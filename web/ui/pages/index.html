@@ -1,5 +1,35 @@
 {{ define "content" }}
 <h1>Universal Till</h1>
-<p>Ultra-light, offline-first EPOS (Go). This is the edge UI placeholder.</p>
-<div id="basket" hx-get="/api/pos/scan" hx-trigger="load"></div>
+
+<div class="pos-container">
+  <!-- Basket section -->
+  <div class="basket" id="basket">
+    <h2>Basket</h2>
+    <table>
+      <thead>
+        <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
+      </thead>
+      <tbody id="basket-lines">
+        <tr><td colspan="3" class="empty">No items</td></tr>
+      </tbody>
+    </table>
+    <div class="totals">
+      <div>Subtotal: <span id="subtotal">0.00</span></div>
+      <div>Tax: <span id="tax">0.00</span></div>
+      <div class="total">Total: <span id="total">0.00</span></div>
+    </div>
+  </div>
+
+  <!-- Product buttons (loaded from JSON via partial) -->
+  <div hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
+
+  <!-- Tender buttons -->
+  <div class="tender">
+    <h2>Tender</h2>
+    <div class="grid">
+      <button class="btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}'>Cash</button>
+      <button class="btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}'>Card</button>
+    </div>
+  </div>
+</div>
 {{ end }}

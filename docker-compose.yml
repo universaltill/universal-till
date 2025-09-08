@@ -1,0 +1,35 @@
+version: "3.9"
+services:
+  edge:
+    build: ../universal-till
+    ports: ["8080:8080"]
+  payments_sdk_demo:
+    build: ../addon-sdk-go
+    ports: ["7001:7001"]
+  addon_qr_demo:
+    build: ../addons/payments-qr
+    ports: ["7002:7002"]
+  addon_printer_mock:
+    build: ../addons/printer-escpos
+    ports: ["7003:7003"]
+  website:
+    build: ../website
+    ports: ["8081:80"]
+  docs:
+    build: ../docs
+    ports: ["8082:8000"]
+  design:
+    build: ../design
+    ports: ["8091:8000"]
+  cloud_proto:
+    build: ../cloud-proto
+    ports: ["8092:8000"]
+  release_test:
+    build: ../release-test
+    ports: ["8093:8000"]
+  playground:
+    build: ../playground
+    ports: ["8094:8000"]
+  addons_premium:
+    build: ../addons-premium
+    ports: ["8095:8000"]

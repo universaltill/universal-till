@@ -1,5 +1,19 @@
-body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0}
-.container{max-width:900px;margin:20px auto;padding:0 16px}
-.nav{display:flex;gap:12px;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #eee}
-.nav a{text-decoration:none;color:#333}
-.logo{font-weight:700}
+.pos-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr 0.6fr;
+  gap: 1rem;
+}
+
+/* Cards & forms */
+.card { background: #fff; border-radius: 12px; padding: .75rem; box-shadow: 0 1px 3px rgba(0,0,0,.08) }
+.form-row { display: grid; grid-template-columns: 1.2fr .6fr .6fr auto; gap: .5rem; align-items: center; margin-bottom: .5rem }
+.form-row input { padding: .5rem; border-radius: 8px; border: 1px solid #ddd }
+
+.grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.btn-tile { display: grid; grid-template-columns: 1fr auto; gap: .4rem; align-items: center }
+.btn { background:#0066ff; color:#fff; border:none; padding:.6rem; border-radius:8px; cursor:pointer }
+.btn:hover { background:#004ecc }
+.btn.primary { background:#0066ff }
+.btn.danger { background:#c81e1e }
+
+.empty { text-align:center; color:#888 }
