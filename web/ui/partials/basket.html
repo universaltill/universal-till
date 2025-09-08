@@ -1,0 +1,28 @@
+{{ define "basket" }}
+<div class="basket" id="basket">
+  <h2>Basket</h2>
+  <table>
+    <thead>
+      <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
+    </thead>
+    <tbody id="basket-lines">
+      {{ if .Lines }}
+        {{ range .Lines }}
+          <tr>
+            <td>{{ .name }} ({{ .sku }})</td>
+            <td>{{ .qty }}</td>
+            <td>£{{ printf "%.2f" (div100 .priceCents) }}</td>
+          </tr>
+        {{ end }}
+      {{ else }}
+        <tr><td colspan="3" class="empty">No items</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  <div class="totals">
+    <div>Subtotal: £{{ printf "%.2f" (div100 .subtotal) }}</div>
+    <div>Tax: £{{ printf "%.2f" (div100 .tax) }}</div>
+    <div class="total">Total: £{{ printf "%.2f" (div100 .total) }}</div>
+  </div>
+</div>
+{{ end }}

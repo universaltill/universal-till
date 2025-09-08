@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -18,11 +19,11 @@ func main() {
 	cfg := common.ConfigFromEnv()
 	logger := log.New(os.Stdout, "[edge] ", log.LstdFlags)
 
-	// Create data dir for storing buttons.json if not present
+	// Data dir for buttons.json
 	dataDir := "./data"
 	_ = os.MkdirAll(dataDir, 0o755)
 
-	// Initialize button store + renderer
+	// Buttons: store + renderer
 	btnStore := ui.NewButtonStore(dataDir)
 	btnRenderer, err := ui.NewRenderer(
 		filepath.Join("web", "ui", "layouts", "base.html"),
@@ -34,34 +35,55 @@ func main() {
 	}
 	btnHTTP := &ui.ButtonsHTTP{Store: btnStore, View: btnRenderer}
 
-	// Initialize POS service
+	// Basket fragment renderer
+	basketView, err := ui.NewBasketView()
+	if err != nil {
+		logger.Fatalf("failed to init basket view: %v", err)
+	}
+
+	// POS engine
 	engine := pos.NewService(pos.Config{TaxInclusive: false})
 
 	mux := httpx.NewMux()
 
-	// Static files (CSS, JS)
+	// Static (CSS/JS)
 	mux.Handle("/public/", http.StripPrefix("/public/", http.FileServer(http.Dir("web/public"))))
 
-	// Root page
+	// Page
 	mux.HandleFunc("/", httpx.Render("ui/pages/index.html", map[string]any{
 		"title": "Universal Till",
 	}))
 
-	// Buttons management endpoints
+	// UI fragments (GET)
 	mux.HandleFunc("/ui/buttons", btnHTTP.List)
+	mux.HandleFunc("/ui/basket", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := engine.Scan("") // no-op to get current basket (or replace with getter)
+		_ = basketView.Render(w, b)
+	})
+
+	// Buttons admin (POST)
 	mux.HandleFunc("/api/buttons/add", btnHTTP.Add)
 	mux.HandleFunc("/api/buttons/remove", btnHTTP.Remove)
 
-	// POS API endpoints
-	mux.HandleFunc("/api/pos/scan", httpx.JSON(func(in struct{ Code string }) (any, error) {
-		return engine.Scan(in.Code)
-	}))
-	mux.HandleFunc("/api/pos/tender", httpx.JSON(func(in struct {
-		Amount int64  `json:"amount"`
-		Method string `json:"method"`
-	}) (any, error) {
-		return engine.Tender(in.Amount, in.Method)
-	}))
+	// POS actions return basket HTML (so htmx can swap it)
+	mux.HandleFunc("/api/pos/scan", func(w http.ResponseWriter, r *http.Request) {
+		type In struct{ Code string }
+		var in In
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		b, _ := engine.Scan(in.Code)
+		_ = basketView.Render(w, b)
+	})
+	mux.HandleFunc("/api/pos/tender", func(w http.ResponseWriter, r *http.Request) {
+		type In struct {
+			Amount int64  `json:"amount"`
+			Method string `json:"method"`
+		}
+		var in In
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		_, _ = engine.Tender(in.Amount, in.Method)
+		b, _ := engine.Scan("") // basket cleared -> render empty basket
+		_ = basketView.Render(w, b)
+	})
 
 	logger.Printf("Universal Till edge %s listening on %s\n", version, cfg.ListenAddr)
 	log.Fatal(http.ListenAndServe(cfg.ListenAddr, mux))
