@@ -2,33 +2,18 @@
 <h1>Universal Till</h1>
 
 <div class="pos-container">
-  <!-- Basket section -->
-  <div class="basket" id="basket">
-    <h2>Basket</h2>
-    <table>
-      <thead>
-        <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
-      </thead>
-      <tbody id="basket-lines">
-        <tr><td colspan="3" class="empty">No items</td></tr>
-      </tbody>
-    </table>
-    <div class="totals">
-      <div>Subtotal: <span id="subtotal">0.00</span></div>
-      <div>Tax: <span id="tax">0.00</span></div>
-      <div class="total">Total: <span id="total">0.00</span></div>
-    </div>
-  </div>
+  <!-- Basket loads on page load -->
+  <div hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
 
-  <!-- Product buttons (loaded from JSON via partial) -->
+  <!-- Product buttons panel loads on page load -->
   <div hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 
-  <!-- Tender buttons -->
+  <!-- Tender -->
   <div class="tender">
     <h2>Tender</h2>
     <div class="grid">
-      <button class="btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}'>Cash</button>
-      <button class="btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}'>Card</button>
+      <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-target="#basket" hx-swap="outerHTML">Cash</button>
+      <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-target="#basket" hx-swap="outerHTML">Card</button>
     </div>
   </div>
 </div>
