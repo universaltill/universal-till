@@ -1,0 +1,27 @@
+[
+  {
+    "label": "Coffee",
+    "code": "A",
+    "priceCents": 250
+  },
+  {
+    "label": "Tea",
+    "code": "B",
+    "priceCents": 200
+  },
+  {
+    "label": "Cake",
+    "code": "C",
+    "priceCents": 350
+  },
+  {
+    "label": "test",
+    "code": "10",
+    "priceCents": 20
+  },
+  {
+    "label": "test item2",
+    "code": "11",
+    "priceCents": 21
+  }
+]
