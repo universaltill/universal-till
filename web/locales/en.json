@@ -1,0 +1,16 @@
+{
+  "app.name": "Universal Till",
+  "nav.home": "Home",
+  "nav.github": "GitHub",
+  "tender.title": "Tender",
+  "tender.cash": "Cash",
+  "tender.card": "Card",
+  "nav.designer": "Designer",
+  "designer.title": "Till Designer",
+  "designer.add_button": "Add Button",
+  "designer.label": "Label",
+  "designer.code": "Code",
+  "designer.price": "Price (cents)",
+  "designer.add": "Add",
+  "designer.buttons": "Buttons"
+}

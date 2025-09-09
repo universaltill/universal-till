@@ -1,0 +1,22 @@
+{{ define "content" }}
+<h1>{{ T "designer.title" }}</h1>
+
+<div class="designer">
+  <section class="card" style="margin-bottom:1rem">
+    <h2>Themes</h2>
+    <form hx-post="/api/settings/theme" hx-trigger="change" hx-swap="none">
+      <label>Theme
+        <select name="theme">
+          <option value="default">Default</option>
+          <option value="monarch">Monarch</option>
+        </select>
+      </label>
+    </form>
+  </section>
+
+  <section>
+    <h2>{{ T "designer.add_button" }}</h2>
+    {{ template "buttons_admin" . }}
+  </section>
+</div>
+{{ end }}

@@ -1,0 +1,25 @@
+{{ define "content" }}
+<h1>System Settings</h1>
+<div class="card">
+  <form hx-post="/api/settings/save" hx-swap="none">
+    <div class="form-row" style="grid-template-columns: repeat(5, 1fr);">
+      <label>Currency
+        <input type="text" name="currency" value="{{ .settings.Currency }}" placeholder="GBP">
+      </label>
+      <label>Country
+        <input type="text" name="country" value="{{ .settings.Country }}" placeholder="GB">
+      </label>
+      <label>Region
+        <input type="text" name="region" value="{{ .settings.Region }}" placeholder="">
+      </label>
+      <label>Tax Inclusive
+        <input type="checkbox" name="taxInclusive" {{ if .settings.TaxInclusive }}checked{{ end }}>
+      </label>
+      <label>Tax Rate (%)
+        <input type="number" name="taxRatePct" min="0" step="1" value="{{ .settings.TaxRatePct }}">
+      </label>
+    </div>
+    <button class="btn" type="submit">Save</button>
+  </form>
+</div>
+{{ end }}

@@ -1,0 +1,42 @@
+[
+  {
+    "label": "sdf",
+    "code": "sdf",
+    "priceCents": 20
+  },
+  {
+    "label": "Apple",
+    "code": "Apll13434",
+    "priceCents": 2000
+  },
+  {
+    "label": "apple",
+    "code": "apl",
+    "priceCents": 2000
+  },
+  {
+    "label": "Item 1",
+    "code": "I1",
+    "priceCents": 100
+  },
+  {
+    "label": "item 2",
+    "code": "i2",
+    "priceCents": 200
+  },
+  {
+    "label": "item 4",
+    "code": "i4",
+    "priceCents": 400
+  },
+  {
+    "label": "ugur",
+    "code": "u1",
+    "priceCents": 1200
+  },
+  {
+    "label": "sdadsf",
+    "code": "33",
+    "priceCents": 1200
+  }
+]

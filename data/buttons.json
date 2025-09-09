@@ -1,17 +1,13 @@
 [
   {
-    "label": "Coffee",
-    "code": "A",
-    "priceCents": 250
+    "label": "apple",
+    "code": "a1",
+    "priceCents": 200
   },
   {
-    "label": "test",
-    "code": "10",
-    "priceCents": 20
-  },
-  {
-    "label": "test item2",
-    "code": "11",
-    "priceCents": 21
+    "label": "apple2",
+    "code": "a2",
+    "priceCents": 200,
+    "imageUrl": "https://cdn.mos.cms.futurecdn.net/38Moe9n3b72uVEf2Ti7KmV.jpg"
   }
 ]

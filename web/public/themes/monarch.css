@@ -1,0 +1,5 @@
+:root { --brand:#1e293b; --accent:#10b981; }
+.nav { background:var(--brand); color:#fff; padding:.6rem 1rem; display:flex; justify-content:space-between; align-items:center }
+.nav a { color:#fff; margin-left:.8rem }
+.btn { background:var(--accent) }
+.basket .total { color:var(--accent) }
