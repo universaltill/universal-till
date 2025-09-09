@@ -1,0 +1,32 @@
+{{ define "content" }}
+<h1>Plugins</h1>
+<div class="card" x-data="{ q: '', items: [] }" x-init="fetch('/public/plugins.json').then(r=>r.json()).then(d=>{ items=d })">
+  <input type="search" placeholder="Search plugins" x-model="q" style="width:100%;padding:.5rem;border:1px solid #ddd;border-radius:8px;margin-bottom:.5rem">
+  <div class="grid">
+    <template x-for="p in items.filter(i => i.name.toLowerCase().includes(q.toLowerCase()) || i.description.toLowerCase().includes(q.toLowerCase()))" :key="p.id">
+      <div class="card" style="padding:1rem" x-data="{
+            st: {downloaded:false, installed:false},
+            refresh(){ fetch('/api/plugins/state?id='+encodeURIComponent(p.id)).then(r=>r.ok?r.json():null).then(s=>{ if(s) this.st=s }) },
+            post(url, data){ return fetch(url, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams(data) }) }
+          }" x-init="refresh()">
+        <h3 x-text="p.name"></h3>
+        <p x-text="p.description"></p>
+        <div class="actions" style="display:flex; gap:.5rem; align-items:center">
+          <template x-if="!st.downloaded">
+            <button class="btn" @click.prevent="post('/api/plugins/download', { id: p.id, bundleUrl: p.bundleUrl || '' }).then(()=>refresh())">Download</button>
+          </template>
+          <template x-if="st.downloaded && !st.installed">
+            <button class="btn" @click.prevent="post('/api/plugins/install', { id: p.id, route: '/plug/'+p.id, label: p.name }).then(()=>refresh())">Install</button>
+          </template>
+          <template x-if="st.installed">
+            <button class="btn danger" @click.prevent="post('/api/plugins/uninstall', { id: p.id }).then(()=>refresh())">Uninstall</button>
+          </template>
+          <template x-if="st.downloaded && !st.installed">
+            <button class="btn" @click.prevent="post('/api/plugins/delete', { id: p.id }).then(()=>refresh())">Delete Files</button>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+{{ end }}

@@ -37,6 +37,11 @@ func money(amountCents int64) string {
 	return fmt.Sprintf("%s%.2f", symbol, float64(amountCents)/100.0)
 }
 
+func toJSON(v any) template.JS {
+	b, _ := json.Marshal(v)
+	return template.JS(string(b))
+}
+
 // InitI18n wires a translator and default locale into the template layer.
 func InitI18n(t *common.I18n, fallback string) {
 	i18nRef.Store(t)
@@ -76,6 +81,7 @@ func FuncsFor(locale string) template.FuncMap {
 		funcs[k] = v
 	}
 	funcs["money"] = money
+	funcs["toJson"] = toJSON
 	funcs["T"] = func(key string) string {
 		if tAny := i18nRef.Load(); tAny != nil {
 			return tAny.(*common.I18n).T(locale, key)

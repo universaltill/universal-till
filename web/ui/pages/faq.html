@@ -1,0 +1,26 @@
+{{ define "content" }}
+<h1>FAQ</h1>
+<div class="card">
+  <h2>General</h2>
+  <details>
+    <summary>How do I add products?</summary>
+    <div>Go to Designer, add label/code/price (and optional image), then use tiles on the home page.</div>
+  </details>
+  <details>
+    <summary>How do I change currency and tax?</summary>
+    <div>Open Settings and update currency, tax rate, and inclusive/exclusive mode.</div>
+  </details>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>Plugins</h2>
+  <details>
+    <summary>What are plugins?</summary>
+    <div>Plugins extend the till with integrations, hardware, and pages like this FAQ. They are listed in the Store and installed to the device.</div>
+  </details>
+  <details>
+    <summary>Can a plugin add its own FAQ entries?</summary>
+    <div>Yes. Plugins can register extra entries rendered below. (Sample implementation to follow.)</div>
+  </details>
+</div>
+{{ end }}
