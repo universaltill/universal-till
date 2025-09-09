@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +17,39 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
+
+type menuItem struct {
+	Href  string
+	Label string
+}
+
+func buildMenu(installed map[string]bool, menuPlugins map[string]common.MenuPlugin, recs map[string]common.PluginRecord) []menuItem {
+	items := []menuItem{
+		{Href: "/", Label: "Home"},
+		{Href: "/designer", Label: "Designer"},
+		{Href: "/settings", Label: "Settings"},
+		{Href: "/plugins", Label: "Plugins"},
+	}
+	for _, p := range menuPlugins {
+		if p.Route != "" && p.Label != "" {
+			items = append(items, menuItem{Href: p.Route, Label: p.Label})
+		}
+	}
+	for _, r := range recs {
+		if r.Route != "" && r.Label != "" {
+			items = append(items, menuItem{Href: r.Route, Label: r.Label})
+		}
+	}
+	return items
+}
+
+// plugin helpers
+func pluginDir(id string) string { return filepath.Join("data", "plugins", id) }
+
+func pluginDownloaded(id string) bool {
+	st, err := os.Stat(filepath.Join(pluginDir(id), "index.html"))
+	return err == nil && !st.IsDir()
+}
 
 var version = "0.1.0"
 
@@ -69,27 +105,72 @@ func main() {
 
 	// Pages
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		cur := settings.GetAll()
 		data := map[string]any{
-			"title":   "Universal Till",
-			"samples": cfg.SamplesDir != "",
-			"theme":   settings.GetTheme(),
+			"title":     "Universal Till",
+			"samples":   cfg.SamplesDir != "",
+			"theme":     settings.GetTheme(),
+			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})
 	mux.HandleFunc("/designer", func(w http.ResponseWriter, r *http.Request) {
+		cur := settings.GetAll()
 		data := map[string]any{
-			"title": "Designer",
-			"theme": settings.GetTheme(),
+			"title":     "Designer",
+			"theme":     settings.GetTheme(),
+			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
 		}
 		httpx.Render("ui/pages/designer.html", data)(w, r)
 	})
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
+		cur := settings.GetAll()
 		data := map[string]any{
-			"title":    "Settings",
-			"theme":    settings.GetTheme(),
-			"settings": settings.GetAll(),
+			"title":     "Settings",
+			"theme":     settings.GetTheme(),
+			"settings":  cur,
+			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
+	})
+	mux.HandleFunc("/plugins", func(w http.ResponseWriter, r *http.Request) {
+		cur := settings.GetAll()
+		// Build installed and downloaded id lists
+		installed := []string{}
+		if cur.InstalledPlugins != nil {
+			for id, ok := range cur.InstalledPlugins {
+				if ok {
+					installed = append(installed, id)
+				}
+			}
+		}
+		downloaded := []string{}
+		for id := range cur.PluginRecords {
+			if pluginDownloaded(id) {
+				downloaded = append(downloaded, id)
+			}
+		}
+		data := map[string]any{
+			"title":         "Plugins",
+			"theme":         settings.GetTheme(),
+			"menuItems":     buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"installedIDs":  installed,
+			"downloadedIDs": downloaded,
+		}
+		httpx.Render("ui/pages/plugins.html", data)(w, r)
+	})
+	mux.HandleFunc("/faq", func(w http.ResponseWriter, r *http.Request) {
+		cur := settings.GetAll()
+		if cur.InstalledPlugins == nil || !cur.InstalledPlugins["com.unitill.plugins.faq"] {
+			http.NotFound(w, r)
+			return
+		}
+		data := map[string]any{
+			"title":     "FAQ",
+			"theme":     settings.GetTheme(),
+			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+		}
+		httpx.Render("ui/pages/faq.html", data)(w, r)
 	})
 
 	// Set theme
@@ -227,6 +308,179 @@ func main() {
 		resolver := ui.PriceResolverAdapter{Store: btnStore}
 		engine = pos.NewServiceWithResolver(pos.Config{TaxInclusive: cur.TaxInclusive}, resolver)
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// plugin state: downloaded/installed
+	mux.HandleFunc("/api/plugins/state", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		cur := settings.GetAll()
+		installed := cur.InstalledPlugins != nil && cur.InstalledPlugins[id]
+		downloaded := pluginDownloaded(id)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"installed":%v,"downloaded":%v}`, installed, downloaded)))
+	})
+
+	// download bundle to local folder
+	mux.HandleFunc("/api/plugins/download", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		bundleURL := strings.TrimSpace(r.Form.Get("bundleUrl"))
+		if id == "" || bundleURL == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		dir := pluginDir(id)
+		_ = os.MkdirAll(dir, 0o755)
+		// local copy or remote fetch
+		if strings.HasPrefix(bundleURL, "/") {
+			src := bundleURL
+			if strings.HasPrefix(src, "/public/") {
+				src = filepath.Join("web", src[1:])
+			}
+			in, err := os.Open(src)
+			if err == nil {
+				defer in.Close()
+				out, err := os.Create(filepath.Join(dir, "index.html"))
+				if err == nil {
+					io.Copy(out, in)
+					out.Close()
+				}
+			}
+		} else if strings.HasPrefix(bundleURL, "http://") || strings.HasPrefix(bundleURL, "https://") {
+			resp, err := http.Get(bundleURL)
+			if err == nil {
+				defer resp.Body.Close()
+				out, err := os.Create(filepath.Join(dir, "index.html"))
+				if err == nil {
+					io.Copy(out, resp.Body)
+					out.Close()
+				}
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// install: require downloaded, then register
+	mux.HandleFunc("/api/plugins/install", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		route := strings.TrimSpace(r.Form.Get("route"))
+		label := strings.TrimSpace(r.Form.Get("label"))
+		if id == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if !pluginDownloaded(id) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		cur := settings.GetAll()
+		if cur.InstalledPlugins == nil {
+			cur.InstalledPlugins = map[string]bool{}
+		}
+		cur.InstalledPlugins[id] = true
+		if cur.PluginRecords == nil {
+			cur.PluginRecords = map[string]common.PluginRecord{}
+		}
+		if route == "" {
+			route = "/plug/" + id
+		}
+		if label == "" {
+			label = id
+		}
+		cur.PluginRecords[id] = common.PluginRecord{Route: route, Label: label, Path: pluginDir(id)}
+		_ = settings.SetAll(cur)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// uninstall: deregister (keep files)
+	mux.HandleFunc("/api/plugins/uninstall", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		if id == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		cur := settings.GetAll()
+		if cur.InstalledPlugins != nil {
+			delete(cur.InstalledPlugins, id)
+		}
+		if cur.PluginRecords != nil {
+			delete(cur.PluginRecords, id)
+		}
+		_ = settings.SetAll(cur)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// delete: remove files (and unregister if present)
+	mux.HandleFunc("/api/plugins/delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		if id == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		cur := settings.GetAll()
+		if cur.InstalledPlugins != nil {
+			delete(cur.InstalledPlugins, id)
+		}
+		if cur.PluginRecords != nil {
+			delete(cur.PluginRecords, id)
+		}
+		_ = settings.SetAll(cur)
+		_ = os.RemoveAll(pluginDir(id))
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Serve local plugin pages
+	mux.HandleFunc("/plug/", func(w http.ResponseWriter, r *http.Request) {
+		cur := settings.GetAll()
+		pid := strings.TrimPrefix(r.URL.Path, "/plug/")
+		rec := cur.PluginRecords[pid]
+		if rec.Path == "" {
+			http.NotFound(w, r)
+			return
+		}
+		b, err := os.ReadFile(filepath.Join(rec.Path, "index.html"))
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		data := map[string]any{
+			"title":      rec.Label,
+			"theme":      settings.GetTheme(),
+			"menuItems":  buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"pluginHTML": template.HTML(string(b)),
+		}
+		httpx.Render("ui/pages/plugin_embed.html", data)(w, r)
+	})
+
+	// Dynamic proxy for external menu plugins: /ext/<pluginId>
+	mux.HandleFunc("/ext/", func(w http.ResponseWriter, r *http.Request) {
+		cur := settings.GetAll()
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/ext/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			http.NotFound(w, r)
+			return
+		}
+		pid := parts[0]
+		mp := cur.MenuPlugins[pid]
+		if mp.URL == "" {
+			http.NotFound(w, r)
+			return
+		}
+		resp, err := http.Get(mp.URL)
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.Copy(w, resp.Body)
 	})
 
 	logger.Printf("Universal Till edge %s listening on %s\n", version, cfg.ListenAddr)
