@@ -10,10 +10,7 @@ type BasketView struct {
 	Tpl *template.Template
 }
 
-func NewBasketView() (*BasketView, error) {
-	funcs := template.FuncMap{
-		"div100": func(cents int64) float64 { return float64(cents) / 100.0 },
-	}
+func NewBasketView(funcs template.FuncMap) (*BasketView, error) {
 	t := template.Must(template.New("base.html").Funcs(funcs).ParseFiles(
 		filepath.Join("web", "ui", "layouts", "base.html"),
 		filepath.Join("web", "ui", "partials", "basket.html"),

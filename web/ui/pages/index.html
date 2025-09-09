@@ -1,5 +1,5 @@
 {{ define "content" }}
-<h1>Universal Till</h1>
+<h1>{{ T "app.name" }}</h1>
 
 <div class="pos-container">
   <!-- Basket loads on page load -->
@@ -8,13 +8,31 @@
   <!-- Product buttons panel loads on page load -->
   <div hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 
-  <!-- Tender -->
+  <!-- Tender and Scan -->
   <div class="tender">
-    <h2>Tender</h2>
+    <h2>{{ T "tender.title" }}</h2>
+    <div class="card" style="margin-bottom:.75rem">
+      <form hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
+        <label>Barcode
+          <input type="text" name="code" placeholder="Scan or type code" autofocus required>
+        </label>
+        <label>Qty
+          <input type="number" name="qty" value="1" min="1" step="1" required>
+        </label>
+        <button class="btn" type="submit">Add</button>
+      </form>
+    </div>
     <div class="grid">
-      <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-target="#basket" hx-swap="outerHTML">Cash</button>
-      <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-target="#basket" hx-swap="outerHTML">Card</button>
+      <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
+      <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
     </div>
   </div>
 </div>
+
+{{ if .samples }}
+<div class="card samples">
+  <h2>Sample tills</h2>
+  <iframe src="/samples/" title="Samples" class="samples-frame"></iframe>
+</div>
+{{ end }}
 {{ end }}

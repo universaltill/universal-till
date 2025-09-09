@@ -1,9 +1,14 @@
 {{ define "nav" -}}
 <nav class="nav">
-  <div class="logo">Universal Till</div>
+  <div class="logo">{{ T "app.name" }}</div>
   <div class="nav-links">
-    <a href="/">Home</a>
-    <a href="https://github.com/universaltill">GitHub</a>
+    <a href="/">{{ T "nav.home" }}</a>
+    <a href="/designer">{{ T "nav.designer" }}</a>
+    <a href="/settings">Settings</a>
+    <a href="https://github.com/universaltill">{{ T "nav.github" }}</a>
+    <span>|</span>
+    <a href="/?lang=en">EN</a>
+    <a href="/?lang=fa">FA</a>
   </div>
 </nav>
 {{- end }}

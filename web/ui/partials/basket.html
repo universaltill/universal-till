@@ -9,9 +9,12 @@
       {{ if .Lines }}
         {{ range .Lines }}
           <tr>
-            <td>{{ .name }} ({{ .sku }})</td>
-            <td>{{ .qty }}</td>
-            <td>£{{ printf "%.2f" (div100 .priceCents) }}</td>
+            <td>
+              {{ if .ImageURL }}<img class="thumb small" src="{{ .ImageURL }}" alt="{{ .Name }}" />{{ end }}
+              {{ .Name }} ({{ .SKU }})
+            </td>
+            <td>{{ .Qty }}</td>
+            <td>{{ money .PriceCents }}</td>
           </tr>
         {{ end }}
       {{ else }}
@@ -20,9 +23,9 @@
     </tbody>
   </table>
   <div class="totals">
-    <div>Subtotal: £{{ printf "%.2f" (div100 .subtotal) }}</div>
-    <div>Tax: £{{ printf "%.2f" (div100 .tax) }}</div>
-    <div class="total">Total: £{{ printf "%.2f" (div100 .total) }}</div>
+    <div>Subtotal: {{ money .Subtotal }}</div>
+    <div>Tax: {{ money .Tax }}</div>
+    <div class="total">Total: {{ money .Total }}</div>
   </div>
 </div>
 {{ end }}

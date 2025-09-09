@@ -1,0 +1,16 @@
+{
+  "app.name": "صندوق فروش همگانی",
+  "nav.home": "خانه",
+  "nav.github": "گیت‌هاب",
+  "tender.title": "پرداخت",
+  "tender.cash": "نقدی",
+  "tender.card": "کارت",
+  "nav.designer": "طراح",
+  "designer.title": "طراح صندوق",
+  "designer.add_button": "افزودن دکمه",
+  "designer.label": "برچسب",
+  "designer.code": "کد",
+  "designer.price": "قیمت (سنت)",
+  "designer.add": "افزودن",
+  "designer.buttons": "دکمه‌ها"
+}
