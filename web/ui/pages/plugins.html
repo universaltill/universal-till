@@ -1,32 +1,171 @@
 {{ define "content" }}
 <h1>Plugins</h1>
-<div class="card" x-data="{ q: '', items: [] }" x-init="fetch('/public/plugins.json').then(r=>r.json()).then(d=>{ items=d })">
-  <input type="search" placeholder="Search plugins" x-model="q" style="width:100%;padding:.5rem;border:1px solid #ddd;border-radius:8px;margin-bottom:.5rem">
+
+<!-- Toast Container -->
+<div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 1000;"></div>
+
+<div class="card" x-data="{ 
+    q: '', 
+    items: [], 
+    selected: new Set(), 
+    bulkLoading: false,
+    async bulkAction(action) {
+      this.bulkLoading = true;
+      const promises = Array.from(this.selected).map(id => {
+        const plugin = this.items.find(p => p.id === id);
+        if (!plugin) return Promise.resolve();
+        
+        const data = { id };
+        if (action === 'download') data.bundleUrl = plugin.bundleUrl || '';
+        if (action === 'install') {
+          data.route = '/plug/' + id;
+          data.label = plugin.name;
+        }
+        
+        return fetch('/api/plugins/' + action, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams(data)
+        });
+      });
+      
+      try {
+        await Promise.all(promises);
+        showToast('Bulk ' + action + ' completed!', 'success');
+        this.selected.clear();
+        refreshAllPlugins();
+      } catch (error) {
+        showToast('Bulk ' + action + ' failed: ' + error.message, 'error');
+      } finally {
+        this.bulkLoading = false;
+      }
+    }
+  }" x-init="fetch('/public/plugins.json').then(r=>r.json()).then(d=>{ items=d })">
+  <div style="display:flex; gap:.5rem; margin-bottom:.5rem; align-items:center">
+    <input type="search" placeholder="Search plugins" x-model="q" style="flex:1;padding:.5rem;border:1px solid #ddd;border-radius:8px">
+    <button class="btn secondary" @click="selected.clear(); $nextTick(() => selected = new Set())" :disabled="selected.size === 0">Clear Selection</button>
+    <button class="btn" @click="bulkAction('download')" :disabled="selected.size === 0 || bulkLoading">
+      <span x-show="!bulkLoading">Bulk Download</span>
+      <span x-show="bulkLoading">⏳</span>
+    </button>
+    <button class="btn" @click="bulkAction('install')" :disabled="selected.size === 0 || bulkLoading">
+      <span x-show="!bulkLoading">Bulk Install</span>
+      <span x-show="bulkLoading">⏳</span>
+    </button>
+  </div>
   <div class="grid">
     <template x-for="p in items.filter(i => i.name.toLowerCase().includes(q.toLowerCase()) || i.description.toLowerCase().includes(q.toLowerCase()))" :key="p.id">
       <div class="card" style="padding:1rem" x-data="{
             st: {downloaded:false, installed:false},
+            loading: false,
             refresh(){ fetch('/api/plugins/state?id='+encodeURIComponent(p.id)).then(r=>r.ok?r.json():null).then(s=>{ if(s) this.st=s }) },
-            post(url, data){ return fetch(url, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams(data) }) }
+            async post(url, data, action){ 
+              this.loading = true;
+              try {
+                const response = await fetch(url, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams(data) });
+                if (response.ok) {
+                  showToast(`${action} successful!`, 'success');
+                  this.refresh();
+                } else {
+                  showToast(`${action} failed!`, 'error');
+                }
+              } catch (error) {
+                showToast(`${action} failed: ${error.message}`, 'error');
+              } finally {
+                this.loading = false;
+              }
+            }
           }" x-init="refresh()">
-        <h3 x-text="p.name"></h3>
+        <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.5rem">
+          <input type="checkbox" :id="'plugin-' + p.id" @change="selected.has(p.id) ? selected.delete(p.id) : selected.add(p.id); $nextTick(() => selected = new Set(selected))">
+          <h3 x-text="p.name" style="margin:0; flex:1"></h3>
+          <span x-show="p.version" style="background:#e9ecef; padding:.2rem .4rem; border-radius:4px; font-size:.8rem" x-text="'v' + p.version"></span>
+        </div>
         <p x-text="p.description"></p>
+        <div x-show="st.installed && p.version" style="color:#28a745; font-size:.9rem; margin-bottom:.5rem">
+          ✓ Installed (v<span x-text="p.version"></span>)
+        </div>
         <div class="actions" style="display:flex; gap:.5rem; align-items:center">
           <template x-if="!st.downloaded">
-            <button class="btn" @click.prevent="post('/api/plugins/download', { id: p.id, bundleUrl: p.bundleUrl || '' }).then(()=>refresh())">Download</button>
+            <button class="btn" :disabled="loading" @click.prevent="post('/api/plugins/download', { id: p.id, bundleUrl: p.bundleUrl || '' }, 'Download')">
+              <span x-show="!loading">Download</span>
+              <span x-show="loading">⏳</span>
+            </button>
           </template>
           <template x-if="st.downloaded && !st.installed">
-            <button class="btn" @click.prevent="post('/api/plugins/install', { id: p.id, route: '/plug/'+p.id, label: p.name }).then(()=>refresh())">Install</button>
+            <button class="btn" :disabled="loading" @click.prevent="post('/api/plugins/install', { id: p.id, route: '/plug/'+p.id, label: p.name }, 'Install')">
+              <span x-show="!loading">Install</span>
+              <span x-show="loading">⏳</span>
+            </button>
           </template>
           <template x-if="st.installed">
-            <button class="btn danger" @click.prevent="post('/api/plugins/uninstall', { id: p.id }).then(()=>refresh())">Uninstall</button>
+            <button class="btn danger" :disabled="loading" @click.prevent="post('/api/plugins/uninstall', { id: p.id }, 'Uninstall')">
+              <span x-show="!loading">Uninstall</span>
+              <span x-show="loading">⏳</span>
+            </button>
           </template>
           <template x-if="st.downloaded && !st.installed">
-            <button class="btn" @click.prevent="post('/api/plugins/delete', { id: p.id }).then(()=>refresh())">Delete Files</button>
+            <button class="btn" :disabled="loading" @click.prevent="post('/api/plugins/delete', { id: p.id }, 'Delete')">
+              <span x-show="!loading">Delete Files</span>
+              <span x-show="loading">⏳</span>
+            </button>
           </template>
         </div>
       </div>
     </template>
   </div>
 </div>
+
+<script>
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  
+  const colors = {
+    success: '#28a745',
+    error: '#dc3545',
+    info: '#17a2b8',
+    warning: '#ffc107'
+  };
+  
+  toast.style.cssText = `
+    background: ${colors[type] || colors.info};
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    max-width: 300px;
+    word-wrap: break-word;
+  `;
+  
+  toast.textContent = message;
+  container.appendChild(toast);
+  
+  // Animate in
+  setTimeout(() => {
+    toast.style.transform = 'translateX(0)';
+  }, 10);
+  
+  // Auto remove after 3 seconds
+  setTimeout(() => {
+    toast.style.transform = 'translateX(100%)';
+    setTimeout(() => {
+      if (toast.parentNode) {
+        toast.parentNode.removeChild(toast);
+      }
+    }, 300);
+  }, 3000);
+}
+
+function refreshAllPlugins() {
+  document.querySelectorAll('[x-data*="refresh()"]').forEach(el => {
+    if (el._x_dataStack && el._x_dataStack[0] && el._x_dataStack[0].refresh) {
+      el._x_dataStack[0].refresh();
+    }
+  });
+}
+</script>
 {{ end }}
