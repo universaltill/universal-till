@@ -4,15 +4,5 @@
   "country": "",
   "region": "",
   "taxInclusive": false,
-  "taxRatePct": 20,
-  "installedPlugins": {
-    "com.unitill.plugins.faq": true
-  },
-  "pluginRecords": {
-    "com.unitill.plugins.faq": {
-      "route": "/plug/com.unitill.plugins.faq",
-      "label": "FAQ Page",
-      "path": "data/plugins/com.unitill.plugins.faq"
-    }
-  }
+  "taxRatePct": 20
 }
