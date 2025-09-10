@@ -2,12 +2,13 @@
 <div class="products">
   <h2>Products</h2>
 
-  <form class="card form-row" hx-post="/api/buttons/add" hx-target="#buttons-grid-admin" hx-swap="outerHTML">
-    <input type="text" name="label" placeholder="Label (e.g., Latte)" required>
-    <input type="text" name="code"  placeholder="Code (e.g., L)" required>
-    <input type="number" name="priceCents" placeholder="Price (cents)" min="0" required>
-    <input type="url" name="imageUrl" placeholder="Image URL (optional)">
-    <button type="submit">Add / Replace</button>
+  <form id="button-form" class="card form-row" hx-post="/api/buttons/add" hx-target="#buttons-grid-admin" hx-swap="outerHTML">
+    <input type="text" name="label" id="label" placeholder="Label (e.g., Latte)" required>
+    <input type="text" name="code" id="code" placeholder="Code (e.g., L)" required>
+    <input type="number" name="priceCents" id="priceCents" placeholder="Price (cents)" min="0" required>
+    <input type="url" name="imageUrl" id="imageUrl" placeholder="Image URL (optional)">
+    <button type="submit" id="submit-btn">Add / Replace</button>
+    <button type="button" id="cancel-btn" onclick="cancelEdit()" style="display:none">Cancel</button>
   </form>
 
   <div id="buttons-grid-admin" class="grid">
@@ -17,16 +18,43 @@
         <img class="thumb" src="{{ .ImageURL }}" alt="{{ .Label }}" />
         {{ end }}
         <div>{{ .Label }} £{{ .Price }}</div>
-        <form class="remove"
-              hx-post="/api/buttons/remove"
-              hx-target="#buttons-grid-admin" hx-swap="outerHTML">
-          <input type="hidden" name="code" value="{{ .Code }}">
-          <button type="submit" class="btn danger">Remove</button>
-        </form>
+        <div class="btn-actions">
+          <button class="btn secondary" 
+                  onclick="editButton('{{ .Code }}', '{{ .Label }}', {{ .PriceCents }}, '{{ .ImageURL }}')">
+            Edit
+          </button>
+          <form class="remove"
+                hx-post="/api/buttons/remove"
+                hx-target="#buttons-grid-admin" hx-swap="outerHTML">
+            <input type="hidden" name="code" value="{{ .Code }}">
+            <button type="submit" class="btn danger">Remove</button>
+          </form>
+        </div>
       </div>
     {{ else }}
       <p class="empty">No products yet.</p>
     {{ end }}
   </div>
 </div>
+
+<script>
+function editButton(code, label, priceCents, imageUrl) {
+  document.getElementById('label').value = label;
+  document.getElementById('code').value = code;
+  document.getElementById('priceCents').value = priceCents;
+  document.getElementById('imageUrl').value = imageUrl;
+  
+  document.getElementById('submit-btn').textContent = 'Update';
+  document.getElementById('cancel-btn').style.display = 'inline-block';
+  
+  // Scroll to form
+  document.getElementById('button-form').scrollIntoView({ behavior: 'smooth' });
+}
+
+function cancelEdit() {
+  document.getElementById('button-form').reset();
+  document.getElementById('submit-btn').textContent = 'Add / Replace';
+  document.getElementById('cancel-btn').style.display = 'none';
+}
+</script>
 {{ end }}

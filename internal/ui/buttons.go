@@ -30,7 +30,7 @@ type ButtonVM struct {
 	ImageURL   string `json:"imageUrl,omitempty"`
 }
 
-func toVM(b []Button) []ButtonVM {
+func ToVM(b []Button) []ButtonVM {
 	out := make([]ButtonVM, 0, len(b))
 	for _, x := range b {
 		out = append(out, ButtonVM{
@@ -175,7 +175,7 @@ type ButtonsHTTP struct {
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	btns, _ := h.Store.Load()
 	_ = h.View.Render(w, "buttons", map[string]any{
-		"Buttons": toVM(btns),
+		"Buttons": ToVM(btns),
 	})
 }
 

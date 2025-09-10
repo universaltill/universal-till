@@ -3,6 +3,7 @@
     "id": "com.unitill.plugins.faq",
     "name": "FAQ Page",
     "description": "Adds a Frequently Asked Questions page.",
+    "version": "1.0.0",
     "priceCents": 0,
     "bundleUrl": "https://raw.githubusercontent.com/universaltill/plugins-faq/main/index.html"
   },
@@ -10,18 +11,21 @@
     "id": "com.unitill.plugins.escpos",
     "name": "ESC/POS Printer",
     "description": "Print receipts on ESC/POS-compatible printers.",
+    "version": "2.1.0",
     "priceCents": 0
   },
   {
     "id": "com.unitill.plugins.ubereats",
     "name": "UberEats Integration",
     "description": "Pull orders from UberEats and push status updates.",
+    "version": "1.5.2",
     "priceCents": 990
   },
   {
     "id": "com.unitill.plugins.qrpay",
     "name": "QR Payments",
     "description": "Accept local QR code payments.",
+    "version": "1.2.1",
     "priceCents": 490
   }
 ]

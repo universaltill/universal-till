@@ -116,12 +116,28 @@ func main() {
 	})
 	mux.HandleFunc("/designer", func(w http.ResponseWriter, r *http.Request) {
 		cur := settings.GetAll()
+
+		// Load buttons for the designer
+		btns, _ := btnStore.Load()
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		renderer, err := ui.NewRenderer(
+			"web/ui/layouts/base.html",
+			"web/ui/pages/designer.html",
+			"web/ui/partials/buttons_admin.html",
+			funcs,
+		)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		data := map[string]any{
 			"title":     "Designer",
 			"theme":     settings.GetTheme(),
 			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"Buttons":   ui.ToVM(btns),
 		}
-		httpx.Render("ui/pages/designer.html", data)(w, r)
+		_ = renderer.Render(w, "designer", data)
 	})
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		cur := settings.GetAll()
