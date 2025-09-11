@@ -1,3 +1,30 @@
+{{ define "buttons_admin_grid" }}
+<div id="buttons-grid-admin" class="grid">
+  {{ range .Buttons }}
+    <div class="btn-tile">
+      {{ if .ImageURL }}
+      <img class="thumb" src="{{ .ImageURL }}" alt="{{ .Label }}" />
+      {{ end }}
+      <div>{{ .Label }} £{{ .Price }}</div>
+      <div class="btn-actions">
+        <button class="btn secondary" 
+                onclick="editButton('{{ .Code }}', '{{ .Label }}', {{ .PriceCents }}, '{{ .ImageURL }}')">
+          Edit
+        </button>
+        <form class="remove"
+              hx-post="/api/buttons/remove"
+              hx-target="#buttons-grid-admin" hx-swap="outerHTML">
+          <input type="hidden" name="code" value="{{ .Code }}">
+          <button type="submit" class="btn danger">Remove</button>
+        </form>
+      </div>
+    </div>
+  {{ else }}
+    <p class="empty">No products yet.</p>
+  {{ end }}
+</div>
+{{ end }}
+
 {{ define "buttons_admin" }}
 <div class="products">
   <h2>Products</h2>
@@ -11,30 +38,7 @@
     <button type="button" id="cancel-btn" onclick="cancelEdit()" style="display:none">Cancel</button>
   </form>
 
-  <div id="buttons-grid-admin" class="grid">
-    {{ range .Buttons }}
-      <div class="btn-tile">
-        {{ if .ImageURL }}
-        <img class="thumb" src="{{ .ImageURL }}" alt="{{ .Label }}" />
-        {{ end }}
-        <div>{{ .Label }} £{{ .Price }}</div>
-        <div class="btn-actions">
-          <button class="btn secondary" 
-                  onclick="editButton('{{ .Code }}', '{{ .Label }}', {{ .PriceCents }}, '{{ .ImageURL }}')">
-            Edit
-          </button>
-          <form class="remove"
-                hx-post="/api/buttons/remove"
-                hx-target="#buttons-grid-admin" hx-swap="outerHTML">
-            <input type="hidden" name="code" value="{{ .Code }}">
-            <button type="submit" class="btn danger">Remove</button>
-          </form>
-        </div>
-      </div>
-    {{ else }}
-      <p class="empty">No products yet.</p>
-    {{ end }}
-  </div>
+  {{ template "buttons_admin_grid" . }}
 </div>
 
 <script>
