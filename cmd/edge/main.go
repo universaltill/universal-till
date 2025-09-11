@@ -64,21 +64,19 @@ func main() {
 	// Buttons: store
 	btnStore := ui.NewButtonStore(dataDir)
 
-	// Settings store
-	preferSQLite := os.Getenv("UT_STORE") == "sqlite"
+	// Settings store: default to SQLite unless explicitly disabled via UT_STORE=file
+	preferSQLite := os.Getenv("UT_STORE") != "file"
 	settings := common.NewSettingsStore(dataDir, preferSQLite)
 
-	// If SQLite is enabled and a legacy buttons.json exists, migrate once
-	if os.Getenv("UT_STORE") == "sqlite" {
-		legacyPath := filepath.Join(dataDir, "buttons.json")
-		if b, err := os.ReadFile(legacyPath); err == nil && len(b) > 0 {
-			var list []ui.Button
-			if err := json.Unmarshal(b, &list); err == nil {
-				if s, ok := btnStore.(*ui.SQLiteButtonStore); ok {
-					_ = s.Save(list)
-					_ = os.Rename(legacyPath, legacyPath+".migrated")
-					log.Printf("migrated %d buttons to sqlite", len(list))
-				}
+	// If SQLite is enabled and a legacy settings.json exists, migrate once
+	if preferSQLite {
+		legacySettings := filepath.Join(dataDir, "settings.json")
+		if b, err := os.ReadFile(legacySettings); err == nil && len(b) > 0 {
+			var legacy common.Settings
+			if json.Unmarshal(b, &legacy) == nil {
+				_ = settings.SetAll(legacy)
+				_ = os.Rename(legacySettings, legacySettings+".migrated")
+				log.Printf("migrated settings.json to sqlite")
 			}
 		}
 	}
