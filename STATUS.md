@@ -8,7 +8,7 @@ Updated: 2025-01-09
 - Basket and tender; barcode auto-capture (USB HID), quantity support
 - Settings page: currency, country, region, tax mode (inclusive), tax rate
 - Currency formatter; TaxEngine (percent-based, inclusive/exclusive)
-- Storage: file JSON (default) or SQLite (UT_STORE=sqlite). JSON→SQLite auto-migration
+- Storage: SQLite only. Legacy JSON auto-migration for buttons/settings
 - Theme selector stored in DB; loads on startup
 - Serve local reference images via /samples when UT_SAMPLES_DIR is set
 - Dockerfile + docker-compose.edge.yml (persistent volume)
@@ -30,12 +30,12 @@ Updated: 2025-01-09
 
 ## How to run
 - Local: `make build && ./bin/edge`
-- With SQLite: `UT_STORE=sqlite ./bin/edge`
+- Run: `./bin/edge` (SQLite is always used)
 - Docker: `docker compose -f docker-compose.edge.yml up --build`
 - Open: `/` (till), `/designer`, `/settings`, `/plugins`
 
 ## Key env vars
-- UT_STORE=sqlite | UT_DEFAULT_LOCALE | UT_CURRENCY | UT_TAX_INCLUSIVE | UT_TAX_RATE | UT_SAMPLES_DIR
+- UT_DEFAULT_LOCALE | UT_CURRENCY | UT_TAX_INCLUSIVE | UT_TAX_RATE | UT_SAMPLES_DIR
 - See `edge.env.example` / `edge.env.dev`
 
 ## Repos/Dirs
@@ -176,8 +176,8 @@ Updated: 2025-01-09
 - **Critical**: Receipt customization and printing improvements
 
 ## Notes
-- Settings are persisted (SQLite if enabled, else data/settings.json)
-- Buttons JSON auto-migrates to SQLite on first run with UT_STORE=sqlite
+- Settings are persisted in SQLite (data/unitill.db). Legacy data/settings.json auto-migrates
+- Buttons JSON auto-migrates to SQLite on first run
 - Plugin system supports external GitHub repositories for plugin distribution
 - Plugin state (downloaded/installed) is tracked in SQLite settings table
 - Dynamic navigation menu updates automatically when plugins are installed/uninstalled
