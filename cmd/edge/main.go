@@ -64,9 +64,8 @@ func main() {
 	// Buttons: store
 	btnStore := ui.NewButtonStore(dataDir)
 
-	// Settings store
-	preferSQLite := os.Getenv("UT_STORE") == "sqlite"
-	settings := common.NewSettingsStore(dataDir, preferSQLite)
+	// Settings store - always use SQLite for settings persistence
+	settings := common.NewSettingsStore(dataDir, true)
 
 	// If SQLite is enabled and a legacy buttons.json exists, migrate once
 	if os.Getenv("UT_STORE") == "sqlite" {
