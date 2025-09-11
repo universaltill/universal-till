@@ -201,7 +201,11 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	h.List(w, r) // Re-render with formatted prices
+	// Re-render admin grid so htmx swaps only the grid in designer
+	btns, _ := h.Store.Load()
+	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
+		"Buttons": ToVM(btns),
+	})
 }
 
 func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
@@ -213,7 +217,10 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	h.List(w, r)
+	btns, _ := h.Store.Load()
+	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
+		"Buttons": ToVM(btns),
+	})
 }
 
 type PriceResolverAdapter struct{ Store ButtonStore }
