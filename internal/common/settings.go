@@ -46,14 +46,19 @@ type sqliteSettings struct{ db *sql.DB }
 
 type fileSettings struct{ path string }
 
+// NewSettingsStore creates a new settings store. The preferSQLite parameter is ignored
+// as settings are now always stored in SQLite database for persistence.
 func NewSettingsStore(dataDir string, preferSQLite bool) SettingsStore {
-	if preferSQLite {
-		db, err := sql.Open("sqlite", filepath.Join(dataDir, "unitill.db"))
-		if err == nil {
-			_ = initSettingsSchema(db)
-			return &sqliteSettings{db: db}
-		}
+	// Always prefer SQLite for settings storage
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "unitill.db"))
+	if err == nil {
+		_ = initSettingsSchema(db)
+		store := &sqliteSettings{db: db}
+		// Migrate existing settings.json if it exists
+		_ = migrateFileSettingsToSQLite(store, filepath.Join(dataDir, "settings.json"))
+		return store
 	}
+	// Fallback to file storage only if SQLite fails
 	return &fileSettings{path: filepath.Join(dataDir, "settings.json")}
 }
 
@@ -63,6 +68,41 @@ func initSettingsSchema(db *sql.DB) error {
 	  value TEXT
 	);`)
 	return err
+}
+
+func migrateFileSettingsToSQLite(store *sqliteSettings, filePath string) error {
+	// Check if settings.json exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return nil // No file to migrate
+	}
+
+	// Read the JSON file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	// Parse the settings
+	var settings Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
+	}
+
+	// Check if database already has settings (avoid re-migration)
+	row := store.db.QueryRow(`SELECT COUNT(*) FROM settings`)
+	var count int
+	if err := row.Scan(&count); err == nil && count > 0 {
+		// Database already has settings, skip migration
+		return nil
+	}
+
+	// Migrate to SQLite
+	if err := store.SetAll(settings); err != nil {
+		return err
+	}
+
+	// Rename the original file to indicate it's been migrated
+	return os.Rename(filePath, filePath+".migrated")
 }
 
 func (s *sqliteSettings) GetTheme() string {

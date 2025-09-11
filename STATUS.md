@@ -176,7 +176,7 @@ Updated: 2025-01-09
 - **Critical**: Receipt customization and printing improvements
 
 ## Notes
-- Settings are persisted (SQLite if enabled, else data/settings.json)
+- Settings are persisted in SQLite database (data/unitill.db) with automatic migration from settings.json
 - Buttons JSON auto-migrates to SQLite on first run with UT_STORE=sqlite
 - Plugin system supports external GitHub repositories for plugin distribution
 - Plugin state (downloaded/installed) is tracked in SQLite settings table
