@@ -65,8 +65,16 @@ func main() {
 	btnStore := ui.NewButtonStore(dataDir)
 
 	// Settings store
-	preferSQLite := os.Getenv("UT_STORE") == "sqlite"
-	settings := common.NewSettingsStore(dataDir, preferSQLite)
+	settings := common.NewSettingsStore(dataDir, true)
+	// Migrate legacy settings.json to SQLite once
+	if b, err := os.ReadFile(filepath.Join(dataDir, "settings.json")); err == nil && len(b) > 0 {
+		var legacy common.Settings
+		if err := json.Unmarshal(b, &legacy); err == nil {
+			_ = settings.SetAll(legacy)
+			_ = os.Rename(filepath.Join(dataDir, "settings.json"), filepath.Join(dataDir, "settings.json.migrated"))
+			log.Printf("migrated settings to sqlite")
+		}
+	}
 
 	// If SQLite is enabled and a legacy buttons.json exists, migrate once
 	if os.Getenv("UT_STORE") == "sqlite" {
