@@ -61,7 +61,7 @@ func main() {
 	dataDir := "./data"
 	_ = os.MkdirAll(dataDir, 0o755)
 
-	// Buttons: store
+	// Buttons: store (SQLite only)
 	btnStore := ui.NewButtonStore(dataDir)
 
 	// Settings store
@@ -76,17 +76,15 @@ func main() {
 		}
 	}
 
-	// If SQLite is enabled and a legacy buttons.json exists, migrate once
-	if os.Getenv("UT_STORE") == "sqlite" {
-		legacyPath := filepath.Join(dataDir, "buttons.json")
-		if b, err := os.ReadFile(legacyPath); err == nil && len(b) > 0 {
-			var list []ui.Button
-			if err := json.Unmarshal(b, &list); err == nil {
-				if s, ok := btnStore.(*ui.SQLiteButtonStore); ok {
-					_ = s.Save(list)
-					_ = os.Rename(legacyPath, legacyPath+".migrated")
-					log.Printf("migrated %d buttons to sqlite", len(list))
-				}
+	// Migrate legacy buttons.json once (unconditional)
+	legacyPath := filepath.Join(dataDir, "buttons.json")
+	if b, err := os.ReadFile(legacyPath); err == nil && len(b) > 0 {
+		var list []ui.Button
+		if err := json.Unmarshal(b, &list); err == nil {
+			if s, ok := btnStore.(*ui.SQLiteButtonStore); ok {
+				_ = s.Save(list)
+				_ = os.Rename(legacyPath, legacyPath+".migrated")
+				log.Printf("migrated %d buttons to sqlite", len(list))
 			}
 		}
 	}

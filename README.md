@@ -14,7 +14,6 @@ Copy `edge.env.example` to `edge.env.dev` and adjust:
 
 - `UT_LISTEN_ADDR` – default `:8080`
 - `UT_DEFAULT_LOCALE` – default `en`
-- `UT_STORE` – `sqlite` enables embedded DB (recommended)
 - `UT_SAMPLES_DIR` – optional path to images to serve at `/samples`
 - `UT_CURRENCY` – currency code (e.g., `GBP`, `USD`)
 - `UT_TAX_INCLUSIVE` – `true|false`
@@ -31,9 +30,8 @@ docker compose -f docker-compose.edge.yml up --build
 - Choose a theme (Default, Monarch). Stored locally and applied automatically.
 
 ## Data & Migration
-- Buttons default: `data/buttons.json`
-- SQLite: `data/unitill.db` when `UT_STORE=sqlite`
-- First SQLite run imports `buttons.json` → `buttons.json.migrated`
+- SQLite database: `data/unitill.db`
+- On first run, legacy `data/buttons.json` (if present) imports to DB and is renamed to `buttons.json.migrated`
 
 ## Settings
 - System settings at `/settings` (currency, country, region, tax)

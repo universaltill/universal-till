@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -57,14 +58,13 @@ type FileButtonStore struct {
 	mu   sync.RWMutex
 }
 
-// NewButtonStore selects storage by env UT_STORE ("sqlite" to use SQLite). Defaults to file JSON.
+// NewButtonStore uses SQLite only. The application will exit if SQLite cannot be initialized.
 func NewButtonStore(dataDir string) ButtonStore {
-	if os.Getenv("UT_STORE") == "sqlite" {
-		if s, err := NewSQLiteButtonStore(filepath.Join(dataDir, "unitill.db")); err == nil {
-			return s
-		}
+	if s, err := NewSQLiteButtonStore(filepath.Join(dataDir, "unitill.db")); err == nil {
+		return s
 	}
-	return &FileButtonStore{path: filepath.Join(dataDir, "buttons.json")}
+	log.Fatalf("sqlite is required for button store; ensure write access to %s", filepath.Join(dataDir, "unitill.db"))
+	return nil
 }
 
 func (s *FileButtonStore) Load() ([]Button, error) {
