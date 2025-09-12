@@ -23,7 +23,7 @@ type menuItem struct {
 	Label string
 }
 
-func buildMenu(installed map[string]bool, menuPlugins map[string]common.MenuPlugin, recs map[string]common.PluginRecord) []menuItem {
+func buildMenu(menuPlugins map[string]common.MenuPlugin, recs map[string]common.PluginRecord) []menuItem {
 	items := []menuItem{
 		{Href: "/", Label: "Home"},
 		{Href: "/designer", Label: "Designer"},
@@ -59,29 +59,31 @@ func main() {
 
 	// Data dir for buttons.json
 	dataDir := "./data"
+	database := "unitill.db"
 	_ = os.MkdirAll(dataDir, 0o755)
 
 	// Buttons: store
-	btnStore := ui.NewButtonStore(dataDir)
+	btnStore := ui.NewButtonStore(dataDir, database)
+	// utStore := os.Getenv("UT_STORE")
 
-	// Settings store
-	preferSQLite := os.Getenv("UT_STORE") == "sqlite"
-	settings := common.NewSettingsStore(dataDir, preferSQLite)
+	// // Settings store
+	// preferSQLite := utStore == "sqlite"
+	settings := common.NewSettingsStore(dataDir, database)
 
 	// If SQLite is enabled and a legacy buttons.json exists, migrate once
-	if os.Getenv("UT_STORE") == "sqlite" {
-		legacyPath := filepath.Join(dataDir, "buttons.json")
-		if b, err := os.ReadFile(legacyPath); err == nil && len(b) > 0 {
-			var list []ui.Button
-			if err := json.Unmarshal(b, &list); err == nil {
-				if s, ok := btnStore.(*ui.SQLiteButtonStore); ok {
-					_ = s.Save(list)
-					_ = os.Rename(legacyPath, legacyPath+".migrated")
-					log.Printf("migrated %d buttons to sqlite", len(list))
-				}
+	// if os.Getenv("UT_STORE") == "sqlite" {
+	legacyPath := filepath.Join(dataDir, "buttons.json")
+	if b, err := os.ReadFile(legacyPath); err == nil && len(b) > 0 {
+		var list []ui.Button
+		if err := json.Unmarshal(b, &list); err == nil {
+			if s, ok := btnStore.(*ui.SQLiteButtonStore); ok {
+				_ = s.Save(list)
+				_ = os.Rename(legacyPath, legacyPath+".migrated")
+				log.Printf("migrated %d buttons to sqlite", len(list))
 			}
 		}
 	}
+	// }
 
 	// i18n
 	i18n, err := common.NewI18n(filepath.Join("web", "locales"), cfg.DefaultLocale)
@@ -110,7 +112,7 @@ func main() {
 			"title":     "Universal Till",
 			"samples":   cfg.SamplesDir != "",
 			"theme":     settings.GetTheme(),
-			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"menuItems": buildMenu(cur.MenuPlugins, cur.PluginRecords),
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})
@@ -123,7 +125,7 @@ func main() {
 		data := map[string]any{
 			"title":     "Designer",
 			"theme":     settings.GetTheme(),
-			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"menuItems": buildMenu(cur.MenuPlugins, cur.PluginRecords),
 			"Buttons":   ui.ToVM(btns),
 		}
 		httpx.Render("ui/pages/designer.html", data)(w, r)
@@ -134,7 +136,7 @@ func main() {
 			"title":     "Settings",
 			"theme":     settings.GetTheme(),
 			"settings":  cur,
-			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"menuItems": buildMenu(cur.MenuPlugins, cur.PluginRecords),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -158,7 +160,7 @@ func main() {
 		data := map[string]any{
 			"title":         "Plugins",
 			"theme":         settings.GetTheme(),
-			"menuItems":     buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"menuItems":     buildMenu(cur.MenuPlugins, cur.PluginRecords),
 			"installedIDs":  installed,
 			"downloadedIDs": downloaded,
 		}
@@ -173,7 +175,7 @@ func main() {
 		data := map[string]any{
 			"title":     "FAQ",
 			"theme":     settings.GetTheme(),
-			"menuItems": buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"menuItems": buildMenu(cur.MenuPlugins, cur.PluginRecords),
 		}
 		httpx.Render("ui/pages/faq.html", data)(w, r)
 	})
@@ -458,7 +460,7 @@ func main() {
 		data := map[string]any{
 			"title":      rec.Label,
 			"theme":      settings.GetTheme(),
-			"menuItems":  buildMenu(cur.InstalledPlugins, cur.MenuPlugins, cur.PluginRecords),
+			"menuItems":  buildMenu(cur.MenuPlugins, cur.PluginRecords),
 			"pluginHTML": template.HTML(string(b)),
 		}
 		httpx.Render("ui/pages/plugin_embed.html", data)(w, r)
