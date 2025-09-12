@@ -46,14 +46,13 @@ type sqliteSettings struct{ db *sql.DB }
 
 type fileSettings struct{ path string }
 
-func NewSettingsStore(dataDir string, preferSQLite bool) SettingsStore {
-	if preferSQLite {
-		db, err := sql.Open("sqlite", filepath.Join(dataDir, "unitill.db"))
-		if err == nil {
-			_ = initSettingsSchema(db)
-			return &sqliteSettings{db: db}
-		}
+func NewSettingsStore(dataDir string, database string) SettingsStore {
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, database))
+	if err == nil {
+		_ = initSettingsSchema(db)
+		return &sqliteSettings{db: db}
 	}
+	// Fallback to file-based settings if sqlite cannot be opened
 	return &fileSettings{path: filepath.Join(dataDir, "settings.json")}
 }
 
