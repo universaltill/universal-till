@@ -1,15 +1,15 @@
 version: "3.9"
 services:
-  edge:
+  pos:
     build: .
-    container_name: unitill-edge
-    env_file:
-      - edge.env.dev
+    container_name: unitill-pos
+    env_file: 
+      - pos.env.dev
     ports:
       - "8080:8080"
     volumes:
-      - edge_data:/app/data
+      - pos_data:/app/data
       # - /Users/farshid/repos/unitill/images:/samples:ro
     restart: unless-stopped
 volumes:
-  edge_data:
+  pos_data:

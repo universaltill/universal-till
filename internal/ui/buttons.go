@@ -1,17 +1,14 @@
 package ui
 
 import (
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 
-	"github.com/universaltill/universal-till/internal/pos"
+	pos "github.com/universaltill/universal-till/internal/pos"
 )
 
 type Button struct {
@@ -45,98 +42,92 @@ func ToVM(b []Button) []ButtonVM {
 }
 
 // ButtonStore defines persistence for quick buttons.
-type ButtonStore interface {
-	Load() ([]Button, error)
-	Save([]Button) error
-	Add(Button) error
-	Remove(code string) error
+// type ButtonStore interface {
+// 	Load() ([]Button, error)
+// 	Save([]Button) error
+// 	Add(Button) error
+// 	Remove(code string) error
+// }
+
+// type FileButtonStore struct {
+// 	path string
+// 	mu   sync.RWMutex
+// }
+
+type ButtonStore struct {
+	db *sql.DB
 }
 
-type FileButtonStore struct {
-	path string
-	mu   sync.RWMutex
-}
+// func NewSQLiteButtonStore(db *sql.DB) (*Store, error) {
+
+// 	return &Store{db: db}, nil
+// }
 
 // NewButtonStore selects storage by env UT_STORE ("sqlite" to use SQLite). Defaults to file JSON.
-func NewButtonStore(dataDir string, database string) ButtonStore {
-	// if os.Getenv("UT_STORE") == "sqlite" {
-	if s, err := NewSQLiteButtonStore(filepath.Join(dataDir, database)); err == nil {
-		return s
-	}
-	// }
-	return &FileButtonStore{path: filepath.Join(dataDir, "buttons.json")}
+func NewButtonStore(db *sql.DB) *ButtonStore {
+	return &ButtonStore{db: db}
 }
 
-func (s *FileButtonStore) Load() ([]Button, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	b, err := os.ReadFile(s.path)
+func (s *ButtonStore) Load() ([]Button, error) {
+	rows, err := s.db.Query(`SELECT label, code, image_path FROM buttons ORDER BY label`)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []Button{}, nil
-		}
 		return nil, err
 	}
+	defer rows.Close()
 	var out []Button
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, err
+	for rows.Next() {
+		var b Button
+		var img sql.NullString
+		if err := rows.Scan(&b.Label, &b.Code, &b.PriceCents, &img); err != nil {
+			return nil, err
+		}
+		if img.Valid {
+			b.ImageURL = img.String
+		}
+		out = append(out, b)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
-func (s *FileButtonStore) Save(list []Button) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b, err := json.MarshalIndent(list, "", "  ")
+func (s *ButtonStore) Save(list []Button) error {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if _, err := tx.Exec(`DELETE FROM buttons`); err != nil {
+		tx.Rollback()
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	stmt, err := tx.Prepare(`INSERT INTO buttons(code,label,price_cents,image_url) VALUES(?,?,?,?)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for _, b := range list {
+		if _, err := stmt.Exec(b.Code, b.Label, b.PriceCents, nullIfEmpty(b.ImageURL)); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
-func (s *FileButtonStore) Add(btn Button) error {
+func (s *ButtonStore) Add(btn Button) error {
 	btn.Label = strings.TrimSpace(btn.Label)
 	btn.Code = strings.TrimSpace(btn.Code)
 	if btn.Label == "" || btn.Code == "" {
-		return fmt.Errorf("label and code are required")
+		return errors.New("label and code are required")
 	}
-
-	list, err := s.Load()
-	if err != nil {
-		return err
-	}
-	// replace if same code exists
-	replaced := false
-	for i := range list {
-		if strings.EqualFold(list[i].Code, btn.Code) {
-			list[i] = btn
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		list = append(list, btn)
-	}
-	return s.Save(list)
+	_, err := s.db.Exec(`INSERT INTO buttons(code,label,price_cents,image_url) VALUES(?,?,?,?)
+	ON CONFLICT(code) DO UPDATE SET label=excluded.label, price_cents=excluded.price_cents, image_url=excluded.image_url`,
+		btn.Code, btn.Label, btn.PriceCents, nullIfEmpty(btn.ImageURL))
+	return err
 }
 
-func (s *FileButtonStore) Remove(code string) error {
-	list, err := s.Load()
-	if err != nil {
-		return err
-	}
-	code = strings.TrimSpace(code)
-	out := make([]Button, 0, len(list))
-	for _, b := range list {
-		if !strings.EqualFold(b.Code, code) {
-			out = append(out, b)
-		}
-	}
-	return s.Save(out)
+func (s *ButtonStore) Remove(code string) error {
+	_, err := s.db.Exec(`DELETE FROM buttons WHERE code=?`, strings.TrimSpace(code))
+	return err
 }
 
 /* ----------------- HTTP handlers (htmx-friendly) ----------------- */
@@ -223,7 +214,7 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type PriceResolverAdapter struct{ Store ButtonStore }
+type PriceResolverAdapter struct{ Store *ButtonStore }
 
 func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
 	list, err := a.Store.Load()
@@ -236,4 +227,11 @@ func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
 		}
 	}
 	return pos.BasketLine{}, false
+}
+
+func nullIfEmpty(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
 }

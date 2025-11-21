@@ -17,16 +17,6 @@ func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
 	return &Service{cfg: cfg, resolver: r, tax: PercentTaxEngine{RatePercent: 20, Inclusive: cfg.TaxInclusive}}
 }
 
-// Backward compat for tests/demos
-func NewService(cfg Config) *Service {
-	price := map[string]BasketLine{
-		"A": {SKU: "A", Name: "Coffee", Qty: 1, PriceCents: 250},
-		"B": {SKU: "B", Name: "Tea", Qty: 1, PriceCents: 200},
-		"C": {SKU: "C", Name: "Cake", Qty: 1, PriceCents: 350},
-	}
-	return &Service{cfg: cfg, resolver: mapResolver(price)}
-}
-
 type BasketLine struct {
 	SKU        string `json:"sku"`
 	Name       string `json:"name"`
@@ -88,10 +78,10 @@ func (s *Service) Tender(amount int64, method string) (map[string]any, error) {
 	return map[string]any{"status": "ok", "method": method, "amount": amount}, nil
 }
 
-// simple in-memory resolver
-type mapResolver map[string]BasketLine
+// // simple in-memory resolver
+// type mapResolver map[string]BasketLine
 
-func (m mapResolver) Resolve(code string) (BasketLine, bool) {
-	v, ok := m[code]
-	return v, ok
-}
+// func (m mapResolver) Resolve(code string) (BasketLine, bool) {
+// 	v, ok := m[code]
+// 	return v, ok
+// }

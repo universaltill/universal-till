@@ -1,0 +1,294 @@
+```mermaid
+erDiagram
+
+    %% -------------------------
+    %% Catalog / Products
+    %% -------------------------
+
+    ITEMS {
+        TEXT id PK
+        TEXT sku UK
+        TEXT name
+        TEXT description
+        TEXT category_id FK
+        TEXT brand_id FK
+        TEXT unit
+        INTEGER base_price
+        INTEGER cost_price
+        TEXT tax_code_id FK
+        INTEGER is_active
+        INTEGER is_weighed
+        TEXT created_at
+        TEXT updated_at
+    }
+
+    ITEM_VARIANTS {
+        TEXT id PK
+        TEXT item_id FK
+        TEXT sku UK
+        TEXT name
+        INTEGER price
+        INTEGER cost_price
+        INTEGER is_active
+    }
+
+    ITEM_BARCODES {
+        TEXT barcode PK
+        TEXT item_id FK
+        TEXT barcode_type
+        INTEGER is_primary
+    }
+
+    VARIANT_BARCODES {
+        TEXT barcode PK
+        TEXT variant_id FK
+        TEXT barcode_type
+        INTEGER is_primary
+    }
+
+    ITEM_IMAGES {
+        TEXT id PK
+        TEXT item_id FK
+        TEXT role
+        TEXT path
+        INTEGER sort_order
+    }
+
+    CATEGORIES {
+        TEXT id PK
+        TEXT name
+        TEXT parent_id FK
+        INTEGER sort_order
+    }
+
+    BRANDS {
+        TEXT id PK
+        TEXT name UK
+    }
+
+    TAX_CODES {
+        TEXT id PK
+        TEXT name UK
+        INTEGER rate_basis_points
+        INTEGER is_active
+    }
+
+    %% -------------------------
+    %% Inventory
+    %% -------------------------
+
+    STOCK_LOCATIONS {
+        TEXT id PK
+        TEXT name UK
+    }
+
+    INVENTORY {
+        TEXT id PK
+        TEXT item_id FK
+        TEXT variant_id FK
+        TEXT location_id FK
+        REAL quantity
+        REAL reorder_level
+        TEXT updated_at
+    }
+
+    STOCK_MOVEMENTS {
+        TEXT id PK
+        TEXT item_id FK
+        TEXT variant_id FK
+        TEXT location_id FK
+        TEXT sale_line_id FK
+        TEXT type
+        REAL quantity
+        INTEGER cost_price
+        TEXT created_at
+    }
+
+    PRICE_HISTORY {
+        TEXT id PK
+        TEXT item_id FK
+        TEXT variant_id FK
+        INTEGER price
+        TEXT starts_at
+        TEXT ends_at
+    }
+
+    %% -------------------------
+    %% Sales
+    %% -------------------------
+
+    SALES {
+        TEXT id PK
+        TEXT receipt_no UK
+        TEXT status
+        TEXT sale_type
+        TEXT register_id FK
+        TEXT cashier_id FK
+        TEXT customer_id FK
+        TEXT currency
+        INTEGER subtotal
+        INTEGER discount_total
+        INTEGER tax_total
+        INTEGER total
+        INTEGER rounding
+        TEXT note
+        TEXT created_at
+        TEXT completed_at
+        TEXT voided_at
+    }
+
+    SALE_LINES {
+        TEXT id PK
+        TEXT sale_id FK
+        INTEGER line_no
+        TEXT item_id FK
+        TEXT variant_id FK
+        TEXT name_snapshot
+        TEXT sku_snapshot
+        TEXT barcode_snapshot
+        REAL quantity
+        INTEGER unit_price
+        INTEGER line_discount
+        INTEGER tax_rate_bp
+        INTEGER tax_amount
+        INTEGER total_before_tax
+        INTEGER total_after_tax
+    }
+
+    PAYMENTS {
+        TEXT id PK
+        TEXT sale_id FK
+        TEXT method_id FK
+        INTEGER amount
+        TEXT currency
+        TEXT reference
+        INTEGER change_given
+        TEXT paid_at
+    }
+
+    PAYMENT_METHODS {
+        TEXT id PK
+        TEXT name UK
+        TEXT type
+        INTEGER is_active
+        INTEGER sort_order
+    }
+
+    SALE_DISCOUNTS {
+        TEXT id PK
+        TEXT sale_id FK
+        TEXT line_id FK
+        TEXT type
+        INTEGER value
+        INTEGER amount
+        TEXT reason
+    }
+
+    SALE_LINKS {
+        TEXT id PK
+        TEXT sale_id FK
+        TEXT original_sale_id FK
+        TEXT reason
+    }
+
+    %% -------------------------
+    %% People / Operations
+    %% -------------------------
+
+    CUSTOMERS {
+        TEXT id PK
+        TEXT name
+        TEXT phone
+        TEXT email
+        TEXT address
+        TEXT loyalty_no UK
+        TEXT created_at
+    }
+
+    REGISTERS {
+        TEXT id PK
+        TEXT name UK
+        TEXT location_id FK
+        INTEGER is_active
+    }
+
+    USERS {
+        TEXT id PK
+        TEXT username UK
+        TEXT display_name
+        TEXT role
+        TEXT pin_hash
+        INTEGER is_active
+    }
+
+    SHIFTS {
+        TEXT id PK
+        TEXT register_id FK
+        TEXT cashier_id FK
+        TEXT opened_at
+        TEXT closed_at
+        INTEGER opening_cash
+        INTEGER closing_cash
+        INTEGER expected_cash
+        TEXT note
+    }
+
+    AUDIT_LOG {
+        TEXT id PK
+        TEXT actor_id FK
+        TEXT entity_type
+        TEXT entity_id
+        TEXT action
+        TEXT data_json
+        TEXT created_at
+    }
+
+    %% -------------------------
+    %% Relationships
+    %% -------------------------
+
+    CATEGORIES ||--o{ ITEMS : has
+    CATEGORIES ||--o{ CATEGORIES : parent_of
+    BRANDS ||--o{ ITEMS : brands
+    TAX_CODES ||--o{ ITEMS : taxed_by
+
+    ITEMS ||--o{ ITEM_BARCODES : barcodes
+    ITEMS ||--o{ ITEM_IMAGES : images
+    ITEMS ||--o{ ITEM_VARIANTS : variants
+    ITEM_VARIANTS ||--o{ VARIANT_BARCODES : barcodes
+
+    STOCK_LOCATIONS ||--o{ INVENTORY : holds
+    ITEMS ||--o{ INVENTORY : stocked
+    ITEM_VARIANTS ||--o{ INVENTORY : stocked
+
+    STOCK_LOCATIONS ||--o{ STOCK_MOVEMENTS : location
+    ITEMS ||--o{ STOCK_MOVEMENTS : moved
+    ITEM_VARIANTS ||--o{ STOCK_MOVEMENTS : moved
+    SALE_LINES ||--o{ STOCK_MOVEMENTS : causes
+
+    ITEMS ||--o{ PRICE_HISTORY : price_hist
+    ITEM_VARIANTS ||--o{ PRICE_HISTORY : price_hist
+
+    REGISTERS ||--o{ SALES : register_sales
+    USERS ||--o{ SALES : cashier_sales
+    CUSTOMERS ||--o{ SALES : customer_sales
+
+    SALES ||--o{ SALE_LINES : contains
+    ITEMS ||--o{ SALE_LINES : sold_as
+    ITEM_VARIANTS ||--o{ SALE_LINES : sold_as
+
+    SALES ||--o{ PAYMENTS : paid_by
+    PAYMENT_METHODS ||--o{ PAYMENTS : method
+
+    SALES ||--o{ SALE_DISCOUNTS : discounts
+    SALE_LINES ||--o{ SALE_DISCOUNTS : line_discounts
+
+    SALES ||--o{ SALE_LINKS : return_link
+    SALES ||--o{ SALE_LINKS : original_link
+
+    STOCK_LOCATIONS ||--o{ REGISTERS : located_in
+    REGISTERS ||--o{ SHIFTS : register_shifts
+    USERS ||--o{ SHIFTS : cashier_shifts
+
+    USERS ||--o{ AUDIT_LOG : actor
+```

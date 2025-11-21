@@ -1,6 +1,6 @@
 version: "3.9"
 services:
-  edge:
+  pos:
     build: ../universal-till
     ports: ["8080:8080"]
   payments_sdk_demo:

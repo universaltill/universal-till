@@ -42,3 +42,31 @@ docker compose -f docker-compose.edge.yml up --build
 ## Barcode
 - USB HID scanners work automatically (global key buffer + Enter)
 - Quantity supported via form or JSON `qty`
+
+
+# plugin types:
+## Covers UI plugins
+- page
+- button
+- popup
+- customer_facing
+- receipt_template
+## Covers workflow/action plugins
+- payment
+- delivery
+- pricing
+- tax
+- notification
+- auth
+## Covers non-UI technical plugins
+- integration
+- hardware (device hubs, COM port managers, USB bridge, Bluetooth stack, custom driver API, kitchen screen controller)
+- device (Barcode, reader, Cash drawer, Scales, Customer display, Payment terminal[SumUp, Ingenico, Pax],Thermal receipt printer [ESC/POS])
+- Covers automation & operations
+- background_job
+- scheduler
+- Covers data movement
+- import
+- export
+## Covers analytics
+- report

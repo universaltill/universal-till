@@ -1,8 +1,8 @@
 module github.com/universaltill/universal-till
 
-go 1.22
+go 1.25
 
-require modernc.org/sqlite v1.29.10
+require modernc.org/sqlite v1.29.10 // or latest
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -18,4 +18,5 @@ require (
 	modernc.org/memory v1.8.0 // indirect
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
+	
 )

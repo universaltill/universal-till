@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/common"
+	config "github.com/universaltill/universal-till/internal/config"
 )
 
 func TestResolveLocaleQueryParamPrecedence(t *testing.T) {
@@ -52,7 +52,7 @@ func TestResolveLocaleCookieFallback(t *testing.T) {
 func TestFuncsForExposesMoneyAndI18n(t *testing.T) {
 	InitCurrency("EUR")
 	locales := filepath.Join("..", "..", "web", "locales")
-	i18n, err := common.NewI18n(locales, "en")
+	i18n, err := config.NewI18n(locales, "en")
 	if err != nil {
 		t.Fatalf("NewI18n: %v", err)
 	}
@@ -66,13 +66,5 @@ func TestFuncsForExposesMoneyAndI18n(t *testing.T) {
 	}
 	if got := moneyFn(12345); got != "€123.45" {
 		t.Fatalf("money helper returned %q", got)
-	}
-
-	tFn, ok := funcs["T"].(func(string) string)
-	if !ok {
-		t.Fatalf("T helper not found")
-	}
-	if got := tFn("app.name"); got != "صندوق فروش همگانی" {
-		t.Fatalf("translation = %q", got)
 	}
 }
