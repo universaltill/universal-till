@@ -1,4 +1,4 @@
-BIN=edge
+BIN=unitill-pos
 VERSION?=0.1.0
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
@@ -9,6 +9,6 @@ build:
 
 run: build
 	./bin/$(BIN)
-
+	
 test:
 	go test ./...

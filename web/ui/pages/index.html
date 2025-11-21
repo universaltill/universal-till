@@ -3,10 +3,10 @@
 
 <div class="pos-container">
   <!-- Basket loads on page load -->
-  <div hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
+  <!-- <div hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div> -->
 
   <!-- Product buttons panel loads on page load -->
-  <div hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
+  <!-- <div hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div> -->
 
   <!-- Tender and Scan -->
   <div class="tender">
@@ -29,10 +29,4 @@
   </div>
 </div>
 
-{{ if .samples }}
-<div class="card samples">
-  <h2>Sample tills</h2>
-  <iframe src="/samples/" title="Samples" class="samples-frame"></iframe>
-</div>
-{{ end }}
 {{ end }}
