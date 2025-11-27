@@ -198,11 +198,9 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			}
 		}
 
-		allowNegative := true // default to allow negatives in demo; override only if explicitly false
+		allowNegative := d.state.AllowNegativeInventory
 		if in.AllowNegative != nil {
 			allowNegative = *in.AllowNegative
-		} else if !d.state.AllowNegativeInventory {
-			allowNegative = false
 		}
 
 		cashierID := in.CashierID
@@ -227,6 +225,19 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			ActorID:                cashierID,
 		})
 		if err != nil {
+			if strings.Contains(err.Error(), "insufficient stock") {
+				locale := httpx.ResolveLocale(w, r)
+				funcs := httpx.FuncsFor(locale)
+				b := d.engine.Basket()
+				basketView, _ := ui.NewBasketView(funcs)
+				var buf bytes.Buffer
+				buf.WriteString(`<div class="alert error">` + err.Error() + `</div>`)
+				_ = basketView.Render(&buf, b)
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(buf.Bytes())
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
