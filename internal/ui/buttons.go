@@ -270,17 +270,20 @@ func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
 func (a PriceResolverAdapter) resolveVariant(ctx context.Context, code string) (pos.BasketLine, bool) {
 	row := a.Store.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, v.id, v.name, v.price,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(t.rate_basis_points, 0)
 FROM variant_barcodes vb
 JOIN item_variants v ON v.id = vb.variant_id
 JOIN items i ON i.id = v.item_id
+LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE vb.barcode = ?
   AND i.is_active = 1 AND v.is_active = 1
 LIMIT 1
 `, code)
 	var itemID, itemName, variantID, variantName, img sql.NullString
 	var price int64
-	if err := row.Scan(&itemID, &itemName, &variantID, &variantName, &price, &img); err != nil {
+	var rateBP sql.NullInt64
+	if err := row.Scan(&itemID, &itemName, &variantID, &variantName, &price, &img, &rateBP); err != nil {
 		return pos.BasketLine{}, false
 	}
 	price = a.Store.currentPrice(ctx, nil, &variantID.String, price)
@@ -288,7 +291,7 @@ LIMIT 1
 	if variantName.String != "" {
 		name = name + " - " + variantName.String
 	}
-	line := pos.BasketLine{SKU: code, Name: name, Qty: 1, PriceCents: price}
+	line := pos.BasketLine{SKU: code, Name: name, Qty: 1, PriceCents: price, ItemID: itemID.String, VariantID: variantID.String, TaxRateBP: int(rateBP.Int64)}
 	if img.Valid {
 		line.ImageURL = img.String
 	}
@@ -298,20 +301,23 @@ LIMIT 1
 func (a PriceResolverAdapter) resolveItem(ctx context.Context, code string) (pos.BasketLine, bool) {
 	row := a.Store.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, i.base_price,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(t.rate_basis_points, 0)
 FROM item_barcodes ib
 JOIN items i ON i.id = ib.item_id
+LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE ib.barcode = ?
   AND i.is_active = 1
 LIMIT 1
 `, code)
 	var itemID, name, img sql.NullString
 	var price int64
-	if err := row.Scan(&itemID, &name, &price, &img); err != nil {
+	var rateBP sql.NullInt64
+	if err := row.Scan(&itemID, &name, &price, &img, &rateBP); err != nil {
 		return pos.BasketLine{}, false
 	}
 	price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-	line := pos.BasketLine{SKU: code, Name: name.String, Qty: 1, PriceCents: price}
+	line := pos.BasketLine{SKU: code, Name: name.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64)}
 	if img.Valid {
 		line.ImageURL = img.String
 	}
@@ -321,20 +327,23 @@ LIMIT 1
 func (a PriceResolverAdapter) resolveShortcut(ctx context.Context, code string) (pos.BasketLine, bool) {
 	row := a.Store.db.QueryRowContext(ctx, `
 SELECT sb.item_id, sb.label, i.base_price,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(t.rate_basis_points, 0)
 FROM shortcut_buttons sb
 JOIN items i ON i.id = sb.item_id
+LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE sb.barcode = ?
   AND i.is_active = 1
 LIMIT 1
 `, code)
 	var itemID, label, img sql.NullString
 	var price int64
-	if err := row.Scan(&itemID, &label, &price, &img); err != nil {
+	var rateBP sql.NullInt64
+	if err := row.Scan(&itemID, &label, &price, &img, &rateBP); err != nil {
 		return pos.BasketLine{}, false
 	}
 	price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-	line := pos.BasketLine{SKU: code, Name: label.String, Qty: 1, PriceCents: price}
+	line := pos.BasketLine{SKU: code, Name: label.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64)}
 	if img.Valid {
 		line.ImageURL = img.String
 	}
@@ -351,16 +360,19 @@ func (a PriceResolverAdapter) resolveTextSearch(ctx context.Context, code string
 	// Try exact SKU match first
 	row := a.Store.db.QueryRowContext(ctx, `
 SELECT i.id, i.sku, i.name, i.base_price,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(t.rate_basis_points, 0)
 FROM items i
+LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE i.is_active = 1 AND i.sku = ?
 LIMIT 1
 `, q)
 	var itemID, sku, name, img sql.NullString
 	var price int64
-	if err := row.Scan(&itemID, &sku, &name, &price, &img); err == nil {
+	var rateBP sql.NullInt64
+	if err := row.Scan(&itemID, &sku, &name, &price, &img, &rateBP); err == nil {
 		price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-		line := pos.BasketLine{SKU: sku.String, Name: name.String, Qty: 1, PriceCents: price}
+		line := pos.BasketLine{SKU: sku.String, Name: name.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64)}
 		if img.Valid {
 			line.ImageURL = img.String
 		}
@@ -371,19 +383,22 @@ LIMIT 1
 	like := "%" + q + "%"
 	row = a.Store.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, i.base_price,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(t.rate_basis_points, 0)
 FROM items i
+LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE i.is_active = 1 AND i.name LIKE ?
 ORDER BY i.name
 LIMIT 1
 `, like)
 	var name2, img2 sql.NullString
 	var price2 int64
-	if err := row.Scan(&itemID, &name2, &price2, &img2); err != nil {
+	var rateBP2 sql.NullInt64
+	if err := row.Scan(&itemID, &name2, &price2, &img2, &rateBP2); err != nil {
 		return pos.BasketLine{}, false
 	}
 	price2 = a.Store.currentPrice(ctx, &itemID.String, nil, price2)
-	line := pos.BasketLine{SKU: q, Name: name2.String, Qty: 1, PriceCents: price2}
+	line := pos.BasketLine{SKU: q, Name: name2.String, Qty: 1, PriceCents: price2, ItemID: itemID.String, TaxRateBP: int(rateBP2.Int64)}
 	if img2.Valid {
 		line.ImageURL = img2.String
 	}

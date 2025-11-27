@@ -9,6 +9,7 @@ type Service struct {
 	basket   Basket
 	resolver PriceResolver
 	tax      TaxEngine
+	lines    []BasketLine // persisted after completion
 }
 
 type Config struct {
@@ -31,6 +32,9 @@ type BasketLine struct {
 	Qty        int    `json:"qty"`
 	PriceCents int64  `json:"priceCents"`
 	ImageURL   string `json:"imageUrl,omitempty"`
+	ItemID     string `json:"-"`
+	VariantID  string `json:"-"`
+	TaxRateBP  int    `json:"-"`
 }
 
 type Basket struct {
@@ -52,24 +56,18 @@ func (s *Service) ScanQty(code string, qty int) (*Basket, error) {
 	if !ok {
 		return &s.basket, nil
 	}
-	// increment if exists
-	found := false
-	for i := range s.basket.Lines {
-		if s.basket.Lines[i].SKU == item.SKU {
-			s.basket.Lines[i].Qty += qty
-			found = true
-			break
-		}
-	}
-	if !found {
-		item.Qty = qty
-		s.basket.Lines = append(s.basket.Lines, item)
-	}
-	// totals
+	item.Qty = qty
+	s.lines = append(s.lines, item)
+	s.recomputeTotals()
+	return &s.basket, nil
+}
+
+func (s *Service) recomputeTotals() {
 	var sub int64
-	for _, l := range s.basket.Lines {
+	for _, l := range s.lines {
 		sub += int64(l.Qty) * l.PriceCents
 	}
+	s.basket.Lines = append([]BasketLine{}, s.lines...)
 	s.basket.Subtotal = sub
 	tax, total := int64(0), sub
 	if s.tax != nil {
@@ -77,13 +75,24 @@ func (s *Service) ScanQty(code string, qty int) (*Basket, error) {
 	}
 	s.basket.Tax = tax
 	s.basket.Total = total
-	return &s.basket, nil
 }
 
 func (s *Service) Tender(amount int64, method string) (map[string]any, error) {
 	// reset basket for demo
 	s.basket = Basket{}
+	s.lines = nil
 	return map[string]any{"status": "ok", "method": method, "amount": amount}, nil
+}
+
+// Lines returns a copy of the current basket lines.
+func (s *Service) Lines() []BasketLine {
+	return append([]BasketLine{}, s.lines...)
+}
+
+// Reset clears basket and lines after completion.
+func (s *Service) Reset() {
+	s.basket = Basket{}
+	s.lines = nil
 }
 
 // // simple in-memory resolver
