@@ -20,12 +20,13 @@ const (
 )
 
 type runtimeState struct {
-	Theme        string
-	Currency     string
-	Country      string
-	Region       string
-	TaxInclusive bool
-	TaxRatePct   int
+	Theme                  string
+	Currency               string
+	Country                string
+	Region                 string
+	TaxInclusive           bool
+	TaxRatePct             int
+	AllowNegativeInventory bool
 }
 
 // loadState pulls settings from the DB-backed settings store with cfg defaults.
@@ -38,11 +39,12 @@ func loadState(ctx context.Context, store *settings.Store, cfg *config.Config) r
 	}
 
 	st := runtimeState{
-		Theme:      get(keyTheme, cfg.Theme),
-		Currency:   get(keyCurrency, cfg.Locales.Currency),
-		Country:    get(keyCountry, "GB"),
-		Region:     get(keyRegion, ""),
-		TaxRatePct: cfg.Locales.TaxRate,
+		Theme:                   get(keyTheme, cfg.Theme),
+		Currency:                get(keyCurrency, cfg.Locales.Currency),
+		Country:                 get(keyCountry, "GB"),
+		Region:                  get(keyRegion, ""),
+		TaxRatePct:              cfg.Locales.TaxRate,
+		AllowNegativeInventory:  false,
 	}
 
 	if v := get(keyTaxInclusive, strconv.FormatBool(cfg.Locales.TaxInclusive)); v != "" {
@@ -52,6 +54,9 @@ func loadState(ctx context.Context, store *settings.Store, cfg *config.Config) r
 		if n, err := strconv.Atoi(v); err == nil {
 			st.TaxRatePct = n
 		}
+	}
+	if v := get("pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
+		st.AllowNegativeInventory, _ = strconv.ParseBool(v)
 	}
 
 	return st
@@ -64,6 +69,7 @@ func saveState(ctx context.Context, store *settings.Store, st runtimeState) {
 	_ = store.Set(ctx, keyRegion, st.Region)
 	_ = store.Set(ctx, keyTaxInclusive, strconv.FormatBool(st.TaxInclusive))
 	_ = store.Set(ctx, keyTaxRate, strconv.Itoa(st.TaxRatePct))
+	_ = store.Set(ctx, "pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory))
 }
 
 type menuItem struct {

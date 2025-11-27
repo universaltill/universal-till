@@ -39,7 +39,7 @@ func (s *Store) LoadRuntimeConfig(ctx context.Context, cfg *config.Config) {
 
 	taxRateStr, _, _ := s.Get(ctx, "store.tax_rate")
 	if taxRateStr != "" {
-		cfg.Locales.TaxRate, _ = strconv.Atoi(taxIncStr)
+		cfg.Locales.TaxRate, _ = strconv.Atoi(taxRateStr)
 	}
 
 }

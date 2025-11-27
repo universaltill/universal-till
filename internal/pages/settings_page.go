@@ -44,6 +44,7 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 			d.state.Region = v
 		}
 		d.state.TaxInclusive = r.Form.Get("taxInclusive") == "on"
+		d.state.AllowNegativeInventory = r.Form.Get("allowNegativeInventory") == "on"
 		if v := r.Form.Get("taxRatePct"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 				d.state.TaxRatePct = n
@@ -52,7 +53,10 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 		saveState(r.Context(), d.settings, d.state)
 		httpx.InitCurrency(d.state.Currency)
 		resolver := ui.PriceResolverAdapter{Store: d.btnStore}
-		d.engine = pos.NewServiceWithResolver(pos.Config{TaxInclusive: d.state.TaxInclusive}, resolver)
+		d.engine = pos.NewServiceWithResolver(pos.Config{
+			TaxInclusive:       d.state.TaxInclusive,
+			TaxRateBasisPoints: d.state.TaxRatePct * 100,
+		}, resolver)
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -83,11 +87,16 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 		case keyTaxInclusive:
 			d.state.TaxInclusive = strings.ToLower(value) == "true" || value == "1" || value == "on"
 			resolver := ui.PriceResolverAdapter{Store: d.btnStore}
-			d.engine = pos.NewServiceWithResolver(pos.Config{TaxInclusive: d.state.TaxInclusive}, resolver)
+			d.engine = pos.NewServiceWithResolver(pos.Config{
+				TaxInclusive:       d.state.TaxInclusive,
+				TaxRateBasisPoints: d.state.TaxRatePct * 100,
+			}, resolver)
 		case keyTaxRate:
 			if n, err := strconv.Atoi(value); err == nil {
 				d.state.TaxRatePct = n
 			}
+		case "pos.allow_negative_inventory":
+			d.state.AllowNegativeInventory = strings.ToLower(value) == "true" || value == "1" || value == "on"
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

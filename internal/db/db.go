@@ -18,6 +18,10 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	// Harden FK enforcement even if DSN flags are ignored.
+	if _, err := sqlDB.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return nil, fmt.Errorf("enable foreign_keys pragma: %w", err)
+	}
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
