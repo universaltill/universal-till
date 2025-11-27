@@ -1,0 +1,19 @@
+{{ define "receipt" }}
+<div class="receipt" id="receipt">
+  <h3>Receipt #{{ .ReceiptNo }}</h3>
+  <ul class="receipt-lines">
+    {{ range .Lines }}
+    <li>
+      <span>{{ .Name }}</span>
+      <span>x{{ .Qty }}</span>
+      <span>{{ money .TotalAfterTax }}</span>
+    </li>
+    {{ end }}
+  </ul>
+  <div class="totals">
+    <div>Subtotal: {{ money .Subtotal }}</div>
+    <div>Tax: {{ money .TaxTotal }}</div>
+    <div><strong>Total: {{ money .Total }}</strong></div>
+  </div>
+</div>
+{{ end }}

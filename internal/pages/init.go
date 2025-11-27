@@ -47,7 +47,10 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 
 	btnStore := ui.NewButtonStore(db)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}
-	engine := pos.NewServiceWithResolver(pos.Config{TaxInclusive: state.TaxInclusive}, resolver)
+	engine := pos.NewServiceWithResolver(pos.Config{
+		TaxInclusive:       state.TaxInclusive,
+		TaxRateBasisPoints: state.TaxRatePct * 100,
+	}, resolver)
 
 	baseMenu := []menuItem{
 		{Href: "/", Label: "Home"},

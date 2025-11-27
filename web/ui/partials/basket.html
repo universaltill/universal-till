@@ -1,9 +1,14 @@
 {{ define "basket" }}
 <div class="basket" id="basket">
+  <style>
+    .toast {position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); padding: 0.75rem 1rem; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000;}
+    .toast-error {background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;}
+  </style>
+  <div id="toast-container"></div>
   <h2>Basket</h2>
   <table>
     <thead>
-      <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
+      <tr><th>Item</th><th>Qty</th><th>Price</th><th></th></tr>
     </thead>
     <tbody id="basket-lines">
       {{ if .Lines }}
@@ -15,10 +20,11 @@
             </td>
             <td>{{ .Qty }}</td>
             <td>{{ money .PriceCents }}</td>
+            <td><button class="btn danger" hx-post="/api/pos/remove" hx-vals='{"code":"{{ .SKU }}"}' hx-target="#basket" hx-swap="outerHTML">Remove</button></td>
           </tr>
         {{ end }}
       {{ else }}
-        <tr><td colspan="3" class="empty">No items</td></tr>
+        <tr><td colspan="4" class="empty">No items</td></tr>
       {{ end }}
     </tbody>
   </table>

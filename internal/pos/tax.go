@@ -9,6 +9,12 @@ type PercentTaxEngine struct {
 	Inclusive   bool // if true, subtotal already includes tax
 }
 
+// BasisPointsTaxEngine uses basis points (1/100th of a percent) to align with DB storage.
+type BasisPointsTaxEngine struct {
+	RateBasisPoints int
+	Inclusive       bool
+}
+
 func (e PercentTaxEngine) Compute(subtotal int64) (int64, int64) {
 	if e.RatePercent <= 0 {
 		return 0, subtotal
@@ -24,4 +30,8 @@ func (e PercentTaxEngine) Compute(subtotal int64) (int64, int64) {
 	// exclusive
 	tax := subtotal * int64(e.RatePercent) / 100
 	return tax, subtotal + tax
+}
+
+func (e BasisPointsTaxEngine) Compute(subtotal int64) (int64, int64) {
+	return ComputeTaxBasisPoints(subtotal, e.RateBasisPoints, e.Inclusive)
 }
