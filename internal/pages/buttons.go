@@ -3,6 +3,8 @@ package pages
 import (
 	"net/http"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -57,5 +59,41 @@ func registerButtonsAPI(mux *http.ServeMux, d *deps) {
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.btnStore, View: renderer}
 		btnHTTP.Remove(w, r)
+	})
+
+	// Item search for shortcuts (HTMX fragment)
+	mux.HandleFunc("/api/buttons/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		q := r.FormValue("q")
+		if q == "" {
+			q = r.FormValue("search")
+		}
+		if len(strings.TrimSpace(q)) < 3 {
+			_, _ = w.Write([]byte("<div class=\"results muted\">Type 3+ characters</div>"))
+			return
+		}
+		offset := 0
+		if off := r.URL.Query().Get("offset"); off != "" {
+			if v, err := strconv.Atoi(off); err == nil && v >= 0 {
+				offset = v
+			}
+		}
+		results, err := d.btnStore.SearchItems(r.Context(), q, offset, 10)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		renderer, err := ui.NewRenderer(
+			filepath.Join("web", "ui", "layouts", "base.html"),
+			filepath.Join("web", "ui", "pages", "index.html"),
+			filepath.Join("web", "ui", "partials", "buttons_admin.html"),
+			funcs,
+		)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = renderer.Render(w, "buttons_search_results", map[string]any{"Results": results})
 	})
 }

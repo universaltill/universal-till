@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"html/template"
@@ -14,6 +15,7 @@ import (
 type Button struct {
 	Label    string `json:"label"`
 	Code     string `json:"code"` // barcode/PLU associated with the shortcut
+	ItemID   string `json:"itemId"`
 	ImageURL string `json:"imageUrl,omitempty"`
 }
 
@@ -21,6 +23,7 @@ type Button struct {
 type ButtonVM struct {
 	Label    string `json:"label"`
 	Code     string `json:"code"`
+	ItemID   string `json:"itemId"`
 	ImageURL string `json:"imageUrl,omitempty"`
 }
 
@@ -30,6 +33,7 @@ func ToVM(b []Button) []ButtonVM {
 		out = append(out, ButtonVM{
 			Label:    x.Label,
 			Code:     x.Code,
+			ItemID:   x.ItemID,
 			ImageURL: x.ImageURL,
 		})
 	}
@@ -45,8 +49,60 @@ func NewButtonStore(db *sql.DB) *ButtonStore {
 	return &ButtonStore{db: db}
 }
 
+type SearchResult struct {
+	ItemID  string
+	Name    string
+	Barcode string
+	Image   string
+}
+
+// SearchItems finds items (and primary barcodes) to add as shortcuts.
+func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit int) ([]SearchResult, error) {
+	like := "%" + strings.TrimSpace(q) + "%"
+	if limit <= 0 {
+		limit = 10
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT i.id,
+       i.name,
+       (
+         SELECT ib.barcode
+         FROM item_barcodes ib
+         WHERE ib.item_id = i.id
+         ORDER BY ib.is_primary DESC
+         LIMIT 1
+       ) AS barcode,
+       COALESCE(img.path, '')
+FROM items i
+LEFT JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
+WHERE i.is_active = 1 AND (
+	  i.name LIKE ?
+	  OR i.sku LIKE ?
+	  OR EXISTS (SELECT 1 FROM item_barcodes ib2 WHERE ib2.item_id = i.id AND ib2.barcode LIKE ?)
+)
+ORDER BY i.name
+LIMIT ? OFFSET ?
+`, like, like, like, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []SearchResult
+	for rows.Next() {
+		var r SearchResult
+		if err := rows.Scan(&r.ItemID, &r.Name, &r.Barcode, &r.Image); err != nil {
+			return nil, err
+		}
+		res = append(res, r)
+	}
+	return res, rows.Err()
+}
+
 func (s *ButtonStore) Load() ([]Button, error) {
-	rows, err := s.db.Query(`SELECT label, barcode, image_path FROM shortcut_buttons ORDER BY label`)
+	rows, err := s.db.Query(`SELECT label, barcode, item_id, image_path FROM shortcut_buttons ORDER BY label`)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +111,7 @@ func (s *ButtonStore) Load() ([]Button, error) {
 	for rows.Next() {
 		var b Button
 		var img sql.NullString
-		if err := rows.Scan(&b.Label, &b.Code, &img); err != nil {
+		if err := rows.Scan(&b.Label, &b.Code, &b.ItemID, &img); err != nil {
 			return nil, err
 		}
 		if img.Valid {
@@ -75,14 +131,14 @@ func (s *ButtonStore) Save(list []Button) error {
 		tx.Rollback()
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO shortcut_buttons(barcode,label,image_path) VALUES(?,?,?)`)
+	stmt, err := tx.Prepare(`INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 	for _, b := range list {
-		if _, err := stmt.Exec(b.Code, b.Label, nullIfEmpty(b.ImageURL)); err != nil {
+		if _, err := stmt.Exec(b.Code, b.Label, b.ItemID, nullIfEmpty(b.ImageURL)); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -93,12 +149,13 @@ func (s *ButtonStore) Save(list []Button) error {
 func (s *ButtonStore) Add(btn Button) error {
 	btn.Label = strings.TrimSpace(btn.Label)
 	btn.Code = strings.TrimSpace(btn.Code)
-	if btn.Label == "" || btn.Code == "" {
-		return errors.New("label and code are required")
+	btn.ItemID = strings.TrimSpace(btn.ItemID)
+	if btn.Label == "" || btn.Code == "" || btn.ItemID == "" {
+		return errors.New("label, code, and itemId are required")
 	}
-	_, err := s.db.Exec(`INSERT INTO shortcut_buttons(barcode,label,image_path) VALUES(?,?,?)
-	ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, image_path=excluded.image_path`,
-		btn.Code, btn.Label, nullIfEmpty(btn.ImageURL))
+	_, err := s.db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)
+	ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path`,
+		btn.Code, btn.Label, btn.ItemID, nullIfEmpty(btn.ImageURL))
 	return err
 }
 
@@ -152,6 +209,7 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	itemID := strings.TrimSpace(r.Form.Get("itemId"))
 	img := strings.TrimSpace(r.Form.Get("imageUrl"))
 	if img != "" && !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") && !strings.HasPrefix(img, "/public/") {
 		// Treat as filename in local images folder
@@ -160,6 +218,7 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 	err := h.Store.Add(Button{
 		Label:    r.Form.Get("label"),
 		Code:     r.Form.Get("code"),
+		ItemID:   itemID,
 		ImageURL: img,
 	})
 	if err != nil {
