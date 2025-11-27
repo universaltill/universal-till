@@ -107,9 +107,12 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	err := db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		if !in.AllowNegativeInventory {
 			for _, l := range in.Lines {
-				cur, err := currentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
+				cur, found, err := currentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
 				if err != nil {
 					return err
+				}
+				if !found {
+					continue // no inventory row yet, allow creation
 				}
 				qtyDelta := l.Qty
 				if in.SaleType == "sale" {
@@ -302,7 +305,7 @@ func valueOrDefault(val, def string) string {
 	return def
 }
 
-func currentQty(ctx context.Context, tx *sql.Tx, locationID, itemID, variantID string) (float64, error) {
+func currentQty(ctx context.Context, tx *sql.Tx, locationID, itemID, variantID string) (float64, bool, error) {
 	var qty float64
 	err := tx.QueryRowContext(ctx, `
 SELECT COALESCE(quantity, 0)
@@ -310,10 +313,13 @@ FROM inventory
 WHERE location_id = ?
   AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL))
 `, locationID, nullString(itemID), nullString(variantID)).Scan(&qty)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("read inventory: %w", err)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("read inventory: %w", err)
 	}
-	return qty, nil
+	return qty, true, nil
 }
 
 func nullString(s string) any {
