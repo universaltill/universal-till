@@ -117,23 +117,24 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		}
 		// Fallback for form-encoded tender buttons (hx-vals)
 		if len(payments) == 0 {
-			_ = r.ParseForm()
-			method := r.Form.Get("method")
-			amountStr := r.Form.Get("amount")
-			var amount int64
-			if amt, err := strconv.ParseInt(amountStr, 10, 64); err == nil && amt > 0 {
-				amount = amt
-			}
-			if method != "" {
-				if err := ensurePaymentMethod(r.Context(), d.db, method); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
+			if err := r.ParseForm(); err == nil {
+				method := r.Form.Get("method")
+				amountStr := r.Form.Get("amount")
+				var amount int64
+				if amt, err := strconv.ParseInt(amountStr, 10, 64); err == nil && amt > 0 {
+					amount = amt
 				}
-				payments = append(payments, pos.PaymentInput{
-					MethodID: method,
-					Amount:   amount,
-					Currency: d.state.Currency,
-				})
+				if method != "" {
+					if err := ensurePaymentMethod(r.Context(), d.db, method); err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					payments = append(payments, pos.PaymentInput{
+						MethodID: method,
+						Amount:   amount,
+						Currency: d.state.Currency,
+					})
+				}
 			}
 		}
 		// compute totals for receipt and fallback payment
@@ -210,7 +211,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			resp := map[string]any{
 				"saleId":   saleID,
 				"total":    total,
-				"payments": in.Payments,
+				"payments": payments,
 				"note":     in.Note,
 			}
 			_ = json.NewEncoder(w).Encode(resp)
