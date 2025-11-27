@@ -3,7 +3,6 @@ package ui
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
@@ -11,65 +10,43 @@ import (
 	pos "github.com/universaltill/universal-till/internal/pos"
 )
 
+// Button represents a shortcut button backed by the shortcut_buttons table.
 type Button struct {
-	Label      string `json:"label"`
-	Code       string `json:"code"`
-	PriceCents int64  `json:"priceCents"`
-	ImageURL   string `json:"imageUrl,omitempty"`
+	Label    string `json:"label"`
+	Code     string `json:"code"` // barcode/PLU associated with the shortcut
+	ImageURL string `json:"imageUrl,omitempty"`
 }
 
-// ButtonVM is the view-model passed to the template
+// ButtonVM is the view-model passed to templates.
 type ButtonVM struct {
-	Label      string `json:"label"`
-	Code       string `json:"code"`
-	PriceCents int64  `json:"priceCents"`
-	Price      string `json:"price"` // Pre-formatted string (e.g. "2.50")
-	ImageURL   string `json:"imageUrl,omitempty"`
+	Label    string `json:"label"`
+	Code     string `json:"code"`
+	ImageURL string `json:"imageUrl,omitempty"`
 }
 
 func ToVM(b []Button) []ButtonVM {
 	out := make([]ButtonVM, 0, len(b))
 	for _, x := range b {
 		out = append(out, ButtonVM{
-			Label:      x.Label,
-			Code:       x.Code,
-			PriceCents: x.PriceCents,
-			Price:      fmt.Sprintf("%.2f", float64(x.PriceCents)/100.0),
-			ImageURL:   x.ImageURL,
+			Label:    x.Label,
+			Code:     x.Code,
+			ImageURL: x.ImageURL,
 		})
 	}
 	return out
 }
 
-// ButtonStore defines persistence for quick buttons.
-// type ButtonStore interface {
-// 	Load() ([]Button, error)
-// 	Save([]Button) error
-// 	Add(Button) error
-// 	Remove(code string) error
-// }
-
-// type FileButtonStore struct {
-// 	path string
-// 	mu   sync.RWMutex
-// }
-
+// ButtonStore persists shortcut buttons in the shortcut_buttons table.
 type ButtonStore struct {
 	db *sql.DB
 }
 
-// func NewSQLiteButtonStore(db *sql.DB) (*Store, error) {
-
-// 	return &Store{db: db}, nil
-// }
-
-// NewButtonStore selects storage by env UT_STORE ("sqlite" to use SQLite). Defaults to file JSON.
 func NewButtonStore(db *sql.DB) *ButtonStore {
 	return &ButtonStore{db: db}
 }
 
 func (s *ButtonStore) Load() ([]Button, error) {
-	rows, err := s.db.Query(`SELECT label, code, image_path FROM buttons ORDER BY label`)
+	rows, err := s.db.Query(`SELECT label, barcode, image_path FROM shortcut_buttons ORDER BY label`)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +55,7 @@ func (s *ButtonStore) Load() ([]Button, error) {
 	for rows.Next() {
 		var b Button
 		var img sql.NullString
-		if err := rows.Scan(&b.Label, &b.Code, &b.PriceCents, &img); err != nil {
+		if err := rows.Scan(&b.Label, &b.Code, &img); err != nil {
 			return nil, err
 		}
 		if img.Valid {
@@ -94,18 +71,18 @@ func (s *ButtonStore) Save(list []Button) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM buttons`); err != nil {
+	if _, err := tx.Exec(`DELETE FROM shortcut_buttons`); err != nil {
 		tx.Rollback()
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO buttons(code,label,price_cents,image_url) VALUES(?,?,?,?)`)
+	stmt, err := tx.Prepare(`INSERT INTO shortcut_buttons(barcode,label,image_path) VALUES(?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 	for _, b := range list {
-		if _, err := stmt.Exec(b.Code, b.Label, b.PriceCents, nullIfEmpty(b.ImageURL)); err != nil {
+		if _, err := stmt.Exec(b.Code, b.Label, nullIfEmpty(b.ImageURL)); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -119,14 +96,14 @@ func (s *ButtonStore) Add(btn Button) error {
 	if btn.Label == "" || btn.Code == "" {
 		return errors.New("label and code are required")
 	}
-	_, err := s.db.Exec(`INSERT INTO buttons(code,label,price_cents,image_url) VALUES(?,?,?,?)
-	ON CONFLICT(code) DO UPDATE SET label=excluded.label, price_cents=excluded.price_cents, image_url=excluded.image_url`,
-		btn.Code, btn.Label, btn.PriceCents, nullIfEmpty(btn.ImageURL))
+	_, err := s.db.Exec(`INSERT INTO shortcut_buttons(barcode,label,image_path) VALUES(?,?,?)
+	ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, image_path=excluded.image_path`,
+		btn.Code, btn.Label, nullIfEmpty(btn.ImageURL))
 	return err
 }
 
 func (s *ButtonStore) Remove(code string) error {
-	_, err := s.db.Exec(`DELETE FROM buttons WHERE code=?`, strings.TrimSpace(code))
+	_, err := s.db.Exec(`DELETE FROM shortcut_buttons WHERE barcode=?`, strings.TrimSpace(code))
 	return err
 }
 
@@ -175,18 +152,15 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	price := int64(0)
-	fmt.Sscan(r.Form.Get("priceCents"), &price)
 	img := strings.TrimSpace(r.Form.Get("imageUrl"))
 	if img != "" && !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") && !strings.HasPrefix(img, "/public/") {
 		// Treat as filename in local images folder
 		img = "/public/images/" + img
 	}
 	err := h.Store.Add(Button{
-		Label:      r.Form.Get("label"),
-		Code:       r.Form.Get("code"),
-		PriceCents: price,
-		ImageURL:   img,
+		Label:    r.Form.Get("label"),
+		Code:     r.Form.Get("code"),
+		ImageURL: img,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -214,6 +188,7 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// PriceResolverAdapter now only matches shortcut codes; price is resolved elsewhere.
 type PriceResolverAdapter struct{ Store *ButtonStore }
 
 func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
@@ -223,7 +198,7 @@ func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
 	}
 	for _, b := range list {
 		if strings.EqualFold(b.Code, code) {
-			return pos.BasketLine{SKU: b.Code, Name: b.Label, Qty: 1, PriceCents: b.PriceCents, ImageURL: b.ImageURL}, true
+			return pos.BasketLine{SKU: b.Code, Name: b.Label, Qty: 1, PriceCents: 0, ImageURL: b.ImageURL}, true
 		}
 	}
 	return pos.BasketLine{}, false

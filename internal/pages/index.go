@@ -3,22 +3,16 @@ package pages
 import (
 	"net/http"
 
-	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
-	"github.com/universaltill/universal-till/internal/plugins"
 )
 
-type IndexPage struct {
-	data map[string]any
-}
-
-// handle implements IPage.
-func (p IndexPage) handle(cfg *config.Config, pm *plugins.Manager) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+func registerIndex(mux *http.ServeMux, d *deps) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		data := map[string]any{
+			"title":     "Universal Till",
+			"theme":     d.state.Theme,
+			"menuItems": d.menu,
 		}
-		httpx.Render("ui/pages/index.html", p.data)(w, r)
-	}
+		httpx.Render("ui/pages/index.html", data)(w, r)
+	})
 }

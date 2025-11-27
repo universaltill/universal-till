@@ -17,6 +17,7 @@ type MenuPlugin struct {
 	Route string
 	Label string
 	Name  string
+	URL   string
 }
 
 type ButtonPlugin struct {
