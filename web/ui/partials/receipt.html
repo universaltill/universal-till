@@ -1,19 +1,19 @@
 {{ define "receipt" }}
-<div class="receipt">
+<div class="receipt" id="receipt">
   <h3>Receipt #{{ .ReceiptNo }}</h3>
-  <ul>
+  <ul class="receipt-lines">
     {{ range .Lines }}
     <li>
       <span>{{ .Name }}</span>
       <span>x{{ .Qty }}</span>
-      <span>{{ printf "%.2f" (mulCents .TotalAfterTax) }}</span>
+      <span>{{ money .TotalAfterTax }}</span>
     </li>
     {{ end }}
   </ul>
   <div class="totals">
-    <div>Subtotal: {{ printf "%.2f" (mulCents .Subtotal) }}</div>
-    <div>Tax: {{ printf "%.2f" (mulCents .TaxTotal) }}</div>
-    <div><strong>Total: {{ printf "%.2f" (mulCents .Total) }}</strong></div>
+    <div>Subtotal: {{ money .Subtotal }}</div>
+    <div>Tax: {{ money .TaxTotal }}</div>
+    <div><strong>Total: {{ money .Total }}</strong></div>
   </div>
 </div>
 {{ end }}
