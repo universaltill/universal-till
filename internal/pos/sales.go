@@ -220,7 +220,7 @@ VALUES (?, ?, ?, 'return')
 			}
 		}
 
-		if err := insertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), subtotal, taxTotal, total); err != nil {
+		if err := insertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), in.Note, subtotal, taxTotal, total); err != nil {
 			return err
 		}
 
@@ -230,6 +230,30 @@ VALUES (?, ?, ?, 'return')
 		return "", err
 	}
 	return saleID, nil
+}
+
+// UpdateSaleStatus updates sale.status and writes audit_log. Status expected: open|parked|voided|refunded.
+func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, reason string) error {
+	if saleID == "" {
+		return errors.New("saleID required")
+	}
+	if status == "" {
+		return errors.New("status required")
+	}
+	err := db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE sales
+SET status = ?, voided_at = CASE WHEN ? = 'voided' THEN ? ELSE voided_at END
+WHERE id = ?
+`, status, status, time.Now().UTC().Format(time.RFC3339), saleID); err != nil {
+			return fmt.Errorf("update sale status: %w", err)
+		}
+		if err := insertAudit(ctx, tx, actorID, "sale", saleID, status, reason, 0, 0, 0); err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
 }
 
 func validateLine(l SaleLineInput) error {
@@ -294,12 +318,14 @@ func nullString(s string) any {
 	return s
 }
 
-func insertAudit(ctx context.Context, tx *sql.Tx, actorID, entityType, entityID, action string, subtotal, taxTotal, total int64) error {
+func insertAudit(ctx context.Context, tx *sql.Tx, actorID, entityType, entityID, action, reason string, subtotal, taxTotal, total int64) error {
 	payload := map[string]any{
 		"subtotal": subtotal,
 		"taxTotal": taxTotal,
 		"total":    total,
 		"action":   action,
+		"reason":   reason,
+		"ts":       time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(payload)
 	_, err := tx.ExecContext(ctx, `
