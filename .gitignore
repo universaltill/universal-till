@@ -4,3 +4,4 @@ dist/
 .DS_Store
 data/plugins/*
 data/*.db
+__debug_*

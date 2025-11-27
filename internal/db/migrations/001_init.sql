@@ -3303,3 +3303,104 @@ VALUES (
         NULL
     );
 
+INSERT INTO plugin_catalog (
+    id, version, name, description, author, website, repository_url,
+    runtime, entrypoint, package_url, sha256, signature, size_bytes,
+    min_pos_version, max_pos_version, api_version, tags_json,
+    capabilities_json, published_at, is_deprecated
+) VALUES
+-- FAQ
+(
+    'com.unitill.plugins.faq', '1.0.0',
+    'FAQ Page', 'Adds a Frequently Asked Questions page.',
+    'UniversalTill', '', '',  -- author, website, repository_url
+    'web', 'index.html',
+    'https://raw.githubusercontent.com/universaltill/plugins-faq/main/index.html',
+    '', '', 0,  -- sha256, signature, size_bytes
+    '1.0.0', '999.0.0', '1.0',
+    '["page"]', '{"ui":["page"]}',
+    CURRENT_TIMESTAMP, 0
+),
+-- ESC/POS
+(
+    'com.unitill.plugins.escpos', '2.1.0',
+    'ESC/POS Printer', 'Print receipts on ESC/POS-compatible printers.',
+    'UniversalTill', '', '',
+    'native', 'driver.so', '', '', '', 0,
+    '1.0.0', '999.0.0', '1.0',
+    '["device"]', '{"devices":["printer"]}',
+    CURRENT_TIMESTAMP, 0
+),
+-- UberEats
+(
+    'com.unitill.plugins.ubereats', '1.5.2',
+    'UberEats Integration', 'Pull orders from UberEats and push status updates.',
+    'UniversalTill', '', '',
+    'native', 'main', '', '', '', 0,
+    '1.0.0', '999.0.0', '1.0',
+    '["integration"]', '{"integrations":["orders"]}',
+    CURRENT_TIMESTAMP, 0
+),
+-- QRPay
+(
+    'com.unitill.plugins.qrpay', '1.2.1',
+    'QR Payments', 'Accept local QR code payments.',
+    'UniversalTill', '', '',
+    'native', 'main', '', '', '', 0,
+    '1.0.0', '999.0.0', '1.0',
+    '["payment"]', '{"payments":["qr"]}',
+    CURRENT_TIMESTAMP, 0
+);
+
+INSERT INTO plugins (
+    id, name, version, install_state, description,
+    author, website, entrypoint, runtime,
+    installed_from_url, installed_sha256, is_active,
+    trust_level, installed_at, updated_at
+) VALUES
+('com.unitill.plugins.faq','FAQ Page','1.0.0','installed','Adds FAQ page.',
+ 'UniversalTill','','index.html','web',
+ 'https://raw.githubusercontent.com/universaltill/plugins-faq/main/index.html','',1,
+ 'trusted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+
+('com.unitill.plugins.escpos','ESC/POS Printer','2.1.0','installed','ESC/POS printing.',
+ 'UniversalTill','','driver.so','native',
+ '','',1,'trusted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+
+('com.unitill.plugins.ubereats','UberEats Integration','1.5.2','installed','UberEats orders.',
+ 'UniversalTill','','main','native',
+ '','',1,'trusted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+
+('com.unitill.plugins.qrpay','QR Payments','1.2.1','installed','QR Payments.',
+ 'UniversalTill','','main','native',
+ '','',1,'trusted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+-- ---------------------------
+
+INSERT INTO plugin_entries (
+    id, plugin_id, type, key, label,
+    icon_path, sort_order, is_active,
+    parent_page_key, menu_group, route,
+    target_action, trigger_event,
+    config_json, created_at, updated_at
+) VALUES
+(
+    'entry-faq-page', 'com.unitill.plugins.faq',
+    'page', 'faq_page', 'FAQ',
+    '', 10, 1,
+    NULL, 'Help', '/faq',
+    NULL, NULL,
+    '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+),
+(
+    'entry-qrpay-payment', 'com.unitill.plugins.qrpay',
+    'payment', 'qr_payment', 'QR Payment',
+    '', 20, 1,
+    NULL, NULL, NULL,
+    'payWithQR', 'sale.payment.requested',
+    '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+);
+
+INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES
+('perm-escpos-print', 'com.unitill.plugins.escpos', 'devices:printer', 1),
+('perm-ubereats-orders','com.unitill.plugins.ubereats','integrations:orders', 1),
+('perm-qrpay-charge','com.unitill.plugins.qrpay','payments:qr', 1);
