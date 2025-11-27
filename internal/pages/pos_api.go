@@ -237,8 +237,8 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 				b := d.engine.Basket()
 				basketView, _ := ui.NewBasketView(funcs)
 				var buf bytes.Buffer
-				buf.WriteString(`<div id="toast-container" hx-swap-oob="true"><div class="toast toast-error">` + err.Error() + `</div><script>setTimeout(function(){var t=document.getElementById('toast-container');if(t){t.innerHTML='';}},2000);</script></div>`)
 				_ = basketView.Render(&buf, b)
+				buf.WriteString(`<div id="toast-container" hx-swap-oob="true"><div class="toast toast-error">` + err.Error() + `</div><script>setTimeout(function(){var t=document.getElementById('toast-container');if(t){t.innerHTML='';}},2000);</script></div>`)
 				w.Header().Set("Content-Type", "text/html")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write(buf.Bytes())
