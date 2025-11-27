@@ -70,10 +70,6 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, "no items in basket", http.StatusBadRequest)
 			return
 		}
-		if len(in.Payments) == 0 {
-			http.Error(w, "payments required", http.StatusBadRequest)
-			return
-		}
 
 		locID, err := ensureStockLocation(r.Context(), d.db)
 		if err != nil {
@@ -118,6 +114,27 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 				Reference:   p.Reference,
 				ChangeGiven: p.Change,
 			})
+		}
+		// Fallback for form-encoded tender buttons (hx-vals)
+		if len(payments) == 0 {
+			_ = r.ParseForm()
+			method := r.Form.Get("method")
+			amountStr := r.Form.Get("amount")
+			var amount int64
+			if amt, err := strconv.ParseInt(amountStr, 10, 64); err == nil && amt > 0 {
+				amount = amt
+			}
+			if method != "" {
+				if err := ensurePaymentMethod(r.Context(), d.db, method); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				payments = append(payments, pos.PaymentInput{
+					MethodID: method,
+					Amount:   amount,
+					Currency: d.state.Currency,
+				})
+			}
 		}
 		// compute totals for receipt and fallback payment
 		subtotal, taxTotal := int64(0), int64(0)
@@ -192,7 +209,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		if r.Header.Get("Accept") == "application/json" {
 			resp := map[string]any{
 				"saleId":   saleID,
-				"total":    d.state.Currency,
+				"total":    total,
 				"payments": in.Payments,
 				"note":     in.Note,
 			}
