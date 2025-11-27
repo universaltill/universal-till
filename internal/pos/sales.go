@@ -112,14 +112,14 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 				if !found {
-					continue // no inventory row yet, allow creation
+					cur = 0
 				}
 				qtyDelta := l.Qty
 				if in.SaleType == "sale" {
 					qtyDelta = -qtyDelta
 				}
 				if cur+qtyDelta < 0 {
-					return fmt.Errorf("insufficient stock for item %s at location %s", valueOrDefault(l.ItemID, l.VariantID), l.LocationID)
+					return fmt.Errorf("insufficient stock for item %s at location %s (have %.2f, need %.2f)", valueOrDefault(l.ItemID, l.VariantID), l.LocationID, cur, l.Qty)
 				}
 			}
 		}
