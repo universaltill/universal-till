@@ -13,6 +13,6 @@
 ## T3 – Implement refactor
 - [x] Move handlers from `main_old.go` into appropriate `internal/pages` files; ensure responses/paths match legacy behaviour.
 - [x] Migrate settings/menu/plugin record logic from `internal/old_common` into the new structure (or dedicated package) without behaviour changes.
-- [x] Wire plugin manager from `internal/plugins/plugins.go` into pages for menu plugins, records, and state.
+- [x] Wire plugin manager from `internal/plugins/plugins.go` into pages for menu plugins, records, and state (DB-backed catalog, install → plugins table, menu reload).
 - [x] Update `main.go` to use slim init flow (`configuration.Init()`, `plugins.Init()`, `pages.Init()`, `Start()`), deprecating `main_old.go`.
 - [x] Verify compilation and route registration parity; adjust imports/build as needed.

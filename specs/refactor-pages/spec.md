@@ -64,3 +64,6 @@ Behaviour must remain compatible with the current `main_old.go` endpoints and pa
 - Static, POS, and plugin endpoints respond identically (status codes, JSON/form support, template rendering) in manual smoke tests.
 - Shortcut buttons use the `shortcut_buttons` table only; designer supports searching items (name/SKU/barcode) with thumbnails and adding/removing shortcuts directly (HTMX).
 - Theme defaults to `monarch` and is persisted via settings store, read from config/env.
+- Plugin catalog/store is DB-backed (no plugins.json). `/plugins` page paginates catalog rows from `plugin_catalog`, supports tag filters, and installs plugins into `plugins`; installs reload the menu entries from `plugin_entries` (FAQ plugin becomes visible in nav).
+- Price resolver pulls item/variant prices from `price_history` (fallback to base/variant price) and thumbnails; basket lines are correctly priced when scanning barcodes or shortcuts.
+- Settings page lists and updates DB `settings` key/values (including generic upsert), no legacy JSON; shortcuts/lookup remain consistent.
