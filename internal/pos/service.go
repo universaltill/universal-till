@@ -11,10 +11,18 @@ type Service struct {
 	tax      TaxEngine
 }
 
-type Config struct{ TaxInclusive bool }
+type Config struct {
+	TaxInclusive       bool
+	TaxRateBasisPoints int // e.g. 2000 = 20.00%
+}
 
 func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
-	return &Service{cfg: cfg, resolver: r, tax: PercentTaxEngine{RatePercent: 20, Inclusive: cfg.TaxInclusive}}
+	tax := BasisPointsTaxEngine{RateBasisPoints: cfg.TaxRateBasisPoints, Inclusive: cfg.TaxInclusive}
+	if cfg.TaxRateBasisPoints == 0 {
+		// default to 20% if not provided
+		tax.RateBasisPoints = 2000
+	}
+	return &Service{cfg: cfg, resolver: r, tax: tax}
 }
 
 type BasketLine struct {
