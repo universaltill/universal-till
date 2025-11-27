@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	"github.com/universaltill/universal-till/internal/common"
+	"github.com/universaltill/universal-till/internal/config"
 )
 
 var baseFuncs = template.FuncMap{
@@ -43,7 +43,7 @@ func toJSON(v any) template.JS {
 }
 
 // InitI18n wires a translator and default locale into the template layer.
-func InitI18n(t *common.I18n, fallback string) {
+func InitI18n(t *config.I18n, fallback string) {
 	i18nRef.Store(t)
 	defaultLocale.Store(fallback)
 }
@@ -84,7 +84,7 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["toJson"] = toJSON
 	funcs["T"] = func(key string) string {
 		if tAny := i18nRef.Load(); tAny != nil {
-			return tAny.(*common.I18n).T(locale, key)
+			return tAny.(*config.I18n).T(locale, key)
 		}
 		return key
 	}
