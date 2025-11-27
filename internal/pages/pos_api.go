@@ -176,6 +176,29 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, b)
 	})
+
+	// Update sale status: park, void, refund (status string expected).
+	mux.HandleFunc("/api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
+		type In struct {
+			SaleID string `json:"saleId"`
+			Status string `json:"status"` // open|parked|voided|refunded
+			Reason string `json:"reason,omitempty"`
+		}
+		var in In
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "invalid payload", http.StatusBadRequest)
+			return
+		}
+		if in.SaleID == "" || in.Status == "" {
+			http.Error(w, "saleId and status required", http.StatusBadRequest)
+			return
+		}
+		if err := pos.UpdateSaleStatus(r.Context(), d.db, in.SaleID, in.Status, "", in.Reason); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
 
 // ensureStockLocation returns an existing location id or creates a default one.
