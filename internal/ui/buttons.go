@@ -261,6 +261,9 @@ func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
 	if line, ok := a.resolveShortcut(ctx, code); ok {
 		return line, true
 	}
+	if line, ok := a.resolveTextSearch(ctx, code); ok {
+		return line, true
+	}
 	return pos.BasketLine{}, false
 }
 
@@ -272,6 +275,7 @@ FROM variant_barcodes vb
 JOIN item_variants v ON v.id = vb.variant_id
 JOIN items i ON i.id = v.item_id
 WHERE vb.barcode = ?
+  AND i.is_active = 1 AND v.is_active = 1
 LIMIT 1
 `, code)
 	var itemID, itemName, variantID, variantName, img sql.NullString
@@ -279,9 +283,7 @@ LIMIT 1
 	if err := row.Scan(&itemID, &itemName, &variantID, &variantName, &price, &img); err != nil {
 		return pos.BasketLine{}, false
 	}
-	if p, ok := a.Store.currentPrice(ctx, nil, &variantID.String); ok {
-		price = p
-	}
+	price = a.Store.currentPrice(ctx, nil, &variantID.String, price)
 	name := itemName.String
 	if variantName.String != "" {
 		name = name + " - " + variantName.String
@@ -300,6 +302,7 @@ SELECT i.id, i.name, i.base_price,
 FROM item_barcodes ib
 JOIN items i ON i.id = ib.item_id
 WHERE ib.barcode = ?
+  AND i.is_active = 1
 LIMIT 1
 `, code)
 	var itemID, name, img sql.NullString
@@ -307,9 +310,7 @@ LIMIT 1
 	if err := row.Scan(&itemID, &name, &price, &img); err != nil {
 		return pos.BasketLine{}, false
 	}
-	if p, ok := a.Store.currentPrice(ctx, &itemID.String, nil); ok {
-		price = p
-	}
+	price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
 	line := pos.BasketLine{SKU: code, Name: name.String, Qty: 1, PriceCents: price}
 	if img.Valid {
 		line.ImageURL = img.String
@@ -324,6 +325,7 @@ SELECT sb.item_id, sb.label, i.base_price,
 FROM shortcut_buttons sb
 JOIN items i ON i.id = sb.item_id
 WHERE sb.barcode = ?
+  AND i.is_active = 1
 LIMIT 1
 `, code)
 	var itemID, label, img sql.NullString
@@ -331,9 +333,7 @@ LIMIT 1
 	if err := row.Scan(&itemID, &label, &price, &img); err != nil {
 		return pos.BasketLine{}, false
 	}
-	if p, ok := a.Store.currentPrice(ctx, &itemID.String, nil); ok {
-		price = p
-	}
+	price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
 	line := pos.BasketLine{SKU: code, Name: label.String, Qty: 1, PriceCents: price}
 	if img.Valid {
 		line.ImageURL = img.String
@@ -341,31 +341,68 @@ LIMIT 1
 	return line, true
 }
 
-func (s *ButtonStore) currentPrice(ctx context.Context, itemID *string, variantID *string) (int64, bool) {
-	if itemID == nil && variantID == nil {
-		return 0, false
+// resolveTextSearch falls back to SKU or name search when barcode lookups miss.
+func (a PriceResolverAdapter) resolveTextSearch(ctx context.Context, code string) (pos.BasketLine, bool) {
+	q := strings.TrimSpace(code)
+	if q == "" {
+		return pos.BasketLine{}, false
 	}
-	var row *sql.Row
-	if variantID != nil && *variantID != "" {
-		row = s.db.QueryRowContext(ctx, `
-SELECT price FROM price_history
-WHERE variant_id = ? AND (ends_at IS NULL OR ends_at > datetime('now'))
-ORDER BY datetime(starts_at) DESC
+
+	// Try exact SKU match first
+	row := a.Store.db.QueryRowContext(ctx, `
+SELECT i.id, i.sku, i.name, i.base_price,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+FROM items i
+WHERE i.is_active = 1 AND i.sku = ?
 LIMIT 1
-`, *variantID)
-	} else {
-		row = s.db.QueryRowContext(ctx, `
-SELECT price FROM price_history
-WHERE item_id = ? AND (ends_at IS NULL OR ends_at > datetime('now'))
-ORDER BY datetime(starts_at) DESC
-LIMIT 1
-`, *itemID)
-	}
+`, q)
+	var itemID, sku, name, img sql.NullString
 	var price int64
-	if err := row.Scan(&price); err == nil {
-		return price, true
+	if err := row.Scan(&itemID, &sku, &name, &price, &img); err == nil {
+		price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
+		line := pos.BasketLine{SKU: sku.String, Name: name.String, Qty: 1, PriceCents: price}
+		if img.Valid {
+			line.ImageURL = img.String
+		}
+		return line, true
 	}
-	return 0, false
+
+	// Partial name match
+	like := "%" + q + "%"
+	row = a.Store.db.QueryRowContext(ctx, `
+SELECT i.id, i.name, i.base_price,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+FROM items i
+WHERE i.is_active = 1 AND i.name LIKE ?
+ORDER BY i.name
+LIMIT 1
+`, like)
+	var name2, img2 sql.NullString
+	var price2 int64
+	if err := row.Scan(&itemID, &name2, &price2, &img2); err != nil {
+		return pos.BasketLine{}, false
+	}
+	price2 = a.Store.currentPrice(ctx, &itemID.String, nil, price2)
+	line := pos.BasketLine{SKU: q, Name: name2.String, Qty: 1, PriceCents: price2}
+	if img2.Valid {
+		line.ImageURL = img2.String
+	}
+	return line, true
+}
+
+func (s *ButtonStore) currentPrice(ctx context.Context, itemID *string, variantID *string, fallback int64) int64 {
+	price, err := pos.ResolveCurrentPrice(ctx, s.db, deref(itemID), deref(variantID))
+	if err != nil {
+		return fallback
+	}
+	return price
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func nullIfEmpty(s string) any {
