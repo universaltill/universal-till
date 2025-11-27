@@ -74,6 +74,19 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	return m, nil
 }
 
+// Reload refreshes installed plugins and menu entries (used after install/uninstall).
+func (m *Manager) Reload(ctx context.Context) error {
+	m.Installed = make(map[string]Plugin)
+	m.MenuPlugins = make(map[string]MenuPlugin)
+	if err := m.loadInstalled(ctx); err != nil {
+		return err
+	}
+	if err := m.loadMenuEntries(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (m *Manager) loadInstalled(ctx context.Context) error {
 	rows, err := m.db.QueryContext(ctx, `
 SELECT id, name, version

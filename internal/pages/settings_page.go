@@ -12,11 +12,13 @@ import (
 
 func registerSettings(mux *http.ServeMux, d *deps) {
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
+		all, _ := d.settings.All(r.Context())
 		data := map[string]any{
-			"title":     "Settings",
-			"theme":     d.state.Theme,
-			"settings":  d.state,
-			"menuItems": d.menu,
+			"title":       "Settings",
+			"theme":       d.state.Theme,
+			"settings":    d.state,
+			"settingsMap": all,
+			"menuItems":   d.menu,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -51,6 +53,42 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 		httpx.InitCurrency(d.state.Currency)
 		resolver := ui.PriceResolverAdapter{Store: d.btnStore}
 		d.engine = pos.NewServiceWithResolver(pos.Config{TaxInclusive: d.state.TaxInclusive}, resolver)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// generic key/value upsert
+	mux.HandleFunc("/api/settings/upsert", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		key := strings.TrimSpace(r.Form.Get("key"))
+		value := strings.TrimSpace(r.Form.Get("value"))
+		if key == "" {
+			http.Error(w, "key required", http.StatusBadRequest)
+			return
+		}
+		if err := d.settings.Set(r.Context(), key, value); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// reflect into state for known keys
+		switch key {
+		case keyTheme:
+			d.state.Theme = value
+		case keyCurrency:
+			d.state.Currency = value
+			httpx.InitCurrency(d.state.Currency)
+		case keyCountry:
+			d.state.Country = value
+		case keyRegion:
+			d.state.Region = value
+		case keyTaxInclusive:
+			d.state.TaxInclusive = strings.ToLower(value) == "true" || value == "1" || value == "on"
+			resolver := ui.PriceResolverAdapter{Store: d.btnStore}
+			d.engine = pos.NewServiceWithResolver(pos.Config{TaxInclusive: d.state.TaxInclusive}, resolver)
+		case keyTaxRate:
+			if n, err := strconv.Atoi(value); err == nil {
+				d.state.TaxRatePct = n
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

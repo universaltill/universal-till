@@ -1,25 +1,29 @@
 {{ define "content" }}
 <h1>System Settings</h1>
 <div class="card">
-  <form hx-post="/api/settings/save" hx-swap="none">
-    <div class="form-row" style="grid-template-columns: repeat(5, 1fr);">
-      <label>Currency
-        <input type="text" name="currency" value="{{ .settings.Currency }}" placeholder="GBP">
-      </label>
-      <label>Country
-        <input type="text" name="country" value="{{ .settings.Country }}" placeholder="GB">
-      </label>
-      <label>Region
-        <input type="text" name="region" value="{{ .settings.Region }}" placeholder="">
-      </label>
-      <label>Tax Inclusive
-        <input type="checkbox" name="taxInclusive" {{ if .settings.TaxInclusive }}checked{{ end }}>
-      </label>
-      <label>Tax Rate (%)
-        <input type="number" name="taxRatePct" min="0" step="1" value="{{ .settings.TaxRatePct }}">
-      </label>
-    </div>
-    <button class="btn" type="submit">Save</button>
-  </form>
+  <h2>All Settings</h2>
+  <table class="table">
+    <thead>
+      <tr><th>Key</th><th>Value</th><th></th></tr>
+    </thead>
+    <tbody>
+    {{ range $k, $v := .settingsMap }}
+      <tr>
+        <td><code>{{ $k }}</code></td>
+        <td>
+          <input type="text" name="value" value="{{ $v }}" hx-post="/api/settings/upsert" hx-include="closest tr" hx-swap="none">
+          <input type="hidden" name="key" value="{{ $k }}">
+        </td>
+        <td><button class="btn secondary" hx-post="/api/settings/upsert" hx-include="closest tr" hx-swap="none">Update</button></td>
+      </tr>
+    {{ end }}
+      <tr>
+        <td><input type="text" name="key" placeholder="new.key" form="new-setting"></td>
+        <td><input type="text" name="value" placeholder="value" form="new-setting"></td>
+        <td><button class="btn" type="submit" form="new-setting">Add / Update</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <form id="new-setting" hx-post="/api/settings/upsert" hx-swap="none"></form>
 </div>
 {{ end }}
