@@ -44,3 +44,21 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 	}
 	return nil
 }
+
+// All returns all key/value pairs from settings.
+func (s *Store) All(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM settings`)
+	if err != nil {
+		return nil, fmt.Errorf("list settings: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, fmt.Errorf("scan setting: %w", err)
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
+}

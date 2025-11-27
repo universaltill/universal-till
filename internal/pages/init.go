@@ -18,8 +18,10 @@ import (
 type deps struct {
 	cfg      *config.Config
 	pm       *plugins.Manager
+	db       *sql.DB
 	settings *settings.Store
 	state    runtimeState
+	baseMenu []menuItem
 	menu     []menuItem
 	engine   *pos.Service
 	btnStore *ui.ButtonStore
@@ -57,8 +59,10 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	dp := &deps{
 		cfg:      cfg,
 		pm:       pm,
+		db:       db,
 		settings: setStore,
 		state:    state,
+		baseMenu: baseMenu,
 		menu:     buildMenu(baseMenu, pm),
 		engine:   engine,
 		btnStore: btnStore,
@@ -70,6 +74,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerDesigner(mux, dp)
 	registerSettings(mux, dp)
 	registerPluginsPage(mux, dp)
+	registerPluginAPI(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
 	registerBasket(mux, dp)
