@@ -26,6 +26,10 @@
 **Project Type**: [single/web/mobile - determines source structure]  
 **Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
 **Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+
+- Changes MUST respect the existing SQLite schema defined in `internal/db/migrations/001_init.sql` and documented in `docs/data-model.md`.
+- Do not rename or drop columns/tables unless the spec explicitly calls for a migration and data migration strategy.
+  
 **Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
 ## Constitution Check
