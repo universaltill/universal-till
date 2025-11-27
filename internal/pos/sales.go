@@ -86,7 +86,10 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 		subtotal += lineNet
 		taxTotal += lineTax
 	}
-	total := subtotal - in.SaleDiscount + taxTotal
+	total := subtotal - in.SaleDiscount
+	if !in.TaxInclusive {
+		total += taxTotal
+	}
 	if total < 0 {
 		total = 0
 	}

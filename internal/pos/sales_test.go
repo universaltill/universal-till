@@ -126,3 +126,42 @@ func TestCompleteSale_RejectsUnderpayment(t *testing.T) {
 		t.Fatalf("expected underpayment to fail")
 	}
 }
+
+func TestCompleteSale_InclusiveTaxNoDoubleCount(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 120, 1)`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+
+	in := SaleInput{
+		SaleType:     "sale",
+		Currency:     "GBP",
+		TaxInclusive: true,
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 120, TaxRateBasisPoints: 2000, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 120, Currency: "GBP"},
+		},
+	}
+
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("CompleteSale error: %v", err)
+	}
+	var storedTotal int64
+	var taxTotal int64
+	if err := db.QueryRow(`SELECT total, tax_total FROM sales WHERE id = ?`, saleID).Scan(&storedTotal, &taxTotal); err != nil {
+		t.Fatalf("read sale: %v", err)
+	}
+	if storedTotal != 120 {
+		t.Fatalf("expected total 120 (inclusive), got %d", storedTotal)
+	}
+	if taxTotal <= 0 {
+		t.Fatalf("expected tax_total > 0 for inclusive tax, got %d", taxTotal)
+	}
+}
