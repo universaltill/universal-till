@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -13,18 +14,20 @@ import (
 
 // SaleInput captures the data needed to persist a sale (or return).
 type SaleInput struct {
-	SaleType       string // sale|return
-	RegisterID     string
-	CashierID      string
-	CustomerID     string
-	Currency       string
-	TaxInclusive   bool
-	SaleDiscount   int64 // fixed discount (minor units) applied to whole sale
-	Lines          []SaleLineInput
-	Payments       []PaymentInput
-	OriginalSaleID string // for returns; creates sale_links entry when set
-	Note           string
-	ReceiptNo      string
+	SaleType               string // sale|return
+	RegisterID             string
+	CashierID              string
+	CustomerID             string
+	Currency               string
+	TaxInclusive           bool
+	SaleDiscount           int64 // fixed discount (minor units) applied to whole sale
+	Lines                  []SaleLineInput
+	Payments               []PaymentInput
+	OriginalSaleID         string // for returns; creates sale_links entry when set
+	Note                   string
+	ReceiptNo              string
+	ActorID                string
+	AllowNegativeInventory bool
 }
 
 type SaleLineInput struct {
@@ -99,6 +102,22 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	saleID := uuid.NewString()
 
 	err := db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
+		if !in.AllowNegativeInventory {
+			for _, l := range in.Lines {
+				cur, err := currentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
+				if err != nil {
+					return err
+				}
+				qtyDelta := l.Qty
+				if in.SaleType == "sale" {
+					qtyDelta = -qtyDelta
+				}
+				if cur+qtyDelta < 0 {
+					return fmt.Errorf("insufficient stock for item %s at location %s", valueOrDefault(l.ItemID, l.VariantID), l.LocationID)
+				}
+			}
+		}
+
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO sales (id, receipt_no, status, sale_type, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at)
 VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
@@ -156,13 +175,24 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 				return fmt.Errorf("insert stock movement: %w", err)
 			}
 
-			// inventory upsert
-			if _, err := tx.ExecContext(ctx, `
+			// inventory upsert with null-safe match
+			res, err := tx.ExecContext(ctx, `
+UPDATE inventory
+SET quantity = quantity + ?, updated_at = ?
+WHERE location_id = ?
+  AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL))
+`, qty, time.Now().UTC().Format(time.RFC3339), l.LocationID, nullString(l.ItemID), nullString(l.VariantID))
+			if err != nil {
+				return fmt.Errorf("update inventory: %w", err)
+			}
+			aff, _ := res.RowsAffected()
+			if aff == 0 {
+				if _, err := tx.ExecContext(ctx, `
 INSERT INTO inventory (id, item_id, variant_id, location_id, quantity, updated_at)
 VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(item_id, variant_id, location_id) DO UPDATE SET quantity = quantity + excluded.quantity, updated_at = excluded.updated_at
 `, uuid.NewString(), nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.LocationID, qty, time.Now().UTC().Format(time.RFC3339)); err != nil {
-				return fmt.Errorf("update inventory: %w", err)
+					return fmt.Errorf("insert inventory: %w", err)
+				}
 			}
 		}
 
@@ -185,6 +215,10 @@ VALUES (?, ?, ?, 'return')
 `, uuid.NewString(), saleID, in.OriginalSaleID); err != nil {
 				return fmt.Errorf("insert sale link: %w", err)
 			}
+		}
+
+		if err := insertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), subtotal, taxTotal, total); err != nil {
+			return err
 		}
 
 		return nil
@@ -234,4 +268,50 @@ func valueOrDefault(val, def string) string {
 		return val
 	}
 	return def
+}
+
+func currentQty(ctx context.Context, tx *sql.Tx, locationID, itemID, variantID string) (float64, error) {
+	var qty float64
+	err := tx.QueryRowContext(ctx, `
+SELECT COALESCE(quantity, 0)
+FROM inventory
+WHERE location_id = ?
+  AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL))
+`, locationID, nullString(itemID), nullString(variantID)).Scan(&qty)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("read inventory: %w", err)
+	}
+	return qty, nil
+}
+
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func insertAudit(ctx context.Context, tx *sql.Tx, actorID, entityType, entityID, action string, subtotal, taxTotal, total int64) error {
+	payload := map[string]any{
+		"subtotal": subtotal,
+		"taxTotal": taxTotal,
+		"total":    total,
+		"action":   action,
+	}
+	data, _ := json.Marshal(payload)
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`, uuid.NewString(), nullIfEmpty(actorID), entityType, entityID, action, string(data), time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("insert audit_log: %w", err)
+	}
+	return nil
+}
+
+func auditAction(saleType string) string {
+	if saleType == "return" {
+		return "refund"
+	}
+	return "complete"
 }
