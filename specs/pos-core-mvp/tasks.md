@@ -5,22 +5,22 @@
 
 ## Phase 0: Setup / Foundation
 
-- [ ] T001 Ensure `PRAGMA foreign_keys = ON` in DB bootstrap (`internal/db`); add guard if missing.
-- [ ] T002 Validate money/quantity helpers handle integer minor units and REAL for weighed items (`internal/pos` or shared helpers); add rounding rules for tax inclusive/exclusive.
-- [ ] T003 Add/confirm price resolution uses latest `price_history` row (open-ended) for item/variant (`internal/pos` pricing logic).
-- [ ] T004 Wrap sale persistence in DB transaction utilities to prevent orphan `sale_lines`/`payments` (`internal/pos`).
+- [x] T001 Ensure `PRAGMA foreign_keys = ON` in DB bootstrap (`internal/db`); add guard if missing.
+- [x] T002 Validate money/quantity helpers handle integer minor units and REAL for weighed items (`internal/pos` or shared helpers); add rounding rules for tax inclusive/exclusive.
+- [x] T003 Add/confirm price resolution uses latest `price_history` row (open-ended) for item/variant (`internal/pos` pricing logic).
+- [x] T004 Wrap sale persistence in DB transaction utilities to prevent orphan `sale_lines`/`payments` (`internal/pos`).
 
 ## Phase 1: User Story 1 – Complete a sale offline (P1)
 
-- [ ] T101 [P] Implement barcode/SKU lookup with fallback search (`internal/pos` + `internal/pages` handlers); prefer primary barcode tables.
-- [ ] T102 [P] Basket operations: add/edit/remove lines (incl. weighed) capturing snapshots (name, sku/barcode, tax_rate_bp, unit_price, totals) in `sale_lines`; exclude `is_active=0` catalog (`internal/pos`, `internal/pages`, `web/` templates).
-- [ ] T103 Tax calc respects `settings` inclusive/exclusive with integer-safe rounding; persist line tax and sale totals (`sales.subtotal`, `tax_total`, `total`, optional rounding) (`internal/pos`).
-- [ ] T104 Discounts: persist sale- and line-level discounts in `sale_discounts` (fixed/percent) and roll into `sales.discount_total` (`internal/pos`).
-- [ ] T105 Payments: support multiple tenders using seeded `payment_methods`; persist `payments` with amount/currency/reference/change_given/paid_at; block completion until covered (`internal/pos`, `internal/pages`).
-- [ ] T106 Completion flow: generate unique `receipt_no`, set `sales.status=completed`/`completed_at`, rollback on partial/failed tender (`internal/pos`).
-- [ ] T107 Stock movements: on completion create `stock_movements(type='sale')` per line with negative qty and `sale_line_id`; update `inventory` aggregates (`internal/pos`).
-- [ ] T108 Receipt payload: include lines, tax, discounts, payments, totals; printable/exportable via existing templates (`web/`).
-- [ ] T109 Audit: record sale lifecycle (create, complete, void/park) with actor/payload in `audit_log` (`internal/pos` logging).
+- [x] T101 [P] Implement barcode/SKU lookup with fallback search (`internal/pos` + `internal/pages` handlers); prefer primary barcode tables.
+- [x] T102 [P] Basket operations: add/edit/remove lines (incl. weighed) capturing snapshots (name, sku/barcode, tax_rate_bp, unit_price, totals) in `sale_lines`; exclude `is_active=0` catalog (`internal/pos`, `internal/pages`, `web/` templates).
+- [x] T103 Tax calc respects `settings` inclusive/exclusive with integer-safe rounding; persist line tax and sale totals (`sales.subtotal`, `tax_total`, `total`, optional rounding) (`internal/pos`).
+- [x] T104 Discounts: persist sale- and line-level discounts in `sale_discounts` (fixed/percent) and roll into `sales.discount_total` (`internal/pos`).
+- [x] T105 Payments: support multiple tenders using seeded `payment_methods`; persist `payments` with amount/currency/reference/change_given/paid_at; block completion until covered (`internal/pos`, `internal/pages`).
+- [x] T106 Completion flow: generate unique `receipt_no`, set `sales.status=completed`/`completed_at`, rollback on partial/failed tender (`internal/pos`).
+- [x] T107 Stock movements: on completion create `stock_movements(type='sale')` per line with negative qty and `sale_line_id`; update `inventory` aggregates (`internal/pos`).
+- [x] T108 Receipt payload: include lines, tax, discounts, payments, totals; printable/exportable via existing templates (`web/`).
+- [x] T109 Audit: record sale lifecycle (create, complete, void/park) with actor/payload in `audit_log` (`internal/pos` logging).
 
 ## Phase 2: User Story 2 – Manage catalog & pricing (P1)
 
@@ -42,8 +42,8 @@
 
 ## Phase 5: Tests & Validation
 
-- [ ] T501 Unit tests for pricing/tax rounding, price resolution, and discount application (`internal/pos` tests).
-- [ ] T502 Unit tests for stock movement generation and inventory aggregation (`internal/pos` tests).
+- [x] T501 Unit tests for pricing/tax rounding, price resolution, and discount application (`internal/pos` tests).
+- [x] T502 Unit tests for stock movement generation and inventory aggregation (`internal/pos` tests).
 - [ ] T503 Unit/handler tests for plugin permission enforcement (deny/allow) (`internal/plugins` tests).
 - [ ] T504 Manual quickstart run with SQLite (`quickstart.md` flow) covering scan→cart→payment→receipt and a return; verify DB rows.
 
