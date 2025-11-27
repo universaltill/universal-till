@@ -4,10 +4,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS buttons (
-    code TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS shortcut_buttons (
+    barcode TEXT PRIMARY KEY,
+    item_id TEXT NOT NULL,
     label TEXT NOT NULL,
     image_path TEXT
+    FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
 );
 
 -- plugins
@@ -78,6 +80,7 @@ target_action TEXT, -- for buttons: action name to invoke
 trigger_event TEXT, -- for popups: event name (e.g. "sale.completed")
 
 -- Arbitrary plugin-defined config, stored as JSON text
+
 
 config_json     TEXT,
 
