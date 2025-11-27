@@ -20,12 +20,13 @@ const (
 )
 
 type runtimeState struct {
-	Theme        string
-	Currency     string
-	Country      string
-	Region       string
-	TaxInclusive bool
-	TaxRatePct   int
+	Theme                  string
+	Currency               string
+	Country                string
+	Region                 string
+	TaxInclusive           bool
+	TaxRatePct             int
+	AllowNegativeInventory bool
 }
 
 // loadState pulls settings from the DB-backed settings store with cfg defaults.
@@ -53,6 +54,9 @@ func loadState(ctx context.Context, store *settings.Store, cfg *config.Config) r
 			st.TaxRatePct = n
 		}
 	}
+	if v := get("pos.allow_negative_inventory", "false"); v != "" {
+		st.AllowNegativeInventory, _ = strconv.ParseBool(v)
+	}
 
 	return st
 }
@@ -64,6 +68,7 @@ func saveState(ctx context.Context, store *settings.Store, st runtimeState) {
 	_ = store.Set(ctx, keyRegion, st.Region)
 	_ = store.Set(ctx, keyTaxInclusive, strconv.FormatBool(st.TaxInclusive))
 	_ = store.Set(ctx, keyTaxRate, strconv.Itoa(st.TaxRatePct))
+	_ = store.Set(ctx, "pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory))
 }
 
 type menuItem struct {

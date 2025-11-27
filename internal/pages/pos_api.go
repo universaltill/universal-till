@@ -57,7 +57,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			RegisterID    string `json:"registerId,omitempty"`
 			CashierID     string `json:"cashierId,omitempty"`
 			CustomerID    string `json:"customerId,omitempty"`
-			AllowNegative bool   `json:"allowNegativeInventory,omitempty"`
+			AllowNegative *bool  `json:"allowNegativeInventory,omitempty"`
 			Note          string `json:"note,omitempty"`
 		}
 		var in In
@@ -126,6 +126,18 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			}
 		}
 
+		allowNegative := d.state.AllowNegativeInventory
+		if in.AllowNegative != nil {
+			allowNegative = *in.AllowNegative
+		}
+
+		cashierID := in.CashierID
+		if cashierID == "" {
+			if cid, err := ensureUser(r.Context(), d.db); err == nil {
+				cashierID = cid
+			}
+		}
+
 		_, err = pos.CompleteSale(r.Context(), d.db, pos.SaleInput{
 			SaleType:               "sale",
 			Currency:               d.state.Currency,
@@ -135,9 +147,10 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			Payments:               payments,
 			Note:                   in.Note,
 			RegisterID:             registerID,
-			CashierID:              in.CashierID,
+			CashierID:              cashierID,
 			CustomerID:             in.CustomerID,
-			AllowNegativeInventory: in.AllowNegative,
+			AllowNegativeInventory: allowNegative,
+			ActorID:                cashierID,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -192,6 +205,23 @@ func ensureRegister(ctx context.Context, db *sql.DB) (string, error) {
 	id = "reg-default"
 	if _, err := db.ExecContext(ctx, `INSERT INTO registers (id, name, is_active) VALUES (?, ?, 1)`, id, "Default Register"); err != nil {
 		return "", fmt.Errorf("create default register: %w", err)
+	}
+	return id, nil
+}
+
+// ensureUser returns a default cashier user if none exists.
+func ensureUser(ctx context.Context, db *sql.DB) (string, error) {
+	var id string
+	err := db.QueryRowContext(ctx, `SELECT id FROM users WHERE is_active = 1 ORDER BY id LIMIT 1`).Scan(&id)
+	if err == nil && id != "" {
+		return id, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("read users: %w", err)
+	}
+	id = "cashier-default"
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (id, username, display_name, role, is_active) VALUES (?, ?, ?, 'cashier', 1)`, id, "cashier", "Default Cashier"); err != nil {
+		return "", fmt.Errorf("create default user: %w", err)
 	}
 	return id, nil
 }

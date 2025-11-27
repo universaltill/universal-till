@@ -44,6 +44,7 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 			d.state.Region = v
 		}
 		d.state.TaxInclusive = r.Form.Get("taxInclusive") == "on"
+		d.state.AllowNegativeInventory = r.Form.Get("allowNegativeInventory") == "on"
 		if v := r.Form.Get("taxRatePct"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 				d.state.TaxRatePct = n
@@ -94,6 +95,8 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 			if n, err := strconv.Atoi(value); err == nil {
 				d.state.TaxRatePct = n
 			}
+		case "pos.allow_negative_inventory":
+			d.state.AllowNegativeInventory = strings.ToLower(value) == "true" || value == "1" || value == "on"
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
