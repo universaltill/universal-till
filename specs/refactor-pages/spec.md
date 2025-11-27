@@ -62,3 +62,5 @@ Behaviour must remain compatible with the current `main_old.go` endpoints and pa
 - Settings/theme/menu/plugins data flows migrated from `internal/old_common` into the new structure; `internal/old_common` no longer required for page bootstrap.
 - Plugin manager usage goes through `internal/plugins/plugins.go`.
 - Static, POS, and plugin endpoints respond identically (status codes, JSON/form support, template rendering) in manual smoke tests.
+- Shortcut buttons use the `shortcut_buttons` table only; designer supports searching items (name/SKU/barcode) with thumbnails and adding/removing shortcuts directly (HTMX).
+- Theme defaults to `monarch` and is persisted via settings store, read from config/env.
