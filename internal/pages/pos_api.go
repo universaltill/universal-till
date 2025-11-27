@@ -58,7 +58,8 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		d.engine.Remove(code)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
-		_ = basketView.Render(w, d.engine.Lines())
+		b := d.engine.Basket()
+		_ = basketView.Render(w, b)
 	})
 
 	// Reset basket for new customer.
@@ -197,9 +198,11 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			}
 		}
 
-		allowNegative := d.state.AllowNegativeInventory
+		allowNegative := true // default to allow negatives in demo; override only if explicitly false
 		if in.AllowNegative != nil {
 			allowNegative = *in.AllowNegative
+		} else if !d.state.AllowNegativeInventory {
+			allowNegative = false
 		}
 
 		cashierID := in.CashierID
@@ -282,15 +285,15 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 // ensureStockLocation returns an existing location id or creates a default one.
 func ensureStockLocation(ctx context.Context, db *sql.DB) (string, error) {
 	var id string
-	err := db.QueryRowContext(ctx, `SELECT id FROM stock_locations ORDER BY id LIMIT 1`).Scan(&id)
+	err := db.QueryRowContext(ctx, `SELECT id FROM stock_locations WHERE name = 'Main' OR id = 'loc_main' ORDER BY id LIMIT 1`).Scan(&id)
 	if err == nil && id != "" {
 		return id, nil
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("read stock_locations: %w", err)
 	}
-	id = "loc-default"
-	if _, err := db.ExecContext(ctx, `INSERT INTO stock_locations(id, name) VALUES(?,?)`, id, "Default"); err != nil {
+	id = "loc_main"
+	if _, err := db.ExecContext(ctx, `INSERT INTO stock_locations(id, name) VALUES(?,?)`, id, "Main"); err != nil {
 		return "", fmt.Errorf("create default location: %w", err)
 	}
 	return id, nil
