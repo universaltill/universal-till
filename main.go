@@ -42,7 +42,7 @@ func main() {
 	}
 
 	// 3) Plugins (and pass db if needed)
-	pluginManager, err := plugins.Init(ctx, cfg /*, database*/)
+	pluginManager, err := plugins.Init(ctx, cfg, database.DB)
 	if err != nil {
 		log.Fatalf("plugin init failed: %v", err)
 	}

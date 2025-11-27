@@ -4,11 +4,54 @@
 <!-- Toast Container -->
 <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 1000;"></div>
 
+<script id="plugins-data" type="application/json">{{ .pluginsJSON }}</script>
+
 <div class="card" x-data="{ 
     q: '', 
-    items: [], 
+    data: (() => { 
+      try { 
+        const el = document.getElementById('plugins-data'); 
+        return el ? JSON.parse(el.textContent || '{}') : {}; 
+      } catch(e){ 
+        return {items:[], total:0, page:1, pageSize:12, type:'', tags:[]}; 
+      } 
+    })(),
+    get items(){ return this.data.items || []; },
     selected: new Set(), 
     bulkLoading: false,
+    get page(){ return this.data.page || 1; },
+    get pageSize(){ return this.data.pageSize || 12; },
+    get total(){ return this.data.total || 0; },
+    get type(){ return this.data.type || ''; },
+    filtered() {
+      const term = this.q.toLowerCase();
+      return this.items.filter(i => i.name.toLowerCase().includes(term) || (i.description || '').toLowerCase().includes(term));
+    },
+    totalPages() {
+      const count = this.total || this.filtered().length || 1;
+      return Math.max(1, Math.ceil(count / this.pageSize));
+    },
+    paged() {
+      // server-paged list; local filter limited to current page
+      return this.filtered();
+    },
+    setPage(p) {
+      const max = this.totalPages();
+      if (p < 1) p = 1;
+      if (p > max) p = max;
+      const params = new URLSearchParams(window.location.search);
+      params.set('page', p);
+      params.set('size', this.pageSize);
+      if (this.type) params.set('type', this.type); else params.delete('type');
+      window.location.search = params.toString();
+    },
+    setType(t) {
+      const params = new URLSearchParams(window.location.search);
+      if (t) params.set('type', t); else params.delete('type');
+      params.set('page', 1);
+      params.set('size', this.pageSize);
+      window.location.search = params.toString();
+    },
     async bulkAction(action) {
       this.bulkLoading = true;
       const promises = Array.from(this.selected).map(id => {
@@ -16,7 +59,7 @@
         if (!plugin) return Promise.resolve();
         
         const data = { id };
-        if (action === 'download') data.bundleUrl = plugin.bundleUrl || '';
+        if (action === 'download') data.bundleUrl = plugin.packageUrl || '';
         if (action === 'install') {
           data.route = '/plug/' + id;
           data.label = plugin.name;
@@ -40,21 +83,36 @@
         this.bulkLoading = false;
       }
     }
-  }" x-init="fetch('/public/plugins.json').then(r=>r.json()).then(d=>{ items=d })">
-  <div style="display:flex; gap:.5rem; margin-bottom:.5rem; align-items:center">
-    <input type="search" placeholder="Search plugins" x-model="q" style="flex:1;padding:.5rem;border:1px solid #ddd;border-radius:8px">
-    <button class="btn secondary" @click="selected.clear(); $nextTick(() => selected = new Set())" :disabled="selected.size === 0">Clear Selection</button>
-    <button class="btn" @click="bulkAction('download')" :disabled="selected.size === 0 || bulkLoading">
-      <span x-show="!bulkLoading">Bulk Download</span>
-      <span x-show="bulkLoading">⏳</span>
-    </button>
-    <button class="btn" @click="bulkAction('install')" :disabled="selected.size === 0 || bulkLoading">
-      <span x-show="!bulkLoading">Bulk Install</span>
-      <span x-show="bulkLoading">⏳</span>
-    </button>
+  }">
+  <div style="display:flex; gap:.5rem; margin-bottom:.5rem; align-items:center; flex-wrap:wrap">
+    <input type="search" placeholder="Search plugins" x-model="q" style="flex:1 1 220px;padding:.5rem;border:1px solid #ddd;border-radius:8px">
+    <div class="tabs" style="display:flex; gap:.25rem; flex-wrap:wrap">
+      <button class="btn secondary" :class="{'active': type === ''}" @click="setType('')">All</button>
+      <template x-for="tag in (data.tags || [])" :key="tag">
+        <button class="btn secondary" :class="{'active': type === tag}" @click="setType(tag)" x-text="tag"></button>
+      </template>
+    </div>
+    <div style="display:flex; gap:.25rem; flex:1 1 auto; justify-content:flex-end">
+      <button class="btn secondary" @click="selected.clear(); $nextTick(() => selected = new Set())" :disabled="selected.size === 0">Clear Selection</button>
+      <button class="btn" @click="bulkAction('download')" :disabled="selected.size === 0 || bulkLoading">
+        <span x-show="!bulkLoading">Bulk Download</span>
+        <span x-show="bulkLoading">⏳</span>
+      </button>
+      <button class="btn" @click="bulkAction('install')" :disabled="selected.size === 0 || bulkLoading">
+        <span x-show="!bulkLoading">Bulk Install</span>
+        <span x-show="bulkLoading">⏳</span>
+      </button>
+    </div>
+  </div>
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem">
+    <div>Page <span x-text="page"></span> / <span x-text="totalPages()"></span> (Total <span x-text="total"></span>)</div>
+    <div style="display:flex; gap:.25rem">
+      <button class="btn secondary" @click="setPage(page-1)" :disabled="page <= 1">Prev</button>
+      <button class="btn secondary" @click="setPage(page+1)" :disabled="page >= totalPages()">Next</button>
+    </div>
   </div>
   <div class="grid">
-    <template x-for="p in items.filter(i => i.name.toLowerCase().includes(q.toLowerCase()) || i.description.toLowerCase().includes(q.toLowerCase()))" :key="p.id">
+    <template x-for="p in paged()" :key="p.id">
       <div class="card" style="padding:1rem" x-data="{
             st: {downloaded:false, installed:false},
             loading: false,

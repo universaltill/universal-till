@@ -16,11 +16,11 @@ func registerExternalProxy(mux *http.ServeMux, d *deps) {
 		}
 		pid := parts[0]
 		mp := d.pm.MenuPlugins[pid]
-		if mp.URL == "" {
+		if mp.Route == "" {
 			http.NotFound(w, r)
 			return
 		}
-		resp, err := http.Get(mp.URL)
+		resp, err := http.Get(mp.Route)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
