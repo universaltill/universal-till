@@ -138,7 +138,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			}
 		}
 
-		_, err = pos.CompleteSale(r.Context(), d.db, pos.SaleInput{
+		saleID, err := pos.CompleteSale(r.Context(), d.db, pos.SaleInput{
 			SaleType:               "sale",
 			Currency:               d.state.Currency,
 			TaxInclusive:           d.state.TaxInclusive,
@@ -158,6 +158,19 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		}
 
 		d.engine.Reset()
+
+		// Render receipt JSON if requested
+		if r.Header.Get("Accept") == "application/json" {
+			resp := map[string]any{
+				"saleId":   saleID,
+				"total":    d.state.Currency,
+				"payments": in.Payments,
+				"note":     in.Note,
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+
 		b, _ := d.engine.Scan("")
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)

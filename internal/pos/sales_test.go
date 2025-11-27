@@ -165,3 +165,35 @@ func TestCompleteSale_InclusiveTaxNoDoubleCount(t *testing.T) {
 		t.Fatalf("expected tax_total > 0 for inclusive tax, got %d", taxTotal)
 	}
 }
+
+func TestUpdateSaleStatus_Void(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 120, 1)`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+
+	saleID, err := CompleteSale(ctx, db, SaleInput{
+		SaleType:     "sale",
+		Currency:     "GBP",
+		TaxInclusive: true,
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 120, TaxRateBasisPoints: 2000, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{{MethodID: "cash", Amount: 120}},
+	})
+	if err != nil {
+		t.Fatalf("complete sale: %v", err)
+	}
+
+	if err := UpdateSaleStatus(ctx, db, saleID, "voided", "actor1", "test-void"); err != nil {
+		t.Fatalf("update status: %v", err)
+	}
+	var status string
+	_ = db.QueryRow(`SELECT status FROM sales WHERE id=?`, saleID).Scan(&status)
+	if status != "voided" {
+		t.Fatalf("expected voided, got %s", status)
+	}
+}
