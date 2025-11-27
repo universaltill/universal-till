@@ -57,7 +57,18 @@ func (s *Service) ScanQty(code string, qty int) (*Basket, error) {
 		return &s.basket, nil
 	}
 	item.Qty = qty
-	s.lines = append(s.lines, item)
+	// merge with existing line if same SKU/item/variant
+	merged := false
+	for i := range s.lines {
+		if s.lines[i].SKU == item.SKU || (s.lines[i].ItemID == item.ItemID && s.lines[i].VariantID == item.VariantID) {
+			s.lines[i].Qty += qty
+			merged = true
+			break
+		}
+	}
+	if !merged {
+		s.lines = append(s.lines, item)
+	}
 	s.recomputeTotals()
 	return &s.basket, nil
 }

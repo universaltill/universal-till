@@ -27,6 +27,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		`CREATE TABLE stock_movements (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, created_at TEXT NOT NULL);`,
 		`CREATE TABLE inventory (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, quantity REAL NOT NULL, updated_at TEXT NOT NULL, UNIQUE(item_id, variant_id, location_id));`,
 		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT, type TEXT, is_active INTEGER DEFAULT 1);`,
+		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL);`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -43,6 +44,7 @@ func TestCompleteSale_SucceedsAndWritesRows(t *testing.T) {
 
 	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
 	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
 
 	in := SaleInput{
@@ -66,6 +68,7 @@ func TestCompleteSale_SucceedsAndWritesRows(t *testing.T) {
 		Payments: []PaymentInput{
 			{MethodID: "cash", Amount: 1200, Currency: "GBP"},
 		},
+		AllowNegativeInventory: false,
 	}
 
 	saleID, err := CompleteSale(ctx, db, in)
@@ -93,9 +96,10 @@ func TestCompleteSale_SucceedsAndWritesRows(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected 1 stock movement, got %d", count)
 	}
-	_ = db.QueryRow(`SELECT quantity FROM inventory WHERE item_id='itm1' AND location_id='loc1'`).Scan(&count)
-	if count != -2 { // qty is REAL; casting into int for simplicity
-		t.Fatalf("expected inventory -2, got %d", count)
+	var qty float64
+	_ = db.QueryRow(`SELECT quantity FROM inventory WHERE item_id='itm1' AND location_id='loc1'`).Scan(&qty)
+	if qty != 3 {
+		t.Fatalf("expected inventory 3, got %v", qty)
 	}
 }
 
@@ -107,8 +111,9 @@ func TestCompleteSale_RejectsUnderpayment(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
 
 	in := SaleInput{
-		SaleType: "sale",
-		Currency: "GBP",
+		SaleType:               "sale",
+		Currency:               "GBP",
+		AllowNegativeInventory: false,
 		Lines: []SaleLineInput{
 			{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"},
 		},
