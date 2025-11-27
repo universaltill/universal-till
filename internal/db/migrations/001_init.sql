@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS item_images (
     id          TEXT PRIMARY KEY,
     item_id     TEXT NOT NULL,
     role        TEXT NOT NULL DEFAULT 'thumbnail', -- thumbnail, gallery, label
-    path        TEXT NOT NULL,                     -- e.g. /data/assets/items/itm001/thumb.png
+    path        TEXT NOT NULL,                     -- e.g. /public/assets/items/itm001/thumb.png
     sort_order  INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
 );
@@ -515,6 +515,18 @@ CREATE TABLE IF NOT EXISTS shortcut_buttons (
 
 -- Insert defaults and samples --------------------------------
 
+
+INSERT INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES
+  ('2000010000017', 'itm001', 'Coca-Cola 330ml', '/public/assets/items/itm001/thumb.png'),
+  ('2000010000024', 'itm002', 'Pepsi 330ml', '/public/assets/items/itm002/thumb.png'),
+  ('2000010000031', 'itm003', 'Orange Juice 1L', '/public/assets/items/itm003/thumb.png'),
+  ('2000010000048', 'itm004', 'Bananas (kg)', '/public/assets/items/itm004/thumb.png'),
+  ('2000010000055', 'itm005', 'Whole Milk 2L', '/public/assets/items/itm005/thumb.png'),
+  ('2000010000062', 'itm006', 'Brown Bread', '/public/assets/items/itm006/thumb.png'),
+  ('2000010000079', 'itm007', 'Chocolate Bar', '/public/assets/items/itm007/thumb.png'),
+  ('2000010000086', 'itm008', 'Eggs (12 pack)', '/public/assets/items/itm008/thumb.png'),
+  ('2000010000093', 'itm009', 'Tomatoes (kg)', '/public/assets/items/itm009/thumb.png'),
+  ('2000010000109', 'itm010', 'Water 500ml', '/public/assets/items/itm010/thumb.png');
 
 INSERT OR IGNORE INTO
     payment_methods (id, name, type, sort_order)
@@ -1699,350 +1711,350 @@ VALUES (
         'img001',
         'itm001',
         'thumbnail',
-        '/data/assets/items/itm001/thumb.png',
+        '/public/assets/items/itm001/thumb.png',
         0
     ),
     (
         'img002',
         'itm002',
         'thumbnail',
-        '/data/assets/items/itm002/thumb.png',
+        '/public/assets/items/itm002/thumb.png',
         0
     ),
     (
         'img003',
         'itm003',
         'thumbnail',
-        '/data/assets/items/itm003/thumb.png',
+        '/public/assets/items/itm003/thumb.png',
         0
     ),
     (
         'img004',
         'itm004',
         'thumbnail',
-        '/data/assets/items/itm004/thumb.png',
+        '/public/assets/items/itm004/thumb.png',
         0
     ),
     (
         'img005',
         'itm005',
         'thumbnail',
-        '/data/assets/items/itm005/thumb.png',
+        '/public/assets/items/itm005/thumb.png',
         0
     ),
     (
         'img006',
         'itm006',
         'thumbnail',
-        '/data/assets/items/itm006/thumb.png',
+        '/public/assets/items/itm006/thumb.png',
         0
     ),
     (
         'img007',
         'itm007',
         'thumbnail',
-        '/data/assets/items/itm007/thumb.png',
+        '/public/assets/items/itm007/thumb.png',
         0
     ),
     (
         'img008',
         'itm008',
         'thumbnail',
-        '/data/assets/items/itm008/thumb.png',
+        '/public/assets/items/itm008/thumb.png',
         0
     ),
     (
         'img009',
         'itm009',
         'thumbnail',
-        '/data/assets/items/itm009/thumb.png',
+        '/public/assets/items/itm009/thumb.png',
         0
     ),
     (
         'img010',
         'itm010',
         'thumbnail',
-        '/data/assets/items/itm010/thumb.png',
+        '/public/assets/items/itm010/thumb.png',
         0
     ),
     (
         'img011',
         'itm011',
         'thumbnail',
-        '/data/assets/items/itm011/thumb.png',
+        '/public/assets/items/itm011/thumb.png',
         0
     ),
     (
         'img012',
         'itm012',
         'thumbnail',
-        '/data/assets/items/itm012/thumb.png',
+        '/public/assets/items/itm012/thumb.png',
         0
     ),
     (
         'img013',
         'itm013',
         'thumbnail',
-        '/data/assets/items/itm013/thumb.png',
+        '/public/assets/items/itm013/thumb.png',
         0
     ),
     (
         'img014',
         'itm014',
         'thumbnail',
-        '/data/assets/items/itm014/thumb.png',
+        '/public/assets/items/itm014/thumb.png',
         0
     ),
     (
         'img015',
         'itm015',
         'thumbnail',
-        '/data/assets/items/itm015/thumb.png',
+        '/public/assets/items/itm015/thumb.png',
         0
     ),
     (
         'img016',
         'itm016',
         'thumbnail',
-        '/data/assets/items/itm016/thumb.png',
+        '/public/assets/items/itm016/thumb.png',
         0
     ),
     (
         'img017',
         'itm017',
         'thumbnail',
-        '/data/assets/items/itm017/thumb.png',
+        '/public/assets/items/itm017/thumb.png',
         0
     ),
     (
         'img018',
         'itm018',
         'thumbnail',
-        '/data/assets/items/itm018/thumb.png',
+        '/public/assets/items/itm018/thumb.png',
         0
     ),
     (
         'img019',
         'itm019',
         'thumbnail',
-        '/data/assets/items/itm019/thumb.png',
+        '/public/assets/items/itm019/thumb.png',
         0
     ),
     (
         'img020',
         'itm020',
         'thumbnail',
-        '/data/assets/items/itm020/thumb.png',
+        '/public/assets/items/itm020/thumb.png',
         0
     ),
     (
         'img021',
         'itm021',
         'thumbnail',
-        '/data/assets/items/itm021/thumb.png',
+        '/public/assets/items/itm021/thumb.png',
         0
     ),
     (
         'img022',
         'itm022',
         'thumbnail',
-        '/data/assets/items/itm022/thumb.png',
+        '/public/assets/items/itm022/thumb.png',
         0
     ),
     (
         'img023',
         'itm023',
         'thumbnail',
-        '/data/assets/items/itm023/thumb.png',
+        '/public/assets/items/itm023/thumb.png',
         0
     ),
     (
         'img024',
         'itm024',
         'thumbnail',
-        '/data/assets/items/itm024/thumb.png',
+        '/public/assets/items/itm024/thumb.png',
         0
     ),
     (
         'img025',
         'itm025',
         'thumbnail',
-        '/data/assets/items/itm025/thumb.png',
+        '/public/assets/items/itm025/thumb.png',
         0
     ),
     (
         'img026',
         'itm026',
         'thumbnail',
-        '/data/assets/items/itm026/thumb.png',
+        '/public/assets/items/itm026/thumb.png',
         0
     ),
     (
         'img027',
         'itm027',
         'thumbnail',
-        '/data/assets/items/itm027/thumb.png',
+        '/public/assets/items/itm027/thumb.png',
         0
     ),
     (
         'img028',
         'itm028',
         'thumbnail',
-        '/data/assets/items/itm028/thumb.png',
+        '/public/assets/items/itm028/thumb.png',
         0
     ),
     (
         'img029',
         'itm029',
         'thumbnail',
-        '/data/assets/items/itm029/thumb.png',
+        '/public/assets/items/itm029/thumb.png',
         0
     ),
     (
         'img030',
         'itm030',
         'thumbnail',
-        '/data/assets/items/itm030/thumb.png',
+        '/public/assets/items/itm030/thumb.png',
         0
     ),
     (
         'img031',
         'itm031',
         'thumbnail',
-        '/data/assets/items/itm031/thumb.png',
+        '/public/assets/items/itm031/thumb.png',
         0
     ),
     (
         'img032',
         'itm032',
         'thumbnail',
-        '/data/assets/items/itm032/thumb.png',
+        '/public/assets/items/itm032/thumb.png',
         0
     ),
     (
         'img033',
         'itm033',
         'thumbnail',
-        '/data/assets/items/itm033/thumb.png',
+        '/public/assets/items/itm033/thumb.png',
         0
     ),
     (
         'img034',
         'itm034',
         'thumbnail',
-        '/data/assets/items/itm034/thumb.png',
+        '/public/assets/items/itm034/thumb.png',
         0
     ),
     (
         'img035',
         'itm035',
         'thumbnail',
-        '/data/assets/items/itm035/thumb.png',
+        '/public/assets/items/itm035/thumb.png',
         0
     ),
     (
         'img036',
         'itm036',
         'thumbnail',
-        '/data/assets/items/itm036/thumb.png',
+        '/public/assets/items/itm036/thumb.png',
         0
     ),
     (
         'img037',
         'itm037',
         'thumbnail',
-        '/data/assets/items/itm037/thumb.png',
+        '/public/assets/items/itm037/thumb.png',
         0
     ),
     (
         'img038',
         'itm038',
         'thumbnail',
-        '/data/assets/items/itm038/thumb.png',
+        '/public/assets/items/itm038/thumb.png',
         0
     ),
     (
         'img039',
         'itm039',
         'thumbnail',
-        '/data/assets/items/itm039/thumb.png',
+        '/public/assets/items/itm039/thumb.png',
         0
     ),
     (
         'img040',
         'itm040',
         'thumbnail',
-        '/data/assets/items/itm040/thumb.png',
+        '/public/assets/items/itm040/thumb.png',
         0
     ),
     (
         'img041',
         'itm041',
         'thumbnail',
-        '/data/assets/items/itm041/thumb.png',
+        '/public/assets/items/itm041/thumb.png',
         0
     ),
     (
         'img042',
         'itm042',
         'thumbnail',
-        '/data/assets/items/itm042/thumb.png',
+        '/public/assets/items/itm042/thumb.png',
         0
     ),
     (
         'img043',
         'itm043',
         'thumbnail',
-        '/data/assets/items/itm043/thumb.png',
+        '/public/assets/items/itm043/thumb.png',
         0
     ),
     (
         'img044',
         'itm044',
         'thumbnail',
-        '/data/assets/items/itm044/thumb.png',
+        '/public/assets/items/itm044/thumb.png',
         0
     ),
     (
         'img045',
         'itm045',
         'thumbnail',
-        '/data/assets/items/itm045/thumb.png',
+        '/public/assets/items/itm045/thumb.png',
         0
     ),
     (
         'img046',
         'itm046',
         'thumbnail',
-        '/data/assets/items/itm046/thumb.png',
+        '/public/assets/items/itm046/thumb.png',
         0
     ),
     (
         'img047',
         'itm047',
         'thumbnail',
-        '/data/assets/items/itm047/thumb.png',
+        '/public/assets/items/itm047/thumb.png',
         0
     ),
     (
         'img048',
         'itm048',
         'thumbnail',
-        '/data/assets/items/itm048/thumb.png',
+        '/public/assets/items/itm048/thumb.png',
         0
     ),
     (
         'img049',
         'itm049',
         'thumbnail',
-        '/data/assets/items/itm049/thumb.png',
+        '/public/assets/items/itm049/thumb.png',
         0
     ),
     (
         'img050',
         'itm050',
         'thumbnail',
-        '/data/assets/items/itm050/thumb.png',
+        '/public/assets/items/itm050/thumb.png',
         0
     );
 

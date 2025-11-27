@@ -8,6 +8,10 @@ import (
 )
 
 func (s *Store) LoadRuntimeConfig(ctx context.Context, cfg *config.Config) {
+	if theme, _, _ := s.Get(ctx, "theme"); theme != "" {
+		cfg.Theme = theme
+	}
+
 	name, _, _ := s.Get(ctx, "store.name")
 	if name != "" {
 		cfg.StoreName = name
@@ -42,6 +46,9 @@ func (s *Store) LoadRuntimeConfig(ctx context.Context, cfg *config.Config) {
 
 // SaveRuntimeConfig updates DB from a RuntimeConfig.
 func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error {
+	if err := s.Set(ctx, "theme", cfg.Theme); err != nil {
+		return err
+	}
 	if err := s.Set(ctx, "store.name", cfg.StoreName); err != nil {
 		return err
 	}

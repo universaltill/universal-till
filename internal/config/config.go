@@ -22,6 +22,7 @@ type Config struct {
 	DBPath     string
 	Locales    Locales
 	LogLevel   string
+	Theme      string
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -32,6 +33,7 @@ func Init() (*Config, error) {
 		// Env:        getenv("UT_ENV", "local"),
 		DBPath:   getenv("UT_DB_PATH", "./data/unitill-pos.db"),
 		LogLevel: getenv("UT_LOG_LEVEL", "info"),
+		Theme:    getenv("UT_THEME", "monarch"),
 	}
 
 	taxRate, _ := strconv.Atoi(getenv("UT_TAX_RATE", "20"))
