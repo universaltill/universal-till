@@ -62,6 +62,12 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		_ = basketView.Render(w, b)
 	})
 
+	// Clear toast for OOB swap.
+	mux.HandleFunc("/ui/clear-toast", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<div id="toast-error"></div>`)
+	})
+
 	// Reset basket for new customer.
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
 		d.engine.Reset()
@@ -231,7 +237,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 				b := d.engine.Basket()
 				basketView, _ := ui.NewBasketView(funcs)
 				var buf bytes.Buffer
-				buf.WriteString(`<div class="toast toast-error" id="toast-error">` + err.Error() + `</div>`)
+				buf.WriteString(`<div class="toast toast-error" id="toast-error" hx-trigger="load delay:2s" hx-swap-oob="true" hx-get="/ui/clear-toast">` + err.Error() + `</div>`)
 				_ = basketView.Render(&buf, b)
 				w.Header().Set("Content-Type", "text/html")
 				w.WriteHeader(http.StatusOK)
