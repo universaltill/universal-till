@@ -247,20 +247,125 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// PriceResolverAdapter now only matches shortcut codes; price is resolved elsewhere.
 type PriceResolverAdapter struct{ Store *ButtonStore }
 
 func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
-	list, err := a.Store.Load()
-	if err != nil {
-		return pos.BasketLine{}, false
+	ctx := context.Background()
+
+	if line, ok := a.resolveVariant(ctx, code); ok {
+		return line, true
 	}
-	for _, b := range list {
-		if strings.EqualFold(b.Code, code) {
-			return pos.BasketLine{SKU: b.Code, Name: b.Label, Qty: 1, PriceCents: 0, ImageURL: b.ImageURL}, true
-		}
+	if line, ok := a.resolveItem(ctx, code); ok {
+		return line, true
+	}
+	if line, ok := a.resolveShortcut(ctx, code); ok {
+		return line, true
 	}
 	return pos.BasketLine{}, false
+}
+
+func (a PriceResolverAdapter) resolveVariant(ctx context.Context, code string) (pos.BasketLine, bool) {
+	row := a.Store.db.QueryRowContext(ctx, `
+SELECT i.id, i.name, v.id, v.name, v.price,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+FROM variant_barcodes vb
+JOIN item_variants v ON v.id = vb.variant_id
+JOIN items i ON i.id = v.item_id
+WHERE vb.barcode = ?
+LIMIT 1
+`, code)
+	var itemID, itemName, variantID, variantName, img sql.NullString
+	var price int64
+	if err := row.Scan(&itemID, &itemName, &variantID, &variantName, &price, &img); err != nil {
+		return pos.BasketLine{}, false
+	}
+	if p, ok := a.Store.currentPrice(ctx, nil, &variantID.String); ok {
+		price = p
+	}
+	name := itemName.String
+	if variantName.String != "" {
+		name = name + " - " + variantName.String
+	}
+	line := pos.BasketLine{SKU: code, Name: name, Qty: 1, PriceCents: price}
+	if img.Valid {
+		line.ImageURL = img.String
+	}
+	return line, true
+}
+
+func (a PriceResolverAdapter) resolveItem(ctx context.Context, code string) (pos.BasketLine, bool) {
+	row := a.Store.db.QueryRowContext(ctx, `
+SELECT i.id, i.name, i.base_price,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+FROM item_barcodes ib
+JOIN items i ON i.id = ib.item_id
+WHERE ib.barcode = ?
+LIMIT 1
+`, code)
+	var itemID, name, img sql.NullString
+	var price int64
+	if err := row.Scan(&itemID, &name, &price, &img); err != nil {
+		return pos.BasketLine{}, false
+	}
+	if p, ok := a.Store.currentPrice(ctx, &itemID.String, nil); ok {
+		price = p
+	}
+	line := pos.BasketLine{SKU: code, Name: name.String, Qty: 1, PriceCents: price}
+	if img.Valid {
+		line.ImageURL = img.String
+	}
+	return line, true
+}
+
+func (a PriceResolverAdapter) resolveShortcut(ctx context.Context, code string) (pos.BasketLine, bool) {
+	row := a.Store.db.QueryRowContext(ctx, `
+SELECT sb.item_id, sb.label, i.base_price,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+FROM shortcut_buttons sb
+JOIN items i ON i.id = sb.item_id
+WHERE sb.barcode = ?
+LIMIT 1
+`, code)
+	var itemID, label, img sql.NullString
+	var price int64
+	if err := row.Scan(&itemID, &label, &price, &img); err != nil {
+		return pos.BasketLine{}, false
+	}
+	if p, ok := a.Store.currentPrice(ctx, &itemID.String, nil); ok {
+		price = p
+	}
+	line := pos.BasketLine{SKU: code, Name: label.String, Qty: 1, PriceCents: price}
+	if img.Valid {
+		line.ImageURL = img.String
+	}
+	return line, true
+}
+
+func (s *ButtonStore) currentPrice(ctx context.Context, itemID *string, variantID *string) (int64, bool) {
+	if itemID == nil && variantID == nil {
+		return 0, false
+	}
+	var row *sql.Row
+	if variantID != nil && *variantID != "" {
+		row = s.db.QueryRowContext(ctx, `
+SELECT price FROM price_history
+WHERE variant_id = ? AND (ends_at IS NULL OR ends_at > datetime('now'))
+ORDER BY datetime(starts_at) DESC
+LIMIT 1
+`, *variantID)
+	} else {
+		row = s.db.QueryRowContext(ctx, `
+SELECT price FROM price_history
+WHERE item_id = ? AND (ends_at IS NULL OR ends_at > datetime('now'))
+ORDER BY datetime(starts_at) DESC
+LIMIT 1
+`, *itemID)
+	}
+	var price int64
+	if err := row.Scan(&price); err == nil {
+		return price, true
+	}
+	return 0, false
 }
 
 func nullIfEmpty(s string) any {
