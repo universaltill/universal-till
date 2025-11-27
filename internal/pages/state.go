@@ -44,6 +44,8 @@ func loadState(ctx context.Context, store *settings.Store, cfg *config.Config) r
 		Country:    get(keyCountry, "GB"),
 		Region:     get(keyRegion, ""),
 		TaxRatePct: cfg.Locales.TaxRate,
+		// default to allowing negative inventory for demo unless explicitly disabled
+		AllowNegativeInventory: true,
 	}
 
 	if v := get(keyTaxInclusive, strconv.FormatBool(cfg.Locales.TaxInclusive)); v != "" {
@@ -54,7 +56,7 @@ func loadState(ctx context.Context, store *settings.Store, cfg *config.Config) r
 			st.TaxRatePct = n
 		}
 	}
-	if v := get("pos.allow_negative_inventory", "false"); v != "" {
+	if v := get("pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
 		st.AllowNegativeInventory, _ = strconv.ParseBool(v)
 	}
 
