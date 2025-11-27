@@ -1,64 +1,414 @@
 -- Create schema_migrations table to track applied migrations
+
+-- 001_init.sql (DDL)
+
+PRAGMA foreign_keys = ON;
+
+-- ----------------------------------------
+-- Schema migrations
+-- ----------------------------------------
 CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    version     INTEGER PRIMARY KEY,
+    applied_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS shortcut_buttons (
-    barcode TEXT PRIMARY KEY,
-    item_id TEXT NOT NULL,
-    label TEXT NOT NULL,
-    image_path TEXT
+-- ----------------------------------------
+-- Global settings
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ----------------------------------------
+-- Tax / catalog lookup tables
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS tax_codes (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL UNIQUE,         -- "Standard VAT", "Zero-rated"
+    rate_basis_points   INTEGER NOT NULL,            -- e.g. 2000 = 20.00%
+    is_active           INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    parent_id   TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (parent_id) REFERENCES categories (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories (parent_id);
+
+CREATE TABLE IF NOT EXISTS brands (
+    id      TEXT PRIMARY KEY,
+    name    TEXT NOT NULL UNIQUE
+);
+
+-- ----------------------------------------
+-- Stock locations
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS stock_locations (
+    id      TEXT PRIMARY KEY,
+    name    TEXT NOT NULL UNIQUE
+);
+
+-- ----------------------------------------
+-- People / tills / payment methods
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS customers (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    phone       TEXT,
+    email       TEXT,
+    address     TEXT,
+    loyalty_no  TEXT UNIQUE,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
+
+CREATE TABLE IF NOT EXISTS registers (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,        -- "Front Till"
+    location_id TEXT,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (location_id) REFERENCES stock_locations (id)
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id          TEXT PRIMARY KEY,
+    username    TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT 'cashier', -- cashier|manager|admin
+    pin_hash    TEXT,
+    is_active   INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS payment_methods (
+    id          TEXT PRIMARY KEY,            -- cash, card, gift, store_credit
+    name        TEXT NOT NULL UNIQUE,
+    type        TEXT NOT NULL,              -- cash|card|voucher|credit
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+-- ----------------------------------------
+-- Items / variants / barcodes / images
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS items (
+    id              TEXT PRIMARY KEY,           -- uuid or your code
+    sku             TEXT UNIQUE,                -- internal SKU / PLU
+    name            TEXT NOT NULL,
+    description     TEXT,
+    category_id     TEXT,
+    brand_id        TEXT,
+    unit            TEXT NOT NULL DEFAULT 'each',  -- each, kg, liter, etc
+    base_price      INTEGER NOT NULL,           -- minor units (pence)
+    cost_price      INTEGER,                    -- optional, minor units
+    tax_code_id     TEXT,                       -- maps to tax table
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    is_weighed      INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (category_id) REFERENCES categories (id),
+    FOREIGN KEY (brand_id)    REFERENCES brands (id),
+    FOREIGN KEY (tax_code_id) REFERENCES tax_codes (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_items_category ON items (category_id);
+CREATE INDEX IF NOT EXISTS idx_items_active   ON items (is_active);
+
+CREATE TABLE IF NOT EXISTS item_barcodes (
+    barcode       TEXT PRIMARY KEY,
+    item_id       TEXT NOT NULL,
+    barcode_type  TEXT DEFAULT 'EAN13',   -- EAN13, UPC, QR, etc
+    is_primary    INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
 );
 
--- plugins
+CREATE INDEX IF NOT EXISTS idx_item_barcodes_item ON item_barcodes (item_id);
 
+CREATE TABLE IF NOT EXISTS item_images (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT 'thumbnail', -- thumbnail, gallery, label
+    path        TEXT NOT NULL,                     -- e.g. /data/assets/items/itm001/thumb.png
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_images_item ON item_images (item_id);
+
+CREATE TABLE IF NOT EXISTS item_variants (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT NOT NULL,   -- parent item
+    sku         TEXT UNIQUE,
+    name        TEXT NOT NULL,   -- "330ml", "500ml Bottle"
+    price       INTEGER NOT NULL, -- minor units
+    cost_price  INTEGER,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_variants_item ON item_variants (item_id);
+
+CREATE TABLE IF NOT EXISTS variant_barcodes (
+    barcode       TEXT PRIMARY KEY,
+    variant_id    TEXT NOT NULL,
+    barcode_type  TEXT DEFAULT 'EAN13',
+    is_primary    INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (variant_id) REFERENCES item_variants (id) ON DELETE CASCADE
+);
+
+-- ----------------------------------------
+-- Inventory / price history
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS inventory (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT,
+    variant_id  TEXT,
+    location_id TEXT NOT NULL,
+    quantity    REAL NOT NULL DEFAULT 0,    -- REAL for weighed items
+    reorder_level REAL DEFAULT 0,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (item_id)     REFERENCES items (id),
+    FOREIGN KEY (variant_id)  REFERENCES item_variants (id),
+    FOREIGN KEY (location_id) REFERENCES stock_locations (id),
+    CHECK (
+        (item_id IS NOT NULL AND variant_id IS NULL)
+        OR (item_id IS NULL AND variant_id IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_item
+    ON inventory (item_id, variant_id, location_id);
+
+CREATE TABLE IF NOT EXISTS price_history (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT,
+    variant_id  TEXT,
+    price       INTEGER NOT NULL,
+    starts_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    ends_at     TEXT,
+    FOREIGN KEY (item_id)     REFERENCES items (id),
+    FOREIGN KEY (variant_id)  REFERENCES item_variants (id),
+    CHECK (
+        (item_id IS NOT NULL AND variant_id IS NULL)
+        OR (item_id IS NULL AND variant_id IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_history_item
+    ON price_history (item_id, variant_id);
+
+-- ----------------------------------------
+-- Sales / lines / payments / discounts / returns
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS sales (
+    id              TEXT PRIMARY KEY,               -- uuid
+    receipt_no      TEXT NOT NULL UNIQUE,           -- visible receipt number
+    status          TEXT NOT NULL DEFAULT 'completed', -- open|parked|completed|voided|refunded
+    sale_type       TEXT NOT NULL DEFAULT 'sale',   -- sale|return
+    register_id     TEXT,
+    cashier_id      TEXT,
+    customer_id     TEXT,
+    currency        TEXT NOT NULL DEFAULT 'GBP',
+    subtotal        INTEGER NOT NULL,              -- sum lines before tax/discount
+    discount_total  INTEGER NOT NULL DEFAULT 0,
+    tax_total       INTEGER NOT NULL DEFAULT 0,
+    total           INTEGER NOT NULL,              -- final total
+    rounding        INTEGER NOT NULL DEFAULT 0,    -- +/- pennies
+    note            TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at    TEXT,
+    voided_at       TEXT,
+    FOREIGN KEY (customer_id) REFERENCES customers (id),
+    FOREIGN KEY (register_id) REFERENCES registers (id),
+    FOREIGN KEY (cashier_id)  REFERENCES users (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sales_created ON sales (created_at);
+CREATE INDEX IF NOT EXISTS idx_sales_status  ON sales (status);
+
+CREATE TABLE IF NOT EXISTS sale_lines (
+    id               TEXT PRIMARY KEY,
+    sale_id          TEXT NOT NULL,
+    line_no          INTEGER NOT NULL,
+    item_id          TEXT,
+    variant_id       TEXT,
+    name_snapshot    TEXT NOT NULL,  -- item name at time of sale
+    sku_snapshot     TEXT,
+    barcode_snapshot TEXT,
+    quantity         REAL NOT NULL,  -- REAL for weighed items
+    unit_price       INTEGER NOT NULL, -- price before line discount
+    line_discount    INTEGER NOT NULL DEFAULT 0,
+    tax_rate_bp      INTEGER NOT NULL, -- basis points
+    tax_amount       INTEGER NOT NULL,
+    total_before_tax INTEGER NOT NULL,
+    total_after_tax  INTEGER NOT NULL,
+    FOREIGN KEY (sale_id)    REFERENCES sales (id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id)    REFERENCES items (id),
+    FOREIGN KEY (variant_id) REFERENCES item_variants (id),
+    CHECK (
+        (item_id IS NOT NULL AND variant_id IS NULL)
+        OR (item_id IS NULL AND variant_id IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_sale_lines_sale_line
+    ON sale_lines (sale_id, line_no);
+
+CREATE TABLE IF NOT EXISTS payments (
+    id          TEXT PRIMARY KEY,
+    sale_id     TEXT NOT NULL,
+    method_id   TEXT NOT NULL,      -- cash/card/etc
+    amount      INTEGER NOT NULL,   -- minor units
+    currency    TEXT NOT NULL DEFAULT 'GBP',
+    reference   TEXT,               -- card auth code, txn id
+    change_given INTEGER NOT NULL DEFAULT 0,
+    paid_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (sale_id)  REFERENCES sales (id) ON DELETE CASCADE,
+    FOREIGN KEY (method_id) REFERENCES payment_methods (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_payments_sale ON payments (sale_id);
+
+CREATE TABLE IF NOT EXISTS sale_discounts (
+    id          TEXT PRIMARY KEY,
+    sale_id     TEXT NOT NULL,
+    line_id     TEXT,          -- null means whole-sale discount
+    type        TEXT NOT NULL, -- percent|fixed
+    value       INTEGER NOT NULL,  -- percent in bp or fixed minor units
+    amount      INTEGER NOT NULL,  -- computed amount applied
+    reason      TEXT,
+    FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE,
+    FOREIGN KEY (line_id) REFERENCES sale_lines (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sale_discounts_sale ON sale_discounts (sale_id);
+
+CREATE TABLE IF NOT EXISTS sale_links (
+    id               TEXT PRIMARY KEY,
+    sale_id          TEXT NOT NULL,  -- the return sale
+    original_sale_id TEXT NOT NULL,
+    reason           TEXT,
+    FOREIGN KEY (sale_id)          REFERENCES sales (id) ON DELETE CASCADE,
+    FOREIGN KEY (original_sale_id) REFERENCES sales (id)
+);
+
+-- ----------------------------------------
+-- Shifts / cash drawer
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS shifts (
+    id            TEXT PRIMARY KEY,
+    register_id   TEXT NOT NULL,
+    cashier_id    TEXT NOT NULL,
+    opened_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    closed_at     TEXT,
+    opening_cash  INTEGER NOT NULL DEFAULT 0,
+    closing_cash  INTEGER,
+    expected_cash INTEGER,
+    note          TEXT,
+    FOREIGN KEY (register_id) REFERENCES registers (id),
+    FOREIGN KEY (cashier_id)  REFERENCES users (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shifts_register_open
+    ON shifts (register_id, opened_at);
+
+-- ----------------------------------------
+-- Stock movements
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS stock_movements (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT,
+    variant_id  TEXT,
+    location_id TEXT NOT NULL,
+    sale_line_id TEXT,           -- nullable for manual adjustments
+    type        TEXT NOT NULL,   -- sale|return|adjust|receive|waste|transfer
+    quantity    REAL NOT NULL,   -- negative for sale, positive for return/receive
+    cost_price  INTEGER,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (item_id)      REFERENCES items (id),
+    FOREIGN KEY (variant_id)   REFERENCES item_variants (id),
+    FOREIGN KEY (location_id)  REFERENCES stock_locations (id),
+    FOREIGN KEY (sale_line_id) REFERENCES sale_lines (id),
+    CHECK (
+        (item_id IS NOT NULL AND variant_id IS NULL)
+        OR (item_id IS NULL AND variant_id IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_movements_item
+    ON stock_movements (item_id, variant_id, created_at);
+
+-- ----------------------------------------
+-- Audit log
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          TEXT PRIMARY KEY,
+    actor_id    TEXT,            -- user who did action
+    entity_type TEXT NOT NULL,   -- sale|item|price|inventory|shift|plugin
+    entity_id   TEXT NOT NULL,
+    action      TEXT NOT NULL,   -- create|update|void|refund|install|uninstall
+    data_json   TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (actor_id) REFERENCES users (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_entity
+    ON audit_log (entity_type, entity_id);
+
+-- ----------------------------------------
+-- Plugin catalog & installed plugins
+-- ----------------------------------------
 CREATE TABLE IF NOT EXISTS plugin_catalog (
-    id TEXT NOT NULL, -- plugin id
-    version TEXT NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
-    author TEXT,
-    website TEXT,
-    repository_url TEXT,
-    runtime TEXT NOT NULL, -- go|wasm|node|python|native
-    entrypoint TEXT NOT NULL,
-    package_url TEXT NOT NULL, -- where to download
-    sha256 TEXT NOT NULL, -- integrity check
-    signature TEXT, -- optional signed manifest
-    size_bytes INTEGER,
-    min_pos_version TEXT NOT NULL, -- compatibility floor
-    max_pos_version TEXT, -- optional ceiling
-    api_version TEXT NOT NULL, -- plugin API contract version
-    tags_json TEXT, -- ["loyalty","payments"]
-    capabilities_json TEXT, -- ["payments:charge","devices:usb"]
-    published_at TEXT NOT NULL,
-    is_deprecated INTEGER NOT NULL DEFAULT 0,
+    id                TEXT NOT NULL,  -- plugin id
+    version           TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    description       TEXT,
+    author            TEXT,
+    website           TEXT,
+    repository_url    TEXT,
+    runtime           TEXT NOT NULL,  -- go|wasm|node|python|native
+    entrypoint        TEXT NOT NULL,
+    package_url       TEXT NOT NULL,  -- where to download
+    sha256            TEXT NOT NULL,  -- integrity check
+    signature         TEXT,           -- optional signed manifest
+    size_bytes        INTEGER,
+    min_pos_version   TEXT NOT NULL,  -- compatibility floor
+    max_pos_version   TEXT,           -- optional ceiling
+    api_version       TEXT NOT NULL,  -- plugin API contract version
+    tags_json         TEXT,           -- ["loyalty","payments"]
+    capabilities_json TEXT,           -- ["payments:charge","devices:usb"]
+    published_at      TEXT NOT NULL,
+    is_deprecated     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (id, version)
 );
 
 CREATE TABLE IF NOT EXISTS plugins (
-    id TEXT PRIMARY KEY, -- e.g. "com.universaltill.loyalty"
-    name TEXT NOT NULL,
-    version TEXT NOT NULL, -- semver "1.2.0"
-    install_state TEXT NOT NULL DEFAULT 'installed', -- installed|disabled|broken|installing|uninstalling
-    description TEXT,
-    author TEXT,
-    website TEXT,
-    entrypoint TEXT NOT NULL, -- executable / wasm / go module / js bundle
-    runtime TEXT NOT NULL DEFAULT 'go', -- go|wasm|node|python|native
+    id                TEXT PRIMARY KEY,       -- e.g. "com.universaltill.loyalty"
+    name              TEXT NOT NULL,
+    version           TEXT NOT NULL,          -- semver "1.2.0"
+    install_state     TEXT NOT NULL DEFAULT 'installed', -- installed|disabled|broken|installing|uninstalling
+    description       TEXT,
+    author            TEXT,
+    website           TEXT,
+    entrypoint        TEXT NOT NULL,          -- executable / wasm / go module / js bundle
+    runtime           TEXT NOT NULL DEFAULT 'go', -- go|wasm|node|python|native
     installed_from_url TEXT,
-    installed_sha256 TEXT,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    trust_level TEXT NOT NULL DEFAULT 'untrusted', -- untrusted|trusted|system
-    installed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (id, version) FOREIGN KEY (id, version) REFERENCES plugin_catalog (id, version)
+    installed_sha256  TEXT,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    trust_level       TEXT NOT NULL DEFAULT 'untrusted', -- untrusted|trusted|system
+    installed_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (id, version),
+    FOREIGN KEY (id, version) REFERENCES plugin_catalog (id, version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_plugins_active ON plugins (is_active);
-
 
 CREATE TABLE IF NOT EXISTS plugin_entries (
     id              TEXT PRIMARY KEY,                 -- uuid
@@ -72,309 +422,99 @@ CREATE TABLE IF NOT EXISTS plugin_entries (
     sort_order      INTEGER NOT NULL DEFAULT 0,
     is_active       INTEGER NOT NULL DEFAULT 1,
 
--- Navigation / placement (nullable depending on type)
-parent_page_key TEXT, -- for buttons/popups: which page they belong to
-menu_group TEXT, -- for pages: top menu group like "Sales", "Admin"
-route TEXT, -- for pages: internal route "/loyalty"
-target_action TEXT, -- for buttons: action name to invoke
-trigger_event TEXT, -- for popups: event name (e.g. "sale.completed")
+    -- Navigation / placement (nullable depending on type)
+    parent_page_key TEXT,                             -- for buttons/popups: which page they belong to
+    menu_group      TEXT,                             -- for pages: top menu group like "Sales", "Admin"
+    route           TEXT,                             -- for pages: internal route "/loyalty"
+    target_action   TEXT,                             -- for buttons/actions: action name to invoke
+    trigger_event   TEXT,                             -- for popups/hooks: event name (e.g. "sale.completed")
 
--- Arbitrary plugin-defined config, stored as JSON text
-
-
-config_json     TEXT,
+    -- Arbitrary plugin-defined config, stored as JSON text
+    config_json     TEXT,
 
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
 
-    FOREIGN KEY(plugin_id) REFERENCES plugins(id) ON DELETE CASCADE,
-    UNIQUE(plugin_id, key),
+    FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE,
+    UNIQUE (plugin_id, key),
 
-    CHECK (type IN ('page','button','popup','payment','device'))
+    CHECK (type IN (
+        'page',
+        'button',
+        'popup',
+        'payment',
+        'device',
+        'integration',
+        'report',
+        'pricing',
+        'tax',
+        'import',
+        'export',
+        'hardware',
+        'background_job',
+        'scheduler',
+        'receipt_template',
+        'customer_facing',
+        'auth',
+        'notification',
+        'delivery'
+    ))
 );
 
-CREATE INDEX IF NOT EXISTS idx_plugin_entries_plugin ON plugin_entries (plugin_id);
-
-CREATE INDEX IF NOT EXISTS idx_plugin_entries_type ON plugin_entries(type);
-
-CREATE INDEX IF NOT EXISTS idx_plugin_entries_parent_page ON plugin_entries (parent_page_key);
+CREATE INDEX IF NOT EXISTS idx_plugin_entries_plugin       ON plugin_entries (plugin_id);
+CREATE INDEX IF NOT EXISTS idx_plugin_entries_type         ON plugin_entries (type);
+CREATE INDEX IF NOT EXISTS idx_plugin_entries_parent_page  ON plugin_entries (parent_page_key);
 
 CREATE TABLE IF NOT EXISTS plugin_settings (
-    id TEXT PRIMARY KEY, -- uuid
-    plugin_id TEXT NOT NULL,
-    key TEXT NOT NULL, -- e.g. "apiKey", "terminalIp"
-    value_json TEXT NOT NULL, -- store typed configs
-    scope TEXT NOT NULL DEFAULT 'global', -- global|register|user
-    scope_id TEXT, -- register_id/user_id if scoped
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    id          TEXT PRIMARY KEY,        -- uuid
+    plugin_id   TEXT NOT NULL,
+    key         TEXT NOT NULL,           -- e.g. "apiKey", "terminalIp"
+    value_json  TEXT NOT NULL,           -- store typed configs
+    scope       TEXT NOT NULL DEFAULT 'global', -- global|register|user
+    scope_id    TEXT,                    -- register_id/user_id if scoped
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE,
-    UNIQUE (
-        plugin_id,
-        key,
-        scope,
-        scope_id
-    )
+    UNIQUE (plugin_id, key, scope, scope_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_plugin_settings_plugin ON plugin_settings (plugin_id);
 
 CREATE TABLE IF NOT EXISTS plugin_hooks (
-    id TEXT PRIMARY KEY,
-    plugin_id TEXT NOT NULL,
-    event TEXT NOT NULL, -- e.g. "sale.completed"
-    action TEXT NOT NULL, -- e.g. "loyalty.awardPoints"
-    priority INTEGER NOT NULL DEFAULT 100,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    config_json TEXT, -- optional per-hook config
+    id          TEXT PRIMARY KEY,
+    plugin_id   TEXT NOT NULL,
+    event       TEXT NOT NULL,      -- e.g. "sale.completed"
+    action      TEXT NOT NULL,      -- e.g. "loyalty.awardPoints"
+    priority    INTEGER NOT NULL DEFAULT 100,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    config_json TEXT,               -- optional per-hook config
     FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE,
     UNIQUE (plugin_id, event, action)
 );
 
-CREATE INDEX IF NOT EXISTS idx_plugin_hooks_event ON plugin_hooks(event);
+CREATE INDEX IF NOT EXISTS idx_plugin_hooks_event ON plugin_hooks (event);
 
 CREATE TABLE IF NOT EXISTS plugin_permissions (
-    id TEXT PRIMARY KEY,
-    plugin_id TEXT NOT NULL,
-    permission TEXT NOT NULL, -- e.g. "payments:charge", "devices:usb", "sales:read"
-    granted INTEGER NOT NULL DEFAULT 0,
+    id          TEXT PRIMARY KEY,
+    plugin_id   TEXT NOT NULL,
+    permission  TEXT NOT NULL,      -- e.g. "payments:charge", "devices:usb", "sales:read"
+    granted     INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE,
     UNIQUE (plugin_id, permission)
 );
 
--- Global key/value settings for the POS instance
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS items (
-    id TEXT PRIMARY KEY, -- uuid or your code
-    sku TEXT UNIQUE, -- internal SKU / PLU
-    name TEXT NOT NULL,
-    description TEXT,
-    category_id TEXT,
-    brand_id TEXT,
-    unit TEXT NOT NULL DEFAULT 'each', -- each, kg, liter, etc
-    base_price INTEGER NOT NULL, -- cents/pence to avoid float
-    cost_price INTEGER, -- optional, cents
-    tax_code_id TEXT, -- maps to tax table
-    is_active INTEGER NOT NULL DEFAULT 1,
-    is_weighed INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (category_id) REFERENCES categories (id),
-    FOREIGN KEY (brand_id) REFERENCES brands (id),
-    FOREIGN KEY (tax_code_id) REFERENCES tax_codes (id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_items_category ON items (category_id);
-
-CREATE INDEX IF NOT EXISTS idx_items_active ON items (is_active);
-
-CREATE TABLE IF NOT EXISTS item_barcodes (
-    barcode TEXT PRIMARY KEY,
-    item_id TEXT NOT NULL,
-    barcode_type TEXT DEFAULT 'EAN13', -- EAN13, UPC, QR, etc
-    is_primary INTEGER NOT NULL DEFAULT 0,
+-- ----------------------------------------
+-- Shortcut buttons (POS UI shortcuts)
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS shortcut_buttons (
+    barcode     TEXT PRIMARY KEY,
+    item_id     TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    image_path  TEXT,
     FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_item_barcodes_item ON item_barcodes (item_id);
+-- Insert defaults and samples --------------------------------
 
-CREATE TABLE IF NOT EXISTS categories (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    parent_id TEXT,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (parent_id) REFERENCES categories (id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories (parent_id);
-
-CREATE TABLE IF NOT EXISTS brands (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS item_images (
-    id TEXT PRIMARY KEY,
-    item_id TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'thumbnail', -- thumbnail, gallery, label
-    path TEXT NOT NULL, -- e.g. assets/items/coke.png
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_item_images_item ON item_images (item_id);
-
-CREATE TABLE IF NOT EXISTS tax_codes (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE, -- "Standard VAT", "Zero-rated"
-    rate_basis_points INTEGER NOT NULL, -- e.g. 2000 = 20.00%
-    is_active INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS item_variants (
-    id TEXT PRIMARY KEY,
-    item_id TEXT NOT NULL, -- parent item
-    sku TEXT UNIQUE,
-    name TEXT NOT NULL, -- "330ml", "500ml Bottle"
-    price INTEGER NOT NULL, -- cents
-    cost_price INTEGER,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_variants_item ON item_variants (item_id);
-
-CREATE TABLE IF NOT EXISTS variant_barcodes (
-    barcode TEXT PRIMARY KEY,
-    variant_id TEXT NOT NULL,
-    barcode_type TEXT DEFAULT 'EAN13',
-    is_primary INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (variant_id) REFERENCES item_variants (id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS stock_locations (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS inventory (
-    id TEXT PRIMARY KEY,
-    item_id TEXT,
-    variant_id TEXT,
-    location_id TEXT NOT NULL,
-    quantity REAL NOT NULL DEFAULT 0, -- REAL because weight items
-    reorder_level REAL DEFAULT 0,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (item_id) REFERENCES items (id),
-    FOREIGN KEY (variant_id) REFERENCES item_variants (id),
-    FOREIGN KEY (location_id) REFERENCES stock_locations (id),
-    CHECK (
-        (
-            item_id IS NOT NULL
-            AND variant_id IS NULL
-        )
-        OR (
-            item_id IS NULL
-            AND variant_id IS NOT NULL
-        )
-    )
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_item ON inventory (
-    item_id,
-    variant_id,
-    location_id
-);
-
-CREATE TABLE IF NOT EXISTS price_history (
-    id TEXT PRIMARY KEY,
-    item_id TEXT,
-    variant_id TEXT,
-    price INTEGER NOT NULL,
-    starts_at TEXT NOT NULL DEFAULT (datetime('now')),
-    ends_at TEXT,
-    FOREIGN KEY (item_id) REFERENCES items (id),
-    FOREIGN KEY (variant_id) REFERENCES item_variants (id),
-    CHECK (
-        (
-            item_id IS NOT NULL
-            AND variant_id IS NULL
-        )
-        OR (
-            item_id IS NULL
-            AND variant_id IS NOT NULL
-        )
-    )
-);
-
-CREATE INDEX IF NOT EXISTS idx_price_history_item ON price_history (item_id, variant_id);
-
-CREATE TABLE IF NOT EXISTS sales (
-    id TEXT PRIMARY KEY, -- uuid
-    receipt_no TEXT NOT NULL UNIQUE, -- visible receipt number
-    status TEXT NOT NULL DEFAULT 'completed', -- open|parked|completed|voided|refunded
-    sale_type TEXT NOT NULL DEFAULT 'sale', -- sale|return
-    register_id TEXT, -- which till
-    cashier_id TEXT, -- user who sold
-    customer_id TEXT, -- optional
-    currency TEXT NOT NULL DEFAULT 'GBP',
-    subtotal INTEGER NOT NULL, -- sum lines before tax/discount
-    discount_total INTEGER NOT NULL DEFAULT 0,
-    tax_total INTEGER NOT NULL DEFAULT 0,
-    total INTEGER NOT NULL, -- final total
-    rounding INTEGER NOT NULL DEFAULT 0, -- +/- pennies
-    note TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT,
-    voided_at TEXT,
-    FOREIGN KEY (customer_id) REFERENCES customers (id),
-    FOREIGN KEY (register_id) REFERENCES registers (id),
-    FOREIGN KEY (cashier_id) REFERENCES users (id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_sales_created ON sales (created_at);
-
-CREATE INDEX IF NOT EXISTS idx_sales_status ON sales (status);
-
-CREATE TABLE IF NOT EXISTS sale_lines (
-    id TEXT PRIMARY KEY,
-    sale_id TEXT NOT NULL,
-    line_no INTEGER NOT NULL,
-    item_id TEXT,
-    variant_id TEXT,
-    name_snapshot TEXT NOT NULL, -- item name at time of sale
-    sku_snapshot TEXT,
-    barcode_snapshot TEXT,
-    quantity REAL NOT NULL, -- REAL for weighed items
-    unit_price INTEGER NOT NULL, -- price before line discount
-    line_discount INTEGER NOT NULL DEFAULT 0,
-    tax_rate_bp INTEGER NOT NULL, -- VAT rate at time of sale (basis points)
-    tax_amount INTEGER NOT NULL,
-    total_before_tax INTEGER NOT NULL,
-    total_after_tax INTEGER NOT NULL,
-    FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE,
-    FOREIGN KEY (item_id) REFERENCES items (id),
-    FOREIGN KEY (variant_id) REFERENCES item_variants (id),
-    CHECK (
-        (
-            item_id IS NOT NULL
-            AND variant_id IS NULL
-        )
-        OR (
-            item_id IS NULL
-            AND variant_id IS NOT NULL
-        )
-    )
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_sale_lines_sale_line ON sale_lines (sale_id, line_no);
-
-CREATE TABLE IF NOT EXISTS payments (
-    id TEXT PRIMARY KEY,
-    sale_id TEXT NOT NULL,
-    method_id TEXT NOT NULL, -- cash/card/etc
-    amount INTEGER NOT NULL, -- paid amount
-    currency TEXT NOT NULL DEFAULT 'GBP',
-    reference TEXT, -- card auth code, txn id
-    change_given INTEGER NOT NULL DEFAULT 0,
-    paid_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE,
-    FOREIGN KEY (method_id) REFERENCES payment_methods (id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_payments_sale ON payments (sale_id);
-
-CREATE TABLE IF NOT EXISTS payment_methods (
-    id TEXT PRIMARY KEY, -- cash, card, gift, store_credit
-    name TEXT NOT NULL UNIQUE,
-    type TEXT NOT NULL, -- cash|card|voucher|credit
-    is_active INTEGER NOT NULL DEFAULT 1,
-    sort_order INTEGER NOT NULL DEFAULT 0
-);
 
 INSERT OR IGNORE INTO
     payment_methods (id, name, type, sort_order)
@@ -387,125 +527,12 @@ VALUES ('cash', 'Cash', 'cash', 1),
         3
     );
 
-CREATE TABLE IF NOT EXISTS customers (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    phone TEXT,
-    email TEXT,
-    address TEXT,
-    loyalty_no TEXT UNIQUE,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
-
-CREATE TABLE IF NOT EXISTS registers (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE, -- "Front Till"
-    location_id TEXT,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    FOREIGN KEY (location_id) REFERENCES stock_locations (id)
-);
-
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'cashier', -- cashier|manager|admin
-    pin_hash TEXT, -- if you want PIN login
-    is_active INTEGER NOT NULL DEFAULT 1
-);
-
--- Shifts / cash drawer
--- Tracks opening float, cash drops, end-of-day.
-
-CREATE TABLE IF NOT EXISTS shifts (
-    id TEXT PRIMARY KEY,
-    register_id TEXT NOT NULL,
-    cashier_id TEXT NOT NULL, -- opener
-    opened_at TEXT NOT NULL DEFAULT (datetime('now')),
-    closed_at TEXT,
-    opening_cash INTEGER NOT NULL DEFAULT 0,
-    closing_cash INTEGER,
-    expected_cash INTEGER,
-    note TEXT,
-    FOREIGN KEY (register_id) REFERENCES registers (id),
-    FOREIGN KEY (cashier_id) REFERENCES users (id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_shifts_register_open ON shifts (register_id, opened_at);
-
-CREATE TABLE IF NOT EXISTS sale_discounts (
-    id TEXT PRIMARY KEY,
-    sale_id TEXT NOT NULL,
-    line_id TEXT, -- null means whole-sale discount
-    type TEXT NOT NULL, -- percent|fixed
-    value INTEGER NOT NULL, -- percent in bp or fixed pennies
-    amount INTEGER NOT NULL, -- computed amount applied
-    reason TEXT,
-    FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE,
-    FOREIGN KEY (line_id) REFERENCES sale_lines (id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_sale_discounts_sale ON sale_discounts (sale_id);
-
-CREATE TABLE IF NOT EXISTS sale_links (
-    id TEXT PRIMARY KEY,
-    sale_id TEXT NOT NULL, -- the return sale
-    original_sale_id TEXT NOT NULL,
-    reason TEXT,
-    FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE,
-    FOREIGN KEY (original_sale_id) REFERENCES sales (id)
-);
-
-CREATE TABLE IF NOT EXISTS stock_movements (
-    id TEXT PRIMARY KEY,
-    item_id TEXT,
-    variant_id TEXT,
-    location_id TEXT NOT NULL,
-    sale_line_id TEXT, -- nullable for manual adjustments
-    type TEXT NOT NULL, -- sale|return|adjust|receive|waste|transfer
-    quantity REAL NOT NULL, -- negative for sale, positive for return/receive
-    cost_price INTEGER, -- snapshot if needed
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (item_id) REFERENCES items (id),
-    FOREIGN KEY (variant_id) REFERENCES item_variants (id),
-    FOREIGN KEY (location_id) REFERENCES stock_locations (id),
-    FOREIGN KEY (sale_line_id) REFERENCES sale_lines (id),
-    CHECK (
-        (
-            item_id IS NOT NULL
-            AND variant_id IS NULL
-        )
-        OR (
-            item_id IS NULL
-            AND variant_id IS NOT NULL
-        )
-    )
-);
-
-CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements (
-    item_id,
-    variant_id,
-    created_at
-);
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    actor_id TEXT, -- user who did action
-    entity_type TEXT NOT NULL, -- sale|item|price|inventory|shift
-    entity_id TEXT NOT NULL,
-    action TEXT NOT NULL, -- create|update|void|refund
-    data_json TEXT, -- before/after snapshot
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (actor_id) REFERENCES users (id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log (entity_type, entity_id);
-
--- sample items:
-
-PRAGMA foreign_keys = ON;
+-- some defaults
+INSERT OR IGNORE INTO
+    settings (key, value)
+VALUES ('store.name', 'My Store'),
+    ('store.currency', 'GBP'),
+    ('pos.tax_inclusive', 'false');
 
 -- ---------------------------
 -- Stock locations
@@ -515,6 +542,7 @@ INSERT INTO
 VALUES ('loc_main', 'Main Store'),
     ('loc_back', 'Back Store'),
     ('loc_wh', 'Warehouse');
+
 
 -- ---------------------------
 -- Tax codes (basis points)
@@ -3263,9 +3291,3 @@ VALUES (
         NULL
     );
 
--- some defaults
-INSERT OR IGNORE INTO
-    settings (key, value)
-VALUES ('store.name', 'My Store'),
-    ('store.currency', 'GBP'),
-    ('pos.tax_inclusive', 'false');
