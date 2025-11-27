@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"text/template"
 
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -43,6 +44,29 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		b, _ := d.engine.ScanQty(code, qty)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
+		_ = basketView.Render(w, b)
+	})
+
+	// Remove a line by SKU/code.
+	mux.HandleFunc("/api/pos/remove", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		code := strings.TrimSpace(r.Form.Get("code"))
+		if code == "" {
+			http.Error(w, "code required", http.StatusBadRequest)
+			return
+		}
+		d.engine.Remove(code)
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		_ = basketView.Render(w, d.engine.Lines())
+	})
+
+	// Reset basket for new customer.
+	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
+		d.engine.Reset()
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		b, _ := d.engine.Scan("")
 		_ = basketView.Render(w, b)
 	})
 

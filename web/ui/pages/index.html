@@ -1,11 +1,11 @@
 {{ define "content" }}
 <h1>{{ T "app.name" }}</h1>
 
-<div class="pos-container">
-  <!-- Basket loads on page load -->
-  <div hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
+  <div class="pos-container">
+    <!-- Basket loads on page load -->
+    <div hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
 
-  <!-- Product buttons panel loads on page load -->
+    <!-- Product buttons panel loads on page load -->
   <div hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 
   <!-- Tender and Scan -->
@@ -25,6 +25,7 @@
     <div class="grid">
       <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
       <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
+      <button class="btn secondary" hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">New Customer</button>
     </div>
   </div>
 </div>

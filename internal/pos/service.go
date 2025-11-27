@@ -100,6 +100,19 @@ func (s *Service) Lines() []BasketLine {
 	return append([]BasketLine{}, s.lines...)
 }
 
+// Remove removes a line by SKU (or item/variant ID fallback) and recomputes totals.
+func (s *Service) Remove(sku string) {
+	filtered := s.lines[:0]
+	for _, l := range s.lines {
+		if l.SKU == sku {
+			continue
+		}
+		filtered = append(filtered, l)
+	}
+	s.lines = filtered
+	s.recomputeTotals()
+}
+
 // Reset clears basket and lines after completion.
 func (s *Service) Reset() {
 	s.basket = Basket{}
