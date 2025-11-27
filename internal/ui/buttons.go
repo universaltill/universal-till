@@ -1,142 +1,167 @@
 package ui
 
 import (
-	"encoding/json"
+	"context"
+	"database/sql"
 	"errors"
-	"fmt"
 	"html/template"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 
-	"github.com/universaltill/universal-till/internal/pos"
+	pos "github.com/universaltill/universal-till/internal/pos"
 )
 
+// Button represents a shortcut button backed by the shortcut_buttons table.
 type Button struct {
-	Label      string `json:"label"`
-	Code       string `json:"code"`
-	PriceCents int64  `json:"priceCents"`
-	ImageURL   string `json:"imageUrl,omitempty"`
+	Label    string `json:"label"`
+	Code     string `json:"code"` // barcode/PLU associated with the shortcut
+	ItemID   string `json:"itemId"`
+	ImageURL string `json:"imageUrl,omitempty"`
 }
 
-// ButtonVM is the view-model passed to the template
+// ButtonVM is the view-model passed to templates.
 type ButtonVM struct {
-	Label      string `json:"label"`
-	Code       string `json:"code"`
-	PriceCents int64  `json:"priceCents"`
-	Price      string `json:"price"` // Pre-formatted string (e.g. "2.50")
-	ImageURL   string `json:"imageUrl,omitempty"`
+	Label    string `json:"label"`
+	Code     string `json:"code"`
+	ItemID   string `json:"itemId"`
+	ImageURL string `json:"imageUrl,omitempty"`
 }
 
 func ToVM(b []Button) []ButtonVM {
 	out := make([]ButtonVM, 0, len(b))
 	for _, x := range b {
 		out = append(out, ButtonVM{
-			Label:      x.Label,
-			Code:       x.Code,
-			PriceCents: x.PriceCents,
-			Price:      fmt.Sprintf("%.2f", float64(x.PriceCents)/100.0),
-			ImageURL:   x.ImageURL,
+			Label:    x.Label,
+			Code:     x.Code,
+			ItemID:   x.ItemID,
+			ImageURL: x.ImageURL,
 		})
 	}
 	return out
 }
 
-// ButtonStore defines persistence for quick buttons.
-type ButtonStore interface {
-	Load() ([]Button, error)
-	Save([]Button) error
-	Add(Button) error
-	Remove(code string) error
+// ButtonStore persists shortcut buttons in the shortcut_buttons table.
+type ButtonStore struct {
+	db *sql.DB
 }
 
-type FileButtonStore struct {
-	path string
-	mu   sync.RWMutex
+func NewButtonStore(db *sql.DB) *ButtonStore {
+	return &ButtonStore{db: db}
 }
 
-// NewButtonStore selects storage by env UT_STORE ("sqlite" to use SQLite). Defaults to file JSON.
-func NewButtonStore(dataDir string, database string) ButtonStore {
-	// if os.Getenv("UT_STORE") == "sqlite" {
-	if s, err := NewSQLiteButtonStore(filepath.Join(dataDir, database)); err == nil {
-		return s
+type SearchResult struct {
+	ItemID  string
+	Name    string
+	Barcode string
+	Image   string
+}
+
+// SearchItems finds items (and primary barcodes) to add as shortcuts.
+func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit int) ([]SearchResult, error) {
+	like := "%" + strings.TrimSpace(q) + "%"
+	if limit <= 0 {
+		limit = 10
 	}
-	// }
-	return &FileButtonStore{path: filepath.Join(dataDir, "buttons.json")}
-}
-
-func (s *FileButtonStore) Load() ([]Button, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	b, err := os.ReadFile(s.path)
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT i.id,
+       i.name,
+       (
+         SELECT ib.barcode
+         FROM item_barcodes ib
+         WHERE ib.item_id = i.id
+         ORDER BY ib.is_primary DESC
+         LIMIT 1
+       ) AS barcode,
+       COALESCE(img.path, '')
+FROM items i
+LEFT JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
+WHERE i.is_active = 1 AND (
+	  i.name LIKE ?
+	  OR i.sku LIKE ?
+	  OR EXISTS (SELECT 1 FROM item_barcodes ib2 WHERE ib2.item_id = i.id AND ib2.barcode LIKE ?)
+)
+ORDER BY i.name
+LIMIT ? OFFSET ?
+`, like, like, like, limit, offset)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []Button{}, nil
+		return nil, err
+	}
+	defer rows.Close()
+	var res []SearchResult
+	for rows.Next() {
+		var r SearchResult
+		if err := rows.Scan(&r.ItemID, &r.Name, &r.Barcode, &r.Image); err != nil {
+			return nil, err
 		}
-		return nil, err
+		res = append(res, r)
 	}
-	var out []Button
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return res, rows.Err()
 }
 
-func (s *FileButtonStore) Save(list []Button) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b, err := json.MarshalIndent(list, "", "  ")
+func (s *ButtonStore) Load() ([]Button, error) {
+	rows, err := s.db.Query(`SELECT label, barcode, item_id, image_path FROM shortcut_buttons ORDER BY label`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Button
+	for rows.Next() {
+		var b Button
+		var img sql.NullString
+		if err := rows.Scan(&b.Label, &b.Code, &b.ItemID, &img); err != nil {
+			return nil, err
+		}
+		if img.Valid {
+			b.ImageURL = img.String
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *ButtonStore) Save(list []Button) error {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if _, err := tx.Exec(`DELETE FROM shortcut_buttons`); err != nil {
+		tx.Rollback()
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	stmt, err := tx.Prepare(`INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for _, b := range list {
+		if _, err := stmt.Exec(b.Code, b.Label, b.ItemID, nullIfEmpty(b.ImageURL)); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
-func (s *FileButtonStore) Add(btn Button) error {
+func (s *ButtonStore) Add(btn Button) error {
 	btn.Label = strings.TrimSpace(btn.Label)
 	btn.Code = strings.TrimSpace(btn.Code)
-	if btn.Label == "" || btn.Code == "" {
-		return fmt.Errorf("label and code are required")
+	btn.ItemID = strings.TrimSpace(btn.ItemID)
+	if btn.Label == "" || btn.Code == "" || btn.ItemID == "" {
+		return errors.New("label, code, and itemId are required")
 	}
-
-	list, err := s.Load()
-	if err != nil {
-		return err
-	}
-	// replace if same code exists
-	replaced := false
-	for i := range list {
-		if strings.EqualFold(list[i].Code, btn.Code) {
-			list[i] = btn
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		list = append(list, btn)
-	}
-	return s.Save(list)
+	_, err := s.db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)
+	ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path`,
+		btn.Code, btn.Label, btn.ItemID, nullIfEmpty(btn.ImageURL))
+	return err
 }
 
-func (s *FileButtonStore) Remove(code string) error {
-	list, err := s.Load()
-	if err != nil {
-		return err
-	}
-	code = strings.TrimSpace(code)
-	out := make([]Button, 0, len(list))
-	for _, b := range list {
-		if !strings.EqualFold(b.Code, code) {
-			out = append(out, b)
-		}
-	}
-	return s.Save(out)
+func (s *ButtonStore) Remove(code string) error {
+	_, err := s.db.Exec(`DELETE FROM shortcut_buttons WHERE barcode=?`, strings.TrimSpace(code))
+	return err
 }
 
 /* ----------------- HTTP handlers (htmx-friendly) ----------------- */
@@ -184,18 +209,17 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	price := int64(0)
-	fmt.Sscan(r.Form.Get("priceCents"), &price)
+	itemID := strings.TrimSpace(r.Form.Get("itemId"))
 	img := strings.TrimSpace(r.Form.Get("imageUrl"))
 	if img != "" && !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") && !strings.HasPrefix(img, "/public/") {
 		// Treat as filename in local images folder
 		img = "/public/images/" + img
 	}
 	err := h.Store.Add(Button{
-		Label:      r.Form.Get("label"),
-		Code:       r.Form.Get("code"),
-		PriceCents: price,
-		ImageURL:   img,
+		Label:    r.Form.Get("label"),
+		Code:     r.Form.Get("code"),
+		ItemID:   itemID,
+		ImageURL: img,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -223,17 +247,130 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type PriceResolverAdapter struct{ Store ButtonStore }
+type PriceResolverAdapter struct{ Store *ButtonStore }
 
 func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
-	list, err := a.Store.Load()
-	if err != nil {
-		return pos.BasketLine{}, false
+	ctx := context.Background()
+
+	if line, ok := a.resolveVariant(ctx, code); ok {
+		return line, true
 	}
-	for _, b := range list {
-		if strings.EqualFold(b.Code, code) {
-			return pos.BasketLine{SKU: b.Code, Name: b.Label, Qty: 1, PriceCents: b.PriceCents, ImageURL: b.ImageURL}, true
-		}
+	if line, ok := a.resolveItem(ctx, code); ok {
+		return line, true
+	}
+	if line, ok := a.resolveShortcut(ctx, code); ok {
+		return line, true
 	}
 	return pos.BasketLine{}, false
+}
+
+func (a PriceResolverAdapter) resolveVariant(ctx context.Context, code string) (pos.BasketLine, bool) {
+	row := a.Store.db.QueryRowContext(ctx, `
+SELECT i.id, i.name, v.id, v.name, v.price,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+FROM variant_barcodes vb
+JOIN item_variants v ON v.id = vb.variant_id
+JOIN items i ON i.id = v.item_id
+WHERE vb.barcode = ?
+LIMIT 1
+`, code)
+	var itemID, itemName, variantID, variantName, img sql.NullString
+	var price int64
+	if err := row.Scan(&itemID, &itemName, &variantID, &variantName, &price, &img); err != nil {
+		return pos.BasketLine{}, false
+	}
+	if p, ok := a.Store.currentPrice(ctx, nil, &variantID.String); ok {
+		price = p
+	}
+	name := itemName.String
+	if variantName.String != "" {
+		name = name + " - " + variantName.String
+	}
+	line := pos.BasketLine{SKU: code, Name: name, Qty: 1, PriceCents: price}
+	if img.Valid {
+		line.ImageURL = img.String
+	}
+	return line, true
+}
+
+func (a PriceResolverAdapter) resolveItem(ctx context.Context, code string) (pos.BasketLine, bool) {
+	row := a.Store.db.QueryRowContext(ctx, `
+SELECT i.id, i.name, i.base_price,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+FROM item_barcodes ib
+JOIN items i ON i.id = ib.item_id
+WHERE ib.barcode = ?
+LIMIT 1
+`, code)
+	var itemID, name, img sql.NullString
+	var price int64
+	if err := row.Scan(&itemID, &name, &price, &img); err != nil {
+		return pos.BasketLine{}, false
+	}
+	if p, ok := a.Store.currentPrice(ctx, &itemID.String, nil); ok {
+		price = p
+	}
+	line := pos.BasketLine{SKU: code, Name: name.String, Qty: 1, PriceCents: price}
+	if img.Valid {
+		line.ImageURL = img.String
+	}
+	return line, true
+}
+
+func (a PriceResolverAdapter) resolveShortcut(ctx context.Context, code string) (pos.BasketLine, bool) {
+	row := a.Store.db.QueryRowContext(ctx, `
+SELECT sb.item_id, sb.label, i.base_price,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1)
+FROM shortcut_buttons sb
+JOIN items i ON i.id = sb.item_id
+WHERE sb.barcode = ?
+LIMIT 1
+`, code)
+	var itemID, label, img sql.NullString
+	var price int64
+	if err := row.Scan(&itemID, &label, &price, &img); err != nil {
+		return pos.BasketLine{}, false
+	}
+	if p, ok := a.Store.currentPrice(ctx, &itemID.String, nil); ok {
+		price = p
+	}
+	line := pos.BasketLine{SKU: code, Name: label.String, Qty: 1, PriceCents: price}
+	if img.Valid {
+		line.ImageURL = img.String
+	}
+	return line, true
+}
+
+func (s *ButtonStore) currentPrice(ctx context.Context, itemID *string, variantID *string) (int64, bool) {
+	if itemID == nil && variantID == nil {
+		return 0, false
+	}
+	var row *sql.Row
+	if variantID != nil && *variantID != "" {
+		row = s.db.QueryRowContext(ctx, `
+SELECT price FROM price_history
+WHERE variant_id = ? AND (ends_at IS NULL OR ends_at > datetime('now'))
+ORDER BY datetime(starts_at) DESC
+LIMIT 1
+`, *variantID)
+	} else {
+		row = s.db.QueryRowContext(ctx, `
+SELECT price FROM price_history
+WHERE item_id = ? AND (ends_at IS NULL OR ends_at > datetime('now'))
+ORDER BY datetime(starts_at) DESC
+LIMIT 1
+`, *itemID)
+	}
+	var price int64
+	if err := row.Scan(&price); err == nil {
+		return price, true
+	}
+	return 0, false
+}
+
+func nullIfEmpty(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
 }
