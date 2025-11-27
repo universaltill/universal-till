@@ -240,6 +240,11 @@ func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorI
 	if status == "" {
 		return errors.New("status required")
 	}
+	switch status {
+	case "open", "parked", "voided", "refunded", "completed":
+	default:
+		return fmt.Errorf("invalid status: %s", status)
+	}
 	err := db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 UPDATE sales

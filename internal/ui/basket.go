@@ -2,7 +2,7 @@ package ui
 
 import (
 	"html/template"
-	"net/http"
+	"io"
 	"path/filepath"
 )
 
@@ -19,7 +19,7 @@ func NewBasketView(funcs template.FuncMap) (*BasketView, error) {
 	return &BasketView{Tpl: t}, nil
 }
 
-func (v *BasketView) Render(w http.ResponseWriter, basket any) error {
+func (v *BasketView) Render(w io.Writer, basket any) error {
 	// Render only the "basket" template (fragment); we don’t need the full layout here.
 	return v.Tpl.ExecuteTemplate(w, "basket", basket)
 }

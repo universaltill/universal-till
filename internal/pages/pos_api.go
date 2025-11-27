@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"text/template"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -79,25 +81,6 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			return
 		}
 
-		var payments []pos.PaymentInput
-		for _, p := range in.Payments {
-			if p.Method == "" || p.Amount <= 0 {
-				http.Error(w, "invalid payment", http.StatusBadRequest)
-				return
-			}
-			if err := ensurePaymentMethod(r.Context(), d.db, p.Method); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			payments = append(payments, pos.PaymentInput{
-				MethodID:    p.Method,
-				Amount:      p.Amount,
-				Currency:    p.Currency,
-				Reference:   p.Reference,
-				ChangeGiven: p.Change,
-			})
-		}
-
 		var saleLines []pos.SaleLineInput
 		for _, l := range lines {
 			taxBP := l.TaxRateBP
@@ -117,6 +100,52 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 				LineDiscount:       0,
 				LocationID:         locID,
 			})
+		}
+
+		var payments []pos.PaymentInput
+		for _, p := range in.Payments {
+			if p.Method == "" || p.Amount <= 0 {
+				continue
+			}
+			if err := ensurePaymentMethod(r.Context(), d.db, p.Method); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			payments = append(payments, pos.PaymentInput{
+				MethodID:    p.Method,
+				Amount:      p.Amount,
+				Currency:    p.Currency,
+				Reference:   p.Reference,
+				ChangeGiven: p.Change,
+			})
+		}
+		// compute totals for receipt and fallback payment
+		subtotal, taxTotal := int64(0), int64(0)
+		for i := range saleLines {
+			lineBase := pos.AmountForQuantity(saleLines[i].UnitPrice, saleLines[i].Qty)
+			lineNet := lineBase - saleLines[i].LineDiscount
+			lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, saleLines[i].TaxRateBasisPoints, d.state.TaxInclusive)
+			subtotal += lineNet
+			taxTotal += lineTax
+		}
+		total := subtotal - in.Discount
+		if !d.state.TaxInclusive {
+			total += taxTotal
+		}
+		if total < 0 {
+			total = 0
+		}
+		if len(payments) == 0 {
+			payments = append(payments, pos.PaymentInput{
+				MethodID: "cash",
+				Amount:   total,
+				Currency: d.state.Currency,
+			})
+		}
+		for i := range payments {
+			if payments[i].Amount <= 0 {
+				payments[i].Amount = total
+			}
 		}
 
 		registerID := in.RegisterID
@@ -171,10 +200,17 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			return
 		}
 
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
+		receiptHTML, _ := renderReceipt(funcs, saleID, saleLines, subtotal, taxTotal, total, d.state.TaxInclusive)
+
 		b, _ := d.engine.Scan("")
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
-		_ = basketView.Render(w, b)
+		var basketBuf bytes.Buffer
+		_ = basketView.Render(&basketBuf, b)
+
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<div id="basket">%s%s</div>`, receiptHTML, basketBuf.String())
 	})
 
 	// Update sale status: park, void, refund (status string expected).
@@ -260,4 +296,45 @@ func ensureUser(ctx context.Context, db *sql.DB) (string, error) {
 		return "", fmt.Errorf("create default user: %w", err)
 	}
 	return id, nil
+}
+
+type receiptLine struct {
+	Name          string
+	Qty           int
+	TotalAfterTax int64
+}
+
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, subtotal, taxTotal, total int64, taxInclusive bool) (string, error) {
+	t, err := template.New("receipt.html").Funcs(funcs).ParseFiles(
+		"web/ui/partials/receipt.html",
+	)
+	if err != nil {
+		return "", err
+	}
+	var rlines []receiptLine
+	for _, l := range lines {
+		lineBase := pos.AmountForQuantity(l.UnitPrice, l.Qty)
+		lineNet := lineBase - l.LineDiscount
+		lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, taxInclusive)
+		if taxInclusive {
+			lineTax = 0 // already in net; only show totals separately
+		}
+		rlines = append(rlines, receiptLine{
+			Name:          l.Name,
+			Qty:           int(l.Qty),
+			TotalAfterTax: lineNet + lineTax,
+		})
+	}
+	data := map[string]any{
+		"ReceiptNo": receiptNo,
+		"Lines":     rlines,
+		"Subtotal":  subtotal,
+		"TaxTotal":  taxTotal,
+		"Total":     total,
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "receipt", data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
