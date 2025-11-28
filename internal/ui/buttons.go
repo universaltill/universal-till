@@ -153,6 +153,14 @@ func (s *ButtonStore) Add(btn Button) error {
 	if btn.Label == "" || btn.Code == "" || btn.ItemID == "" {
 		return errors.New("label, code, and itemId are required")
 	}
+	// ensure item exists and is active
+	var exists int
+	if err := s.db.QueryRow(`SELECT 1 FROM items WHERE id = ? AND is_active = 1`, btn.ItemID).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("item not found or inactive")
+		}
+		return err
+	}
 	_, err := s.db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)
 	ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path`,
 		btn.Code, btn.Label, btn.ItemID, nullIfEmpty(btn.ImageURL))

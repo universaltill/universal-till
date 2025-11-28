@@ -73,3 +73,17 @@ func TestPriceResolverAdapter_FallbackNameSearch(t *testing.T) {
 		t.Fatalf("unexpected name %s", line.Name)
 	}
 }
+
+func TestButtonStoreAdd_ValidatesActiveItem(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	store := NewButtonStore(db)
+	if err := store.Add(Button{Label: "Btn", Code: "B1", ItemID: "missing"}); err == nil {
+		t.Fatalf("expected error for missing item")
+	}
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Orange Soda', 250, 1)`)
+	if err := store.Add(Button{Label: "Btn", Code: "B1", ItemID: "itm1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
