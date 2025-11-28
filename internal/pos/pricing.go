@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // ResolveCurrentPrice returns the active price (minor units) for an item or variant.
@@ -44,6 +47,52 @@ func ResolveCurrentPrice(ctx context.Context, db *sql.DB, itemID, variantID stri
 	}
 	return price, nil
 }
+
+// AppendPriceHistoryItem ends the current open price (if any) and appends a new price_history row for an item.
+func AppendPriceHistoryItem(ctx context.Context, db *sql.DB, itemID string, price int64, startsAt time.Time) error {
+	if itemID == "" {
+		return errors.New("itemID required")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE price_history SET ends_at = ? WHERE item_id = ? AND ends_at IS NULL`, startsAt.Format(time.RFC3339), itemID); err != nil {
+		return fmt.Errorf("close previous price: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO price_history(id, item_id, price, starts_at) VALUES(?,?,?,?)`, uuidString(), itemID, price, startsAt.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("insert price_history: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit price update: %w", err)
+	}
+	return nil
+}
+
+// AppendPriceHistoryVariant ends the current open price (if any) and appends a new price_history row for a variant.
+func AppendPriceHistoryVariant(ctx context.Context, db *sql.DB, variantID string, price int64, startsAt time.Time) error {
+	if variantID == "" {
+		return errors.New("variantID required")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE price_history SET ends_at = ? WHERE variant_id = ? AND ends_at IS NULL`, startsAt.Format(time.RFC3339), variantID); err != nil {
+		return fmt.Errorf("close previous price: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO price_history(id, variant_id, price, starts_at) VALUES(?,?,?,?)`, uuidString(), variantID, price, startsAt.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("insert price_history: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit price update: %w", err)
+	}
+	return nil
+}
+
+func uuidString() string { return uuid.New().String() }
 
 func lookupPriceHistory(ctx context.Context, db *sql.DB, column, id string) (int64, bool, error) {
 	query := fmt.Sprintf(`
