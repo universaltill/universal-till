@@ -34,6 +34,22 @@ func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
 	return r.t.ExecuteTemplate(w, name, data)
 }
 
+// RenderWith builds a one-off renderer from explicit files and funcs.
+func RenderWith(files []string, funcs template.FuncMap) func(name string, data any) http.HandlerFunc {
+	return func(name string, data any) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			t, err := template.New("base.html").Funcs(funcs).ParseFiles(files...)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := t.ExecuteTemplate(w, name, data); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		}
+	}
+}
+
 var (
 	i18nRef       atomic.Value // *common.I18n
 	defaultLocale atomic.Value // string

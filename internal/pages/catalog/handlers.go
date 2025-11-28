@@ -16,21 +16,22 @@ import (
 func Register(mux *http.ServeMux, db *sql.DB) {
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		renderer, err := httpx.NewRenderer(
-			filepath.Join("web", "ui", "layouts", "base.html"),
-			filepath.Join("web", "ui", "pages", "catalog.html"),
-			funcs,
-		)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 		items, err := listItems(r.Context(), db)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = renderer.Render(w, "content", map[string]any{"Items": items})
+		data := map[string]any{
+			"title":     "Catalog",
+			"menuItems": []map[string]string{{"Href": "/", "Label": "Home"}, {"Href": "/catalog", "Label": "Catalog"}},
+			"Items":     items,
+		}
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "layouts", "base.html"),
+			filepath.Join("web", "ui", "pages", "catalog.html"),
+			filepath.Join("web", "ui", "partials", "nav.html"),
+			filepath.Join("web", "ui", "partials", "catalog_table.html"),
+		), funcs)("content", data)(w, r)
 	})
 
 	mux.HandleFunc("/api/catalog/item", func(w http.ResponseWriter, r *http.Request) {
@@ -64,12 +65,9 @@ func Register(mux *http.ServeMux, db *sql.DB) {
 		}
 		items, _ := listItems(r.Context(), db)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		renderer, _ := httpx.NewRenderer(
-			filepath.Join("web", "ui", "layouts", "base.html"),
+		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-			funcs,
-		)
-		_ = renderer.Render(w, "catalog_table", map[string]any{"Items": items})
+		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
 	})
 
 	mux.HandleFunc("/api/catalog/barcode", func(w http.ResponseWriter, r *http.Request) {
@@ -97,12 +95,9 @@ func Register(mux *http.ServeMux, db *sql.DB) {
 		}
 		items, _ := listItems(r.Context(), db)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		renderer, _ := httpx.NewRenderer(
-			filepath.Join("web", "ui", "layouts", "base.html"),
+		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-			funcs,
-		)
-		_ = renderer.Render(w, "catalog_table", map[string]any{"Items": items})
+		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
 	})
 }
 
@@ -133,3 +128,4 @@ func strPtr(s string) *string {
 	}
 	return &s
 }
+func files(paths ...string) []string { return paths }
