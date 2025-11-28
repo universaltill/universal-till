@@ -113,6 +113,9 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			taxBP := l.TaxRateBP
 			if taxBP == 0 {
 				taxBP = d.state.TaxRatePct * 100
+				if taxBP == 0 {
+					taxBP = 2000 // fallback to 20% if missing to avoid zero-tax totals
+				}
 			}
 			// Qty is int; convert to float64 for REAL support
 			saleLines = append(saleLines, pos.SaleLineInput{
