@@ -13,7 +13,7 @@ import (
 )
 
 // Register mounts catalog list/create and barcode attach endpoints.
-func Register(mux *http.ServeMux, db *sql.DB) {
+func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		items, err := listItems(r.Context(), db)
@@ -23,7 +23,8 @@ func Register(mux *http.ServeMux, db *sql.DB) {
 		}
 		data := map[string]any{
 			"title":     "Catalog",
-			"menuItems": []map[string]string{{"Href": "/", "Label": "Home"}, {"Href": "/catalog", "Label": "Catalog"}},
+			"menuItems": menu,
+			"theme":     theme,
 			"Items":     items,
 		}
 		httpx.RenderWith(files(
@@ -31,7 +32,7 @@ func Register(mux *http.ServeMux, db *sql.DB) {
 			filepath.Join("web", "ui", "pages", "catalog.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("content", data)(w, r)
+		), funcs)("base", data)(w, r)
 	})
 
 	mux.HandleFunc("/api/catalog/item", func(w http.ResponseWriter, r *http.Request) {

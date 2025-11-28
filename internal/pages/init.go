@@ -82,7 +82,13 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPluginAPI(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
-	catalog.Register(mux, dp.db)
+	catalog.Register(mux, dp.db, dp.state.Theme, []map[string]string{
+		{"Href": "/", "Label": "Home"},
+		{"Href": "/catalog", "Label": "Catalog"},
+		{"Href": "/designer", "Label": "Designer"},
+		{"Href": "/settings", "Label": "Settings"},
+		{"Href": "/plugins", "Label": "Plugins"},
+	})
 	registerBasket(mux, dp)
 	registerHealth(mux)
 	registerExternalProxy(mux, dp)

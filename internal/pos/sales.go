@@ -284,11 +284,9 @@ func validateLine(l SaleLineInput) error {
 }
 
 func generateReceiptNo() string {
-	id := uuid.NewString()
-	if len(id) > 8 {
-		return id[len(id)-8:]
-	}
-	return id
+	// numeric-ish receipt no derived from timestamp for readability
+	n := time.Now().UnixNano() % 1000000000
+	return fmt.Sprintf("%09d", n)
 }
 
 func nullIfEmpty(s string) any {
