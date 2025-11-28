@@ -516,17 +516,6 @@ CREATE TABLE IF NOT EXISTS shortcut_buttons (
 -- Insert defaults and samples --------------------------------
 
 
-INSERT INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES
-  ('2000010000017', 'itm001', 'Coca-Cola 330ml', '/public/assets/items/itm001/thumb.png'),
-  ('2000010000024', 'itm002', 'Pepsi 330ml', '/public/assets/items/itm002/thumb.png'),
-  ('2000010000031', 'itm003', 'Orange Juice 1L', '/public/assets/items/itm003/thumb.png'),
-  ('2000010000048', 'itm004', 'Bananas (kg)', '/public/assets/items/itm004/thumb.png'),
-  ('2000010000055', 'itm005', 'Whole Milk 2L', '/public/assets/items/itm005/thumb.png'),
-  ('2000010000062', 'itm006', 'Brown Bread', '/public/assets/items/itm006/thumb.png'),
-  ('2000010000079', 'itm007', 'Chocolate Bar', '/public/assets/items/itm007/thumb.png'),
-  ('2000010000086', 'itm008', 'Eggs (12 pack)', '/public/assets/items/itm008/thumb.png'),
-  ('2000010000093', 'itm009', 'Tomatoes (kg)', '/public/assets/items/itm009/thumb.png'),
-  ('2000010000109', 'itm010', 'Water 500ml', '/public/assets/items/itm010/thumb.png');
 
 INSERT OR IGNORE INTO
     payment_methods (id, name, type, sort_order)
@@ -3404,3 +3393,16 @@ INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES
 ('perm-escpos-print', 'com.unitill.plugins.escpos', 'devices:printer', 1),
 ('perm-ubereats-orders','com.unitill.plugins.ubereats','integrations:orders', 1),
 ('perm-qrpay-charge','com.unitill.plugins.qrpay','payments:qr', 1);
+
+
+INSERT INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES
+  ('2000010000017', 'itm001', 'Coca-Cola 330ml', '/public/assets/items/itm001/thumb.png'),
+  ('2000010000024', 'itm002', 'Pepsi 330ml', '/public/assets/items/itm002/thumb.png'),
+  ('2000010000031', 'itm003', 'Orange Juice 1L', '/public/assets/items/itm003/thumb.png'),
+  ('2000010000048', 'itm004', 'Bananas (kg)', '/public/assets/items/itm004/thumb.png'),
+  ('2000010000055', 'itm005', 'Whole Milk 2L', '/public/assets/items/itm005/thumb.png'),
+  ('2000010000062', 'itm006', 'Brown Bread', '/public/assets/items/itm006/thumb.png'),
+  ('2000010000079', 'itm007', 'Chocolate Bar', '/public/assets/items/itm007/thumb.png'),
+  ('2000010000086', 'itm008', 'Eggs (12 pack)', '/public/assets/items/itm008/thumb.png'),
+  ('2000010000093', 'itm009', 'Tomatoes (kg)', '/public/assets/items/itm009/thumb.png'),
+  ('2000010000109', 'itm010', 'Water 500ml', '/public/assets/items/itm010/thumb.png');
