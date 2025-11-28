@@ -52,7 +52,7 @@ Principles: local-first, offline-capable, integer money, append-only migrations
 - Payments: multiple per sale; use seeded `payment_methods` (cash, card, gift); capture reference/change.
 - Rounding field available but default 0 (GBP integer).
 - Register and cashier recorded; optional customer link.
-- Receipt numbering uses unique `receipt_no`.
+- Receipt numbering uses unique numeric `receipt_no`; receipts render printable view with barcode, print button, new-customer reset, and auto-reset after inactivity.
 
 ### Shifts & Cash Drawer
 - Open/close shift per register + cashier; record opening_cash, closing_cash, expected_cash, note.

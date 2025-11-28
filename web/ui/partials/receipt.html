@@ -1,19 +1,44 @@
 {{ define "receipt" }}
-<div class="receipt" id="receipt">
-  <h3>Receipt #{{ .ReceiptNo }}</h3>
-  <ul class="receipt-lines">
-    {{ range .Lines }}
-    <li>
-      <span>{{ .Name }}</span>
-      <span>x{{ .Qty }}</span>
-      <span>{{ money .TotalAfterTax }}</span>
-    </li>
-    {{ end }}
-  </ul>
-  <div class="totals">
-    <div>Subtotal: {{ money .Subtotal }}</div>
-    <div>Tax: {{ money .TaxTotal }}</div>
-    <div><strong>Total: {{ money .Total }}</strong></div>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Libre+Barcode+39&display=swap');
+  .receipt-wrap {max-width: 420px; margin: 0 auto; padding: 1rem; font-family: sans-serif;}
+  .receipt-card {background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.05);}
+  .barcode {font-family: 'Libre Barcode 39', cursive; letter-spacing: 3px; font-size: 2.4rem; margin: 0.25rem 0;}
+  .actions {display: flex; gap: 0.5rem; margin: 1rem 0;}
+  .btn {padding: 0.5rem 0.75rem; border-radius: 4px; border: none; cursor: pointer;}
+  .btn.primary {background: #2563eb; color: #fff;}
+  .btn.secondary {background: #e5e7eb; color: #111;}
+  .receipt-lines {list-style: none; padding: 0; margin: 0.5rem 0;}
+  .receipt-lines li {display: flex; justify-content: space-between; margin-bottom: 0.25rem;}
+  @media print {
+    body {background: #fff;}
+    .actions {display: none;}
+    .nav {display: none !important;}
+    .pos-container > :not(#basket) {display: none !important;}
+  }
+</style>
+<div class="receipt-wrap">
+  <div class="receipt-card">
+    <h2>Receipt #{{ .ReceiptNo }}</h2>
+    <div class="barcode">*{{ .ReceiptNo }}*</div>
+    <ul class="receipt-lines">
+      {{ range .Lines }}
+      <li><span>{{ .Name }} x{{ .Qty }}</span><span>{{ money .TotalAfterTax }}</span></li>
+      {{ end }}
+    </ul>
+    <div class="totals">
+      <div>Subtotal: {{ money .Subtotal }}</div>
+      <div>Tax: {{ money .TaxTotal }}</div>
+      <div><strong>Total: {{ money .Total }}</strong></div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" onclick="window.print()">Print</button>
+      <button class="btn secondary" onclick="window.location='/'">New Customer</button>
+    </div>
+    <small>Auto-reset in 60s...</small>
   </div>
 </div>
+<script>
+  setTimeout(function(){ window.location='/'; }, 60000);
+</script>
 {{ end }}

@@ -258,13 +258,23 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 
 		d.engine.Reset()
 
+		// load receipt_no and totals from DB for rendering
+		var receiptNo string
+		var dbSubtotal, dbTax, dbTotal int64
+		_ = d.db.QueryRowContext(r.Context(), `SELECT receipt_no, subtotal, tax_total, total FROM sales WHERE id = ?`, saleID).
+			Scan(&receiptNo, &dbSubtotal, &dbTax, &dbTotal)
+		if receiptNo == "" {
+			receiptNo = saleID
+		}
+
 		// Render receipt JSON if requested
 		if r.Header.Get("Accept") == "application/json" {
 			resp := map[string]any{
-				"saleId":   saleID,
-				"total":    total,
-				"payments": payments,
-				"note":     in.Note,
+				"saleId":    saleID,
+				"receiptNo": receiptNo,
+				"total":     dbTotal,
+				"payments":  payments,
+				"note":      in.Note,
 			}
 			_ = json.NewEncoder(w).Encode(resp)
 			return
@@ -272,15 +282,11 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
-		receiptHTML, _ := renderReceipt(funcs, saleID, saleLines, subtotal, taxTotal, total, d.state.TaxInclusive)
-
-		b, _ := d.engine.Scan("")
-		basketView, _ := ui.NewBasketView(funcs)
-		var basketBuf bytes.Buffer
-		_ = basketView.Render(&basketBuf, b)
+		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.state.TaxInclusive)
 
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, `<div id="basket">%s%s</div>`, receiptHTML, basketBuf.String())
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `<div id="basket">%s</div>`, receiptHTML)
 	})
 
 	// Update sale status: park, void, refund (status string expected).

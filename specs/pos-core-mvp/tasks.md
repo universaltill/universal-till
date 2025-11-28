@@ -19,7 +19,7 @@
 - [x] T105 Payments: support multiple tenders using seeded `payment_methods`; persist `payments` with amount/currency/reference/change_given/paid_at; block completion until covered (`internal/pos`, `internal/pages`).
 - [x] T106 Completion flow: generate unique `receipt_no`, set `sales.status=completed`/`completed_at`, rollback on partial/failed tender (`internal/pos`).
 - [x] T107 Stock movements: on completion create `stock_movements(type='sale')` per line with negative qty and `sale_line_id`; update `inventory` aggregates (`internal/pos`).
-- [x] T108 Receipt payload: include lines, tax, discounts, payments, totals; printable/exportable via existing templates (`web/`).
+- [x] T108 Receipt payload: include lines, tax, discounts, payments, totals; printable/exportable via existing templates (`web/`); numeric receipt number with barcode + print/reset flow.
 - [x] T109 Audit: record sale lifecycle (create, complete, void/park) with actor/payload in `audit_log` (`internal/pos` logging).
 
 ## Phase 2: User Story 2 – Manage catalog & pricing (P1)
