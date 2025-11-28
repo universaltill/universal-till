@@ -383,13 +383,14 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		lineBase := pos.AmountForQuantity(l.UnitPrice, l.Qty)
 		lineNet := lineBase - l.LineDiscount
 		lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, taxInclusive)
-		if taxInclusive {
-			lineTax = 0 // already in net; only show totals separately
+		lineTotal := lineNet
+		if !taxInclusive {
+			lineTotal += lineTax
 		}
 		rlines = append(rlines, receiptLine{
 			Name:          l.Name,
 			Qty:           int(l.Qty),
-			TotalAfterTax: lineNet + lineTax,
+			TotalAfterTax: lineTotal,
 		})
 	}
 	data := map[string]any{
