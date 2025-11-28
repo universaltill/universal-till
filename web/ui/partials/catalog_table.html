@@ -1,0 +1,22 @@
+{{ define "catalog_table" }}
+<div class="card" id="catalog-table">
+  <h3>Active Items</h3>
+  <table>
+    <thead><tr><th>Name</th><th>SKU</th><th>Price</th><th>Tax</th></tr></thead>
+    <tbody>
+      {{ if .Items }}
+        {{ range .Items }}
+          <tr>
+            <td>{{ .Name }}</td>
+            <td>{{ .SKU }}</td>
+            <td>{{ money .BasePrice }}</td>
+            <td>{{ if .TaxCodeID }}{{ .TaxCodeID }}{{ else }}—{{ end }}</td>
+          </tr>
+        {{ end }}
+      {{ else }}
+        <tr><td colspan="4" class="empty">No items</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ end }}

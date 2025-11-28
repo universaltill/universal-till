@@ -19,14 +19,14 @@
 - [x] T105 Payments: support multiple tenders using seeded `payment_methods`; persist `payments` with amount/currency/reference/change_given/paid_at; block completion until covered (`internal/pos`, `internal/pages`).
 - [x] T106 Completion flow: generate unique `receipt_no`, set `sales.status=completed`/`completed_at`, rollback on partial/failed tender (`internal/pos`).
 - [x] T107 Stock movements: on completion create `stock_movements(type='sale')` per line with negative qty and `sale_line_id`; update `inventory` aggregates (`internal/pos`).
-- [x] T108 Receipt payload: include lines, tax, discounts, payments, totals; printable/exportable via existing templates (`web/`).
+- [x] T108 Receipt payload: include lines, tax, discounts, payments, totals; printable/exportable via existing templates (`web/`); numeric receipt number with barcode + print/reset flow.
 - [x] T109 Audit: record sale lifecycle (create, complete, void/park) with actor/payload in `audit_log` (`internal/pos` logging).
 
 ## Phase 2: User Story 2 – Manage catalog & pricing (P1)
 
-- [ ] T201 [P] CRUD for items/variants with barcodes, images, category, brand, tax code; enforce `(item_id XOR variant_id)` on barcodes; honor `is_active` (`internal/pos`, `internal/pages`, `web/`).
-- [ ] T202 [P] Price changes append new `price_history` row with timestamps; previous rows untouched (`internal/pos`).
-- [ ] T203 [P] Ensure inactive catalog records are hidden from sale selection and searches; add UI guard (`internal/pages`, `web/`).
+- [ ] T201 [P] Expand catalog CRUD: create/update/deactivate items & variants; manage barcodes/images/category/brand/tax code; enforce `(item_id XOR variant_id)` on barcodes; honor `is_active` in UI/search (`internal/pos`, `internal/pages`, `web/`).
+- [x] T202 [P] Price changes append new `price_history` row with timestamps; previous rows untouched (`internal/pos`).
+- [x] T203 [P] Ensure inactive catalog records are hidden from sale selection and searches; add UI guard (`internal/pages`, `web/`).
 
 ## Phase 3: User Story 3 – Maintain inventory accuracy (P2)
 

@@ -1,0 +1,29 @@
+{{ define "content" }}
+<h1>Catalog</h1>
+
+<div class="grid two">
+  <div class="card">
+    <h3>Add Item</h3>
+    <form hx-post="/api/catalog/item" hx-target="#catalog-table" hx-swap="outerHTML">
+      <label>Name <input type="text" name="name" required></label>
+      <label>SKU <input type="text" name="sku" placeholder="auto if blank"></label>
+      <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
+      <label>Tax Code <input type="text" name="taxCode" placeholder="tax_std"></label>
+      <button class="btn" type="submit">Create</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Add Barcode</h3>
+    <form hx-post="/api/catalog/barcode" hx-target="#catalog-table" hx-swap="outerHTML">
+      <label>Barcode <input type="text" name="barcode" required></label>
+      <label>Item ID <input type="text" name="itemId"></label>
+      <label>Variant ID <input type="text" name="variantId"></label>
+      <label>Primary? <input type="checkbox" name="isPrimary" value="1"></label>
+      <button class="btn" type="submit">Attach</button>
+    </form>
+  </div>
+</div>
+
+{{ template "catalog_table" . }}
+{{ end }}
