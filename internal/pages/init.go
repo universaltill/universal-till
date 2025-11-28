@@ -9,6 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -57,6 +58,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		{Href: "/designer", Label: "Designer"},
 		{Href: "/settings", Label: "Settings"},
 		{Href: "/plugins", Label: "Plugins"},
+		{Href: "/catalog", Label: "Catalog"},
 	}
 
 	dp := &deps{
@@ -80,6 +82,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPluginAPI(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
+	catalog.Register(mux, dp.db)
 	registerBasket(mux, dp)
 	registerHealth(mux)
 	registerExternalProxy(mux, dp)

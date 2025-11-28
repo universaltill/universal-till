@@ -15,6 +15,25 @@ var baseFuncs = template.FuncMap{
 	"div100": func(cents int64) float64 { return float64(cents) / 100.0 },
 }
 
+// NewRenderer renders a layout + page (and optional partial) with funcs.
+type Renderer struct {
+	t *template.Template
+}
+
+func NewRenderer(layout string, page string, funcs template.FuncMap, partials ...string) (*Renderer, error) {
+	files := []string{layout, page, filepath.Join("web", "ui", "partials", "nav.html")}
+	files = append(files, partials...)
+	t, err := template.New("base.html").Funcs(funcs).ParseFiles(files...)
+	if err != nil {
+		return nil, err
+	}
+	return &Renderer{t: t}, nil
+}
+
+func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
+	return r.t.ExecuteTemplate(w, name, data)
+}
+
 var (
 	i18nRef       atomic.Value // *common.I18n
 	defaultLocale atomic.Value // string
