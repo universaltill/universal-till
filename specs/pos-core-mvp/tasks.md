@@ -25,7 +25,7 @@
 ## Phase 2: User Story 2 – Manage catalog & pricing (P1)
 
 - [ ] T201 [P] CRUD for items/variants with barcodes, images, category, brand, tax code; enforce `(item_id XOR variant_id)` on barcodes; honor `is_active` (`internal/pos`, `internal/pages`, `web/`).
-- [ ] T202 [P] Price changes append new `price_history` row with timestamps; previous rows untouched (`internal/pos`).
+- [x] T202 [P] Price changes append new `price_history` row with timestamps; previous rows untouched (`internal/pos`).
 - [ ] T203 [P] Ensure inactive catalog records are hidden from sale selection and searches; add UI guard (`internal/pages`, `web/`).
 
 ## Phase 3: User Story 3 – Maintain inventory accuracy (P2)
