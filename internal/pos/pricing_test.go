@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -58,6 +59,24 @@ func TestResolveCurrentPrice_FallbackToBase(t *testing.T) {
 	}
 	if price != 999 {
 		t.Fatalf("expected base price 999, got %d", price)
+	}
+}
+
+func TestResolveCurrentPrice_FuturePriceNotActive(t *testing.T) {
+	ctx := context.Background()
+	db := setupPriceDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO items(id, base_price, is_active) VALUES('itm1', 1000, 1)`)
+	future := time.Now().Add(time.Hour)
+	_, _ = db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('phf','itm1',2000,?)`, future)
+
+	price, err := ResolveCurrentPrice(ctx, db, "itm1", "")
+	if err != nil {
+		t.Fatalf("ResolveCurrentPrice error: %v", err)
+	}
+	if price != 1000 {
+		t.Fatalf("expected base price 1000 due to future price, got %d", price)
 	}
 }
 

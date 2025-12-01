@@ -99,6 +99,7 @@ func lookupPriceHistory(ctx context.Context, db *sql.DB, column, id string) (int
 SELECT price
 FROM price_history
 WHERE %s = ?
+  AND datetime(starts_at) <= CURRENT_TIMESTAMP
   AND (ends_at IS NULL OR ends_at > CURRENT_TIMESTAMP)
 ORDER BY datetime(starts_at) DESC
 LIMIT 1
