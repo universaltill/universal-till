@@ -1,3 +1,36 @@
+# Research: Hybrid Local + Cloud Plugin Model
+
+Date: 2025-12-02
+
+Summary
+- Decision: Keep core strictly local-first and open-source. Offer optional cloud-enhanced plugin features that merchants opt into. Plugins run locally by default; cloud mode is an enhancement for premium features (reconciliation, fraud, analytics, multi-location sync).
+
+Rationale
+- Local-first preserves the project's open-source credibility, supports offline markets, and enables hardware partnerships.
+- Cloud features provide incremental monetization and differentiated value (fraud scoring, multi-channel inventory, backups). Make them clearly optional and additive.
+
+Alternatives considered
+- Force cloud (rejected): alienates early adopters and emerging markets.
+- Cloud-only (rejected): breaks the open-source promise and offline operability.
+
+Technical considerations
+- Plugin runtime: run plugins as separate OS processes for isolation; host communicates via IPC (unix sockets/pipes) or gRPC over loopback. This enables language-agnostic plugins.
+- Manifest verification: verify SHA256 and manifest schema at install time; persist manifest metadata in `plugin_catalog` and runtime install rows in `plugins`.
+- Sensitive credentials: prefer not to store raw cloud API keys in local DB. For local plugins requiring merchant-owned 3rd-party keys (e.g., Stripe), store keys in `plugin_settings` only if encrypted by the host or rely on OS-level secrets (recommendation).
+- Cloud tokens: if a merchant enables cloud features, store cloud-scoped tokens in plugin_settings with encryption and mark trust_level accordingly; provide an admin UI to review trust for cloud-enabled plugins.
+- Offline-first behavior: cloud operations must be non-blocking for core flows. Any cloud-enhanced step should be asynchronous with retry and idempotency guarantees.
+
+Operational concerns
+- Backups & restore: cloud subscribers get automated backups and cross-device sync; non-cloud users must perform manual backups (`data/unitill.db`).
+- Privacy & compliance: clearly document what data is sent to cloud; allow merchants to opt out of each cloud feature.
+
+Open questions (NEEDS CLARIFICATION)
+- Encryption strategy for storing API keys on-device (host-provided encryption vs OS secret store) — research and decide.
+- Cloud API surface: minimal event set to upload (e.g., `sale.completed`, `inventory.delta`) and retrieval endpoints for sync.
+
+Decisions to be captured in contracts/
+- Plugin manifest schema with `modes.local` and `modes.cloud` sections.
+- Host ↔ plugin IPC/gRPC handshake: versioned protocol and capability negotiation.
 # Research Notes: POS Core MVP
 
 **Date**: 2025-11-27  
