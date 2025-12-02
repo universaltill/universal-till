@@ -1,3 +1,34 @@
+# Data Model: Hybrid Plugin Metadata (pos-core-mvp)
+
+Date: 2025-12-02
+
+Purpose
+- Describe how cloud-enhanced plugin metadata and local-only plugin data map to existing schema without adding migrations for MVP.
+
+Key existing tables used
+- `plugin_catalog` — store canonical manifests (id, version, package_url, sha256, runtime, entrypoint, author)
+- `plugins` — installed plugin rows (id, name, version, is_active, trust_level)
+- `plugin_entries` — UI and entry registrations (page/button/popup)
+- `plugin_settings` — per-plugin key/value configuration (use for local-mode credentials or cloud tokens; prefer encryption)
+- `plugin_permissions` / `plugin_hooks` — capabilities and event subscriptions
+
+Design notes (no schema changes)
+- Local mode
+  - Manifest installed into `plugin_catalog` and `plugins` with `runtime`/`entrypoint` for local process invocation.
+  - Merchant-provided 3rd-party API keys (e.g., Stripe) may be stored in `plugin_settings` with host-side encryption; alternatively, encourage OS secret stores and only reference them from `plugin_settings` as a key identifier.
+
+- Cloud mode
+  - Cloud-specific tokens or flags live in `plugin_settings` under a `cloud.*` namespace (e.g., `cloud.enabled=true`, `cloud.token_id=<id>`). The actual token material should be encrypted or stored in the cloud vault; `plugin_settings` holds a pointer/metadata only when possible.
+  - Cloud sync metadata (last_sync_at, sync_cursor) can be stored in `plugin_settings` for each plugin. Keep values small to avoid DB bloat.
+
+Sync & Reconciliation
+- Do not require new tables for initial MVP. Use background worker processes to push `sale.completed` events to cloud endpoints. For reconciliation, cloud returns match ids that the local host records via `plugin_settings` or `plugin_hooks` audit entries.
+
+Security
+- Sensitive values should be encrypted at rest. Recommend host provides an encryption key managed via environment variables or OS key store. Document migration path later for secure key rotation.
+
+Limitations
+- This design intentionally avoids schema migrations for MVP. If later we need scalable sync (change tracking, conflict resolution), add dedicated sync tables and robust conflict policies in a follow-up migration.
 # Data Model Notes: POS Core MVP
 
 **Date**: 2025-11-27  
