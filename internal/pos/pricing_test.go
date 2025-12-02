@@ -107,3 +107,27 @@ func TestResolveCurrentPrice_InactiveErrors(t *testing.T) {
 		t.Fatalf("expected error for inactive item")
 	}
 }
+
+func TestResolveCurrentPrice_InvalidArgs(t *testing.T) {
+	ctx := context.Background()
+	db := setupPriceDB(t)
+	defer db.Close()
+
+	if _, err := ResolveCurrentPrice(ctx, db, "", ""); err == nil {
+		t.Fatalf("expected error when neither item nor variant provided")
+	}
+	if _, err := ResolveCurrentPrice(ctx, db, "itm1", "var1"); err == nil {
+		t.Fatalf("expected error when both item and variant provided")
+	}
+}
+
+func TestResolveCurrentPrice_InactiveVariantErrors(t *testing.T) {
+	ctx := context.Background()
+	db := setupPriceDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, price, is_active) VALUES('var1','itm1', 500, 0)`)
+	if _, err := ResolveCurrentPrice(ctx, db, "", "var1"); err == nil {
+		t.Fatalf("expected error for inactive variant")
+	}
+}

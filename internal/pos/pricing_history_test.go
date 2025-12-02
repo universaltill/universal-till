@@ -79,3 +79,39 @@ func TestAppendPriceHistoryVariant_AppendsAndEndsPrevious(t *testing.T) {
 		t.Fatalf("expected previous price to be ended")
 	}
 }
+
+func TestAppendPriceHistoryItem_MultipleAppends(t *testing.T) {
+	ctx := context.Background()
+	db := setupHistoryDB(t)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	// first price
+	if err := AppendPriceHistoryItem(ctx, db, "itm1", 100, now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("AppendPriceHistoryItem first error: %v", err)
+	}
+	// second price
+	if err := AppendPriceHistoryItem(ctx, db, "itm1", 200, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("AppendPriceHistoryItem second error: %v", err)
+	}
+	// third price
+	if err := AppendPriceHistoryItem(ctx, db, "itm1", 300, now); err != nil {
+		t.Fatalf("AppendPriceHistoryItem third error: %v", err)
+	}
+
+	var openCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM price_history WHERE ends_at IS NULL`).Scan(&openCount)
+	if openCount != 1 {
+		t.Fatalf("expected exactly one open price, got %d", openCount)
+	}
+	var current int64
+	_ = db.QueryRow(`SELECT price FROM price_history WHERE ends_at IS NULL`).Scan(&current)
+	if current != 300 {
+		t.Fatalf("expected latest open price 300, got %d", current)
+	}
+	var endedCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM price_history WHERE ends_at IS NOT NULL`).Scan(&endedCount)
+	if endedCount != 2 {
+		t.Fatalf("expected two ended prices, got %d", endedCount)
+	}
+}

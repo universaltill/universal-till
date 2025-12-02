@@ -2,19 +2,24 @@
 <div class="card" id="catalog-table">
   <h3>Active Items</h3>
   <table>
-    <thead><tr><th>Name</th><th>SKU</th><th>Price</th><th>Tax</th></tr></thead>
+    <thead><tr><th>ID</th><th>Name</th><th>SKU</th><th>Unit</th><th>Weighed</th><th>Price</th><th>Tax</th><th>Category</th><th>Brand</th></tr></thead>
     <tbody>
       {{ if .Items }}
         {{ range .Items }}
           <tr>
+            <td>{{ .ID }}</td>
             <td>{{ .Name }}</td>
             <td>{{ .SKU }}</td>
+            <td>{{ if .Unit }}{{ .Unit }}{{ else }}each{{ end }}</td>
+            <td>{{ if .IsWeighed }}yes{{ else }}no{{ end }}</td>
             <td>{{ money .BasePrice }}</td>
             <td>{{ if .TaxCodeID }}{{ .TaxCodeID }}{{ else }}—{{ end }}</td>
+            <td>{{ if .CategoryID }}{{ .CategoryID }}{{ else }}—{{ end }}</td>
+            <td>{{ if .BrandID }}{{ .BrandID }}{{ else }}—{{ end }}</td>
           </tr>
         {{ end }}
       {{ else }}
-        <tr><td colspan="4" class="empty">No items</td></tr>
+        <tr><td colspan="9" class="empty">No items</td></tr>
       {{ end }}
     </tbody>
   </table>
