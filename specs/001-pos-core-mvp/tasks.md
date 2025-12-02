@@ -93,6 +93,51 @@ Below each task is expanded into an issue-ready checklist: description, acceptan
 	- Estimate: 2d
 	- Labels: `area:plugins`, `priority:P3`
 
+ - T401b — Manifest verification & provenance (P3)
+	- Summary: Verify plugin manifest checksums (SHA256) at install time, record provenance (source URL, uploader, checksum) and set default `trust_level = 'untrusted'` until manual trust is granted.
+	- Acceptance Criteria:
+		- Installer computes SHA256 and compares to manifest's declared checksum; mismatch aborts install.
+		- `plugins` row stores provenance metadata (source, uploaded_by, checksum, installed_at).
+		- Default `trust_level` is `untrusted` and UI shows a trust/approve action for `admin`.
+	- Tests:
+		- Unit test for checksum verification.
+		- Integration test that simulates install with correct and incorrect checksums.
+	- Estimate: 1d
+	- Labels: `area:plugins`, `security`, `priority:P2`
+
+
+ - T410 — Plugin process isolation & lifecycle (P3)
+	- Summary: Implement host logic to launch plugins as separate OS processes, supervise lifecycle (start/stop/restart), and enforce timeouts/healthchecks.
+	- Acceptance Criteria:
+		- Host can start a plugin process from its manifest entrypoint and capture stdout/stderr.
+		- Host health-checks plugin process and restarts on crash according to policy.
+		- Lifecycle events are recorded in `audit_log` with `action` values like `plugin_started`, `plugin_crashed`, `plugin_restarted`.
+	- Tests:
+		- Integration test that starts a small test plugin binary and verifies lifecycle events and restart policy.
+	- Estimate: 3d
+	- Labels: `area:plugins`, `stability`, `priority:P2`
+
+
+ - T411 — Plugin IPC / minimal gRPC contract (P3)
+	- Summary: Define a minimal IPC/gRPC contract for event dispatch and RPC calls used by plugin types (payment, device, pricing). Provide a small reference server/client stub for integration tests.
+	- Acceptance Criteria:
+		- A one-page contract doc exists in `specs/pos-core-mvp/contracts/ipc.md` describing messages, timeouts, error model, and auth (if any).
+		- Host implements a test stub to call `sale.completed` and receive an ack.
+	- Tests:
+		- Contract compliance test using the reference stub.
+	- Estimate: 2d
+	- Labels: `area:plugins`, `spec`, `priority:P2`
+
+
+ - T412 — Plugin crash isolation & DB integrity test (P3)
+	- Summary: Add an integration test that simulates plugin crash during an event dispatch (e.g., `sale.completed`) and asserts core DB invariants (no partial writes, no corrupted rows).
+	- Acceptance Criteria:
+		- Test injects a failing plugin that exits/crashes during event handling and verifies `sales` and `stock_movements` consistency after host recovery.
+	- Tests:
+		- Integration test with an intentional plugin crash.
+	- Estimate: 2d
+	- Labels: `area:plugins`, `stability`, `priority:P2`
+
 - T402 — Plugin UI rendering & permission checks (P3)
 	- Summary: Render plugin-provided entries (buttons/pages) and enforce runtime permission checks for host APIs.
 	- Acceptance Criteria:

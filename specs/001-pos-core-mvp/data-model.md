@@ -65,3 +65,23 @@ Limitations
 - Inactive (`is_active=0`) catalog entities excluded from sale selection.  
 - Rounding rules for tax-inclusive/exclusive pricing must remain integer-safe.  
 - No migration files added/edited for this feature.
+
+## Rounding Test Vectors (half-up)
+
+Include these explicit test vectors in unit tests (T505) to validate deterministic rounding semantics at the line and tax level.
+
+1) Unweighted (integer qty)
+  - unit_price = 100 (minor units, e.g., £1.00), qty = 1.000 → raw = 100.0 → rounded = 100
+  - unit_price = 100, qty = 1.004 → raw = 100.4 → rounded = 100
+  - unit_price = 100, qty = 1.005 → raw = 100.5 → rounded = 101
+
+2) Weighted (REAL qty)
+  - unit_price = 1000 (minor units/kg, £10.00/kg), qty = 0.333 → raw = 333.0 → rounded = 333
+  - unit_price = 1000, qty = 0.3333 → raw = 333.3 → rounded = 333
+  - unit_price = 1000, qty = 0.3335 → raw = 333.5 → rounded = 334
+
+3) Tax rounding (line-level)
+  - line_pre_tax = 100, tax_rate = 20% (2000 bp) → tax_raw = 20.0 → rounded_tax = 20
+  - line_pre_tax = 101, tax_rate = 20% → tax_raw = 20.2 → rounded_tax = 20
+
+Use these vectors in table-driven unit tests that assert both line rounding and tax rounding, and verify `sales.rounding` records any residual signed difference between summed rounded line values and expected arithmetic totals.
