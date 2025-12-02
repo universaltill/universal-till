@@ -29,6 +29,7 @@
     <div class="totals">
       <div>Subtotal: {{ money .Subtotal }}</div>
       <div>Tax: {{ money .TaxTotal }}</div>
+      {{ if gt .SaleDiscount 0 }}<div>Discount: -{{ money .SaleDiscount }}</div>{{ end }}
       <div><strong>Total: {{ money .Total }}</strong></div>
     </div>
     <div class="actions">
