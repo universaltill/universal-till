@@ -6,19 +6,20 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
-func registerSettings(mux *http.ServeMux, d *deps) {
+func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
-		all, _ := d.settings.All(r.Context())
+		all, _ := d.Settings.All(r.Context())
 		data := map[string]any{
 			"title":       "Settings",
-			"theme":       d.state.Theme,
-			"settings":    d.state,
+			"theme":       d.State.Theme,
+			"settings":    d.State,
 			"settingsMap": all,
-			"menuItems":   d.menu,
+			"menuItems":   d.Menu,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -26,8 +27,8 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 	mux.HandleFunc("/api/settings/theme", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if v := strings.TrimSpace(r.Form.Get("theme")); v != "" {
-			d.state.Theme = v
-			saveState(r.Context(), d.settings, d.state)
+			d.State.Theme = v
+			common.SaveState(r.Context(), d.Settings, d.State)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -35,27 +36,27 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 	mux.HandleFunc("/api/settings/save", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" {
-			d.state.Currency = v
+			d.State.Currency = v
 		}
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
-			d.state.Country = v
+			d.State.Country = v
 		}
 		if v := strings.TrimSpace(r.Form.Get("region")); v != "" {
-			d.state.Region = v
+			d.State.Region = v
 		}
-		d.state.TaxInclusive = r.Form.Get("taxInclusive") == "on"
-		d.state.AllowNegativeInventory = r.Form.Get("allowNegativeInventory") == "on"
+		d.State.TaxInclusive = r.Form.Get("taxInclusive") == "on"
+		d.State.AllowNegativeInventory = r.Form.Get("allowNegativeInventory") == "on"
 		if v := r.Form.Get("taxRatePct"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-				d.state.TaxRatePct = n
+				d.State.TaxRatePct = n
 			}
 		}
-		saveState(r.Context(), d.settings, d.state)
-		httpx.InitCurrency(d.state.Currency)
-		resolver := ui.PriceResolverAdapter{Store: d.btnStore}
-		d.engine = pos.NewServiceWithResolver(pos.Config{
-			TaxInclusive:       d.state.TaxInclusive,
-			TaxRateBasisPoints: d.state.TaxRatePct * 100,
+		common.SaveState(r.Context(), d.Settings, d.State)
+		httpx.InitCurrency(d.State.Currency)
+		resolver := ui.PriceResolverAdapter{Store: d.BtnStore}
+		d.Engine = pos.NewServiceWithResolver(pos.Config{
+			TaxInclusive:       d.State.TaxInclusive,
+			TaxRateBasisPoints: d.State.TaxRatePct * 100,
 		}, resolver)
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -69,34 +70,34 @@ func registerSettings(mux *http.ServeMux, d *deps) {
 			http.Error(w, "key required", http.StatusBadRequest)
 			return
 		}
-		if err := d.settings.Set(r.Context(), key, value); err != nil {
+		if err := d.Settings.Set(r.Context(), key, value); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// reflect into state for known keys
 		switch key {
-		case keyTheme:
-			d.state.Theme = value
-		case keyCurrency:
-			d.state.Currency = value
-			httpx.InitCurrency(d.state.Currency)
-		case keyCountry:
-			d.state.Country = value
-		case keyRegion:
-			d.state.Region = value
-		case keyTaxInclusive:
-			d.state.TaxInclusive = strings.ToLower(value) == "true" || value == "1" || value == "on"
-			resolver := ui.PriceResolverAdapter{Store: d.btnStore}
-			d.engine = pos.NewServiceWithResolver(pos.Config{
-				TaxInclusive:       d.state.TaxInclusive,
-				TaxRateBasisPoints: d.state.TaxRatePct * 100,
+		case common.KeyTheme:
+			d.State.Theme = value
+		case common.KeyCurrency:
+			d.State.Currency = value
+			httpx.InitCurrency(d.State.Currency)
+		case common.KeyCountry:
+			d.State.Country = value
+		case common.KeyRegion:
+			d.State.Region = value
+		case common.KeyTaxInclusive:
+			d.State.TaxInclusive = strings.ToLower(value) == "true" || value == "1" || value == "on"
+			resolver := ui.PriceResolverAdapter{Store: d.BtnStore}
+			d.Engine = pos.NewServiceWithResolver(pos.Config{
+				TaxInclusive:       d.State.TaxInclusive,
+				TaxRateBasisPoints: d.State.TaxRatePct * 100,
 			}, resolver)
-		case keyTaxRate:
+		case common.KeyTaxRate:
 			if n, err := strconv.Atoi(value); err == nil {
-				d.state.TaxRatePct = n
+				d.State.TaxRatePct = n
 			}
 		case "pos.allow_negative_inventory":
-			d.state.AllowNegativeInventory = strings.ToLower(value) == "true" || value == "1" || value == "on"
+			d.State.AllowNegativeInventory = strings.ToLower(value) == "true" || value == "1" || value == "on"
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

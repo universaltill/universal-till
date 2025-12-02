@@ -4,34 +4,47 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // Register mounts catalog list/create and barcode attach endpoints.
-func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
+// func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
+func Register(mux *http.ServeMux, d *common.Deps) {
+
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		items, err := listItems(r.Context(), db)
+		items, err := listItems(r.Context(), d.Db)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cats, brands, taxCodes, err := listLookups(r.Context(), d.Db)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		data := map[string]any{
-			"title":     "Catalog",
-			"menuItems": menu,
-			"theme":     theme,
-			"Items":     items,
+			"title":      "Catalog",
+			"menuItems":  d.Menu,
+			"theme":      d.State.Theme,
+			"Items":      items,
+			"Categories": cats,
+			"Brands":     brands,
+			"TaxCodes":   taxCodes,
 		}
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
 			filepath.Join("web", "ui", "pages", "catalog.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
+			filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 		), funcs)("base", data)(w, r)
 	})
@@ -47,11 +60,15 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if _, err := pos.CreateItem(r.Context(), db, itemInput); err != nil {
+		if err := validateLookups(r.Context(), d.Db, itemInput); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		if _, err := pos.CreateItem(r.Context(), d.Db, itemInput); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, _ := listItems(r.Context(), d.Db)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -71,11 +88,15 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			return
 		}
 		itemInput.ID = strings.TrimSpace(r.Form.Get("id"))
-		if err := pos.UpdateItem(r.Context(), db, itemInput); err != nil {
+		if err := validateLookups(r.Context(), d.Db, itemInput); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		if err := pos.UpdateItem(r.Context(), d.Db, itemInput); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, _ := listItems(r.Context(), d.Db)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -94,11 +115,11 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, "id required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.DeactivateItem(r.Context(), db, itemID); err != nil {
+		if err := pos.DeactivateItem(r.Context(), d.Db, itemID); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		items, _ := listItems(r.Context(), d.Db)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -144,17 +165,17 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			}
 		}
 		if vInput.ID == "" {
-			if _, err := pos.CreateVariant(r.Context(), db, vInput); err != nil {
+			if _, err := pos.CreateVariant(r.Context(), d.Db, vInput); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		} else {
-			if err := pos.UpdateVariant(r.Context(), db, vInput); err != nil {
+			if err := pos.UpdateVariant(r.Context(), d.Db, vInput); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
-		items, _ := listItems(r.Context(), db)
+		items, _ := listItems(r.Context(), d.Db)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -173,11 +194,11 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, "id required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.DeactivateVariant(r.Context(), db, variantID); err != nil {
+		if err := pos.DeactivateVariant(r.Context(), d.Db, variantID); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		items, _ := listItems(r.Context(), d.Db)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -198,7 +219,7 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, "barcode required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.AddBarcode(r.Context(), db, pos.BarcodeInput{
+		if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
 			Barcode:   barcode,
 			ItemID:    itemID,
 			VariantID: variantID,
@@ -207,7 +228,7 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		items, _ := listItems(r.Context(), d.Db)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -265,8 +286,6 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 	cat := strPtr(r.Form.Get("categoryId"))
 	brand := strPtr(r.Form.Get("brandId"))
 	taxCode := strPtr(r.Form.Get("taxCode"))
-	cost := strPtr(r.Form.Get("costPrice")) // cost not stored on item; kept for future?
-	_ = cost                                // placeholder to avoid unused; cost handling can be added if schema supports
 	return pos.ItemInput{
 		Name:        name,
 		SKU:         strings.TrimSpace(r.Form.Get("sku")),
@@ -279,5 +298,78 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		IsWeighed:   r.Form.Get("isWeighed") == "1" || strings.ToLower(r.Form.Get("isWeighed")) == "on",
 		IsActive:    r.Form.Get("isActive") != "0",
 	}, nil
+}
+
+type lookup struct {
+	ID   string
+	Name string
+}
+
+func listLookups(ctx context.Context, db *sql.DB) ([]lookup, []lookup, []lookup, error) {
+	cats, err := readLookup(ctx, db, "categories")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	brands, err := readLookup(ctx, db, "brands")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	taxCodes, err := readLookup(ctx, db, "tax_codes")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return cats, brands, taxCodes, nil
+}
+
+func readLookup(ctx context.Context, db *sql.DB, table string) ([]lookup, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, name FROM `+table+` WHERE (is_active IS NULL OR is_active = 1) ORDER BY name`)
+	if err != nil {
+		// Fallback for tables without is_active column
+		if strings.Contains(err.Error(), "no such column: is_active") {
+			rows, err = db.QueryContext(ctx, `SELECT id, name FROM `+table+` ORDER BY name`)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []lookup
+	for rows.Next() {
+		var l lookup
+		if err := rows.Scan(&l.ID, &l.Name); err != nil {
+			return nil, err
+		}
+		res = append(res, l)
+	}
+	return res, rows.Err()
+}
+
+func validateLookups(ctx context.Context, db *sql.DB, in pos.ItemInput) error {
+	check := func(table, id string) error {
+		var exists int
+		if err := db.QueryRowContext(ctx, `SELECT 1 FROM `+table+` WHERE id = ?`, id).Scan(&exists); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%s not found: %s", table, id)
+			}
+			return err
+		}
+		return nil
+	}
+	if in.CategoryID != nil {
+		if err := check("categories", *in.CategoryID); err != nil {
+			return err
+		}
+	}
+	if in.BrandID != nil {
+		if err := check("brands", *in.BrandID); err != nil {
+			return err
+		}
+	}
+	if in.TaxCodeID != nil {
+		if err := check("tax_codes", *in.TaxCodeID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func files(paths ...string) []string { return paths }
