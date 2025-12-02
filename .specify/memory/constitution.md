@@ -370,6 +370,10 @@ Human review required for all AI-generated proposals.
 
 All feature work begins with a **spec**.
 
+### Contribution Workflow
+
+- All changes must land via a feature branch and PR; avoid direct commits to `main` unless explicitly authorized.
+
 ---
 
 **Version:** 1.0.0  
