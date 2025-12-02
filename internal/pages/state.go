@@ -39,12 +39,12 @@ func loadState(ctx context.Context, store *settings.Store, cfg *config.Config) r
 	}
 
 	st := runtimeState{
-		Theme:                   get(keyTheme, cfg.Theme),
-		Currency:                get(keyCurrency, cfg.Locales.Currency),
-		Country:                 get(keyCountry, "GB"),
-		Region:                  get(keyRegion, ""),
-		TaxRatePct:              cfg.Locales.TaxRate,
-		AllowNegativeInventory:  false,
+		Theme:                  get(keyTheme, cfg.Theme),
+		Currency:               get(keyCurrency, cfg.Locales.Currency),
+		Country:                get(keyCountry, "GB"),
+		Region:                 get(keyRegion, ""),
+		TaxRatePct:             cfg.Locales.TaxRate,
+		AllowNegativeInventory: false,
 	}
 
 	if v := get(keyTaxInclusive, strconv.FormatBool(cfg.Locales.TaxInclusive)); v != "" {
