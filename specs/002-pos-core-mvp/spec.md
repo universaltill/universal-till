@@ -135,10 +135,10 @@ Examples:
 
 ### Receipt Numbering
 
-- Receipt numbers must be globally unique integers. Implementation guidance:
-	- Use an atomic sequence table `receipt_sequence(sequence INTEGER)` with a single-row increment-on-insert pattern, or rely on SQLite rowid on a dedicated `receipt_numbers` table to generate monotonic integers. The generator must be persisted in the database to survive restarts.
-	- Decide on scope: recommended global sequence (not per-register) to avoid collisions and simplify reconciliation.
-	- Add concurrent test to guarantee uniqueness when multiple checkout processes run in parallel (simulate concurrent inserts).
+- Receipt numbers must be globally unique. Use the existing `sales.receipt_no` column (UNIQUE) and generate the next value transactionally without introducing new tables or migrations:
+	- Allocate the next receipt number inside the sale-finalisation transaction using SQLite locking to prevent races (e.g., select max(receipt_no) → +1, or use `rowid`/`id` as the monotonic basis) and persist to `sales.receipt_no`.
+	- Scope is global (not per-register) to avoid collisions and simplify reconciliation.
+	- Add a concurrent test that simulates multiple checkout processes to prove uniqueness and monotonicity with the no-new-table approach.
 
 ### Event Dispatch Semantics
 

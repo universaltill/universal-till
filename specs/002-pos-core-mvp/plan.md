@@ -1,7 +1,7 @@
 # Implementation Plan: POS Core MVP
 
-**Branch**: `[001-pos-core-mvp]` | **Date**: 2025-11-27 | **Spec**: specs/pos-core-mvp/spec.md  
-**Input**: Feature specification from `specs/pos-core-mvp/spec.md`
+**Branch**: `[002-pos-core-mvp]` | **Date**: 2025-11-27 | **Spec**: specs/002-pos-core-mvp/spec.md  
+**Input**: Feature specification from `specs/002-pos-core-mvp/spec.md`
 
 ## Summary
 
@@ -98,7 +98,7 @@ Sprint cadence and scope:
 
 - Week 3 — Payments, Receipt Generator & Inventory
   - Implement multi-tender payments recording and the atomic DB transaction pattern for sale finalisation described in this plan: core DB changes inside a transaction; external plugin/payment capture outside with compensating state recorded on failure.
-  - Implement DB-backed receipt number generator and add concurrency test that spawns goroutines to request numbers concurrently; assert uniqueness and monotonicity.
+  - Implement DB-backed receipt number generator using existing `sales.receipt_no` (no new tables) and add concurrency test that spawns goroutines to request numbers concurrently; assert uniqueness and monotonicity.
   - Implement stock movement writes on sale completion and return flows; add aggregation helpers and unit tests validating inventory after sales/returns.
   - Deliverable: payments write-path, receipt generator, stock_movement integration, and tests.
   - Acceptance criteria: payment workflow tests (success + simulated partial failure) pass; receipt concurrency test passes locally.
@@ -162,7 +162,7 @@ Rollout & verification
 
 ### Receipt Number Generator
 
-- Implement a DB-backed atomic generator (see `spec.md` guidance) and add a test that concurrently requests receipt numbers from multiple goroutines/processes to ensure uniqueness and monotonicity under contention.
+- Implement a DB-backed atomic generator using the existing `sales.receipt_no` column (UNIQUE) with no new tables/migrations. Allocate the next value transactionally (e.g., max(receipt_no)+1 or rowid-based) with locking, and add a test that concurrently requests receipt numbers from multiple goroutines/processes to ensure uniqueness and monotonicity under contention.
 
 ### Performance Validation
 
