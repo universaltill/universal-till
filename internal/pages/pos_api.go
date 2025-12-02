@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -41,6 +42,44 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					qty = v
 				}
 			}
+		}
+		customerID := ""
+		if r.Header.Get("Content-Type") == "application/json" {
+			type In struct {
+				Code       string  `json:"code"`
+				Qty        float64 `json:"qty"`
+				CustomerID string  `json:"customerId,omitempty"`
+			}
+			var in In
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			code = in.Code
+			customerID = strings.TrimSpace(in.CustomerID)
+			if in.Qty > 0 {
+				qty = in.Qty
+			}
+		} else {
+			_ = r.ParseForm()
+			code = r.Form.Get("code")
+			customerID = strings.TrimSpace(r.Form.Get("customerId"))
+			if q := r.Form.Get("qty"); q != "" {
+				if v, err := strconv.ParseFloat(q, 64); err == nil && v > 0 {
+					qty = v
+				}
+			}
+		}
+		if discount, ok := promoFromDB(r.Context(), d.Db, customerID, code); ok {
+			d.Engine.SetDiscount(discount)
+			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+			basketView, _ := ui.NewBasketView(funcs)
+			_ = basketView.Render(w, d.Engine.Basket())
+			return
+		}
+		if discount, ok := parsePromotionBarcode(code); ok {
+			d.Engine.SetDiscount(discount)
+			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+			basketView, _ := ui.NewBasketView(funcs)
+			_ = basketView.Render(w, d.Engine.Basket())
+			return
 		}
 		b, _ := d.Engine.ScanQty(code, qty)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -84,6 +123,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		d.Engine.UpdateLine(code, qty, discount)
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		b := d.Engine.Basket()
+		_ = basketView.Render(w, b)
+	})
+
+	// Apply sale-level discount (coupon/promotion) in minor units.
+	mux.HandleFunc("/api/pos/discount", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		discount := int64(0)
+		if v := r.Form.Get("discount"); v != "" {
+			if dVal, err := strconv.ParseInt(v, 10, 64); err == nil && dVal >= 0 {
+				discount = dVal
+			}
+		}
+		d.Engine.SetDiscount(discount)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
@@ -247,11 +302,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
+		discount := in.Discount
+		if discount == 0 {
+			discount = d.Engine.SaleDiscount()
+		}
+
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, pos.SaleInput{
 			SaleType:               "sale",
 			Currency:               d.State.Currency,
 			TaxInclusive:           d.State.TaxInclusive,
-			SaleDiscount:           in.Discount,
+			SaleDiscount:           discount,
 			Lines:                  saleLines,
 			Payments:               payments,
 			Note:                   in.Note,
@@ -339,6 +399,71 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// parsePromotionBarcode interprets promo codes like PROMO500 (minor units) or PROMO5.00.
+func parsePromotionBarcode(code string) (int64, bool) {
+	c := strings.TrimSpace(code)
+	if c == "" {
+		return 0, false
+	}
+	up := strings.ToUpper(c)
+	prefixes := []string{"PROMO", "DISC", "COUPON"}
+	var raw string
+	for _, p := range prefixes {
+		if strings.HasPrefix(up, p) {
+			raw = strings.TrimSpace(up[len(p):])
+			break
+		}
+	}
+	if raw == "" {
+		return 0, false
+	}
+	raw = strings.TrimLeft(raw, "-")
+	if raw == "" {
+		return 0, false
+	}
+	if val, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		if val > 0 {
+			return val, true
+		}
+	}
+	if f, err := strconv.ParseFloat(raw, 64); err == nil {
+		amt := int64(math.Round(f * 100))
+		if amt > 0 {
+			return amt, true
+		}
+	}
+	return 0, false
+}
+
+// promoFromDB looks up promotions table with optional customer targeting and active window.
+func promoFromDB(ctx context.Context, db *sql.DB, customerID string, code string) (int64, bool) {
+	row := db.QueryRowContext(ctx, `
+SELECT amount
+FROM promotions
+WHERE code = ?
+  AND is_active = 1
+  AND (customer_id IS NULL OR customer_id = ?)
+  AND (starts_at IS NULL OR datetime(starts_at) <= CURRENT_TIMESTAMP)
+  AND (ends_at IS NULL OR datetime(ends_at) >= CURRENT_TIMESTAMP)
+LIMIT 1
+`, strings.TrimSpace(code), nullIfEmpty(customerID))
+	var amount int64
+	if err := row.Scan(&amount); err != nil {
+		return 0, false
+	}
+	if amount <= 0 {
+		return 0, false
+	}
+	return amount, true
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // ensureStockLocation returns an existing location id or creates a default one.

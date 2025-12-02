@@ -598,3 +598,11 @@ erDiagram
 
 ```
 
+
+## Promotions
+
+- Table: `promotions(code TEXT PK, amount INTEGER, description TEXT, starts_at TEXT, ends_at TEXT, customer_id TEXT FK customers.id, is_active INTEGER)`
+- Purpose: store coupon/promotion codes redeemable at checkout; `amount` in minor units; optional `customer_id` for targeted promos; `starts_at`/`ends_at` bound validity.
+- Seeds (001_init.sql): PROMO50 (50p), PROMO500 (£5), DISC10 (£10).
+- Usage: POS scan/discount endpoint checks active promotions (optionally matching customer) before applying barcode prefixes.
+- Constraints: no negative amounts; inactive/expired codes ignored.
