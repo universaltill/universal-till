@@ -310,7 +310,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
-		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive)
+		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, in.Discount)
 
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
@@ -408,7 +408,7 @@ type receiptLine struct {
 	TotalAfterTax int64
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, subtotal, taxTotal, total int64, taxInclusive bool) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFiles(
 		"web/ui/partials/receipt.html",
 	)
@@ -431,11 +431,12 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		})
 	}
 	data := map[string]any{
-		"ReceiptNo": receiptNo,
-		"Lines":     rlines,
-		"Subtotal":  subtotal,
-		"TaxTotal":  taxTotal,
-		"Total":     total,
+		"ReceiptNo":    receiptNo,
+		"Lines":        rlines,
+		"Subtotal":     subtotal,
+		"TaxTotal":     taxTotal,
+		"SaleDiscount": saleDiscount,
+		"Total":        total,
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "receipt", data); err != nil {

@@ -9,9 +9,9 @@
 - [x] SB-202 Support sale- and line-level discounts; ensure totals reflect discounts.
 
 ## Phase 3: Status & Audit
-- [ ] SB-301 Implement park flow (status change, persistence, audit entry).
-- [ ] SB-302 Implement void flow (status change, audit entry, safe cleanup).
+- [x] SB-301 Implement park flow (status change, persistence, audit entry).
+- [x] SB-302 Implement void flow (status change, audit entry, safe cleanup).
 
 ## Phase 4: Receipts & UI
-- [ ] SB-401 Ensure receipt payload includes lines/discounts/totals; render via existing templates (`web/`).
-- [ ] SB-402 Handler/HTMX tests for basket and park/void actions.
+- [x] SB-401 Ensure receipt payload includes lines/discounts/totals; render via existing templates (`web/`).
+- [x] SB-402 Handler/HTMX tests for basket and park/void actions.
