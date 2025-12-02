@@ -79,6 +79,65 @@ proto/           # (if used)
 - Summarize plugin manifest ingestion and rendering paths; document minimal host contract in `contracts/`.
 - Write quickstart steps for running with SQLite (`UT_STORE=sqlite`) and seed data for manual testing.
 
+### Phase 1 – Implementation (detailed)
+
+Timebox: 4 weeks (can be split into two 2-week sprints). Goal: deliver a minimally usable, well-tested POS core supporting catalog, sales (offline), inventory updates, returns, payments (multi‑tender), and a minimal plugin host surface.
+
+Sprint cadence and scope:
+- Week 1 — Catalog & Pricing Core
+  - Implement and harden catalog CRUD paths used by the UI and API handlers. Ensure barcode lookup, image paths, and active/inactive flags behave as expected.
+  - Implement `price_history` read/write helpers and price resolution logic used by the sale flow. Add unit tests for price selection and edge cases (no price, multiple prices same timestamp).
+  - Deliverable: catalog CRUD + pricing helpers with unit tests and docs updated in `data-model.md`.
+  - Acceptance criteria: all new/changed functions covered by unit tests; no DB schema changes; `go test ./internal/pos -run TestPrice|TestCatalog` passes locally.
+
+- Week 2 — Sale Flow & Basket
+  - Implement basket operations (add/edit/remove, weighed items) and snapshot semantics for `sale_lines` so price/tax at time-of-sale is preserved.
+  - Wire basket -> payment initiation UI flow and server endpoints. Implement client-side hooks for UX (HTMX snippets) to avoid full page reloads.
+  - Deliverable: end-to-end scan→cart→review flow (UI + handlers) with unit tests for snapshot semantics.
+  - Acceptance criteria: sale lines preserve price/tax snapshot in tests; manual smoke validates scan→cart→checkout flows using seed DB.
+
+- Week 3 — Payments, Receipt Generator & Inventory
+  - Implement multi-tender payments recording and the atomic DB transaction pattern for sale finalisation described in this plan: core DB changes inside a transaction; external plugin/payment capture outside with compensating state recorded on failure.
+  - Implement DB-backed receipt number generator and add concurrency test that spawns goroutines to request numbers concurrently; assert uniqueness and monotonicity.
+  - Implement stock movement writes on sale completion and return flows; add aggregation helpers and unit tests validating inventory after sales/returns.
+  - Deliverable: payments write-path, receipt generator, stock_movement integration, and tests.
+  - Acceptance criteria: payment workflow tests (success + simulated partial failure) pass; receipt concurrency test passes locally.
+
+- Week 4 — Plugin Host Minimal Surface, Audit & Release Prep
+  - Implement plugin manifest ingestion (persist minimal manifest fields), permission checks at runtime for the host, and a rendering path for plugin-provided UI entries (buttons/pages) in a safe, permissioned way.
+  - Add audit logging for manager overrides and negative inventory overrides; ensure override actions create auditable rows with `user_id`, `reason`, and `timestamp`.
+  - Finish remaining unit tests and add at least one integration smoke script that runs a full sale in a temp SQLite DB and verifies DB invariants.
+  - Deliverable: minimal plugin host support for manifests + permission enforcement, audit logging, integration smoke script.
+  - Acceptance criteria: plugin permission enforcement unit tests pass; audit entries appear for override paths; smoke script exits 0.
+
+Milestone sign-off criteria (for each sprint):
+- Unit tests added/updated for changed packages; `go test ./...` passes.
+- CI gates: `gofmt`/`go vet` pass, linter (if present) passes; no new DB migration files added or modified.
+- Performance quick-check: the provided smoke benchmark for sale completion must complete within configured threshold on CI runner (threshold configurable; default 5s for constrained hardware check — CI may run a looser threshold).
+- Documentation: `data-model.md` and `quickstart.md` updated with any behavioral changes and manual verification steps.
+
+CI & gating recommendations
+- Required CI jobs for this feature branch:
+  - `unit-tests`: `go test ./...` (fail on any package test failure)
+  - `fmt-vet`: `gofmt -l` + `go vet`
+  - `receipt-concurrency-test`: run a small Go test that stresses the receipt generator under concurrency
+  - `smoke`: run the integration smoke script against a temporary SQLite file (created and destroyed during job)
+  - `bench-check` (optional): run a short benchmark and fail the job if sale completion median exceeds the threshold for the runner class; treat as advisory for now.
+
+Delivery checklist (before merge to `main`):
+- All unit and integration tests passing locally.
+- Smoke script demonstrates an offline sale (scan → cart → pay → receipt) against a seeded SQLite DB.
+- Receipt concurrency test added and passing.
+- No modifications to `internal/db/migrations/*.sql` (verify with CI file check).
+- Update agent context (`.specify/scripts/bash/update-agent-context.sh copilot`) to refresh Copilot guidance.
+
+Owners & assignments
+- Suggested: break tasks into issues and assign to implementers. Use `T-` task IDs from `tasks.md` for traceability. If no assignee, use `unassigned` label and link PR to spec.
+
+Rollout & verification
+- Merge to `main` after sign-off and CI green. Run the manual smoke quickstart steps from `quickstart.md` on a test machine (Linux or macOS) to validate UI flows and receipts.
+- Post-merge: monitor logs for unexpected DB errors, receipt generator anomalies, and plugin permission denials; collect feedback and cut follow-up patches.
+
 ### Phase 2 – Implementation Breakdown (feeds `/speckit.tasks`)
 - Catalog/Pricing: CRUD respects `is_active`, barcodes/images; append-only `price_history`; fallback search when barcode missing.
 - Sales Flow: basket add/edit/remove (incl. weighed), snapshot fields on `sale_lines`, tax calc per settings (inclusive/exclusive), discounts persisted.
