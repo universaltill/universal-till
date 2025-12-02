@@ -7,12 +7,66 @@
     <form hx-post="/api/catalog/item" hx-target="#catalog-table" hx-swap="outerHTML">
       <label>Name <input type="text" name="name" required></label>
       <label>SKU <input type="text" name="sku" placeholder="auto if blank"></label>
+      <label>Description <input type="text" name="description" placeholder="short description"></label>
+      <label>Unit <input type="text" name="unit" value="each"></label>
+      <label>Weighed? <input type="checkbox" name="isWeighed" value="1"></label>
+      <label>Category ID <input type="text" name="categoryId"></label>
+      <label>Brand ID <input type="text" name="brandId"></label>
       <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
       <label>Tax Code <input type="text" name="taxCode" placeholder="tax_std"></label>
+      <label>Active? <input type="checkbox" name="isActive" value="1" checked></label>
       <button class="btn" type="submit">Create</button>
     </form>
   </div>
 
+  <div class="card">
+    <h3>Update Item</h3>
+    <form hx-post="/api/catalog/item/update" hx-target="#catalog-table" hx-swap="outerHTML">
+      <label>Item ID <input type="text" name="id" required></label>
+      <label>Name <input type="text" name="name" required></label>
+      <label>SKU <input type="text" name="sku"></label>
+      <label>Description <input type="text" name="description"></label>
+      <label>Unit <input type="text" name="unit" value="each"></label>
+      <label>Weighed? <input type="checkbox" name="isWeighed" value="1"></label>
+      <label>Category ID <input type="text" name="categoryId"></label>
+      <label>Brand ID <input type="text" name="brandId"></label>
+      <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
+      <label>Tax Code <input type="text" name="taxCode"></label>
+      <label>Active? <input type="checkbox" name="isActive" value="1" checked></label>
+      <button class="btn" type="submit">Update</button>
+    </form>
+  </div>
+</div>
+
+<div class="grid two">
+  <div class="card">
+    <h3>Add/Update Variant</h3>
+    <form hx-post="/api/catalog/variant" hx-target="#catalog-table" hx-swap="outerHTML">
+      <label>Variant ID (leave blank to create) <input type="text" name="id"></label>
+      <label>Item ID <input type="text" name="itemId" required></label>
+      <label>Name <input type="text" name="name" required></label>
+      <label>SKU <input type="text" name="sku"></label>
+      <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
+      <label>Cost Price (minor units) <input type="number" name="costPrice" min="0" step="1"></label>
+      <label>Active? <input type="checkbox" name="isActive" value="1" checked></label>
+      <button class="btn" type="submit">Save Variant</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Deactivate Item/Variant</h3>
+    <form hx-post="/api/catalog/item/deactivate" hx-target="#catalog-table" hx-swap="outerHTML">
+      <label>Item ID <input type="text" name="id" required></label>
+      <button class="btn warning" type="submit">Deactivate Item</button>
+    </form>
+    <form hx-post="/api/catalog/variant/deactivate" hx-target="#catalog-table" hx-swap="outerHTML" style="margin-top:1rem">
+      <label>Variant ID <input type="text" name="id" required></label>
+      <button class="btn warning" type="submit">Deactivate Variant</button>
+    </form>
+  </div>
+</div>
+
+<div class="grid two">
   <div class="card">
     <h3>Add Barcode</h3>
     <form hx-post="/api/catalog/barcode" hx-target="#catalog-table" hx-swap="outerHTML">

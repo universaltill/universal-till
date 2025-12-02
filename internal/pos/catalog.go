@@ -14,11 +14,11 @@ type ItemInput struct {
 	SKU         string
 	Name        string
 	BasePrice   int64
+	Unit        string
 	CategoryID  *string
 	BrandID     *string
 	TaxCodeID   *string
 	IsWeighed   bool
-	Unit        string
 	Description string
 	IsActive    bool
 }
@@ -95,6 +95,41 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return in.ID, nil
 }
 
+// UpdateItem updates mutable fields for an item.
+func UpdateItem(ctx context.Context, db *sql.DB, in ItemInput) error {
+	if in.ID == "" {
+		return errors.New("id required")
+	}
+	if in.Name == "" {
+		return errors.New("name required")
+	}
+	if in.Unit == "" {
+		in.Unit = "each"
+	}
+	active := 1
+	if !in.IsActive {
+		active = 0
+	}
+	_, err := db.ExecContext(ctx, `
+UPDATE items
+SET sku = COALESCE(NULLIF(?, ''), sku),
+    name = ?,
+    description = ?,
+    category_id = ?,
+    brand_id = ?,
+    unit = ?,
+    base_price = ?,
+    tax_code_id = ?,
+    is_active = ?,
+    is_weighed = ?
+WHERE id = ?
+`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), in.ID)
+	if err != nil {
+		return fmt.Errorf("update item: %w", err)
+	}
+	return nil
+}
+
 // CreateVariant inserts a new active variant under an item.
 func CreateVariant(ctx context.Context, db *sql.DB, in VariantInput) (string, error) {
 	if in.ItemID == "" {
@@ -120,6 +155,33 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	return in.ID, nil
 }
 
+// UpdateVariant updates mutable fields for a variant.
+func UpdateVariant(ctx context.Context, db *sql.DB, in VariantInput) error {
+	if in.ID == "" {
+		return errors.New("id required")
+	}
+	if in.Name == "" {
+		return errors.New("name required")
+	}
+	active := 1
+	if !in.IsActive {
+		active = 0
+	}
+	_, err := db.ExecContext(ctx, `
+UPDATE item_variants
+SET sku = COALESCE(NULLIF(?, ''), sku),
+    name = ?,
+    price = ?,
+    cost_price = ?,
+    is_active = ?
+WHERE id = ?
+`, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active, in.ID)
+	if err != nil {
+		return fmt.Errorf("update variant: %w", err)
+	}
+	return nil
+}
+
 // AddBarcode enforces XOR between item_id and variant_id and that the target is active.
 func AddBarcode(ctx context.Context, db *sql.DB, in BarcodeInput) error {
 	if in.Barcode == "" {
@@ -132,6 +194,9 @@ func AddBarcode(ctx context.Context, db *sql.DB, in BarcodeInput) error {
 		in.BarcodeType = "EAN13"
 	}
 	if in.VariantID != "" {
+		if err := ensureBarcodeAvailable(ctx, db, in.Barcode, "variant", in.VariantID); err != nil {
+			return err
+		}
 		var active int
 		if err := db.QueryRowContext(ctx, `SELECT is_active FROM item_variants WHERE id = ?`, in.VariantID).Scan(&active); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -150,6 +215,9 @@ ON CONFLICT(barcode) DO UPDATE SET variant_id=excluded.variant_id, barcode_type=
 		return err
 	}
 	// item barcode
+	if err := ensureBarcodeAvailable(ctx, db, in.Barcode, "item", in.ItemID); err != nil {
+		return err
+	}
 	var active int
 	if err := db.QueryRowContext(ctx, `SELECT is_active FROM items WHERE id = ?`, in.ItemID).Scan(&active); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -194,4 +262,42 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ensureBarcodeAvailable enforces the (item_id XOR variant_id) rule across barcode tables.
+// It permits re-inserting the same barcode for the same target, but blocks cross-target moves.
+func ensureBarcodeAvailable(ctx context.Context, db *sql.DB, barcode, targetType, targetID string) error {
+	var existingItem string
+	switch targetType {
+	case "item":
+		if err := db.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&existingItem); err == nil {
+			if existingItem != targetID {
+				return fmt.Errorf("barcode already assigned to item %s", existingItem)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		// Check variant table for cross-assignment
+		if err := db.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&existingItem); err == nil {
+			return fmt.Errorf("barcode already assigned to variant %s", existingItem)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	case "variant":
+		if err := db.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&existingItem); err == nil {
+			if existingItem != targetID {
+				return fmt.Errorf("barcode already assigned to variant %s", existingItem)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err := db.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&existingItem); err == nil {
+			return fmt.Errorf("barcode already assigned to item %s", existingItem)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	default:
+		return errors.New("invalid targetType for barcode")
+	}
+	return nil
 }
