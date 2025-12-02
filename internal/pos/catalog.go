@@ -42,6 +42,31 @@ type BarcodeInput struct {
 	ForVariant  bool
 }
 
+// DeactivateItem sets is_active=0 for an item and its variants.
+func DeactivateItem(ctx context.Context, db *sql.DB, itemID string) error {
+	if itemID == "" {
+		return errors.New("itemID required")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = ?`, itemID); err != nil {
+		return fmt.Errorf("deactivate item: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE item_id = ?`, itemID); err != nil {
+		return fmt.Errorf("deactivate item variants: %w", err)
+	}
+	return nil
+}
+
+// DeactivateVariant sets is_active=0 for a variant.
+func DeactivateVariant(ctx context.Context, db *sql.DB, variantID string) error {
+	if variantID == "" {
+		return errors.New("variantID required")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE id = ?`, variantID); err != nil {
+		return fmt.Errorf("deactivate variant: %w", err)
+	}
+	return nil
+}
+
 // CreateItem inserts a new active item.
 func CreateItem(ctx context.Context, db *sql.DB, in ItemInput) (string, error) {
 	if in.Name == "" {

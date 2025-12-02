@@ -71,3 +71,40 @@ func TestCreateVariantAndBarcode(t *testing.T) {
 		t.Fatalf("AddBarcode variant error: %v", err)
 	}
 }
+
+func TestDeactivateItemAndVariants(t *testing.T) {
+	ctx := context.Background()
+	db := setupCatalogDB(t)
+	defer db.Close()
+	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm1','Apple',100,1)`)
+	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, name, price, is_active) VALUES('var1','itm1','500ml',150,1)`)
+
+	if err := DeactivateItem(ctx, db, "itm1"); err != nil {
+		t.Fatalf("DeactivateItem error: %v", err)
+	}
+	var active int
+	_ = db.QueryRow(`SELECT is_active FROM items WHERE id='itm1'`).Scan(&active)
+	if active != 0 {
+		t.Fatalf("expected item inactive")
+	}
+	_ = db.QueryRow(`SELECT is_active FROM item_variants WHERE id='var1'`).Scan(&active)
+	if active != 0 {
+		t.Fatalf("expected variant inactive")
+	}
+}
+
+func TestDeactivateVariant(t *testing.T) {
+	ctx := context.Background()
+	db := setupCatalogDB(t)
+	defer db.Close()
+	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm1','Apple',100,1)`)
+	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, name, price, is_active) VALUES('var1','itm1','500ml',150,1)`)
+	if err := DeactivateVariant(ctx, db, "var1"); err != nil {
+		t.Fatalf("DeactivateVariant error: %v", err)
+	}
+	var active int
+	_ = db.QueryRow(`SELECT is_active FROM item_variants WHERE id='var1'`).Scan(&active)
+	if active != 0 {
+		t.Fatalf("expected variant inactive")
+	}
+}
