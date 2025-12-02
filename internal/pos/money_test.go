@@ -10,9 +10,9 @@ func TestAmountForQuantity(t *testing.T) {
 		want      int64
 	}{
 		{"integer qty", 199, 2, 398},
-		{"weighed half up", 599, 0.5, 300},      // 599 * 0.5 = 299.5 -> 300
-		{"tiny qty rounds down", 199, 0.1, 20},  // 19.9 -> 20
-		{"rounds properly", 105, 1.3, 137},      // 136.5 -> 137
+		{"weighed half up", 599, 0.5, 300},     // 599 * 0.5 = 299.5 -> 300
+		{"tiny qty rounds down", 199, 0.1, 20}, // 19.9 -> 20
+		{"rounds properly", 105, 1.3, 137},     // 136.5 -> 137
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
