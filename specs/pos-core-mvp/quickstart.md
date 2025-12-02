@@ -1,3 +1,47 @@
+# Quickstart: Run POS Core MVP (local-first)
+
+Prerequisites
+- Go toolchain (recommended Go 1.25)
+- Docker (optional for edge/dev environment)
+
+Run locally (SQLite)
+
+1. Copy example env and enable SQLite:
+
+```bash
+cp pos.env.example pos.env.dev
+# ensure UT_STORE=sqlite in pos.env.dev
+```
+
+2. Build and run:
+
+```bash
+make build
+UT_STORE=sqlite ./bin/unitill-pos
+# open http://localhost:8080
+```
+
+3. Install a local plugin (example flow)
+- Place plugin binary and manifest where installer expects, or use the plugin catalog UI to add a manifest URL.
+- On install, host verifies manifest SHA256, creates `plugins` row and (if enabled) spawns plugin process for local mode.
+
+Cloud-enhanced features (optional)
+- Cloud features are opt-in. To enable cloud for a plugin, go to Settings → Plugins → Enable Cloud Mode and provide `ut_cloud_token` as instructed.
+- Cloud features are asynchronous and do not block core sale flows.
+
+Testing
+- Run unit tests:
+
+```bash
+go test ./...
+```
+
+Agent context update
+- After editing spec or plan files run:
+
+```bash
+SPECIFY_FEATURE=pos-core-mvp bash .specify/scripts/bash/update-agent-context.sh copilot
+```
 # Quickstart: POS Core MVP
 
 **Date**: 2025-11-27  

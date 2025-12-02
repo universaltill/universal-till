@@ -34,11 +34,21 @@
 - [ ] T302 [P] Returns: model as new sales with `sale_type='return'`, link via `sale_links`, post positive movements; receipt reflects link (`internal/pos`, `internal/pages`, `web/`).
 - [ ] T303 Negative inventory policy: block by default; allow explicit manager override with audit entry (`internal/pos`).
 
+## Phase 3.1: Safety & Audit additions
+
+- [ ] T304 Implement manager override audit flow: require `manager`/`admin` approval, create `audit_log` entry `negative_inventory_override` with pre-sale inventory snapshot and reason (`internal/pos`, `internal/pages`).
+
+
 ## Phase 4: User Story 4 – Basic plugin host operability (P3)
 
 - [ ] T401 [P] Persist plugin manifest data into `plugins`, `plugin_entries`, `plugin_settings`, `plugin_permissions`, `plugin_hooks` per contracts (`internal/plugins`).
 - [ ] T402 [P] Render plugin entries (page/button/popup/customer_facing/receipt_template) in UI shell and enforce declared permissions/capabilities (`internal/plugins`, `internal/pages`, `web/`).
 - [ ] T403 Audit plugin enable/disable/install actions in `audit_log` with actor/payload (`internal/plugins`).
+
+## Phase 4.1: Plugin Contracts & Tests
+
+- [ ] T404 Define and persist minimal plugin permission contract in `specs/pos-core-mvp/contracts/permissions.md` and implement runtime enforcement checks in `internal/plugins` (`internal/plugins` + tests).
+- [ ] T405 Add unit/handler tests for plugin permission enforcement, including denial and audit entries (`internal/plugins` tests).
 
 ## Phase 5: Tests & Validation
 
@@ -46,6 +56,15 @@
 - [x] T502 Unit tests for stock movement generation and inventory aggregation (`internal/pos` tests).
 - [ ] T503 Unit/handler tests for plugin permission enforcement (deny/allow) (`internal/plugins` tests).
 - [ ] T504 Manual quickstart run with SQLite (`quickstart.md` flow) covering scan→cart→payment→receipt and a return; verify DB rows.
+
+## Phase 5.1: Additional Test Tasks
+
+- [ ] T505 Add deterministic rounding tests with examples (half-up) for weighted and unweighted items; ensure `sales.rounding` behavior verified (`internal/pos` tests).
+- [ ] T506 Implement receipt-number concurrency test: simulate concurrent checkout goroutines/processes and assert unique, monotonic receipt numbers (`internal/pos` tests).
+- [ ] T507 Payment partial-failure tests: simulate external payment capture failures and verify DB transaction and recoverable payment states; include retry path tests (`internal/pos` + `internal/plugins` tests).
+- [ ] T508 Shift reconciliation tests: implement expected_cash calculation unit tests using seeded payments and payouts (`internal/pos` tests).
+- [ ] T509 Add `shortcut_buttons` UI test to ensure quick-add mapping and correct quantity behavior (`web/` + `internal/pages`).
+- [ ] T510 Performance benchmark: add a simple benchmark that runs sale completion end-to-end against an in-memory SQLite DB and asserts completion time under configured threshold (configurable CI warn only) (`internal/pos` tests / `scripts/bench`).
 
 ## Phase 6: Polish
 

@@ -94,6 +94,23 @@ proto/           # (if used)
 - Integration/smoke: `go test ./...`; manual run `UT_STORE=sqlite ./bin/unitill-pos` (or `make build && ./bin/unitill-pos`) to exercise scan→cart→payment→receipt offline.  
 - Data integrity checks: verify FK enforcement and `(item_id XOR variant_id)` constraints in tests; ensure `price_history` append-only; confirm stock movements align with inventory aggregates.
 
+### Payment Transaction Model (explicit)
+
+- Payment and sale completion transaction boundaries:
+  - All core sale finalisation DB changes (creating/updating `sales`, `sale_lines`, `sale_discounts`, `payments`, `stock_movements`, and `inventory` updates) must be executed in a single database transaction when possible. This ensures atomic visibility of a completed sale.
+  - External operations (e.g., calling a payment gateway or plugin `payment.capture`) should be performed outside the DB transaction where practical. On success, perform a follow-up DB update to record `payments.reference`/`paid_at`. If an external call fails, the DB transaction must not mark the sale as `completed` and must either rollback or persist a recoverable `payments` row with status `failed` depending on local offline constraints.
+  - Tests must simulate partial failure: e.g., payment capture success/fail after DB write, ensuring there is a clear, auditable intermediate state and a mechanism to retry/resolve.
+
+### Receipt Number Generator
+
+- Implement a DB-backed atomic generator (see `spec.md` guidance) and add a test that concurrently requests receipt numbers from multiple goroutines/processes to ensure uniqueness and monotonicity under contention.
+
+### Performance Validation
+
+- Add simple benchmarks and smoke checks to validate the performance goals (sale completion <5s in a constrained environment):
+  - A benchmark that runs the sale completion flow against an in-memory or temp SQLite DB measuring end-to-end time.
+  - A CI smoke script (optional) to run the benchmark and warn if thresholds exceed configured limits.
+
 ## Out of Scope / Non-goals
 
 - No schema/migration changes beyond `001_init.sql`.  
