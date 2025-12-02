@@ -10,6 +10,7 @@ type Service struct {
 	resolver PriceResolver
 	tax      TaxEngine
 	lines    []BasketLine // persisted after completion
+	discount int64        // sale-level discount (minor units)
 }
 
 type Config struct {
@@ -45,6 +46,7 @@ type Basket struct {
 	Subtotal int64        `json:"subtotal"`
 	Tax      int64        `json:"tax"`
 	Total    int64        `json:"total"`
+	Discount int64        `json:"discount"`
 }
 
 func (s *Service) Scan(code string) (*Basket, error) {
@@ -90,11 +92,16 @@ func (s *Service) recomputeTotals() {
 	}
 	s.basket.Lines = append([]BasketLine{}, s.lines...)
 	s.basket.Subtotal = sub
+	s.basket.Discount = s.discount
 	tax, total := int64(0), sub
 	if s.tax != nil {
 		tax, total = s.tax.Compute(sub)
 	}
 	s.basket.Tax = tax
+	total -= s.discount
+	if total < 0 {
+		total = 0
+	}
 	s.basket.Total = total
 }
 
@@ -133,6 +140,7 @@ func (s *Service) Remove(sku string) {
 func (s *Service) Reset() {
 	s.basket = Basket{}
 	s.lines = nil
+	s.discount = 0
 }
 
 // UpdateLine sets qty/discount for a given SKU (or item/variant match) and recomputes totals.
@@ -152,6 +160,20 @@ func (s *Service) UpdateLine(code string, qty float64, discount int64) {
 			return
 		}
 	}
+}
+
+// SetDiscount sets the sale-level discount (minor units) and recomputes totals.
+func (s *Service) SetDiscount(discount int64) {
+	if discount < 0 {
+		discount = 0
+	}
+	s.discount = discount
+	s.recomputeTotals()
+}
+
+// SaleDiscount returns the current sale-level discount.
+func (s *Service) SaleDiscount() int64 {
+	return s.discount
 }
 
 // // simple in-memory resolver

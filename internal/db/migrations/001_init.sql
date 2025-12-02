@@ -22,6 +22,20 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- ----------------------------------------
+-- Promotions / coupons
+-- ----------------------------------------
+CREATE TABLE IF NOT EXISTS promotions (
+    code        TEXT PRIMARY KEY,               -- e.g., PROMO50
+    amount      INTEGER NOT NULL,               -- minor units
+    description TEXT,
+    starts_at   TEXT,
+    ends_at     TEXT,
+    customer_id TEXT,                            -- optional targeted customer
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (customer_id) REFERENCES customers (id)
+);
+
+-- ----------------------------------------
 -- Tax / catalog lookup tables
 -- ----------------------------------------
 CREATE TABLE IF NOT EXISTS tax_codes (
@@ -3393,6 +3407,12 @@ INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES
 ('perm-escpos-print', 'com.unitill.plugins.escpos', 'devices:printer', 1),
 ('perm-ubereats-orders','com.unitill.plugins.ubereats','integrations:orders', 1),
 ('perm-qrpay-charge','com.unitill.plugins.qrpay','payments:qr', 1);
+
+-- sample promotions
+INSERT OR IGNORE INTO promotions (code, amount, description, is_active) VALUES
+('PROMO50', 50, '50p off', 1),
+('PROMO500', 500, '£5 off', 1),
+('DISC10', 1000, '£10 off', 1);
 
 
 INSERT INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES
