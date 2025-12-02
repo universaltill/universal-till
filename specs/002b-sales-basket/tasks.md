@@ -1,7 +1,7 @@
 # Tasks: Sales Flow & Basket (002b)
 
 ## Phase 1: Helpers
-- [ ] SB-101 Add rounding/tax helper (half-up) covering inclusive/exclusive settings; table-driven tests.
+- [x] SB-101 Add rounding/tax helper (half-up) covering inclusive/exclusive settings; table-driven tests.
 - [ ] SB-102 Ensure catalog selection filters out inactive items/variants; add guard tests.
 
 ## Phase 2: Basket Operations

@@ -10,23 +10,12 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 )
-
-type deps struct {
-	cfg      *config.Config
-	pm       *plugins.Manager
-	db       *sql.DB
-	settings *settings.Store
-	state    runtimeState
-	baseMenu []menuItem
-	menu     []menuItem
-	engine   *pos.Service
-	btnStore *ui.ButtonStore
-}
 
 func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB) *http.ServeMux {
 	log := logging.L()
@@ -34,9 +23,17 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 
 	// settings + state
 	setStore := settings.NewStore(db)
-	state := loadState(ctx, setStore, cfg)
+	state := common.LoadState(ctx, setStore, cfg)
 	// Ensure defaults are persisted (e.g., theme).
-	saveState(ctx, setStore, state)
+	common.SaveState(ctx, setStore, common.RuntimeState{
+		Theme:                  state.Theme,
+		Currency:               state.Currency,
+		Country:                state.Country,
+		Region:                 state.Region,
+		TaxInclusive:           state.TaxInclusive,
+		TaxRatePct:             state.TaxRatePct,
+		AllowNegativeInventory: state.AllowNegativeInventory,
+	})
 
 	// i18n / currency
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), cfg.Locales.Locale)
@@ -53,7 +50,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		TaxRateBasisPoints: state.TaxRatePct * 100,
 	}, resolver)
 
-	baseMenu := []menuItem{
+	baseMenu := []common.MenuItem{
 		{Href: "/", Label: "Home"},
 		{Href: "/designer", Label: "Designer"},
 		{Href: "/settings", Label: "Settings"},
@@ -61,16 +58,16 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		{Href: "/catalog", Label: "Catalog"},
 	}
 
-	dp := &deps{
-		cfg:      cfg,
-		pm:       pm,
-		db:       db,
-		settings: setStore,
-		state:    state,
-		baseMenu: baseMenu,
-		menu:     buildMenu(baseMenu, pm),
-		engine:   engine,
-		btnStore: btnStore,
+	dp := &common.Deps{
+		Cfg:      cfg,
+		Pm:       pm,
+		Db:       db,
+		Settings: setStore,
+		State:    state,
+		BaseMenu: baseMenu,
+		Menu:     common.BuildMenu(baseMenu, pm),
+		Engine:   engine,
+		BtnStore: btnStore,
 	}
 
 	// Register routes
@@ -82,13 +79,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPluginAPI(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
-	catalog.Register(mux, dp.db, dp.state.Theme, []map[string]string{
-		{"Href": "/", "Label": "Home"},
-		{"Href": "/catalog", "Label": "Catalog"},
-		{"Href": "/designer", "Label": "Designer"},
-		{"Href": "/settings", "Label": "Settings"},
-		{"Href": "/plugins", "Label": "Plugins"},
-	})
+	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerHealth(mux)
 	registerExternalProxy(mux, dp)
