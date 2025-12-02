@@ -13,11 +13,12 @@ import (
 	"text/template"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
-func registerPOSAPI(mux *http.ServeMux, d *deps) {
+func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/pos/scan", func(w http.ResponseWriter, r *http.Request) {
 		code := ""
 		qty := 1
@@ -41,7 +42,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 				}
 			}
 		}
-		b, _ := d.engine.ScanQty(code, qty)
+		b, _ := d.Engine.ScanQty(code, qty)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, b)
@@ -55,10 +56,10 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, "code required", http.StatusBadRequest)
 			return
 		}
-		d.engine.Remove(code)
+		d.Engine.Remove(code)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
-		b := d.engine.Basket()
+		b := d.Engine.Basket()
 		_ = basketView.Render(w, b)
 	})
 
@@ -70,10 +71,10 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 
 	// Reset basket for new customer.
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
-		d.engine.Reset()
+		d.Engine.Reset()
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
-		b, _ := d.engine.Scan("")
+		b, _ := d.Engine.Scan("")
 		_ = basketView.Render(w, b)
 	})
 
@@ -96,13 +97,13 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		var in In
 		_ = json.NewDecoder(r.Body).Decode(&in)
 
-		lines := d.engine.Lines()
+		lines := d.Engine.Lines()
 		if len(lines) == 0 {
 			http.Error(w, "no items in basket", http.StatusBadRequest)
 			return
 		}
 
-		locID, err := ensureStockLocation(r.Context(), d.db)
+		locID, err := ensureStockLocation(r.Context(), d.Db)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -112,7 +113,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		for _, l := range lines {
 			taxBP := l.TaxRateBP
 			if taxBP == 0 {
-				taxBP = d.state.TaxRatePct * 100
+				taxBP = d.State.TaxRatePct * 100
 				if taxBP == 0 {
 					taxBP = 2000 // fallback to 20% if missing to avoid zero-tax totals
 				}
@@ -137,7 +138,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			if p.Method == "" || p.Amount <= 0 {
 				continue
 			}
-			if err := ensurePaymentMethod(r.Context(), d.db, p.Method); err != nil {
+			if err := ensurePaymentMethod(r.Context(), d.Db, p.Method); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -159,14 +160,14 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 					amount = amt
 				}
 				if method != "" {
-					if err := ensurePaymentMethod(r.Context(), d.db, method); err != nil {
+					if err := ensurePaymentMethod(r.Context(), d.Db, method); err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
 					payments = append(payments, pos.PaymentInput{
 						MethodID: method,
 						Amount:   amount,
-						Currency: d.state.Currency,
+						Currency: d.State.Currency,
 					})
 				}
 			}
@@ -176,12 +177,12 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		for i := range saleLines {
 			lineBase := pos.AmountForQuantity(saleLines[i].UnitPrice, saleLines[i].Qty)
 			lineNet := lineBase - saleLines[i].LineDiscount
-			lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, saleLines[i].TaxRateBasisPoints, d.state.TaxInclusive)
+			lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, saleLines[i].TaxRateBasisPoints, d.State.TaxInclusive)
 			subtotal += lineNet
 			taxTotal += lineTax
 		}
 		total := subtotal - in.Discount
-		if !d.state.TaxInclusive {
+		if !d.State.TaxInclusive {
 			total += taxTotal
 		}
 		if total < 0 {
@@ -191,7 +192,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			payments = append(payments, pos.PaymentInput{
 				MethodID: "cash",
 				Amount:   total,
-				Currency: d.state.Currency,
+				Currency: d.State.Currency,
 			})
 		}
 		for i := range payments {
@@ -202,27 +203,27 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 
 		registerID := in.RegisterID
 		if registerID == "" {
-			if regID, err := ensureRegister(r.Context(), d.db); err == nil {
+			if regID, err := ensureRegister(r.Context(), d.Db); err == nil {
 				registerID = regID
 			}
 		}
 
-		allowNegative := d.state.AllowNegativeInventory
+		allowNegative := d.State.AllowNegativeInventory
 		if in.AllowNegative != nil {
 			allowNegative = *in.AllowNegative
 		}
 
 		cashierID := in.CashierID
 		if cashierID == "" {
-			if cid, err := ensureUser(r.Context(), d.db); err == nil {
+			if cid, err := ensureUser(r.Context(), d.Db); err == nil {
 				cashierID = cid
 			}
 		}
 
-		saleID, err := pos.CompleteSale(r.Context(), d.db, pos.SaleInput{
+		saleID, err := pos.CompleteSale(r.Context(), d.Db, pos.SaleInput{
 			SaleType:               "sale",
-			Currency:               d.state.Currency,
-			TaxInclusive:           d.state.TaxInclusive,
+			Currency:               d.State.Currency,
+			TaxInclusive:           d.State.TaxInclusive,
 			SaleDiscount:           in.Discount,
 			Lines:                  saleLines,
 			Payments:               payments,
@@ -237,7 +238,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			if strings.Contains(err.Error(), "insufficient stock") {
 				locale := httpx.ResolveLocale(w, r)
 				funcs := httpx.FuncsFor(locale)
-				b := d.engine.Basket()
+				b := d.Engine.Basket()
 				basketView, _ := ui.NewBasketView(funcs)
 				var buf bytes.Buffer
 				_ = basketView.Render(&buf, b)
@@ -256,12 +257,12 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			return
 		}
 
-		d.engine.Reset()
+		d.Engine.Reset()
 
 		// load receipt_no and totals from DB for rendering
 		var receiptNo string
 		var dbSubtotal, dbTax, dbTotal int64
-		_ = d.db.QueryRowContext(r.Context(), `SELECT receipt_no, subtotal, tax_total, total FROM sales WHERE id = ?`, saleID).
+		_ = d.Db.QueryRowContext(r.Context(), `SELECT receipt_no, subtotal, tax_total, total FROM sales WHERE id = ?`, saleID).
 			Scan(&receiptNo, &dbSubtotal, &dbTax, &dbTotal)
 		if receiptNo == "" {
 			receiptNo = saleID
@@ -282,7 +283,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
-		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.state.TaxInclusive)
+		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive)
 
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
@@ -305,7 +306,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, "saleId and status required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.UpdateSaleStatus(r.Context(), d.db, in.SaleID, in.Status, "", in.Reason); err != nil {
+		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, "", in.Reason); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

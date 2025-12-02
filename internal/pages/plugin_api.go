@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-func registerPluginAPI(mux *http.ServeMux, d *deps) {
+func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/plugins/install", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -19,12 +21,12 @@ func registerPluginAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, "id required", http.StatusBadRequest)
 			return
 		}
-		if err := installPlugin(r.Context(), d.db, id); err != nil {
+		if err := installPlugin(r.Context(), d.Db, id); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = d.pm.Reload(r.Context())
-		d.menu = buildMenu(d.baseMenu, d.pm)
+		_ = d.Pm.Reload(r.Context())
+		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
