@@ -50,3 +50,10 @@ When to ask for human review
 If something's unclear, open a concise PR or ask in the repo: reference the changed file and give a short rationale.
 
 — End —
+
+## Active Technologies
+- Go 1.25 (per `go.mod`), SQLite via `modernc.org/sqlite`; responsive web UI (htmx + Alpine.js) served by Go. + Go standard library, `database/sql` + `modernc.org/sqlite`, existing template/static assets, UUID, LRU cache. (pos-core-mvp)
+- SQLite file (default `data/unitill.db`) when `UT_STORE=sqlite`; JSON legacy fallback for some data. (pos-core-mvp)
+
+## Recent Changes
+- pos-core-mvp: Added Go 1.25 (per `go.mod`), SQLite via `modernc.org/sqlite`; responsive web UI (htmx + Alpine.js) served by Go. + Go standard library, `database/sql` + `modernc.org/sqlite`, existing template/static assets, UUID, LRU cache.
