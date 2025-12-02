@@ -27,14 +27,17 @@ func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
 }
 
 type BasketLine struct {
-	SKU        string `json:"sku"`
-	Name       string `json:"name"`
-	Qty        int    `json:"qty"`
-	PriceCents int64  `json:"priceCents"`
-	ImageURL   string `json:"imageUrl,omitempty"`
-	ItemID     string `json:"-"`
-	VariantID  string `json:"-"`
-	TaxRateBP  int    `json:"-"`
+	SKU          string  `json:"sku"`
+	Name         string  `json:"name"`
+	Qty          float64 `json:"qty"`
+	PriceCents   int64   `json:"priceCents"`
+	LineDiscount int64   `json:"lineDiscount,omitempty"`
+	LineTotal    int64   `json:"lineTotal,omitempty"`
+	ImageURL     string  `json:"imageUrl,omitempty"`
+	ItemID       string  `json:"-"`
+	VariantID    string  `json:"-"`
+	TaxRateBP    int     `json:"-"`
+	IsWeighed    bool    `json:"-"`
 }
 
 type Basket struct {
@@ -48,7 +51,7 @@ func (s *Service) Scan(code string) (*Basket, error) {
 	return s.ScanQty(code, 1)
 }
 
-func (s *Service) ScanQty(code string, qty int) (*Basket, error) {
+func (s *Service) ScanQty(code string, qty float64) (*Basket, error) {
 	if qty <= 0 {
 		qty = 1
 	}
@@ -75,8 +78,15 @@ func (s *Service) ScanQty(code string, qty int) (*Basket, error) {
 
 func (s *Service) recomputeTotals() {
 	var sub int64
-	for _, l := range s.lines {
-		sub += int64(l.Qty) * l.PriceCents
+	for i := range s.lines {
+		l := &s.lines[i]
+		lineBase := AmountForQuantity(l.PriceCents, l.Qty)
+		lineNet := lineBase - l.LineDiscount
+		if lineNet < 0 {
+			lineNet = 0
+		}
+		l.LineTotal = lineNet
+		sub += lineNet
 	}
 	s.basket.Lines = append([]BasketLine{}, s.lines...)
 	s.basket.Subtotal = sub
@@ -123,6 +133,25 @@ func (s *Service) Remove(sku string) {
 func (s *Service) Reset() {
 	s.basket = Basket{}
 	s.lines = nil
+}
+
+// UpdateLine sets qty/discount for a given SKU (or item/variant match) and recomputes totals.
+func (s *Service) UpdateLine(code string, qty float64, discount int64) {
+	if qty < 0 {
+		qty = 0
+	}
+	for i := range s.lines {
+		if s.lines[i].SKU == code || (s.lines[i].ItemID == code || s.lines[i].VariantID == code) {
+			s.lines[i].Qty = qty
+			s.lines[i].LineDiscount = discount
+			if s.lines[i].Qty == 0 {
+				s.Remove(s.lines[i].SKU)
+				return
+			}
+			s.recomputeTotals()
+			return
+		}
+	}
 }
 
 // // simple in-memory resolver

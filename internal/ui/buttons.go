@@ -277,7 +277,7 @@ func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
 
 func (a PriceResolverAdapter) resolveVariant(ctx context.Context, code string) (pos.BasketLine, bool) {
 	row := a.Store.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, v.id, v.name, v.price,
+SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0)
 FROM variant_barcodes vb
@@ -291,7 +291,8 @@ LIMIT 1
 	var itemID, itemName, variantID, variantName, img sql.NullString
 	var price int64
 	var rateBP sql.NullInt64
-	if err := row.Scan(&itemID, &itemName, &variantID, &variantName, &price, &img, &rateBP); err != nil {
+	var weighed sql.NullInt64
+	if err := row.Scan(&itemID, &itemName, &variantID, &variantName, &price, &weighed, &img, &rateBP); err != nil {
 		return pos.BasketLine{}, false
 	}
 	price = a.Store.currentPrice(ctx, nil, &variantID.String, price)
@@ -299,7 +300,7 @@ LIMIT 1
 	if variantName.String != "" {
 		name = name + " - " + variantName.String
 	}
-	line := pos.BasketLine{SKU: code, Name: name, Qty: 1, PriceCents: price, ItemID: itemID.String, VariantID: variantID.String, TaxRateBP: int(rateBP.Int64)}
+	line := pos.BasketLine{SKU: code, Name: name, Qty: 1, PriceCents: price, ItemID: itemID.String, VariantID: variantID.String, TaxRateBP: int(rateBP.Int64), IsWeighed: weighed.Int64 == 1}
 	if img.Valid {
 		line.ImageURL = img.String
 	}
@@ -308,7 +309,7 @@ LIMIT 1
 
 func (a PriceResolverAdapter) resolveItem(ctx context.Context, code string) (pos.BasketLine, bool) {
 	row := a.Store.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, i.base_price,
+SELECT i.id, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0)
 FROM item_barcodes ib
@@ -321,11 +322,12 @@ LIMIT 1
 	var itemID, name, img sql.NullString
 	var price int64
 	var rateBP sql.NullInt64
-	if err := row.Scan(&itemID, &name, &price, &img, &rateBP); err != nil {
+	var weighed sql.NullInt64
+	if err := row.Scan(&itemID, &name, &price, &weighed, &img, &rateBP); err != nil {
 		return pos.BasketLine{}, false
 	}
 	price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-	line := pos.BasketLine{SKU: code, Name: name.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64)}
+	line := pos.BasketLine{SKU: code, Name: name.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64), IsWeighed: weighed.Int64 == 1}
 	if img.Valid {
 		line.ImageURL = img.String
 	}
@@ -334,7 +336,7 @@ LIMIT 1
 
 func (a PriceResolverAdapter) resolveShortcut(ctx context.Context, code string) (pos.BasketLine, bool) {
 	row := a.Store.db.QueryRowContext(ctx, `
-SELECT sb.item_id, sb.label, i.base_price,
+SELECT sb.item_id, sb.label, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0)
 FROM shortcut_buttons sb
@@ -347,11 +349,12 @@ LIMIT 1
 	var itemID, label, img sql.NullString
 	var price int64
 	var rateBP sql.NullInt64
-	if err := row.Scan(&itemID, &label, &price, &img, &rateBP); err != nil {
+	var weighed sql.NullInt64
+	if err := row.Scan(&itemID, &label, &price, &weighed, &img, &rateBP); err != nil {
 		return pos.BasketLine{}, false
 	}
 	price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-	line := pos.BasketLine{SKU: code, Name: label.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64)}
+	line := pos.BasketLine{SKU: code, Name: label.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64), IsWeighed: weighed.Int64 == 1}
 	if img.Valid {
 		line.ImageURL = img.String
 	}
@@ -367,7 +370,7 @@ func (a PriceResolverAdapter) resolveTextSearch(ctx context.Context, code string
 
 	// Try exact SKU match first
 	row := a.Store.db.QueryRowContext(ctx, `
-SELECT i.id, i.sku, i.name, i.base_price,
+SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0)
 FROM items i
@@ -378,9 +381,10 @@ LIMIT 1
 	var itemID, sku, name, img sql.NullString
 	var price int64
 	var rateBP sql.NullInt64
-	if err := row.Scan(&itemID, &sku, &name, &price, &img, &rateBP); err == nil {
+	var weighed sql.NullInt64
+	if err := row.Scan(&itemID, &sku, &name, &price, &weighed, &img, &rateBP); err == nil {
 		price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-		line := pos.BasketLine{SKU: sku.String, Name: name.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64)}
+		line := pos.BasketLine{SKU: sku.String, Name: name.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64), IsWeighed: weighed.Int64 == 1}
 		if img.Valid {
 			line.ImageURL = img.String
 		}
@@ -390,7 +394,7 @@ LIMIT 1
 	// Partial name match
 	like := "%" + q + "%"
 	row = a.Store.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, i.base_price,
+SELECT i.id, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0)
 FROM items i
@@ -402,11 +406,12 @@ LIMIT 1
 	var name2, img2 sql.NullString
 	var price2 int64
 	var rateBP2 sql.NullInt64
-	if err := row.Scan(&itemID, &name2, &price2, &img2, &rateBP2); err != nil {
+	var weighed2 sql.NullInt64
+	if err := row.Scan(&itemID, &name2, &price2, &weighed2, &img2, &rateBP2); err != nil {
 		return pos.BasketLine{}, false
 	}
 	price2 = a.Store.currentPrice(ctx, &itemID.String, nil, price2)
-	line := pos.BasketLine{SKU: q, Name: name2.String, Qty: 1, PriceCents: price2, ItemID: itemID.String, TaxRateBP: int(rateBP2.Int64)}
+	line := pos.BasketLine{SKU: q, Name: name2.String, Qty: 1, PriceCents: price2, ItemID: itemID.String, TaxRateBP: int(rateBP2.Int64), IsWeighed: weighed2.Int64 == 1}
 	if img2.Valid {
 		line.ImageURL = img2.String
 	}

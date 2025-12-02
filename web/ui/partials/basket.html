@@ -8,7 +8,7 @@
   <h2>Basket</h2>
   <table>
     <thead>
-      <tr><th>Item</th><th>Qty</th><th>Price</th><th></th></tr>
+      <tr><th>Item</th><th>Qty</th><th>Price</th><th>Line Total</th><th></th></tr>
     </thead>
     <tbody id="basket-lines">
       {{ if .Lines }}
@@ -18,13 +18,28 @@
               {{ if .ImageURL }}<img class="thumb small" src="{{ .ImageURL }}" alt="{{ .Name }}" />{{ end }}
               {{ .Name }} ({{ .SKU }})
             </td>
-            <td>{{ .Qty }}</td>
+            <td>
+              <input type="number" name="qty" value="{{ printf "%.2f" .Qty }}" min="0" step="{{ if .IsWeighed }}0.01{{ else }}1{{ end }}"
+                     hx-post="/api/pos/line"
+                     hx-vals='{"code":"{{ .SKU }}"}'
+                     hx-include="closest tr"
+                     hx-target="#basket"
+                     hx-swap="outerHTML" />
+              <small>Discount (minor units):</small>
+              <input type="number" name="discount" value="{{ .LineDiscount }}" min="0" step="1"
+                     hx-post="/api/pos/line"
+                     hx-vals='{"code":"{{ .SKU }}"}'
+                     hx-include="closest tr"
+                     hx-target="#basket"
+                     hx-swap="outerHTML" />
+            </td>
             <td>{{ money .PriceCents }}</td>
+            <td>{{ money .LineTotal }}</td>
             <td><button class="btn danger" hx-post="/api/pos/remove" hx-vals='{"code":"{{ .SKU }}"}' hx-target="#basket" hx-swap="outerHTML">Remove</button></td>
           </tr>
         {{ end }}
       {{ else }}
-        <tr><td colspan="4" class="empty">No items</td></tr>
+        <tr><td colspan="5" class="empty">No items</td></tr>
       {{ end }}
     </tbody>
   </table>

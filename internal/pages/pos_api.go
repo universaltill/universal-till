@@ -21,11 +21,11 @@ import (
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/pos/scan", func(w http.ResponseWriter, r *http.Request) {
 		code := ""
-		qty := 1
+		qty := 1.0
 		if r.Header.Get("Content-Type") == "application/json" {
 			type In struct {
-				Code string `json:"code"`
-				Qty  int    `json:"qty"`
+				Code string  `json:"code"`
+				Qty  float64 `json:"qty"`
 			}
 			var in In
 			_ = json.NewDecoder(r.Body).Decode(&in)
@@ -37,7 +37,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = r.ParseForm()
 			code = r.Form.Get("code")
 			if q := r.Form.Get("qty"); q != "" {
-				if v, err := strconv.Atoi(q); err == nil && v > 0 {
+				if v, err := strconv.ParseFloat(q, 64); err == nil && v > 0 {
 					qty = v
 				}
 			}
@@ -57,6 +57,33 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		d.Engine.Remove(code)
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		b := d.Engine.Basket()
+		_ = basketView.Render(w, b)
+	})
+
+	// Update line qty/discount (htmx-friendly)
+	mux.HandleFunc("/api/pos/line", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		code := strings.TrimSpace(r.Form.Get("code"))
+		if code == "" {
+			http.Error(w, "code required", http.StatusBadRequest)
+			return
+		}
+		qty := 0.0
+		if v := r.Form.Get("qty"); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+				qty = f
+			}
+		}
+		discount := int64(0)
+		if v := r.Form.Get("discount"); v != "" {
+			if dVal, err := strconv.ParseInt(v, 10, 64); err == nil && dVal >= 0 {
+				discount = dVal
+			}
+		}
+		d.Engine.UpdateLine(code, qty, discount)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
@@ -128,7 +155,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Qty:                float64(l.Qty),
 				UnitPrice:          l.PriceCents,
 				TaxRateBasisPoints: taxBP,
-				LineDiscount:       0,
+				LineDiscount:       l.LineDiscount,
 				LocationID:         locID,
 			})
 		}
