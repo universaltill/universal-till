@@ -1,7 +1,7 @@
 # Tasks: Payments & Receipt Numbers (002c)
 
 ## Phase 1: Flow Definition
-- [ ] PR-101 Define payment transaction boundaries; ensure rollback on failure before marking sale completed (`internal/pos`).
+- [x] PR-101 Define payment transaction boundaries; ensure rollback on failure before marking sale completed (`internal/pos`).
 
 ## Phase 2: Payment Handling
 - [ ] PR-201 Implement multi-tender payments with change/reference capture; block completion until fully paid (`internal/pos`, `internal/pages`).
