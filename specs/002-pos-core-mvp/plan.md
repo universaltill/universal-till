@@ -36,7 +36,7 @@ Status: Gates pass with above commitments.
 ### Documentation (this feature)
 
 ```text
-specs/pos-core-mvp/
+specs/002-pos-core-mvp/
 ├── plan.md              # This file
 ├── research.md          # Phase 0 notes
 ├── data-model.md        # Feature-specific data model mapping (no schema changes)
