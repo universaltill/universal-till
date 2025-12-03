@@ -15,6 +15,7 @@ type Service struct {
 	discountValue     int64
 	discountPercentBP int64
 	customerID        string
+	customerName      string
 }
 
 type Config struct {
@@ -54,6 +55,8 @@ type Basket struct {
 	DiscountType string       `json:"discountType,omitempty"` // amount|percent
 	DiscountRaw  int64        `json:"discountRaw,omitempty"`  // minor units or basis points
 	CustomerID   string       `json:"customerId,omitempty"`
+	CustomerName string       `json:"customerName,omitempty"`
+	ToastMessage string       `json:"toastMessage,omitempty"`
 }
 
 func (s *Service) Scan(code string) (*Basket, error) {
@@ -119,6 +122,8 @@ func (s *Service) recomputeTotals() {
 	} else {
 		s.basket.DiscountRaw = s.discountValue
 	}
+	s.basket.CustomerID = s.customerID
+	s.basket.CustomerName = s.customerName
 	tax, total := int64(0), sub
 	if s.tax != nil {
 		tax, total = s.tax.Compute(sub)
@@ -170,7 +175,9 @@ func (s *Service) Reset() {
 	s.discountValue = 0
 	s.discountPercentBP = 0
 	s.customerID = ""
+	s.customerName = ""
 	s.basket.CustomerID = ""
+	s.basket.CustomerName = ""
 }
 
 // UpdateLine sets qty/discount for a given SKU (or item/variant match) and recomputes totals.
@@ -229,6 +236,14 @@ func (s *Service) CustomerID() string {
 func (s *Service) SetCustomerID(customerID string) {
 	s.customerID = customerID
 	s.basket.CustomerID = customerID
+}
+
+// SetCustomer sets both id and name for the basket.
+func (s *Service) SetCustomer(id, name string) {
+	s.customerID = id
+	s.customerName = name
+	s.basket.CustomerID = id
+	s.basket.CustomerName = name
 }
 
 // // simple in-memory resolver
