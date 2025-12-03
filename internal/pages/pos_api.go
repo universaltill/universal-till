@@ -53,14 +53,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		customerID := d.Engine.CustomerID()
 
 		// If the scan is a customer barcode, attach and return current basket.
-		if custID, ok := lookupCustomer(r.Context(), d.Db, code); ok {
-			d.Engine.SetCustomerID(custID)
+		if custID, custName, ok := lookupCustomer(r.Context(), d.Db, code); ok {
+			d.Engine.SetCustomer(custID, custName)
 			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 			basketView, _ := ui.NewBasketView(funcs)
-			_ = basketView.Render(w, d.Engine.Basket())
+			b := d.Engine.Basket()
+			b.ToastMessage = fmt.Sprintf("Customer %s linked", custName)
+			_ = basketView.Render(w, b)
 			return
 		}
 
+		customerID = d.Engine.CustomerID()
 		if promoType, value, ok := promoFromDB(r.Context(), d.Db, customerID, code); ok {
 			if promoType == "percent" {
 				d.Engine.SetDiscountPercent(value)
@@ -69,7 +72,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 			basketView, _ := ui.NewBasketView(funcs)
-			_ = basketView.Render(w, d.Engine.Basket())
+			b := d.Engine.Basket()
+			b.ToastMessage = fmt.Sprintf("Promotion %s applied", code)
+			_ = basketView.Render(w, b)
 			return
 		}
 		b, _ := d.Engine.ScanQty(code, in.Qty)
@@ -432,21 +437,21 @@ LIMIT 1
 	return pType, value, true
 }
 
-func lookupCustomer(ctx context.Context, db *sql.DB, code string) (string, bool) {
+func lookupCustomer(ctx context.Context, db *sql.DB, code string) (string, string, bool) {
 	c := strings.TrimSpace(code)
 	if c == "" {
-		return "", false
+		return "", "", false
 	}
 	row := db.QueryRowContext(ctx, `
-SELECT id FROM customers
+SELECT id, name FROM customers
 WHERE id = ? OR loyalty_no = ? OR phone = ?
 LIMIT 1
 `, c, c, c)
-	var id string
-	if err := row.Scan(&id); err != nil {
-		return "", false
+	var id, name string
+	if err := row.Scan(&id, &name); err != nil {
+		return "", "", false
 	}
-	return id, true
+	return id, name, true
 }
 
 func nullIfEmpty(s string) any {

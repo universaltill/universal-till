@@ -57,7 +57,7 @@ func TestPromoBarcodeSetsDiscount_Percent(t *testing.T) {
 	}
 	defer db.Close()
 	_, _ = db.Exec(`CREATE TABLE promotions (code TEXT PRIMARY KEY, type TEXT NOT NULL, value INTEGER NOT NULL, description TEXT, starts_at TEXT, ends_at TEXT, customer_id TEXT, is_active INTEGER NOT NULL DEFAULT 1);`)
-	_, _ = db.Exec(`CREATE TABLE customers (id TEXT PRIMARY KEY);`)
+	_, _ = db.Exec(`CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT, loyalty_no TEXT, phone TEXT);`)
 	_, _ = db.Exec(`INSERT INTO promotions(code, type, value, description, is_active) VALUES('DISC10','percent',1000,'10% off',1)`)
 
 	resolver := promoStubResolver{
@@ -96,8 +96,8 @@ func TestPromoBarcodeRequiresCustomerMatch(t *testing.T) {
 	}
 	defer db.Close()
 	_, _ = db.Exec(`CREATE TABLE promotions (code TEXT PRIMARY KEY, type TEXT NOT NULL, value INTEGER NOT NULL, description TEXT, starts_at TEXT, ends_at TEXT, customer_id TEXT, is_active INTEGER NOT NULL DEFAULT 1);`)
-	_, _ = db.Exec(`CREATE TABLE customers (id TEXT PRIMARY KEY, loyalty_no TEXT, phone TEXT);`)
-	_, _ = db.Exec(`INSERT INTO customers(id, loyalty_no) VALUES('cust-1','LOY123');`)
+	_, _ = db.Exec(`CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT, loyalty_no TEXT, phone TEXT);`)
+	_, _ = db.Exec(`INSERT INTO customers(id, name, loyalty_no) VALUES('cust-1','Customer One','LOY123');`)
 	_, _ = db.Exec(`INSERT INTO promotions(code, type, value, description, customer_id, is_active) VALUES('PROMO-CUST','amount',250,'£2.50 off','cust-1',1);`)
 
 	dp := &common.Deps{
