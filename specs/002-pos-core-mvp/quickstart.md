@@ -66,12 +66,14 @@ UT_STORE=sqlite UT_LISTEN_ADDR=:8080 ./bin/unitill-pos
 1) Disable network (if safe).  
 2) Add items via Designer/catalog, including a weighed item and barcodes.  
 3) Add to basket by barcode/SKU search; edit quantity; apply discount.  
-4) Complete sale with split payments (cash + card).  
-5) Verify DB (`data/unitill.db`) has `sales`, `sale_lines`, `payments`, `stock_movements`; confirm price_history appended on price change.  
-6) Process a return linked to the sale and confirm stock increments and `sale_links`.
+4) Complete a sale with split payments (cash + card) and include change on one tender to confirm multi-tender coverage.
+5) Simulate a payment plugin failure by POSTing to `/api/pos/tender` with `{"simulateFailure":true}`; basket should remain intact and `audit_log` should capture a `payment_failed` entry for retry.
+6) Verify DB (`data/unitill.db`) has `sales`, `sale_lines`, `payments`, `stock_movements`; confirm price_history appended on price change.
+7) Process a return linked to the sale and confirm stock increments and `sale_links`.
 
 ## Notes
 
 - Money must remain integer minor units; weighed quantities are REAL.  
 - No schema changes; `PRAGMA foreign_keys = ON` must be enabled.  
 - Plugin entries should appear in UI after being stored in plugin tables.
+- Receipt numbers are allocated sequentially from SQLite (`sales.receipt_no`). They auto-retry on contention so numbers remain unique/monotonic even with concurrent sales.

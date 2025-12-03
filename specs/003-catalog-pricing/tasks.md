@@ -15,4 +15,4 @@
 ## Phase 4: Testing & Docs
 - [x] CA-401 Unit tests for CRUD helpers and barcode validation (`internal/pos` tests).
 - [x] CA-402 Handler/HTMX tests for create/update/deactivate flows.
-- [ ] CA-403 Update `specs/002a-catalog-pricing/data-model.md` or notes as needed; add quickstart notes if UI paths change.
+- [ ] CA-403 Update `specs/003-catalog-pricing/data-model.md` or notes as needed; add quickstart notes if UI paths change.

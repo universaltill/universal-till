@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ import (
 // SaleInput captures the data needed to persist a sale (or return).
 type SaleInput struct {
 	SaleType               string // sale|return
+	SaleID                 string
 	RegisterID             string
 	CashierID              string
 	CustomerID             string
@@ -51,14 +53,80 @@ type PaymentInput struct {
 	ChangeGiven int64
 }
 
+const receiptRetryLimit = 5
+
+func computeSaleTotals(in SaleInput) (subtotal, taxTotal, total int64, err error) {
+	for _, l := range in.Lines {
+		if err := validateLine(l); err != nil {
+			return 0, 0, 0, err
+		}
+		lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
+		if l.LineDiscount < 0 || l.LineDiscount > lineBase {
+			return 0, 0, 0, fmt.Errorf("invalid line discount for item %s", l.ItemID)
+		}
+		lineNet := lineBase - l.LineDiscount
+		lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
+		subtotal += lineNet
+		taxTotal += lineTax
+	}
+	total = subtotal - in.SaleDiscount
+	if !in.TaxInclusive {
+		total += taxTotal
+	}
+	if total < 0 {
+		total = 0
+	}
+	return subtotal, taxTotal, total, nil
+}
+
+func netPayments(payments []PaymentInput) (int64, error) {
+	var sum int64
+	if len(payments) == 0 {
+		return 0, errors.New("sale requires at least one payment")
+	}
+	for i, p := range payments {
+		if p.MethodID == "" {
+			return 0, fmt.Errorf("payment %d missing method", i+1)
+		}
+		if p.Amount <= 0 {
+			return 0, fmt.Errorf("payment %d amount must be > 0", i+1)
+		}
+		if p.ChangeGiven < 0 {
+			return 0, fmt.Errorf("payment %d change must be >= 0", i+1)
+		}
+		if p.ChangeGiven > p.Amount {
+			return 0, fmt.Errorf("payment %d change cannot exceed amount", i+1)
+		}
+		sum += p.Amount - p.ChangeGiven
+	}
+	return sum, nil
+}
+
+func nextReceiptNo(ctx context.Context, tx *sql.Tx) (string, error) {
+	var maxVal sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(receipt_no AS INTEGER)), 0) FROM sales`).Scan(&maxVal); err != nil {
+		return "", fmt.Errorf("next receipt no: %w", err)
+	}
+	next := maxVal.Int64 + 1
+	if next < 1 {
+		next = 1
+	}
+	return fmt.Sprintf("%09d", next), nil
+}
+
+func isReceiptConflictErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "receipt_no") && strings.Contains(strings.ToLower(msg), "unique")
+}
+
 // CompleteSale persists a sale (or return) with lines, payments, stock movements, discounts, and optional sale link.
 // It enforces payment coverage, FK constraints, and uses a single transaction for integrity.
 func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, error) {
 	if len(in.Lines) == 0 {
 		return "", errors.New("sale requires at least one line")
-	}
-	if len(in.Payments) == 0 {
-		return "", errors.New("sale requires at least one payment")
 	}
 	if in.SaleType == "" {
 		in.SaleType = "sale"
@@ -66,45 +134,23 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	if in.Currency == "" {
 		in.Currency = "GBP"
 	}
-	if in.ReceiptNo == "" {
-		in.ReceiptNo = generateReceiptNo()
+	subtotal, taxTotal, total, err := computeSaleTotals(in)
+	if err != nil {
+		return "", err
+	}
+	netPaid, err := netPayments(in.Payments)
+	if err != nil {
+		return "", err
+	}
+	if netPaid < total {
+		return "", fmt.Errorf("payments (%d) do not cover total (%d)", netPaid, total)
+	}
+	saleID := in.SaleID
+	if saleID == "" {
+		saleID = uuid.NewString()
 	}
 
-	// Compute totals
-	var subtotal int64
-	var taxTotal int64
-	for _, l := range in.Lines {
-		if err := validateLine(l); err != nil {
-			return "", err
-		}
-		lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
-		if l.LineDiscount < 0 || l.LineDiscount > lineBase {
-			return "", fmt.Errorf("invalid line discount for item %s", l.ItemID)
-		}
-		lineNet := lineBase - l.LineDiscount
-		lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
-		subtotal += lineNet
-		taxTotal += lineTax
-	}
-	total := subtotal - in.SaleDiscount
-	if !in.TaxInclusive {
-		total += taxTotal
-	}
-	if total < 0 {
-		total = 0
-	}
-
-	var paymentsSum int64
-	for _, p := range in.Payments {
-		paymentsSum += p.Amount
-	}
-	if paymentsSum < total {
-		return "", fmt.Errorf("payments (%d) do not cover total (%d)", paymentsSum, total)
-	}
-
-	saleID := uuid.NewString()
-
-	err := db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
+	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		if !in.AllowNegativeInventory {
 			for _, l := range in.Lines {
 				cur, found, err := currentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
@@ -124,12 +170,33 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			}
 		}
 
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-`, saleID, in.ReceiptNo, in.SaleType, nullIfEmpty(in.RegisterID), nullIfEmpty(in.CashierID), nullIfEmpty(in.CustomerID), in.Currency, subtotal, in.SaleDiscount, taxTotal, total, nullIfEmpty(in.Note), time.Now().UTC().Format(time.RFC3339)); err != nil {
-			return fmt.Errorf("insert sale: %w", err)
+		receiptNo := in.ReceiptNo
+		now := time.Now().UTC().Format(time.RFC3339)
+		inserted := false
+		for attempt := 0; attempt < receiptRetryLimit && !inserted; attempt++ {
+			if receiptNo == "" {
+				var err error
+				receiptNo, err = nextReceiptNo(ctx, tx)
+				if err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO sales (id, receipt_no, status, sale_type, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+`, saleID, receiptNo, in.SaleType, nullIfEmpty(in.RegisterID), nullIfEmpty(in.CashierID), nullIfEmpty(in.CustomerID), in.Currency, subtotal, in.SaleDiscount, taxTotal, total, nullIfEmpty(in.Note), now, now); err != nil {
+				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
+					receiptNo = ""
+					continue
+				}
+				return fmt.Errorf("insert sale: %w", err)
+			}
+			inserted = true
 		}
+		if !inserted {
+			return fmt.Errorf("insert sale: unable to allocate receipt number")
+		}
+		in.ReceiptNo = receiptNo
 
 		var saleDiscountID string
 		if in.SaleDiscount > 0 {
@@ -203,9 +270,6 @@ VALUES (?, ?, ?, ?, ?, ?)
 		}
 
 		for _, p := range in.Payments {
-			if p.Amount <= 0 {
-				return fmt.Errorf("payment amount must be > 0")
-			}
 			if _, err := tx.ExecContext(ctx, `
 INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, paid_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -352,4 +416,38 @@ func auditAction(saleType string) string {
 		return "refund"
 	}
 	return "complete"
+}
+
+type PaymentFailure struct {
+	SaleID   string
+	ActorID  string
+	Reason   string
+	Payments []PaymentInput
+	Lines    []SaleLineInput
+	Total    int64
+	Currency string
+}
+
+// RecordPaymentFailure logs a recoverable payment failure attempt for later retry/audit.
+func RecordPaymentFailure(ctx context.Context, sqlDB *sql.DB, failure PaymentFailure) (string, error) {
+	saleID := failure.SaleID
+	if saleID == "" {
+		saleID = uuid.NewString()
+	}
+	payload := map[string]any{
+		"reason":   failure.Reason,
+		"payments": failure.Payments,
+		"lines":    failure.Lines,
+		"total":    failure.Total,
+		"currency": failure.Currency,
+		"ts":       time.Now().UTC().Format(time.RFC3339),
+	}
+	data, _ := json.Marshal(payload)
+	if _, err := sqlDB.ExecContext(ctx, `
+INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
+VALUES (?, ?, 'sale', ?, 'payment_failed', ?, ?)
+`, uuid.NewString(), nullIfEmpty(failure.ActorID), saleID, string(data), time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return "", fmt.Errorf("record payment failure: %w", err)
+	}
+	return saleID, nil
 }

@@ -1,5 +1,5 @@
 # UniversalTill POS Constitution
-_Last updated: 2025-11-26_
+_Last updated: 2025-12-03_
 
 ---
 
@@ -57,6 +57,11 @@ Cloud sync is optional, not required.
 - Validate all external input (user, plugins, devices, integrations).
 - Critical state transitions are auditable.
 - Sensitive data (API keys, PINs, secrets) must never be logged.
+
+### 7. Backend-Led UI & Tests
+- Implement or update backend flows, handlers, and contracts **before** building UI for them.
+- Every UI change must ship with automated tests (Go handler/UI smoke tests or equivalent) covering the rendered controls and workflows.
+- UI forms and controls must be wired to live backend data; no stubs or hardcoded payloads are permitted in production templates.
 
 ---
 
@@ -376,6 +381,6 @@ All feature work begins with a **spec**.
 
 ---
 
-**Version:** 1.0.0  
+**Version:** 1.1.0  
 **Ratified:** 2025-11-26  
-**Last Amended:** 2025-11-26
+**Last Amended:** 2025-12-03

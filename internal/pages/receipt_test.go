@@ -18,7 +18,8 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
-	html, err := renderReceipt(funcs, "123", lines, 100, 0, 90, false, 10, "amount", 10)
+	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 10, Reference: "REF"}}
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10)
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -30,5 +31,8 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 	}
 	if !strings.Contains(html, "Total") {
 		t.Fatalf("expected total in receipt html")
+	}
+	if !strings.Contains(html, "Payments") || !strings.Contains(html, "cash") {
+		t.Fatalf("expected payments breakdown in receipt html: %s", html)
 	}
 }
