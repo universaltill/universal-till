@@ -347,10 +347,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		d.Engine.Reset()
 
 		// load receipt_no and totals from DB for rendering
-		var receiptNo string
-		var dbSubtotal, dbTax, dbTotal int64
-		_ = d.Db.QueryRowContext(r.Context(), `SELECT receipt_no, subtotal, tax_total, total FROM sales WHERE id = ?`, saleID).
-			Scan(&receiptNo, &dbSubtotal, &dbTax, &dbTotal)
+		receiptNo, dbSubtotal, dbTax, dbTotal, _ := repo.SaleTotals(r.Context(), saleID)
 		if receiptNo == "" {
 			receiptNo = saleID
 		}

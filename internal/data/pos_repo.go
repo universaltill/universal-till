@@ -121,6 +121,15 @@ func (r *POSRepo) EnsureUser(ctx context.Context) (string, error) {
 	return id, nil
 }
 
+// SaleTotals returns receipt_no, subtotal, tax_total, total for a sale.
+func (r *POSRepo) SaleTotals(ctx context.Context, saleID string) (string, int64, int64, int64, error) {
+	var receiptNo string
+	var dbSubtotal, dbTax, dbTotal int64
+	err := r.db.QueryRowContext(ctx, `SELECT receipt_no, subtotal, tax_total, total FROM sales WHERE id = ?`, saleID).
+		Scan(&receiptNo, &dbSubtotal, &dbTax, &dbTotal)
+	return receiptNo, dbSubtotal, dbTax, dbTotal, err
+}
+
 func nullIfEmpty(s string) any {
 	if s == "" {
 		return nil
