@@ -5,3 +5,8 @@ dist/
 data/plugins/*
 data/*.db
 __debug_*
+# Go build artifacts
+*.exe
+*.test
+*.out
+vendor/

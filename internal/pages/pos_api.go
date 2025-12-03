@@ -177,6 +177,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			CustomerID    string `json:"customerId,omitempty"`
 			AllowNegative *bool  `json:"allowNegativeInventory,omitempty"`
 			Note          string `json:"note,omitempty"`
+			SimFail       bool   `json:"simulateFailure,omitempty"`
+			FailReason    string `json:"failureReason,omitempty"`
 		}
 		var in In
 		_ = json.NewDecoder(r.Body).Decode(&in)
@@ -313,6 +315,26 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			customerID = d.Engine.CustomerID()
 		}
 
+		if in.SimFail {
+			failureReason := in.FailReason
+			if failureReason == "" {
+				failureReason = "simulated payment failure"
+			}
+			if _, err := pos.RecordPaymentFailure(r.Context(), d.Db, pos.PaymentFailure{
+				ActorID:  cashierID,
+				Reason:   failureReason,
+				Payments: payments,
+				Lines:    saleLines,
+				Total:    total,
+				Currency: d.State.Currency,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			http.Error(w, "payment failed; retry required", http.StatusBadGateway)
+			return
+		}
+
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, pos.SaleInput{
 			SaleType:               "sale",
 			Currency:               d.State.Currency,
@@ -381,7 +403,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			discountRaw = in.Discount
 		}
 
-		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount, discountType, discountRaw)
+		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount, discountType, discountRaw)
 
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
@@ -418,7 +440,14 @@ type receiptLine struct {
 	TotalAfterTax int64
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64) (string, error) {
+type receiptPayment struct {
+	Method    string
+	Applied   int64
+	Change    int64
+	Reference string
+}
+
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFiles(
 		"web/ui/partials/receipt.html",
 	)
@@ -440,9 +469,23 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 			TotalAfterTax: lineTotal,
 		})
 	}
+	var paymentViews []receiptPayment
+	for _, p := range payments {
+		applied := p.Amount - p.ChangeGiven
+		if applied < 0 {
+			applied = 0
+		}
+		paymentViews = append(paymentViews, receiptPayment{
+			Method:    p.MethodID,
+			Applied:   applied,
+			Change:    p.ChangeGiven,
+			Reference: p.Reference,
+		})
+	}
 	data := map[string]any{
 		"ReceiptNo":        receiptNo,
 		"Lines":            rlines,
+		"Payments":         paymentViews,
 		"Subtotal":         subtotal,
 		"TaxTotal":         taxTotal,
 		"SaleDiscount":     saleDiscount,

@@ -10,6 +10,11 @@
   .btn.secondary {background: #e5e7eb; color: #111;}
   .receipt-lines {list-style: none; padding: 0; margin: 0.5rem 0;}
   .receipt-lines li {display: flex; justify-content: space-between; margin-bottom: 0.25rem;}
+  .receipt-payments {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem;}
+  .receipt-payments h3 {margin: 0 0 0.35rem; font-size: 1rem;}
+  .receipt-payments ul {list-style: none; padding: 0; margin: 0;}
+  .receipt-payments li {display: flex; justify-content: space-between; margin-bottom: 0.35rem;}
+  .receipt-payments small {color: #6b7280; display: block; text-align: right;}
   @media print {
     body {background: #fff;}
     .actions {display: none;}
@@ -32,6 +37,25 @@
       {{ if gt .SaleDiscount 0 }}<div>Discount{{ if eq .SaleDiscountType "percent" }} ({{ bpPercent .SaleDiscountRaw }}){{ end }}: -{{ money .SaleDiscount }}</div>{{ end }}
       <div><strong>Total: {{ money .Total }}</strong></div>
     </div>
+    {{ if .Payments }}
+    <div class="receipt-payments">
+      <h3>Payments</h3>
+      <ul>
+        {{ range .Payments }}
+          <li>
+            <div>
+              <strong>{{ .Method }}</strong>
+              {{ if .Reference }}<small>{{ .Reference }}</small>{{ end }}
+            </div>
+            <div>
+              {{ money .Applied }}
+              {{ if gt .Change 0 }}<small>Change {{ money .Change }}</small>{{ end }}
+            </div>
+          </li>
+        {{ end }}
+      </ul>
+    </div>
+    {{ end }}
     <div class="actions">
       <button class="btn primary" onclick="window.print()">Print</button>
       <button class="btn secondary" onclick="window.location='/'">New Customer</button>
