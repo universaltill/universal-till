@@ -21,3 +21,6 @@
 - [x] SB-502 Add customer scan/link support so basket carries customer_id for targeted promotions.
 - [x] SB-503 Update promo scan to honor type/date window/customer targeting; add tests covering amount vs percent and customer-limited promos.
 - [x] SB-504 Surface promotion line/summary in basket/receipt with type-aware display.
+
+## Phase 6: Data Access Hygiene
+- [x] SB-601 Introduce POS data repo layer (`internal/data/pos_repo.go`) and move DB queries (customers, promos, register/user/payment helpers) out of handlers for cleaner separation.
