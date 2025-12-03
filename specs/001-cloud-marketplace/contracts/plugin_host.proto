@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package pluginhost.v1;
+
+option go_package = "github.com/universaltill/universal-till/internal/gen/pluginhost/v1";
+
+// Exposes how the POS host talks to local plugin executables via gRPC over loopback/Unix sockets.
+service PluginLifecycle {
+  rpc Start (StartRequest) returns (StartResponse);
+  rpc Stop (StopRequest) returns (StopResponse);
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+service PluginEvents {
+  // Fired after a sale completes; plugins may ack asynchronously.
+  rpc OnSaleCompleted (SaleCompletedEvent) returns (Ack);
+
+  // Generic hook dispatcher for device/payment integrations.
+  rpc InvokeHook (InvokeHookRequest) returns (InvokeHookResponse);
+}
+
+message StartRequest {
+  string plugin_id = 1;
+  string version = 2;
+  string type = 3;    // canonical type
+  string endpoint = 4; // host supplies callback endpoint for control plane
+}
+
+message StartResponse {
+  string process_id = 1;
+  string listen_addr = 2; // plugin's gRPC address for host calls
+}
+
+message StopRequest {
+  string plugin_id = 1;
+  string process_id = 2;
+}
+
+message StopResponse {}
+
+message HealthCheckRequest {
+  string plugin_id = 1;
+}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string message = 2;
+}
+
+message SaleCompletedEvent {
+  string plugin_id = 1; // plugin receiving the event
+  string sale_id = 2;
+  bytes payload = 3; // JSON snapshot of sale data (redacted payments if required)
+}
+
+message InvokeHookRequest {
+  string plugin_id = 1;
+  string hook = 2;          // e.g., payment.authorize, device.print
+  bytes payload = 3;        // JSON payload defined per hook contract
+  int64 timeout_ms = 4;
+}
+
+message InvokeHookResponse {
+  bool success = 1;
+  bytes payload = 2;
+  string error = 3;
+}
+
+message Ack {
+  bool success = 1;
+  string error = 2;
+}

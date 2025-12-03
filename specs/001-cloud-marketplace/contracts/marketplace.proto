@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package marketplace.v1;
+
+option go_package = "github.com/universaltill/universal-till/internal/gen/marketplace/v1";
+
+// CatalogService powers User Story 1 (browse/filter) and supplies metadata for offline caching.
+service CatalogService {
+  rpc ListPlugins (ListPluginsRequest) returns (ListPluginsResponse);
+}
+
+// DownloadService covers token issuance, resumable downloads, and manual import verification (User Story 2/4).
+service DownloadService {
+  rpc IssueDownloadToken (IssueDownloadTokenRequest) returns (IssueDownloadTokenResponse);
+  rpc AckDownload (AckDownloadRequest) returns (AckDownloadResponse);
+  rpc GetRevocations (GetRevocationsRequest) returns (GetRevocationsResponse);
+}
+
+// TelemetryService reports install/update/removal status back to the marketplace (User Story 3) without sensitive data.
+service TelemetryService {
+  rpc ReportPluginStatus (ReportPluginStatusRequest) returns (ReportPluginStatusResponse);
+}
+
+message ListPluginsRequest {
+  string locale = 1;
+  string device_arch = 2;         // e.g., linux/arm64
+  repeated string capability = 3; // filter by canonical plugin types or capabilities
+  string page_token = 4;
+}
+
+message ListPluginsResponse {
+  repeated PluginSummary plugins = 1;
+  string next_page_token = 2;
+  int64 snapshot_version = 3;
+}
+
+message PluginSummary {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  string type = 4;                // canonical type (page, payment, etc.)
+  string vendor = 5;
+  string trust_level = 6;         // e.g., verified, untrusted, revoked
+  repeated string required_capabilities = 7;
+  string min_host_version = 8;
+  string description = 9;
+  string icon_url = 10;
+  bool paid_listing = 11;
+}
+
+message IssueDownloadTokenRequest {
+  string plugin_id = 1;
+  string version = 2;
+  string device_id = 3;
+  string device_arch = 4;
+}
+
+message IssueDownloadTokenResponse {
+  string artifact_url = 1;
+  string token = 2;
+  int64 expires_at_unix = 3;
+  bytes sha256 = 4;
+  string signature = 5; // detached signature for manifest
+}
+
+message AckDownloadRequest {
+  string plugin_id = 1;
+  string version = 2;
+  string token = 3;
+  bool success = 4;
+  string failure_reason = 5;
+}
+
+message AckDownloadResponse {}
+
+message GetRevocationsRequest {
+  int64 since_version = 1; // last applied revocation feed version
+}
+
+message GetRevocationsResponse {
+  repeated Revocation revocations = 1;
+  int64 latest_version = 2;
+}
+
+message Revocation {
+  string plugin_id = 1;
+  string version = 2;
+  string action = 3; // disable | delete
+  string reason = 4;
+}
+
+message ReportPluginStatusRequest {
+  repeated PluginStatus statuses = 1;
+}
+
+message PluginStatus {
+  string plugin_id = 1;
+  string installed_version = 2;
+  string status = 3; // enabled | disabled | revoked | failed
+  string source = 4; // cloud | manual
+  string device_id = 5;
+}
+
+message ReportPluginStatusResponse {}
