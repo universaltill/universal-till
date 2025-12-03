@@ -166,6 +166,54 @@ func TestCompleteSale_InclusiveTaxNoDoubleCount(t *testing.T) {
 	}
 }
 
+func TestCompleteSale_RollsBackOnPaymentFailure(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	// create trigger to force payment insert failure
+	_, _ = db.Exec(`CREATE TRIGGER payments_fail BEFORE INSERT ON payments WHEN NEW.reference = 'FAIL' BEGIN SELECT RAISE(ABORT, 'payment failure'); END;`)
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	in := SaleInput{
+		SaleType:     "sale",
+		Currency:     "GBP",
+		TaxInclusive: false,
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 500, Currency: "GBP", Reference: "FAIL"},
+		},
+	}
+
+	if _, err := CompleteSale(ctx, db, in); err == nil {
+		t.Fatalf("expected payment failure to bubble")
+	}
+
+	var count int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count)
+	if count != 0 {
+		t.Fatalf("expected no sales persisted, got %d", count)
+	}
+	_ = db.QueryRow(`SELECT COUNT(*) FROM sale_lines`).Scan(&count)
+	if count != 0 {
+		t.Fatalf("expected no sale_lines, got %d", count)
+	}
+	_ = db.QueryRow(`SELECT COUNT(*) FROM payments`).Scan(&count)
+	if count != 0 {
+		t.Fatalf("expected no payments, got %d", count)
+	}
+	_ = db.QueryRow(`SELECT COUNT(*) FROM stock_movements`).Scan(&count)
+	if count != 0 {
+		t.Fatalf("expected no stock_movements, got %d", count)
+	}
+}
+
 func TestUpdateSaleStatus_Void(t *testing.T) {
 	ctx := context.Background()
 	db := setupSaleDB(t)
