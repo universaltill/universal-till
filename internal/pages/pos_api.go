@@ -60,6 +60,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			b.ToastMessage = fmt.Sprintf("Customer %s linked", custName)
 			_ = basketView.Render(w, b)
 			return
+		} else if looksLikeCustomerCode(code) {
+			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+			basketView, _ := ui.NewBasketView(funcs)
+			b := d.Engine.Basket()
+			b.ToastMessage = "Customer not found"
+			_ = basketView.Render(w, b)
+			return
 		}
 
 		customerID = d.Engine.CustomerID()
@@ -449,4 +456,12 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+func looksLikeCustomerCode(code string) bool {
+	c := strings.ToUpper(strings.TrimSpace(code))
+	if c == "" {
+		return false
+	}
+	return strings.HasPrefix(c, "CUST") || strings.HasPrefix(c, "LOY-")
 }
