@@ -82,11 +82,6 @@ CREATE TABLE IF NOT EXISTS customers (
 
 CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
 
--- sample customers
-INSERT OR IGNORE INTO customers (id, name, phone, email, address, loyalty_no) VALUES
-('cust-001', 'Alice Carter', '+441234567890', 'alice@example.com', '10 High St, London', 'LOY-ALICE'),
-('cust-002', 'Ben Singh', '+441122334455', 'ben@example.com', '22 Market Rd, Manchester', 'LOY-BEN'),
-('cust-003', 'Chloe Martin', '+447700900123', 'chloe@example.com', '5 Queen Sq, Bristol', 'LOY-CHLOE');
 
 CREATE TABLE IF NOT EXISTS registers (
     id          TEXT PRIMARY KEY,
@@ -534,6 +529,11 @@ CREATE TABLE IF NOT EXISTS shortcut_buttons (
 
 -- Insert defaults and samples --------------------------------
 
+-- sample customers
+INSERT OR IGNORE INTO customers (id, name, phone, email, address, loyalty_no) VALUES
+('cust-001', 'Alice Carter', '+441234567890', 'alice@example.com', '10 High St, London', 'LOY-ALICE'),
+('cust-002', 'Ben Singh', '+441122334455', 'ben@example.com', '22 Market Rd, Manchester', 'LOY-BEN'),
+('cust-003', 'Chloe Martin', '+447700900123', 'chloe@example.com', '5 Queen Sq, Bristol', 'LOY-CHLOE');
 
 
 INSERT OR IGNORE INTO
