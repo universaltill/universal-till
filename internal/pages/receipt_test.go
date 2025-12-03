@@ -12,12 +12,13 @@ import (
 func TestRenderReceipt_DiscountShown(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money": func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 	}
 	lines := []pos.SaleLineInput{
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
-	html, err := renderReceipt(funcs, "123", lines, 100, 0, 90, false, 10)
+	html, err := renderReceipt(funcs, "123", lines, 100, 0, 90, false, 10, "amount", 10)
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}

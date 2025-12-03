@@ -21,12 +21,11 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- ----------------------------------------
 -- Promotions / coupons
--- ----------------------------------------
 CREATE TABLE IF NOT EXISTS promotions (
-    code        TEXT PRIMARY KEY,               -- e.g., PROMO50
-    amount      INTEGER NOT NULL,               -- minor units
+    code        TEXT PRIMARY KEY,                -- e.g., PROMO50
+    type        TEXT NOT NULL DEFAULT 'amount'   CHECK (type IN ('amount','percent')),
+    value       INTEGER NOT NULL,                -- minor units or basis points (1% = 100)
     description TEXT,
     starts_at   TEXT,
     ends_at     TEXT,
@@ -3408,11 +3407,11 @@ INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES
 ('perm-ubereats-orders','com.unitill.plugins.ubereats','integrations:orders', 1),
 ('perm-qrpay-charge','com.unitill.plugins.qrpay','payments:qr', 1);
 
--- sample promotions
-INSERT OR IGNORE INTO promotions (code, amount, description, is_active) VALUES
-('PROMO50', 50, '50p off', 1),
-('PROMO500', 500, '£5 off', 1),
-('DISC10', 1000, '£10 off', 1);
+-- sample promotions (amount = minor units, percent = basis points)
+INSERT OR IGNORE INTO promotions (code, type, value, description, is_active) VALUES
+('PROMO50', 'amount', 50, '50p off', 1),
+('PROMO500', 'amount', 500, '£5 off', 1),
+('DISC10', 'percent', 1000, '10% off basket', 1);
 
 
 INSERT INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES

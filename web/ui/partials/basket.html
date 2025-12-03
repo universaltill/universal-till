@@ -45,7 +45,11 @@
   </table>
   <div class="totals">
     <div>Subtotal: {{ money .Subtotal }}</div>
-    {{ if gt .Discount 0 }}<div>Discount: -{{ money .Discount }}</div>{{ end }}
+    {{ if gt .Discount 0 }}
+      <div>
+        Discount{{ if eq .DiscountType "percent" }} ({{ bpPercent .DiscountRaw }}){{ end }}: -{{ money .Discount }}
+      </div>
+    {{ end }}
     <div>Tax: {{ money .Tax }}</div>
     <div class="total">Total: {{ money .Total }}</div>
   </div>
