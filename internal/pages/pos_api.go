@@ -2,46 +2,88 @@ package pages
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"text/template"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
-func registerPOSAPI(mux *http.ServeMux, d *deps) {
+func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
+	repo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("/api/pos/scan", func(w http.ResponseWriter, r *http.Request) {
-		code := ""
-		qty := 1
-		if r.Header.Get("Content-Type") == "application/json" {
-			type In struct {
-				Code string `json:"code"`
-				Qty  int    `json:"qty"`
-			}
-			var in In
+		in := struct {
+			Code       string  `json:"code"`
+			Qty        float64 `json:"qty"`
+			CustomerID string  `json:"customerId,omitempty"`
+		}{Qty: 1}
+
+		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			code = in.Code
-			if in.Qty > 0 {
-				qty = in.Qty
-			}
 		} else {
 			_ = r.ParseForm()
-			code = r.Form.Get("code")
+			in.Code = r.Form.Get("code")
+			in.CustomerID = r.Form.Get("customerId")
 			if q := r.Form.Get("qty"); q != "" {
-				if v, err := strconv.Atoi(q); err == nil && v > 0 {
-					qty = v
+				if v, err := strconv.ParseFloat(q, 64); err == nil && v > 0 {
+					in.Qty = v
 				}
 			}
 		}
-		b, _ := d.engine.ScanQty(code, qty)
+		code := strings.TrimSpace(in.Code)
+		if in.Qty > 0 {
+			if rQty, err := strconv.ParseFloat(fmt.Sprintf("%v", in.Qty), 64); err == nil {
+				in.Qty = rQty
+			}
+		} else {
+			in.Qty = 1
+		}
+
+		if cid := strings.TrimSpace(in.CustomerID); cid != "" {
+			d.Engine.SetCustomerID(cid)
+		}
+		customerID := d.Engine.CustomerID()
+
+		// If the scan is a customer barcode, attach and return current basket.
+		if custID, custName, ok := repo.LookupCustomer(r.Context(), code); ok {
+			d.Engine.SetCustomer(custID, custName)
+			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+			basketView, _ := ui.NewBasketView(funcs)
+			b := d.Engine.Basket()
+			b.ToastMessage = fmt.Sprintf("Customer %s linked", custName)
+			_ = basketView.Render(w, b)
+			return
+		} else if looksLikeCustomerCode(code) {
+			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+			basketView, _ := ui.NewBasketView(funcs)
+			b := d.Engine.Basket()
+			b.ToastMessage = "Customer not found"
+			_ = basketView.Render(w, b)
+			return
+		}
+
+		customerID = d.Engine.CustomerID()
+		if promoType, value, ok := repo.FindActivePromo(r.Context(), customerID, code); ok {
+			if promoType == "percent" {
+				d.Engine.SetDiscountPercent(value)
+			} else {
+				d.Engine.SetDiscount(value)
+			}
+			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+			basketView, _ := ui.NewBasketView(funcs)
+			b := d.Engine.Basket()
+			b.ToastMessage = fmt.Sprintf("Promotion %s applied", code)
+			_ = basketView.Render(w, b)
+			return
+		}
+		b, _ := d.Engine.ScanQty(code, in.Qty)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, b)
@@ -55,10 +97,53 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, "code required", http.StatusBadRequest)
 			return
 		}
-		d.engine.Remove(code)
+		d.Engine.Remove(code)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
-		b := d.engine.Basket()
+		b := d.Engine.Basket()
+		_ = basketView.Render(w, b)
+	})
+
+	// Update line qty/discount (htmx-friendly)
+	mux.HandleFunc("/api/pos/line", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		code := strings.TrimSpace(r.Form.Get("code"))
+		if code == "" {
+			http.Error(w, "code required", http.StatusBadRequest)
+			return
+		}
+		qty := 0.0
+		if v := r.Form.Get("qty"); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+				qty = f
+			}
+		}
+		discount := int64(0)
+		if v := r.Form.Get("discount"); v != "" {
+			if dVal, err := strconv.ParseInt(v, 10, 64); err == nil && dVal >= 0 {
+				discount = dVal
+			}
+		}
+		d.Engine.UpdateLine(code, qty, discount)
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		b := d.Engine.Basket()
+		_ = basketView.Render(w, b)
+	})
+
+	// Apply sale-level discount (coupon/promotion) in minor units.
+	mux.HandleFunc("/api/pos/discount", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		discount := int64(0)
+		if v := r.Form.Get("discount"); v != "" {
+			if dVal, err := strconv.ParseInt(v, 10, 64); err == nil && dVal >= 0 {
+				discount = dVal
+			}
+		}
+		d.Engine.SetDiscount(discount)
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		b := d.Engine.Basket()
 		_ = basketView.Render(w, b)
 	})
 
@@ -70,10 +155,10 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 
 	// Reset basket for new customer.
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
-		d.engine.Reset()
+		d.Engine.Reset()
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
-		b, _ := d.engine.Scan("")
+		b, _ := d.Engine.Scan("")
 		_ = basketView.Render(w, b)
 	})
 
@@ -96,13 +181,13 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		var in In
 		_ = json.NewDecoder(r.Body).Decode(&in)
 
-		lines := d.engine.Lines()
+		lines := d.Engine.Lines()
 		if len(lines) == 0 {
 			http.Error(w, "no items in basket", http.StatusBadRequest)
 			return
 		}
 
-		locID, err := ensureStockLocation(r.Context(), d.db)
+		locID, err := repo.EnsureStockLocation(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -112,7 +197,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		for _, l := range lines {
 			taxBP := l.TaxRateBP
 			if taxBP == 0 {
-				taxBP = d.state.TaxRatePct * 100
+				taxBP = d.State.TaxRatePct * 100
 				if taxBP == 0 {
 					taxBP = 2000 // fallback to 20% if missing to avoid zero-tax totals
 				}
@@ -127,7 +212,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 				Qty:                float64(l.Qty),
 				UnitPrice:          l.PriceCents,
 				TaxRateBasisPoints: taxBP,
-				LineDiscount:       0,
+				LineDiscount:       l.LineDiscount,
 				LocationID:         locID,
 			})
 		}
@@ -137,7 +222,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			if p.Method == "" || p.Amount <= 0 {
 				continue
 			}
-			if err := ensurePaymentMethod(r.Context(), d.db, p.Method); err != nil {
+			if err := repo.EnsurePaymentMethod(r.Context(), p.Method); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -159,14 +244,14 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 					amount = amt
 				}
 				if method != "" {
-					if err := ensurePaymentMethod(r.Context(), d.db, method); err != nil {
+					if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
 					payments = append(payments, pos.PaymentInput{
 						MethodID: method,
 						Amount:   amount,
-						Currency: d.state.Currency,
+						Currency: d.State.Currency,
 					})
 				}
 			}
@@ -176,12 +261,12 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 		for i := range saleLines {
 			lineBase := pos.AmountForQuantity(saleLines[i].UnitPrice, saleLines[i].Qty)
 			lineNet := lineBase - saleLines[i].LineDiscount
-			lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, saleLines[i].TaxRateBasisPoints, d.state.TaxInclusive)
+			lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, saleLines[i].TaxRateBasisPoints, d.State.TaxInclusive)
 			subtotal += lineNet
 			taxTotal += lineTax
 		}
 		total := subtotal - in.Discount
-		if !d.state.TaxInclusive {
+		if !d.State.TaxInclusive {
 			total += taxTotal
 		}
 		if total < 0 {
@@ -191,7 +276,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			payments = append(payments, pos.PaymentInput{
 				MethodID: "cash",
 				Amount:   total,
-				Currency: d.state.Currency,
+				Currency: d.State.Currency,
 			})
 		}
 		for i := range payments {
@@ -202,34 +287,44 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 
 		registerID := in.RegisterID
 		if registerID == "" {
-			if regID, err := ensureRegister(r.Context(), d.db); err == nil {
+			if regID, err := repo.EnsureRegister(r.Context()); err == nil {
 				registerID = regID
 			}
 		}
 
-		allowNegative := d.state.AllowNegativeInventory
+		allowNegative := d.State.AllowNegativeInventory
 		if in.AllowNegative != nil {
 			allowNegative = *in.AllowNegative
 		}
 
 		cashierID := in.CashierID
 		if cashierID == "" {
-			if cid, err := ensureUser(r.Context(), d.db); err == nil {
+			if cid, err := repo.EnsureUser(r.Context()); err == nil {
 				cashierID = cid
 			}
 		}
 
-		saleID, err := pos.CompleteSale(r.Context(), d.db, pos.SaleInput{
+		discount := in.Discount
+		if discount == 0 {
+			discount = d.Engine.SaleDiscount()
+		}
+
+		customerID := in.CustomerID
+		if customerID == "" {
+			customerID = d.Engine.CustomerID()
+		}
+
+		saleID, err := pos.CompleteSale(r.Context(), d.Db, pos.SaleInput{
 			SaleType:               "sale",
-			Currency:               d.state.Currency,
-			TaxInclusive:           d.state.TaxInclusive,
-			SaleDiscount:           in.Discount,
+			Currency:               d.State.Currency,
+			TaxInclusive:           d.State.TaxInclusive,
+			SaleDiscount:           discount,
 			Lines:                  saleLines,
 			Payments:               payments,
 			Note:                   in.Note,
 			RegisterID:             registerID,
 			CashierID:              cashierID,
-			CustomerID:             in.CustomerID,
+			CustomerID:             customerID,
 			AllowNegativeInventory: allowNegative,
 			ActorID:                cashierID,
 		})
@@ -237,7 +332,7 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			if strings.Contains(err.Error(), "insufficient stock") {
 				locale := httpx.ResolveLocale(w, r)
 				funcs := httpx.FuncsFor(locale)
-				b := d.engine.Basket()
+				b := d.Engine.Basket()
 				basketView, _ := ui.NewBasketView(funcs)
 				var buf bytes.Buffer
 				_ = basketView.Render(&buf, b)
@@ -256,13 +351,10 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			return
 		}
 
-		d.engine.Reset()
+		d.Engine.Reset()
 
 		// load receipt_no and totals from DB for rendering
-		var receiptNo string
-		var dbSubtotal, dbTax, dbTotal int64
-		_ = d.db.QueryRowContext(r.Context(), `SELECT receipt_no, subtotal, tax_total, total FROM sales WHERE id = ?`, saleID).
-			Scan(&receiptNo, &dbSubtotal, &dbTax, &dbTotal)
+		receiptNo, dbSubtotal, dbTax, dbTotal, _ := repo.SaleTotals(r.Context(), saleID)
 		if receiptNo == "" {
 			receiptNo = saleID
 		}
@@ -282,7 +374,15 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
-		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.state.TaxInclusive)
+		basket := d.Engine.Basket()
+		discountType := basket.DiscountType
+		discountRaw := basket.DiscountRaw
+		if in.Discount > 0 {
+			discountType = "amount"
+			discountRaw = in.Discount
+		}
+
+		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount, discountType, discountRaw)
 
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
@@ -305,73 +405,12 @@ func registerPOSAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, "saleId and status required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.UpdateSaleStatus(r.Context(), d.db, in.SaleID, in.Status, "", in.Reason); err != nil {
+		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, "", in.Reason); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-}
-
-// ensureStockLocation returns an existing location id or creates a default one.
-func ensureStockLocation(ctx context.Context, db *sql.DB) (string, error) {
-	var id string
-	err := db.QueryRowContext(ctx, `SELECT id FROM stock_locations WHERE name = 'Main' OR id = 'loc_main' ORDER BY id LIMIT 1`).Scan(&id)
-	if err == nil && id != "" {
-		return id, nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("read stock_locations: %w", err)
-	}
-	id = "loc_main"
-	if _, err := db.ExecContext(ctx, `INSERT INTO stock_locations(id, name) VALUES(?,?)`, id, "Main"); err != nil {
-		return "", fmt.Errorf("create default location: %w", err)
-	}
-	return id, nil
-}
-
-// ensurePaymentMethod upserts a minimal payment method to satisfy FK.
-func ensurePaymentMethod(ctx context.Context, db *sql.DB, id string) error {
-	var exists int
-	if err := db.QueryRowContext(ctx, `SELECT 1 FROM payment_methods WHERE id = ? AND is_active = 1`, id).Scan(&exists); err == nil {
-		return nil
-	}
-	_, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO payment_methods (id, name, type, is_active) VALUES (?, ?, 'cash', 1)`, id, id)
-	return err
-}
-
-// ensureRegister returns an existing register or creates a default one.
-func ensureRegister(ctx context.Context, db *sql.DB) (string, error) {
-	var id string
-	err := db.QueryRowContext(ctx, `SELECT id FROM registers WHERE is_active = 1 ORDER BY id LIMIT 1`).Scan(&id)
-	if err == nil && id != "" {
-		return id, nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("read registers: %w", err)
-	}
-	id = "reg-default"
-	if _, err := db.ExecContext(ctx, `INSERT INTO registers (id, name, is_active) VALUES (?, ?, 1)`, id, "Default Register"); err != nil {
-		return "", fmt.Errorf("create default register: %w", err)
-	}
-	return id, nil
-}
-
-// ensureUser returns a default cashier user if none exists.
-func ensureUser(ctx context.Context, db *sql.DB) (string, error) {
-	var id string
-	err := db.QueryRowContext(ctx, `SELECT id FROM users WHERE is_active = 1 ORDER BY id LIMIT 1`).Scan(&id)
-	if err == nil && id != "" {
-		return id, nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("read users: %w", err)
-	}
-	id = "cashier-default"
-	if _, err := db.ExecContext(ctx, `INSERT INTO users (id, username, display_name, role, is_active) VALUES (?, ?, ?, 'cashier', 1)`, id, "cashier", "Default Cashier"); err != nil {
-		return "", fmt.Errorf("create default user: %w", err)
-	}
-	return id, nil
 }
 
 type receiptLine struct {
@@ -380,7 +419,7 @@ type receiptLine struct {
 	TotalAfterTax int64
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, subtotal, taxTotal, total int64, taxInclusive bool) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFiles(
 		"web/ui/partials/receipt.html",
 	)
@@ -403,15 +442,26 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		})
 	}
 	data := map[string]any{
-		"ReceiptNo": receiptNo,
-		"Lines":     rlines,
-		"Subtotal":  subtotal,
-		"TaxTotal":  taxTotal,
-		"Total":     total,
+		"ReceiptNo":        receiptNo,
+		"Lines":            rlines,
+		"Subtotal":         subtotal,
+		"TaxTotal":         taxTotal,
+		"SaleDiscount":     saleDiscount,
+		"SaleDiscountType": saleDiscountType,
+		"SaleDiscountRaw":  saleDiscountRaw,
+		"Total":            total,
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "receipt", data); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+func looksLikeCustomerCode(code string) bool {
+	c := strings.ToUpper(strings.TrimSpace(code))
+	if c == "" {
+		return false
+	}
+	return strings.HasPrefix(c, "CUST") || strings.HasPrefix(c, "LOY-")
 }

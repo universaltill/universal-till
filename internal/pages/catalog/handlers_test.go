@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/pages/common"
 	_ "modernc.org/sqlite"
 )
 
@@ -26,6 +27,9 @@ func setupCatalogPageDB(t *testing.T) *sql.DB {
 		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE variant_barcodes (barcode TEXT PRIMARY KEY, variant_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT, CHECK ((item_id IS NOT NULL AND variant_id IS NULL) OR (item_id IS NULL AND variant_id IS NOT NULL)));`,
+		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, name TEXT NOT NULL, rate_basis_points INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -41,9 +45,17 @@ func TestCatalogPage_FiltersInactive(t *testing.T) {
 	defer db.Close()
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('active1','A1','Active Item',100,1)`)
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('inactive1','I1','Inactive Item',200,0)`)
+	_, _ = db.Exec(`INSERT INTO categories(id,name,is_active) VALUES('cat1','Cat 1',1)`)
+	_, _ = db.Exec(`INSERT INTO brands(id,name,is_active) VALUES('brand1','Brand 1',1)`)
+	_, _ = db.Exec(`INSERT INTO tax_codes(id,name,rate_basis_points,is_active) VALUES('tax_std','Standard',2000,1)`)
 
-	mux := http.NewServeMux()
-	Register(mux, db, "default", nil)
+    mux := http.NewServeMux()
+    dp := &common.Deps{
+        Db: db,
+        State: common.RuntimeState{Theme: "default"},
+        Menu: []common.MenuItem{},
+    }
+    Register(mux, dp)
 
 	req := httptest.NewRequest(http.MethodGet, "/catalog", nil)
 	rec := httptest.NewRecorder()
@@ -64,8 +76,14 @@ func TestCatalogCreateAndDeactivate(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
-	mux := http.NewServeMux()
-	Register(mux, db, "default", nil)
+	_, _ = db.Exec(`INSERT INTO tax_codes(id,name,rate_basis_points,is_active) VALUES('tax_std','Standard',2000,1)`)
+    mux := http.NewServeMux()
+    dp := &common.Deps{
+        Db: db,
+        State: common.RuntimeState{Theme: "default"},
+        Menu: []common.MenuItem{},
+    }
+    Register(mux, dp)
 
 	// create item
 	form := strings.NewReader("name=Test+Item&price=123&sku=T1&taxCode=tax_std&isActive=1")

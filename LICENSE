@@ -1,2 +1,260 @@
-SPDX-License-Identifier: Apache-2.0
-See https://www.apache.org/licenses/LICENSE-2.0
+# Universal Till License
+
+**Version 1.0 - December 2025**
+
+Universal Till is distributed under a dual-license model to ensure the core remains free and open while protecting the sustainability of the project.
+
+---
+
+## Core License: MIT License
+
+The **Universal Till Core** (POS engine, UI, local plugins, and all components in this repository unless otherwise specified) is licensed under the **MIT License**.
+
+```
+MIT License
+
+Copyright (c) 2025 Universal Till Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### What This Means:
+✅ Use Universal Till for **any purpose** (commercial or personal)  
+✅ Run it on **any hardware** (Raspberry Pi, tablets, servers, etc.)  
+✅ Modify the source code **freely**  
+✅ **Fork the project** and create your own versions  
+✅ Distribute your modifications  
+✅ Build and sell your own plugins  
+✅ Install it on devices you sell  
+✅ Use it **offline forever** without any restrictions  
+✅ No requirement to pay or register  
+✅ **Contribute improvements back** to the main project (encouraged!)
+
+---
+
+## Forking & Contributions Policy
+
+### Forking is Encouraged! 🎉
+
+We **fully support and encourage** forking Universal Till:
+
+- ✅ Create specialized versions for specific industries (restaurants, retail, healthcare, etc.)
+- ✅ Adapt it for regional requirements (tax systems, languages, regulations)
+- ✅ Experiment with new features and improvements
+- ✅ Build custom versions for your hardware products
+- ✅ Maintain private forks for internal use
+
+**We only ask that you:**
+1. Maintain the MIT license and attribution in your fork
+2. Consider contributing improvements back upstream (but it's not required)
+3. Don't use our trademark in a way that suggests official endorsement
+
+**We'll even link to notable forks** in our README to help users discover alternatives!
+
+### Contributing is Better! 💪
+
+While you're free to fork, contributing to the main project has benefits:
+
+- ✅ Your code reaches all Universal Till users automatically
+- ✅ We maintain and improve your feature
+- ✅ Credit in CONTRIBUTORS.md and release notes
+- ✅ Special contributor role in our community
+- ✅ Influence the project roadmap
+- ✅ No need to maintain a separate fork
+
+**See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.**
+
+---
+
+## Plugin Ecosystem
+
+### Plugin Store (Free for All Developers)
+
+Universal Till operates a **free plugin store** where developers can:
+
+- ✅ Upload plugins at no cost (forever free hosting)
+- ✅ Distribute free plugins to all users
+- ✅ Sell premium plugins (we take 20% commission)
+- ✅ Receive automatic security scanning
+- ✅ Get download statistics and user feedback
+- ✅ Publish updates easily
+
+### Plugin Licensing (Your Choice)
+
+Plugin developers choose their own license:
+
+- **Open Source Plugins**: Can use MIT, Apache, GPL, or any OSI-approved license
+- **Proprietary Plugins**: Can be closed source with your own terms
+- **Dual-Licensed Plugins**: Can offer both free and premium versions
+
+### Plugin Review Process
+
+All plugins submitted to our store undergo:
+
+**Automated Security Scan (Instant):**
+- Malware detection
+- Known vulnerability checks
+- API key exposure detection
+- Permission analysis
+- Code signing verification
+
+**Manual Review (1-3 business days for):**
+- First-time developer submissions
+- Plugins requesting sensitive permissions (payments, customer data)
+- Paid/premium plugins
+- Plugins seeking "Verified" status
+
+**Approval Criteria:**
+- No malicious code or security vulnerabilities
+- Accurate description of functionality
+- Proper permission declarations
+- Functional testing passes
+- Follows plugin API guidelines
+
+**See [PLUGIN_GUIDELINES.md](PLUGIN_GUIDELINES.md) for complete details.**
+
+### Plugin Revenue
+
+- **Free Plugins**: 0% commission, distribute freely
+- **Paid Plugins**: 20% commission to Universal Till (covers hosting, payment processing, support)
+- **Subscription Plugins**: 20% commission on recurring revenue
+
+---
+
+## Cloud Services: Proprietary License
+
+**Universal Till Cloud Services** (when connecting to our hosted infrastructure) are proprietary and subject to separate terms:
+
+### Cloud Services Include:
+- Multi-device synchronization
+- Cloud-enhanced plugin features
+- Hosted backups and data redundancy
+- Advanced analytics and business intelligence
+- Fraud detection and security features
+- Plugin marketplace hosting and distribution
+- Priority support and SLA guarantees
+
+### Cloud Services Terms:
+1. **Free Tier Available**: Basic cloud features provided free for personal and small business use
+2. **Paid Tiers**: Advanced features require a subscription (see pricing at universaltill.com)
+3. **Data Privacy**: Your data remains yours; see our Privacy Policy
+4. **Fair Use**: Reasonable usage limits apply to prevent abuse
+5. **No Lock-in**: Export all data and return to local-only mode anytime
+6. **Plugin Store**: Free hosting for all developers, commission on paid plugins only
+
+**Cloud services source code is NOT open source** but the APIs are fully documented.
+
+---
+
+## Trademark Guidelines
+
+"Universal Till" and the Universal Till logo are trademarks. You may:
+- Use the name when accurately describing the software
+- Use the name in plugin descriptions (e.g., "Stripe Plugin for Universal Till")
+- Fork and modify the code under the MIT license
+- State that your fork is "based on Universal Till"
+
+You may NOT:
+- Use the trademark to suggest official endorsement of your fork
+- Create confusion about the origin of the software
+- Register similar trademarks
+- Use our branding for commercial hosting services without permission
+- Name your fork "Universal Till [Something]" (choose a distinct name)
+
+**Example Acceptable Fork Names:**
+- "RetailPOS (based on Universal Till)"
+- "CoffeePOS (powered by Universal Till)"
+- "TillMaster (Universal Till fork)"
+
+**Hardware Manufacturers**: May use "Powered by Universal Till" or "Includes Universal Till" when pre-installing the unmodified software. Contact us for official partnership terms.
+
+---
+
+## Patent Grant
+
+Universal Till contributors grant you a license to any patents necessary to use, modify, and distribute the software under the MIT license terms.
+
+If you initiate patent litigation against any entity claiming that Universal Till infringes your patents, your license terminates automatically.
+
+---
+
+## Contributions
+
+By contributing to Universal Till, you agree that:
+1. Your contributions will be licensed under the MIT License (for core components)
+2. You have the right to submit the contribution
+3. You grant Universal Till the right to include your contribution in both open source and commercial offerings
+4. You retain copyright to your contribution
+5. You waive any moral rights that would prevent us from modifying your contribution
+
+**All contributors are credited in CONTRIBUTORS.md and release notes.**
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for complete details.
+
+---
+
+## Export Compliance
+
+Universal Till includes encryption technology. Export and use may be subject to laws and regulations in your jurisdiction. You are responsible for compliance with applicable export control laws.
+
+---
+
+## Third-Party Components
+
+Universal Till includes or may interact with third-party software subject to their own licenses:
+- Go standard library (BSD-style license)
+- SQLite (Public Domain)
+- Various Go modules (see go.mod for individual licenses)
+
+All third-party components maintain their original licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for complete list.
+
+---
+
+## Summary (TL;DR)
+
+| Component | License | Cost | What You Can Do |
+|-----------|---------|------|-----------------|
+| **Core POS Software** | MIT (Open Source) | Free Forever | Use, modify, sell, fork, distribute freely |
+| **Forking** | MIT (Open Source) | Free Forever | Create your own versions, no permission needed |
+| **Contributing** | MIT (Open Source) | Free Forever | Submit PRs, get credited, shape the project |
+| **Plugin Development** | Your Choice | Free to Upload | Build free or paid plugins, your license |
+| **Plugin Store Hosting** | N/A | Free Forever | Free hosting and distribution for all |
+| **Cloud Services** | Proprietary | Free Tier + Paid | Optional enhancement, no lock-in |
+| **Paid Plugins** | Varies | 20% Commission | Sell plugins, we handle infrastructure |
+
+**Philosophy**: The POS engine is yours forever, free and open. Fork it, contribute to it, build on it. Cloud services and the plugin marketplace fund ongoing development while keeping the core truly free.
+
+---
+
+## Questions?
+
+- **General**: hello@universaltill.com
+- **Licensing**: licensing@universaltill.com  
+- **Security**: security@universaltill.com
+- **Partnerships**: partners@universaltill.com
+- **Plugin Development**: plugins@universaltill.com
+
+**GitHub**: https://github.com/universaltill/universal-till  
+**Documentation**: https://docs.universaltill.com  
+**Plugin Guidelines**: See PLUGIN_GUIDELINES.md  
+**Community**: https://discord.gg/universaltill
+
+---
+
+*This license is effective as of December 2025 and supersedes all prior license agreements.*

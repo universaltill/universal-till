@@ -2,36 +2,49 @@ package catalog
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // Register mounts catalog list/create and barcode attach endpoints.
-func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
+// func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
+func Register(mux *http.ServeMux, d *common.Deps) {
+	repo := data.NewCatalogRepo(d.Db)
+
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		items, err := listItems(r.Context(), db)
+		items, err := repo.ListItems(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cats, brands, taxCodes, err := listLookups(r.Context(), repo)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		data := map[string]any{
-			"title":     "Catalog",
-			"menuItems": menu,
-			"theme":     theme,
-			"Items":     items,
+			"title":      "Catalog",
+			"menuItems":  d.Menu,
+			"theme":      d.State.Theme,
+			"Items":      items,
+			"Categories": cats,
+			"Brands":     brands,
+			"TaxCodes":   taxCodes,
 		}
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
 			filepath.Join("web", "ui", "pages", "catalog.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
+			filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 		), funcs)("base", data)(w, r)
 	})
@@ -47,11 +60,15 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if _, err := pos.CreateItem(r.Context(), db, itemInput); err != nil {
+		if err := validateLookups(r.Context(), repo, itemInput); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		if _, err := pos.CreateItem(r.Context(), d.Db, itemInput); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -71,11 +88,15 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			return
 		}
 		itemInput.ID = strings.TrimSpace(r.Form.Get("id"))
-		if err := pos.UpdateItem(r.Context(), db, itemInput); err != nil {
+		if err := validateLookups(r.Context(), repo, itemInput); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		if err := pos.UpdateItem(r.Context(), d.Db, itemInput); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -94,11 +115,11 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, "id required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.DeactivateItem(r.Context(), db, itemID); err != nil {
+		if err := pos.DeactivateItem(r.Context(), d.Db, itemID); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -144,17 +165,17 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			}
 		}
 		if vInput.ID == "" {
-			if _, err := pos.CreateVariant(r.Context(), db, vInput); err != nil {
+			if _, err := pos.CreateVariant(r.Context(), d.Db, vInput); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		} else {
-			if err := pos.UpdateVariant(r.Context(), db, vInput); err != nil {
+			if err := pos.UpdateVariant(r.Context(), d.Db, vInput); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
-		items, _ := listItems(r.Context(), db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -173,11 +194,11 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, "id required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.DeactivateVariant(r.Context(), db, variantID); err != nil {
+		if err := pos.DeactivateVariant(r.Context(), d.Db, variantID); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -198,7 +219,7 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, "barcode required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.AddBarcode(r.Context(), db, pos.BarcodeInput{
+		if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
 			Barcode:   barcode,
 			ItemID:    itemID,
 			VariantID: variantID,
@@ -207,42 +228,12 @@ func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]st
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
 	})
-}
-
-func listItems(ctx context.Context, db *sql.DB) ([]pos.ItemInput, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed FROM items WHERE is_active = 1 ORDER BY name`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []pos.ItemInput
-	for rows.Next() {
-		var itm pos.ItemInput
-		var tax, cat, brand, desc sql.NullString
-		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed); err != nil {
-			return nil, err
-		}
-		if desc.Valid {
-			itm.Description = desc.String
-		}
-		if tax.Valid {
-			itm.TaxCodeID = &tax.String
-		}
-		if cat.Valid {
-			itm.CategoryID = &cat.String
-		}
-		if brand.Valid {
-			itm.BrandID = &brand.String
-		}
-		out = append(out, itm)
-	}
-	return out, rows.Err()
 }
 
 func strPtr(s string) *string {
@@ -265,8 +256,6 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 	cat := strPtr(r.Form.Get("categoryId"))
 	brand := strPtr(r.Form.Get("brandId"))
 	taxCode := strPtr(r.Form.Get("taxCode"))
-	cost := strPtr(r.Form.Get("costPrice")) // cost not stored on item; kept for future?
-	_ = cost                                // placeholder to avoid unused; cost handling can be added if schema supports
 	return pos.ItemInput{
 		Name:        name,
 		SKU:         strings.TrimSpace(r.Form.Get("sku")),
@@ -279,5 +268,53 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		IsWeighed:   r.Form.Get("isWeighed") == "1" || strings.ToLower(r.Form.Get("isWeighed")) == "on",
 		IsActive:    r.Form.Get("isActive") != "0",
 	}, nil
+}
+
+type lookup struct {
+	ID   string
+	Name string
+}
+
+func listLookups(ctx context.Context, repo *data.CatalogRepo) ([]lookup, []lookup, []lookup, error) {
+	catsRaw, err := repo.ReadLookup(ctx, "categories")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	brandsRaw, err := repo.ReadLookup(ctx, "brands")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	taxCodesRaw, err := repo.ReadLookup(ctx, "tax_codes")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return convertLookups(catsRaw), convertLookups(brandsRaw), convertLookups(taxCodesRaw), nil
+}
+
+func convertLookups(in []data.Lookup) []lookup {
+	var out []lookup
+	for _, l := range in {
+		out = append(out, lookup{ID: l.ID, Name: l.Name})
+	}
+	return out
+}
+
+func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInput) error {
+	if in.CategoryID != nil {
+		if err := repo.ValidateLookup(ctx, "categories", *in.CategoryID, false); err != nil {
+			return err
+		}
+	}
+	if in.BrandID != nil {
+		if err := repo.ValidateLookup(ctx, "brands", *in.BrandID, false); err != nil {
+			return err
+		}
+	}
+	if in.TaxCodeID != nil {
+		if err := repo.ValidateLookup(ctx, "tax_codes", *in.TaxCodeID, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func files(paths ...string) []string { return paths }
