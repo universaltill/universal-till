@@ -24,6 +24,10 @@ Principles: offline-first, integer money, append-only migrations (no schema chan
 - Promotions/coupons stored in `promotions` table with fields: code, type (`amount|percent`), value (minor units or basis points), optional customer_id, validity window; applied via barcode scan and must respect type math.
 - Customer barcode/ID scan should attach a customer to the basket for promo eligibility checks.
 - Handlers should delegate DB access (customer lookup, promo lookup, register/payment/user helpers) to a small POS repo to keep HTTP layer thin and testable.
+- Helper scripts (available anytime):
+  - `scripts/run_migrations`: apply DB migrations.
+  - `scripts/smoke_quickstart`: quick sanity pass over POS/UI.
+  - `scripts/test-plugin`: basic plugin harness check.
 
 ## Acceptance Criteria
 - Basket add/edit/remove works for weighted and integer quantities; tests cover rounding and discounts.
