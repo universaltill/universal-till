@@ -12,7 +12,8 @@ import (
 )
 
 var baseFuncs = template.FuncMap{
-	"div100": func(cents int64) float64 { return float64(cents) / 100.0 },
+	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
+	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.

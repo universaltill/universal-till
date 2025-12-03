@@ -8,9 +8,10 @@ import (
 	"strconv"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-func registerPluginsPage(mux *http.ServeMux, d *deps) {
+func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/plugins", func(w http.ResponseWriter, r *http.Request) {
 		page := 1
 		size := 12
@@ -26,14 +27,14 @@ func registerPluginsPage(mux *http.ServeMux, d *deps) {
 			}
 		}
 		offset := (page - 1) * size
-		items, total, err := d.pm.CatalogPage(r.Context(), offset, size, tag)
+		items, total, err := d.Pm.CatalogPage(r.Context(), offset, size, tag)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// collect all tags from full catalog for tabs
 		tagsSet := make(map[string]struct{})
-		for _, c := range d.pm.Catalog {
+		for _, c := range d.Pm.Catalog {
 			for _, t := range c.Tags {
 				tagsSet[t] = struct{}{}
 			}
@@ -54,8 +55,8 @@ func registerPluginsPage(mux *http.ServeMux, d *deps) {
 		raw, _ := json.Marshal(payload)
 		data := map[string]any{
 			"title":       "Plugins",
-			"theme":       d.state.Theme,
-			"menuItems":   d.menu,
+			"theme":       d.State.Theme,
+			"menuItems":   d.Menu,
 			"pluginsJSON": template.JS(raw),
 		}
 		httpx.Render("ui/pages/plugins.html", data)(w, r)

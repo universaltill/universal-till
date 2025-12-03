@@ -8,6 +8,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
-      - run: go build ./...
-      - run: go test ./...
+        with: { go-version: '1.25' }
+      - name: Prep Go cache dirs
+        run: |
+          mkdir -p "${RUNNER_TEMP}/gobuildcache"
+          mkdir -p "${RUNNER_TEMP}/gomodcache"
+      - name: Restore Go cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/gobuildcache
+            ${{ runner.temp }}/gomodcache
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Build
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: go build ./...
+      - name: Test
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: go test ./...

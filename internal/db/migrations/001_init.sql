@@ -21,6 +21,19 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Promotions / coupons
+CREATE TABLE IF NOT EXISTS promotions (
+    code        TEXT PRIMARY KEY,                -- e.g., PROMO50
+    type        TEXT NOT NULL DEFAULT 'amount'   CHECK (type IN ('amount','percent')),
+    value       INTEGER NOT NULL,                -- minor units or basis points (1% = 100)
+    description TEXT,
+    starts_at   TEXT,
+    ends_at     TEXT,
+    customer_id TEXT,                            -- optional targeted customer
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (customer_id) REFERENCES customers (id)
+);
+
 -- ----------------------------------------
 -- Tax / catalog lookup tables
 -- ----------------------------------------
@@ -68,6 +81,7 @@ CREATE TABLE IF NOT EXISTS customers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
+
 
 CREATE TABLE IF NOT EXISTS registers (
     id          TEXT PRIMARY KEY,
@@ -515,6 +529,11 @@ CREATE TABLE IF NOT EXISTS shortcut_buttons (
 
 -- Insert defaults and samples --------------------------------
 
+-- sample customers
+INSERT OR IGNORE INTO customers (id, name, phone, email, address, loyalty_no) VALUES
+('cust-001', 'Alice Carter', '+441234567890', 'alice@example.com', '10 High St, London', 'LOY-ALICE'),
+('cust-002', 'Ben Singh', '+441122334455', 'ben@example.com', '22 Market Rd, Manchester', 'LOY-BEN'),
+('cust-003', 'Chloe Martin', '+447700900123', 'chloe@example.com', '5 Queen Sq, Bristol', 'LOY-CHLOE');
 
 
 INSERT OR IGNORE INTO
@@ -3393,6 +3412,12 @@ INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES
 ('perm-escpos-print', 'com.unitill.plugins.escpos', 'devices:printer', 1),
 ('perm-ubereats-orders','com.unitill.plugins.ubereats','integrations:orders', 1),
 ('perm-qrpay-charge','com.unitill.plugins.qrpay','payments:qr', 1);
+
+-- sample promotions (amount = minor units, percent = basis points)
+INSERT OR IGNORE INTO promotions (code, type, value, description, is_active) VALUES
+('PROMO50', 'amount', 50, '50p off', 1),
+('PROMO500', 'amount', 500, '£5 off', 1),
+('DISC10', 'percent', 1000, '10% off basket', 1);
 
 
 INSERT INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES

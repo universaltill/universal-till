@@ -1,6 +1,8 @@
 {{ define "content" }}
 <h1>Catalog</h1>
 
+{{ template "catalog_lookups" . }}
+
 <div class="grid two">
   <div class="card">
     <h3>Add Item</h3>
@@ -10,10 +12,10 @@
       <label>Description <input type="text" name="description" placeholder="short description"></label>
       <label>Unit <input type="text" name="unit" value="each"></label>
       <label>Weighed? <input type="checkbox" name="isWeighed" value="1"></label>
-      <label>Category ID <input type="text" name="categoryId"></label>
-      <label>Brand ID <input type="text" name="brandId"></label>
+      <label>Category ID <input type="text" name="categoryId" list="categories-list" placeholder="search category"></label>
+      <label>Brand ID <input type="text" name="brandId" list="brands-list" placeholder="search brand"></label>
       <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
-      <label>Tax Code <input type="text" name="taxCode" placeholder="tax_std"></label>
+      <label>Tax Code <input type="text" name="taxCode" list="taxcodes-list" placeholder="tax_std"></label>
       <label>Active? <input type="checkbox" name="isActive" value="1" checked></label>
       <button class="btn" type="submit">Create</button>
     </form>
@@ -28,10 +30,10 @@
       <label>Description <input type="text" name="description"></label>
       <label>Unit <input type="text" name="unit" value="each"></label>
       <label>Weighed? <input type="checkbox" name="isWeighed" value="1"></label>
-      <label>Category ID <input type="text" name="categoryId"></label>
-      <label>Brand ID <input type="text" name="brandId"></label>
+      <label>Category ID <input type="text" name="categoryId" list="categories-list" placeholder="search category"></label>
+      <label>Brand ID <input type="text" name="brandId" list="brands-list" placeholder="search brand"></label>
       <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
-      <label>Tax Code <input type="text" name="taxCode"></label>
+      <label>Tax Code <input type="text" name="taxCode" list="taxcodes-list"></label>
       <label>Active? <input type="checkbox" name="isActive" value="1" checked></label>
       <button class="btn" type="submit">Update</button>
     </form>

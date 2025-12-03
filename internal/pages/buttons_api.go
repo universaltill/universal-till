@@ -7,10 +7,11 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
-func registerButtonsAPI(mux *http.ServeMux, d *deps) {
+func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// UI fragment
 	mux.HandleFunc("/ui/buttons", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -24,7 +25,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.btnStore, View: renderer}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
 		btnHTTP.List(w, r)
 	})
 
@@ -41,7 +42,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.btnStore, View: renderer}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
 		btnHTTP.Add(w, r)
 	})
 
@@ -57,7 +58,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.btnStore, View: renderer}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
 		btnHTTP.Remove(w, r)
 	})
 
@@ -78,7 +79,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *deps) {
 				offset = v
 			}
 		}
-		results, err := d.btnStore.SearchItems(r.Context(), q, offset, 10)
+		results, err := d.BtnStore.SearchItems(r.Context(), q, offset, 10)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
