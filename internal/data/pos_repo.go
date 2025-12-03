@@ -24,7 +24,7 @@ func (r *POSRepo) LookupCustomer(ctx context.Context, code string) (string, stri
 	}
 	row := r.db.QueryRowContext(ctx, `
 SELECT id, name FROM customers
-WHERE id = ? OR loyalty_no = ? OR phone = ?
+WHERE lower(id) = lower(?) OR lower(loyalty_no) = lower(?) OR phone = ?
 LIMIT 1
 `, c, c, c)
 	var id, name string
