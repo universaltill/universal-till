@@ -265,7 +265,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			subtotal += lineNet
 			taxTotal += lineTax
 		}
-		total := subtotal - in.Discount
+		discount := in.Discount
+		if discount == 0 {
+			discount = d.Engine.SaleDiscount()
+		}
+		total := subtotal - discount
 		if !d.State.TaxInclusive {
 			total += taxTotal
 		}
@@ -302,11 +306,6 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			if cid, err := repo.EnsureUser(r.Context()); err == nil {
 				cashierID = cid
 			}
-		}
-
-		discount := in.Discount
-		if discount == 0 {
-			discount = d.Engine.SaleDiscount()
 		}
 
 		customerID := in.CustomerID

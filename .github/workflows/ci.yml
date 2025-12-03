@@ -19,7 +19,7 @@ jobs:
           path: |
             ${{ runner.temp }}/gobuildcache
             ${{ runner.temp }}/gomodcache
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
       - name: Build
