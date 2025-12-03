@@ -13,18 +13,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+            ${{ runner.temp }}/gobuildcache
+            ${{ runner.temp }}/gomodcache
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-go-
       - name: Build
         env:
-          GOMODCACHE: ~/go/pkg/mod
-          GOCACHE: ~/.cache/go-build
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go build ./...
       - name: Test
         env:
-          GOMODCACHE: ~/go/pkg/mod
-          GOCACHE: ~/.cache/go-build
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go test ./...
