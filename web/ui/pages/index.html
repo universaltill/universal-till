@@ -1,7 +1,7 @@
 {{ define "content" }}
 <h1>{{ T "app.name" }}</h1>
 
-  <div class="pos-container">
+  <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
     <!-- Basket loads on page load -->
     <div hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
 
@@ -22,11 +22,53 @@
         <button class="btn" type="submit">Add</button>
       </form>
     </div>
-    <div class="grid">
-      <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
-      <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
-      <button class="btn secondary" hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">New Customer</button>
+
+    <div class="card tender-quick">
+      <h3>Quick Tender</h3>
+      <p class="tender-help">Pays the full remaining balance with one tap.</p>
+      <div class="grid">
+        <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
+        <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
+      </div>
     </div>
+
+    <div class="card tender-split" id="split-tender-card">
+      <h3>Split Tender</h3>
+      <p class="tender-help">Capture multiple tenders (e.g. part cash, part card) before completing the sale.</p>
+      <form class="split-tender-form" id="split-tender-form" autocomplete="off">
+        {{ $default := .paymentMethodDefault }}
+        <label>Method
+          <select name="method" id="split-tender-method" data-default="{{ $default }}" required>
+            {{ range .paymentMethods }}
+              <option value="{{ . }}" {{ if eq . $default }}selected{{ end }}>{{ . }}</option>
+            {{ end }}
+          </select>
+        </label>
+        <label>Amount (e.g. 12.50)
+          <input type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" required>
+        </label>
+        <label>Change (optional)
+          <input type="number" name="change" min="0" step="0.01" value="0.00">
+        </label>
+        <label>Reference (optional)
+          <input type="text" name="reference" placeholder="Last 4, auth code, etc.">
+        </label>
+        <div class="grid split-tender-controls">
+          <button class="btn" type="button" id="split-tender-add">Add Payment</button>
+          <button class="btn secondary" type="button" id="split-tender-fill">Fill Remaining</button>
+        </div>
+      </form>
+      <div id="split-tender-payments" class="split-tender-payments empty">
+        <p>No pending payments yet.</p>
+      </div>
+      <div id="split-tender-status" class="split-tender-status" aria-live="polite"></div>
+      <div class="grid tender-actions">
+        <button class="btn primary" type="button" id="split-tender-submit">Complete Sale</button>
+        <button class="btn secondary" type="button" id="split-tender-clear">Clear</button>
+      </div>
+    </div>
+
+    <button class="btn secondary" style="width:100%; margin-top:.75rem" hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">New Customer</button>
   </div>
 </div>
 
