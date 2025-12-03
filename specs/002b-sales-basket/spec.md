@@ -21,9 +21,11 @@ Principles: offline-first, integer money, append-only migrations (no schema chan
 - Basket operations exclude inactive catalog entries.
 - Park and void actions change sale status and record audit events.
 - Deterministic rounding (half-up) per constitution.
-- Promotions/coupons stored in `promotions` table (code, amount minor units, optional customer_id, validity window) and applied via barcode scan.
+- Promotions/coupons stored in `promotions` table with fields: code, type (`amount|percent`), value (minor units or basis points), optional customer_id, validity window; applied via barcode scan and must respect type math.
+- Customer barcode/ID scan should attach a customer to the basket for promo eligibility checks.
 
 ## Acceptance Criteria
 - Basket add/edit/remove works for weighted and integer quantities; tests cover rounding and discounts.
 - Park/void flows persist status changes and emit audit records.
 - Receipt payload includes lines/discounts/totals (including promotions) and renders via existing templates.
+- Promotions honor type (`amount|percent`), date window, and optional customer targeting; customer scan links basket to promotions.

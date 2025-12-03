@@ -98,6 +98,14 @@ func TestIndexAndBasketRender(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scan render failed: code %d body %s", rec.Code, rec.Body.String())
 	}
+	// Apply promo barcode
+	req = httptest.NewRequest(http.MethodPost, "/api/pos/scan", strings.NewReader("code=PROMO50"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("promo scan failed: code %d body %s", rec.Code, rec.Body.String())
+	}
 	// Update qty to 2 and ensure rendered qty sticks
 	req = httptest.NewRequest(http.MethodPost, "/api/pos/line", strings.NewReader("code=ABC&qty=2&discount=0"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
