@@ -409,3 +409,71 @@ func TestReceiptNoGenerator_Concurrency(t *testing.T) {
 		}
 	}
 }
+
+func TestCompleteSale_RetriesAfterReceiptConflict(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',10,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`
+INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, rounding, created_at)
+VALUES ('existing', '000000001', 'completed', 'sale', 'GBP', 500, 0, 0, 500, 0, ?)
+`, now); err != nil {
+		t.Fatalf("insert existing sale: %v", err)
+	}
+
+	origAllocator := receiptAllocator
+	t.Cleanup(func() { receiptAllocator = origAllocator })
+	var mu sync.Mutex
+	allocations := map[*sql.Tx]string{}
+	seq := []string{"000000001", "000000002"}
+	receiptAllocator = func(ctx context.Context, tx *sql.Tx) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if val, ok := allocations[tx]; ok {
+			return val, nil
+		}
+		if len(seq) == 0 {
+			return nextReceiptNo(ctx, tx)
+		}
+		val := seq[0]
+		seq = seq[1:]
+		allocations[tx] = val
+		return val, nil
+	}
+
+	if _, err := CompleteSale(ctx, db, SaleInput{
+		SaleType: "sale",
+		Currency: "GBP",
+		Lines:    []SaleLineInput{{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"}},
+		Payments: []PaymentInput{{MethodID: "cash", Amount: 500}},
+	}); err != nil {
+		t.Fatalf("complete sale: %v", err)
+	}
+
+	rows, err := db.Query(`SELECT receipt_no FROM sales ORDER BY receipt_no`)
+	if err != nil {
+		t.Fatalf("query receipts: %v", err)
+	}
+	defer rows.Close()
+	var receipts []string
+	for rows.Next() {
+		var rcpt string
+		if err := rows.Scan(&rcpt); err != nil {
+			t.Fatalf("scan receipt: %v", err)
+		}
+		receipts = append(receipts, rcpt)
+	}
+	if len(receipts) != 2 {
+		t.Fatalf("expected 2 receipts, got %d", len(receipts))
+	}
+	if receipts[0] != "000000001" || receipts[1] != "000000002" {
+		t.Fatalf("unexpected receipts: %v", receipts)
+	}
+}
