@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,67 +20,59 @@ import (
 
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/pos/scan", func(w http.ResponseWriter, r *http.Request) {
-		code := ""
-		qty := 1.0
-		if r.Header.Get("Content-Type") == "application/json" {
-			type In struct {
-				Code string  `json:"code"`
-				Qty  float64 `json:"qty"`
-			}
-			var in In
+		in := struct {
+			Code       string  `json:"code"`
+			Qty        float64 `json:"qty"`
+			CustomerID string  `json:"customerId,omitempty"`
+		}{Qty: 1}
+
+		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			code = in.Code
-			if in.Qty > 0 {
-				qty = in.Qty
-			}
 		} else {
 			_ = r.ParseForm()
-			code = r.Form.Get("code")
+			in.Code = r.Form.Get("code")
+			in.CustomerID = r.Form.Get("customerId")
 			if q := r.Form.Get("qty"); q != "" {
 				if v, err := strconv.ParseFloat(q, 64); err == nil && v > 0 {
-					qty = v
+					in.Qty = v
 				}
 			}
 		}
-		customerID := ""
-		if r.Header.Get("Content-Type") == "application/json" {
-			type In struct {
-				Code       string  `json:"code"`
-				Qty        float64 `json:"qty"`
-				CustomerID string  `json:"customerId,omitempty"`
-			}
-			var in In
-			_ = json.NewDecoder(r.Body).Decode(&in)
-			code = in.Code
-			customerID = strings.TrimSpace(in.CustomerID)
-			if in.Qty > 0 {
-				qty = in.Qty
+		code := strings.TrimSpace(in.Code)
+		if in.Qty > 0 {
+			if rQty, err := strconv.ParseFloat(fmt.Sprintf("%v", in.Qty), 64); err == nil {
+				in.Qty = rQty
 			}
 		} else {
-			_ = r.ParseForm()
-			code = r.Form.Get("code")
-			customerID = strings.TrimSpace(r.Form.Get("customerId"))
-			if q := r.Form.Get("qty"); q != "" {
-				if v, err := strconv.ParseFloat(q, 64); err == nil && v > 0 {
-					qty = v
-				}
-			}
+			in.Qty = 1
 		}
-		if discount, ok := promoFromDB(r.Context(), d.Db, customerID, code); ok {
-			d.Engine.SetDiscount(discount)
+
+		if cid := strings.TrimSpace(in.CustomerID); cid != "" {
+			d.Engine.SetCustomerID(cid)
+		}
+		customerID := d.Engine.CustomerID()
+
+		// If the scan is a customer barcode, attach and return current basket.
+		if custID, ok := lookupCustomer(r.Context(), d.Db, code); ok {
+			d.Engine.SetCustomerID(custID)
 			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 			basketView, _ := ui.NewBasketView(funcs)
 			_ = basketView.Render(w, d.Engine.Basket())
 			return
 		}
-		if discount, ok := parsePromotionBarcode(code); ok {
-			d.Engine.SetDiscount(discount)
+
+		if promoType, value, ok := promoFromDB(r.Context(), d.Db, customerID, code); ok {
+			if promoType == "percent" {
+				d.Engine.SetDiscountPercent(value)
+			} else {
+				d.Engine.SetDiscount(value)
+			}
 			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 			basketView, _ := ui.NewBasketView(funcs)
 			_ = basketView.Render(w, d.Engine.Basket())
 			return
 		}
-		b, _ := d.Engine.ScanQty(code, qty)
+		b, _ := d.Engine.ScanQty(code, in.Qty)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, b)
@@ -307,6 +298,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			discount = d.Engine.SaleDiscount()
 		}
 
+		customerID := in.CustomerID
+		if customerID == "" {
+			customerID = d.Engine.CustomerID()
+		}
+
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, pos.SaleInput{
 			SaleType:               "sale",
 			Currency:               d.State.Currency,
@@ -317,7 +313,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			Note:                   in.Note,
 			RegisterID:             registerID,
 			CashierID:              cashierID,
-			CustomerID:             in.CustomerID,
+			CustomerID:             customerID,
 			AllowNegativeInventory: allowNegative,
 			ActorID:                cashierID,
 		})
@@ -370,7 +366,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
-		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, in.Discount)
+		basket := d.Engine.Basket()
+		discountType := basket.DiscountType
+		discountRaw := basket.DiscountRaw
+		if in.Discount > 0 {
+			discountType = "amount"
+			discountRaw = in.Discount
+		}
+
+		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount, discountType, discountRaw)
 
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
@@ -401,46 +405,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
-// parsePromotionBarcode interprets promo codes like PROMO500 (minor units) or PROMO5.00.
-func parsePromotionBarcode(code string) (int64, bool) {
-	c := strings.TrimSpace(code)
-	if c == "" {
-		return 0, false
-	}
-	up := strings.ToUpper(c)
-	prefixes := []string{"PROMO", "DISC", "COUPON"}
-	var raw string
-	for _, p := range prefixes {
-		if strings.HasPrefix(up, p) {
-			raw = strings.TrimSpace(up[len(p):])
-			break
-		}
-	}
-	if raw == "" {
-		return 0, false
-	}
-	raw = strings.TrimLeft(raw, "-")
-	if raw == "" {
-		return 0, false
-	}
-	if val, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		if val > 0 {
-			return val, true
-		}
-	}
-	if f, err := strconv.ParseFloat(raw, 64); err == nil {
-		amt := int64(math.Round(f * 100))
-		if amt > 0 {
-			return amt, true
-		}
-	}
-	return 0, false
-}
-
 // promoFromDB looks up promotions table with optional customer targeting and active window.
-func promoFromDB(ctx context.Context, db *sql.DB, customerID string, code string) (int64, bool) {
+// It returns the promo type (amount|percent) and numeric value (minor units or basis points).
+func promoFromDB(ctx context.Context, db *sql.DB, customerID string, code string) (string, int64, bool) {
 	row := db.QueryRowContext(ctx, `
-SELECT amount
+SELECT type, value
 FROM promotions
 WHERE code = ?
   AND is_active = 1
@@ -449,14 +418,35 @@ WHERE code = ?
   AND (ends_at IS NULL OR datetime(ends_at) >= CURRENT_TIMESTAMP)
 LIMIT 1
 `, strings.TrimSpace(code), nullIfEmpty(customerID))
-	var amount int64
-	if err := row.Scan(&amount); err != nil {
-		return 0, false
+	var pType string
+	var value int64
+	if err := row.Scan(&pType, &value); err != nil {
+		return "", 0, false
 	}
-	if amount <= 0 {
-		return 0, false
+	if value <= 0 {
+		return "", 0, false
 	}
-	return amount, true
+	if pType == "" {
+		pType = "amount"
+	}
+	return pType, value, true
+}
+
+func lookupCustomer(ctx context.Context, db *sql.DB, code string) (string, bool) {
+	c := strings.TrimSpace(code)
+	if c == "" {
+		return "", false
+	}
+	row := db.QueryRowContext(ctx, `
+SELECT id FROM customers
+WHERE id = ? OR loyalty_no = ? OR phone = ?
+LIMIT 1
+`, c, c, c)
+	var id string
+	if err := row.Scan(&id); err != nil {
+		return "", false
+	}
+	return id, true
 }
 
 func nullIfEmpty(s string) any {
@@ -533,7 +523,7 @@ type receiptLine struct {
 	TotalAfterTax int64
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFiles(
 		"web/ui/partials/receipt.html",
 	)
@@ -556,12 +546,14 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		})
 	}
 	data := map[string]any{
-		"ReceiptNo":    receiptNo,
-		"Lines":        rlines,
-		"Subtotal":     subtotal,
-		"TaxTotal":     taxTotal,
-		"SaleDiscount": saleDiscount,
-		"Total":        total,
+		"ReceiptNo":        receiptNo,
+		"Lines":            rlines,
+		"Subtotal":         subtotal,
+		"TaxTotal":         taxTotal,
+		"SaleDiscount":     saleDiscount,
+		"SaleDiscountType": saleDiscountType,
+		"SaleDiscountRaw":  saleDiscountRaw,
+		"Total":            total,
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "receipt", data); err != nil {

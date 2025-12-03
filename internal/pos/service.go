@@ -10,7 +10,11 @@ type Service struct {
 	resolver PriceResolver
 	tax      TaxEngine
 	lines    []BasketLine // persisted after completion
-	discount int64        // sale-level discount (minor units)
+	// discount can be fixed amount or percentage basis points (1% = 100)
+	discountType      string
+	discountValue     int64
+	discountPercentBP int64
+	customerID        string
 }
 
 type Config struct {
@@ -42,11 +46,14 @@ type BasketLine struct {
 }
 
 type Basket struct {
-	Lines    []BasketLine `json:"lines"`
-	Subtotal int64        `json:"subtotal"`
-	Tax      int64        `json:"tax"`
-	Total    int64        `json:"total"`
-	Discount int64        `json:"discount"`
+	Lines        []BasketLine `json:"lines"`
+	Subtotal     int64        `json:"subtotal"`
+	Tax          int64        `json:"tax"`
+	Total        int64        `json:"total"`
+	Discount     int64        `json:"discount"`
+	DiscountType string       `json:"discountType,omitempty"` // amount|percent
+	DiscountRaw  int64        `json:"discountRaw,omitempty"`  // minor units or basis points
+	CustomerID   string       `json:"customerId,omitempty"`
 }
 
 func (s *Service) Scan(code string) (*Basket, error) {
@@ -92,13 +99,32 @@ func (s *Service) recomputeTotals() {
 	}
 	s.basket.Lines = append([]BasketLine{}, s.lines...)
 	s.basket.Subtotal = sub
-	s.basket.Discount = s.discount
+	discount := int64(0)
+	switch s.discountType {
+	case "percent":
+		if s.discountPercentBP > 0 && sub > 0 {
+			// round to nearest minor unit
+			discount = (sub*int64(s.discountPercentBP) + 9999) / 10000
+		}
+	default:
+		discount = s.discountValue
+	}
+	if discount < 0 {
+		discount = 0
+	}
+	s.basket.Discount = discount
+	s.basket.DiscountType = s.discountType
+	if s.discountType == "percent" {
+		s.basket.DiscountRaw = s.discountPercentBP
+	} else {
+		s.basket.DiscountRaw = s.discountValue
+	}
 	tax, total := int64(0), sub
 	if s.tax != nil {
 		tax, total = s.tax.Compute(sub)
 	}
 	s.basket.Tax = tax
-	total -= s.discount
+	total -= discount
 	if total < 0 {
 		total = 0
 	}
@@ -140,7 +166,11 @@ func (s *Service) Remove(sku string) {
 func (s *Service) Reset() {
 	s.basket = Basket{}
 	s.lines = nil
-	s.discount = 0
+	s.discountType = ""
+	s.discountValue = 0
+	s.discountPercentBP = 0
+	s.customerID = ""
+	s.basket.CustomerID = ""
 }
 
 // UpdateLine sets qty/discount for a given SKU (or item/variant match) and recomputes totals.
@@ -167,13 +197,38 @@ func (s *Service) SetDiscount(discount int64) {
 	if discount < 0 {
 		discount = 0
 	}
-	s.discount = discount
+	s.discountType = "amount"
+	s.discountValue = discount
+	s.discountPercentBP = 0
 	s.recomputeTotals()
 }
 
 // SaleDiscount returns the current sale-level discount.
 func (s *Service) SaleDiscount() int64 {
-	return s.discount
+	s.recomputeTotals()
+	return s.basket.Discount
+}
+
+// SetDiscountPercent sets a sale-level percentage discount (basis points, 1% = 100).
+func (s *Service) SetDiscountPercent(bp int64) {
+	if bp < 0 {
+		bp = 0
+	}
+	s.discountType = "percent"
+	s.discountPercentBP = bp
+	s.discountValue = 0
+	s.recomputeTotals()
+}
+
+// CustomerID returns the current customer attached to the basket.
+func (s *Service) CustomerID() string {
+	return s.customerID
+}
+
+// SetCustomerID attaches the basket to a customer (or clears when empty).
+func (s *Service) SetCustomerID(customerID string) {
+	s.customerID = customerID
+	s.basket.CustomerID = customerID
 }
 
 // // simple in-memory resolver

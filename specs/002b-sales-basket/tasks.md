@@ -17,7 +17,7 @@
 - [x] SB-402 Handler/HTMX tests for basket and park/void actions.
 
 ## Phase 5: Promotions & Customer Linking
-- [ ] SB-501 Extend promotions to support `type` (amount|percent) and value handling; apply math correctly per type.
-- [ ] SB-502 Add customer scan/link support so basket carries customer_id for targeted promotions.
-- [ ] SB-503 Update promo scan to honor type/date window/customer targeting; add tests covering amount vs percent and customer-limited promos.
-- [ ] SB-504 Surface promotion line/summary in basket/receipt with type-aware display.
+- [x] SB-501 Extend promotions to support `type` (amount|percent) and value handling; apply math correctly per type.
+- [x] SB-502 Add customer scan/link support so basket carries customer_id for targeted promotions.
+- [x] SB-503 Update promo scan to honor type/date window/customer targeting; add tests covering amount vs percent and customer-limited promos.
+- [x] SB-504 Surface promotion line/summary in basket/receipt with type-aware display.

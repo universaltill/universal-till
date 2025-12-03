@@ -601,8 +601,8 @@ erDiagram
 
 ## Promotions
 
-- Table: `promotions(code TEXT PK, amount INTEGER, type TEXT, description TEXT, starts_at TEXT, ends_at TEXT, customer_id TEXT FK customers.id, is_active INTEGER)`
-- Purpose: store coupon/promotion codes redeemable at checkout; `amount` represents minor units for `type='amount'` or basis points (e.g., 1000 = 10%) for `type='percent'`; optional `customer_id` for targeted promos; `starts_at`/`ends_at` bound validity.
-- Seeds (001_init.sql): PROMO50 (50p), PROMO500 (£5), DISC10 (£10) — default `type='amount'`.
+- Table: `promotions(code TEXT PK, type TEXT CHECK type IN ('amount','percent') DEFAULT 'amount', value INTEGER, description TEXT, starts_at TEXT, ends_at TEXT, customer_id TEXT FK customers.id, is_active INTEGER)`
+- Purpose: store coupon/promotion codes redeemable at checkout; `value` is minor units for `type='amount'` or basis points (e.g., 1000 = 10%) for `type='percent'`; optional `customer_id` for targeted promos; `starts_at`/`ends_at` bound validity.
+- Seeds (001_init.sql): PROMO50 (50p), PROMO500 (£5), DISC10 (10% off) — respecting `type`.
 - Usage: POS scan/discount endpoint checks active promotions (optionally matching customer) before applying barcode prefixes; basket carries `customer_id` for targeted promos.
 - Constraints: no negative amounts; inactive/expired codes ignored; percent promos should cap discounts to avoid negative totals.
