@@ -49,7 +49,6 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if cid := strings.TrimSpace(in.CustomerID); cid != "" {
 			d.Engine.SetCustomerID(cid)
 		}
-		customerID := d.Engine.CustomerID()
 
 		// If the scan is a customer barcode, attach and return current basket.
 		if custID, custName, ok := repo.LookupCustomer(r.Context(), code); ok {
@@ -69,7 +68,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		customerID = d.Engine.CustomerID()
+		customerID := d.Engine.CustomerID()
 		if promoType, value, ok := repo.FindActivePromo(r.Context(), customerID, code); ok {
 			if promoType == "percent" {
 				d.Engine.SetDiscountPercent(value)
