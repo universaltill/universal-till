@@ -55,6 +55,10 @@ type PaymentInput struct {
 
 const receiptRetryLimit = 5
 
+var errReceiptConflictRetry = errors.New("receipt_conflict_retry")
+
+var receiptAllocator = nextReceiptNo
+
 func computeSaleTotals(in SaleInput) (subtotal, taxTotal, total int64, err error) {
 	for _, l := range in.Lines {
 		if err := validateLine(l); err != nil {
@@ -150,33 +154,36 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 		saleID = uuid.NewString()
 	}
 
-	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
-		if !in.AllowNegativeInventory {
-			for _, l := range in.Lines {
-				cur, found, err := currentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
-				if err != nil {
-					return err
-				}
-				if !found {
-					cur = 0
-				}
-				qtyDelta := l.Qty
-				if in.SaleType == "sale" {
-					qtyDelta = -qtyDelta
-				}
-				if cur+qtyDelta < 0 {
-					return fmt.Errorf("insufficient stock for item %s at location %s (have %.2f, need %.2f)", valueOrDefault(l.ItemID, l.VariantID), l.LocationID, cur, l.Qty)
+	providedReceipt := in.ReceiptNo
+
+	for attempt := 0; attempt < receiptRetryLimit; attempt++ {
+		in.ReceiptNo = providedReceipt
+
+		err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
+			if !in.AllowNegativeInventory {
+				for _, l := range in.Lines {
+					cur, found, err := currentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
+					if err != nil {
+						return err
+					}
+					if !found {
+						cur = 0
+					}
+					qtyDelta := l.Qty
+					if in.SaleType == "sale" {
+						qtyDelta = -qtyDelta
+					}
+					if cur+qtyDelta < 0 {
+						return fmt.Errorf("insufficient stock for item %s at location %s (have %.2f, need %.2f)", valueOrDefault(l.ItemID, l.VariantID), l.LocationID, cur, l.Qty)
+					}
 				}
 			}
-		}
 
-		receiptNo := in.ReceiptNo
-		now := time.Now().UTC().Format(time.RFC3339)
-		inserted := false
-		for attempt := 0; attempt < receiptRetryLimit && !inserted; attempt++ {
+			receiptNo := in.ReceiptNo
+			now := time.Now().UTC().Format(time.RFC3339)
 			if receiptNo == "" {
 				var err error
-				receiptNo, err = nextReceiptNo(ctx, tx)
+				receiptNo, err = receiptAllocator(ctx, tx)
 				if err != nil {
 					return err
 				}
@@ -186,117 +193,116 @@ INSERT INTO sales (id, receipt_no, status, sale_type, register_id, cashier_id, c
 VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
 `, saleID, receiptNo, in.SaleType, nullIfEmpty(in.RegisterID), nullIfEmpty(in.CashierID), nullIfEmpty(in.CustomerID), in.Currency, subtotal, in.SaleDiscount, taxTotal, total, nullIfEmpty(in.Note), now, now); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
-					receiptNo = ""
-					continue
+					return errReceiptConflictRetry
 				}
 				return fmt.Errorf("insert sale: %w", err)
 			}
-			inserted = true
-		}
-		if !inserted {
-			return fmt.Errorf("insert sale: unable to allocate receipt number")
-		}
-		in.ReceiptNo = receiptNo
+			in.ReceiptNo = receiptNo
 
-		var saleDiscountID string
-		if in.SaleDiscount > 0 {
-			saleDiscountID = uuid.NewString()
-			if _, err := tx.ExecContext(ctx, `
+			var saleDiscountID string
+			if in.SaleDiscount > 0 {
+				saleDiscountID = uuid.NewString()
+				if _, err := tx.ExecContext(ctx, `
 INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason)
 VALUES (?, ?, NULL, 'fixed', ?, ?, 'sale_discount')
 `, saleDiscountID, saleID, in.SaleDiscount, in.SaleDiscount); err != nil {
-				return fmt.Errorf("insert sale discount: %w", err)
-			}
-		}
-
-		for i, l := range in.Lines {
-			lineID := uuid.NewString()
-			lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
-			lineNet := lineBase - l.LineDiscount
-			lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
-			totalBeforeTax := lineNet
-			totalAfterTax := lineNet + lineTax
-
-			if _, err := tx.ExecContext(ctx, `
-INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, lineID, saleID, i+1, nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice, l.LineDiscount, l.TaxRateBasisPoints, lineTax, totalBeforeTax, totalAfterTax); err != nil {
-				return fmt.Errorf("insert sale line: %w", err)
-			}
-
-			if l.LineDiscount > 0 {
-				if _, err := tx.ExecContext(ctx, `
-INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason)
-VALUES (?, ?, ?, 'fixed', ?, ?, 'line_discount')
-`, uuid.NewString(), saleID, lineID, l.LineDiscount, l.LineDiscount); err != nil {
-					return fmt.Errorf("insert line discount: %w", err)
+					return fmt.Errorf("insert sale discount: %w", err)
 				}
 			}
 
-			// Stock movement: negative for sale, positive for return
-			qty := l.Qty
-			if in.SaleType == "sale" {
-				qty = -qty
-			}
-			if in.SaleType == "return" {
-				// keep positive
-			}
-			if _, err := tx.ExecContext(ctx, `
+			for i, l := range in.Lines {
+				lineID := uuid.NewString()
+				lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
+				lineNet := lineBase - l.LineDiscount
+				lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
+				totalBeforeTax := lineNet
+				totalAfterTax := lineNet + lineTax
+
+				if _, err := tx.ExecContext(ctx, `
+INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, lineID, saleID, i+1, nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice, l.LineDiscount, l.TaxRateBasisPoints, lineTax, totalBeforeTax, totalAfterTax); err != nil {
+					return fmt.Errorf("insert sale line: %w", err)
+				}
+
+				if l.LineDiscount > 0 {
+					if _, err := tx.ExecContext(ctx, `
+INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason)
+VALUES (?, ?, ?, 'fixed', ?, ?, 'line_discount')
+`, uuid.NewString(), saleID, lineID, l.LineDiscount, l.LineDiscount); err != nil {
+						return fmt.Errorf("insert line discount: %w", err)
+					}
+				}
+
+				// Stock movement: negative for sale, positive for return
+				qty := l.Qty
+				if in.SaleType == "sale" {
+					qty = -qty
+				}
+				if in.SaleType == "return" {
+					// keep positive
+				}
+				if _, err := tx.ExecContext(ctx, `
 INSERT INTO stock_movements (id, item_id, variant_id, location_id, sale_line_id, type, quantity, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `, uuid.NewString(), nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.LocationID, lineID, in.SaleType, qty, time.Now().UTC().Format(time.RFC3339)); err != nil {
-				return fmt.Errorf("insert stock movement: %w", err)
-			}
+					return fmt.Errorf("insert stock movement: %w", err)
+				}
 
-			// inventory upsert with null-safe match
-			res, err := tx.ExecContext(ctx, `
+				// inventory upsert with null-safe match
+				res, err := tx.ExecContext(ctx, `
 UPDATE inventory
 SET quantity = quantity + ?, updated_at = ?
 WHERE location_id = ?
   AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL))
 `, qty, time.Now().UTC().Format(time.RFC3339), l.LocationID, nullString(l.ItemID), nullString(l.VariantID))
-			if err != nil {
-				return fmt.Errorf("update inventory: %w", err)
-			}
-			aff, _ := res.RowsAffected()
-			if aff == 0 {
-				if _, err := tx.ExecContext(ctx, `
+				if err != nil {
+					return fmt.Errorf("update inventory: %w", err)
+				}
+				aff, _ := res.RowsAffected()
+				if aff == 0 {
+					if _, err := tx.ExecContext(ctx, `
 INSERT INTO inventory (id, item_id, variant_id, location_id, quantity, updated_at)
 VALUES (?, ?, ?, ?, ?, ?)
 `, uuid.NewString(), nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.LocationID, qty, time.Now().UTC().Format(time.RFC3339)); err != nil {
-					return fmt.Errorf("insert inventory: %w", err)
+						return fmt.Errorf("insert inventory: %w", err)
+					}
 				}
 			}
-		}
 
-		for _, p := range in.Payments {
-			if _, err := tx.ExecContext(ctx, `
+			for _, p := range in.Payments {
+				if _, err := tx.ExecContext(ctx, `
 INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, paid_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `, uuid.NewString(), saleID, p.MethodID, p.Amount, valueOrDefault(p.Currency, in.Currency), nullIfEmpty(p.Reference), p.ChangeGiven, time.Now().UTC().Format(time.RFC3339)); err != nil {
-				return fmt.Errorf("insert payment: %w", err)
+					return fmt.Errorf("insert payment: %w", err)
+				}
 			}
-		}
 
-		if in.SaleType == "return" && in.OriginalSaleID != "" {
-			if _, err := tx.ExecContext(ctx, `
+			if in.SaleType == "return" && in.OriginalSaleID != "" {
+				if _, err := tx.ExecContext(ctx, `
 INSERT INTO sale_links (id, sale_id, original_sale_id, reason)
 VALUES (?, ?, ?, 'return')
 `, uuid.NewString(), saleID, in.OriginalSaleID); err != nil {
-				return fmt.Errorf("insert sale link: %w", err)
+					return fmt.Errorf("insert sale link: %w", err)
+				}
 			}
-		}
 
-		if err := insertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), in.Note, subtotal, taxTotal, total); err != nil {
-			return err
-		}
+			if err := insertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), in.Note, subtotal, taxTotal, total); err != nil {
+				return err
+			}
 
-		return nil
-	})
-	if err != nil {
+			return nil
+		})
+		if err == nil {
+			return saleID, nil
+		}
+		if errors.Is(err, errReceiptConflictRetry) {
+			continue
+		}
 		return "", err
 	}
-	return saleID, nil
+	return "", fmt.Errorf("insert sale: unable to allocate receipt number")
 }
 
 // UpdateSaleStatus updates sale.status and writes audit_log. Status expected: open|parked|voided|refunded.
