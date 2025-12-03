@@ -2,14 +2,13 @@ package catalog
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -18,15 +17,16 @@ import (
 // Register mounts catalog list/create and barcode attach endpoints.
 // func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
 func Register(mux *http.ServeMux, d *common.Deps) {
+	repo := data.NewCatalogRepo(d.Db)
 
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		items, err := listItems(r.Context(), d.Db)
+		items, err := repo.ListItems(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		cats, brands, taxCodes, err := listLookups(r.Context(), d.Db)
+		cats, brands, taxCodes, err := listLookups(r.Context(), repo)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -60,7 +60,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := validateLookups(r.Context(), d.Db, itemInput); err != nil {
+		if err := validateLookups(r.Context(), repo, itemInput); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -68,7 +68,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), d.Db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -88,7 +88,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		itemInput.ID = strings.TrimSpace(r.Form.Get("id"))
-		if err := validateLookups(r.Context(), d.Db, itemInput); err != nil {
+		if err := validateLookups(r.Context(), repo, itemInput); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -96,7 +96,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), d.Db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -119,7 +119,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), d.Db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -175,7 +175,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		items, _ := listItems(r.Context(), d.Db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -198,7 +198,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), d.Db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -228,42 +228,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := listItems(r.Context(), d.Db)
+		items, _ := repo.ListItems(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
 	})
-}
-
-func listItems(ctx context.Context, db *sql.DB) ([]pos.ItemInput, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed FROM items WHERE is_active = 1 ORDER BY name`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []pos.ItemInput
-	for rows.Next() {
-		var itm pos.ItemInput
-		var tax, cat, brand, desc sql.NullString
-		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed); err != nil {
-			return nil, err
-		}
-		if desc.Valid {
-			itm.Description = desc.String
-		}
-		if tax.Valid {
-			itm.TaxCodeID = &tax.String
-		}
-		if cat.Valid {
-			itm.CategoryID = &cat.String
-		}
-		if brand.Valid {
-			itm.BrandID = &brand.String
-		}
-		out = append(out, itm)
-	}
-	return out, rows.Err()
 }
 
 func strPtr(s string) *string {
@@ -305,68 +275,43 @@ type lookup struct {
 	Name string
 }
 
-func listLookups(ctx context.Context, db *sql.DB) ([]lookup, []lookup, []lookup, error) {
-	cats, err := readLookup(ctx, db, "categories")
+func listLookups(ctx context.Context, repo *data.CatalogRepo) ([]lookup, []lookup, []lookup, error) {
+	catsRaw, err := repo.ReadLookup(ctx, "categories")
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	brands, err := readLookup(ctx, db, "brands")
+	brandsRaw, err := repo.ReadLookup(ctx, "brands")
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	taxCodes, err := readLookup(ctx, db, "tax_codes")
+	taxCodesRaw, err := repo.ReadLookup(ctx, "tax_codes")
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return cats, brands, taxCodes, nil
+	return convertLookups(catsRaw), convertLookups(brandsRaw), convertLookups(taxCodesRaw), nil
 }
 
-func readLookup(ctx context.Context, db *sql.DB, table string) ([]lookup, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, name FROM `+table+` WHERE (is_active IS NULL OR is_active = 1) ORDER BY name`)
-	if err != nil {
-		// Fallback for tables without is_active column
-		if strings.Contains(err.Error(), "no such column: is_active") {
-			rows, err = db.QueryContext(ctx, `SELECT id, name FROM `+table+` ORDER BY name`)
-		}
+func convertLookups(in []data.Lookup) []lookup {
+	var out []lookup
+	for _, l := range in {
+		out = append(out, lookup{ID: l.ID, Name: l.Name})
 	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var res []lookup
-	for rows.Next() {
-		var l lookup
-		if err := rows.Scan(&l.ID, &l.Name); err != nil {
-			return nil, err
-		}
-		res = append(res, l)
-	}
-	return res, rows.Err()
+	return out
 }
 
-func validateLookups(ctx context.Context, db *sql.DB, in pos.ItemInput) error {
-	check := func(table, id string) error {
-		var exists int
-		if err := db.QueryRowContext(ctx, `SELECT 1 FROM `+table+` WHERE id = ?`, id).Scan(&exists); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("%s not found: %s", table, id)
-			}
-			return err
-		}
-		return nil
-	}
+func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInput) error {
 	if in.CategoryID != nil {
-		if err := check("categories", *in.CategoryID); err != nil {
+		if err := repo.ValidateLookup(ctx, "categories", *in.CategoryID, false); err != nil {
 			return err
 		}
 	}
 	if in.BrandID != nil {
-		if err := check("brands", *in.BrandID); err != nil {
+		if err := repo.ValidateLookup(ctx, "brands", *in.BrandID, false); err != nil {
 			return err
 		}
 	}
 	if in.TaxCodeID != nil {
-		if err := check("tax_codes", *in.TaxCodeID); err != nil {
+		if err := repo.ValidateLookup(ctx, "tax_codes", *in.TaxCodeID, false); err != nil {
 			return err
 		}
 	}
