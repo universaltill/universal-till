@@ -3,16 +3,31 @@ package pos
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 func setupSaleDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	path := filepath.Join(t.TempDir(), fmt.Sprintf("pos_%d.db", time.Now().UnixNano()))
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		t.Fatalf("set busy_timeout: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable fks: %v", err)
 	}
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
@@ -243,5 +258,154 @@ func TestUpdateSaleStatus_Void(t *testing.T) {
 	_ = db.QueryRow(`SELECT status FROM sales WHERE id=?`, saleID).Scan(&status)
 	if status != "voided" {
 		t.Fatalf("expected voided, got %s", status)
+	}
+}
+
+func TestCompleteSale_AllowsChangeAcrossPayments(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',20,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
+
+	in := SaleInput{
+		SaleType: "sale",
+		Currency: "GBP",
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 2, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 600},
+			{MethodID: "card", Amount: 500, ChangeGiven: 100},
+		},
+	}
+
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("complete sale: %v", err)
+	}
+	var change int64
+	if err := db.QueryRow(`SELECT change_given FROM payments WHERE sale_id=? AND method_id='card'`, saleID).Scan(&change); err != nil {
+		t.Fatalf("read payment: %v", err)
+	}
+	if change != 100 {
+		t.Fatalf("expected change 100, got %d", change)
+	}
+}
+
+func TestCompleteSale_RejectsInvalidChange(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	in := SaleInput{
+		SaleType: "sale",
+		Currency: "GBP",
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 500, ChangeGiven: 600},
+		},
+	}
+
+	if _, err := CompleteSale(ctx, db, in); err == nil {
+		t.Fatalf("expected change validation error")
+	}
+}
+
+func TestRecordPaymentFailure_PersistsAuditLog(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	failureID, err := RecordPaymentFailure(ctx, db, PaymentFailure{
+		Reason:   "gateway timeout",
+		Payments: []PaymentInput{{MethodID: "card", Amount: 1000}},
+		Lines:    []SaleLineInput{{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 1000}},
+		Total:    1000,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("record failure: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action = 'payment_failed'`, failureID).Scan(&count); err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 failure audit, got %d", count)
+	}
+}
+
+func TestReceiptNoGenerator_Concurrency(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',100,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	const workers = 6
+	var wg sync.WaitGroup
+	receipts := make(chan string, workers)
+	errs := make(chan error, workers)
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			saleID, err := CompleteSale(ctx, db, SaleInput{
+				SaleType: "sale",
+				Currency: "GBP",
+				Lines:    []SaleLineInput{{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"}},
+				Payments: []PaymentInput{{MethodID: "cash", Amount: 500}},
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			var receipt string
+			if err := db.QueryRow(`SELECT receipt_no FROM sales WHERE id = ?`, saleID).Scan(&receipt); err != nil {
+				errs <- err
+				return
+			}
+			receipts <- receipt
+		}()
+	}
+	wg.Wait()
+	close(receipts)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent sale error: %v", err)
+		}
+	}
+	var receiptVals []int
+	for rcpt := range receipts {
+		val, err := strconv.Atoi(rcpt)
+		if err != nil {
+			t.Fatalf("invalid receipt %s: %v", rcpt, err)
+		}
+		receiptVals = append(receiptVals, val)
+	}
+	if len(receiptVals) != workers {
+		t.Fatalf("expected %d receipts, got %d", workers, len(receiptVals))
+	}
+	sort.Ints(receiptVals)
+	for i := 1; i < len(receiptVals); i++ {
+		if receiptVals[i] <= receiptVals[i-1] {
+			t.Fatalf("receipts not strictly increasing: %v", receiptVals)
+		}
 	}
 }
