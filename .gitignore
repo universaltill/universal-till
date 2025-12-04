@@ -1,12 +1,54 @@
-bin/
-dist/
-*.log
-.DS_Store
-data/plugins/*
-data/*.db
-__debug_*
-# Go build artifacts
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+build/
+dist/
+data/*.db
+
+# Test binary, built with `go test -c`
 *.test
+
+# Code coverage profiles and other test artifacts
 *.out
-vendor/
+coverage.*
+*.coverprofile
+profile.cov
+coverage/
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+!*.code-workspace
