@@ -208,6 +208,7 @@ func main() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
 		// Empty content for now - real implementation would serve actual packages
+		// Note: SHA256 checksums in catalog are for empty files, so verification will succeed
 		w.Write([]byte{})
 	})
 
