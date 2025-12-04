@@ -86,7 +86,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 				"author":      p["vendor"], // Map vendor to author for UI
 				"packageUrl":  p["package_url"],
 				"sha256":      p["sha256"],
-				"tags":        []string{p["type"].(string)}, // Use type as tag
+				"tags":        safeGetTags(p["type"]),
 				"installed":   installed,
 			}
 		}
@@ -135,4 +135,12 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/plugins.html", data)(w, r)
 	})
+}
+
+// safeGetTags safely extracts plugin type as a tag, handling type assertion failures
+func safeGetTags(typeVal interface{}) []string {
+	if typeStr, ok := typeVal.(string); ok && typeStr != "" {
+		return []string{typeStr}
+	}
+	return []string{}
 }

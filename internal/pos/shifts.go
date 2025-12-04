@@ -212,7 +212,7 @@ VALUES (?, ?, 'shift', ?, 'cash_adjustment', ?, ?)
 }
 
 // ComputeExpectedCash calculates expected cash for a shift
-// Formula: opening_cash + cash_payments + adjustments (adjustments are negative for payouts)
+// Formula: opening_cash + cash_payments + adjustments (adjustments should be stored as negative values for payouts)
 func ComputeExpectedCash(ctx context.Context, sqlDB *sql.DB, shiftID string, openingCash int64) (int64, error) {
 	if shiftID == "" {
 		return 0, errors.New("shift_id required")
