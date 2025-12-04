@@ -1,0 +1,112 @@
+{{ define "content" }}
+<h1>Inventory Management</h1>
+
+<div class="card">
+  <h2>Low Stock Alerts <span id="low-stock-badge" class="badge" style="background: #ef4444; color: white; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem;">0</span></h2>
+  <div id="low-stock-list" hx-get="/api/inventory/low-stock" hx-trigger="load" hx-swap="innerHTML">
+    Loading low stock items...
+  </div>
+</div>
+
+<div class="card mt-4">
+  <h2>Stock Receipt / Adjustment</h2>
+  <form id="stock-form" hx-post="/api/inventory/receipt" hx-swap="innerHTML" hx-target="#result">
+    <div class="form-group">
+      <label for="type">Type</label>
+      <select name="type" id="type" required>
+        <option value="">Select type...</option>
+        <option value="receive">Stock Receipt</option>
+        <option value="adjust">Stock Adjustment</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="item_id">Item ID</label>
+      <input type="text" name="item_id" id="item_id" placeholder="item-uuid">
+    </div>
+
+    <div class="form-group">
+      <label for="variant_id">Variant ID (optional)</label>
+      <input type="text" name="variant_id" id="variant_id" placeholder="variant-uuid">
+    </div>
+
+    <div class="form-group">
+      <label for="location_id">Location ID</label>
+      <input type="text" name="location_id" id="location_id" required>
+    </div>
+
+    <div class="form-group">
+      <label for="quantity">Quantity</label>
+      <input type="number" name="quantity" id="quantity" step="0.01" required>
+    </div>
+
+    <div class="form-group">
+      <label for="cost_price">Cost Price (minor units, optional)</label>
+      <input type="number" name="cost_price" id="cost_price" step="1">
+    </div>
+
+    <div class="form-group">
+      <label for="reason">Reason</label>
+      <textarea name="reason" id="reason" rows="3" placeholder="Optional explanation"></textarea>
+    </div>
+
+    <button type="submit" class="btn">Submit</button>
+  </form>
+  <div id="result" class="mt-2"></div>
+</div>
+
+<div class="card mt-4">
+  <h2>Manager Override - Negative Inventory</h2>
+  <form id="override-form" hx-post="/api/inventory/override" hx-swap="innerHTML" hx-target="#override-result">
+    <div class="form-group">
+      <label for="override_item_id">Item ID</label>
+      <input type="text" name="item_id" id="override_item_id" required>
+    </div>
+
+    <div class="form-group">
+      <label for="override_variant_id">Variant ID (optional)</label>
+      <input type="text" name="variant_id" id="override_variant_id">
+    </div>
+
+    <div class="form-group">
+      <label for="override_location_id">Location ID</label>
+      <input type="text" name="location_id" id="override_location_id" required>
+    </div>
+
+    <div class="form-group">
+      <label for="qty_before">Current Quantity</label>
+      <input type="number" name="qty_before" id="qty_before" step="0.01" required>
+    </div>
+
+    <div class="form-group">
+      <label for="override_reason">Reason (required)</label>
+      <textarea name="reason" id="override_reason" rows="3" placeholder="Explain why negative inventory is needed" required></textarea>
+    </div>
+
+    <button type="submit" class="btn">Authorize Override</button>
+  </form>
+  <div id="override-result" class="mt-2"></div>
+</div>
+
+<div class="card mt-4">
+  <h2>Process Return</h2>
+  <form id="return-form" hx-post="/api/inventory/return" hx-swap="innerHTML" hx-target="#return-result">
+    <div class="form-group">
+      <label for="receipt_no">Original Receipt Number</label>
+      <input type="text" name="receipt_no" id="receipt_no" required placeholder="RCP-123456">
+    </div>
+
+    <div class="form-group">
+      <label for="return_reason">Reason for Return</label>
+      <textarea name="reason" id="return_reason" rows="3" placeholder="Customer reason for return" required></textarea>
+    </div>
+
+    <div class="form-group">
+      <p><small>Note: Line selection will be implemented in a future enhancement. Currently returns entire sale.</small></p>
+    </div>
+
+    <button type="submit" class="btn">Process Return</button>
+  </form>
+  <div id="return-result" class="mt-2"></div>
+</div>
+{{ end }}

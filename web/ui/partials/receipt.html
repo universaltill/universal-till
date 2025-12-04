@@ -25,6 +25,7 @@
 <div class="receipt-wrap">
   <div class="receipt-card">
     <h2>Receipt #{{ .ReceiptNo }}</h2>
+    {{ if .OriginalReceiptNo }}<p><small>Return for: {{ .OriginalReceiptNo }}</small></p>{{ end }}
     <div class="barcode">*{{ .ReceiptNo }}*</div>
     <ul class="receipt-lines">
       {{ range .Lines }}

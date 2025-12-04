@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS items (
     base_price      INTEGER NOT NULL,           -- minor units (pence)
     cost_price      INTEGER,                    -- optional, minor units
     tax_code_id     TEXT,                       -- maps to tax table
+    reorder_level   INTEGER NOT NULL DEFAULT 0, -- low-stock threshold (qty)
     is_active       INTEGER NOT NULL DEFAULT 1,
     is_weighed      INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),

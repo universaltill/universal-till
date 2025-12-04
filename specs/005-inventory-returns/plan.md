@@ -19,14 +19,14 @@ Deliver inventory movement handling (receipts/adjustments), negative-inventory p
 - Implement return-as-sale with `sale_type='return'`, `sale_links`, and positive stock movements; ensure receipts reference original sale.
 
 5) Low-Stock Alerts
-- Surface reorder-level-based low-stock flags in UI/API (no automation beyond flags).
+- Calculate low-stock flags using `items.reorder_level` (column added to `001_init.sql`); surface in catalog/inventory UI as badges and expose handler endpoint via API (no automated ordering/notifications beyond visual flags).
 
 6) Tests
 - Unit tests for aggregation, negative-inventory checks, overrides, returns, and low-stock flags.
 - Integration tests for receipt/adjustment and return flows.
 
 ## Constraints
-- No schema changes; integer money; offline-first.
+- Schema amendment: added `items.reorder_level` column to `001_init.sql` (pre-release); integer money; offline-first.
 
 ## Deliverables
 - Inventory APIs/handlers, override/audit logic, return handling, low-stock surfacing, and tests.
