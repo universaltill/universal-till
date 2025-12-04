@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package plugins_test
+package plugins
 
 import (
 	"context"
@@ -10,17 +10,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
-	"github.com/universaltill/universal-till/internal/plugins"
+	_ "modernc.org/sqlite"
 )
 
 // TestIntegration_PermissionDenialAudit verifies that denied permission attempts
 // create audit log entries with correct metadata
 func TestIntegration_PermissionDenialAudit(t *testing.T) {
 	// Setup: Create temp database with full schema
-	tmpDB := setupTestDB(t)
+	tmpDB := setupIntegrationTestDB(t)
 	defer tmpDB.Close()
 
 	ctx := context.Background()
@@ -40,27 +39,27 @@ func TestIntegration_PermissionDenialAudit(t *testing.T) {
 	defer os.Remove(binaryPath)
 
 	// Install plugin
-	opts := plugins.InstallOptions{
+	opts := InstallOptions{
 		InstalledFromURL: "http://test.com/plugin.tar.gz",
 		SHA256:           computeTestChecksum(t, binaryPath),
 		TrustLevel:       "untrusted",
 		Uploader:         "test",
 	}
-	if err := plugins.InstallPlugin(ctx, tmpDB, manifestPath, binaryPath, opts); err != nil {
+	if err := InstallPlugin(ctx, tmpDB, manifestPath, binaryPath, opts); err != nil {
 		t.Fatalf("failed to install plugin: %v", err)
 	}
 
 	// DO NOT grant permission - attempt check should fail
 
 	// Act: Check permission (should be denied)
-	allowed := plugins.CheckPermission(ctx, tmpDB, "test-plugin", "pos.sales.read")
-	if allowed {
+	err := CheckPermission(ctx, tmpDB, "test-plugin", "pos.sales.read")
+	if err == nil {
 		t.Fatal("expected permission to be denied")
 	}
 
 	// Assert: Verify audit log entry exists
 	var count int
-	err := tmpDB.QueryRowContext(ctx, `
+	err = tmpDB.QueryRowContext(ctx, `
 		SELECT COUNT(*) 
 		FROM audit_log 
 		WHERE action = 'permission_denied' 
@@ -80,7 +79,7 @@ func TestIntegration_PermissionDenialAudit(t *testing.T) {
 // TestIntegration_MenuFilteringByPermissions verifies that plugin menu entries
 // are only rendered when the plugin has required permissions granted
 func TestIntegration_MenuFilteringByPermissions(t *testing.T) {
-	tmpDB := setupTestDB(t)
+	tmpDB := setupIntegrationTestDB(t)
 	defer tmpDB.Close()
 
 	ctx := context.Background()
@@ -107,17 +106,17 @@ func TestIntegration_MenuFilteringByPermissions(t *testing.T) {
 	binaryPath := createEmptyBinary(t, "menu-plugin")
 	defer os.Remove(binaryPath)
 
-	opts := plugins.InstallOptions{
+	opts := InstallOptions{
 		SHA256:     computeTestChecksum(t, binaryPath),
 		TrustLevel: "untrusted",
 		Uploader:   "test",
 	}
-	if err := plugins.InstallPlugin(ctx, tmpDB, manifestPath, binaryPath, opts); err != nil {
+	if err := InstallPlugin(ctx, tmpDB, manifestPath, binaryPath, opts); err != nil {
 		t.Fatalf("install failed: %v", err)
 	}
 
 	// Load manager and check menu entries WITHOUT permission
-	mgr, err := plugins.Init(ctx, testConfig(), tmpDB)
+	mgr, err := Init(ctx, testConfig(), tmpDB)
 	if err != nil {
 		t.Fatalf("failed to init manager: %v", err)
 	}
@@ -128,12 +127,12 @@ func TestIntegration_MenuFilteringByPermissions(t *testing.T) {
 	}
 
 	// Act: Grant permission
-	if err := plugins.GrantPermission(ctx, tmpDB, "menu-plugin", "pos.reports.view"); err != nil {
+	if err := GrantPermission(ctx, tmpDB, "menu-plugin", "pos.reports.view"); err != nil {
 		t.Fatalf("grant permission failed: %v", err)
 	}
 
 	// Reload manager
-	mgr2, err := plugins.Init(ctx, testConfig(), tmpDB)
+	mgr2, err := Init(ctx, testConfig(), tmpDB)
 	if err != nil {
 		t.Fatalf("failed to reinit manager: %v", err)
 	}
@@ -175,7 +174,7 @@ func TestIntegration_IPCEventRoundTrip(t *testing.T) {
 // TestIntegration_MarketplaceChecksumRejection verifies that install flow
 // rejects packages with mismatched SHA256 checksums
 func TestIntegration_MarketplaceChecksumRejection(t *testing.T) {
-	tmpDB := setupTestDB(t)
+	tmpDB := setupIntegrationTestDB(t)
 	defer tmpDB.Close()
 
 	ctx := context.Background()
@@ -196,13 +195,13 @@ func TestIntegration_MarketplaceChecksumRejection(t *testing.T) {
 	correctChecksum := computeTestChecksum(t, binaryPath)
 
 	// Act: Attempt install with WRONG checksum
-	opts := plugins.InstallOptions{
+	opts := InstallOptions{
 		SHA256:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // deliberately wrong
 		TrustLevel: "untrusted",
 		Uploader:   "test",
 	}
 
-	err := plugins.InstallPlugin(ctx, tmpDB, manifestPath, binaryPath, opts)
+	err := InstallPlugin(ctx, tmpDB, manifestPath, binaryPath, opts)
 
 	// Assert: Install should FAIL due to checksum mismatch
 	if err == nil {
@@ -222,7 +221,7 @@ func TestIntegration_MarketplaceChecksumRejection(t *testing.T) {
 
 	// Act: Install with correct checksum
 	opts.SHA256 = correctChecksum
-	if err := plugins.InstallPlugin(ctx, tmpDB, manifestPath, binaryPath, opts); err != nil {
+	if err := InstallPlugin(ctx, tmpDB, manifestPath, binaryPath, opts); err != nil {
 		t.Fatalf("install with correct checksum should succeed: %v", err)
 	}
 
@@ -235,7 +234,7 @@ func TestIntegration_MarketplaceChecksumRejection(t *testing.T) {
 
 // Helper functions
 
-func setupTestDB(t *testing.T) *sql.DB {
+func setupIntegrationTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
 	tmpFile, err := os.CreateTemp("", "plugin-integration-*.db")
@@ -245,17 +244,13 @@ func setupTestDB(t *testing.T) *sql.DB {
 	tmpFile.Close()
 	t.Cleanup(func() { os.Remove(tmpFile.Name()) })
 
-	database, err := sql.Open("sqlite3", tmpFile.Name())
+	// Use db.Open which automatically runs migrations
+	database, err := db.Open(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
 
-	// Run migrations
-	if err := db.MigrateUp(context.Background(), database); err != nil {
-		t.Fatalf("migrate db: %v", err)
-	}
-
-	return database
+	return database.DB
 }
 
 func createTestManifest(t *testing.T, data map[string]interface{}) string {
@@ -283,7 +278,7 @@ func createEmptyBinary(t *testing.T, name string) string {
 func computeTestChecksum(t *testing.T, path string) string {
 	t.Helper()
 
-	checksum, err := plugins.ComputeSHA256(path)
+	checksum, err := ComputeSHA256(path)
 	if err != nil {
 		t.Fatalf("compute checksum: %v", err)
 	}
