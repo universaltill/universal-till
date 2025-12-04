@@ -116,20 +116,24 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 		Payload:   payloadBytes,
 	}
 
-	// Send to subscribers
+	eb.mu.RLock()
 	subscribers, exists := eb.subscribers[eventType]
+	eb.mu.RUnlock()
+
 	if !exists || len(subscribers) == 0 {
 		// No subscribers for this event type
 		return event.ID, nil
 	}
 
+	// Pre-check permissions for all subscribers (without holding lock)
+	authorizedSubs := make([]EventSubscriber, 0, len(subscribers))
 	for _, sub := range subscribers {
-		// Check permission before sending
-		if err := CheckPermission(ctx, eb.db, sub.PluginID, "events:receive"); err != nil {
-			// Skip plugins without permission
-			continue
+		if err := CheckPermission(ctx, eb.db, sub.PluginID, "events:receive"); err == nil {
+			authorizedSubs = append(authorizedSubs, sub)
 		}
+	}
 
+	for _, sub := range authorizedSubs {
 		// Non-blocking send
 		select {
 		case sub.Channel <- event:
