@@ -1,7 +1,7 @@
 # Implementation Plan: POS Core MVP
 
-**Branch**: `[002-pos-core-mvp]` | **Date**: 2025-11-27 | **Spec**: specs/002-pos-core-mvp/spec.md  
-**Input**: Feature specification from `specs/002-pos-core-mvp/spec.md`
+**Branch**: `[001-pos-core-mvp]` | **Date**: 2025-11-27 | **Spec**: specs/001-pos-core-mvp/spec.md  
+**Input**: Feature specification from `specs/001-pos-core-mvp/spec.md`
 
 ## Summary
 
@@ -36,7 +36,7 @@ Status: Gates pass with above commitments.
 ### Documentation (this feature)
 
 ```text
-specs/002-pos-core-mvp/
+specs/001-pos-core-mvp/
 ├── plan.md              # This file
 ├── research.md          # Phase 0 notes
 ├── data-model.md        # Feature-specific data model mapping (no schema changes)

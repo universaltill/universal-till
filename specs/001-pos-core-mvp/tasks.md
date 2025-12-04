@@ -1,6 +1,6 @@
 # Tasks: POS Core MVP
 
-**Input**: `specs/002-pos-core-mvp/` (spec, plan, research, data-model, quickstart, contracts)  
+**Input**: `specs/001-pos-core-mvp/` (spec, plan, research, data-model, quickstart, contracts)  
 **Prerequisites**: No schema changes; SQLite (`UT_STORE=sqlite`); responsive web UI
 
 ## Phase 0: Setup / Foundation
