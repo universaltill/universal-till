@@ -1,6 +1,6 @@
 # Plan: Payments & Receipt Numbers (002c)
 
-Branch: `002-pos-core-mvp` | Inputs: specs/002c-payments-receipts/spec.md
+Branch: `004-payments-receipts` | Inputs: specs/004-payments-receiptsspec.md
 
 ## Summary
 Implement multi-tender payments with safe completion gating, partial-failure handling, and a receipt number generator that is unique and concurrency-safe using the existing `sales.receipt_no` column (no new tables/migrations).

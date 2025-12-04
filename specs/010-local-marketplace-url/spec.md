@@ -1,6 +1,6 @@
 # Feature Specification: Local Marketplace URL Override
 
-**Feature Branch**: `001-local-marketplace-url`  
+**Feature Branch**: `010-local-marketplace-url`  
 **Created**: 2025-12-03  
 **Status**: Draft  
 **Input**: User description: "in development mode, I should be able to use local url of market place"

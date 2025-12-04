@@ -1,6 +1,6 @@
 # Plan: Performance & Resilience (002g)
 
-Branch: `002-pos-core-mvp` | Inputs: specs/002g-performance-resilience/spec.md
+Branch: `008-performance-resilience` | Inputs: specs/008-performance-resilience/spec.md
 
 ## Summary
 Add performance benchmarks/smoke scripts, enforce event dispatch semantics (blocking vs non-blocking with rollback/audit), and resilience tests for crash isolation and offline safety using existing codepaths and SQLite.

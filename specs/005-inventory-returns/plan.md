@@ -1,6 +1,6 @@
 # Plan: Inventory Movements & Returns (002d)
 
-Branch: `002-pos-core-mvp` | Inputs: specs/002d-inventory-returns/spec.md
+Branch: `005-inventory-returns` | Inputs: specs/005-inventory-returns/spec.md
 
 ## Summary
 Deliver inventory movement handling (receipts/adjustments), negative-inventory policy with override/audit, return flows with linked sales, and low-stock alert surfacing, all using existing schema.
