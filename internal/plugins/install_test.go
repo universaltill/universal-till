@@ -364,3 +364,57 @@ func TestUpdatePluginTrustLevel_InvalidLevel(t *testing.T) {
 		t.Errorf("expected 'invalid trust level' error, got: %v", err)
 	}
 }
+
+func TestUpdatePluginTrustLevel_AllValidLevels(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create audit_log table
+	_, err := db.Exec(`
+		CREATE TABLE audit_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			action TEXT NOT NULL,
+			entity_type TEXT,
+			entity_id TEXT,
+			details TEXT,
+			created_at TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		t.Fatalf("create audit_log: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Insert test plugin
+	manifest := &Manifest{
+		ID:         "com.test.alllevels",
+		Name:       "All Levels Test",
+		Version:    "1.0.0",
+		Entrypoint: "./test",
+	}
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("persist manifest: %v", err)
+	}
+
+	// Test all valid trust levels
+	validLevels := []string{"untrusted", "verified", "trusted", "revoked"}
+	for _, level := range validLevels {
+		if err := UpdatePluginTrustLevel(ctx, db, manifest.ID, level); err != nil {
+			t.Errorf("UpdatePluginTrustLevel failed for level '%s': %v", level, err)
+		}
+
+		// Verify trust level changed
+		var trustLevel string
+		err = db.QueryRowContext(ctx, `
+			SELECT trust_level FROM plugins WHERE id = ?
+		`, manifest.ID).Scan(&trustLevel)
+		if err != nil {
+			t.Fatalf("query plugin: %v", err)
+		}
+
+		if trustLevel != level {
+			t.Errorf("expected trust_level '%s', got '%s'", level, trustLevel)
+		}
+	}
+}
