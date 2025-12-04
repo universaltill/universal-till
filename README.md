@@ -190,7 +190,7 @@ func main() {
 }
 ```
 
-**See [PLUGIN_GUIDELINES.md](PLUGIN_GUIDELINES.md) for complete documentation.**
+**See [PLUGIN_GUIDELINES.md](docs/plugin_guidelines.md) for complete documentation.**
 
 ### Plugin Store
 
@@ -419,6 +419,6 @@ Made with ❤️ by the Universal Till community
 <p align="center">
 <a href="LICENSE">MIT License</a> •
 <a href="CONTRIBUTING.md">Contributing</a> •
-<a href="PLUGIN_GUIDELINES.md">Plugin Development</a> •
+<a href="docs/plugin_guidelines.md">Plugin Development</a> •
 <a href="https://discord.gg/universaltill">Discord</a>
 </p>
