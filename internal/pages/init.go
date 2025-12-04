@@ -53,6 +53,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	baseMenu := []common.MenuItem{
 		{Href: "/", Label: "Home"},
 		{Href: "/designer", Label: "Designer"},
+		{Href: "/inventory", Label: "Inventory"},
 		{Href: "/settings", Label: "Settings"},
 		{Href: "/plugins", Label: "Plugins"},
 		{Href: "/catalog", Label: "Catalog"},
@@ -79,6 +80,8 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPluginAPI(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
+	registerInventoryAPI(mux, dp)
+	registerInventoryPage(mux, dp)
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerHealth(mux)
