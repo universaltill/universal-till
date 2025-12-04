@@ -15,7 +15,7 @@ The plugin host infrastructure is complete and production-ready for integration 
 | Component | File | Lines | Tests | Status |
 |-----------|------|-------|-------|--------|
 | Manifest Parser | `internal/plugins/manifest.go` | 303 | 8 | ✅ Complete |
-| Install/Uninstall | `internal/plugins/install.go` | 162 | 7 | ✅ Complete |
+| Install/Uninstall | `internal/plugins/install.go` | 162 | 10 | ✅ Complete |
 | Permissions | `internal/plugins/permissions.go` | 186 | 9 | ✅ Complete |
 | Process Supervisor | `internal/plugins/supervisor.go` | 243 | 7 | ✅ Complete |
 | IPC/Event Bus | `internal/plugins/ipc.go` | 198 | 6 | ✅ Complete |
@@ -24,7 +24,7 @@ The plugin host infrastructure is complete and production-ready for integration 
 | Mock Marketplace | `scripts/mock-marketplace/main.go` | 241 | - | ✅ Complete |
 | Integration Tests | `internal/plugins/integration_test.go` | 350 | 3/5 | ⚠️ Partial |
 
-**Total**: 2,036 lines of production code + 32 passing unit tests
+**Total**: 2,036 lines of production code + 35 passing unit tests
 
 ### API Endpoints
 
@@ -44,9 +44,9 @@ The plugin host infrastructure is complete and production-ready for integration 
 
 ### Test Coverage
 
-**Unit Tests**: 32/32 passing (100%)
+**Unit Tests**: 35/35 passing (100%)
 - Manifest: validation, SHA256, persistence, updates
-- Install: checksum verification, provenance, trust levels
+- Install: checksum verification, provenance, trust levels (all 4 levels tested)
 - Permissions: grant/revoke/check, audit logging, multi-permission
 - Supervisor: start/stop/restart, process info, shutdown
 - IPC: subscribe/publish/ack, multiple subscribers, unsubscribe
@@ -123,7 +123,7 @@ open http://localhost:8080/plugins
 ### Run Unit Tests
 ```bash
 go test ./internal/plugins/... -v
-# Expected: PASS (32 tests, ~2s)
+# Expected: PASS (35 tests, ~2s)
 ```
 
 ### Run Integration Tests
@@ -196,7 +196,7 @@ Move to next POS feature (e.g., advanced reporting, backoffice sync):
 ## Sign-Off Checklist
 
 - ✅ All tasks complete (10/10)
-- ✅ Unit tests passing (32/32)
+- ✅ Unit tests passing (35/35)
 - ✅ Integration tests implemented (3/5, remainder require future work)
 - ✅ Documentation complete (spec, plan, quickstart)
 - ✅ Mock server functional
@@ -204,6 +204,7 @@ Move to next POS feature (e.g., advanced reporting, backoffice sync):
 - ✅ No schema changes (uses existing tables)
 - ✅ No breaking changes
 - ✅ Build successful
+- ✅ Code review issues resolved
 - ✅ Ready for PR review
 
 ---
