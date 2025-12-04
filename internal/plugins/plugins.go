@@ -141,7 +141,13 @@ ORDER BY pe.sort_order, pe.label
 		// Check if plugin has any required permissions
 		// For now, we only show menu entries if the plugin has at least one granted permission
 		// This prevents untrusted/zero-permission plugins from appearing in menus
-		if permsStr.Valid && grantedStr.Valid {
+		// If plugin has permissions, verify at least one is granted
+		if permsStr.Valid && permsStr.String != "" {
+			if !grantedStr.Valid {
+				// Has permissions but none granted
+				continue
+			}
+
 			perms := strings.Split(permsStr.String, ",")
 			grantedFlags := strings.Split(grantedStr.String, ",")
 
@@ -158,6 +164,7 @@ ORDER BY pe.sort_order, pe.label
 				continue
 			}
 		}
+		// If no permissions required (permsStr is NULL/empty), allow the entry
 
 		m.MenuPlugins[mp.Key] = mp
 	}
