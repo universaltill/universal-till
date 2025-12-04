@@ -90,12 +90,13 @@ func UninstallPlugin(ctx context.Context, db *sql.DB, pluginID string) error {
 func UpdatePluginTrustLevel(ctx context.Context, db *sql.DB, pluginID, trustLevel string) error {
 	validLevels := map[string]bool{
 		"untrusted": true,
+		"verified":  true,
 		"trusted":   true,
-		"system":    true,
+		"revoked":   true,
 	}
 
 	if !validLevels[trustLevel] {
-		return fmt.Errorf("invalid trust level: %s (must be untrusted, trusted, or system)", trustLevel)
+		return fmt.Errorf("invalid trust level: %s (must be untrusted, verified, trusted, or revoked)", trustLevel)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
