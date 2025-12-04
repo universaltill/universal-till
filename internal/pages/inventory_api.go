@@ -1,0 +1,504 @@
+package pages
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
+)
+
+// StockReceiptRequest models input for stock receipt/adjustment
+type StockReceiptRequest struct {
+	ItemID     string  `json:"item_id"`
+	VariantID  string  `json:"variant_id"`
+	LocationID string  `json:"location_id"`
+	Type       string  `json:"type"`       // receive|adjust
+	Quantity   float64 `json:"quantity"`   // positive for receive, +/- for adjust
+	CostPrice  int64   `json:"cost_price"` // optional, minor units
+	Reason     string  `json:"reason"`
+}
+
+// StockReceiptResponse models response with created movement ID
+type StockReceiptResponse struct {
+	MovementID string `json:"movement_id"`
+	Success    bool   `json:"success"`
+	Message    string `json:"message,omitempty"`
+}
+
+// CreateStockReceipt handles POST /api/inventory/receipt
+func CreateStockReceipt(dp *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		var req StockReceiptRequest
+
+		// Handle both JSON and form-encoded data
+		contentType := r.Header.Get("Content-Type")
+		if strings.Contains(contentType, "application/json") {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(w, http.StatusBadRequest, StockReceiptResponse{Success: false, Message: "invalid JSON"})
+				return
+			}
+		} else {
+			// Parse form data
+			if err := r.ParseForm(); err != nil {
+				writeHTML(w, http.StatusBadRequest, "<div class='error'>Invalid form data</div>")
+				return
+			}
+			req.Type = r.FormValue("type")
+			req.ItemID = r.FormValue("item_id")
+			req.VariantID = r.FormValue("variant_id")
+			req.LocationID = r.FormValue("location_id")
+			req.Reason = r.FormValue("reason")
+
+			if qtyStr := r.FormValue("quantity"); qtyStr != "" {
+				if qty, err := strconv.ParseFloat(qtyStr, 64); err == nil {
+					req.Quantity = qty
+				}
+			}
+			if cpStr := r.FormValue("cost_price"); cpStr != "" {
+				if cp, err := strconv.ParseInt(cpStr, 10, 64); err == nil {
+					req.CostPrice = cp
+				}
+			}
+		}
+
+		// Extract actor from session
+		actorID := getSessionUserID(r)
+		if actorID == "" {
+			respondError(w, r, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
+		// Validate input
+		if req.Type != "receive" && req.Type != "adjust" {
+			respondError(w, r, http.StatusBadRequest, "type must be 'receive' or 'adjust'")
+			return
+		}
+		if req.LocationID == "" {
+			respondError(w, r, http.StatusBadRequest, "location_id required")
+			return
+		}
+		if req.ItemID == "" && req.VariantID == "" {
+			respondError(w, r, http.StatusBadRequest, "item_id or variant_id required")
+			return
+		}
+		if req.Quantity == 0 {
+			respondError(w, r, http.StatusBadRequest, "quantity must be non-zero")
+			return
+		}
+
+		// Record stock movement
+		movementID, err := pos.RecordStockMovement(ctx, dp.Db, pos.StockMovementInput{
+			ItemID:     req.ItemID,
+			VariantID:  req.VariantID,
+			LocationID: req.LocationID,
+			Type:       req.Type,
+			Quantity:   req.Quantity,
+			CostPrice:  req.CostPrice,
+			Reason:     req.Reason,
+			ActorID:    actorID,
+		})
+		if err != nil {
+			respondError(w, r, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		respondSuccess(w, r, StockReceiptResponse{MovementID: movementID, Success: true})
+	}
+}
+
+// getSessionUserID retrieves current user ID from session (stub for now)
+func getSessionUserID(r *http.Request) string {
+	// TODO: Implement session management
+	return "system"
+}
+
+// writeJSON writes JSON response
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+// writeHTML writes HTML response
+func writeHTML(w http.ResponseWriter, status int, html string) {
+	w.Header().Set("Content-Type", "text/html")
+	w.WriteHeader(status)
+	fmt.Fprint(w, html)
+}
+
+// respondError writes error response (JSON or HTML based on request)
+func respondError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, status, StockReceiptResponse{Success: false, Message: message})
+	} else {
+		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+	}
+}
+
+// respondSuccess writes success response (JSON or HTML based on request)
+func respondSuccess(w http.ResponseWriter, r *http.Request, data StockReceiptResponse) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, http.StatusOK, data)
+	} else {
+		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Stock movement created: %s</div>", data.MovementID))
+	}
+}
+
+// OverrideRequest models manager override input
+type OverrideRequest struct {
+	Reason     string  `json:"reason"`
+	ItemID     string  `json:"item_id"`
+	VariantID  string  `json:"variant_id"`
+	LocationID string  `json:"location_id"`
+	QtyBefore  float64 `json:"qty_before"`
+}
+
+// OverrideResponse models manager override response
+type OverrideResponse struct {
+	OverrideID string `json:"override_id"`
+	Success    bool   `json:"success"`
+	Message    string `json:"message,omitempty"`
+}
+
+// CreateNegativeInventoryOverride handles POST /api/inventory/override
+func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		var req OverrideRequest
+
+		// Handle both JSON and form-encoded data
+		contentType := r.Header.Get("Content-Type")
+		if strings.Contains(contentType, "application/json") {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(w, http.StatusBadRequest, OverrideResponse{Success: false, Message: "invalid JSON"})
+				return
+			}
+		} else {
+			if err := r.ParseForm(); err != nil {
+				writeHTML(w, http.StatusBadRequest, "<div class='error'>Invalid form data</div>")
+				return
+			}
+			req.Reason = r.FormValue("reason")
+			req.ItemID = r.FormValue("item_id")
+			req.VariantID = r.FormValue("variant_id")
+			req.LocationID = r.FormValue("location_id")
+
+			if qtyStr := r.FormValue("qty_before"); qtyStr != "" {
+				if qty, err := strconv.ParseFloat(qtyStr, 64); err == nil {
+					req.QtyBefore = qty
+				}
+			}
+		}
+
+		// Extract actor from session and verify manager role
+		actorID := getSessionUserID(r)
+		if actorID == "" {
+			respondOverrideError(w, r, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
+		// Check manager/admin role
+		var role string
+		err := dp.Db.QueryRowContext(ctx, `SELECT role FROM users WHERE id = ?`, actorID).Scan(&role)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				respondOverrideError(w, r, http.StatusForbidden, "user not found")
+			} else {
+				respondOverrideError(w, r, http.StatusInternalServerError, fmt.Sprintf("auth check failed: %v", err))
+			}
+			return
+		}
+		if role != "manager" && role != "admin" {
+			respondOverrideError(w, r, http.StatusForbidden, "manager or admin role required")
+			return
+		}
+
+		// Validate input
+		if req.Reason == "" {
+			respondOverrideError(w, r, http.StatusBadRequest, "reason required")
+			return
+		}
+		if req.LocationID == "" {
+			respondOverrideError(w, r, http.StatusBadRequest, "location_id required")
+			return
+		}
+		if req.ItemID == "" && req.VariantID == "" {
+			respondOverrideError(w, r, http.StatusBadRequest, "item_id or variant_id required")
+			return
+		}
+
+		// Record override
+		overrideID, err := pos.RecordNegativeInventoryOverride(ctx, dp.Db, pos.OverrideNegativeInventory{
+			ActorID:    actorID,
+			Reason:     req.Reason,
+			ItemID:     req.ItemID,
+			VariantID:  req.VariantID,
+			LocationID: req.LocationID,
+			QtyBefore:  req.QtyBefore,
+		})
+		if err != nil {
+			respondOverrideError(w, r, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		respondOverrideSuccess(w, r, OverrideResponse{OverrideID: overrideID, Success: true})
+	}
+}
+
+// respondOverrideError writes override error response
+func respondOverrideError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, status, OverrideResponse{Success: false, Message: message})
+	} else {
+		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+	}
+}
+
+// respondOverrideSuccess writes override success response
+func respondOverrideSuccess(w http.ResponseWriter, r *http.Request, data OverrideResponse) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, http.StatusOK, data)
+	} else {
+		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Override recorded: %s</div>", data.OverrideID))
+	}
+}
+
+// ReturnRequest models input for processing a return
+type ReturnRequest struct {
+	OriginalSaleID string              `json:"original_sale_id"`
+	ReceiptNo      string              `json:"receipt_no"`
+	Lines          []ReturnLineRequest `json:"lines"`
+	Reason         string              `json:"reason"`
+}
+
+type ReturnLineRequest struct {
+	LineID   string  `json:"line_id"`
+	Quantity float64 `json:"quantity"`
+}
+
+// ReturnResponse models response with created return sale ID
+type ReturnResponse struct {
+	ReturnSaleID string `json:"return_sale_id"`
+	ReceiptNo    string `json:"receipt_no"`
+	Success      bool   `json:"success"`
+	Message      string `json:"message,omitempty"`
+}
+
+// CreateReturn handles POST /api/inventory/return
+func CreateReturn(dp *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		var req ReturnRequest
+
+		// Handle both JSON and form-encoded data
+		contentType := r.Header.Get("Content-Type")
+		if strings.Contains(contentType, "application/json") {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(w, http.StatusBadRequest, ReturnResponse{Success: false, Message: "invalid JSON"})
+				return
+			}
+		} else {
+			if err := r.ParseForm(); err != nil {
+				writeHTML(w, http.StatusBadRequest, "<div class='error'>Invalid form data</div>")
+				return
+			}
+			req.OriginalSaleID = r.FormValue("original_sale_id")
+			req.ReceiptNo = r.FormValue("receipt_no")
+			req.Reason = r.FormValue("reason")
+			// Note: Form handling for lines array would need custom parsing
+		}
+
+		// Extract actor from session
+		actorID := getSessionUserID(r)
+		if actorID == "" {
+			respondReturnError(w, r, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
+		// Lookup original sale by receipt_no if provided instead of ID
+		originalSaleID := req.OriginalSaleID
+		if originalSaleID == "" && req.ReceiptNo != "" {
+			err := dp.Db.QueryRowContext(ctx, `SELECT id FROM sales WHERE receipt_no = ?`, req.ReceiptNo).Scan(&originalSaleID)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					respondReturnError(w, r, http.StatusNotFound, "original sale not found")
+				} else {
+					respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("lookup failed: %v", err))
+				}
+				return
+			}
+		}
+
+		// Validate input
+		if originalSaleID == "" {
+			respondReturnError(w, r, http.StatusBadRequest, "original_sale_id or receipt_no required")
+			return
+		}
+		if len(req.Lines) == 0 {
+			respondReturnError(w, r, http.StatusBadRequest, "at least one line required")
+			return
+		}
+
+		// Fetch original sale lines
+		rows, err := dp.Db.QueryContext(ctx, `
+SELECT id, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, tax_rate_bp
+FROM sale_lines
+WHERE sale_id = ?
+ORDER BY line_no`, originalSaleID)
+		if err != nil {
+			respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("fetch lines: %v", err))
+			return
+		}
+		defer rows.Close()
+
+		originalLines := make(map[string]pos.SaleLineInput)
+		for rows.Next() {
+			var lineID, itemID, variantID, name, sku, barcode sql.NullString
+			var qty float64
+			var unitPrice, taxRateBP int64
+			if err := rows.Scan(&lineID, &itemID, &variantID, &name, &sku, &barcode, &qty, &unitPrice, &taxRateBP); err != nil {
+				respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("scan line: %v", err))
+				return
+			}
+			originalLines[lineID.String] = pos.SaleLineInput{
+				ItemID:             itemID.String,
+				VariantID:          variantID.String,
+				Name:               name.String,
+				SKU:                sku.String,
+				Barcode:            barcode.String,
+				Qty:                qty,
+				UnitPrice:          unitPrice,
+				TaxRateBasisPoints: int(taxRateBP),
+				LocationID:         "loc_main", // TODO: Get from original sale
+			}
+		}
+
+		// Build return sale lines
+		returnLines := []pos.SaleLineInput{}
+		for _, reqLine := range req.Lines {
+			origLine, ok := originalLines[reqLine.LineID]
+			if !ok {
+				respondReturnError(w, r, http.StatusBadRequest, fmt.Sprintf("line_id %s not found in original sale", reqLine.LineID))
+				return
+			}
+			if reqLine.Quantity <= 0 || reqLine.Quantity > origLine.Qty {
+				respondReturnError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid return quantity %.2f for line %s (max %.2f)", reqLine.Quantity, reqLine.LineID, origLine.Qty))
+				return
+			}
+		returnLine := origLine
+		returnLine.Qty = reqLine.Quantity
+		returnLines = append(returnLines, returnLine)
+	}
+
+	// Calculate return total (sum of line totals)
+	var returnTotal int64
+	for _, line := range returnLines {
+		lineBase := int64(line.Qty * float64(line.UnitPrice))
+		lineTax := (lineBase * int64(line.TaxRateBasisPoints)) / 10000
+		returnTotal += lineBase + lineTax
+	}
+
+	// For returns, payment represents the refund amount
+	if returnTotal <= 0 {
+		respondReturnError(w, r, http.StatusBadRequest, "return total must be positive")
+		return
+	}
+
+	// Create return sale
+	returnSaleID, err := pos.CompleteSale(ctx, dp.Db, pos.SaleInput{
+		SaleType:               "return",
+		OriginalSaleID:         originalSaleID,
+		Lines:                  returnLines,
+		Payments:               []pos.PaymentInput{{MethodID: "cash", Amount: returnTotal}},
+		ActorID:                actorID,
+		Note:                   req.Reason,
+		Currency:               "GBP",
+		AllowNegativeInventory: true, // Returns add inventory
+	})
+	if err != nil {
+		respondReturnError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}		// Fetch receipt_no
+		var receiptNo string
+		err = dp.Db.QueryRowContext(ctx, `SELECT receipt_no FROM sales WHERE id = ?`, returnSaleID).Scan(&receiptNo)
+		if err != nil {
+			receiptNo = ""
+		}
+
+		respondReturnSuccess(w, r, ReturnResponse{ReturnSaleID: returnSaleID, ReceiptNo: receiptNo, Success: true})
+	}
+}
+
+// respondReturnError writes return error response
+func respondReturnError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, status, ReturnResponse{Success: false, Message: message})
+	} else {
+		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+	}
+}
+
+// respondReturnSuccess writes return success response
+func respondReturnSuccess(w http.ResponseWriter, r *http.Request, data ReturnResponse) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, http.StatusOK, data)
+	} else {
+		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Return created: %s (Receipt: %s)</div>", data.ReturnSaleID, data.ReceiptNo))
+	}
+}
+
+// registerInventoryAPI registers inventory API routes
+func registerInventoryAPI(mux *http.ServeMux, dp *common.Deps) {
+	mux.HandleFunc("POST /api/inventory/receipt", CreateStockReceipt(dp))
+	mux.HandleFunc("POST /api/inventory/override", CreateNegativeInventoryOverride(dp))
+	mux.HandleFunc("POST /api/inventory/return", CreateReturn(dp))
+	mux.HandleFunc("GET /api/inventory/low-stock", GetLowStock(dp))
+}
+
+// GetLowStock handles GET /api/inventory/low-stock
+func GetLowStock(dp *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		locationID := r.URL.Query().Get("location_id")
+
+		items, err := pos.GetLowStockItems(ctx, dp.Db, locationID)
+		if err != nil {
+			if strings.Contains(r.Header.Get("Accept"), "application/json") {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			} else {
+				writeHTML(w, http.StatusInternalServerError, fmt.Sprintf("<div class='error'>%s</div>", err.Error()))
+			}
+			return
+		}
+
+		// Check if JSON response requested
+		if strings.Contains(r.Header.Get("Accept"), "application/json") {
+			writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+			return
+		}
+
+		// Return HTML for HTMX
+		if len(items) == 0 {
+			writeHTML(w, http.StatusOK, "<p>No low stock items</p>")
+			return
+		}
+
+		html := "<table class='table'><thead><tr><th>Item</th><th>SKU</th><th>Location</th><th>Current</th><th>Reorder Level</th></tr></thead><tbody>"
+		for _, item := range items {
+			html += fmt.Sprintf("<tr><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
+				item.Name, item.SKU, item.LocationName, item.CurrentQty, item.ReorderLevel)
+		}
+		html += "</tbody></table>"
+		html += fmt.Sprintf("<script>document.getElementById('low-stock-badge').textContent = '%d';</script>", len(items))
+		writeHTML(w, http.StatusOK, html)
+	}
+}
