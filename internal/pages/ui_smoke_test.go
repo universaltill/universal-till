@@ -63,16 +63,34 @@ func TestIndexAndBasketRender(t *testing.T) {
 
 	seedForPages(t, db)
 
+	// Start a simple mock marketplace server
+	mockMarketplace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/catalog/plugins" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"plugins":[],"total":0}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockMarketplace.Close()
+
 	resolver := stubResolver{
 		"ABC": {SKU: "ABC", Name: "Test Item", Qty: 1, PriceCents: 100},
 	}
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
-	pm, err := plugins.Init(t.Context(), &config.Config{}, db)
+	cfg := &config.Config{
+		Theme:          "default",
+		Locales:        config.Locales{Currency: "GBP", TaxRate: 20},
+		MarketplaceURL: mockMarketplace.URL,
+	}
+	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(db), &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{
+		Cfg:      cfg,
 		Db:       db,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
@@ -217,6 +235,9 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE plugin_catalog (id TEXT PRIMARY KEY, version TEXT, name TEXT, description TEXT, runtime TEXT, entrypoint TEXT, package_url TEXT, sha256 TEXT, author TEXT, website TEXT, tags_json TEXT, is_deprecated INTEGER DEFAULT 0);`,
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER DEFAULT 1);`,
 		`CREATE TABLE plugin_entries (plugin_id TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, type TEXT, is_active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0);`,
+		`CREATE TABLE plugin_permissions (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, permission TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 0, UNIQUE(plugin_id, permission));`,
+		`CREATE TABLE plugin_hooks (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, event TEXT NOT NULL, action TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 100, is_active INTEGER NOT NULL DEFAULT 1, config_json TEXT, UNIQUE(plugin_id, event, action));`,
+		`CREATE TABLE plugin_settings (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', scope_id TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(plugin_id, key, scope, scope_id));`,
 		`CREATE TABLE promotions (code TEXT PRIMARY KEY, type TEXT NOT NULL, value INTEGER NOT NULL, description TEXT, starts_at TEXT, ends_at TEXT, customer_id TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT UNIQUE, name TEXT NOT NULL, description TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', base_price INTEGER NOT NULL, tax_code_id TEXT, reorder_level INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
@@ -266,12 +287,18 @@ func TestInventoryFormRender(t *testing.T) {
 	defer db.Close()
 	seedForPages(t, db)
 
-	pm, err := plugins.Init(t.Context(), &config.Config{}, db)
+	cfg := &config.Config{
+		Theme:          "default",
+		Locales:        config.Locales{Currency: "GBP", TaxRate: 20},
+		MarketplaceURL: "http://localhost:8081",
+	}
+	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(db), &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{
+		Cfg:      cfg,
 		Db:       db,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
