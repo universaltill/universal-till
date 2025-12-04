@@ -1,7 +1,7 @@
 # Implementation Plan: Cloud Marketplace Integration (POS Client)
 
-**Branch**: `001-cloud-marketplace` | **Date**: 2025-12-03 | **Spec**: `specs/001-cloud-marketplace/spec.md`
-**Input**: Feature specification from `specs/001-cloud-marketplace/spec.md`
+**Branch**: `009-cloud-marketplace` | **Date**: 2025-12-03 | **Spec**: `specs/009-cloud-marketplace/spec.md`
+**Input**: Feature specification from `specs/009-cloud-marketplace/spec.md`
 
 ## Summary
 
@@ -44,7 +44,7 @@ Gates pass for Phase 0.
 ### Documentation (this feature)
 
 ```text
-specs/001-cloud-marketplace/
+specs/009-cloud-marketplace/
 ├── plan.md              # This file
 ├── research.md          # Phase 0 output
 ├── data-model.md        # Phase 1 mapping between spec entities and DB tables
