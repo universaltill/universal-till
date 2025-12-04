@@ -394,28 +394,40 @@ ORDER BY line_no`, originalSaleID)
 				respondReturnError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid return quantity %.2f for line %s (max %.2f)", reqLine.Quantity, reqLine.LineID, origLine.Qty))
 				return
 			}
-			returnLine := origLine
-			returnLine.Qty = reqLine.Quantity
-			returnLines = append(returnLines, returnLine)
-		}
+		returnLine := origLine
+		returnLine.Qty = reqLine.Quantity
+		returnLines = append(returnLines, returnLine)
+	}
 
-		// Create return sale
-		returnSaleID, err := pos.CompleteSale(ctx, dp.Db, pos.SaleInput{
-			SaleType:               "return",
-			OriginalSaleID:         originalSaleID,
-			Lines:                  returnLines,
-			Payments:               []pos.PaymentInput{{MethodID: "cash", Amount: 0}}, // Placeholder, will be calculated
-			ActorID:                actorID,
-			Note:                   req.Reason,
-			Currency:               "GBP",
-			AllowNegativeInventory: true, // Returns add inventory
-		})
-		if err != nil {
-			respondReturnError(w, r, http.StatusInternalServerError, err.Error())
-			return
-		}
+	// Calculate return total (sum of line totals)
+	var returnTotal int64
+	for _, line := range returnLines {
+		lineBase := int64(line.Qty * float64(line.UnitPrice))
+		lineTax := (lineBase * int64(line.TaxRateBasisPoints)) / 10000
+		returnTotal += lineBase + lineTax
+	}
 
-		// Fetch receipt_no
+	// For returns, payment represents the refund amount
+	if returnTotal <= 0 {
+		respondReturnError(w, r, http.StatusBadRequest, "return total must be positive")
+		return
+	}
+
+	// Create return sale
+	returnSaleID, err := pos.CompleteSale(ctx, dp.Db, pos.SaleInput{
+		SaleType:               "return",
+		OriginalSaleID:         originalSaleID,
+		Lines:                  returnLines,
+		Payments:               []pos.PaymentInput{{MethodID: "cash", Amount: returnTotal}},
+		ActorID:                actorID,
+		Note:                   req.Reason,
+		Currency:               "GBP",
+		AllowNegativeInventory: true, // Returns add inventory
+	})
+	if err != nil {
+		respondReturnError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}		// Fetch receipt_no
 		var receiptNo string
 		err = dp.Db.QueryRowContext(ctx, `SELECT receipt_no FROM sales WHERE id = ?`, returnSaleID).Scan(&receiptNo)
 		if err != nil {
