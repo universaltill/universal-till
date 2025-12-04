@@ -212,7 +212,7 @@ VALUES (?, ?, 'shift', ?, 'cash_adjustment', ?, ?)
 }
 
 // ComputeExpectedCash calculates expected cash for a shift
-// Formula: opening_cash + cash_payments - cash_adjustments (payouts/adjustments)
+// Formula: opening_cash + cash_payments + adjustments (adjustments should be stored as negative values for payouts)
 func ComputeExpectedCash(ctx context.Context, sqlDB *sql.DB, shiftID string, openingCash int64) (int64, error) {
 	if shiftID == "" {
 		return 0, errors.New("shift_id required")
@@ -231,10 +231,10 @@ WHERE id = ?
 	}
 
 	// Sum cash payments during shift
-	// Join sales with shift time range
+	// Join sales with shift time range and filter by register
 	var cashPayments int64
 	timeFilter := `s.completed_at >= ?`
-	args := []any{openedAt.String}
+	args := []any{registerID, openedAt.String}
 	if closedAt.Valid {
 		timeFilter += ` AND s.completed_at <= ?`
 		args = append(args, closedAt.String)
@@ -247,6 +247,7 @@ JOIN sales s ON s.id = p.sale_id
 JOIN payment_methods pm ON pm.id = p.method_id
 WHERE pm.type = 'cash'
   AND s.status = 'completed'
+  AND s.register_id = ?
   AND %s
 `, timeFilter)
 

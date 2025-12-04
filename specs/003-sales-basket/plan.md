@@ -1,6 +1,6 @@
 # Plan: Sales Flow & Basket (002b)
 
-Branch: `002-pos-core-mvp` | Inputs: specs/002b-sales-basket/spec.md
+Branch: `003-sales-basket` | Inputs: specs/003-sales-basket/spec.md
 
 ## Summary
 Deliver basket management, tax/discount handling, sale-line snapshots, and park/void flows with audit hooks, using existing schema and templates.

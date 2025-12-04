@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package plugin;
+
+option go_package = "github.com/universaltill/universal-till/proto/plugin";
+
+// PluginHost service is implemented by the POS system
+// Plugins connect to this service to receive events and send responses
+service PluginHost {
+  // Subscribe allows a plugin to subscribe to events
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+  
+  // Acknowledge allows a plugin to confirm event processing
+  rpc Acknowledge(AckRequest) returns (AckResponse);
+}
+
+// SubscribeRequest initiates an event stream for a plugin
+message SubscribeRequest {
+  string plugin_id = 1;
+  repeated string event_types = 2; // e.g., ["sale.completed", "sale.cancelled"]
+}
+
+// Event represents a POS event sent to plugins
+message Event {
+  string event_id = 1;
+  string event_type = 2; // e.g., "sale.completed"
+  int64 timestamp = 3;   // Unix timestamp
+  bytes payload = 4;     // JSON-encoded event data
+}
+
+// AckRequest confirms event processing
+message AckRequest {
+  string event_id = 1;
+  string plugin_id = 2;
+  bool success = 3;
+  string error_message = 4; // Optional error if processing failed
+}
+
+// AckResponse confirms acknowledgment receipt
+message AckResponse {
+  bool received = 1;
+}
+
+// SaleCompletedEvent is sent when a sale is finalized
+// This is encoded as JSON in Event.payload
+message SaleCompletedEvent {
+  string sale_id = 1;
+  int64 total_cents = 2;
+  int64 tax_cents = 3;
+  string customer_id = 4;
+  repeated SaleLineItem line_items = 5;
+  string payment_method = 6;
+  int64 completed_at = 7;
+}
+
+message SaleLineItem {
+  string item_id = 1;
+  string name = 2;
+  int32 quantity = 3;
+  int64 unit_price_cents = 4;
+  int64 total_cents = 5;
+}

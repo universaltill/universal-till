@@ -16,13 +16,14 @@ type Locales struct {
 }
 
 type Config struct {
-	StoreName  string
-	ListenAddr string
-	Env        string
-	DBPath     string
-	Locales    Locales
-	LogLevel   string
-	Theme      string
+	StoreName      string
+	ListenAddr     string
+	Env            string
+	DBPath         string
+	Locales        Locales
+	LogLevel       string
+	Theme          string
+	MarketplaceURL string
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -31,9 +32,10 @@ func Init() (*Config, error) {
 		StoreName:  getenv("UT_STORE_NAME", "My Store"),
 		ListenAddr: getenv("UT_LISTEN_ADDR", ":8080"),
 		// Env:        getenv("UT_ENV", "local"),
-		DBPath:   getenv("UT_DB_PATH", "./data/unitill-pos.db"),
-		LogLevel: getenv("UT_LOG_LEVEL", "info"),
-		Theme:    getenv("UT_THEME", "monarch"),
+		DBPath:         getenv("UT_DB_PATH", "./data/unitill-pos.db"),
+		LogLevel:       getenv("UT_LOG_LEVEL", "info"),
+		Theme:          getenv("UT_THEME", "monarch"),
+		MarketplaceURL: getenv("UT_MARKETPLACE_URL", "http://127.0.0.1:8081"),
 	}
 
 	taxRate, _ := strconv.Atoi(getenv("UT_TAX_RATE", "20"))

@@ -1,6 +1,6 @@
 # Plan: Shifts & Cash Drawer (002e)
 
-Branch: `002-pos-core-mvp` | Inputs: specs/002e-shifts-cash/spec.md
+Branch: `006-shifts-cash` | Inputs: specs/006-shifts-cash/spec.md
 
 ## Summary
 Deliver shift lifecycle (open/close) with expected cash computation and audit logging using existing schema and local SQLite store.

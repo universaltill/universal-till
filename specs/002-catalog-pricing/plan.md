@@ -1,6 +1,6 @@
 # Plan: Catalog & Pricing Core (002a)
 
-Branch: `002-pos-core-mvp` | Inputs: specs/002a-catalog-pricing/spec.md, existing schema `internal/db/migrations/001_init.sql`
+Branch: `002-catalog-pricing` | Inputs: specs/002-catalog-pricing/spec.md, existing schema `internal/db/migrations/001_init.sql`
 
 ## Summary
 Implement catalog CRUD, barcode enforcement, active/inactive filtering, and append-only price history using existing Go code paths and SQLite schema. No migrations allowed.

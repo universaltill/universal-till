@@ -108,22 +108,64 @@ WHERE is_active = 1
 }
 
 func (m *Manager) loadMenuEntries(ctx context.Context) error {
+	// Load all menu entries with permission requirements
 	rows, err := m.db.QueryContext(ctx, `
-SELECT pe.plugin_id, pe.key, pe.route, pe.label, pe.menu_group
+SELECT 
+    pe.plugin_id, 
+    pe.key, 
+    pe.route, 
+    pe.label, 
+    pe.menu_group,
+    GROUP_CONCAT(pp.permission) as required_permissions,
+    GROUP_CONCAT(pp.granted) as granted_flags
 FROM plugin_entries pe
 JOIN plugins p ON p.id = pe.plugin_id
+LEFT JOIN plugin_permissions pp ON pp.plugin_id = pe.plugin_id
 WHERE pe.type = 'page' AND pe.is_active = 1 AND p.is_active = 1
+GROUP BY pe.plugin_id, pe.key, pe.route, pe.label, pe.menu_group
 ORDER BY pe.sort_order, pe.label
 `)
 	if err != nil {
 		return fmt.Errorf("load plugin menu entries: %w", err)
 	}
 	defer rows.Close()
+
 	for rows.Next() {
 		var mp MenuPlugin
-		if err := rows.Scan(&mp.PluginID, &mp.Key, &mp.Route, &mp.Label, &mp.Menu); err != nil {
+		var permsStr, grantedStr sql.NullString
+
+		if err := rows.Scan(&mp.PluginID, &mp.Key, &mp.Route, &mp.Label, &mp.Menu, &permsStr, &grantedStr); err != nil {
 			return err
 		}
+
+		// Check if plugin has any required permissions
+		// For now, we only show menu entries if the plugin has at least one granted permission
+		// This prevents untrusted/zero-permission plugins from appearing in menus
+		// If plugin has permissions, verify at least one is granted
+		if permsStr.Valid && permsStr.String != "" {
+			if !grantedStr.Valid {
+				// Has permissions but none granted
+				continue
+			}
+
+			perms := strings.Split(permsStr.String, ",")
+			grantedFlags := strings.Split(grantedStr.String, ",")
+
+			hasGranted := false
+			for i, perm := range perms {
+				if perm != "" && i < len(grantedFlags) && grantedFlags[i] == "1" {
+					hasGranted = true
+					break
+				}
+			}
+
+			// Skip entries from plugins with no granted permissions
+			if !hasGranted {
+				continue
+			}
+		}
+		// If no permissions required (permsStr is NULL/empty), allow the entry
+
 		m.MenuPlugins[mp.Key] = mp
 	}
 	return rows.Err()
