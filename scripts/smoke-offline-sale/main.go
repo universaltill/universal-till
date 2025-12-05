@@ -47,14 +47,14 @@ func main() {
 	fmt.Println("Step 1/5: Opening database and running migrations...")
 	database, err := db.Open(dbPath)
 	if err != nil {
-		fatal("Failed to open database: %v", err)
+		fatal(1, "Failed to open database: %v", err)
 	}
 	defer database.Close()
 
 	// Seed test data
 	fmt.Println("Step 2/5: Seeding test data...")
 	if err := seedTestData(database.DB); err != nil {
-		fatal("Failed to seed test data: %v", err)
+		fatal(1, "Failed to seed test data: %v", err)
 	}
 
 	// Create sale input
@@ -97,7 +97,7 @@ func main() {
 	durationMS := duration.Milliseconds()
 
 	if err != nil {
-		fatal("Sale completion failed: %v", err)
+		fatal(2, "Sale completion failed: %v", err)
 	}
 
 	fmt.Printf("✓ Sale completed in %dms (ID: %s)\n", durationMS, saleID)
@@ -105,7 +105,7 @@ func main() {
 	// Validate results
 	fmt.Println("Step 5/5: Validating sale data...")
 	if err := validateSale(database.DB, saleID); err != nil {
-		fatal("Sale validation failed: %v", err)
+		fatal(2, "Sale validation failed: %v", err)
 	}
 
 	// Check performance threshold
@@ -289,7 +289,7 @@ func validateSale(sqlDB *sql.DB, saleID string) error {
 	return nil
 }
 
-func fatal(format string, args ...interface{}) {
+func fatal(exitCode int, format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "\n❌ ERROR: "+format+"\n", args...)
-	os.Exit(2)
+	os.Exit(exitCode)
 }

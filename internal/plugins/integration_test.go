@@ -203,7 +203,10 @@ func TestIntegration_EventDispatchCrashIsolation(t *testing.T) {
 	}
 
 	// Simulate crash by unsubscribing immediately (mimics plugin process crash)
-	// In real scenario, this would be a plugin binary that panics/exits
+	// NOTE: This is a simplified crash simulation for DB invariant testing.
+	// It validates that EventBus handles missing subscribers gracefully, but does NOT
+	// test real crash recovery (process restarts, cleanup) or supervisor features.
+	// Full crash isolation testing with process supervision should be implemented separately.
 	bus.Unsubscribe(manifest.ID)
 
 	// Publish event - should not crash the host despite plugin "crash"
@@ -243,7 +246,9 @@ func TestIntegration_EventDispatchCrashIsolation(t *testing.T) {
 	}
 
 	// Assert DB Invariant 2: inventory.quantity reflects stock_movements
-	// For test item, should be initial(100) - sale(2) = 98
+	// Stock movements are deltas: positive for additions, negative for sales.
+	// The invariant: inventory.quantity = SUM(stock_movements.quantity)
+	// Test data: 100 (initial movement) + (-2) (sale movement) = 98 (current inventory)
 	var inventoryQty float64
 	err = tmpDB.QueryRowContext(ctx, `
 		SELECT quantity FROM inventory WHERE item_id = 'test-item-001'
@@ -260,7 +265,7 @@ func TestIntegration_EventDispatchCrashIsolation(t *testing.T) {
 		t.Fatalf("query stock movements: %v", err)
 	}
 
-	// Initial inventory was set to match movements sum (100 initial - 2 sold = 98)
+	// Verify that current inventory matches the sum of all movement deltas
 	if inventoryQty != movementsSum {
 		t.Errorf("DB Invariant 2 violated: inventory.quantity (%.2f) != SUM(stock_movements.quantity) (%.2f)",
 			inventoryQty, movementsSum)
