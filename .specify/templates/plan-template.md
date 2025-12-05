@@ -17,7 +17,7 @@
   the iteration process.
 -->
 
-**Language/Version**: Go (target 1.21+ or later), SQLite for local persistence  
+**Language/Version**: Go (target 1.25+ or later), SQLite for local persistence  
 **Primary Dependencies**: Standard library, database/sql + SQLite driver, plus any explicitly mentioned in the spec/plan
 
 **Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  

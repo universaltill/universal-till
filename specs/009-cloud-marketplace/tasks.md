@@ -3,9 +3,9 @@
 **Input**: `specs/009-cloud-marketplace/`
 
 ## Phase 1: Setup (Shared Infrastructure)
-- [ ] T001 Add marketplace configuration struct + env wiring in `internal/config/config.go` and surface defaults in `pos.env.example`.
-- [ ] T002 [P] Create local plugin cache directories (`data/plugins/cache`, `data/plugins/tmp`) via startup bootstrap in `main.go`.
-- [ ] T003 [P] Document new marketplace environment keys in `specs/009-cloud-marketplace/quickstart.md` and `README.md`.
+- [X] T001 Add marketplace configuration struct + env wiring in `internal/config/config.go` and surface defaults in `pos.env.example`.
+- [X] T002 [P] Create local plugin cache directories (`data/plugins/cache`, `data/plugins/tmp`) via startup bootstrap in `main.go`.
+- [X] T003 [P] Document new marketplace environment keys in `specs/009-cloud-marketplace/quickstart.md` and `README.md`.
 
 ---
 

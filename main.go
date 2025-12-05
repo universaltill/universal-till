@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
@@ -35,6 +36,11 @@ func main() {
 
 	settingsStore := settings.NewStore(database.DB)
 
+	// Bootstrap: create plugin cache directories (T002 - 009-cloud-marketplace)
+	if err := bootstrapPluginDirectories(); err != nil {
+		log.Fatalf("failed to create plugin cache directories: %v", err)
+	}
+
 	// load runtime config from DB
 	settingsStore.LoadRuntimeConfig(ctx, cfg)
 	err = settingsStore.SaveRuntimeConfig(ctx, cfg)
@@ -54,4 +60,21 @@ func main() {
 	if err := server.Start(ctx, cfg, mux); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
+}
+
+// bootstrapPluginDirectories creates required plugin cache directories
+// as specified in 009-cloud-marketplace feature (T002)
+func bootstrapPluginDirectories() error {
+	dirs := []string{
+		"./data/plugins/cache",
+		"./data/plugins/tmp",
+	}
+	
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+	}
+	
+	return nil
 }

@@ -10,13 +10,15 @@
 cp pos.env.example pos.env.dev
 export $(grep -v '^#' pos.env.dev | xargs) # or use direnv
 cat >> pos.env.dev <<'EOF'
-UT_MARKETPLACE_ENDPOINT="https://staging.marketplace.example.com"
-UT_MARKETPLACE_GRPC="staging.marketplace.example.com:443"
+# Marketplace configuration (see pos.env.example for all options)
+UT_MARKETPLACE_ENDPOINT_URL="https://staging.marketplace.example.com"
 UT_MARKETPLACE_CLIENT_ID="store-123-pos"
 UT_MARKETPLACE_CLIENT_SECRET="<redacted>"
-UT_MARKETPLACE_API_VERSION="1"
-UT_MARKETPLACE_DEVICE_ID="pos-mac-mini-01"
+UT_MARKETPLACE_API_VERSION="1.0.0"
 UT_MARKETPLACE_TELEMETRY_OPT_IN="false" # flip to true when ready to report
+# Dev mode settings (optional)
+UT_DEV_MODE="false"
+UT_MARKETPLACE_DEV_OVERRIDE_URL="" # local marketplace override when dev mode is true
 EOF
 ```
 
