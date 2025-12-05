@@ -10,7 +10,7 @@
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)
-- [ ] T004 Implement OAuth2 client-credentials token manager in `internal/plugins/oauth/token_client.go` with secure on-disk cache.
+- [X] T004 Implement OAuth2 client-credentials token manager in `internal/plugins/oauth/token_client.go` with secure on-disk cache.
 - [ ] T005 [P] Add marketplace gRPC/HTTPS client abstractions in `internal/plugins/marketplace/client.go` following `contracts/marketplace.proto`.
 - [ ] T006 [P] Build download cache abstraction (`internal/plugins/storage/cache_store.go`) that tracks `.part` files and disk quotas.
 - [ ] T006b [P] Attach API version metadata to all marketplace requests (per FR-016), with config wiring, deprecation alerting, and tests.
