@@ -118,7 +118,7 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 		params.Set("page_token", req.PageToken)
 	}
 
-	path := "/api/v1/catalog/plugins"
+	path := "/v1/catalog/plugins"
 	if len(params) > 0 {
 		path += "?" + params.Encode()
 	}
@@ -167,7 +167,7 @@ func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadToken
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/downloads/token", bytes.NewReader(body))
+	resp, err := c.doRequest(ctx, http.MethodPost, "/v1/download/token", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (c *Client) AckDownload(ctx context.Context, req *AckDownloadRequest) error
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/downloads/ack", bytes.NewReader(body))
+	resp, err := c.doRequest(ctx, http.MethodPost, "/v1/download/ack", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -235,7 +235,7 @@ type GetRevocationsResponse struct {
 
 // GetRevocations fetches plugin revocations since a given version.
 func (c *Client) GetRevocations(ctx context.Context, req *GetRevocationsRequest) (*GetRevocationsResponse, error) {
-	path := fmt.Sprintf("/api/v1/revocations?since_version=%d", req.SinceVersion)
+	path := fmt.Sprintf("/v1/revocations?since_version=%d", req.SinceVersion)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -283,7 +283,7 @@ func (c *Client) ReportPluginStatus(ctx context.Context, req *ReportPluginStatus
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/telemetry/status", bytes.NewReader(body))
+	resp, err := c.doRequest(ctx, http.MethodPost, "/v1/telemetry/status", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
