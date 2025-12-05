@@ -80,7 +80,7 @@ func Init() (*Config, error) {
 			DevOverrideURL:        getenv("UT_MARKETPLACE_DEV_OVERRIDE_URL", ""),
 			HealthCheckTimeoutSec: healthCheckTimeout,
 			FallbackTimeoutSec:    fallbackTimeout,
-RequestTimeoutSec:     30,
+			RequestTimeoutSec:     30,
 		},
 	}
 

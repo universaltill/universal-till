@@ -1,39 +1,39 @@
 package marketplace
 
 import (
-"context"
-"encoding/json"
-"net/http"
-"net/http/httptest"
-"testing"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
 
-"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/config"
 )
 
 func TestClient_ListPlugins(t *testing.T) {
 	// Mock marketplace server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-// Verify auth header
-if r.Header.Get("Authorization") != "Bearer test-token" {
-t.Errorf("missing or invalid auth header")
-}
-// Verify API version header
-if r.Header.Get("x-marketplace-api-version") != "1.0.0" {
-t.Errorf("missing or invalid API version header")
-}
+		// Verify auth header
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("missing or invalid auth header")
+		}
+		// Verify API version header
+		if r.Header.Get("x-marketplace-api-version") != "1.0.0" {
+			t.Errorf("missing or invalid API version header")
+		}
 
-resp := ListPluginsResponse{
-Plugins: []PluginSummary{
-{
-ID:      "test-plugin",
-Name:    "Test Plugin",
-Version: "1.0.0",
-Type:    "page",
-},
-},
-SnapshotVersion: 1,
-}
-w.Header().Set("Content-Type", "application/json")
+		resp := ListPluginsResponse{
+			Plugins: []PluginSummary{
+				{
+					ID:      "test-plugin",
+					Name:    "Test Plugin",
+					Version: "1.0.0",
+					Type:    "page",
+				},
+			},
+			SnapshotVersion: 1,
+		}
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
@@ -46,7 +46,7 @@ w.Header().Set("Content-Type", "application/json")
 		ClientSecret:      "secret",
 		RequestTimeoutSec: 30,
 	}
-	
+
 	// Mock token client
 	tokenClient := &mockTokenClient{token: "test-token"}
 	client := NewClient(cfg, tokenClient)
