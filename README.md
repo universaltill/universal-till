@@ -149,6 +149,15 @@ UT_CURRENCY=USD                        # Currency code (USD, GBP, EUR, etc.)
 UT_TAX_INCLUSIVE=true                  # Tax included in prices?
 UT_TAX_RATE=20                         # Tax rate percentage
 
+# Marketplace integration (cloud plugin store)
+UT_MARKETPLACE_ENDPOINT_URL=http://127.0.0.1:8081  # Marketplace API endpoint
+UT_MARKETPLACE_CLIENT_ID=              # OAuth2 client ID (leave empty for local dev)
+UT_MARKETPLACE_CLIENT_SECRET=          # OAuth2 client secret
+UT_MARKETPLACE_API_VERSION=1.0.0       # Marketplace API version
+UT_MARKETPLACE_TELEMETRY_OPT_IN=false  # Send usage telemetry to marketplace
+UT_DEV_MODE=false                      # Enable developer mode features
+UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode only)
+
 # Optional
 UT_SAMPLES_DIR=/path/to/images        # Sample product images
 ```
