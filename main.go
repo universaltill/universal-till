@@ -69,12 +69,12 @@ func bootstrapPluginDirectories() error {
 		"./data/plugins/cache",
 		"./data/plugins/tmp",
 	}
-	
+
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
 	}
-	
+
 	return nil
 }

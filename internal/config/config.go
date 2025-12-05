@@ -18,25 +18,28 @@ type Locales struct {
 type MarketplaceConfig struct {
 	// Production/Staging/Custom endpoint (FR-015)
 	EndpointURL string
-	
+
 	// OAuth2 client credentials for marketplace authentication (FR-018)
 	ClientID     string
 	ClientSecret string
-	
+
 	// API version pinning (FR-016)
 	APIVersion string // semver format: "1.2.3"
-	
+
 	// Telemetry opt-in flag (FR-013)
 	TelemetryOptIn bool
-	
+
 	// Dev-mode local override (FR-015, only honored when UT_DEV_MODE=true)
 	DevOverrideURL string
-	
+
 	// Health check timeout for endpoint validation (FR-015)
 	HealthCheckTimeoutSec int
-	
+
 	// Fallback timeout for dev override (FR-015)
 	FallbackTimeoutSec int
+
+	// Request timeout for marketplace HTTP calls
+	RequestTimeoutSec int
 }
 
 type Config struct {
@@ -58,7 +61,7 @@ func Init() (*Config, error) {
 	telemetryOptIn, _ := strconv.ParseBool(getenv("UT_MARKETPLACE_TELEMETRY_OPT_IN", "false"))
 	healthCheckTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "5"))
 	fallbackTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC", "30"))
-	
+
 	cfg := &Config{
 		StoreName:  getenv("UT_STORE_NAME", "My Store"),
 		ListenAddr: getenv("UT_LISTEN_ADDR", ":8080"),
@@ -77,6 +80,7 @@ func Init() (*Config, error) {
 			DevOverrideURL:        getenv("UT_MARKETPLACE_DEV_OVERRIDE_URL", ""),
 			HealthCheckTimeoutSec: healthCheckTimeout,
 			FallbackTimeoutSec:    fallbackTimeout,
+RequestTimeoutSec:     30,
 		},
 	}
 
