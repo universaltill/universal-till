@@ -11,12 +11,12 @@
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 - [X] T004 Implement OAuth2 client-credentials token manager in `internal/plugins/oauth/token_client.go` with secure on-disk cache.
-- [ ] T005 [P] Add marketplace gRPC/HTTPS client abstractions in `internal/plugins/marketplace/client.go` following `contracts/marketplace.proto`.
-- [ ] T006 [P] Build download cache abstraction (`internal/plugins/storage/cache_store.go`) that tracks `.part` files and disk quotas.
-- [ ] T006b [P] Attach API version metadata to all marketplace requests (per FR-016), with config wiring, deprecation alerting, and tests.
-- [ ] T007 Define canonical plugin type enums + validation helpers in `internal/plugins/types.go` reused by host + UI.
-- [ ] T008 Wire RBAC + audit helpers in `internal/plugins/authorizer.go` so installs/updates enforce manager overrides globally.
-- [ ] T009 Add scheduler stubs in `internal/server/server.go` for catalog sync, telemetry, and revocation jobs (no logic yet).
+- [X] T005 [P] Add marketplace gRPC/HTTPS client abstractions in `internal/plugins/marketplace/client.go` following `contracts/marketplace.proto`.
+- [X] T006 [P] Build download cache abstraction (`internal/plugins/storage/cache_store.go`) that tracks `.part` files and disk quotas.
+- [X] T006b [P] Attach API version metadata to all marketplace requests (per FR-016), with config wiring, deprecation alerting, and tests.
+- [X] T007 Define canonical plugin type enums + validation helpers in `internal/plugins/types.go` reused by host + UI.
+- [X] T008 Wire RBAC + audit helpers in `internal/plugins/authorizer.go` so installs/updates enforce manager overrides globally.
+- [X] T009 Add scheduler stubs in `internal/server/server.go` for catalog sync, telemetry, and revocation jobs (no logic yet).
 
 **Checkpoint**: Marketplace auth, clients, storage, and RBAC scaffolding are ready; user stories can start.
 
