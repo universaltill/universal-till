@@ -164,7 +164,7 @@ func auditPermissionDenial(ctx context.Context, db *sql.DB, pluginID, permission
 	details := fmt.Sprintf("permission=%s, reason=%s", permission, reason)
 
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, details, created_at)
+		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
 		VALUES ('permission_denied', 'plugin', ?, ?, ?)
 	`, pluginID, details, now)
 	return err
@@ -176,7 +176,7 @@ func auditPermissionGrant(ctx context.Context, db *sql.DB, pluginID, permission 
 	details := fmt.Sprintf("permission=%s", permission)
 
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, details, created_at)
+		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
 		VALUES ('permission_granted', 'plugin', ?, ?, ?)
 	`, pluginID, details, now)
 	return err
@@ -188,7 +188,7 @@ func auditPermissionRevoke(ctx context.Context, db *sql.DB, pluginID, permission
 	details := fmt.Sprintf("permission=%s", permission)
 
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, details, created_at)
+		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
 		VALUES ('permission_revoked', 'plugin', ?, ?, ?)
 	`, pluginID, details, now)
 	return err

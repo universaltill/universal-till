@@ -14,12 +14,12 @@ func TestInstallPlugin_Success(t *testing.T) {
 
 	// Create audit_log table
 	_, err := db.Exec(`
-		CREATE TABLE audit_log (
+		CREATE TABLE IF NOT EXISTS audit_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			action TEXT NOT NULL,
 			entity_type TEXT,
 			entity_id TEXT,
-			details TEXT,
+			data_json TEXT,
 			created_at TEXT NOT NULL
 		)
 	`)
@@ -166,12 +166,12 @@ func TestInstallPlugin_DefaultTrustLevel(t *testing.T) {
 
 	// Create audit_log table
 	_, err := db.Exec(`
-		CREATE TABLE audit_log (
+		CREATE TABLE IF NOT EXISTS audit_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			action TEXT NOT NULL,
 			entity_type TEXT,
 			entity_id TEXT,
-			details TEXT,
+			data_json TEXT,
 			created_at TEXT NOT NULL
 		)
 	`)
@@ -222,12 +222,12 @@ func TestUninstallPlugin(t *testing.T) {
 
 	// Create audit_log table
 	_, err := db.Exec(`
-		CREATE TABLE audit_log (
+		CREATE TABLE IF NOT EXISTS audit_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			action TEXT NOT NULL,
 			entity_type TEXT,
 			entity_id TEXT,
-			details TEXT,
+			data_json TEXT,
 			created_at TEXT NOT NULL
 		)
 	`)
@@ -291,12 +291,12 @@ func TestUpdatePluginTrustLevel(t *testing.T) {
 
 	// Create audit_log table
 	_, err := db.Exec(`
-		CREATE TABLE audit_log (
+		CREATE TABLE IF NOT EXISTS audit_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			action TEXT NOT NULL,
 			entity_type TEXT,
 			entity_id TEXT,
-			details TEXT,
+			data_json TEXT,
 			created_at TEXT NOT NULL
 		)
 	`)
@@ -338,7 +338,7 @@ func TestUpdatePluginTrustLevel(t *testing.T) {
 	// Verify audit log
 	var action, details string
 	err = db.QueryRowContext(ctx, `
-		SELECT action, details FROM audit_log WHERE action = 'plugin_trust_change'
+		SELECT action, data_json FROM audit_log WHERE action = 'plugin_trust_change'
 	`).Scan(&action, &details)
 	if err != nil {
 		t.Fatalf("query audit_log: %v", err)
@@ -371,12 +371,12 @@ func TestUpdatePluginTrustLevel_AllValidLevels(t *testing.T) {
 
 	// Create audit_log table
 	_, err := db.Exec(`
-		CREATE TABLE audit_log (
+		CREATE TABLE IF NOT EXISTS audit_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			action TEXT NOT NULL,
 			entity_type TEXT,
 			entity_id TEXT,
-			details TEXT,
+			data_json TEXT,
 			created_at TEXT NOT NULL
 		)
 	`)

@@ -162,6 +162,13 @@ Access `/settings` in the web interface to configure:
 - Employee permissions
 - Hardware devices
 
+## 🏎️ Performance checks
+- Target hardware: Raspberry Pi 4 (8GB) or equivalent mini PC.
+- Run sale + micro-interaction checks: `go test ./internal/pos -run "(TestSalePerformanceThresholds|TestMicroInteractionLatency)"`
+- Optional deep benchmark: `go test -bench=BenchmarkCompleteSale -benchtime=10x ./internal/pos`
+- Override thresholds if your runner differs: `UT_BENCHMARK_SALE_WARN_MS`, `UT_BENCHMARK_SALE_FAIL_MS`, `UT_BENCHMARK_INTERACT_WARN_MS`, `UT_BENCHMARK_INTERACT_FAIL_MS`.
+- See `docs/performance.md` for full thresholds, hardware assumptions, and offline smoke instructions.
+
 ---
 
 ## 🔌 Plugin Development
@@ -287,7 +294,7 @@ Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translatio
 - [ ] Plugin system architecture
 - [ ] Payment processor plugins (Stripe, Square)
 - [ ] Cloud sync service (optional)
-- [ ] Mobile app (React Native)
+- [ ] Mobile app
 
 ### Upcoming (Q2-Q3 2025)
 - [ ] Advanced inventory management

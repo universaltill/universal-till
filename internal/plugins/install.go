@@ -124,7 +124,7 @@ func recordInstallAudit(ctx context.Context, db *sql.DB, pluginID, version strin
 		opts.InstalledFromURL, opts.SHA256, opts.TrustLevel, opts.Uploader)
 
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, details, created_at)
+		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
 		VALUES ('plugin_install', 'plugin', ?, ?, ?)
 	`, pluginID, details, now)
 	return err
@@ -146,7 +146,7 @@ func recordTrustChangeAudit(ctx context.Context, db *sql.DB, pluginID, newTrustL
 	details := fmt.Sprintf("trust_level=%s", newTrustLevel)
 
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, details, created_at)
+		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
 		VALUES ('plugin_trust_change', 'plugin', ?, ?, ?)
 	`, pluginID, details, now)
 	return err

@@ -1,11 +1,11 @@
 # Feature Specification: Cloud Marketplace Integration (POS Client)
 
-**Feature Branch**: `001-cloud-marketplace`  
+**Feature Branch**: `009-cloud-marketplace`  
 **Created**: 2025-12-03  
 **Status**: Draft  
-**Input**: User description: "it will be a market place which will implement in another repo and will deploy to the cloud."
+**Input**: User description: "it will be a market place which is implementing in another repo (https://github.com/universaltill/ut-market-place) and will deploy to the cloud. However, we can run it locally and connect to it and use it locally"
 
-**Scope Note**: The cloud marketplace (plugin store) is implemented and hosted in a separate repository/service. This spec covers the Universal Till POS client work needed to browse the remote catalog, fetch metadata, download plugin artifacts, install/uninstall/update them locally, and keep operating offline. No marketplace authoring, billing, or cloud hosting code lives in this repo.
+**Scope Note**: The cloud marketplace (plugin store) is implementing and will be hosted in a separate repository/service. This spec covers the Universal Till POS client work needed to browse the remote catalog, fetch metadata, download plugin artifacts, install/uninstall/update them locally, and keep operating offline. No marketplace authoring, billing, or cloud hosting code lives in this repo.
 
 ## Clarifications
 
@@ -78,11 +78,29 @@ Store admins must limit who can install/disable plugins and view audit history o
 1. **Given** a cashier without plugin permissions, **When** they try to install a plugin, **Then** the POS prompts for manager override and blocks the install if not approved.
 2. **Given** an admin opens the audit screen, **When** they filter by "Marketplace", **Then** they see install/update/remove events with timestamps, operator IDs, and manifest hashes.
 
+---
+
+### User Story 6 - Dev Mode Local Marketplace Override (Priority: P2)
+Developers and QA need to point the POS marketplace client at a local/stub marketplace service while in dev mode, and toggle back to the cloud endpoint quickly.
+
+**Why this priority**: Enables local iteration and compatibility testing without touching production config; speeds up validation of marketplace changes.
+
+**Independent Test**: Enable dev mode, set a local marketplace base URL, confirm catalog/install requests hit the local endpoint; clear/toggle to cloud and see immediate switch.
+
+**Acceptance Scenarios**:
+1. **Given** dev mode is enabled and a valid local URL is configured, **When** the catalog loads, **Then** all marketplace requests use that URL until the override is cleared or dev mode is off.
+2. **Given** both local and cloud endpoints are configured, **When** the user toggles to cloud, **Then** subsequent marketplace requests use the cloud endpoint and log the switch; toggling back to local re-applies after a quick health check.
+3. **Given** the local URL is malformed or unreachable, **When** the developer saves settings, **Then** the UI blocks activation with the exact error and keeps the previous working endpoint active.
+4. **Given** the local endpoint dies mid-session, **When** marketplace calls fail for longer than the timeout, **Then** the POS surfaces a non-blocking warning and temporarily falls back to cloud while logging the failover.
+
 ### Edge Cases
 - Marketplace API returns a feed without the device’s architecture → UI must hide the install button and explain incompatibility.
 - Download token expires mid-transfer → client requests a fresh token transparently up to N retries before failing gracefully.
 - Local disk lacks space for the package → installer aborts with actionable guidance and does not corrupt existing plugins.
 - Revocation notice arrives for a plugin currently running critical hooks → POS must disable it safely after current transaction completes, log the action, and prompt operator.
+- Dev-mode override is provided while dev mode is off → must be ignored with a warning and no endpoint switch.
+- Non-HTTP(S) schemes or malformed URLs are rejected with actionable errors; self-signed certs in dev mode must be called out.
+- Multiple developers on the same device keep independent overrides; clearing override reverts to the default cloud endpoint without restart.
 
 ## Requirements *(mandatory)*
 
@@ -106,6 +124,9 @@ Store admins must limit who can install/disable plugins and view audit history o
 - **FR-017**: POS MUST recognize and enforce the canonical plugin types (`page`, `button`, `popup`, `payment`, `device`, `integration`, `report`, `pricing`, `tax`, `import`, `export`, `hardware`, `background_job`, `scheduler`, `receipt_template`, `customer_facing`, `auth`, `notification`, `delivery`) when rendering catalog entries, validating manifests, and applying permissions.
 - **FR-018**: POS MUST authenticate to the marketplace using an OAuth2 client-credentials flow (store/device client ID + secret), request scoped tokens, cache them securely, and rotate credentials without operator interaction.
 - **FR-019**: POS MUST auto-start every installed + enabled plugin as a supervised executable at POS startup, ensuring each process exposes the gRPC contract defined in `contracts/plugin_host.proto` so host↔plugin IPC stays consistent.
+- **FR-020**: POS MUST support a dev-mode-only marketplace base URL override that, when enabled, routes all marketplace calls to the configured local URL; override is ignored when dev mode is off.
+- **FR-021**: POS MUST validate the override (scheme/host/port) and reachability before activation, surface human-readable errors, and keep the previous endpoint active on failure.
+- **FR-022**: POS MUST support runtime toggling between cloud and local endpoints without restart, log the active source with timestamp, and fall back to cloud automatically after a configurable timeout if the local endpoint stops responding.
 
 ### Key Entities *(include if feature involves data)*
 - **MarketplaceFeed**: Cached JSON snapshot (version, timestamp, locale, list of PluginSummaries) fetched from the cloud API.
@@ -123,6 +144,8 @@ Store admins must limit who can install/disable plugins and view audit history o
 - **SC-003**: Revocation feeds are processed within 15 minutes for 95% of online devices, automatically disabling affected plugins and logging the action.
 - **SC-004**: At least one previous plugin version remains available locally for rollback on 90%+ of update attempts (subject to disk space); rollback completes in <2 minutes.
 - **SC-005**: Audit log entries exist for 100% of install/update/uninstall/revoke/manual-import actions initiated through the marketplace UI or API.
+- **SC-006**: A developer can switch marketplace endpoints (local ↔ cloud) and observe requests hitting the new endpoint within 60 seconds, with health check and logging.
+- **SC-007**: At least 90% of malformed/failed local overrides produce actionable validation errors; fallback to cloud occurs within 5 seconds of detecting an unresponsive local endpoint.
 
 ## Assumptions & Constraints
 - Cloud marketplace provides stable REST endpoints for catalog, download token issuance, telemetry, and revocation feeds; this repo only consumes them.
@@ -130,3 +153,4 @@ Store admins must limit who can install/disable plugins and view audit history o
 - POS devices may run offline for extended periods; features must degrade gracefully and reconcile once connectivity returns.
 - Marketplace authentication uses OAuth2 client-credentials per store/device; secrets are provisioned centrally and rotated without exposing operator accounts.
 - Telemetry reporting honors the persisted opt-in flag `settings.marketplace.telemetry_opt_in` and remains disabled when false.
+- Dev-mode gating (`UT_DEV_MODE=true`) is the only context where local overrides apply; production/staging configs must remain unaffected by overrides.
