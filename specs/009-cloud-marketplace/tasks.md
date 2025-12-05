@@ -43,7 +43,9 @@
 
 ### Implementation & Tests
 - [ ] T015 [P] [US2] Implement resumable download manager with Range requests + `.part` promotion in `internal/plugins/download_manager.go`.
-- [ ] T016 [P] [US2] Add manifest verifier + checksum/signature validation in `internal/plugins/manifest_verifier.go` using data-model mappings.
+- [ ] T016 [P] [US2] Add manifest verifier in `internal/plugins/manifest_verifier.go` using data-model mappings:
+  - T016a: Implement SHA256 checksum validation against marketplace-provided hash.
+  - T016b: Implement cryptographic signature verification using marketplace public key (RSA or Ed25519) to prevent tampering.
 - [ ] T017 [US2] Extend plugin install API handler + RBAC prompts in `internal/pages/plugin_api.go` (install endpoint, manager PIN modal).
 - [ ] T018 [P] [US2] Create HTMX progress modal and toast partials in `web/ui/partials/plugin_install_modal.html`.
 - [ ] T019 [US2] Persist install metadata (plugin_entries, permissions, settings) and audit log writes in `internal/plugins/manager.go`.
@@ -61,7 +63,9 @@
 - [ ] T021 [P] [US3] Implement update checker + diff metadata handling in `internal/plugins/update_checker.go` tied to marketplace client.
 - [ ] T022 [US3] Add rollback + version swapper storing previous artifacts in `internal/plugins/rollback.go`.
 - [ ] T023 [US3] Ensure plugin supervisor auto-starts active plugins at boot and on install in `internal/plugins/manager.go`.
-- [ ] T024 [P] [US3] Implement telemetry client + batching in `internal/plugins/telemetry_client.go` with retry logic and honor `settings.marketplace.telemetry_opt_in` before enqueueing status updates.
+- [ ] T024 [P] [US3] Implement telemetry client + batching in `internal/plugins/telemetry_client.go` with retry logic:
+  - T024a: Update status telemetry (plugin version, enabled/disabled state changes) honoring `settings.marketplace.telemetry_opt_in` at enqueue-time.
+  - T024b: General marketplace interaction telemetry (catalog browse counts, install/update events per FR-013) with same opt-in enforcement.
 - [ ] T025 [US3] Build installed-plugin management UI (`web/ui/pages/plugins_installed.html`) with update/disable/rollback actions.
 - [ ] T026 [P] [US3] Add integration tests for update/rollback + telemetry acknowledgements in `internal/plugins/manager_test.go`.
 
@@ -78,6 +82,10 @@
 - [ ] T029 [US4] Build USB/file picker UI partials in `web/ui/partials/plugin_manual_import.html` showing validation feedback.
 - [ ] T030 [US4] Implement revocation sync loop + alerts in `internal/server/scheduler.go` and surface banners in `internal/pages/plugins_page.go`.
 - [ ] T031 [P] [US4] Create importer + revocation tests in `internal/plugins/importer_test.go` and `internal/server/scheduler_test.go` (revocation path).
+- [ ] T031a [Edge Case] Add test for revocation arriving during critical plugin hooks (sale completion) - ensure safe disable after transaction completes.
+- [ ] T031b [Edge Case] Add validation + test for dev-override rejection when dev-mode is off (log warning, preserve existing endpoint).
+- [ ] T031c [Edge Case] Add validation + test for malformed URLs (non-HTTP schemes, invalid ports) with actionable error messages.
+- [ ] T031d [Edge Case] Add handling + test for self-signed certs in dev-mode with explicit warning logs.
 
 ---
 
