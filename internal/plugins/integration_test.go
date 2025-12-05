@@ -281,18 +281,18 @@ func TestIntegration_EventDispatchCrashIsolation(t *testing.T) {
 	}
 
 	// Check DB Invariant 4: Audit log entry exists for event publication
-	// NOTE: This currently fails due to schema mismatch (code uses 'details' column,
-	// but migration defines 'data_json'). This is a pre-existing bug in the codebase.
-	// For now, we log a warning if audit is missing, but don't fail the test.
+	// The audit_log schema bug has been fixed (code now uses 'data_json'), so this test
+	// now expects audit logging to work. Fail the test if no audit log entry is found.
 	var auditCount int
 	err = tmpDB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM audit_log 
 		WHERE action = 'event_published' AND entity_type = 'event'
 	`).Scan(&auditCount)
 	if err != nil {
-		t.Logf("Warning: could not check audit log: %v", err)
-	} else if auditCount == 0 {
-		t.Logf("Warning: DB Invariant 4 (audit logging) not satisfied - likely due to schema mismatch bug")
+		t.Fatalf("could not check audit log: %v", err)
+	}
+	if auditCount == 0 {
+		t.Errorf("DB Invariant 4 violated: no audit log entry found for event publication")
 	}
 
 	t.Logf("✓ All core DB invariants verified after simulated plugin crash")
