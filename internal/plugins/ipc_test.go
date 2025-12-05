@@ -2,6 +2,8 @@ package plugins
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -245,6 +247,160 @@ func TestEventBus_MultipleSubscribers(t *testing.T) {
 	}
 }
 
+func TestEventBus_NonBlockingAuditsAndContinues(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+
+	ctx := context.Background()
+
+	// Allowed plugin
+	allow := &Manifest{
+		ID:         "plugin-allow",
+		Name:       "Allow",
+		Version:    "1.0.0",
+		Entrypoint: "./test",
+		Hooks: []ManifestHook{
+			{Event: "sale.completed", Action: "onSale"},
+		},
+		Permissions: []string{"events:receive"},
+	}
+	if err := PersistManifest(ctx, db, allow, InstallOptions{}); err != nil {
+		t.Fatalf("persist allow: %v", err)
+	}
+	if err := GrantPermission(ctx, db, allow.ID, "events:receive"); err != nil {
+		t.Fatalf("grant allow: %v", err)
+	}
+
+	// Denied plugin (no permission granted)
+	deny := &Manifest{
+		ID:         "plugin-deny",
+		Name:       "Deny",
+		Version:    "1.0.0",
+		Entrypoint: "./test",
+		Hooks: []ManifestHook{
+			{Event: "sale.completed", Action: "onSale"},
+		},
+		Permissions: []string{"events:receive"},
+	}
+	if err := PersistManifest(ctx, db, deny, InstallOptions{}); err != nil {
+		t.Fatalf("persist deny: %v", err)
+	}
+
+	bus := NewEventBus(db)
+
+	allowCh, err := bus.Subscribe(ctx, allow.ID, []string{"sale.completed"})
+	if err != nil {
+		t.Fatalf("subscribe allow: %v", err)
+	}
+	denyCh, err := bus.Subscribe(ctx, deny.ID, []string{"sale.completed"})
+	if err != nil {
+		t.Fatalf("subscribe deny: %v", err)
+	}
+
+	_, err = bus.PublishSaleCompleted(ctx, SaleCompletedEvent{SaleID: "sale-abc", TotalCents: 100})
+	if err != nil {
+		t.Fatalf("publish non-blocking: %v", err)
+	}
+
+	// allowed plugin receives
+	select {
+	case <-allowCh:
+	case <-time.After(time.Second):
+		t.Fatal("expected allow plugin to receive event")
+	}
+
+	// denied plugin should not receive
+	select {
+	case ev := <-denyCh:
+		t.Fatalf("expected no event for denied plugin, got %v", ev)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Audit should record both enqueue and denial
+	rows, err := db.QueryContext(ctx, `
+		SELECT data_json FROM audit_log WHERE action = 'event_dispatch'
+	`)
+	if err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	defer rows.Close()
+
+	var hasEnqueued, hasDenied bool
+	for rows.Next() {
+		var details string
+		if err := rows.Scan(&details); err != nil {
+			t.Fatalf("scan audit: %v", err)
+		}
+		if strings.Contains(details, "plugin_id=plugin-allow") && strings.Contains(details, "status=enqueued") {
+			hasEnqueued = true
+		}
+		if strings.Contains(details, "plugin_id=plugin-deny") && strings.Contains(details, "status=denied") {
+			hasDenied = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+	if !hasEnqueued || !hasDenied {
+		t.Fatalf("expected audit entries for enqueue (%v) and deny (%v)", hasEnqueued, hasDenied)
+	}
+}
+
+func TestEventBus_BlockingRollsBackOnError(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+
+	ctx := context.Background()
+
+	manifest := &Manifest{
+		ID:         "plugin-block",
+		Name:       "Blocker",
+		Version:    "1.0.0",
+		Entrypoint: "./test",
+		Hooks: []ManifestHook{
+			{Event: "sale.completed", Action: "onSale"},
+		},
+		Permissions: []string{"events:receive"},
+	}
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("persist manifest: %v", err)
+	}
+	if err := GrantPermission(ctx, db, manifest.ID, "events:receive"); err != nil {
+		t.Fatalf("grant permission: %v", err)
+	}
+
+	bus := NewEventBus(db)
+	bus.SetEventMode("sale.completed", Blocking)
+
+	handlerErr := errors.New("handler failed")
+	if _, err := bus.SubscribeWithHandler(ctx, manifest.ID, []string{"sale.completed"}, func(ctx context.Context, event Event) error {
+		return handlerErr
+	}); err != nil {
+		t.Fatalf("subscribe with handler: %v", err)
+	}
+
+	if _, err := bus.PublishSaleCompleted(ctx, SaleCompletedEvent{SaleID: "sale-block", TotalCents: 500}); err == nil {
+		t.Fatal("expected blocking publish to fail")
+	} else if !strings.Contains(err.Error(), handlerErr.Error()) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var details string
+	err := db.QueryRowContext(ctx, `
+		SELECT data_json FROM audit_log 
+		WHERE action = 'event_dispatch' AND entity_id = ? 
+		ORDER BY id DESC LIMIT 1
+	`, manifest.ID).Scan(&details)
+	if err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	if !strings.Contains(details, "status=error") {
+		t.Fatalf("expected error status in audit details, got %s", details)
+	}
+}
+
 func TestEventBus_Unsubscribe(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
@@ -326,7 +482,7 @@ func TestEventBus_AcknowledgeError(t *testing.T) {
 	// Verify audit log contains error details
 	var details string
 	err = db.QueryRowContext(ctx, `
-		SELECT details FROM audit_log WHERE action = 'event_acknowledged'
+		SELECT data_json FROM audit_log WHERE action = 'event_acknowledged'
 	`).Scan(&details)
 	if err != nil {
 		t.Fatalf("query audit_log: %v", err)
