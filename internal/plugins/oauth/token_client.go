@@ -30,6 +30,12 @@ type CachedToken struct {
 	Scope     string    `json:"scope"`
 }
 
+// TokenProvider defines the interface for obtaining OAuth2 tokens
+type TokenProvider interface {
+	GetToken(ctx context.Context) (string, error)
+	ClearCache() error
+}
+
 // TokenClient manages OAuth2 client-credentials tokens with on-disk caching
 type TokenClient struct {
 	cfg       *config.MarketplaceConfig
