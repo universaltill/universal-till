@@ -209,7 +209,7 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 			if sub.Handler == nil {
 				msg := "blocking event requires handler"
 				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", msg)
-				return "", fmt.Errorf("%s: %s", sub.PluginID, msg)
+				return "", fmt.Errorf("blocking event %s failed for plugin %s: %s", eventType, sub.PluginID, msg)
 			}
 			if err := sub.Handler(ctx, event); err != nil {
 				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
