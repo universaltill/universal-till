@@ -370,7 +370,7 @@ func setupAuditLog(t *testing.T, db *sql.DB) {
 			action TEXT NOT NULL,
 			entity_type TEXT,
 			entity_id TEXT,
-			details TEXT,
+			data_json TEXT,
 			created_at TEXT NOT NULL
 		)
 	`)

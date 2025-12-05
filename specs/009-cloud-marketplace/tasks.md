@@ -1,11 +1,11 @@
 # Tasks: Cloud Marketplace Integration (POS Client)
 
-**Input**: `specs/001-cloud-marketplace/`
+**Input**: `specs/009-cloud-marketplace/`
 
 ## Phase 1: Setup (Shared Infrastructure)
 - [ ] T001 Add marketplace configuration struct + env wiring in `internal/config/config.go` and surface defaults in `pos.env.example`.
 - [ ] T002 [P] Create local plugin cache directories (`data/plugins/cache`, `data/plugins/tmp`) via startup bootstrap in `main.go`.
-- [ ] T003 [P] Document new marketplace environment keys in `specs/001-cloud-marketplace/quickstart.md` and `README.md`.
+- [ ] T003 [P] Document new marketplace environment keys in `specs/009-cloud-marketplace/quickstart.md` and `README.md`.
 
 ---
 
@@ -13,6 +13,7 @@
 - [ ] T004 Implement OAuth2 client-credentials token manager in `internal/plugins/oauth/token_client.go` with secure on-disk cache.
 - [ ] T005 [P] Add marketplace gRPC/HTTPS client abstractions in `internal/plugins/marketplace/client.go` following `contracts/marketplace.proto`.
 - [ ] T006 [P] Build download cache abstraction (`internal/plugins/storage/cache_store.go`) that tracks `.part` files and disk quotas.
+- [ ] T006b [P] Attach API version metadata to all marketplace requests (per FR-016), with config wiring, deprecation alerting, and tests.
 - [ ] T007 Define canonical plugin type enums + validation helpers in `internal/plugins/types.go` reused by host + UI.
 - [ ] T008 Wire RBAC + audit helpers in `internal/plugins/authorizer.go` so installs/updates enforce manager overrides globally.
 - [ ] T009 Add scheduler stubs in `internal/server/server.go` for catalog sync, telemetry, and revocation jobs (no logic yet).
@@ -94,23 +95,34 @@
 ---
 
 ## Phase 8: Polish & Cross-Cutting Concerns
-- [ ] T036 [P] Update `docs/data-model.md` and `specs/001-cloud-marketplace/quickstart.md` with any schema/flow changes discovered during implementation.
+- [ ] T036 [P] Update `docs/data-model.md` and `specs/009-cloud-marketplace/quickstart.md` with any schema/flow changes discovered during implementation.
 - [ ] T037 Add smoke script coverage for catalog→install→rollback in `scripts/smoke_quickstart/main.go` and ensure quickstart steps remain accurate.
 - [ ] T038 [P] Instrument `/plugins/store` render timings (excluding WAN) in `internal/pages/plugins_page.go` and extend `scripts/smoke_quickstart/main.go` to fail if 90th percentile render time exceeds 3 seconds (SC-001).
 
+---
+
+## Phase 9: User Story 6 – Dev Mode Local Marketplace Override (Priority: P2)
+**Goal**: Allow dev-mode-only override of marketplace base URL with validation, toggle, and fallback.
+
+**Independent Test**: Enable dev mode, set a local URL, confirm requests route locally; toggle to cloud and back; invalid URL is rejected with actionable error; timeout triggers fallback to cloud with log.
+
+### Implementation & Tests
+- [ ] T039 [P] Implement dev-mode-only override config + validation (scheme/host/port/reachability) in `internal/settings` + `internal/plugins/marketplace/client.go`; keep previous endpoint on failure.
+- [ ] T040 [US6] Add runtime toggle and fallback logic (health check + timeout) with audit/logging in marketplace client/router; ensure dev-mode gating.
+- [ ] T041 [P] Update UI/API surfaces (`internal/pages/plugins_page.go`, templates) and quickstart docs to expose override/toggle; add tests covering toggle, validation errors, and fallback.
 ---
 
 ## Dependencies & Execution Order
 
 1. **Phase 1 → Phase 2**: Setup must complete before foundational services; no user story work until Phase 2 tasks (T004–T009) are done.
 2. **Phase 2 → User Stories**: All user stories depend on OAuth, marketplace client, cache, RBAC, and scheduler stubs.
-3. **User Story Order**: US1 (catalog) is the MVP and must finish before other stories rely on catalog data. US2 depends on US1 metadata, while US3–US5 can proceed once US2 exposes install data. US4 (manual/offline) depends on install pipeline; US5 builds atop RBAC + audit from earlier phases.
+3. **User Story Order**: US1 (catalog) is the MVP and must finish before other stories rely on catalog data. US2 depends on US1 metadata, while US3–US5 can proceed once US2 exposes install data. US4 (manual/offline) depends on install pipeline; US5 builds atop RBAC + audit from earlier phases. US6 (dev override) depends on foundational client/config work and can run in parallel with US3–US5 once Phase 2 completes.
 4. **Polish Phase**: Runs after desired user stories merge; focuses on docs/smoke coverage.
 
 Graph (simplified):
 ```
-Setup → Foundational → US1 → US2 → {US3, US4, US5 in priority order}
-                       ↘ after US3/US4/US5 → Polish
+Setup → Foundational → US1 → US2 → {US3, US4, US5, US6 in priority order}
+                       ↘ after US3/US4/US5/US6 → Polish
 ```
 
 ## Parallel Execution Examples

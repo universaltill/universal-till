@@ -291,7 +291,7 @@ func (s *Supervisor) auditLifecycle(ctx context.Context, pluginID, action, detai
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, details, created_at)
+		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
 		VALUES (?, 'plugin', ?, ?, ?)
 	`, action, pluginID, details, now)
 	return err
