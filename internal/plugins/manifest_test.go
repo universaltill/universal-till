@@ -439,6 +439,16 @@ func setupTestDB(t *testing.T) *sql.DB {
 		FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE,
 		UNIQUE (plugin_id, permission)
 	);
+
+	CREATE TABLE audit_log (
+		id TEXT PRIMARY KEY,
+		actor_id TEXT,
+		entity_type TEXT NOT NULL,
+		entity_id TEXT NOT NULL,
+		action TEXT NOT NULL,
+		data_json TEXT,
+		created_at TEXT NOT NULL
+	);
 	`
 
 	if _, err := db.Exec(schema); err != nil {

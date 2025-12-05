@@ -18,12 +18,14 @@ Principles: offline-first; correctness over cleverness; testable core; no schema
 
 ## Functional Requirements
 - Sale completion benchmark/smoke under target thresholds; CI warn/fail thresholds documented.
-- Event dispatch defaults to non-blocking with audit for non-critical events; blocking paths explicitly marked with rollback semantics.
-- Crash isolation: plugin crash during events must not corrupt DB; tests verify invariants.
-- Offline safety: flows must operate without network; errors handled gracefully.
+- Local interactions (e.g., item lookup or cart add) complete under 200ms on target hardware; micro-interaction benchmark validates latency (PRS-103).
+- Event dispatch MUST default to non-blocking mode with audit for non-critical events. Blocking mode requires explicit configuration and implements rollback semantics on handler failure. Implementation (PRS-201) and tests (PRS-202) cover both modes.
+- Crash isolation: plugin crash during events must not corrupt DB. Tests verify invariants: (1) sales.total = SUM(payments.amount), (2) inventory.quantity = SUM(stock_movements.quantity), (3) no orphaned sale_lines, (4) audit_log entry exists for crash event (PRS-301).
+- Offline safety: flows must operate without network; errors handled gracefully with regression tests for offline scenarios (PRS-302).
 
 ## Acceptance Criteria
 - Benchmark/CI script exists and runs sale flow against temp SQLite; threshold configurable.
+- Target hardware defined as Raspberry Pi 4 (8GB) baseline: 4-core ARM64 @ 1.5GHz, 8GB RAM, SSD storage. "Equivalent mini PC" means similar CPU/RAM/storage performance; adjust thresholds for x86 or HDD with explicit justification. Thresholds (warn/fail) documented for sale and micro-interactions.
 - Event dispatch code distinguishes blocking vs non-blocking and documents rollback; tests cover both.
-- Crash isolation test simulates plugin crash during event dispatch and asserts DB invariants.
+- Crash isolation test simulates plugin crash during event dispatch and asserts DB invariants (enumerated in FR above).
 - Smoke script documents offline run path; results reproducible locally.

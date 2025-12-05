@@ -7,8 +7,10 @@ Add performance benchmarks/smoke scripts, enforce event dispatch semantics (bloc
 
 ## Phases
 1) Benchmarks & Smoke
-- Implement sale-flow benchmark against temp SQLite; configurable threshold; CI warn/fail mode.
-- Add smoke script to run offline sale flow end-to-end.
+- Implement sale-flow benchmark against temp SQLite; configurable threshold; CI warn/fail mode (PRS-101).
+- Add micro-interaction benchmark/smoke (item lookup or cart add) with thresholds; wire CI warn/fail (PRS-103).
+- Add smoke script to run offline sale flow end-to-end (PRS-102).
+- Document target hardware baseline: Raspberry Pi 4 (8GB) - 4-core ARM64 @ 1.5GHz, 8GB RAM, SSD storage. Define thresholds (warn/fail) for sale and micro-interactions (PRS-401).
 
 2) Event Dispatch Semantics
 - Document and implement blocking vs non-blocking plugin events; add rollback/audit handling where blocking.
@@ -19,7 +21,7 @@ Add performance benchmarks/smoke scripts, enforce event dispatch semantics (bloc
 
 4) Tests & Docs
 - Benchmarks and integration tests wired into CI target list.
-- Update contracts/quickstart with event dispatch rules and benchmark usage.
+- Update contracts/quickstart with event dispatch rules, hardware assumptions, thresholds (warn/fail), and benchmark/smoke usage.
 
 ## Constraints
 - No schema changes; offline-first; stable domain model; avoid external dependencies.

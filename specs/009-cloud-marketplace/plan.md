@@ -5,9 +5,11 @@
 
 ## Summary
 
-Universal Till POS must integrate with the remotely hosted plugin marketplace: browse catalog feeds, authenticate via OAuth2 client credentials, download plugin artifacts over HTTPS/gRPC token exchanges, install/update/uninstall plugins locally, and keep working offline. Plugins remain separate executables (preferably Go) launched by the POS; depending on their declared canonical type (page, payment, device, etc.) the host wires UI/menu entries or API shims that communicate via gRPC IPC. Work includes resilient caching, compatibility gating before enabling installs, resume-capable downloads, rollback storage, revocation handling, audit logging, and RBAC enforcement without changing the existing SQLite schema.
+Universal Till POS must integrate with the remotely hosted plugin marketplace: browse catalog feeds, authenticate via OAuth2 client credentials, download plugin artifacts over HTTPS/gRPC token exchanges, install/update/uninstall plugins locally, and keep working offline. Plugins remain separate executables (preferably Go) launched by the POS; depending on their declared canonical type (page, payment, device, etc.) the host wires UI/menu entries or API shims that communicate via gRPC IPC. Work includes resilient caching, compatibility gating before enabling installs, resume-capable downloads, rollback storage, revocation handling, audit logging, RBAC enforcement, marketplace API version pinning, and a dev-mode-only local marketplace URL override (validation/toggle/fallback) without changing the existing SQLite schema.
 
 **Performance Measurement**: Instrument `/plugins/store` handlers to log render timings excluding remote latency, expose metrics in the smoke script (`scripts/smoke_quickstart`) that fail if 90th percentile exceeds 3 seconds, and document the measurement procedure in `quickstart.md`.
+
+**Dev Override & Versioning**: Pin marketplace API version metadata on all calls (FR-016) and support a dev-mode-only local marketplace base URL override with validation, runtime toggle, logging, and fallback to cloud on failure (FR-020–FR-022).
 
 ## Technical Context
 
@@ -85,3 +87,9 @@ scripts/
 |-----------|------------|-------------------------------------|
 | [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
 | [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+
+## Additional Workstreams (Post-merge Update)
+
+1) Dev Mode Override & Version Pinning  
+- Wire marketplace API version metadata on all marketplace client calls with configurable pin/deprecation alerts (FR-016).  
+- Implement a dev-mode-only marketplace override with validation (scheme/host/port/reachability), runtime toggle between local/cloud, logging/audit of active source, and fallback to cloud on timeout (FR-020–FR-022).
