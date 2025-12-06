@@ -12,12 +12,13 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
-func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB) *http.ServeMux {
+func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository) *http.ServeMux {
 	log := logging.L()
 	mux := http.NewServeMux()
 
@@ -61,15 +62,16 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	}
 
 	dp := &common.Deps{
-		Cfg:      cfg,
-		Pm:       pm,
-		Db:       db,
-		Settings: setStore,
-		State:    state,
-		BaseMenu: baseMenu,
-		Menu:     common.BuildMenu(baseMenu, pm),
-		Engine:   engine,
-		BtnStore: btnStore,
+		Cfg:         cfg,
+		Pm:          pm,
+		Db:          db,
+		Settings:    setStore,
+		State:       state,
+		BaseMenu:    baseMenu,
+		Menu:        common.BuildMenu(baseMenu, pm),
+		Engine:      engine,
+		BtnStore:    btnStore,
+		CatalogRepo: catalogRepo,
 	}
 
 	// Register routes
@@ -89,6 +91,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerBasket(mux, dp)
 	registerHealth(mux)
 	registerExternalProxy(mux, dp)
+	registerPluginStore(mux, dp) // Marketplace plugin store
 
 	return mux
 }

@@ -1,0 +1,35 @@
+{{ define "plugin_filters" }}
+<div class="bg-white shadow rounded-lg p-4 mb-6">
+	<form hx-get="/plugins/store" hx-target="#plugin-list" hx-trigger="change" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+		<div>
+			<label for="type" class="block text-sm font-medium text-gray-700">Plugin Type</label>
+			<select id="type" name="type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+				<option value="">All Types</option>
+				<option value="page" {{ if eq .Filters.Type "page" }}selected{{ end }}>Page</option>
+				<option value="button" {{ if eq .Filters.Type "button" }}selected{{ end }}>Button</option>
+				<option value="payment" {{ if eq .Filters.Type "payment" }}selected{{ end }}>Payment</option>
+				<option value="report" {{ if eq .Filters.Type "report" }}selected{{ end }}>Report</option>
+				<option value="integration" {{ if eq .Filters.Type "integration" }}selected{{ end }}>Integration</option>
+				<option value="background_job" {{ if eq .Filters.Type "background_job" }}selected{{ end }}>Background Job</option>
+			</select>
+		</div>
+
+		<div>
+			<label for="developer" class="block text-sm font-medium text-gray-700">Developer</label>
+			<input type="text" id="developer" name="developer" value="{{ .Filters.Developer }}" 
+				class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+				placeholder="Filter by developer...">
+		</div>
+
+		<div>
+			<label for="trust_tier" class="block text-sm font-medium text-gray-700">Trust Tier</label>
+			<select id="trust_tier" name="trust_tier" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+				<option value="">All Tiers</option>
+				<option value="verified" {{ if eq .Filters.TrustTier "verified" }}selected{{ end }}>Verified</option>
+				<option value="approved" {{ if eq .Filters.TrustTier "approved" }}selected{{ end }}>Approved</option>
+				<option value="community" {{ if eq .Filters.TrustTier "community" }}selected{{ end }}>Community</option>
+			</select>
+		</div>
+	</form>
+</div>
+{{ end }}

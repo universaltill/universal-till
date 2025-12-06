@@ -116,7 +116,7 @@ func (cr *CatalogRepository) GetOrFetch(ctx context.Context, locale, deviceArch 
 }
 
 // Filter returns plugins matching the given criteria
-func (cr *CatalogRepository) Filter(pluginType, vendor, trustLevel string) ([]PluginSummary, error) {
+func (cr *CatalogRepository) Filter(pluginType, developer, trustTier string) ([]PluginSummary, error) {
 	snapshot, _, err := cr.Get()
 	if err != nil {
 		return nil, err
@@ -126,13 +126,13 @@ func (cr *CatalogRepository) Filter(pluginType, vendor, trustLevel string) ([]Pl
 	for _, p := range snapshot.Plugins {
 		match := true
 
-		if pluginType != "" && p.Type != pluginType {
+		if pluginType != "" && p.CanonicalType != pluginType {
 			match = false
 		}
-		if vendor != "" && p.Vendor != vendor {
+		if developer != "" && p.DeveloperID != developer {
 			match = false
 		}
-		if trustLevel != "" && p.TrustLevel != trustLevel {
+		if trustTier != "" && p.TrustTier != trustTier {
 			match = false
 		}
 

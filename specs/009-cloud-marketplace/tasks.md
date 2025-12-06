@@ -29,9 +29,9 @@
 
 ### Implementation & Tests
 - [X] T010 [P] [US1] Implement catalog repository with on-disk snapshot + stale markers in `internal/plugins/marketplace/catalog_repository.go`.
-- [ ] T011 [US1] Add periodic catalog sync job + exponential backoff in `internal/server/scheduler.go` invoking the repository.
-- [ ] T012 [P] [US1] Create HTMX handlers in `internal/pages/plugins_page.go` to list/filter plugins and expose stale metadata.
-- [ ] T013 [P] [US1] Build UI templates/partials (`web/ui/pages/plugins_store.html`, `web/ui/partials/plugins_filters.html`) with capability/device filters.
+- [X] T011 [US1] Add periodic catalog sync job + exponential backoff in `internal/server/scheduler.go` invoking the repository.
+- [X] T012 [P] [US1] Create HTMX handlers in `internal/pages/plugins_page.go` to list/filter plugins and expose stale metadata.
+- [X] T013 [P] [US1] Build UI templates/partials (`web/ui/pages/plugins_store.html`, `web/ui/partials/plugins_filters.html`) with capability/device filters.
 - [X] T014 [US1] Add catalog caching tests covering offline replay in `internal/plugins/marketplace/catalog_repository_test.go`.
 
 ---

@@ -25,10 +25,17 @@ func TestClient_ListPlugins(t *testing.T) {
 		resp := ListPluginsResponse{
 			Plugins: []PluginSummary{
 				{
-					ID:      "test-plugin",
-					Name:    "Test Plugin",
-					Version: "1.0.0",
-					Type:    "page",
+					ListingID:     "550e8400-e29b-41d4-a716-446655440001",
+					Name:          "Test Plugin",
+					Version:       "1.0.0",
+					CanonicalType: "page",
+					DeveloperID:   "test-dev",
+					TrustTier:     "verified",
+					ArtifactURL:   "https://example.com/plugin.tar.gz",
+					ArtifactHash:  "abc123",
+					Locale:        "en",
+					DeviceArch:    "linux/amd64",
+					ApprovedAt:    "2024-01-01T00:00:00Z",
 				},
 			},
 			SnapshotVersion: 1,
@@ -64,8 +71,8 @@ func TestClient_ListPlugins(t *testing.T) {
 	if len(resp.Plugins) != 1 {
 		t.Errorf("expected 1 plugin, got %d", len(resp.Plugins))
 	}
-	if resp.Plugins[0].ID != "test-plugin" {
-		t.Errorf("unexpected plugin ID: %s", resp.Plugins[0].ID)
+	if resp.Plugins[0].ListingID != "550e8400-e29b-41d4-a716-446655440001" {
+		t.Errorf("unexpected plugin listing ID: %s", resp.Plugins[0].ListingID)
 	}
 }
 
