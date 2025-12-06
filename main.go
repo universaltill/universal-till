@@ -9,6 +9,8 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/server"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -53,11 +55,31 @@ func main() {
 		log.Fatalf("plugin init failed: %v", err)
 	}
 
-	// 4) Pages: pass db so handlers can use it
-	mux := pages.Init(ctx, cfg, pluginManager, database.DB)
+	// 3b) Marketplace: OAuth client and catalog repository (T004, T010 - 009-cloud-marketplace)
+	var catalogRepo *marketplace.CatalogRepository
+	if cfg.Marketplace.EndpointURL != "" {
+		// Create OAuth token client
+		tokenClient := oauth.NewTokenClient(&cfg.Marketplace)
 
-	// 5) Server
-	if err := server.Start(ctx, cfg, mux); err != nil {
+		// Create marketplace HTTP client
+		marketplaceClient := marketplace.NewClient(&cfg.Marketplace, tokenClient)
+
+		// Create catalog repository
+		var err error
+		catalogRepo, err = marketplace.NewCatalogRepository(marketplaceClient, "./data/plugins/cache")
+		if err != nil {
+			log.Fatalf("failed to create catalog repository: %v", err)
+		}
+		log.Infof("Marketplace catalog repository initialized (endpoint: %s)", cfg.Marketplace.EndpointURL)
+	} else {
+		log.Warnf("Marketplace not configured (UT_MARKETPLACE_ENDPOINT_URL not set)")
+	}
+
+	// 4) Pages: pass db and catalog repo so handlers can use them
+	mux := pages.Init(ctx, cfg, pluginManager, database.DB, catalogRepo)
+
+	// 5) Server with background jobs (T011 - 009-cloud-marketplace)
+	if err := server.Start(ctx, cfg, mux, catalogRepo); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
 }

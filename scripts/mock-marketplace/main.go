@@ -8,24 +8,21 @@ import (
 	"log"
 	"net/http"
 	"runtime"
-	"strings"
 )
 
 type PluginSummary struct {
-	ID                   string   `json:"id"`
-	Name                 string   `json:"name"`
-	Version              string   `json:"version"`
-	Type                 string   `json:"type"`
-	Vendor               string   `json:"vendor"`
-	TrustLevel           string   `json:"trust_level"`
-	RequiredCapabilities []string `json:"required_capabilities"`
-	MinHostVersion       string   `json:"min_host_version"`
-	Description          string   `json:"description"`
-	IconURL              string   `json:"icon_url"`
-	PaidListing          bool     `json:"paid_listing"`
-	PackageURL           string   `json:"package_url"` // HTTP extension for POS download
-	SHA256               string   `json:"sha256"`      // HTTP extension for POS verification
-	SizeBytes            int64    `json:"size_bytes"`  // HTTP extension for UI display
+	ListingID     string `json:"listing_id"`
+	DeveloperID   string `json:"developer_id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	CanonicalType string `json:"canonical_type"`
+	TrustTier     string `json:"trust_tier"`
+	ArtifactURL   string `json:"artifact_url"`
+	ArtifactHash  string `json:"artifact_hash"`
+	Version       string `json:"version"`
+	Locale        string `json:"locale"`
+	DeviceArch    string `json:"device_arch"`
+	ApprovedAt    string `json:"approved_at"`
 }
 
 type ListPluginsResponse struct {
@@ -49,60 +46,72 @@ type IssueDownloadTokenResponse struct {
 	Signature     string `json:"signature"`
 }
 
-// Mock plugin catalog - in production this comes from database
+// Mock plugin catalog - matches official marketplace API structure
 var mockCatalog = []PluginSummary{
 	{
-		ID:                   "sales-report",
-		Name:                 "Sales Report Plugin",
-		Version:              "1.0.0",
-		Type:                 "page",
-		Vendor:               "Universal Till",
-		TrustLevel:           "verified",
-		RequiredCapabilities: []string{"pos.sales.read"},
-		MinHostVersion:       "0.1.0",
-		Description:          "Generate daily sales reports with charts and export to PDF",
-		IconURL:              "https://example.com/icons/sales-report.png",
-		PaidListing:          false,
-		PackageURL:           "http://127.0.0.1:8081/artifacts/sales-report-1.0.0.tar.gz",
-		SHA256:               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", // empty file hash for demo
-		SizeBytes:            2048,
+		ListingID:     "550e8400-e29b-41d4-a716-446655440001",
+		DeveloperID:   "dev-universaltill",
+		Name:          "Sales Report Plugin",
+		Description:   "Generate daily sales reports with charts and export to PDF",
+		CanonicalType: "page",
+		TrustTier:     "verified",
+		ArtifactURL:   "http://127.0.0.1:8081/artifacts/sales-report-1.0.0.tar.gz",
+		ArtifactHash:  "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		Version:       "1.0.0",
+		Locale:        "en",
+		DeviceArch:    "linux/amd64",
+		ApprovedAt:    "2025-12-01T10:00:00Z",
 	},
 	{
-		ID:                   "loyalty-card",
-		Name:                 "Loyalty Card Scanner",
-		Version:              "2.1.3",
-		Type:                 "payment",
-		Vendor:               "Acme Corp",
-		TrustLevel:           "untrusted",
-		RequiredCapabilities: []string{"pos.payment.process", "hardware.scanner"},
-		MinHostVersion:       "0.2.0",
-		Description:          "Scan QR code loyalty cards and apply discounts automatically",
-		IconURL:              "https://example.com/icons/loyalty.png",
-		PaidListing:          true,
-		PackageURL:           "http://127.0.0.1:8081/artifacts/loyalty-card-2.1.3.tar.gz",
-		SHA256:               "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a", // different hash
-		SizeBytes:            4096,
+		ListingID:     "550e8400-e29b-41d4-a716-446655440002",
+		DeveloperID:   "dev-acmecorp",
+		Name:          "Loyalty Card Scanner",
+		Description:   "Scan QR code loyalty cards and apply discounts automatically",
+		CanonicalType: "payment",
+		TrustTier:     "approved",
+		ArtifactURL:   "http://127.0.0.1:8081/artifacts/loyalty-card-2.1.3.tar.gz",
+		ArtifactHash:  "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+		Version:       "2.1.3",
+		Locale:        "en",
+		DeviceArch:    "linux/amd64",
+		ApprovedAt:    "2025-11-15T14:30:00Z",
 	},
 	{
-		ID:                   "inventory-sync",
-		Name:                 "Cloud Inventory Sync",
-		Version:              "0.9.0",
-		Type:                 "background",
-		Vendor:               "Universal Till",
-		TrustLevel:           "verified",
-		RequiredCapabilities: []string{"pos.inventory.write", "network.outbound"},
-		MinHostVersion:       "0.1.0",
-		Description:          "Synchronize inventory counts to central warehouse management system",
-		IconURL:              "https://example.com/icons/inventory.png",
-		PaidListing:          false,
-		PackageURL:           "http://127.0.0.1:8081/artifacts/inventory-sync-0.9.0.tar.gz",
-		SHA256:               "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-		SizeBytes:            3072,
+		ListingID:     "550e8400-e29b-41d4-a716-446655440003",
+		DeveloperID:   "dev-universaltill",
+		Name:          "Cloud Inventory Sync",
+		Description:   "Synchronize inventory counts to central warehouse management system",
+		CanonicalType: "background_job",
+		TrustTier:     "verified",
+		ArtifactURL:   "http://127.0.0.1:8081/artifacts/inventory-sync-0.9.0.tar.gz",
+		ArtifactHash:  "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+		Version:       "0.9.0",
+		Locale:        "en",
+		DeviceArch:    "linux/amd64",
+		ApprovedAt:    "2025-12-05T09:00:00Z",
 	},
 }
 
 func main() {
 	mux := http.NewServeMux()
+
+	// OAuth2 token endpoint (simplified mock)
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Return a mock OAuth2 token response
+		resp := map[string]interface{}{
+			"access_token": "mock-access-token-12345",
+			"token_type":   "Bearer",
+			"expires_in":   3600, // 1 hour
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
 
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -122,23 +131,17 @@ func main() {
 			deviceArch = fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 		}
 
-		capabilityFilter := r.URL.Query().Get("capability")
+		// Filter plugins by device_arch and locale if specified
+		locale := r.URL.Query().Get("locale")
 
-		// Filter plugins
 		filtered := make([]PluginSummary, 0, len(mockCatalog))
 		for _, p := range mockCatalog {
-			// For demo, show all plugins - in production filter by arch/capability
-			if capabilityFilter != "" {
-				hasCapability := false
-				for _, cap := range p.RequiredCapabilities {
-					if strings.Contains(cap, capabilityFilter) {
-						hasCapability = true
-						break
-					}
-				}
-				if !hasCapability {
-					continue
-				}
+			// For demo, show all plugins compatible with requested arch/locale
+			if locale != "" && p.Locale != locale {
+				continue
+			}
+			if deviceArch != "" && p.DeviceArch != deviceArch {
+				continue
 			}
 			filtered = append(filtered, p)
 		}
@@ -170,7 +173,7 @@ func main() {
 		// Find plugin in catalog
 		var plugin *PluginSummary
 		for i := range mockCatalog {
-			if mockCatalog[i].ID == req.PluginID && mockCatalog[i].Version == req.Version {
+			if mockCatalog[i].ListingID == req.PluginID && mockCatalog[i].Version == req.Version {
 				plugin = &mockCatalog[i]
 				break
 			}
@@ -183,10 +186,10 @@ func main() {
 
 		// Issue download token (simplified - no expiry/auth for mock)
 		resp := IssueDownloadTokenResponse{
-			ArtifactURL:   plugin.PackageURL,
+			ArtifactURL:   plugin.ArtifactURL,
 			Token:         fmt.Sprintf("mock-token-%s-%s", req.PluginID, req.Version),
 			ExpiresAtUnix: 0, // no expiry for mock
-			SHA256:        plugin.SHA256,
+			SHA256:        plugin.ArtifactHash,
 			Signature:     "mock-signature",
 		}
 
@@ -226,9 +229,17 @@ func main() {
 
 	log.Println("Mock Marketplace Server starting on :8081")
 	log.Println("Endpoints:")
+	log.Println("  POST /oauth/token (OAuth2 client credentials)")
 	log.Println("  GET  /health")
 	log.Println("  GET  /v1/catalog/plugins?device_arch=&capability=")
 	log.Println("  POST /v1/download/token")
 	log.Println("  GET  /artifacts/{filename}")
-	log.Fatal(http.ListenAndServe(":8081", mux))
+
+	// Wrap with logging middleware
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[%s] %s %s", r.Method, r.URL.Path, r.URL.RawQuery)
+		mux.ServeHTTP(w, r)
+	})
+
+	log.Fatal(http.ListenAndServe(":8081", handler))
 }

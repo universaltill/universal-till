@@ -157,8 +157,8 @@ func TestCatalogRepository_Filter(t *testing.T) {
 	}
 
 	for _, p := range filtered {
-		if p.Type != "payment" {
-			t.Errorf("unexpected plugin type in filtered results: %s", p.Type)
+		if p.CanonicalType != "payment" {
+			t.Errorf("unexpected plugin type in filtered results: %s", p.CanonicalType)
 		}
 	}
 }

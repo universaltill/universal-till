@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -50,6 +51,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		return nil, fmt.Errorf("invalid request URL: %w", err)
 	}
 
+	// DEBUG: Log the request URL
+	log.Printf("[DEBUG] Marketplace request: %s %s", method, reqURL)
+
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -66,6 +70,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 
+	// DEBUG: Log the response status
+	log.Printf("[DEBUG] Marketplace response: %d for %s %s", resp.StatusCode, method, reqURL)
+
 	return resp, nil
 }
 
@@ -73,25 +80,26 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 
 // ListPluginsRequest matches the proto contract.
 type ListPluginsRequest struct {
-	Locale       string   `json:"locale,omitempty"`
-	DeviceArch   string   `json:"device_arch,omitempty"`
-	Capability   []string `json:"capability,omitempty"`
-	PageToken    string   `json:"page_token,omitempty"`
+	Locale     string   `json:"locale,omitempty"`
+	DeviceArch string   `json:"device_arch,omitempty"`
+	Capability []string `json:"capability,omitempty"`
+	PageToken  string   `json:"page_token,omitempty"`
 }
 
 // PluginSummary represents a plugin in the catalog.
 type PluginSummary struct {
-	ID                   string   `json:"id"`
-	Name                 string   `json:"name"`
-	Version              string   `json:"version"`
-	Type                 string   `json:"type"`
-	Vendor               string   `json:"vendor"`
-	TrustLevel           string   `json:"trust_level"`
-	RequiredCapabilities []string `json:"required_capabilities"`
-	MinHostVersion       string   `json:"min_host_version"`
-	Description          string   `json:"description"`
-	IconURL              string   `json:"icon_url"`
-	PaidListing          bool     `json:"paid_listing"`
+	ListingID     string `json:"listing_id"`
+	DeveloperID   string `json:"developer_id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	CanonicalType string `json:"canonical_type"`
+	TrustTier     string `json:"trust_tier"`
+	ArtifactURL   string `json:"artifact_url"`
+	ArtifactHash  string `json:"artifact_hash"`
+	Version       string `json:"version"`
+	Locale        string `json:"locale"`
+	DeviceArch    string `json:"device_arch"`
+	ApprovedAt    string `json:"approved_at"`
 }
 
 // ListPluginsResponse contains paginated catalog results.
@@ -118,16 +126,49 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 		params.Set("page_token", req.PageToken)
 	}
 
-	path := "/v1/catalog/plugins"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
+	// Build URL properly with query parameters
+	endpoint := c.cfg.EndpointURL
+	if c.cfg.DevOverrideURL != "" {
+		endpoint = c.cfg.DevOverrideURL
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	reqURL, err := url.JoinPath(endpoint, "/v1/catalog/plugins")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid request URL: %w", err)
+	}
+
+	// Parse URL and add query params
+	parsedURL, err := url.Parse(reqURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+	parsedURL.RawQuery = params.Encode()
+
+	// Get token
+	token, err := c.tokenClient.GetToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get auth token: %w", err)
+	}
+
+	// Create request
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
+
+	// DEBUG
+	log.Printf("[DEBUG] Marketplace request: GET %s", parsedURL.String())
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	log.Printf("[DEBUG] Marketplace response: %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("catalog request failed: status %d", resp.StatusCode)

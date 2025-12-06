@@ -1,0 +1,50 @@
+{
+  "plugins": [
+    {
+      "listing_id": "550e8400-e29b-41d4-a716-446655440001",
+      "developer_id": "dev-universaltill",
+      "name": "Sales Report Plugin",
+      "description": "Generate daily sales reports with charts and export to PDF",
+      "canonical_type": "page",
+      "trust_tier": "verified",
+      "artifact_url": "http://127.0.0.1:8081/artifacts/sales-report-1.0.0.tar.gz",
+      "artifact_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "1.0.0",
+      "locale": "en",
+      "device_arch": "linux/amd64",
+      "approved_at": "2025-12-01T10:00:00Z"
+    },
+    {
+      "listing_id": "550e8400-e29b-41d4-a716-446655440002",
+      "developer_id": "dev-acmecorp",
+      "name": "Loyalty Card Scanner",
+      "description": "Scan QR code loyalty cards and apply discounts automatically",
+      "canonical_type": "payment",
+      "trust_tier": "approved",
+      "artifact_url": "http://127.0.0.1:8081/artifacts/loyalty-card-2.1.3.tar.gz",
+      "artifact_hash": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "version": "2.1.3",
+      "locale": "en",
+      "device_arch": "linux/amd64",
+      "approved_at": "2025-11-15T14:30:00Z"
+    },
+    {
+      "listing_id": "550e8400-e29b-41d4-a716-446655440003",
+      "developer_id": "dev-universaltill",
+      "name": "Cloud Inventory Sync",
+      "description": "Synchronize inventory counts to central warehouse management system",
+      "canonical_type": "background_job",
+      "trust_tier": "verified",
+      "artifact_url": "http://127.0.0.1:8081/artifacts/inventory-sync-0.9.0.tar.gz",
+      "artifact_hash": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "version": "0.9.0",
+      "locale": "en",
+      "device_arch": "linux/amd64",
+      "approved_at": "2025-12-05T09:00:00Z"
+    }
+  ],
+  "snapshot_version": 1,
+  "fetched_at": "2025-12-06T00:15:00.922237Z",
+  "locale": "en",
+  "device_arch": "linux/amd64"
+}
