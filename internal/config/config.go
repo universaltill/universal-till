@@ -53,6 +53,7 @@ type Config struct {
 	MarketplaceURL string // Deprecated: use Marketplace.EndpointURL
 	Marketplace    MarketplaceConfig
 	DevMode        bool
+	DefaultLocale  string // BCP 47 format: en-US, fr-CA, es-MX, etc.
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -90,11 +91,12 @@ func Init() (*Config, error) {
 	locales := Locales{
 		Currency:       getenv("UT_CURRENCY", "GBP"),
 		CurrencySymbol: getenv("UT_CURRENCY_SYMBOL", "£"),
-		Locale:         getenv("UT_DEFAULT_LOCALE", "en"),
+		Locale:         getenv("UT_DEFAULT_LOCALE", "en-US"),
 		TaxRate:        taxRate,
 		TaxInclusive:   tax_inclusive,
 	}
 	cfg.Locales = locales
+	cfg.DefaultLocale = getenv("UT_MARKETPLACE_LOCALE", "en-US") // BCP 47 format for marketplace
 	// if you need validation, do it here and return an error
 	return cfg, nil
 }

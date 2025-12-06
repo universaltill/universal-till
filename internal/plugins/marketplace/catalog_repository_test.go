@@ -27,7 +27,7 @@ func TestCatalogRepository_FetchAndGet(t *testing.T) {
 
 	// Fetch catalog
 	ctx := context.Background()
-	snapshot, err := repo.Fetch(ctx, "en", "linux/amd64")
+	snapshot, err := repo.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestCatalogRepository_StaleDetection(t *testing.T) {
 
 	// Fetch catalog
 	ctx := context.Background()
-	_, err = repo.Fetch(ctx, "en", "linux/amd64")
+	_, err = repo.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCatalogRepository_DiskPersistence(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	snapshot1, err := repo1.Fetch(ctx, "en", "linux/amd64")
+	snapshot1, err := repo1.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestCatalogRepository_Filter(t *testing.T) {
 
 	// Fetch catalog
 	ctx := context.Background()
-	_, err = repo.Fetch(ctx, "en", "linux/amd64")
+	_, err = repo.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestCatalogRepository_OfflineReplay(t *testing.T) {
 
 	// Fetch while online
 	ctx := context.Background()
-	_, err = repo.Fetch(ctx, "en", "linux/amd64")
+	_, err = repo.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}

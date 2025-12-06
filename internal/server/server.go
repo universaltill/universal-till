@@ -17,16 +17,18 @@ type BackgroundJobs struct {
 	telemetryInterval   time.Duration
 	revocationInterval  time.Duration
 	logger              *log.Logger
+	cfg                 *config.Config
 }
 
 // NewBackgroundJobs creates a background job scheduler
-func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, logger *log.Logger) *BackgroundJobs {
+func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
 	return &BackgroundJobs{
 		catalogRepo:         catalogRepo,
 		catalogSyncInterval: 15 * time.Minute,
 		telemetryInterval:   5 * time.Minute,
 		revocationInterval:  30 * time.Minute,
 		logger:              logger,
+		cfg:                 cfg,
 	}
 }
 
@@ -88,12 +90,16 @@ func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 
 	// Detect device architecture
 	deviceArch := "linux/amd64" // Default, could be runtime.GOOS + "/" + runtime.GOARCH
+	locale := bj.cfg.DefaultLocale
+	if locale == "" {
+		locale = "en-US" // fallback to US English
+	}
 
 	maxRetries := 3
 	baseDelay := 1 * time.Second
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		_, err := bj.catalogRepo.Fetch(ctx, "en", deviceArch)
+		_, err := bj.catalogRepo.Fetch(ctx, locale, deviceArch)
 		if err == nil {
 			bj.logger.Printf("[Scheduler] catalog sync successful")
 			return
@@ -115,7 +121,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// Start background jobs if catalog repository is configured
 	if catalogRepo != nil {
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
-		jobs := NewBackgroundJobs(catalogRepo, logger)
+		jobs := NewBackgroundJobs(catalogRepo, cfg, logger)
 		go jobs.Start(ctx)
 	}
 

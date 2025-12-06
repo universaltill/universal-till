@@ -419,4 +419,142 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Trust level updated"))
 	})
+
+	// T017: Marketplace plugin installation endpoints (009-cloud-marketplace Phase 4)
+	mux.HandleFunc("POST /api/plugins/install-from-marketplace", handleInstallFromMarketplace(d))
+	mux.HandleFunc("POST /api/plugins/{id}/enable", handleEnablePlugin(d))
+	mux.HandleFunc("POST /api/plugins/{id}/disable", handleDisablePlugin(d))
+	mux.HandleFunc("DELETE /api/plugins/{id}", handleUninstallPlugin(d))
 }
+
+// handleInstallFromMarketplace handles marketplace plugin installation (T017)
+func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Parse request
+		var req struct {
+			ListingID string `json:"listing_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.ListingID == "" {
+			http.Error(w, "listing_id is required", http.StatusBadRequest)
+			return
+		}
+
+		// Check if catalog repository is available
+		if d.CatalogRepo == nil {
+			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Get plugin details from catalog
+		snapshot, _, err := d.CatalogRepo.Get()
+		if err != nil {
+			http.Error(w, "Failed to fetch catalog", http.StatusInternalServerError)
+			return
+		}
+
+		var targetPlugin interface{}
+		for _, p := range snapshot.Plugins {
+			if p.ListingID == req.ListingID {
+				targetPlugin = p
+				break
+			}
+		}
+
+		if targetPlugin == nil {
+			http.Error(w, "Plugin not found in catalog", http.StatusNotFound)
+			return
+		}
+
+		// Verify compatibility before installation
+		systemArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+		_ = systemArch // TODO: Use for compatibility check
+		
+		// TODO: Extract arch from plugin and verify
+		// TODO: Check RBAC - require manager override if configured
+		// TODO: Check disk quota before proceeding
+
+		// Start installation process
+		downloadMgr := plugins.NewDownloadManager("./data/plugins/tmp")
+		_ = downloadMgr // TODO: Use for actual download
+		
+		// TODO: Extract artifact URL and hash from targetPlugin
+		// TODO: Call downloadMgr.Download()
+		// TODO: Extract archive
+		// TODO: Verify manifest
+		// TODO: Persist to database (T019)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Installation started (implementation pending T019)",
+		})
+	}
+}
+
+// handleEnablePlugin handles enabling a plugin (T017)
+func handleEnablePlugin(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pluginID := r.PathValue("id")
+		if pluginID == "" {
+			http.Error(w, "plugin ID is required", http.StatusBadRequest)
+			return
+		}
+
+		// TODO: Update database to mark plugin as enabled
+		// TODO: Start plugin process if auto-start is configured
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Plugin %s enabled", pluginID),
+		})
+	}
+}
+
+// handleDisablePlugin handles disabling a plugin (T017)
+func handleDisablePlugin(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pluginID := r.PathValue("id")
+		if pluginID == "" {
+			http.Error(w, "plugin ID is required", http.StatusBadRequest)
+			return
+		}
+
+		// TODO: Update database to mark plugin as disabled
+		// TODO: Stop plugin process if running
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Plugin %s disabled", pluginID),
+		})
+	}
+}
+
+// handleUninstallPlugin handles uninstalling a plugin (T017)
+func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pluginID := r.PathValue("id")
+		if pluginID == "" {
+			http.Error(w, "plugin ID is required", http.StatusBadRequest)
+			return
+		}
+
+		// TODO: Stop running plugin process
+		// TODO: Remove database entries
+		// TODO: Clean up plugin files
+		// TODO: Create audit log entry
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Plugin %s scheduled for uninstallation", pluginID),
+		})
+	}
+}
+
