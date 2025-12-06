@@ -21,8 +21,12 @@ func PluginStoreHandler(deps *common.Deps) http.HandlerFunc {
 		// Get catalog from repository
 		snapshot, isStale, err := deps.CatalogRepo.Get()
 		if err != nil {
-			// Try to fetch if no cache available
-			snapshot, err = deps.CatalogRepo.Fetch(ctx, "en", "linux/amd64")
+			// Try to fetch if no cache available (use configured locale)
+			locale := deps.Cfg.DefaultLocale
+			if locale == "" {
+				locale = "en-US" // fallback
+			}
+			snapshot, err = deps.CatalogRepo.Fetch(ctx, locale, "linux/amd64")
 			if err != nil {
 				http.Error(w, "Failed to load plugin catalog: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -73,8 +77,12 @@ func PluginStoreRefreshHandler(deps *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		// Force fetch fresh catalog
-		snapshot, err := deps.CatalogRepo.Fetch(ctx, "en", "linux/amd64")
+		// Force fetch fresh catalog (use configured locale)
+		locale := deps.Cfg.DefaultLocale
+		if locale == "" {
+			locale = "en-US" // fallback
+		}
+		snapshot, err := deps.CatalogRepo.Fetch(ctx, locale, "linux/amd64")
 		if err != nil {
 			http.Error(w, "Failed to refresh catalog", http.StatusInternalServerError)
 			return
