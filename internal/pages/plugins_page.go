@@ -2,7 +2,6 @@ package pages
 
 import (
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"net/http"
 	"sort"
@@ -28,74 +27,39 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		// Fetch plugins from marketplace API instead of local catalog
-		marketplaceURL := d.Cfg.MarketplaceURL + "/v1/catalog/plugins"
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, marketplaceURL, nil)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		// LOCAL-FIRST: Use cached catalog if available
+		var items []map[string]interface{}
+		var tagsSet = make(map[string]struct{})
 
-		if tag != "" {
-			q := req.URL.Query()
-			q.Set("capability", tag)
-			req.URL.RawQuery = q.Encode()
-		}
+		if d.CatalogRepo != nil {
+			// Try to get from cache first
+			snapshot, _, err := d.CatalogRepo.Get()
+			if err == nil && snapshot != nil {
+				// Transform catalog plugins to format expected by UI
+				for _, p := range snapshot.Plugins {
+					// Check if installed
+					installed := false
+					if _, exists := d.Pm.Installed[p.ListingID]; exists {
+						installed = true
+					}
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("marketplace request failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
+					items = append(items, map[string]interface{}{
+						"id":          p.ListingID,
+						"name":        p.Name,
+						"version":     p.Version,
+						"description": p.Description,
+						"author":      p.DeveloperID,
+						"packageUrl":  p.ArtifactURL,
+						"sha256":      p.ArtifactHash,
+						"tags":        []string{p.CanonicalType},
+						"installed":   installed,
+					})
 
-		if resp.StatusCode != http.StatusOK {
-			http.Error(w, fmt.Sprintf("marketplace returned status %d", resp.StatusCode), resp.StatusCode)
-			return
-		}
-
-		// Parse marketplace response
-		var marketplaceResp struct {
-			Plugins         []map[string]interface{} `json:"plugins"`
-			NextPageToken   string                   `json:"next_page_token"`
-			SnapshotVersion int64                    `json:"snapshot_version"`
-		}
-
-		if err := json.NewDecoder(resp.Body).Decode(&marketplaceResp); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Transform marketplace plugins to catalog format expected by UI
-		items := make([]map[string]interface{}, len(marketplaceResp.Plugins))
-		for i, p := range marketplaceResp.Plugins {
-			// Check if installed
-			installed := false
-			if pluginID, ok := p["id"].(string); ok {
-				if _, exists := d.Pm.Installed[pluginID]; exists {
-					installed = true
+					// Collect tags
+					if p.CanonicalType != "" {
+						tagsSet[p.CanonicalType] = struct{}{}
+					}
 				}
-			}
-
-			items[i] = map[string]interface{}{
-				"id":          p["id"],
-				"name":        p["name"],
-				"version":     p["version"],
-				"description": p["description"],
-				"author":      p["vendor"], // Map vendor to author for UI
-				"packageUrl":  p["package_url"],
-				"sha256":      p["sha256"],
-				"tags":        safeGetTags(p["type"]),
-				"installed":   installed,
-			}
-		}
-
-		// Collect tags from plugins
-		tagsSet := make(map[string]struct{})
-		for _, p := range marketplaceResp.Plugins {
-			if pluginType, ok := p["type"].(string); ok {
-				tagsSet[pluginType] = struct{}{}
 			}
 		}
 		var tags []string
@@ -104,19 +68,36 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		sort.Strings(tags)
 
+		// Apply type filter if specified
+		filteredItems := items
+		if tag != "" {
+			filteredItems = make([]map[string]interface{}, 0)
+			for _, item := range items {
+				itemTags, ok := item["tags"].([]string)
+				if ok {
+					for _, t := range itemTags {
+						if t == tag {
+							filteredItems = append(filteredItems, item)
+							break
+						}
+					}
+				}
+			}
+		}
+
 		offset := (page - 1) * size
-		total := len(items)
+		total := len(filteredItems)
 
 		// Apply client-side pagination
 		start := offset
 		end := offset + size
-		if start > len(items) {
-			start = len(items)
+		if start > len(filteredItems) {
+			start = len(filteredItems)
 		}
-		if end > len(items) {
-			end = len(items)
+		if end > len(filteredItems) {
+			end = len(filteredItems)
 		}
-		paged := items[start:end]
+		paged := filteredItems[start:end]
 
 		payload := map[string]any{
 			"items":    paged,

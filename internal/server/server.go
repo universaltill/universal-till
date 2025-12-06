@@ -34,11 +34,9 @@ func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, cfg *config.C
 
 // Start begins all background jobs
 func (bj *BackgroundJobs) Start(ctx context.Context) {
-	// Catalog sync job (T011)
+	// Catalog sync job (T011) - LOCAL-FIRST: Only sync when cache is stale
+	// User must explicitly refresh via UI to fetch from marketplace
 	go func() {
-		// Run immediately on startup
-		bj.syncCatalog(ctx)
-
 		ticker := time.NewTicker(bj.catalogSyncInterval)
 		defer ticker.Stop()
 		for {
@@ -46,7 +44,14 @@ func (bj *BackgroundJobs) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				bj.syncCatalog(ctx)
+				// Only sync if cache exists and is stale (not first fetch)
+				if bj.catalogRepo != nil {
+					_, isStale, err := bj.catalogRepo.Get()
+					if err == nil && isStale {
+						bj.logger.Println("[Scheduler] cache is stale, syncing catalog")
+						bj.syncCatalog(ctx)
+					}
+				}
 			}
 		}
 	}()

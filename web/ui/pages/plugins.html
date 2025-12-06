@@ -1,6 +1,16 @@
 {{ define "content" }}
 <h1>Plugins</h1>
 
+<!-- Tab Navigation -->
+<div class="tabs mb-4" style="border-bottom: 2px solid #e5e7eb;">
+  <a href="/plugins" class="tab-active" style="display: inline-block; padding: 0.75rem 1.5rem; border-bottom: 3px solid #3b82f6; color: #3b82f6; font-weight: 600; text-decoration: none;">
+    Installed
+  </a>
+  <a href="/plugins/store" class="tab" style="display: inline-block; padding: 0.75rem 1.5rem; color: #6b7280; font-weight: 500; text-decoration: none; border-bottom: 3px solid transparent;">
+    Marketplace
+  </a>
+</div>
+
 <!-- Toast Container -->
 <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 1000;"></div>
 
