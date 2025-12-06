@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -17,6 +18,14 @@ import (
 
 func main() {
 	ctx := context.Background()
+
+	// Load pos.env if it exists (created during installation/setup)
+	// For development, you can manually create pos.env or use UT_ENV=dev for pos.env.dev
+	envFile := os.Getenv("UT_ENV_FILE")
+	if envFile == "" {
+		envFile = "pos.env" // Default production config file
+	}
+	_ = godotenv.Load(envFile)
 
 	logging.Init()
 	log := logging.L()

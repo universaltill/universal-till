@@ -43,17 +43,16 @@ type MarketplaceConfig struct {
 }
 
 type Config struct {
-	StoreName      string
-	ListenAddr     string
-	Env            string
-	DBPath         string
-	Locales        Locales
-	LogLevel       string
-	Theme          string
-	MarketplaceURL string // Deprecated: use Marketplace.EndpointURL
-	Marketplace    MarketplaceConfig
-	DevMode        bool
-	DefaultLocale  string // BCP 47 format: en-US, fr-CA, es-MX, etc.
+	StoreName     string
+	ListenAddr    string
+	Env           string
+	DBPath        string
+	Locales       Locales
+	LogLevel      string
+	Theme         string
+	Marketplace   MarketplaceConfig
+	DevMode       bool
+	DefaultLocale string // BCP 47 format: en-US, fr-CA, es-MX, etc.
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -67,11 +66,10 @@ func Init() (*Config, error) {
 		StoreName:  getenv("UT_STORE_NAME", "My Store"),
 		ListenAddr: getenv("UT_LISTEN_ADDR", ":8080"),
 		// Env:        getenv("UT_ENV", "local"),
-		DBPath:         getenv("UT_DB_PATH", "./data/unitill-pos.db"),
-		LogLevel:       getenv("UT_LOG_LEVEL", "info"),
-		Theme:          getenv("UT_THEME", "monarch"),
-		MarketplaceURL: getenv("UT_MARKETPLACE_URL", "http://127.0.0.1:8081"), // Deprecated
-		DevMode:        devMode,
+		DBPath:   getenv("UT_DB_PATH", "./data/unitill-pos.db"),
+		LogLevel: getenv("UT_LOG_LEVEL", "info"),
+		Theme:    getenv("UT_THEME", "monarch"),
+		DevMode:  devMode,
 		Marketplace: MarketplaceConfig{
 			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081"),
 			ClientID:              getenv("UT_MARKETPLACE_CLIENT_ID", ""),

@@ -50,7 +50,7 @@ func NewManifestVerifier(publicKeyHex string) (*ManifestVerifier, error) {
 // VerifyArtifact verifies a downloaded plugin artifact against its expected checksum
 func (mv *ManifestVerifier) VerifyArtifact(artifactPath, expectedChecksum string) error {
 	log := logging.L()
-	
+
 	// Calculate SHA256 of artifact
 	f, err := os.Open(artifactPath)
 	if err != nil {
@@ -64,7 +64,7 @@ func (mv *ManifestVerifier) VerifyArtifact(artifactPath, expectedChecksum string
 	}
 
 	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-	
+
 	if actualChecksum != expectedChecksum {
 		log.Warnf("[Verifier] Checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
 		return fmt.Errorf("artifact checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
@@ -77,7 +77,7 @@ func (mv *ManifestVerifier) VerifyArtifact(artifactPath, expectedChecksum string
 // VerifyManifest validates and parses a plugin manifest file
 func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationResult, error) {
 	log := logging.L()
-	
+
 	result := &VerificationResult{
 		Errors: []string{},
 	}
@@ -128,7 +128,7 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 
 	// Signature verification (if public key configured)
 	result.SignatureVerified = mv.publicKey == nil // true if no verification configured
-	
+
 	if mv.publicKey != nil && manifest.Signature != "" {
 		// Verify Ed25519 signature
 		sigBytes, err := hex.DecodeString(manifest.Signature)
@@ -163,7 +163,7 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 // VerifyExecutable checks that the executable file exists and is executable
 func (mv *ManifestVerifier) VerifyExecutable(pluginDir, executableName string) error {
 	execPath := filepath.Join(pluginDir, executableName)
-	
+
 	info, err := os.Stat(execPath)
 	if err != nil {
 		if os.IsNotExist(err) {

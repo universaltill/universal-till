@@ -33,11 +33,11 @@ type DownloadRequest struct {
 
 // DownloadResult contains the outcome of a download operation
 type DownloadResult struct {
-	FilePath       string
-	ActualChecksum string
+	FilePath        string
+	ActualChecksum  string
 	BytesDownloaded int64
-	ResumedFrom    int64
-	Verified       bool
+	ResumedFrom     int64
+	Verified        bool
 }
 
 // NewDownloadManager creates a new download manager
@@ -56,7 +56,7 @@ func NewDownloadManager(tmpDir string) *DownloadManager {
 // Download downloads a plugin artifact with resume support and checksum verification
 func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (*DownloadResult, error) {
 	log := logging.L()
-	
+
 	// Validate request
 	if req.URL == "" {
 		return nil, fmt.Errorf("download URL is required")
@@ -76,7 +76,7 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 
 	// Create .part file path
 	partFile := filepath.Join(dm.tmpDir, fmt.Sprintf("%s.part", req.PluginID))
-	
+
 	// Check if partial download exists
 	var resumeFrom int64
 	if fi, err := os.Stat(partFile); err == nil {
@@ -90,7 +90,7 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 		if attempt > 0 {
 			backoff := dm.retryBackoff * time.Duration(attempt)
 			log.Warnf("[Download] Retry %d/%d for %s after %v", attempt, dm.maxRetries, req.PluginID, backoff)
-			
+
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -103,10 +103,10 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 		if err == nil {
 			return result, nil
 		}
-		
+
 		lastErr = err
 		log.Warnf("[Download] Attempt %d failed for %s: %v", attempt+1, req.PluginID, err)
-		
+
 		// Check if we should retry
 		if !dm.isRetryable(err) {
 			break
@@ -119,7 +119,7 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 // downloadOnce performs a single download attempt with resume support
 func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadRequest, partFile string, resumeFrom, maxSize int64) (*DownloadResult, error) {
 	log := logging.L()
-	
+
 	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, req.URL, nil)
 	if err != nil {
@@ -144,11 +144,11 @@ func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadReques
 		log.Warnf("[Download] Server doesn't support resume for %s, starting from beginning", req.PluginID)
 		resumeFrom = 0
 		os.Remove(partFile) // delete partial file
-		
+
 		// Retry without Range header
 		httpReq.Header.Del("Range")
 		resp.Body.Close()
-		
+
 		resp, err = dm.httpClient.Do(httpReq)
 		if err != nil {
 			return nil, fmt.Errorf("HTTP request failed: %w", err)
@@ -174,7 +174,7 @@ func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadReques
 
 	// Download with size limit
 	hasher := sha256.New()
-	
+
 	// If resuming, we need to rehash the existing content
 	if resumeFrom > 0 {
 		f.Seek(0, io.SeekStart)
@@ -186,7 +186,7 @@ func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadReques
 
 	limitedReader := io.LimitReader(resp.Body, maxSize-resumeFrom)
 	multiWriter := io.MultiWriter(f, hasher)
-	
+
 	bytesDownloaded, err := io.Copy(multiWriter, limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("download interrupted: %w", err)
@@ -202,25 +202,25 @@ func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadReques
 	}
 
 	return &DownloadResult{
-		FilePath:       partFile,
-		ActualChecksum: actualChecksum,
+		FilePath:        partFile,
+		ActualChecksum:  actualChecksum,
 		BytesDownloaded: totalBytes,
-		ResumedFrom:    resumeFrom,
-		Verified:       true,
+		ResumedFrom:     resumeFrom,
+		Verified:        true,
 	}, nil
 }
 
 // PromoteToPermanent moves a .part file to its final destination
 func (dm *DownloadManager) PromoteToPermanent(partFile, destDir, destName string) error {
 	log := logging.L()
-	
+
 	// Ensure destination directory exists
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
 	destPath := filepath.Join(destDir, destName)
-	
+
 	// Move file
 	if err := os.Rename(partFile, destPath); err != nil {
 		// If rename fails (cross-device), try copy + delete
@@ -271,11 +271,11 @@ func (dm *DownloadManager) isRetryable(err error) bool {
 	if err == context.Canceled || err == context.DeadlineExceeded {
 		return false
 	}
-	
+
 	// Checksum mismatch is not retryable
 	if fmt.Sprintf("%v", err) == "checksum mismatch" {
 		return false
 	}
-	
+
 	return true
 }

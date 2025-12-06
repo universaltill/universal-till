@@ -12,7 +12,7 @@ func TestCatalogRepository_FetchAndGet(t *testing.T) {
 	// Setup mock client
 	mockToken := &mockTokenClient{token: "test-token"}
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8081",
+		EndpointURL:       "http://localhost:8082",
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
@@ -55,7 +55,7 @@ func TestCatalogRepository_StaleDetection(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8081",
+		EndpointURL:       "http://localhost:8082",
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
@@ -94,7 +94,7 @@ func TestCatalogRepository_DiskPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8081",
+		EndpointURL:       "http://localhost:8082",
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
@@ -132,7 +132,7 @@ func TestCatalogRepository_Filter(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8081",
+		EndpointURL:       "http://localhost:8082",
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
@@ -167,7 +167,7 @@ func TestCatalogRepository_OfflineReplay(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8081",
+		EndpointURL:       "http://localhost:8082",
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}

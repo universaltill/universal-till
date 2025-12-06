@@ -27,12 +27,12 @@ type Manifest struct {
 	Runtime     string `json:"runtime"`    // go|wasm|node|python|native
 
 	// Marketplace fields (T016 - 009-cloud-marketplace)
-	CanonicalType  string `json:"canonical_type"`    // page|button|payment|report|integration|background_job|device
-	DeviceArch     string `json:"device_arch"`       // linux/amd64, darwin/arm64, any
-	MinPOSVersion  string `json:"min_pos_version"`   // Minimum POS version required
-	Signature      string `json:"signature"`          // Ed25519 signature of manifest (hex)
-	ArtifactHash   string `json:"artifact_hash"`      // SHA256 of the plugin artifact
-	
+	CanonicalType string `json:"canonical_type"`  // page|button|payment|report|integration|background_job|device
+	DeviceArch    string `json:"device_arch"`     // linux/amd64, darwin/arm64, any
+	MinPOSVersion string `json:"min_pos_version"` // Minimum POS version required
+	Signature     string `json:"signature"`       // Ed25519 signature of manifest (hex)
+	ArtifactHash  string `json:"artifact_hash"`   // SHA256 of the plugin artifact
+
 	// Entries: pages, buttons, popups, etc.
 	Entries []ManifestEntry `json:"entries,omitempty"`
 
@@ -45,7 +45,6 @@ type Manifest struct {
 	// Permissions: requested capabilities
 	Permissions []string `json:"permissions,omitempty"`
 }
-
 
 // ManifestEntry represents a UI/integration entry
 type ManifestEntry struct {

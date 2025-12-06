@@ -1,13 +1,25 @@
 {{ define "content" }}
 <!-- Include install modal and toast partials (T018) -->
-<div class="hidden">
+<div style="display: none;">
 	{{ template "plugin_install_modal" . }}
 	{{ template "toast" . }}
 </div>
 
 <div class="container mx-auto px-4 py-6">
+	<h1 class="text-3xl font-bold mb-4">Plugins</h1>
+
+	<!-- Tab Navigation -->
+	<div class="tabs mb-4" style="border-bottom: 2px solid #e5e7eb;">
+		<a href="/plugins" class="tab" style="display: inline-block; padding: 0.75rem 1.5rem; color: #6b7280; font-weight: 500; text-decoration: none; border-bottom: 3px solid transparent;">
+			Installed
+		</a>
+		<a href="/plugins/store" class="tab-active" style="display: inline-block; padding: 0.75rem 1.5rem; border-bottom: 3px solid #3b82f6; color: #3b82f6; font-weight: 600; text-decoration: none;">
+			Marketplace
+		</a>
+	</div>
+
 	<div class="flex justify-between items-center mb-6">
-		<h1 class="text-3xl font-bold">Plugin Store</h1>
+		<h2 class="text-2xl font-semibold">Browse Marketplace</h2>
 		{{ if .IsStale }}
 		<div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-3" role="alert">
 			<p class="font-bold">Catalog may be outdated</p>
@@ -15,7 +27,7 @@
 		</div>
 		{{ end }}
 		<button 
-			hx-post="/plugins/store/refresh" 
+			hx-post="/plugins/store/refresh{{ if or .Filters.Type .Filters.Developer .Filters.TrustTier }}?{{ end }}{{ if .Filters.Type }}type={{ .Filters.Type }}{{ end }}{{ if and .Filters.Type (or .Filters.Developer .Filters.TrustTier) }}&{{ end }}{{ if .Filters.Developer }}developer={{ .Filters.Developer }}{{ end }}{{ if and .Filters.Developer .Filters.TrustTier }}&{{ end }}{{ if .Filters.TrustTier }}trust_tier={{ .Filters.TrustTier }}{{ end }}" 
 			hx-target="#plugin-list" 
 			hx-indicator="#refresh-indicator"
 			class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
@@ -24,20 +36,12 @@
 		</button>
 	</div>
 
-	<--resource-group "$resourceGroup" \
-          --template-file ./common/test.bicep \
-         --parameters targetEnvironment="$targetEnvironment" \
-                        subscriptionSpoke="$subscriptionSpoke" \
-                        altEnvironment="$altEnvironment" \
-                        location="$location" \
-                        issuer="$issuer" \
-                        subject="$subject" \
-                        federationName="$federation" Filters -->
+	<!-- Filters -->
 	<div class="bg-white shadow rounded-lg p-4 mb-6">
-		<form hx-get="/plugins/store" hx-target="#plugin-list" hx-trigger="change" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+		<form method="get" action="/plugins/store" class="grid grid-cols-1 md:grid-cols-3 gap-4">
 			<div>
 				<label for="type" class="block text-sm font-medium text-gray-700">Plugin Type</label>
-				<select id="type" name="type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
+				<select id="type" name="type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" onchange="this.form.submit()">
 					<option value="">All Types</option>
 					<option value="page" {{ if eq .Filters.Type "page" }}selected{{ end }}>Page</option>
 					<option value="button" {{ if eq .Filters.Type "button" }}selected{{ end }}>Button</option>
@@ -52,12 +56,13 @@
 				<label for="developer" class="block text-sm font-medium text-gray-700">Developer</label>
 				<input type="text" id="developer" name="developer" value="{{ .Filters.Developer }}" 
 					class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
-					placeholder="Filter by developer...">
+					placeholder="Filter by developer..."
+					onkeyup="clearTimeout(window.devFilterTimeout); window.devFilterTimeout = setTimeout(() => this.form.submit(), 500);">
 			</div>
 
 			<div>
 				<label for="trust_tier" class="block text-sm font-medium text-gray-700">Trust Tier</label>
-				<select id="trust_tier" name="trust_tier" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
+				<select id="trust_tier" name="trust_tier" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" onchange="this.form.submit()">
 					<option value="">All Tiers</option>
 					<option value="verified" {{ if eq .Filters.TrustTier "verified" }}selected{{ end }}>Verified</option>
 					<option value="approved" {{ if eq .Filters.TrustTier "approved" }}selected{{ end }}>Approved</option>
@@ -67,17 +72,18 @@
 		</form>
 	</div>
 
-	<--resource-group "$resourceGroup" \
-          --template-file ./common/test.bicep \
-         --parameters targetEnvironment="$targetEnvironment" \
-                        subscriptionSpoke="$subscriptionSpoke" \
-                        altEnvironment="$altEnvironment" \
-                        location="$location" \
-                        issuer="$issuer" \
-                        subject="$subject" \
-                        federationName="$federation" Plugin List -->
+	<!-- Plugin List -->
 	<div id="plugin-list" class="mt-6">
-		{{ if .Plugins }}
+		{{ if .NoCache }}
+		<div class="text-center py-12 bg-blue-50 rounded-lg">
+			<svg class="mx-auto h-12 w-12 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+			</svg>
+			<h3 class="mt-2 text-lg font-medium text-gray-900">No plugin catalog cached</h3>
+			<p class="mt-1 text-sm text-gray-500">Click "Refresh Catalog" to fetch plugins from the marketplace.</p>
+			<p class="mt-1 text-xs text-gray-400">The POS works locally and only syncs when you request it.</p>
+		</div>
+		{{ else if .Plugins }}
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 			{{ range .Plugins }}
 			<div class="bg-white shadow rounded-lg p-6 hover:shadow-xl transition-shadow">

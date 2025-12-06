@@ -15,8 +15,8 @@ import (
 )
 
 func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
-	// Install endpoint - downloads from marketplace and installs
-	mux.HandleFunc("/api/plugins/install", func(w http.ResponseWriter, r *http.Request) {
+	// Manual plugin upload endpoint
+	mux.HandleFunc("/api/plugins/upload", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -34,7 +34,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// Get plugin info from marketplace API
-		marketplaceURL := d.Cfg.MarketplaceURL + "/v1/catalog/plugins"
+		marketplaceURL := d.Cfg.Marketplace.EndpointURL + "/v1/catalog/plugins"
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, marketplaceURL, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to create request: %v", err), http.StatusInternalServerError)
@@ -191,8 +191,8 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		deviceArch := fmt.Sprintf("%s/%s", osFilter, archFilter)
 		capability := r.URL.Query().Get("capability")
 
-		// Call marketplace HTTP API
-		marketplaceURL := d.Cfg.MarketplaceURL + "/v1/catalog/plugins"
+		// Call marketplace HTTP API (use new config field)
+		marketplaceURL := d.Cfg.Marketplace.EndpointURL + "/v1/catalog/plugins"
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, marketplaceURL, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to create request: %v", err), http.StatusInternalServerError)
@@ -424,7 +424,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/plugins/install-from-marketplace", handleInstallFromMarketplace(d))
 	mux.HandleFunc("POST /api/plugins/{id}/enable", handleEnablePlugin(d))
 	mux.HandleFunc("POST /api/plugins/{id}/disable", handleDisablePlugin(d))
-	mux.HandleFunc("DELETE /api/plugins/{id}", handleUninstallPlugin(d))
+	mux.HandleFunc("POST /api/plugins/{id}/uninstall", handleUninstallPlugin(d))
 }
 
 // handleInstallFromMarketplace handles marketplace plugin installation (T017)
@@ -473,7 +473,7 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		// Verify compatibility before installation
 		systemArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 		_ = systemArch // TODO: Use for compatibility check
-		
+
 		// TODO: Extract arch from plugin and verify
 		// TODO: Check RBAC - require manager override if configured
 		// TODO: Check disk quota before proceeding
@@ -481,7 +481,7 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		// Start installation process
 		downloadMgr := plugins.NewDownloadManager("./data/plugins/tmp")
 		_ = downloadMgr // TODO: Use for actual download
-		
+
 		// TODO: Extract artifact URL and hash from targetPlugin
 		// TODO: Call downloadMgr.Download()
 		// TODO: Extract archive
@@ -557,4 +557,3 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 		})
 	}
 }
-
