@@ -1,9 +1,12 @@
 package pages
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
@@ -430,6 +434,8 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 // handleInstallFromMarketplace handles marketplace plugin installation (T017)
 func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		
 		// Parse request
 		var req struct {
 			ListingID string `json:"listing_id"`
@@ -457,10 +463,10 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		var targetPlugin interface{}
+		var targetPlugin *marketplace.PluginSummary
 		for _, p := range snapshot.Plugins {
 			if p.ListingID == req.ListingID {
-				targetPlugin = p
+				targetPlugin = &p
 				break
 			}
 		}
@@ -470,28 +476,87 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		// Verify compatibility before installation
+		// T019a: Verify compatibility before installation
 		systemArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-		_ = systemArch // TODO: Use for compatibility check
+		if targetPlugin.DeviceArch != systemArch {
+			http.Error(w, fmt.Sprintf("Incompatible architecture: plugin requires %s, system is %s", targetPlugin.DeviceArch, systemArch), http.StatusBadRequest)
+			return
+		}
 
-		// TODO: Extract arch from plugin and verify
-		// TODO: Check RBAC - require manager override if configured
-		// TODO: Check disk quota before proceeding
+		// TODO T017: Check RBAC - require manager override if configured
+		// For now, allow all installs (RBAC will be added in T017 completion)
 
 		// Start installation process
 		downloadMgr := plugins.NewDownloadManager("./data/plugins/tmp")
-		_ = downloadMgr // TODO: Use for actual download
+		
+		// Download the artifact with resume support
+		downloadReq := &plugins.DownloadRequest{
+			URL:              targetPlugin.ArtifactURL,
+			PluginID:         targetPlugin.ListingID,
+			ExpectedChecksum: strings.TrimPrefix(targetPlugin.ArtifactHash, "sha256:"),
+			MaxSizeBytes:     200 * 1024 * 1024, // 200 MB limit
+		}
 
-		// TODO: Extract artifact URL and hash from targetPlugin
-		// TODO: Call downloadMgr.Download()
-		// TODO: Extract archive
-		// TODO: Verify manifest
-		// TODO: Persist to database (T019)
+		downloadResult, err := downloadMgr.Download(ctx, downloadReq)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Extract archive (assuming tar.gz format)
+		pluginDir := filepath.Join("./data/plugins", targetPlugin.ListingID, targetPlugin.Version)
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to create plugin directory: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if err := extractTarGz(downloadResult.FilePath, pluginDir); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to extract plugin: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Verify manifest
+		manifestPath := filepath.Join(pluginDir, "manifest.json")
+		manifestFile, err := os.Open(manifestPath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Manifest not found: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer manifestFile.Close()
+
+		manifest, err := plugins.ParseManifest(manifestFile)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid manifest: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Persist to database (T019)
+		installOpts := plugins.InstallOptions{
+			InstalledFromURL: targetPlugin.ArtifactURL,
+			SHA256:           downloadResult.ActualChecksum,
+			TrustLevel:       mapTrustTier(targetPlugin.TrustTier),
+			Uploader:         "marketplace", // TODO: Extract actual user from session
+		}
+
+		if err := plugins.PersistManifest(ctx, d.Db, manifest, installOpts); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to persist plugin: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Cleanup .part file
+		downloadMgr.CleanupPartFile(targetPlugin.ListingID)
+
+		// Reload plugin manager to pick up new plugin
+		if err := d.Pm.Reload(ctx); err != nil {
+			// Non-fatal - plugin is installed but won't show until restart
+			log.Printf("Warning: failed to reload plugin manager: %v", err)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"message": "Installation started (implementation pending T019)",
+			"message": fmt.Sprintf("Plugin %s v%s installed successfully", manifest.Name, manifest.Version),
+			"plugin_id": manifest.ID,
 		})
 	}
 }
@@ -555,5 +620,75 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			"success": true,
 			"message": fmt.Sprintf("Plugin %s scheduled for uninstallation", pluginID),
 		})
+	}
+}
+
+// extractTarGz extracts a tar.gz archive to the specified directory
+func extractTarGz(archivePath, destDir string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open archive: %w", err)
+	}
+	defer file.Close()
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar entry: %w", err)
+		}
+
+		target := filepath.Join(destDir, header.Name)
+
+		// Security: prevent path traversal
+		if !strings.HasPrefix(target, filepath.Clean(destDir)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path in archive: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fmt.Errorf("failed to create directory: %w", err)
+			}
+		case tar.TypeReg:
+			dir := filepath.Dir(target)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("failed to create parent directory: %w", err)
+			}
+
+			outFile, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
+			if err != nil {
+				return fmt.Errorf("failed to create file: %w", err)
+			}
+			defer outFile.Close()
+
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				return fmt.Errorf("failed to write file: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// mapTrustTier maps marketplace trust tier to plugin trust level
+func mapTrustTier(tier string) string {
+	switch tier {
+	case "verified":
+		return "trusted"
+	case "approved":
+		return "trusted"
+	default:
+		return "untrusted"
 	}
 }
