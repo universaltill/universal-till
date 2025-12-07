@@ -19,9 +19,10 @@ type Manager struct {
 }
 
 type Plugin struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	IsActive bool   `json:"isActive"`
 }
 
 type MenuPlugin struct {
@@ -89,7 +90,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 func (m *Manager) loadInstalled(ctx context.Context) error {
 	rows, err := m.db.QueryContext(ctx, `
-SELECT id, name, version
+SELECT id, name, version, is_active
 FROM plugins
 WHERE is_active = 1
 `)
@@ -99,9 +100,11 @@ WHERE is_active = 1
 	defer rows.Close()
 	for rows.Next() {
 		var p Plugin
-		if err := rows.Scan(&p.ID, &p.Name, &p.Version); err != nil {
+		var isActive int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &isActive); err != nil {
 			return err
 		}
+		p.IsActive = (isActive == 1)
 		m.Installed[p.ID] = p
 	}
 	return rows.Err()

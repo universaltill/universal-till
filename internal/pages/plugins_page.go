@@ -39,20 +39,34 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 				for _, p := range snapshot.Plugins {
 					// Check if installed
 					installed := false
-					if _, exists := d.Pm.Installed[p.ListingID]; exists {
+					enabled := false
+					currentVersion := ""
+					hasUpdate := false
+					
+					if inst, exists := d.Pm.Installed[p.ListingID]; exists {
 						installed = true
+						enabled = inst.IsActive
+						currentVersion = inst.Version
+						
+						// Check if update available (simple string comparison - production should use semantic versioning)
+						if p.Version != currentVersion {
+							hasUpdate = true
+						}
 					}
 
 					items = append(items, map[string]interface{}{
-						"id":          p.ListingID,
-						"name":        p.Name,
-						"version":     p.Version,
-						"description": p.Description,
-						"author":      p.DeveloperID,
-						"packageUrl":  p.ArtifactURL,
-						"sha256":      p.ArtifactHash,
-						"tags":        []string{p.CanonicalType},
-						"installed":   installed,
+						"id":             p.ListingID,
+						"name":           p.Name,
+						"version":        p.Version,
+						"currentVersion": currentVersion,
+						"description":    p.Description,
+						"author":         p.DeveloperID,
+						"packageUrl":     p.ArtifactURL,
+						"sha256":         p.ArtifactHash,
+						"tags":           []string{p.CanonicalType},
+						"installed":      installed,
+						"enabled":        enabled,
+						"hasUpdate":      hasUpdate,
 					})
 
 					// Collect tags
