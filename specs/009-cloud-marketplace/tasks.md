@@ -42,14 +42,14 @@
 **Independent Test**: Install a 50 MB plugin, drop network mid-download, resume, and ensure checksum + signature validate before plugin appears under Installed with audit entry.
 
 ### Implementation & Tests
-- [ ] T015 [P] [US2] Implement resumable download manager with Range requests + `.part` promotion in `internal/plugins/download_manager.go`.
-- [ ] T016 [P] [US2] Add manifest verifier in `internal/plugins/manifest_verifier.go` using data-model mappings:
+- [X] T015 [P] [US2] Implement resumable download manager with Range requests + `.part` promotion in `internal/plugins/download_manager.go`.
+- [X] T016 [P] [US2] Add manifest verifier in `internal/plugins/manifest_verifier.go` using data-model mappings:
   - T016a: Implement SHA256 checksum validation against marketplace-provided hash.
   - T016b: Implement cryptographic signature verification using marketplace public key (RSA or Ed25519) to prevent tampering.
-- [ ] T017 [US2] Extend plugin install API handler + RBAC prompts in `internal/pages/plugin_api.go` (install endpoint, manager PIN modal).
-- [ ] T018 [P] [US2] Create HTMX progress modal and toast partials in `web/ui/partials/plugin_install_modal.html`.
-- [ ] T019 [US2] Persist install metadata (plugin_entries, permissions, settings) and audit log writes in `internal/plugins/manager.go`.
-- [ ] T019a [US2] Enforce compatibility gating in `internal/pages/plugin_api.go` and `web/ui/pages/plugins_store.html`, disabling installs for mismatched OS/arch/capabilities and adding tests in `internal/pages/plugins_page_test.go`.
+- [X] T017 [US2] Extend plugin install API handler + RBAC prompts in `internal/pages/plugin_api.go` (install endpoint, manager PIN modal).
+- [X] T018 [P] [US2] Create HTMX progress modal and toast partials in `web/ui/partials/plugin_install_modal.html`.
+- [X] T019 [US2] Persist install metadata (plugin_entries, permissions, settings) and audit log writes in `internal/plugins/manager.go`.
+- [X] T019a [US2] Enforce compatibility gating in `internal/pages/plugin_api.go` and `web/ui/pages/plugins_store.html`, disabling installs for mismatched OS/arch/capabilities and adding tests in `internal/pages/plugins_page_test.go`.
 - [ ] T020 [P] [US2] Add download + manifest failure tests in `internal/plugins/download_manager_test.go` and `internal/plugins/manifest_verifier_test.go`.
 
 ---
