@@ -60,13 +60,13 @@
 **Independent Test**: Update plugin 1.2→1.3, roll back to 1.2 offline, confirm cached artifacts exist and telemetry reports status without WAN errors.
 
 ### Implementation & Tests
-- [ ] T021 [P] [US3] Implement update checker + diff metadata handling in `internal/plugins/update_checker.go` tied to marketplace client.
-- [ ] T022 [US3] Add rollback + version swapper storing previous artifacts in `internal/plugins/rollback.go`.
-- [ ] T023 [US3] Ensure plugin supervisor auto-starts active plugins at boot and on install in `internal/plugins/manager.go`.
-- [ ] T024 [P] [US3] Implement telemetry client + batching in `internal/plugins/telemetry_client.go` with retry logic:
+- [X] T021 [P] [US3] Implement update checker + diff metadata handling in `internal/plugins/update_checker.go` tied to marketplace client.
+- [X] T022 [US3] Add rollback + version swapper storing previous artifacts in `internal/plugins/rollback.go`.
+- [X] T023 [US3] Ensure plugin supervisor auto-starts active plugins at boot and on install in `internal/plugins/supervisor.go`.
+- [X] T024 [P] [US3] Implement telemetry client + batching in `internal/plugins/telemetry_client.go` with retry logic:
   - T024a: Update status telemetry (plugin version, enabled/disabled state changes) honoring `settings.marketplace.telemetry_opt_in` at enqueue-time.
   - T024b: General marketplace interaction telemetry (catalog browse counts, install/update events per FR-013) with same opt-in enforcement.
-- [ ] T025 [US3] Build installed-plugin management UI (`web/ui/pages/plugins_installed.html`) with update/disable/rollback actions.
+- [X] T025 [US3] Build installed-plugin management UI (updated `web/ui/pages/plugins.html`) with update/disable/rollback actions.
 - [ ] T026 [P] [US3] Add integration tests for update/rollback + telemetry acknowledgements in `internal/plugins/manager_test.go`.
 
 ---
