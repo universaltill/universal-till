@@ -88,7 +88,8 @@ func main() {
 	mux := pages.Init(ctx, cfg, pluginManager, database.DB, catalogRepo)
 
 	// 5) Server with background jobs (T011 - 009-cloud-marketplace)
-	if err := server.Start(ctx, cfg, mux, catalogRepo); err != nil {
+	// TODO: Initialize supervisor and pass it to server.Start for revocation handling
+	if err := server.Start(ctx, cfg, mux, catalogRepo, database.DB, nil); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
 }

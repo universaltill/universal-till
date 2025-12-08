@@ -514,16 +514,16 @@ erDiagram
         string id
         string name
         string version
-        string install_state
+        string install_state           %% 'pending'|'installed'|'revoked' (009-marketplace)
         string description
         string author
         string website
         string entrypoint
         string runtime
-        string installed_from_url
-        string installed_sha256
-        boolean is_active
-        string trust_level
+        string installed_from_url      %% Marketplace URL or 'file://' for manual imports
+        string installed_sha256        %% SHA256 checksum for integrity verification
+        boolean is_active              %% Enable/disable control (Phase 5)
+        string trust_level             %% 'untrusted'|'trusted'|'verified' (marketplace trust tier)
         string installed_at
         string updated_at
     }
@@ -606,3 +606,156 @@ erDiagram
 - Seeds (001_init.sql): PROMO50 (50p), PROMO500 (£5), DISC10 (10% off) — respecting `type`.
 - Usage: POS scan/discount endpoint checks active promotions (optionally matching customer) before applying barcode prefixes; basket carries `customer_id` for targeted promos.
 - Constraints: no negative amounts; inactive/expired codes ignored; percent promos should cap discounts to avoid negative totals.
+
+---
+
+## Cloud Marketplace Integration (Feature 009)
+
+### Overview
+The marketplace integration enables POS devices to discover, install, update, and manage plugins from a central cloud marketplace. Implementation follows a **local-first** architecture where catalog data is cached locally and all plugin operations work offline.
+
+### Plugin Lifecycle States
+- **pending**: Download in progress or installation incomplete
+- **installed**: Successfully installed and ready to use
+- **revoked**: Disabled by marketplace due to security/compliance issues
+
+### Trust Levels
+- **untrusted**: Manual imports or unverified sources (default for file uploads)
+- **trusted**: Verified by marketplace or approved developer
+- **verified**: Cryptographically signed by marketplace with valid signature
+
+### File Storage Structure
+```
+data/plugins/
+├── cache/                    # Catalog snapshots
+│   └── prod.catalog.json    # Cached marketplace catalog
+├── tmp/                      # Temporary downloads
+│   └── *.part               # Resume-capable partial downloads
+├── auth/                     # OAuth2 credentials cache
+│   └── token.json           # Marketplace access token
+└── {plugin_id}/             # Plugin installations
+    ├── {version}/           # Current active version
+    │   ├── manifest.json    # Plugin metadata
+    │   └── ...              # Plugin files
+    └── versions/            # Rollback history (max 3 versions)
+        ├── 1.0.0/
+        ├── 1.1.0/
+        └── 1.2.0/
+```
+
+### Key Tables
+
+**plugins** (extended for marketplace)
+- `install_state`: Tracks installation progress and revocation status
+- `installed_from_url`: Source URL (marketplace or `file://` for manual)
+- `installed_sha256`: Integrity checksum (empty for manual imports)
+- `trust_level`: Security classification for permission gating
+- `is_active`: Enable/disable control (independent of install_state)
+
+**plugin_entries** (unchanged)
+- Links plugins to UI elements (buttons, pages, menus)
+- Respects `is_active` flag for conditional rendering
+
+**plugin_permissions** (marketplace-aware)
+- Permissions requested by plugin manifest
+- `granted` field for RBAC enforcement
+- Marketplace plugins default to restricted permissions
+
+**audit_log** (marketplace events)
+- Records: install, update, rollback, revocation, manual import
+- Includes actor, manifest hash, source URL
+- Used for compliance and debugging
+
+### Background Jobs
+
+**Catalog Sync** (15 min interval)
+- Fetches latest plugin catalog from marketplace
+- Updates local cache at `data/plugins/cache/`
+- Only runs when existing cache is stale
+- Exponential backoff on failures (max 3 retries)
+
+**Telemetry Upload** (5 min interval)
+- Batches plugin lifecycle events (install, update, enable/disable)
+- Honors `settings.marketplace.telemetry_opt_in` flag
+- Queues events offline, syncs when connected
+- Max 50 events per batch
+
+**Revocation Sync** (30 min interval)
+- Checks marketplace revocation feed
+- Disables revoked plugins (sets `install_state='revoked'`)
+- Stops running plugin processes via Supervisor
+- Creates audit log entries
+
+### API Integration
+
+**OAuth2 Flow**
+- Client credentials grant for device authentication
+- Tokens cached with expiry tracking
+- Automatic refresh before expiration
+- Secure storage at `data/plugins/auth/token.json`
+
+**Catalog Endpoint**
+- `GET /v1/catalog?locale={locale}&arch={os}/{arch}`
+- Returns plugin summaries with compatibility filters
+- Includes version, URL, checksum, signature, trust tier
+
+**Revocation Endpoint**
+- `GET /v1/revocations`
+- Returns list of revoked plugin IDs and versions
+- Includes revocation reason and timestamp
+
+**Telemetry Endpoint**
+- `POST /v1/telemetry`
+- Accepts batched event arrays
+- Returns 200 OK on successful ingestion
+
+### Security Features
+
+**Download Integrity**
+- SHA256 checksum validation during download
+- Ed25519 signature verification for marketplace artifacts
+- Resume support via HTTP Range requests
+- .part file promotion only after verification
+
+**Archive Safety**
+- Path traversal protection in ZIP/tar.gz extraction
+- File size limits (max 200 MB per archive)
+- Disk budget enforcement (max 1 GB per plugin)
+
+**Trust Enforcement**
+- Marketplace plugins verified before installation
+- Manual imports default to "untrusted" level
+- Signature verification skip only in dev mode
+- RBAC gates high-privilege operations (Phase 7)
+
+### Operational Notes
+
+**Offline Behavior**
+- Catalog browsing works with cached snapshot (shows stale badge)
+- Plugin installation proceeds if artifact cached
+- Manual import via USB/file always available
+- Revocation sync deferred until connectivity restored
+
+**Version Management**
+- Update checker compares semantic versions (1.2.3 format)
+- Rollback maintains 3 most recent versions
+- Old versions auto-pruned to conserve disk
+- Version swaps are atomic (transaction-based)
+
+**Error Handling**
+- Network failures retry with exponential backoff
+- Download resume continues from partial .part files
+- Manifest verification failures reject installation
+- Audit logs capture all failure cases
+
+### Performance Characteristics
+- Catalog render target: <3s p90 (excluding WAN latency)
+- Download resume overhead: ~100ms per retry
+- Manifest verification: ~50ms for signature check
+- Database persistence: <200ms for full plugin metadata
+
+### Testing Coverage
+- Unit tests: Download resume, version comparison, revocation logic
+- Integration tests: End-to-end install, update with rollback, manual import
+- Edge cases: Network interruption, signature failure, disk full, concurrent updates
+

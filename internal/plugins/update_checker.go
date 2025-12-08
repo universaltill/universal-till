@@ -12,16 +12,16 @@ import (
 
 // UpdateInfo contains information about an available plugin update
 type UpdateInfo struct {
-	PluginID        string
+	PluginID         string
 	InstalledVersion string
 	AvailableVersion string
-	Name            string
-	Description     string
-	ReleaseNotes    string
-	ArtifactURL     string
-	ArtifactHash    string
-	DeviceArch      string
-	TrustTier       string
+	Name             string
+	Description      string
+	ReleaseNotes     string
+	ArtifactURL      string
+	ArtifactHash     string
+	DeviceArch       string
+	TrustTier        string
 }
 
 // UpdateChecker detects available plugin updates from marketplace
@@ -65,7 +65,7 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 		// For now, we'll use developer_id + name as a simple key
 		// In production, you'd want a proper plugin ID mapping
 		key := p.DeveloperID + "/" + p.Name
-		
+
 		// Keep the highest version for each plugin
 		if existing, ok := catalogMap[key]; ok {
 			if compareVersions(p.Version, existing.Version) > 0 {
@@ -81,7 +81,7 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 	for _, inst := range installed {
 		// Try to find in catalog
 		key := inst.Author + "/" + inst.Name
-		
+
 		if catalogPlugin, ok := catalogMap[key]; ok {
 			// Compare versions
 			if compareVersions(catalogPlugin.Version, inst.Version) > 0 {
@@ -97,8 +97,8 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 					TrustTier:        catalogPlugin.TrustTier,
 				}
 				updates = append(updates, update)
-				
-				log.Infof("[UpdateChecker] Update available for %s: %s -> %s", 
+
+				log.Infof("[UpdateChecker] Update available for %s: %s -> %s",
 					inst.Name, inst.Version, catalogPlugin.Version)
 			}
 		}
@@ -144,34 +144,34 @@ func (uc *UpdateChecker) getInstalledPlugins(ctx context.Context) ([]installedPl
 func compareVersions(v1, v2 string) int {
 	// Simple version comparison (semantic versioning)
 	// For production, use a proper semver library
-	
+
 	// Remove 'v' prefix if present
 	v1 = strings.TrimPrefix(v1, "v")
 	v2 = strings.TrimPrefix(v2, "v")
-	
+
 	// Split into parts
 	parts1 := strings.Split(v1, ".")
 	parts2 := strings.Split(v2, ".")
-	
+
 	// Pad to same length
 	maxLen := len(parts1)
 	if len(parts2) > maxLen {
 		maxLen = len(parts2)
 	}
-	
+
 	for len(parts1) < maxLen {
 		parts1 = append(parts1, "0")
 	}
 	for len(parts2) < maxLen {
 		parts2 = append(parts2, "0")
 	}
-	
+
 	// Compare each part
 	for i := 0; i < maxLen; i++ {
 		var n1, n2 int
 		fmt.Sscanf(parts1[i], "%d", &n1)
 		fmt.Sscanf(parts2[i], "%d", &n2)
-		
+
 		if n1 > n2 {
 			return 1
 		}
@@ -179,7 +179,7 @@ func compareVersions(v1, v2 string) int {
 			return -1
 		}
 	}
-	
+
 	return 0
 }
 

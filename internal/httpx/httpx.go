@@ -145,6 +145,7 @@ func Render(tplPath string, data any) http.HandlerFunc {
 			filepath.Join("web", "ui", "partials", "basket.html"),
 			filepath.Join("web", "ui", "partials", "toast.html"),
 			filepath.Join("web", "ui", "partials", "plugin_install_modal.html"),
+			filepath.Join("web", "ui", "partials", "plugin_manual_import.html"),
 		))
 		if err := t.ExecuteTemplate(w, "base", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

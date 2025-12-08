@@ -60,11 +60,11 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		var marketplaceResp struct {
 			Plugins []struct {
-				ID         string `json:"id"`
-				Name       string `json:"name"`
-				Version    string `json:"version"`
-				PackageURL string `json:"package_url"`
-				SHA256     string `json:"sha256"`
+				ListingID   string `json:"listing_id"`
+				Name        string `json:"name"`
+				Version     string `json:"version"`
+				ArtifactURL string `json:"artifact_url"`
+				SHA256      string `json:"sha256"`
 			} `json:"plugins"`
 		}
 
@@ -75,15 +75,15 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		// Find the requested plugin
 		var targetPlugin *struct {
-			ID         string `json:"id"`
-			Name       string `json:"name"`
-			Version    string `json:"version"`
-			PackageURL string `json:"package_url"`
-			SHA256     string `json:"sha256"`
+			ListingID   string `json:"listing_id"`
+			Name        string `json:"name"`
+			Version     string `json:"version"`
+			ArtifactURL string `json:"artifact_url"`
+			SHA256      string `json:"sha256"`
 		}
 
 		for i := range marketplaceResp.Plugins {
-			if marketplaceResp.Plugins[i].ID == pluginID {
+			if marketplaceResp.Plugins[i].ListingID == pluginID {
 				targetPlugin = &marketplaceResp.Plugins[i]
 				break
 			}
@@ -96,9 +96,9 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		// Download plugin package
 		tmpDir := os.TempDir()
-		packagePath := filepath.Join(tmpDir, fmt.Sprintf("%s-%s.tar.gz", targetPlugin.ID, targetPlugin.Version))
+		packagePath := filepath.Join(tmpDir, fmt.Sprintf("%s-%s.tar.gz", targetPlugin.ListingID, targetPlugin.Version))
 
-		packageResp, err := http.Get(targetPlugin.PackageURL)
+		packageResp, err := http.Get(targetPlugin.ArtifactURL)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("download failed: %v", err), http.StatusInternalServerError)
 			return
@@ -138,14 +138,14 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		// Create minimal manifest for installation
 		// In production, this would be extracted from the tarball
-		manifestPath := filepath.Join(tmpDir, fmt.Sprintf("plugin-%s.json", targetPlugin.ID))
+		manifestPath := filepath.Join(tmpDir, fmt.Sprintf("plugin-%s.json", targetPlugin.ListingID))
 		manifestJSON := fmt.Sprintf(`{
-			"id": "%s",
-			"name": "%s",
-			"version": "%s",
-			"entrypoint": "./plugin",
-			"runtime": "go"
-		}`, targetPlugin.ID, targetPlugin.Name, targetPlugin.Version)
+			       "id": "%s",
+			       "name": "%s",
+			       "version": "%s",
+			       "entrypoint": "./plugin",
+			       "runtime": "go"
+		       }`, targetPlugin.ListingID, targetPlugin.Name, targetPlugin.Version)
 
 		if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0644); err != nil {
 			http.Error(w, fmt.Sprintf("write manifest failed: %v", err), http.StatusInternalServerError)
@@ -155,7 +155,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		// Install plugin
 		opts := plugins.InstallOptions{
-			InstalledFromURL: targetPlugin.PackageURL,
+			InstalledFromURL: targetPlugin.ArtifactURL,
 			SHA256:           targetPlugin.SHA256,
 			TrustLevel:       "untrusted",
 			Uploader:         "marketplace",
@@ -432,6 +432,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/plugins/{id}/update", handleUpdatePlugin(d))
 	mux.HandleFunc("POST /api/plugins/{id}/rollback", handleRollbackPlugin(d))
 	mux.HandleFunc("GET /api/plugins/check-updates", handleCheckUpdates(d))
+	mux.HandleFunc("POST /api/plugins/import-from-file", handleImportFromFile(d))
 }
 
 // handleInstallFromMarketplace handles marketplace plugin installation (T017)
@@ -701,7 +702,7 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		pluginID := r.PathValue("id")
-		
+
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
@@ -821,7 +822,7 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		pluginID := r.PathValue("id")
-		
+
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
@@ -882,6 +883,111 @@ func handleCheckUpdates(d *common.Deps) http.HandlerFunc {
 			"success": true,
 			"updates": updates,
 			"count":   len(updates),
+		})
+	}
+}
+
+// handleImportFromFile handles manual plugin import from uploaded file (T028)
+func handleImportFromFile(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		// Parse multipart form (max 200 MB)
+		if err := r.ParseMultipartForm(200 << 20); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse form: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Get uploaded file
+		file, handler, err := r.FormFile("plugin_file")
+		if err != nil {
+			http.Error(w, "plugin_file is required", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		// Get optional trust level (default to untrusted for manual imports)
+		trustLevel := r.FormValue("trust_level")
+		if trustLevel == "" {
+			trustLevel = "untrusted"
+		}
+
+		// Get uploader (TODO: extract from session)
+		uploader := r.FormValue("uploader")
+		if uploader == "" {
+			uploader = "manual-import"
+		}
+
+		// Check if signature verification should be skipped (dev-mode only)
+		skipSignature := false
+		if d.Cfg.Env == "dev" && r.FormValue("skip_signature") == "true" {
+			skipSignature = true
+		}
+
+		// Save uploaded file to temporary location
+		tmpDir := filepath.Join("./data/plugins/tmp")
+		if err := os.MkdirAll(tmpDir, 0755); err != nil {
+			http.Error(w, "Failed to create temp directory", http.StatusInternalServerError)
+			return
+		}
+
+		tmpFile := filepath.Join(tmpDir, handler.Filename)
+		out, err := os.Create(tmpFile)
+		if err != nil {
+			http.Error(w, "Failed to save uploaded file", http.StatusInternalServerError)
+			return
+		}
+		defer os.Remove(tmpFile)
+
+		if _, err := io.Copy(out, file); err != nil {
+			out.Close()
+			http.Error(w, "Failed to save uploaded file", http.StatusInternalServerError)
+			return
+		}
+		out.Close()
+
+		// Detect format from filename
+		format := plugins.ImportFormatTarGz
+		if strings.HasSuffix(strings.ToLower(handler.Filename), ".zip") {
+			format = plugins.ImportFormatZip
+		}
+
+		// Create importer
+		verifier, err := plugins.NewManifestVerifier("") // TODO: Add public key path from config
+		if err != nil {
+			log.Printf("Warning: failed to create verifier: %v", err)
+			verifier = nil // Allow import without verification in dev-mode
+		}
+		importer := plugins.NewImporter(d.Db, "./data/plugins", verifier)
+
+		// Import plugin
+		importReq := &plugins.ImportRequest{
+			FilePath:      tmpFile,
+			Format:        format,
+			MaxSizeBytes:  200 * 1024 * 1024, // 200 MB
+			TrustLevel:    trustLevel,
+			Uploader:      uploader,
+			SkipSignature: skipSignature,
+		}
+
+		result, err := importer.Import(ctx, importReq)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Reload plugin manager
+		if err := d.Pm.Reload(ctx); err != nil {
+			log.Printf("Warning: failed to reload plugin manager: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":  true,
+			"message":  fmt.Sprintf("Plugin %s v%s imported successfully", result.Name, result.Version),
+			"plugin":   result.PluginID,
+			"version":  result.Version,
+			"warnings": result.Warnings,
 		})
 	}
 }

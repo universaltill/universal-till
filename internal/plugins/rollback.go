@@ -15,9 +15,9 @@ import (
 
 // RollbackManager handles plugin version rollback operations
 type RollbackManager struct {
-	db             *sql.DB
-	pluginBaseDir  string
-	maxVersions    int // maximum versions to keep
+	db            *sql.DB
+	pluginBaseDir string
+	maxVersions   int // maximum versions to keep
 }
 
 // NewRollbackManager creates a new rollback manager
@@ -41,7 +41,7 @@ type VersionInfo struct {
 func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID string) ([]VersionInfo, error) {
 	// Check plugin directory
 	pluginDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
-	
+
 	if _, err := os.Stat(pluginDir); os.IsNotExist(err) {
 		return []VersionInfo{}, nil
 	}
@@ -54,8 +54,8 @@ func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID strin
 
 	// Get current version from database
 	var currentVersion string
-	err = rm.db.QueryRowContext(ctx, 
-		`SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1`, 
+	err = rm.db.QueryRowContext(ctx,
+		`SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1`,
 		pluginID).Scan(&currentVersion)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("failed to get current version: %w", err)
@@ -94,8 +94,8 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 
 	// Get current version
 	var currentVersion string
-	err := rm.db.QueryRowContext(ctx, 
-		`SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1`, 
+	err := rm.db.QueryRowContext(ctx,
+		`SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1`,
 		pluginID).Scan(&currentVersion)
 	if err != nil {
 		return fmt.Errorf("failed to get current version: %w", err)
@@ -172,10 +172,10 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	// Create audit log entry
 	auditID := uuid.New().String()
 	auditData := map[string]interface{}{
-		"plugin_id":        pluginID,
-		"from_version":     currentVersion,
-		"to_version":       targetVersion,
-		"rollback_reason":  "user_requested",
+		"plugin_id":       pluginID,
+		"from_version":    currentVersion,
+		"to_version":      targetVersion,
+		"rollback_reason": "user_requested",
 	}
 	auditDataJSON, _ := json.Marshal(auditData)
 
@@ -205,7 +205,7 @@ func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) er
 	log := logging.L()
 
 	versionDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions", version)
-	
+
 	// Create version directory
 	if err := os.MkdirAll(versionDir, 0755); err != nil {
 		return fmt.Errorf("failed to create version directory: %w", err)
@@ -228,7 +228,7 @@ func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) er
 // cleanupOldVersions removes old plugin versions, keeping only maxVersions
 func (rm *RollbackManager) cleanupOldVersions(pluginID string) error {
 	versionsDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
-	
+
 	entries, err := os.ReadDir(versionsDir)
 	if err != nil {
 		return err
@@ -241,7 +241,7 @@ func (rm *RollbackManager) cleanupOldVersions(pluginID string) error {
 			name    string
 			modTime time.Time
 		}
-		
+
 		var versions []versionEntry
 		for _, entry := range entries {
 			if entry.IsDir() {

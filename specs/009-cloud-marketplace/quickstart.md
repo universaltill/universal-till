@@ -58,3 +58,118 @@ Focus tests should cover catalog sync, download manager resume, manifest ingest,
 - **Plugin not appearing in UI**: Ensure manifest declares canonical `type` and that `plugin_entries.is_active=1`.
 - **Background sync disabled**: Confirm `settings.marketplace.sync_enabled` flag via admin UI.
 - **Telemetry not sending**: Ensure `settings.marketplace.telemetry_opt_in` is true and the device has recent tokens; otherwise telemetry remains off by design.
+
+## 7. Implementation Notes (Phase 1-6 Complete)
+
+### Architecture Overview
+The marketplace integration follows a **local-first** architecture where:
+- Catalog snapshots are cached locally (`data/plugins/cache/`)
+- Manual catalog refresh is required (no automatic first-fetch)
+- All plugin operations work offline with cached data
+- Background sync updates stale caches every 15 minutes
+
+### Key Components Implemented
+
+**Phase 1-2: Foundation**
+- OAuth2 token client with secure on-disk caching (`internal/plugins/oauth/`)
+- Marketplace HTTPS client with API versioning (`internal/plugins/marketplace/client.go`)
+- Plugin cache storage with .part file tracking (`internal/plugins/storage/`)
+- Background scheduler for catalog sync, telemetry, revocation (`internal/server/server.go`)
+
+**Phase 3: Catalog Browsing (US1)**
+- `CatalogRepository` with snapshot persistence and stale detection
+- HTMX-based `/plugins/store` UI with type/capability filters
+- Offline fallback with stale badge display
+- Periodic sync with exponential backoff (max 3 retries)
+
+**Phase 4: Plugin Installation (US2)**
+- `DownloadManager` with HTTP Range requests for resume support
+- SHA256 checksum validation during download
+- Ed25519 signature verification via `ManifestVerifier`
+- Atomic database persistence with transaction support
+- OS/arch compatibility gating (blocks mismatched installs)
+- Secure tar.gz extraction with path traversal protection
+
+**Phase 5: Plugin Lifecycle (US3)**
+- `UpdateChecker` compares installed vs catalog versions
+- `RollbackManager` maintains version history (max 3 versions)
+- `Supervisor.AutoStartPlugins()` launches active plugins at boot
+- `TelemetryClient` batches events (50 items or 5min), honors opt-in flag
+- Management UI with update badges, enable/disable, rollback actions
+
+**Phase 6: Offline Continuity (US4)**
+- `Importer` supports .zip and .tar.gz formats for manual installs
+- File upload endpoint with multipart handling (max 200 MB)
+- Modal UI with drag-and-drop, file validation, security warnings
+- `RevocationChecker` syncs marketplace revocation feed (30min interval)
+- Automatic plugin disabling when revoked, with audit trail
+
+### File Structure
+```
+data/plugins/
+├── cache/                    # Catalog snapshots (prod.catalog.json)
+├── tmp/                      # Temporary downloads (.part files)
+├── auth/                     # OAuth2 token cache
+├── {plugin_id}/
+│   ├── {version}/            # Current installed version
+│   │   ├── manifest.json
+│   │   ├── entrypoint (executable)
+│   │   └── ... (plugin files)
+│   └── versions/             # Rollback history (max 3)
+│       ├── 1.0.0/
+│       ├── 1.1.0/
+│       └── 1.2.0/
+```
+
+### Database Schema Updates
+- `plugins.install_state`: 'pending'|'installed'|'revoked'
+- `plugins.trust_level`: 'untrusted'|'trusted'|'verified'
+- `plugins.is_active`: Controls enable/disable state
+- Audit log entries for install, update, rollback, revocation events
+
+### API Endpoints
+- `POST /api/plugins/install-from-marketplace` - Marketplace install
+- `POST /api/plugins/import-from-file` - Manual upload (multipart)
+- `POST /api/plugins/{id}/update` - Update to latest version
+- `POST /api/plugins/{id}/rollback` - Revert to previous version
+- `POST /api/plugins/{id}/enable` - Activate plugin
+- `POST /api/plugins/{id}/disable` - Deactivate plugin
+- `GET /api/plugins/check-updates` - List available updates
+
+### Background Jobs
+- **Catalog Sync** (15min): Refreshes stale snapshots from marketplace
+- **Telemetry** (5min): Flushes batched events (if opt-in enabled)
+- **Revocation Check** (30min): Syncs revocation feed, disables affected plugins
+
+### Security Features
+- Path traversal protection in archive extraction
+- SHA256 integrity verification for all downloads
+- Ed25519 signature verification for marketplace artifacts
+- Trust tier mapping (verified/approved → trusted)
+- Disk budget enforcement (max 1 GB per plugin)
+- Untrusted default for manual imports
+- Dev-mode signature bypass (controlled by UT_ENV=dev)
+
+### Testing Strategy
+Unit tests cover:
+- Catalog repository offline replay
+- Download manager resume logic
+- Manifest verification (checksum + signature)
+- Update version comparison
+- Rollback transaction atomicity
+- Revocation sync processing
+- Telemetry opt-in enforcement
+
+Integration tests validate:
+- End-to-end install flow (marketplace → download → verify → persist)
+- Update with rollback version storage
+- Manual import from local file
+- Revocation disabling running plugins
+- Background job orchestration
+
+### Known Limitations
+- Supervisor not yet integrated into main.go (revocation won't stop processes)
+- RBAC manager PIN prompts not implemented (Phase 7)
+- Performance instrumentation pending (Phase 8)
+- Dev-mode marketplace override pending (Phase 9)
+

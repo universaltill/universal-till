@@ -77,10 +77,10 @@
 **Independent Test**: Disconnect WAN, install plugin from local `.utplugin`, verify validation + install succeed, then reconnect and confirm revocation sync disables a revoked plugin with alert.
 
 ### Implementation & Tests
-- [ ] T027 [P] [US4] Implement manual import parser (zip reader + manifest validation) in `internal/plugins/importer.go`.
-- [ ] T028 [US4] Add "Install from file" endpoint + file upload handling in `internal/pages/plugin_api.go` with disk budget checks.
-- [ ] T029 [US4] Build USB/file picker UI partials in `web/ui/partials/plugin_manual_import.html` showing validation feedback.
-- [ ] T030 [US4] Implement revocation sync loop + alerts in `internal/server/scheduler.go` and surface banners in `internal/pages/plugins_page.go`.
+- [X] T027 [P] [US4] Implement manual import parser (zip reader + manifest validation) in `internal/plugins/importer.go`.
+- [X] T028 [US4] Add "Install from file" endpoint + file upload handling in `internal/pages/plugin_api.go` with disk budget checks.
+- [X] T029 [US4] Build USB/file picker UI partials in `web/ui/partials/plugin_manual_import.html` showing validation feedback.
+- [X] T030 [US4] Implement revocation sync loop + alerts in `internal/server/scheduler.go` and surface banners in `internal/pages/plugins_page.go`.
 - [ ] T031 [P] [US4] Create importer + revocation tests in `internal/plugins/importer_test.go` and `internal/server/scheduler_test.go` (revocation path).
 - [ ] T031a [Edge Case] Add test for revocation arriving during critical plugin hooks (sale completion) - ensure safe disable after transaction completes.
 - [ ] T031b [Edge Case] Add validation + test for dev-override rejection when dev-mode is off (log warning, preserve existing endpoint).

@@ -2,6 +2,9 @@ package marketplace
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -11,21 +14,37 @@ import (
 func TestCatalogRepository_FetchAndGet(t *testing.T) {
 	// Setup mock client
 	mockToken := &mockTokenClient{token: "test-token"}
+	// Start mock marketplace server
+	mockPlugins := []map[string]interface{}{
+		{
+			"listing_id":     "test-plugin",
+			"name":           "Test Plugin",
+			"version":        "1.0.0",
+			"artifact_url":   "http://example.com/plugin.tar.gz",
+			"sha256":         "deadbeef",
+			"canonical_type": "payment",
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{"plugins": mockPlugins}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8082",
+		EndpointURL:       server.URL,
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
 	client := NewClient(cfg, mockToken)
 
-	// Create repository
 	tmpDir := t.TempDir()
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
 		t.Fatalf("NewCatalogRepository failed: %v", err)
 	}
 
-	// Fetch catalog
 	ctx := context.Background()
 	snapshot, err := repo.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
@@ -36,7 +55,6 @@ func TestCatalogRepository_FetchAndGet(t *testing.T) {
 		t.Error("expected plugins in snapshot")
 	}
 
-	// Get from cache
 	cached, isStale, err := repo.Get()
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
@@ -54,8 +72,24 @@ func TestCatalogRepository_FetchAndGet(t *testing.T) {
 func TestCatalogRepository_StaleDetection(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{"plugins": []map[string]interface{}{
+			{
+				"listing_id":     "test-plugin",
+				"name":           "Test Plugin",
+				"version":        "1.0.0",
+				"artifact_url":   "http://example.com/plugin.tar.gz",
+				"sha256":         "deadbeef",
+				"canonical_type": "payment",
+			},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8082",
+		EndpointURL:       server.URL,
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
@@ -66,20 +100,16 @@ func TestCatalogRepository_StaleDetection(t *testing.T) {
 		t.Fatalf("NewCatalogRepository failed: %v", err)
 	}
 
-	// Override staleAfter for testing
 	repo.staleAfter = 100 * time.Millisecond
 
-	// Fetch catalog
 	ctx := context.Background()
 	_, err = repo.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
 
-	// Wait for staleness
 	time.Sleep(150 * time.Millisecond)
 
-	// Check stale marker
 	_, isStale, err := repo.Get()
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
@@ -93,14 +123,29 @@ func TestCatalogRepository_StaleDetection(t *testing.T) {
 func TestCatalogRepository_DiskPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{"plugins": []map[string]interface{}{
+			{
+				"listing_id":     "test-plugin",
+				"name":           "Test Plugin",
+				"version":        "1.0.0",
+				"artifact_url":   "http://example.com/plugin.tar.gz",
+				"sha256":         "deadbeef",
+				"canonical_type": "payment",
+			},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8082",
+		EndpointURL:       server.URL,
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
 	client := NewClient(cfg, mockToken)
 
-	// First repository - fetch and save
 	repo1, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
 		t.Fatalf("NewCatalogRepository failed: %v", err)
@@ -112,7 +157,6 @@ func TestCatalogRepository_DiskPersistence(t *testing.T) {
 		t.Fatalf("Fetch failed: %v", err)
 	}
 
-	// Second repository - should load from disk
 	repo2, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
 		t.Fatalf("NewCatalogRepository failed: %v", err)
@@ -131,8 +175,32 @@ func TestCatalogRepository_DiskPersistence(t *testing.T) {
 func TestCatalogRepository_Filter(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{"plugins": []map[string]interface{}{
+			{
+				"listing_id":     "test-plugin",
+				"name":           "Test Plugin",
+				"version":        "1.0.0",
+				"artifact_url":   "http://example.com/plugin.tar.gz",
+				"sha256":         "deadbeef",
+				"canonical_type": "payment",
+			},
+			{
+				"listing_id":     "other-plugin",
+				"name":           "Other Plugin",
+				"version":        "1.0.0",
+				"artifact_url":   "http://example.com/other.tar.gz",
+				"sha256":         "cafebabe",
+				"canonical_type": "report",
+			},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8082",
+		EndpointURL:       server.URL,
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
@@ -143,14 +211,12 @@ func TestCatalogRepository_Filter(t *testing.T) {
 		t.Fatalf("NewCatalogRepository failed: %v", err)
 	}
 
-	// Fetch catalog
 	ctx := context.Background()
 	_, err = repo.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
 
-	// Filter by type
 	filtered, err := repo.Filter("payment", "", "")
 	if err != nil {
 		t.Fatalf("Filter failed: %v", err)
@@ -166,8 +232,24 @@ func TestCatalogRepository_Filter(t *testing.T) {
 func TestCatalogRepository_OfflineReplay(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{"plugins": []map[string]interface{}{
+			{
+				"listing_id":     "test-plugin",
+				"name":           "Test Plugin",
+				"version":        "1.0.0",
+				"artifact_url":   "http://example.com/plugin.tar.gz",
+				"sha256":         "deadbeef",
+				"canonical_type": "payment",
+			},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
 	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://localhost:8082",
+		EndpointURL:       server.URL,
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
@@ -178,7 +260,6 @@ func TestCatalogRepository_OfflineReplay(t *testing.T) {
 		t.Fatalf("NewCatalogRepository failed: %v", err)
 	}
 
-	// Fetch while online
 	ctx := context.Background()
 	_, err = repo.Fetch(ctx, "en-US", "linux/amd64")
 	if err != nil {
@@ -188,7 +269,6 @@ func TestCatalogRepository_OfflineReplay(t *testing.T) {
 	// Simulate offline by using invalid endpoint
 	cfg.EndpointURL = "http://invalid-endpoint:9999"
 
-	// Should still get cached data
 	snapshot, isStale, err := repo.Get()
 	if err != nil {
 		t.Fatalf("Get failed when offline: %v", err)
@@ -198,6 +278,5 @@ func TestCatalogRepository_OfflineReplay(t *testing.T) {
 		t.Error("expected cached plugins when offline")
 	}
 
-	// Snapshot should be available even if stale
 	t.Logf("Offline snapshot available, stale=%v", isStale)
 }

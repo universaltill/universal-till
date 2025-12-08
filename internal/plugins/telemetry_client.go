@@ -32,17 +32,17 @@ type TelemetryBatch struct {
 
 // TelemetryClient sends plugin telemetry to marketplace
 type TelemetryClient struct {
-	db              *sql.DB
-	marketplaceURL  string
-	deviceID        string
-	httpClient      *http.Client
-	optInEnabled    bool
-	batchSize       int
-	batchInterval   time.Duration
-	mu              sync.Mutex
-	pendingEvents   []TelemetryEvent
-	ticker          *time.Ticker
-	stopChan        chan struct{}
+	db             *sql.DB
+	marketplaceURL string
+	deviceID       string
+	httpClient     *http.Client
+	optInEnabled   bool
+	batchSize      int
+	batchInterval  time.Duration
+	mu             sync.Mutex
+	pendingEvents  []TelemetryEvent
+	ticker         *time.Ticker
+	stopChan       chan struct{}
 }
 
 // NewTelemetryClient creates a new telemetry client
@@ -75,7 +75,7 @@ func (tc *TelemetryClient) Start(ctx context.Context) {
 	}
 
 	tc.ticker = time.NewTicker(tc.batchInterval)
-	
+
 	go func() {
 		for {
 			select {
@@ -191,13 +191,13 @@ func (tc *TelemetryClient) loadOptInStatus(ctx context.Context) error {
 	err := tc.db.QueryRowContext(ctx,
 		`SELECT value FROM settings WHERE key = 'marketplace.telemetry_opt_in' LIMIT 1`,
 	).Scan(&value)
-	
+
 	if err == sql.ErrNoRows {
 		// Default to opt-out if not set
 		tc.optInEnabled = false
 		return nil
 	}
-	
+
 	if err != nil {
 		return err
 	}
@@ -262,7 +262,7 @@ func (tc *TelemetryClient) sendBatch(ctx context.Context, batch TelemetryBatch) 
 	}
 
 	endpoint := fmt.Sprintf("%s/v1/telemetry", tc.marketplaceURL)
-	
+
 	maxRetries := 3
 	backoff := 2 * time.Second
 
