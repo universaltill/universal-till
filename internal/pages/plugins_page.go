@@ -42,12 +42,12 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 					enabled := false
 					currentVersion := ""
 					hasUpdate := false
-					
+
 					if inst, exists := d.Pm.Installed[p.ListingID]; exists {
 						installed = true
 						enabled = inst.IsActive
 						currentVersion = inst.Version
-						
+
 						// Check if update available (simple string comparison - production should use semantic versioning)
 						if p.Version != currentVersion {
 							hasUpdate = true

@@ -2,14 +2,48 @@ package pages
 
 import (
 	"net/http"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 // PluginStoreHandler handles the marketplace plugin store page
 func PluginStoreHandler(deps *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Performance instrumentation
+		start := time.Now()
+		defer func() {
+			elapsed := time.Since(start)
+			elapsedMs := elapsed.Milliseconds()
+
+			// Get thresholds from env (defaults: warn=2000ms, fail=3000ms)
+			warnMs := int64(2000)
+			failMs := int64(3000)
+			if envWarn := os.Getenv("UT_MARKETPLACE_RENDER_WARN_MS"); envWarn != "" {
+				if parsed, err := strconv.ParseInt(envWarn, 10, 64); err == nil {
+					warnMs = parsed
+				}
+			}
+			if envFail := os.Getenv("UT_MARKETPLACE_RENDER_FAIL_MS"); envFail != "" {
+				if parsed, err := strconv.ParseInt(envFail, 10, 64); err == nil {
+					failMs = parsed
+				}
+			}
+
+			// Log performance metrics
+			if elapsedMs >= failMs {
+				logging.L().Errorf("Plugin store render FAILED threshold: %dms (threshold: %dms)", elapsedMs, failMs)
+			} else if elapsedMs >= warnMs {
+				logging.L().Warnf("Plugin store render exceeded warn threshold: %dms (threshold: %dms)", elapsedMs, warnMs)
+			} else {
+				logging.L().Debugf("Plugin store render completed in %dms", elapsedMs)
+			}
+		}()
+
 		// Check if marketplace is configured
 		if deps.CatalogRepo == nil {
 			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)

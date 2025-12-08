@@ -15,22 +15,28 @@ import (
 
 func TestTokenClient_GetToken_Success(t *testing.T) {
 	// Setup mock OAuth server
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/oauth/token" {
+		if r.URL.Path != "/v1/auth/merchant-token" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		if err := r.ParseForm(); err != nil {
-			t.Fatal(err)
+		if r.Method != "POST" {
+			t.Errorf("unexpected method: %s", r.Method)
 		}
-		if r.Form.Get("grant_type") != "client_credentials" {
-			t.Errorf("expected client_credentials grant, got %s", r.Form.Get("grant_type"))
+		var reqBody map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
 		}
-
+		if reqBody["merchant_id"] != "test-client" {
+			t.Errorf("expected merchant_id 'test-client', got %s", reqBody["merchant_id"])
+		}
+		if reqBody["device_id"] != "test-secret" {
+			t.Errorf("expected device_id 'test-secret', got %s", reqBody["device_id"])
+		}
 		resp := TokenResponse{
-			AccessToken: "test-token-12345",
-			TokenType:   "Bearer",
-			ExpiresIn:   3600,
-			Scope:       "marketplace:read",
+			Token:     "test-token-12345",
+			ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+			Scope:     "marketplace:read",
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)

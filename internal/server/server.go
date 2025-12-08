@@ -2,17 +2,20 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 // BackgroundJobs manages periodic marketplace tasks
 type BackgroundJobs struct {
 	catalogRepo         *marketplace.CatalogRepository
+	revocationChecker   *plugins.RevocationChecker
 	catalogSyncInterval time.Duration
 	telemetryInterval   time.Duration
 	revocationInterval  time.Duration
@@ -21,9 +24,15 @@ type BackgroundJobs struct {
 }
 
 // NewBackgroundJobs creates a background job scheduler
-func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
+func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
+	var revocationChecker *plugins.RevocationChecker
+	if cfg.Marketplace.EndpointURL != "" {
+		revocationChecker = plugins.NewRevocationChecker(db, cfg.Marketplace.EndpointURL, supervisor)
+	}
+
 	return &BackgroundJobs{
 		catalogRepo:         catalogRepo,
+		revocationChecker:   revocationChecker,
 		catalogSyncInterval: 15 * time.Minute,
 		telemetryInterval:   5 * time.Minute,
 		revocationInterval:  30 * time.Minute,
@@ -71,7 +80,7 @@ func (bj *BackgroundJobs) Start(ctx context.Context) {
 		}
 	}()
 
-	// Revocation check job (stub for T030)
+	// Revocation check job (T030)
 	go func() {
 		ticker := time.NewTicker(bj.revocationInterval)
 		defer ticker.Stop()
@@ -80,8 +89,15 @@ func (bj *BackgroundJobs) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				bj.logger.Println("[Scheduler] revocation check job triggered (stub)")
-				// TODO: Implement revocation sync in T030
+				if bj.revocationChecker != nil {
+					bj.logger.Println("[Scheduler] checking for revoked plugins")
+					count, err := bj.revocationChecker.SyncRevocations(ctx)
+					if err != nil {
+						bj.logger.Printf("[Scheduler] revocation sync failed: %v", err)
+					} else if count > 0 {
+						bj.logger.Printf("[Scheduler] disabled %d revoked plugins", count)
+					}
+				}
 			}
 		}
 	}()
@@ -122,11 +138,11 @@ func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 	}
 }
 
-func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository) error {
+func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor) error {
 	// Start background jobs if catalog repository is configured
 	if catalogRepo != nil {
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
-		jobs := NewBackgroundJobs(catalogRepo, cfg, logger)
+		jobs := NewBackgroundJobs(catalogRepo, db, supervisor, cfg, logger)
 		go jobs.Start(ctx)
 	}
 

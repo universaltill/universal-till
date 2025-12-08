@@ -178,6 +178,7 @@ Ask the user: "Would you like me to suggest concrete remediation edits for the t
 - **Prioritize constitution violations** (these are always CRITICAL)
 - **Use examples over exhaustive rules** (cite specific instances, not generic patterns)
 - **Report zero issues gracefully** (emit success report with coverage statistics)
+- **Flag misplaced POS/pricing logic**: Treat POS and pricing business logic implemented outside the `corepos` package under `/corepos` (intended for POS and gomobile builds) as an inconsistency to highlight
 
 ## Context
 

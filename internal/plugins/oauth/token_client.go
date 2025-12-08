@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,12 +14,20 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 )
 
-// TokenResponse represents OAuth2 token response
+// TokenResponse represents JWT token response (actual marketplace uses camelCase)
 type TokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-	Scope       string `json:"scope,omitempty"`
+	Token      string `json:"token"`     // JWT token
+	ExpiresAt  string `json:"expiresAt"` // ISO 8601 timestamp (camelCase in actual API)
+	MerchantID string `json:"merchantId,omitempty"`
+	DeviceID   string `json:"deviceId,omitempty"`
+	// Legacy fields for backward compatibility
+	ExpiresAtSnake  string `json:"expires_at,omitempty"` // snake_case fallback
+	MerchantIDSnake string `json:"merchant_id,omitempty"`
+	DeviceIDSnake   string `json:"device_id,omitempty"`
+	AccessToken     string `json:"access_token,omitempty"`
+	TokenType       string `json:"token_type,omitempty"`
+	ExpiresIn       int    `json:"expires_in,omitempty"`
+	Scope           string `json:"scope,omitempty"`
 }
 
 // CachedToken stores token with expiry metadata
@@ -97,28 +104,33 @@ func (tc *TokenClient) GetToken(ctx context.Context) (string, error) {
 	return token.Token, nil
 }
 
-// requestToken performs OAuth2 client-credentials flow
+// requestToken performs JWT merchant token request (matches OpenAPI /v1/auth/merchant-token)
 func (tc *TokenClient) requestToken(ctx context.Context) (*CachedToken, error) {
 	if tc.cfg.ClientID == "" || tc.cfg.ClientSecret == "" {
 		return nil, fmt.Errorf("marketplace OAuth2 credentials not configured")
 	}
 
-	// Construct token endpoint URL
-	tokenURL := strings.TrimSuffix(tc.cfg.EndpointURL, "/") + "/oauth/token"
+	// Construct token endpoint URL (OpenAPI spec: /v1/auth/merchant-token)
+	tokenURL := strings.TrimSuffix(tc.cfg.EndpointURL, "/") + "/v1/auth/merchant-token"
 
-	// Prepare request body
-	data := url.Values{}
-	data.Set("grant_type", "client_credentials")
-	data.Set("client_id", tc.cfg.ClientID)
-	data.Set("client_secret", tc.cfg.ClientSecret)
-	data.Set("scope", "marketplace:read marketplace:install marketplace:telemetry")
+	// Prepare request body (matches GenerateTokenRequest schema)
+	requestBody := map[string]string{
+		"merchant_id": tc.cfg.ClientID,
+		"device_id":   tc.getDeviceID(),
+		"pos_version": "2.5.0", // TODO: Get from config
+	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(data.Encode()))
+	bodyJSON, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(string(bodyJSON)))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := tc.client.Do(req)
@@ -136,14 +148,51 @@ func (tc *TokenClient) requestToken(ctx context.Context) (*CachedToken, error) {
 		return nil, fmt.Errorf("failed to decode token response: %w", err)
 	}
 
-	// Calculate expiry with 5-minute safety margin
-	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn-300) * time.Second)
+	// Handle new JWT response format
+	token := tokenResp.Token
+	if token == "" {
+		// Fallback to legacy OAuth2 format
+		token = tokenResp.AccessToken
+	}
+
+	// Parse expiry (try both camelCase and snake_case for compatibility)
+	var expiresAt time.Time
+	expiresAtStr := tokenResp.ExpiresAt
+	if expiresAtStr == "" {
+		expiresAtStr = tokenResp.ExpiresAtSnake
+	}
+	if expiresAtStr != "" {
+		// Parse ISO 8601 timestamp
+		expiresAt, err = time.Parse(time.RFC3339, expiresAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse expires_at: %w", err)
+		}
+	} else if tokenResp.ExpiresIn > 0 {
+		// Fallback to legacy expires_in (seconds)
+		expiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn-300) * time.Second)
+	} else {
+		// Default: 1 hour expiry
+		expiresAt = time.Now().Add(55 * time.Minute)
+	}
 
 	return &CachedToken{
-		Token:     tokenResp.AccessToken,
+		Token:     token,
 		ExpiresAt: expiresAt,
 		Scope:     tokenResp.Scope,
 	}, nil
+}
+
+// getDeviceID returns a device identifier (using ClientSecret as device_id for now)
+func (tc *TokenClient) getDeviceID() string {
+	if tc.cfg.ClientSecret != "" {
+		return tc.cfg.ClientSecret
+	}
+	// Generate a stable device ID based on hostname
+	hostname, _ := os.Hostname()
+	if hostname != "" {
+		return hostname
+	}
+	return "pos-device-1"
 }
 
 // loadFromDisk reads cached token from disk
