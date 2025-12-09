@@ -2,7 +2,9 @@
 
 ## Overview
 
-This feature does **not** add new tables. It maps marketplace concepts onto the existing plugin schema introduced in `internal/db/migrations/001_init.sql` plus filesystem caches under `data/plugins/`. The marketplace service remains remote; the POS client persists metadata locally for offline use.
+This feature does **not** add new tables or columns. It maps marketplace concepts onto the existing plugin schema introduced in `internal/db/migrations/001_init.sql` plus filesystem caches under `data/plugins/`. The marketplace service remains remote; the POS client persists metadata locally for offline use.
+
+**Schema Confirmation**: Uses ONLY existing columns in `plugin_catalog`, `plugins`, `plugin_entries`, `plugin_permissions`, `plugin_settings`, and `audit_log`. No migrations required.
 
 ```
 Marketplace API (gRPC/HTTPS)

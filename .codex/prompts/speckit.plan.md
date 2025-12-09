@@ -87,3 +87,5 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 - Use absolute paths
 - ERROR on gate failures or unresolved clarifications
+- Place any function executing SQL in the appropriate repository under `internal/data/` (e.g., `catalog_repo.go`, `pos_repo.go`)
+- Implement all POS and pricing business logic in the `corepos` package under `/corepos`, which will be consumed by POS and mobile apps (mobile build via gomobile)

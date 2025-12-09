@@ -80,9 +80,11 @@ func TestIndexAndBasketRender(t *testing.T) {
 	}
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
 	cfg := &config.Config{
-		Theme:          "default",
-		Locales:        config.Locales{Currency: "GBP", TaxRate: 20},
-		MarketplaceURL: mockMarketplace.URL,
+		Theme:   "default",
+		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL: mockMarketplace.URL,
+		},
 	}
 	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {
@@ -288,9 +290,11 @@ func TestInventoryFormRender(t *testing.T) {
 	seedForPages(t, db)
 
 	cfg := &config.Config{
-		Theme:          "default",
-		Locales:        config.Locales{Currency: "GBP", TaxRate: 20},
-		MarketplaceURL: "http://localhost:8081",
+		Theme:   "default",
+		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL: "http://localhost:8081",
+		},
 	}
 	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {

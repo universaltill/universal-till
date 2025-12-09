@@ -130,11 +130,44 @@ docker compose -f docker-compose.edge.yml up --build
 
 Open http://localhost:8080
 
+### Option 4: Development Mode (with Mock Marketplace)
+
+For development and testing with marketplace features:
+
+```bash
+# 1. Start mock marketplace (in one terminal)
+go run scripts/mock-marketplace/main.go
+# Mock runs on :8082
+
+# 2. Start POS with dev environment (in another terminal)
+./scripts/dev.sh
+# Or manually:
+# export $(grep -v '^#' pos.env.dev | grep -v '^$' | xargs)
+# make build && ./bin/unitill-pos
+```
+
+This loads configuration from `pos.env.dev` which includes:
+- Mock marketplace endpoint (http://localhost:8082)
+- Dev OAuth credentials
+- BCP 47 locale settings
+
 ---
 
 ## ⚙️ Configuration
 
-Edit `edge.env.dev` to configure:
+Universal Till uses a single configuration file: `pos.env`
+
+**On first installation**, create your configuration:
+
+```bash
+# Copy the example template
+cp pos.env.example pos.env
+
+# Edit with your settings
+nano pos.env
+```
+
+**Configuration options:**
 
 ```bash
 # Server configuration
@@ -148,6 +181,16 @@ UT_STORE=sqlite                        # Database type (sqlite recommended)
 UT_CURRENCY=USD                        # Currency code (USD, GBP, EUR, etc.)
 UT_TAX_INCLUSIVE=true                  # Tax included in prices?
 UT_TAX_RATE=20                         # Tax rate percentage
+
+# Marketplace integration (cloud plugin store)
+UT_MARKETPLACE_ENDPOINT_URL=http://127.0.0.1:8081  # Production marketplace API
+# For local testing with mock: http://localhost:8082
+UT_MARKETPLACE_CLIENT_ID=              # OAuth2 client ID (leave empty for local dev)
+UT_MARKETPLACE_CLIENT_SECRET=          # OAuth2 client secret
+UT_MARKETPLACE_API_VERSION=1.0.0       # Marketplace API version
+UT_MARKETPLACE_TELEMETRY_OPT_IN=false  # Send usage telemetry to marketplace
+UT_DEV_MODE=false                      # Enable developer mode features
+UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode only)
 
 # Optional
 UT_SAMPLES_DIR=/path/to/images        # Sample product images

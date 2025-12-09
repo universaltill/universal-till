@@ -116,17 +116,18 @@ Developers and QA need to point the POS marketplace client at a local/stub marke
 - **FR-009**: POS MUST expose role-based access control so only managers/admins can install or remove plugins; overrides require authentication.
 - **FR-010**: POS MUST support manual package import/export (USB/file picker) that follows the same manifest verification path used for cloud downloads.
 - **FR-011**: POS MUST detect compatibility (OS, arch, required capabilities) before enabling the "Install" action by comparing catalog metadata against the device profile; incompatible plugins stay disabled in the UI/API with a clear explanation banner.
-- **FR-012**: POS MUST backoff and retry marketplace syncs using exponential strategy to avoid hammering the remote API during outages.
+- **FR-012**: POS MUST backoff and retry marketplace syncs using exponential strategy (initial 1s delay, max 5min, with 10% jitter) to avoid hammering the remote API during outages.
 - **FR-013**: POS MUST send lightweight telemetry (plugin id, version, status) to the marketplace when online only if `settings.marketplace.telemetry_opt_in` is true, and must avoid sensitive data when reporting.
 - **FR-014**: POS MUST maintain at least one previous version per plugin (if disk permits) to allow rollback when an update misbehaves.
-- **FR-015**: POS MUST expose configuration for marketplace endpoint URLs (prod/staging/custom) so partner deployments can point to their own cloud instance.
-- **FR-016**: POS MUST gracefully handle marketplace API version mismatches by pinning the target gRPC service version via device configuration and attaching it as metadata on every request; devices must log and alert when the configured version is deprecated.
+- **FR-015**: POS MUST expose configuration for marketplace endpoint URLs with the following hierarchy:
+  - **Production/Staging/Custom endpoints**: Configured via `marketplace.endpoint_url` (prod default, staging/custom for partner deployments) and honored in all modes.
+  - **Dev-mode local override**: When `UT_DEV_MODE=true`, POS may override the base URL via `marketplace.dev_override_url` for local testing; this override is ignored and logged as a warning when dev mode is off.
+  - **Validation**: Before activating any override, POS validates scheme (http/https only), host/port format, and reachability (5-second health check timeout); validation failures surface actionable errors and preserve the previous working endpoint.
+  - **Runtime toggling**: Supports switching between cloud and local endpoints without restart; logs active source with timestamp; falls back to cloud automatically after 30-second timeout if local endpoint stops responding.
+- **FR-016**: POS MUST gracefully handle marketplace API version mismatches by pinning the target gRPC service version (semver format: "1.2.3") via device configuration (`marketplace.api_version`) and attaching it as gRPC metadata (key: `x-marketplace-api-version`) on every request; devices must log and alert when the configured version is marked deprecated (6-month warning window before sunset) by the marketplace service.
 - **FR-017**: POS MUST recognize and enforce the canonical plugin types (`page`, `button`, `popup`, `payment`, `device`, `integration`, `report`, `pricing`, `tax`, `import`, `export`, `hardware`, `background_job`, `scheduler`, `receipt_template`, `customer_facing`, `auth`, `notification`, `delivery`) when rendering catalog entries, validating manifests, and applying permissions.
 - **FR-018**: POS MUST authenticate to the marketplace using an OAuth2 client-credentials flow (store/device client ID + secret), request scoped tokens, cache them securely, and rotate credentials without operator interaction.
-- **FR-019**: POS MUST auto-start every installed + enabled plugin as a supervised executable at POS startup, ensuring each process exposes the gRPC contract defined in `contracts/plugin_host.proto` so host↔plugin IPC stays consistent.
-- **FR-020**: POS MUST support a dev-mode-only marketplace base URL override that, when enabled, routes all marketplace calls to the configured local URL; override is ignored when dev mode is off.
-- **FR-021**: POS MUST validate the override (scheme/host/port) and reachability before activation, surface human-readable errors, and keep the previous endpoint active on failure.
-- **FR-022**: POS MUST support runtime toggling between cloud and local endpoints without restart, log the active source with timestamp, and fall back to cloud automatically after a configurable timeout if the local endpoint stops responding.
+- **FR-019**: POS MUST auto-start every installed + enabled plugin as a supervised executable at POS startup with failure handling: retry failed starts with exponential backoff (initial 1s, max 30s, 3 attempts max), then mark `plugin.status='start_failed'` and alert operator. Each process must expose the gRPC contract defined in `contracts/plugin_host.proto` so host↔plugin IPC stays consistent.
 
 ### Key Entities *(include if feature involves data)*
 - **MarketplaceFeed**: Cached JSON snapshot (version, timestamp, locale, list of PluginSummaries) fetched from the cloud API.
@@ -139,7 +140,7 @@ Developers and QA need to point the POS marketplace client at a local/stub marke
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
-- **SC-001**: Catalog view fetch + render completes in <3 seconds on 90% of requests when online (excluding remote latency) and uses cached data when offline.
+- **SC-001**: Catalog view fetch + render completes in <3 seconds for p90 requests when online (excluding remote network latency) and uses cached data when offline.
 - **SC-002**: 95% of plugin downloads either complete successfully or resume after transient failures without user intervention; checksum mismatches are detected 100% of the time.
 - **SC-003**: Revocation feeds are processed within 15 minutes for 95% of online devices, automatically disabling affected plugins and logging the action.
 - **SC-004**: At least one previous plugin version remains available locally for rollback on 90%+ of update attempts (subject to disk space); rollback completes in <2 minutes.
@@ -149,7 +150,7 @@ Developers and QA need to point the POS marketplace client at a local/stub marke
 
 ## Assumptions & Constraints
 - Cloud marketplace provides stable REST endpoints for catalog, download token issuance, telemetry, and revocation feeds; this repo only consumes them.
-- No schema changes are allowed; all persistence uses existing plugin tables defined in `internal/db/migrations/001_init.sql`.
+- **No schema changes are allowed**: All persistence uses ONLY existing columns in `plugin_catalog`, `plugins`, `plugin_entries`, `plugin_permissions`, `plugin_settings`, and `audit_log` tables defined in `internal/db/migrations/001_init.sql`. No new tables, no new columns, no migrations for this feature.
 - POS devices may run offline for extended periods; features must degrade gracefully and reconcile once connectivity returns.
 - Marketplace authentication uses OAuth2 client-credentials per store/device; secrets are provisioned centrally and rotated without exposing operator accounts.
 - Telemetry reporting honors the persisted opt-in flag `settings.marketplace.telemetry_opt_in` and remains disabled when false.

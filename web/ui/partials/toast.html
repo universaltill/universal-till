@@ -1,0 +1,84 @@
+{{ define "toast" }}
+<!-- Toast Notifications (T018 - 009-cloud-marketplace Phase 4) -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2">
+	<!-- Toasts will be dynamically inserted here -->
+</div>
+
+<script>
+function showToast(message, type = 'info', duration = 5000) {
+	const toast = document.createElement('div');
+	const toastId = 'toast-' + Date.now();
+	toast.id = toastId;
+	
+	const colors = {
+		success: 'bg-green-500',
+		error: 'bg-red-500',
+		warning: 'bg-yellow-500',
+		info: 'bg-blue-500'
+	};
+	
+	const icons = {
+		success: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>',
+		error: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>',
+		warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>',
+		info: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>'
+	};
+	
+	toast.className = `${colors[type]} text-white px-6 py-4 rounded-lg shadow-lg flex items-center space-x-3 transform transition-all duration-300 opacity-0 translate-x-full max-w-md`;
+	toast.innerHTML = `
+		<svg class="h-6 w-6 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			${icons[type]}
+		</svg>
+		<span class="flex-1">${message}</span>
+		<button onclick="dismissToast('${toastId}')" class="text-white hover:text-gray-200">
+			<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+			</svg>
+		</button>
+	`;
+	
+	document.getElementById('toast-container').appendChild(toast);
+	
+	// Trigger animation
+	setTimeout(() => {
+		toast.classList.remove('opacity-0', 'translate-x-full');
+	}, 10);
+	
+	// Auto-dismiss
+	if (duration > 0) {
+		setTimeout(() => {
+			dismissToast(toastId);
+		}, duration);
+	}
+	
+	return toastId;
+}
+
+function dismissToast(toastId) {
+	const toast = document.getElementById(toastId);
+	if (toast) {
+		toast.classList.add('opacity-0', 'translate-x-full');
+		setTimeout(() => {
+			toast.remove();
+		}, 300);
+	}
+}
+
+// Convenience functions
+function showSuccessToast(message) {
+	return showToast(message, 'success');
+}
+
+function showErrorToast(message) {
+	return showToast(message, 'error', 8000);
+}
+
+function showWarningToast(message) {
+	return showToast(message, 'warning', 6000);
+}
+
+function showInfoToast(message) {
+	return showToast(message, 'info');
+}
+</script>
+{{ end }}

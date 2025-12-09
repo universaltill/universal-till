@@ -1,0 +1,252 @@
+{{ define "plugin_manual_import" }}
+<!-- Manual Plugin Import Modal -->
+<div id="manualImportModal" 
+     class="modal" 
+     x-data="{ step: 'upload', uploadProgress: 0, importFile: null }"
+     x-show="$store.pluginImport.showModal"
+     x-cloak
+     @keydown.escape.window="$store.pluginImport.showModal = false">
+  
+  <div class="modal-backdrop" @click="$store.pluginImport.showModal = false"></div>
+  
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h2>Manual Plugin Import</h2>
+      <button class="btn-icon" @click="$store.pluginImport.showModal = false">
+        <span aria-hidden="true">&times;</span>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Step 1: File Upload -->
+      <div x-show="step === 'upload'">
+        <div class="info-panel mb-3">
+          <p><strong>Upload a signed plugin archive</strong></p>
+          <p class="text-sm">Supported formats: .tar.gz, .tar.sig (paired files required)</p>
+          <p class="text-sm text-warning">
+            ⚠️ Only install plugins from trusted sources. Manual imports bypass marketplace verification.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label for="pluginArchive">Plugin Archive (.tar.gz)</label>
+          <input type="file" 
+                 id="pluginArchive"
+                 accept=".tar.gz,.tgz"
+                 @change="importFile = $event.target.files[0]"
+                 class="form-control">
+        </div>
+
+        <div class="form-group">
+          <label for="pluginSignature">Signature File (.tar.sig)</label>
+          <input type="file" 
+                 id="pluginSignature"
+                 accept=".sig"
+                 class="form-control">
+        </div>
+
+        <div class="mt-3">
+          <button class="btn btn-primary"
+                  @click="step = 'verify'"
+                  :disabled="!importFile">
+            Next: Verify Signature
+          </button>
+          <button class="btn btn-secondary"
+                  @click="$store.pluginImport.showModal = false">
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: Signature Verification -->
+      <div x-show="step === 'verify'">
+        <div class="info-panel mb-3">
+          <h3>Signature Verification</h3>
+          <p class="text-sm">Verifying plugin authenticity and integrity...</p>
+        </div>
+
+        <div class="verification-status">
+          <div class="status-item">
+            <span class="status-icon">⏳</span>
+            <span>Checking file integrity (SHA256)</span>
+          </div>
+          <div class="status-item">
+            <span class="status-icon">⏳</span>
+            <span>Verifying developer signature</span>
+          </div>
+          <div class="status-item">
+            <span class="status-icon">⏳</span>
+            <span>Scanning manifest for malicious permissions</span>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <button class="btn btn-primary"
+                  @click="step = 'confirm'">
+            Verification Passed - Continue
+          </button>
+          <button class="btn btn-secondary"
+                  @click="step = 'upload'">
+            Back
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 3: Confirmation -->
+      <div x-show="step === 'confirm'">
+        <div class="plugin-details mb-3">
+          <h3>Plugin Information</h3>
+          <table class="table-sm">
+            <tr>
+              <td><strong>Name:</strong></td>
+              <td x-text="$store.pluginImport.pluginName || 'Sample Payment Plugin'"></td>
+            </tr>
+            <tr>
+              <td><strong>Version:</strong></td>
+              <td x-text="$store.pluginImport.version || '1.0.0'"></td>
+            </tr>
+            <tr>
+              <td><strong>Developer:</strong></td>
+              <td x-text="$store.pluginImport.developer || 'Trusted Developer Inc.'"></td>
+            </tr>
+            <tr>
+              <td><strong>Trust Tier:</strong></td>
+              <td>
+                <span class="badge badge-warning">Manual Import (Unverified)</span>
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Permissions:</strong></td>
+              <td>
+                <ul class="permission-list text-sm">
+                  <li>🔐 Network Access (payment.process)</li>
+                  <li>💳 Transaction Read/Write</li>
+                  <li>📊 Sales Data Read</li>
+                </ul>
+              </td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" x-model="$store.pluginImport.acceptRisk">
+            I understand this plugin is manually imported and not marketplace-verified
+          </label>
+        </div>
+
+        <div class="mt-3">
+          <button class="btn btn-primary"
+                  @click="step = 'installing'"
+                  :disabled="!$store.pluginImport.acceptRisk">
+            Install Plugin
+          </button>
+          <button class="btn btn-secondary"
+                  @click="step = 'verify'">
+            Back
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 4: Installing -->
+      <div x-show="step === 'installing'">
+        <div class="install-progress">
+          <h3>Installing Plugin...</h3>
+          <div class="progress-bar">
+            <div class="progress-fill" 
+                 :style="'width: ' + uploadProgress + '%'"></div>
+          </div>
+          <p class="text-sm text-center mt-2" x-text="uploadProgress + '%'"></p>
+        </div>
+
+        <!-- Simulate progress -->
+        <div x-init="
+          let interval = setInterval(() => {
+            if (uploadProgress < 100) {
+              uploadProgress += 10;
+            } else {
+              clearInterval(interval);
+              step = 'complete';
+            }
+          }, 200)
+        "></div>
+      </div>
+
+      <!-- Step 5: Complete -->
+      <div x-show="step === 'complete'">
+        <div class="success-panel text-center">
+          <div class="success-icon mb-3">✓</div>
+          <h3>Plugin Installed Successfully</h3>
+          <p class="text-sm">
+            The plugin has been installed and is ready to use.
+            You may need to restart the POS for changes to take effect.
+          </p>
+        </div>
+
+        <div class="mt-3 text-center">
+          <button class="btn btn-primary"
+                  @click="$store.pluginImport.showModal = false; window.location.reload()">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.verification-status .status-item {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0;
+  gap: 0.75rem;
+}
+
+.status-icon {
+  font-size: 1.25rem;
+}
+
+.permission-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.permission-list li {
+  padding: 0.25rem 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 24px;
+  background: #e0e0e0;
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4CAF50, #45a049);
+  transition: width 0.3s ease;
+}
+
+.success-panel {
+  padding: 2rem;
+  background: #f0f8f0;
+  border-radius: 8px;
+  border: 2px solid #4CAF50;
+}
+
+.success-icon {
+  font-size: 4rem;
+  color: #4CAF50;
+  font-weight: bold;
+}
+
+.install-progress {
+  padding: 2rem 1rem;
+  text-align: center;
+}
+</style>
+{{ end }}

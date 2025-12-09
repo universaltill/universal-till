@@ -286,6 +286,63 @@ func (s *Supervisor) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// AutoStartPlugins starts all active plugins at boot (T023)
+func (s *Supervisor) AutoStartPlugins(ctx context.Context) error {
+	// Query all active, installed plugins
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, entrypoint, runtime
+		FROM plugins
+		WHERE is_active = 1 AND install_state = 'installed'
+		ORDER BY id
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to query plugins: %w", err)
+	}
+	defer rows.Close()
+
+	var started, failed []string
+	for rows.Next() {
+		var pluginID, entrypoint, runtime string
+		if err := rows.Scan(&pluginID, &entrypoint, &runtime); err != nil {
+			return fmt.Errorf("failed to scan plugin: %w", err)
+		}
+
+		// Skip non-executable runtimes for now
+		if runtime != "go" && runtime != "native" {
+			continue
+		}
+
+		// Default restart policy for auto-started plugins
+		policy := RestartPolicy{
+			Enabled:        true,
+			MaxRestarts:    3,
+			RestartWindow:  5 * time.Minute,
+			BackoffInitial: 1 * time.Second,
+			BackoffMax:     30 * time.Second,
+		}
+
+		// Start the plugin
+		if err := s.StartPlugin(ctx, pluginID, entrypoint, []string{}, policy); err != nil {
+			fmt.Printf("warning: failed to auto-start plugin %s: %v\n", pluginID, err)
+			failed = append(failed, pluginID)
+			continue
+		}
+
+		started = append(started, pluginID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to iterate plugins: %w", err)
+	}
+
+	fmt.Printf("Auto-started %d plugins (%d failed)\n", len(started), len(failed))
+	if len(failed) > 0 {
+		fmt.Printf("Failed to start: %v\n", failed)
+	}
+
+	return nil
+}
+
 // auditLifecycle logs plugin lifecycle events to audit_log
 func (s *Supervisor) auditLifecycle(ctx context.Context, pluginID, action, details string) error {
 	now := time.Now().UTC().Format(time.RFC3339)

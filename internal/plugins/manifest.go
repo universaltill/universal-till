@@ -22,8 +22,16 @@ type Manifest struct {
 	Description string `json:"description"` // Short description
 	Author      string `json:"author"`
 	Website     string `json:"website"`
-	Entrypoint  string `json:"entrypoint"` // Executable path or module
+	Entrypoint  string `json:"entrypoint"` // Executable path or module (deprecated, use Executable)
+	Executable  string `json:"executable"` // Executable filename (marketplace standard)
 	Runtime     string `json:"runtime"`    // go|wasm|node|python|native
+
+	// Marketplace fields (T016 - 009-cloud-marketplace)
+	CanonicalType string `json:"canonical_type"`  // page|button|payment|report|integration|background_job|device
+	DeviceArch    string `json:"device_arch"`     // linux/amd64, darwin/arm64, any
+	MinPOSVersion string `json:"min_pos_version"` // Minimum POS version required
+	Signature     string `json:"signature"`       // Ed25519 signature of manifest (hex)
+	ArtifactHash  string `json:"artifact_hash"`   // SHA256 of the plugin artifact
 
 	// Entries: pages, buttons, popups, etc.
 	Entries []ManifestEntry `json:"entries,omitempty"`
