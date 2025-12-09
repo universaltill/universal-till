@@ -1,6 +1,21 @@
 {{ define "content" }}
 <h1>Plugins</h1>
 
+<!-- Tab Navigation -->
+<div class="tabs mb-4" style="border-bottom: 2px solid #e5e7eb;">
+  <a href="/plugins" class="tab-active" style="display: inline-block; padding: 0.75rem 1.5rem; border-bottom: 3px solid #3b82f6; color: #3b82f6; font-weight: 600; text-decoration: none;">
+    Installed
+  </a>
+  <a href="/plugins/store" class="tab" style="display: inline-block; padding: 0.75rem 1.5rem; color: #6b7280; font-weight: 500; text-decoration: none; border-bottom: 3px solid transparent;">
+    Marketplace
+  </a>
+</div>
+
+<!-- Manual Import Button -->
+<div style="margin-bottom: 1rem;">
+  {{ template "plugin_manual_import" . }}
+</div>
+
 <!-- Toast Container -->
 <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 1000;"></div>
 
@@ -137,13 +152,15 @@
         <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.5rem">
           <input type="checkbox" :id="'plugin-' + p.id" @change="selected.has(p.id) ? selected.delete(p.id) : selected.add(p.id); $nextTick(() => selected = new Set(selected))">
           <h3 x-text="p.name" style="margin:0; flex:1"></h3>
+          <span x-show="p.hasUpdate" style="background:#ff9800; color:white; padding:.2rem .4rem; border-radius:4px; font-size:.8rem; font-weight:bold">UPDATE AVAILABLE</span>
           <span x-show="p.version" style="background:#e9ecef; padding:.2rem .4rem; border-radius:4px; font-size:.8rem" x-text="'v' + p.version"></span>
+        </div>
         </div>
         <p x-text="p.description"></p>
         <div x-show="st.installed && p.version" style="color:#28a745; font-size:.9rem; margin-bottom:.5rem">
           ✓ Installed (v<span x-text="p.version"></span>)
         </div>
-        <div class="actions" style="display:flex; gap:.5rem; align-items:center">
+        <div class="actions" style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
           <template x-if="!st.downloaded">
             <button class="btn" :disabled="loading" @click.prevent="post('/api/plugins/download', { id: p.id, bundleUrl: p.bundleUrl || '' }, 'Download')">
               <span x-show="!loading">Download</span>
@@ -153,6 +170,30 @@
           <template x-if="st.downloaded && !st.installed">
             <button class="btn" :disabled="loading" @click.prevent="post('/api/plugins/install', { id: p.id, route: '/plug/'+p.id, label: p.name }, 'Install')">
               <span x-show="!loading">Install</span>
+              <span x-show="loading">⏳</span>
+            </button>
+          </template>
+          <template x-if="st.installed && p.hasUpdate">
+            <button class="btn" style="background:#ff9800; border-color:#ff9800" :disabled="loading" @click.prevent="updatePlugin(p.id)">
+              <span x-show="!loading">Update to v<span x-text="p.version"></span></span>
+              <span x-show="loading">⏳</span>
+            </button>
+          </template>
+          <template x-if="st.installed && p.enabled">
+            <button class="btn secondary" :disabled="loading" @click.prevent="togglePlugin(p.id, false)">
+              <span x-show="!loading">Disable</span>
+              <span x-show="loading">⏳</span>
+            </button>
+          </template>
+          <template x-if="st.installed && !p.enabled">
+            <button class="btn" :disabled="loading" @click.prevent="togglePlugin(p.id, true)">
+              <span x-show="!loading">Enable</span>
+              <span x-show="loading">⏳</span>
+            </button>
+          </template>
+          <template x-if="st.installed">
+            <button class="btn secondary" :disabled="loading" @click.prevent="showRollbackModal(p.id)">
+              <span x-show="!loading">Rollback</span>
               <span x-show="loading">⏳</span>
             </button>
           </template>
@@ -169,6 +210,69 @@
             </button>
           </template>
         </div>
+        <div x-data="{ 
+          async updatePlugin(pluginId) {
+            this.loading = true;
+            try {
+              const response = await fetch(`/api/plugins/${pluginId}/update`, {
+                method: 'POST'
+              });
+              if (response.ok) {
+                showToast('Update successful!', 'success');
+                setTimeout(() => window.location.reload(), 1500);
+              } else {
+                showToast('Update failed!', 'error');
+              }
+            } catch (error) {
+              showToast(`Update failed: ${error.message}`, 'error');
+            } finally {
+              this.loading = false;
+            }
+          },
+          async togglePlugin(pluginId, enable) {
+            this.loading = true;
+            const action = enable ? 'enable' : 'disable';
+            try {
+              const response = await fetch(`/api/plugins/${pluginId}/${action}`, {
+                method: 'POST'
+              });
+              if (response.ok) {
+                showToast(`Plugin ${action}d successfully!`, 'success');
+                this.refresh();
+              } else {
+                showToast(`Failed to ${action} plugin!`, 'error');
+              }
+            } catch (error) {
+              showToast(`Failed to ${action} plugin: ${error.message}`, 'error');
+            } finally {
+              this.loading = false;
+            }
+          },
+          async showRollbackModal(pluginId) {
+            // TODO: Implement rollback modal with version selection
+            const version = prompt('Enter version to rollback to:');
+            if (!version) return;
+            
+            this.loading = true;
+            try {
+              const response = await fetch(`/api/plugins/${pluginId}/rollback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ version })
+              });
+              if (response.ok) {
+                showToast('Rollback successful!', 'success');
+                setTimeout(() => window.location.reload(), 1500);
+              } else {
+                showToast('Rollback failed!', 'error');
+              }
+            } catch (error) {
+              showToast(`Rollback failed: ${error.message}`, 'error');
+            } finally {
+              this.loading = false;
+            }
+          }
+        }"></div>
       </div>
     </template>
   </div>

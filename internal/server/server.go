@@ -2,14 +2,150 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
-func Start(ctx context.Context, cfg *config.Config, handler http.Handler) error {
+// BackgroundJobs manages periodic marketplace tasks
+type BackgroundJobs struct {
+	catalogRepo         *marketplace.CatalogRepository
+	revocationChecker   *plugins.RevocationChecker
+	catalogSyncInterval time.Duration
+	telemetryInterval   time.Duration
+	revocationInterval  time.Duration
+	logger              *log.Logger
+	cfg                 *config.Config
+}
+
+// NewBackgroundJobs creates a background job scheduler
+func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
+	var revocationChecker *plugins.RevocationChecker
+	if cfg.Marketplace.EndpointURL != "" {
+		revocationChecker = plugins.NewRevocationChecker(db, cfg.Marketplace.EndpointURL, supervisor)
+	}
+
+	return &BackgroundJobs{
+		catalogRepo:         catalogRepo,
+		revocationChecker:   revocationChecker,
+		catalogSyncInterval: 15 * time.Minute,
+		telemetryInterval:   5 * time.Minute,
+		revocationInterval:  30 * time.Minute,
+		logger:              logger,
+		cfg:                 cfg,
+	}
+}
+
+// Start begins all background jobs
+func (bj *BackgroundJobs) Start(ctx context.Context) {
+	// Catalog sync job (T011) - LOCAL-FIRST: Only sync when cache is stale
+	// User must explicitly refresh via UI to fetch from marketplace
+	go func() {
+		ticker := time.NewTicker(bj.catalogSyncInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Only sync if cache exists and is stale (not first fetch)
+				if bj.catalogRepo != nil {
+					_, isStale, err := bj.catalogRepo.Get()
+					if err == nil && isStale {
+						bj.logger.Println("[Scheduler] cache is stale, syncing catalog")
+						bj.syncCatalog(ctx)
+					}
+				}
+			}
+		}
+	}()
+
+	// Telemetry reporting job (stub for T024)
+	go func() {
+		ticker := time.NewTicker(bj.telemetryInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				bj.logger.Println("[Scheduler] telemetry job triggered (stub)")
+				// TODO: Implement telemetry reporting in T024
+			}
+		}
+	}()
+
+	// Revocation check job (T030)
+	go func() {
+		ticker := time.NewTicker(bj.revocationInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if bj.revocationChecker != nil {
+					bj.logger.Println("[Scheduler] checking for revoked plugins")
+					count, err := bj.revocationChecker.SyncRevocations(ctx)
+					if err != nil {
+						bj.logger.Printf("[Scheduler] revocation sync failed: %v", err)
+					} else if count > 0 {
+						bj.logger.Printf("[Scheduler] disabled %d revoked plugins", count)
+					}
+				}
+			}
+		}
+	}()
+}
+
+// syncCatalog fetches the latest catalog from marketplace with exponential backoff
+func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
+	if bj.catalogRepo == nil {
+		return
+	}
+
+	// Detect device architecture
+	deviceArch := "linux/amd64" // Default, could be runtime.GOOS + "/" + runtime.GOARCH
+	locale := bj.cfg.DefaultLocale
+	if locale == "" {
+		locale = "en-US" // fallback to US English
+	}
+
+	maxRetries := 3
+	baseDelay := 1 * time.Second
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		_, err := bj.catalogRepo.Fetch(ctx, locale, deviceArch)
+		if err == nil {
+			bj.logger.Printf("[Scheduler] catalog sync successful")
+			return
+		}
+
+		// Exponential backoff
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<uint(attempt))
+			bj.logger.Printf("[Scheduler] catalog sync failed (attempt %d/%d): %v, retrying in %v",
+				attempt+1, maxRetries, err, delay)
+			time.Sleep(delay)
+		} else {
+			bj.logger.Printf("[Scheduler] catalog sync failed after %d attempts: %v", maxRetries, err)
+		}
+	}
+}
+
+func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor) error {
+	// Start background jobs if catalog repository is configured
+	if catalogRepo != nil {
+		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
+		jobs := NewBackgroundJobs(catalogRepo, db, supervisor, cfg, logger)
+		go jobs.Start(ctx)
+	}
+
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: handler,

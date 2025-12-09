@@ -1,0 +1,920 @@
+openapi: 3.1.0
+info:
+  title: Universal Till Marketplace API
+  description: |
+    Plugin discovery, authentication, and download management API for Universal Till POS systems.
+    
+    ## Features
+    - Plugin catalog with advanced filtering
+    - Multi-region support with data residency
+    - JWT-based authentication
+    - Pre-signed download URLs
+    - Multilingual support (100+ locales)
+    - gRPC and REST APIs
+    
+    ## Rate Limits
+    - Authenticated: 100 req/sec per merchant
+    - Unauthenticated: 10 req/sec per IP
+    
+    ## Success Criteria
+    - SC-001: ≥95% catalog responses <1.5s (P95)
+    - SC-002: ≥98% first-attempt token issuance
+    
+  version: 1.0.0
+  contact:
+    name: Universal Till API Support
+    email: api-support@universaltill.com
+    url: https://docs.marketplace.example.com
+  license:
+    name: Proprietary
+    url: https://universaltill.com/terms
+
+servers:
+  - url: https://api.marketplace.example.com
+    description: Production (Global)
+  - url: https://api-us-east-1.marketplace.example.com
+    description: Production (US-EAST-1)
+  - url: https://api-eu-west-1.marketplace.example.com
+    description: Production (EU-WEST-1)
+  - url: https://api-ap-southeast-1.marketplace.example.com
+    description: Production (AP-SOUTHEAST-1)
+  - url: https://api-staging.marketplace.example.com
+    description: Staging
+
+tags:
+  - name: Health
+    description: Service health and readiness checks
+  - name: Authentication
+    description: Token generation and management
+  - name: Catalog
+    description: Plugin discovery and metadata
+  - name: Downloads
+    description: Plugin binary downloads
+  - name: UI
+    description: Merchant portal endpoints
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Basic health check for load balancers
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is degraded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /readiness:
+    get:
+      tags:
+        - Health
+      summary: Readiness check
+      description: Validates all dependencies (DB, Redis, NATS, blob storage)
+      operationId: readinessCheck
+      security: []
+      responses:
+        '200':
+          description: All dependencies healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: One or more dependencies unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/auth/merchant-token:
+    post:
+      tags:
+        - Authentication
+      summary: Generate merchant token
+      description: Generate a short-lived JWT token for merchant device authentication
+      operationId: generateMerchantToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateTokenRequest'
+      responses:
+        '200':
+          description: Token generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Merchant not found or suspended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/auth/refresh-token:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh token
+      description: Refresh an expiring token
+      operationId: refreshToken
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/auth/revoke-token:
+    post:
+      tags:
+        - Authentication
+      summary: Revoke token
+      description: Revoke a token (logout or security incident)
+      operationId: revokeToken
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeTokenRequest'
+      responses:
+        '200':
+          description: Token revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevokeTokenResponse'
+        '401':
+          description: Not authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/catalog/plugins:
+    get:
+      tags:
+        - Catalog
+      summary: List plugins
+      description: |
+        List all available plugins with pagination and filtering.
+        Supports search, trust tier, capability, pricing, and architecture filters.
+      operationId: listPlugins
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          description: Items per page
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: search
+          in: query
+          description: Search by name, description, or vendor
+          schema:
+            type: string
+        - name: trust_tier
+          in: query
+          description: Filter by trust level
+          schema:
+            type: string
+            enum: [verified, trusted, community]
+        - name: capability
+          in: query
+          description: Filter by capability
+          schema:
+            type: string
+            enum: [payment, inventory, loyalty, reporting, integration]
+        - name: price_flag
+          in: query
+          description: Filter by pricing model
+          schema:
+            type: string
+            enum: [free, paid, freemium]
+        - name: arch
+          in: query
+          description: Filter by architecture
+          schema:
+            type: string
+            enum: [amd64, arm64, armv7]
+        - name: locale
+          in: query
+          description: Localized content language
+          schema:
+            type: string
+            default: en-US
+            example: fr-FR
+      responses:
+        '200':
+          description: Plugins retrieved successfully
+          headers:
+            X-RateLimit-Limit:
+              schema:
+                type: integer
+              description: Request rate limit
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+              description: Remaining requests
+            X-RateLimit-Reset:
+              schema:
+                type: integer
+              description: Rate limit reset timestamp
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginListResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid or missing token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/catalog/plugins/{plugin_id}:
+    get:
+      tags:
+        - Catalog
+      summary: Get plugin details
+      description: Get comprehensive information about a specific plugin
+      operationId: getPlugin
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: plugin_id
+          in: path
+          required: true
+          description: Plugin UUID
+          schema:
+            type: string
+            format: uuid
+        - name: locale
+          in: query
+          description: Localized content language
+          schema:
+            type: string
+            default: en-US
+      responses:
+        '200':
+          description: Plugin found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginDetail'
+        '401':
+          description: Invalid or missing token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Plugin not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/catalog/plugins/{plugin_id}/reviews:
+    get:
+      tags:
+        - Catalog
+      summary: Get plugin reviews
+      description: Get paginated reviews for a specific plugin
+      operationId: getPluginReviews
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: plugin_id
+          in: path
+          required: true
+          description: Plugin UUID
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 50
+        - name: rating
+          in: query
+          description: Filter by star rating
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [newest, oldest, highest_rating, lowest_rating, most_helpful]
+            default: newest
+      responses:
+        '200':
+          description: Reviews retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewListResponse'
+        '404':
+          description: Plugin not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/catalog/categories:
+    get:
+      tags:
+        - Catalog
+      summary: List categories
+      description: Get all plugin categories
+      operationId: listCategories
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Categories retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryListResponse'
+
+  /v1/downloads/{plugin_id}/url:
+    get:
+      tags:
+        - Downloads
+      summary: Get download URL
+      description: Generate a pre-signed URL for downloading plugin binary
+      operationId: getDownloadURL
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: plugin_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: arch
+          in: query
+          required: true
+          description: Target architecture
+          schema:
+            type: string
+            enum: [amd64, arm64, armv7]
+        - name: platform
+          in: query
+          required: true
+          description: Target platform
+          schema:
+            type: string
+            enum: [linux, darwin]
+        - name: version
+          in: query
+          description: Specific version #  (default: latest)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Download URL generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadURLResponse'
+        '400':
+          description: Invalid architecture or platform
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '402':
+          description: Payment required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Plugin or version not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '451':
+          description: Unavailable in merchant's region
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/downloads/{plugin_id}/verify:
+    post:
+      tags:
+        - Downloads
+      summary: Verify plugin integrity
+      description: Verify downloaded plugin checksum
+      operationId: verifyPlugin
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: plugin_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyPluginRequest'
+      responses:
+        '200':
+          description: Checksum valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyPluginResponse'
+        '400':
+          description: Checksum mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+        region:
+          type: string
+
+    ReadinessResponse:
+      type: object
+      properties:
+        ready:
+          type: boolean
+        checks:
+          type: object
+          properties:
+            database:
+              type: string
+            redis:
+              type: string
+            nats:
+              type: string
+            blob_storage:
+              type: string
+
+    GenerateTokenRequest:
+      type: object
+      required:
+        - merchant_id
+        - device_id
+      properties:
+        merchant_id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+        pos_version:
+          type: string
+          example: "2.5.0"
+
+    TokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT token
+        expires_at:
+          type: string
+          format: date-time
+        merchant_id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+
+    RevokeTokenRequest:
+      type: object
+      required:
+        - token
+      properties:
+        token:
+          type: string
+
+    RevokeTokenResponse:
+      type: object
+      properties:
+        revoked:
+          type: boolean
+        revoked_at:
+          type: string
+          format: date-time
+
+    Plugin:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        vendor:
+          $ref: '#/components/schemas/Vendor'
+        version:
+          type: string
+        trust_tier:
+          type: string
+          enum: [verified, trusted, community]
+        capabilities:
+          type: array
+          items:
+            type: string
+        price_flag:
+          type: string
+          enum: [free, paid, freemium]
+        pricing:
+          $ref: '#/components/schemas/Pricing'
+        architectures:
+          type: array
+          items:
+            type: string
+        icon_url:
+          type: string
+          format: uri
+        screenshots:
+          type: array
+          items:
+            type: string
+            format: uri
+        rating:
+          type: number
+          format: float
+        review_count:
+          type: integer
+        download_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PluginDetail:
+      allOf:
+        - $ref: '#/components/schemas/Plugin'
+        - type: object
+          properties:
+            long_description:
+              type: string
+            version_history:
+              type: array
+              items:
+                $ref: '#/components/schemas/VersionInfo'
+            supported_platforms:
+              type: array
+              items:
+                type: string
+            min_pos_version:
+              type: string
+            documentation_url:
+              type: string
+              format: uri
+            support_url:
+              type: string
+              format: uri
+            license:
+              type: string
+            file_size_bytes:
+              type: integer
+              format: int64
+            checksum:
+              $ref: '#/components/schemas/Checksum'
+            security_scan:
+              $ref: '#/components/schemas/SecurityScan'
+            tags:
+              type: array
+              items:
+                type: string
+            data_residency:
+              type: array
+              items:
+                type: string
+            compliance:
+              type: array
+              items:
+                type: string
+
+    Vendor:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        website:
+          type: string
+          format: uri
+        verified:
+          type: boolean
+        verified_at:
+          type: string
+          format: date-time
+
+    Pricing:
+      type: object
+      properties:
+        model:
+          type: string
+          enum: [free, one_time, subscription]
+        price:
+          type: string
+        currency:
+          type: string
+        trial_days:
+          type: integer
+        annual_discount:
+          type: string
+
+    VersionInfo:
+      type: object
+      properties:
+        version:
+          type: string
+        released_at:
+          type: string
+          format: date-time
+        changelog:
+          type: string
+
+    Checksum:
+      type: object
+      properties:
+        sha256:
+          type: string
+
+    SecurityScan:
+      type: object
+      properties:
+        scanned_at:
+          type: string
+          format: date-time
+        vulnerabilities:
+          type: integer
+        status:
+          type: string
+          enum: [clean, warnings, critical]
+
+    PluginListResponse:
+      type: object
+      properties:
+        plugins:
+          type: array
+          items:
+            $ref: '#/components/schemas/Plugin'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total_items:
+          type: integer
+        total_pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_previous:
+          type: boolean
+
+    Review:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        merchant_id:
+          type: string
+          format: uuid
+        merchant_name:
+          type: string
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        title:
+          type: string
+        comment:
+          type: string
+        helpful_count:
+          type: integer
+        verified_purchase:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReviewListResponse:
+      type: object
+      properties:
+        reviews:
+          type: array
+          items:
+            $ref: '#/components/schemas/Review'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Category:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        icon:
+          type: string
+        plugin_count:
+          type: integer
+
+    CategoryListResponse:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/Category'
+
+    DownloadURLResponse:
+      type: object
+      properties:
+        download_url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+        file_size_bytes:
+          type: integer
+          format: int64
+        checksum:
+          $ref: '#/components/schemas/Checksum'
+        version:
+          type: string
+
+    VerifyPluginRequest:
+      type: object
+      required:
+        - version
+        - arch
+        - platform
+        - checksum
+      properties:
+        version:
+          type: string
+        arch:
+          type: string
+        platform:
+          type: string
+        checksum:
+          type: string
+
+    VerifyPluginResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        verified_at:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+            request_id:
+              type: string

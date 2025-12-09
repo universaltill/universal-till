@@ -484,7 +484,9 @@ func computeTestChecksum(t *testing.T, path string) string {
 
 func testConfig() *config.Config {
 	return &config.Config{
-		MarketplaceURL: "http://127.0.0.1:8081",
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL: "http://127.0.0.1:8081",
+		},
 	}
 }
 

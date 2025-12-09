@@ -143,8 +143,24 @@ func Render(tplPath string, data any) http.HandlerFunc {
 			filepath.Join("web", "ui", "partials", "buttons.html"),
 			filepath.Join("web", "ui", "partials", "buttons_admin.html"),
 			filepath.Join("web", "ui", "partials", "basket.html"),
+			filepath.Join("web", "ui", "partials", "toast.html"),
+			filepath.Join("web", "ui", "partials", "plugin_install_modal.html"),
+			filepath.Join("web", "ui", "partials", "plugin_manual_import.html"),
 		))
 		if err := t.ExecuteTemplate(w, "base", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// RenderPartial renders just a template fragment (for HTMX responses)
+func RenderPartial(tplPath string, data any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		page := filepath.Join("web", tplPath)
+
+		locale := ResolveLocale(w, r)
+		t := template.Must(template.New(filepath.Base(page)).Funcs(FuncsFor(locale)).ParseFiles(page))
+		if err := t.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
