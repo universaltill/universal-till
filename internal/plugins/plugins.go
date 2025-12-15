@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 type Manager struct {
@@ -56,6 +57,7 @@ type CatalogView struct {
 func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error) {
 	log.Printf("initialising plugins for env=%s", cfg.Env)
 
+	repo := data.NewPluginRepo(db)
 	m := &Manager{
 		MenuPlugins: make(map[string]MenuPlugin),
 		Installed:   make(map[string]Plugin),
@@ -63,13 +65,13 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 		db:          db,
 	}
 
-	if err := m.loadCatalog(ctx); err != nil {
+	if err := m.loadCatalog(ctx, repo); err != nil {
 		return nil, err
 	}
-	if err := m.loadInstalled(ctx); err != nil {
+	if err := m.loadInstalled(ctx, repo); err != nil {
 		return nil, err
 	}
-	if err := m.loadMenuEntries(ctx); err != nil {
+	if err := m.loadMenuEntries(ctx, repo); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -79,67 +81,48 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 func (m *Manager) Reload(ctx context.Context) error {
 	m.Installed = make(map[string]Plugin)
 	m.MenuPlugins = make(map[string]MenuPlugin)
-	if err := m.loadInstalled(ctx); err != nil {
+	repo := data.NewPluginRepo(m.db)
+	if err := m.loadInstalled(ctx, repo); err != nil {
 		return err
 	}
-	if err := m.loadMenuEntries(ctx); err != nil {
+	if err := m.loadMenuEntries(ctx, repo); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (m *Manager) loadInstalled(ctx context.Context) error {
-	rows, err := m.db.QueryContext(ctx, `
-SELECT id, name, version, is_active
-FROM plugins
-WHERE is_active = 1
-`)
+func (m *Manager) loadInstalled(ctx context.Context, repo *data.PluginRepo) error {
+	rows, err := repo.ListInstalledPlugins(ctx)
 	if err != nil {
 		return fmt.Errorf("load plugins: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var p Plugin
-		var isActive int
-		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &isActive); err != nil {
-			return err
+	for _, row := range rows {
+		m.Installed[row.ID] = Plugin{
+			ID:       row.ID,
+			Name:     row.Name,
+			Version:  row.Version,
+			IsActive: true,
 		}
-		p.IsActive = (isActive == 1)
-		m.Installed[p.ID] = p
 	}
-	return rows.Err()
+	return nil
 }
 
-func (m *Manager) loadMenuEntries(ctx context.Context) error {
-	// Load all menu entries with permission requirements
-	rows, err := m.db.QueryContext(ctx, `
-SELECT 
-    pe.plugin_id, 
-    pe.key, 
-    pe.route, 
-    pe.label, 
-    pe.menu_group,
-    GROUP_CONCAT(pp.permission) as required_permissions,
-    GROUP_CONCAT(pp.granted) as granted_flags
-FROM plugin_entries pe
-JOIN plugins p ON p.id = pe.plugin_id
-LEFT JOIN plugin_permissions pp ON pp.plugin_id = pe.plugin_id
-WHERE pe.type = 'page' AND pe.is_active = 1 AND p.is_active = 1
-GROUP BY pe.plugin_id, pe.key, pe.route, pe.label, pe.menu_group
-ORDER BY pe.sort_order, pe.label
-`)
+func (m *Manager) loadMenuEntries(ctx context.Context, repo *data.PluginRepo) error {
+	entries, err := repo.ListMenuEntries(ctx)
 	if err != nil {
 		return fmt.Errorf("load plugin menu entries: %w", err)
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var mp MenuPlugin
-		var permsStr, grantedStr sql.NullString
-
-		if err := rows.Scan(&mp.PluginID, &mp.Key, &mp.Route, &mp.Label, &mp.Menu, &permsStr, &grantedStr); err != nil {
-			return err
+	for _, row := range entries {
+		mp := MenuPlugin{
+			PluginID: row.PluginID,
+			Key:      row.Key,
+			Route:    row.Route,
+			Label:    row.Label,
+			Menu:     row.MenuGroup,
 		}
+		permsStr := row.RequiredPermissions
+		grantedStr := row.GrantedFlags
 
 		// Check if plugin has any required permissions
 		// For now, we only show menu entries if the plugin has at least one granted permission
@@ -171,7 +154,7 @@ ORDER BY pe.sort_order, pe.label
 
 		m.MenuPlugins[mp.Key] = mp
 	}
-	return rows.Err()
+	return nil
 }
 
 // InstalledIDs returns a stable sorted list of installed plugin IDs.
@@ -197,28 +180,30 @@ func (m *Manager) CatalogList() []CatalogView {
 	return out
 }
 
-func (m *Manager) loadCatalog(ctx context.Context) error {
-	rows, err := m.db.QueryContext(ctx, `
-SELECT id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, COALESCE(tags_json,'')
-FROM plugin_catalog
-WHERE is_deprecated = 0
-`)
+func (m *Manager) loadCatalog(ctx context.Context, repo *data.PluginRepo) error {
+	rows, err := repo.ListCatalog(ctx)
 	if err != nil {
 		return fmt.Errorf("load plugin catalog: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var c CatalogEntry
-		var tags string
-		if err := rows.Scan(&c.ID, &c.Version, &c.Name, &c.Description, &c.Runtime, &c.Entrypoint, &c.PackageURL, &c.SHA256, &c.Author, &c.Website, &tags); err != nil {
-			return err
+	for _, row := range rows {
+		entry := CatalogEntry{
+			ID:          row.ID,
+			Version:     row.Version,
+			Name:        row.Name,
+			Description: row.Description,
+			Runtime:     row.Runtime,
+			Entrypoint:  row.Entrypoint,
+			PackageURL:  row.PackageURL,
+			SHA256:      row.SHA256,
+			Author:      row.Author,
+			Website:     row.Website,
 		}
-		if strings.TrimSpace(tags) != "" {
-			c.Tags = parseTags(tags)
+		if strings.TrimSpace(row.TagsJSON) != "" {
+			entry.Tags = parseTags(row.TagsJSON)
 		}
-		m.Catalog[c.ID] = c
+		m.Catalog[entry.ID] = entry
 	}
-	return rows.Err()
+	return nil
 }
 
 func parseTags(s string) []string {
@@ -249,48 +234,30 @@ func (m *Manager) CatalogPage(ctx context.Context, offset, limit int, tag string
 	}
 	tag = strings.TrimSpace(tag)
 
-	where := "WHERE is_deprecated = 0"
-	args := []any{}
-	if tag != "" {
-		where += " AND tags_json LIKE ?"
-		args = append(args, "%"+tag+"%")
-	}
-
-	var total int
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM plugin_catalog %s`, where)
-	if err := m.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count catalog: %w", err)
-	}
-
-	args = append(args, limit, offset)
-	query := fmt.Sprintf(`
-SELECT id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, COALESCE(tags_json,'')
-FROM plugin_catalog
-%s
-ORDER BY name
-LIMIT ? OFFSET ?
-`, where)
-	rows, err := m.db.QueryContext(ctx, query, args...)
+	rows, total, err := data.NewPluginRepo(m.db).CatalogPage(ctx, offset, limit, tag)
 	if err != nil {
 		return nil, 0, fmt.Errorf("load catalog page: %w", err)
 	}
-	defer rows.Close()
 
 	var out []CatalogView
-	for rows.Next() {
-		var c CatalogEntry
-		var tags string
-		if err := rows.Scan(&c.ID, &c.Version, &c.Name, &c.Description, &c.Runtime, &c.Entrypoint, &c.PackageURL, &c.SHA256, &c.Author, &c.Website, &tags); err != nil {
-			return nil, 0, err
+	for _, row := range rows {
+		c := CatalogEntry{
+			ID:          row.ID,
+			Version:     row.Version,
+			Name:        row.Name,
+			Description: row.Description,
+			Runtime:     row.Runtime,
+			Entrypoint:  row.Entrypoint,
+			PackageURL:  row.PackageURL,
+			SHA256:      row.SHA256,
+			Author:      row.Author,
+			Website:     row.Website,
 		}
-		if strings.TrimSpace(tags) != "" {
-			c.Tags = parseTags(tags)
+		if strings.TrimSpace(row.TagsJSON) != "" {
+			c.Tags = parseTags(row.TagsJSON)
 		}
 		_, installed := m.Installed[c.ID]
 		out = append(out, CatalogView{CatalogEntry: c, Installed: installed})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, err
 	}
 	return out, total, nil
 }

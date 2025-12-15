@@ -1,6 +1,6 @@
 # Tasks: POS Core MVP
 
-**Input**: `specs/001-pos-core-mvp/` (spec, plan, research, data-model, quickstart, contracts)  
+**Input**: `specs/000-pos-core-mvp/` (spec, plan, research, data-model, quickstart, contracts)  
 **Prerequisites**: No schema changes; SQLite (`UT_STORE=sqlite`); responsive web UI
 
 ## Phase 0: Setup / Foundation
@@ -53,7 +53,7 @@
 
 ## Phase 4.1: Plugin Contracts & Tests
 
-- [ ] T404 Define and persist minimal plugin permission contract in `specs/001-pos-core-mvp/contracts/permissions.md` and implement runtime enforcement checks in `internal/plugins` (`internal/plugins` + tests).
+- [ ] T404 Define and persist minimal plugin permission contract in `specs/000-pos-core-mvp/contracts/permissions.md` and implement runtime enforcement checks in `internal/plugins` (`internal/plugins` + tests).
 - [ ] T405 Add unit/handler tests for plugin permission enforcement, including denial and audit entries (`internal/plugins` tests).
 - [ ] T406 Implement event dispatch semantics: tag blocking vs non-blocking plugin events; enforce rollback/audit for blocking, audit+continue for non-blocking (`internal/plugins`).
 - [ ] T407 Add crash-isolation test for plugin event dispatch to ensure DB invariants; audit plugin handler errors (`internal/plugins` tests).

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -41,6 +42,7 @@ type VersionInfo struct {
 func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID string) ([]VersionInfo, error) {
 	// Check plugin directory
 	pluginDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
+	repo := data.NewPluginRepo(rm.db)
 
 	if _, err := os.Stat(pluginDir); os.IsNotExist(err) {
 		return []VersionInfo{}, nil
@@ -53,11 +55,8 @@ func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID strin
 	}
 
 	// Get current version from database
-	var currentVersion string
-	err = rm.db.QueryRowContext(ctx,
-		`SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1`,
-		pluginID).Scan(&currentVersion)
-	if err != nil && err != sql.ErrNoRows {
+	currentVersion, _, err := repo.GetActivePluginVersion(ctx, pluginID)
+	if err != nil {
 		return nil, fmt.Errorf("failed to get current version: %w", err)
 	}
 
@@ -85,6 +84,7 @@ func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID strin
 // Rollback rolls back a plugin to a previous version
 func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion, actorID string) error {
 	log := logging.L()
+	repo := data.NewPluginRepo(rm.db)
 
 	// Verify target version exists
 	targetPath := filepath.Join(rm.pluginBaseDir, pluginID, "versions", targetVersion)
@@ -93,12 +93,12 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	}
 
 	// Get current version
-	var currentVersion string
-	err := rm.db.QueryRowContext(ctx,
-		`SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1`,
-		pluginID).Scan(&currentVersion)
+	currentVersion, ok, err := repo.GetActivePluginVersion(ctx, pluginID)
 	if err != nil {
 		return fmt.Errorf("failed to get current version: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("plugin %s has no active version", pluginID)
 	}
 
 	if currentVersion == targetVersion {
@@ -125,70 +125,52 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	}
 	defer tx.Rollback()
 
-	now := time.Now().UTC().Format(time.RFC3339)
-
 	// Update plugins table
-	_, err = tx.ExecContext(ctx, `
-		UPDATE plugins 
-		SET version = ?, 
-		    entrypoint = ?,
-		    updated_at = ?,
-		    install_state = 'installed'
-		WHERE id = ?
-	`, targetVersion, manifest.Entrypoint, now, pluginID)
-	if err != nil {
-		return fmt.Errorf("failed to update plugin version: %w", err)
+	if err := repo.UpdatePluginVersion(ctx, tx, pluginID, targetVersion, manifest.Entrypoint, "installed"); err != nil {
+		return err
 	}
 
-	// Delete existing entries for this plugin
-	_, err = tx.ExecContext(ctx, `DELETE FROM plugin_entries WHERE plugin_id = ?`, pluginID)
-	if err != nil {
-		return fmt.Errorf("failed to delete old entries: %w", err)
-	}
-
-	// Re-insert entries from rolled-back manifest
+	// Re-insert entries from rolled-back manifest (delete+bulk insert)
+	var entryRows []data.PluginEntryRow
 	for _, e := range manifest.Entries {
 		configJSON := ""
 		if len(e.Config) > 0 {
 			b, _ := json.Marshal(e.Config)
 			configJSON = string(b)
 		}
-
-		entryID := uuid.NewString()
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO plugin_entries (
-				id, plugin_id, type, key, label, icon_path, sort_order, is_active,
-				parent_page_key, menu_group, route, target_action, trigger_event,
-				config_json, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, entryID, pluginID, e.Type, e.Key, e.Label, e.IconPath, e.SortOrder,
-			e.ParentPageKey, e.MenuGroup, e.Route, e.TargetAction, e.TriggerEvent,
-			configJSON, now, now)
-		if err != nil {
-			return fmt.Errorf("failed to insert plugin entry %s: %w", e.Key, err)
-		}
+		entryRows = append(entryRows, data.PluginEntryRow{
+			ID:            uuid.NewString(),
+			Type:          e.Type,
+			Key:           e.Key,
+			Label:         e.Label,
+			IconPath:      e.IconPath,
+			SortOrder:     e.SortOrder,
+			ParentPageKey: e.ParentPageKey,
+			MenuGroup:     e.MenuGroup,
+			Route:         e.Route,
+			TargetAction:  e.TargetAction,
+			TriggerEvent:  e.TriggerEvent,
+			ConfigJSON:    configJSON,
+		})
+	}
+	if err := repo.ReplacePluginEntries(ctx, tx, pluginID, entryRows); err != nil {
+		return err
 	}
 
 	// Create audit log entry
-	auditID := uuid.New().String()
 	auditData := map[string]interface{}{
 		"plugin_id":       pluginID,
 		"from_version":    currentVersion,
 		"to_version":      targetVersion,
 		"rollback_reason": "user_requested",
 	}
-	auditDataJSON, _ := json.Marshal(auditData)
 
 	if actorID == "" {
 		actorID = "system"
 	}
 
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
-		VALUES (?, ?, 'plugin', ?, 'rollback', ?, ?)
-	`, auditID, actorID, pluginID, string(auditDataJSON), now)
-	if err != nil {
-		return fmt.Errorf("failed to create audit log: %w", err)
+	if err := repo.InsertAudit(ctx, tx, "plugin_rollback", pluginID, auditData, time.Now()); err != nil {
+		return err
 	}
 
 	// Commit transaction

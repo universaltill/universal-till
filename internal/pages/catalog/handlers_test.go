@@ -11,51 +11,31 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
-	_ "modernc.org/sqlite"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func setupCatalogPageDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	stmts := []string{
-		`PRAGMA foreign_keys = ON;`,
-		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT UNIQUE, name TEXT NOT NULL, description TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', base_price INTEGER NOT NULL, tax_code_id TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0);`,
-		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, sku TEXT UNIQUE, name TEXT NOT NULL, price INTEGER NOT NULL, cost_price INTEGER, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
-		`CREATE TABLE variant_barcodes (barcode TEXT PRIMARY KEY, variant_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
-		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT, CHECK ((item_id IS NOT NULL AND variant_id IS NULL) OR (item_id IS NULL AND variant_id IS NOT NULL)));`,
-		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, name TEXT NOT NULL, rate_basis_points INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
-	}
-	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatalf("setup stmt failed: %v", err)
-		}
-	}
-	return db
+	return testsupport.NewCatalogTestDB(t)
 }
 
 func TestCatalogPage_FiltersInactive(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
-	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('active1','A1','Active Item',100,1)`)
-	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('inactive1','I1','Inactive Item',200,0)`)
-	_, _ = db.Exec(`INSERT INTO categories(id,name,is_active) VALUES('cat1','Cat 1',1)`)
-	_, _ = db.Exec(`INSERT INTO brands(id,name,is_active) VALUES('brand1','Brand 1',1)`)
-	_, _ = db.Exec(`INSERT INTO tax_codes(id,name,rate_basis_points,is_active) VALUES('tax_std','Standard',2000,1)`)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "active1", SKU: "A1", Name: "Active Item", BasePrice: 100, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "inactive1", SKU: "I1", Name: "Inactive Item", BasePrice: 200, IsActive: false})
+	testsupport.SeedCategory(t, db, "cat1", "Cat 1", true)
+	testsupport.SeedBrand(t, db, "brand1", "Brand 1", true)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
 
-    mux := http.NewServeMux()
-    dp := &common.Deps{
-        Db: db,
-        State: common.RuntimeState{Theme: "default"},
-        Menu: []common.MenuItem{},
-    }
-    Register(mux, dp)
+	mux := http.NewServeMux()
+	dp := &common.Deps{
+		Db:    db,
+		State: common.RuntimeState{Theme: "default"},
+		Menu:  []common.MenuItem{},
+	}
+	Register(mux, dp)
 
 	req := httptest.NewRequest(http.MethodGet, "/catalog", nil)
 	rec := httptest.NewRecorder()
@@ -76,14 +56,14 @@ func TestCatalogCreateAndDeactivate(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
-	_, _ = db.Exec(`INSERT INTO tax_codes(id,name,rate_basis_points,is_active) VALUES('tax_std','Standard',2000,1)`)
-    mux := http.NewServeMux()
-    dp := &common.Deps{
-        Db: db,
-        State: common.RuntimeState{Theme: "default"},
-        Menu: []common.MenuItem{},
-    }
-    Register(mux, dp)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	mux := http.NewServeMux()
+	dp := &common.Deps{
+		Db:    db,
+		State: common.RuntimeState{Theme: "default"},
+		Menu:  []common.MenuItem{},
+	}
+	Register(mux, dp)
 
 	// create item
 	form := strings.NewReader("name=Test+Item&price=123&sku=T1&taxCode=tax_std&isActive=1")

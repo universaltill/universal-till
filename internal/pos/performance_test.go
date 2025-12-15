@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	_ "modernc.org/sqlite"
 )
 
@@ -333,7 +334,7 @@ func TestMicroInteractionLatency(t *testing.T) {
 	defer db.Close()
 
 	warn, fail := microInteractionThresholds()
-	searcher := NewCatalogSearcher(db)
+	searcher := NewCatalogSearcher(data.NewPOSRepo(db))
 	resolver := &staticResolver{
 		lines: map[string]BasketLine{
 			"SKU001": {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // Manifest represents the plugin.json schema
@@ -121,13 +122,14 @@ func ComputeSHA256(filePath string) (string, error) {
 
 // PersistManifest saves the manifest to database tables
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {
+	repo := data.NewPluginRepo(db)
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC()
 
 	// 1. Insert into plugins table
 	trustLevel := "untrusted"
@@ -135,32 +137,27 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		trustLevel = opts.TrustLevel
 	}
 
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO plugins (
-			id, name, version, install_state, description, author, website,
-			entrypoint, runtime, installed_from_url, installed_sha256,
-			is_active, trust_level, installed_at, updated_at
-		) VALUES (?, ?, ?, 'installed', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-		ON CONFLICT(id, version) DO UPDATE SET
-			name = excluded.name,
-			description = excluded.description,
-			author = excluded.author,
-			website = excluded.website,
-			entrypoint = excluded.entrypoint,
-			runtime = excluded.runtime,
-			installed_from_url = excluded.installed_from_url,
-			installed_sha256 = excluded.installed_sha256,
-			updated_at = excluded.updated_at,
-			install_state = 'installed',
-			is_active = 1
-	`, m.ID, m.Name, m.Version, m.Description, m.Author, m.Website,
-		m.Entrypoint, m.Runtime, opts.InstalledFromURL, opts.SHA256,
-		trustLevel, now, now)
-	if err != nil {
+	if err := repo.UpsertPluginManifest(ctx, tx, data.ManifestRow{
+		ID:           m.ID,
+		Name:         m.Name,
+		Version:      m.Version,
+		InstallState: "installed",
+		Description:  m.Description,
+		Author:       m.Author,
+		Website:      m.Website,
+		Entrypoint:   m.Entrypoint,
+		Runtime:      m.Runtime,
+		PackageURL:   opts.InstalledFromURL,
+		SHA256:       opts.SHA256,
+		TrustLevel:   trustLevel,
+		InstalledAt:  now,
+		UpdatedAt:    now,
+	}); err != nil {
 		return fmt.Errorf("insert plugin: %w", err)
 	}
 
 	// 2. Insert entries
+	var entryRows []data.PluginEntryRow
 	for _, e := range m.Entries {
 		configJSON := ""
 		if len(e.Config) > 0 {
@@ -168,33 +165,27 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 			configJSON = string(b)
 		}
 
-		entryID := uuid.NewString()
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO plugin_entries (
-				id, plugin_id, type, key, label, icon_path, sort_order, is_active,
-				parent_page_key, menu_group, route, target_action, trigger_event,
-				config_json, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(plugin_id, key) DO UPDATE SET
-				label = excluded.label,
-				icon_path = excluded.icon_path,
-				sort_order = excluded.sort_order,
-				parent_page_key = excluded.parent_page_key,
-				menu_group = excluded.menu_group,
-				route = excluded.route,
-				target_action = excluded.target_action,
-				trigger_event = excluded.trigger_event,
-				config_json = excluded.config_json,
-				updated_at = excluded.updated_at
-		`, entryID, m.ID, e.Type, e.Key, e.Label, e.IconPath, e.SortOrder,
-			e.ParentPageKey, e.MenuGroup, e.Route, e.TargetAction, e.TriggerEvent,
-			configJSON, now, now)
-		if err != nil {
-			return fmt.Errorf("insert plugin entry %s: %w", e.Key, err)
-		}
+		entryRows = append(entryRows, data.PluginEntryRow{
+			ID:            uuid.NewString(),
+			Type:          e.Type,
+			Key:           e.Key,
+			Label:         e.Label,
+			IconPath:      e.IconPath,
+			SortOrder:     e.SortOrder,
+			ParentPageKey: e.ParentPageKey,
+			MenuGroup:     e.MenuGroup,
+			Route:         e.Route,
+			TargetAction:  e.TargetAction,
+			TriggerEvent:  e.TriggerEvent,
+			ConfigJSON:    configJSON,
+		})
+	}
+	if err := repo.ReplacePluginEntries(ctx, tx, m.ID, entryRows); err != nil {
+		return fmt.Errorf("insert plugin entry: %w", err)
 	}
 
 	// 3. Insert settings with defaults
+	var settingRows []data.PluginSettingRow
 	for _, s := range m.Settings {
 		scope := s.Scope
 		if scope == "" {
@@ -207,21 +198,22 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 			valueJSON = string(b)
 		}
 
-		settingID := uuid.NewString()
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO plugin_settings (
-				id, plugin_id, key, value_json, scope, scope_id, updated_at
-			) VALUES (?, ?, ?, ?, ?, NULL, ?)
-			ON CONFLICT(plugin_id, key, scope, scope_id) DO UPDATE SET
-				value_json = excluded.value_json,
-				updated_at = excluded.updated_at
-		`, settingID, m.ID, s.Key, valueJSON, scope, now)
-		if err != nil {
-			return fmt.Errorf("insert plugin setting %s: %w", s.Key, err)
-		}
+		settingRows = append(settingRows, data.PluginSettingRow{
+			ID:        uuid.NewString(),
+			PluginID:  m.ID,
+			Key:       s.Key,
+			ValueJSON: valueJSON,
+			Scope:     scope,
+			ScopeID:   sql.NullString{Valid: false},
+			UpdatedAt: now,
+		})
+	}
+	if err := repo.InsertPluginSettings(ctx, tx, settingRows); err != nil {
+		return fmt.Errorf("insert plugin setting: %w", err)
 	}
 
 	// 4. Insert hooks
+	var hookRows []data.PluginHookRow
 	for _, h := range m.Hooks {
 		configJSON := ""
 		if len(h.Config) > 0 {
@@ -234,32 +226,23 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 			priority = 100 // default
 		}
 
-		hookID := uuid.NewString()
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO plugin_hooks (
-				id, plugin_id, event, action, priority, is_active, config_json
-			) VALUES (?, ?, ?, ?, ?, 1, ?)
-			ON CONFLICT(plugin_id, event, action) DO UPDATE SET
-				priority = excluded.priority,
-				config_json = excluded.config_json
-		`, hookID, m.ID, h.Event, h.Action, priority, configJSON)
-		if err != nil {
-			return fmt.Errorf("insert plugin hook %s/%s: %w", h.Event, h.Action, err)
-		}
+		hookRows = append(hookRows, data.PluginHookRow{
+			ID:         uuid.NewString(),
+			PluginID:   m.ID,
+			Event:      h.Event,
+			Action:     h.Action,
+			Priority:   priority,
+			IsActive:   true,
+			ConfigJSON: configJSON,
+		})
+	}
+	if err := repo.InsertPluginHooks(ctx, tx, hookRows); err != nil {
+		return fmt.Errorf("insert plugin hook: %w", err)
 	}
 
 	// 5. Insert permissions (initially not granted)
-	for _, perm := range m.Permissions {
-		permID := uuid.NewString()
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO plugin_permissions (
-				id, plugin_id, permission, granted
-			) VALUES (?, ?, ?, 0)
-			ON CONFLICT(plugin_id, permission) DO NOTHING
-		`, permID, m.ID, perm)
-		if err != nil {
-			return fmt.Errorf("insert plugin permission %s: %w", perm, err)
-		}
+	if err := repo.InsertPluginPermissions(ctx, tx, m.ID, m.Permissions); err != nil {
+		return fmt.Errorf("insert plugin permission: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
