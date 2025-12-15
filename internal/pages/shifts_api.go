@@ -1,13 +1,13 @@
 package pages
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -108,6 +108,7 @@ type ShiftCloseResponse struct {
 func CloseShift(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		repo := data.NewPOSRepo(dp.Db)
 
 		var req ShiftCloseRequest
 
@@ -143,16 +144,13 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 		}
 
 		// Get expected cash before closing
-		var openingCash int64
-		err := dp.Db.QueryRowContext(ctx, `
-SELECT opening_cash FROM shifts WHERE id = ? AND closed_at IS NULL
-`, req.ShiftID).Scan(&openingCash)
+		openingCash, ok, err := repo.GetShiftOpeningCash(ctx, req.ShiftID)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				respondCloseError(w, r, http.StatusNotFound, "shift not found or already closed")
-			} else {
-				respondCloseError(w, r, http.StatusInternalServerError, fmt.Sprintf("query shift: %v", err))
-			}
+			respondCloseError(w, r, http.StatusInternalServerError, fmt.Sprintf("query shift: %v", err))
+			return
+		}
+		if !ok {
+			respondCloseError(w, r, http.StatusNotFound, "shift not found or already closed")
 			return
 		}
 

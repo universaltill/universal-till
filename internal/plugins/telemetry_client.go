@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -187,19 +188,13 @@ func (tc *TelemetryClient) shouldTrack(ctx context.Context) bool {
 
 // loadOptInStatus reads telemetry opt-in from settings
 func (tc *TelemetryClient) loadOptInStatus(ctx context.Context) error {
-	var value string
-	err := tc.db.QueryRowContext(ctx,
-		`SELECT value FROM settings WHERE key = 'marketplace.telemetry_opt_in' LIMIT 1`,
-	).Scan(&value)
-
-	if err == sql.ErrNoRows {
-		// Default to opt-out if not set
-		tc.optInEnabled = false
-		return nil
-	}
-
+	value, ok, err := data.NewSettingsRepo(tc.db).Get(ctx, "marketplace.telemetry_opt_in")
 	if err != nil {
 		return err
+	}
+	if !ok {
+		tc.optInEnabled = false
+		return nil
 	}
 
 	tc.optInEnabled = (value == "true" || value == "1")

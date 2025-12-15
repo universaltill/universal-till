@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	_ "modernc.org/sqlite"
 )
 
@@ -36,7 +37,8 @@ func TestSearchActiveItems_FiltersInactive(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','SKU2','Inactive',200,0)`)
 	_, _ = db.Exec(`INSERT INTO item_barcodes(barcode,item_id,is_primary) VALUES('111','a1',1)`) // ensure barcode search works
 
-	cs := NewCatalogSearcher(db)
+	repo := data.NewPOSRepo(db)
+	cs := NewCatalogSearcher(repo)
 	results, err := cs.SearchActiveItems(ctx, "SKU", 0, 10)
 	if err != nil {
 		t.Fatalf("SearchActiveItems error: %v", err)
@@ -57,7 +59,7 @@ func TestLookupActiveVariant(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO item_variants(id,item_id,sku,name,price,is_active) VALUES('v1','i1','VSKU','Var',500,1)`)
 	_, _ = db.Exec(`INSERT INTO item_variants(id,item_id,sku,name,price,is_active) VALUES('v2','i1','VSK2','InactiveVar',500,0)`)
 
-	cs := NewCatalogSearcher(db)
+	cs := NewCatalogSearcher(data.NewPOSRepo(db))
 	v, err := cs.LookupActiveVariant(ctx, "v1")
 	if err != nil || v.ID != "v1" {
 		t.Fatalf("expected variant v1, got %v err=%v", v, err)

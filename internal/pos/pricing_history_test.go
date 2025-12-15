@@ -36,7 +36,8 @@ func TestAppendPriceHistoryItem_AppendsAndEndsPrevious(t *testing.T) {
 	// existing open price
 	_, _ = db.Exec(`INSERT INTO price_history(id,item_id,price,starts_at) VALUES('p1','itm1',100,?)`, now.Add(-time.Hour))
 
-	if err := AppendPriceHistoryItem(ctx, db, "itm1", 200, now); err != nil {
+	repo := &testPricingRepo{db: db}
+	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 200, now); err != nil {
 		t.Fatalf("AppendPriceHistoryItem error: %v", err)
 	}
 
@@ -65,7 +66,8 @@ func TestAppendPriceHistoryVariant_AppendsAndEndsPrevious(t *testing.T) {
 	now := time.Now().UTC()
 	_, _ = db.Exec(`INSERT INTO price_history(id,variant_id,price,starts_at) VALUES('pv1','var1',500,?)`, now.Add(-time.Hour))
 
-	if err := AppendPriceHistoryVariant(ctx, db, "var1", 750, now); err != nil {
+	repo := &testPricingRepo{db: db}
+	if err := AppendPriceHistoryVariant(ctx, repo, "var1", 750, now); err != nil {
 		t.Fatalf("AppendPriceHistoryVariant error: %v", err)
 	}
 	var price int64
@@ -87,15 +89,16 @@ func TestAppendPriceHistoryItem_MultipleAppends(t *testing.T) {
 
 	now := time.Now().UTC()
 	// first price
-	if err := AppendPriceHistoryItem(ctx, db, "itm1", 100, now.Add(-2*time.Hour)); err != nil {
+	repo := &testPricingRepo{db: db}
+	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 100, now.Add(-2*time.Hour)); err != nil {
 		t.Fatalf("AppendPriceHistoryItem first error: %v", err)
 	}
 	// second price
-	if err := AppendPriceHistoryItem(ctx, db, "itm1", 200, now.Add(-time.Hour)); err != nil {
+	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 200, now.Add(-time.Hour)); err != nil {
 		t.Fatalf("AppendPriceHistoryItem second error: %v", err)
 	}
 	// third price
-	if err := AppendPriceHistoryItem(ctx, db, "itm1", 300, now); err != nil {
+	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 300, now); err != nil {
 		t.Fatalf("AppendPriceHistoryItem third error: %v", err)
 	}
 

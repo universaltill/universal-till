@@ -3,12 +3,12 @@ package pos
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 )
 
@@ -38,6 +38,7 @@ type CashAdjustmentInput struct {
 
 // OpenShift creates a new shift record with opening cash and audit entry
 func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (string, error) {
+	repo := data.NewPOSRepo(sqlDB)
 	if in.RegisterID == "" {
 		return "", errors.New("register_id required")
 	}
@@ -49,13 +50,9 @@ func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (string, error
 	}
 
 	// Check if there's already an open shift for this register
-	var existingID string
-	err := sqlDB.QueryRowContext(ctx, `
-SELECT id FROM shifts 
-WHERE register_id = ? AND closed_at IS NULL
-LIMIT 1`, in.RegisterID).Scan(&existingID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("check existing shift: %w", err)
+	existingID, err := repo.FindOpenShiftForRegister(ctx, nil, in.RegisterID)
+	if err != nil {
+		return "", err
 	}
 	if existingID != "" {
 		return "", fmt.Errorf("register %s already has an open shift: %s", in.RegisterID, existingID)
@@ -68,27 +65,17 @@ LIMIT 1`, in.RegisterID).Scan(&existingID)
 
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Format(time.RFC3339)
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO shifts (id, register_id, cashier_id, opened_at, opening_cash)
-VALUES (?, ?, ?, ?, ?)
-`, shiftID, in.RegisterID, in.CashierID, now, in.OpeningCash); err != nil {
-			return fmt.Errorf("insert shift: %w", err)
+		if err := repo.InsertShift(ctx, tx, shiftID, in.RegisterID, in.CashierID, in.OpeningCash, now); err != nil {
+			return err
 		}
-
-		// Audit log
 		payload := map[string]any{
 			"register_id":  in.RegisterID,
 			"cashier_id":   in.CashierID,
 			"opening_cash": in.OpeningCash,
 		}
-		payloadJSON, _ := json.Marshal(payload)
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
-VALUES (?, ?, 'shift', ?, 'open', ?, ?)
-`, uuid.NewString(), in.CashierID, shiftID, string(payloadJSON), now); err != nil {
-			return fmt.Errorf("insert audit: %w", err)
+		if err := repo.InsertAudit(ctx, tx, in.CashierID, "shift", shiftID, "open", payload, now, ""); err != nil {
+			return err
 		}
-
 		return nil
 	})
 	if err != nil {
@@ -100,6 +87,7 @@ VALUES (?, ?, 'shift', ?, 'open', ?, ?)
 
 // CloseShift closes an existing shift, calculates expected cash, and persists closing cash
 func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
+	repo := data.NewPOSRepo(sqlDB)
 	if in.ShiftID == "" {
 		return errors.New("shift_id required")
 	}
@@ -108,51 +96,31 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 	}
 
 	// Verify shift exists and is open
-	var registerID, cashierID string
-	var openingCash int64
-	err := sqlDB.QueryRowContext(ctx, `
-SELECT register_id, cashier_id, opening_cash
-FROM shifts 
-WHERE id = ? AND closed_at IS NULL
-`, in.ShiftID).Scan(&registerID, &cashierID, &openingCash)
+	_, cashierID, openingCash, err := repo.LoadShiftForClose(ctx, nil, in.ShiftID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("shift not found or already closed")
-		}
-		return fmt.Errorf("query shift: %w", err)
+		return err
 	}
 
 	// Calculate expected cash
-	expectedCash, err := ComputeExpectedCash(ctx, sqlDB, in.ShiftID, openingCash)
+	expectedCash, err := repo.ComputeExpectedCash(ctx, in.ShiftID, openingCash)
 	if err != nil {
 		return fmt.Errorf("compute expected cash: %w", err)
 	}
 
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Format(time.RFC3339)
-		if _, err := tx.ExecContext(ctx, `
-UPDATE shifts
-SET closed_at = ?, closing_cash = ?, expected_cash = ?, note = ?
-WHERE id = ?
-`, now, in.ClosingCash, expectedCash, nullIfEmpty(in.Note), in.ShiftID); err != nil {
-			return fmt.Errorf("update shift: %w", err)
+		if err := repo.UpdateShiftClose(ctx, tx, in.ShiftID, in.ClosingCash, expectedCash, in.Note, now); err != nil {
+			return err
 		}
-
-		// Audit log
 		payload := map[string]any{
 			"closing_cash":  in.ClosingCash,
 			"expected_cash": expectedCash,
 			"variance":      in.ClosingCash - expectedCash,
 			"note":          in.Note,
 		}
-		payloadJSON, _ := json.Marshal(payload)
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
-VALUES (?, ?, 'shift', ?, 'close', ?, ?)
-`, uuid.NewString(), cashierID, in.ShiftID, string(payloadJSON), now); err != nil {
-			return fmt.Errorf("insert audit: %w", err)
+		if err := repo.InsertAudit(ctx, tx, cashierID, "shift", in.ShiftID, "close", payload, now, ""); err != nil {
+			return err
 		}
-
 		return nil
 	})
 
@@ -162,6 +130,7 @@ VALUES (?, ?, 'shift', ?, 'close', ?, ?)
 // RecordCashAdjustment records a payout or adjustment for a shift
 // Stores as audit_log entry with action 'cash_adjustment'
 func RecordCashAdjustment(ctx context.Context, sqlDB *sql.DB, in CashAdjustmentInput) (string, error) {
+	repo := data.NewPOSRepo(sqlDB)
 	if in.ShiftID == "" {
 		return "", errors.New("shift_id required")
 	}
@@ -179,15 +148,12 @@ func RecordCashAdjustment(ctx context.Context, sqlDB *sql.DB, in CashAdjustmentI
 	}
 
 	// Verify shift exists and is open
-	var exists bool
-	err := sqlDB.QueryRowContext(ctx, `
-SELECT 1 FROM shifts WHERE id = ? AND closed_at IS NULL
-`, in.ShiftID).Scan(&exists)
+	ok, err := repo.ShiftOpenExists(ctx, nil, in.ShiftID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", errors.New("shift not found or already closed")
-		}
-		return "", fmt.Errorf("query shift: %w", err)
+		return "", err
+	}
+	if !ok {
+		return "", errors.New("shift not found or already closed")
 	}
 
 	adjustmentID := uuid.NewString()
@@ -199,13 +165,8 @@ SELECT 1 FROM shifts WHERE id = ? AND closed_at IS NULL
 		"amount":   in.Amount,
 		"reason":   in.Reason,
 	}
-	payloadJSON, _ := json.Marshal(payload)
-
-	if _, err := sqlDB.ExecContext(ctx, `
-INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
-VALUES (?, ?, 'shift', ?, 'cash_adjustment', ?, ?)
-`, adjustmentID, in.ActorID, in.ShiftID, string(payloadJSON), now); err != nil {
-		return "", fmt.Errorf("insert adjustment audit: %w", err)
+	if err := repo.InsertAudit(ctx, nil, in.ActorID, "shift", in.ShiftID, "cash_adjustment", payload, now, adjustmentID); err != nil {
+		return "", err
 	}
 
 	return adjustmentID, nil
@@ -214,66 +175,5 @@ VALUES (?, ?, 'shift', ?, 'cash_adjustment', ?, ?)
 // ComputeExpectedCash calculates expected cash for a shift
 // Formula: opening_cash + cash_payments + adjustments (adjustments should be stored as negative values for payouts)
 func ComputeExpectedCash(ctx context.Context, sqlDB *sql.DB, shiftID string, openingCash int64) (int64, error) {
-	if shiftID == "" {
-		return 0, errors.New("shift_id required")
-	}
-
-	// Get shift time range
-	var openedAt, closedAt sql.NullString
-	var registerID string
-	err := sqlDB.QueryRowContext(ctx, `
-SELECT register_id, opened_at, closed_at
-FROM shifts
-WHERE id = ?
-`, shiftID).Scan(&registerID, &openedAt, &closedAt)
-	if err != nil {
-		return 0, fmt.Errorf("query shift: %w", err)
-	}
-
-	// Sum cash payments during shift
-	// Join sales with shift time range and filter by register
-	var cashPayments int64
-	timeFilter := `s.completed_at >= ?`
-	args := []any{registerID, openedAt.String}
-	if closedAt.Valid {
-		timeFilter += ` AND s.completed_at <= ?`
-		args = append(args, closedAt.String)
-	}
-
-	query := fmt.Sprintf(`
-SELECT COALESCE(SUM(p.amount - p.change_given), 0)
-FROM payments p
-JOIN sales s ON s.id = p.sale_id
-JOIN payment_methods pm ON pm.id = p.method_id
-WHERE pm.type = 'cash'
-  AND s.status = 'completed'
-  AND s.register_id = ?
-  AND %s
-`, timeFilter)
-
-	err = sqlDB.QueryRowContext(ctx, query, args...).Scan(&cashPayments)
-	if err != nil {
-		return 0, fmt.Errorf("sum cash payments: %w", err)
-	}
-
-	// Sum cash adjustments from audit_log
-	var adjustments int64
-	err = sqlDB.QueryRowContext(ctx, `
-SELECT COALESCE(SUM(
-	CAST(json_extract(data_json, '$.amount') AS INTEGER)
-), 0)
-FROM audit_log
-WHERE entity_type = 'shift'
-  AND entity_id = ?
-  AND action = 'cash_adjustment'
-`, shiftID).Scan(&adjustments)
-	if err != nil {
-		return 0, fmt.Errorf("sum adjustments: %w", err)
-	}
-
-	// Expected = opening + cash_payments - adjustments
-	// (adjustments are typically negative for payouts, positive for additions)
-	expectedCash := openingCash + cashPayments + adjustments
-
-	return expectedCash, nil
+	return data.NewPOSRepo(sqlDB).ComputeExpectedCash(ctx, shiftID, openingCash)
 }

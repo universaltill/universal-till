@@ -6,58 +6,38 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // CheckPermission verifies if a plugin has a granted permission
 func CheckPermission(ctx context.Context, db *sql.DB, pluginID, permission string) error {
-	var granted int
-	err := db.QueryRowContext(ctx, `
-		SELECT granted
-		FROM plugin_permissions
-		WHERE plugin_id = ? AND permission = ?
-	`, pluginID, permission).Scan(&granted)
-
-	if err == sql.ErrNoRows {
+	repo := data.NewPluginRepo(db)
+	granted, exists, err := repo.CheckPermission(ctx, pluginID, permission)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		// Permission not defined in manifest
 		if err := auditPermissionDenial(ctx, db, pluginID, permission, "permission not declared"); err != nil {
 			fmt.Printf("warning: failed to audit permission denial: %v\n", err)
 		}
 		return fmt.Errorf("permission denied: %s not declared for plugin %s", permission, pluginID)
 	}
-
-	if err != nil {
-		return fmt.Errorf("check permission: %w", err)
-	}
-
-	if granted == 0 {
-		// Permission declared but not granted
+	if !granted {
 		if err := auditPermissionDenial(ctx, db, pluginID, permission, "permission not granted"); err != nil {
 			fmt.Printf("warning: failed to audit permission denial: %v\n", err)
 		}
 		return fmt.Errorf("permission denied: %s not granted for plugin %s", permission, pluginID)
 	}
-
 	return nil
 }
 
 // GrantPermission grants a permission to a plugin
 func GrantPermission(ctx context.Context, db *sql.DB, pluginID, permission string) error {
-	result, err := db.ExecContext(ctx, `
-		UPDATE plugin_permissions
-		SET granted = 1
-		WHERE plugin_id = ? AND permission = ?
-	`, pluginID, permission)
-	if err != nil {
-		return fmt.Errorf("grant permission: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("check rows affected: %w", err)
-	}
-
-	if rows == 0 {
-		return fmt.Errorf("permission %s not found for plugin %s", permission, pluginID)
+	repo := data.NewPluginRepo(db)
+	if err := repo.SetPermission(ctx, pluginID, permission, true); err != nil {
+		return err
 	}
 
 	// Audit the grant
@@ -70,22 +50,9 @@ func GrantPermission(ctx context.Context, db *sql.DB, pluginID, permission strin
 
 // RevokePermission revokes a permission from a plugin
 func RevokePermission(ctx context.Context, db *sql.DB, pluginID, permission string) error {
-	result, err := db.ExecContext(ctx, `
-		UPDATE plugin_permissions
-		SET granted = 0
-		WHERE plugin_id = ? AND permission = ?
-	`, pluginID, permission)
-	if err != nil {
-		return fmt.Errorf("revoke permission: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("check rows affected: %w", err)
-	}
-
-	if rows == 0 {
-		return fmt.Errorf("permission %s not found for plugin %s", permission, pluginID)
+	repo := data.NewPluginRepo(db)
+	if err := repo.SetPermission(ctx, pluginID, permission, false); err != nil {
+		return err
 	}
 
 	// Audit the revocation
@@ -98,31 +65,16 @@ func RevokePermission(ctx context.Context, db *sql.DB, pluginID, permission stri
 
 // ListPluginPermissions returns all permissions for a plugin with grant status
 func ListPluginPermissions(ctx context.Context, db *sql.DB, pluginID string) ([]Permission, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT permission, granted
-		FROM plugin_permissions
-		WHERE plugin_id = ?
-		ORDER BY permission
-	`, pluginID)
+	repo := data.NewPluginRepo(db)
+	rows, err := repo.ListPermissions(ctx, pluginID)
 	if err != nil {
-		return nil, fmt.Errorf("query permissions: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	var permissions []Permission
-	for rows.Next() {
-		var p Permission
-		if err := rows.Scan(&p.Name, &p.Granted); err != nil {
-			return nil, fmt.Errorf("scan permission: %w", err)
-		}
-		permissions = append(permissions, p)
+	var out []Permission
+	for _, r := range rows {
+		out = append(out, Permission{Name: r.Permission, Granted: r.Granted})
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate permissions: %w", err)
-	}
-
-	return permissions, nil
+	return out, nil
 }
 
 // Permission represents a plugin permission
@@ -160,36 +112,25 @@ func HasAnyPermission(ctx context.Context, db *sql.DB, pluginID string, permissi
 
 // auditPermissionDenial logs permission denial to audit_log
 func auditPermissionDenial(ctx context.Context, db *sql.DB, pluginID, permission, reason string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	details := fmt.Sprintf("permission=%s, reason=%s", permission, reason)
-
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
-		VALUES ('permission_denied', 'plugin', ?, ?, ?)
-	`, pluginID, details, now)
-	return err
+	repo := data.NewPluginRepo(db)
+	return repo.InsertAudit(ctx, nil, "permission_denied", pluginID, map[string]any{
+		"permission": permission,
+		"reason":     reason,
+	}, time.Now())
 }
 
 // auditPermissionGrant logs permission grant to audit_log
 func auditPermissionGrant(ctx context.Context, db *sql.DB, pluginID, permission string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	details := fmt.Sprintf("permission=%s", permission)
-
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
-		VALUES ('permission_granted', 'plugin', ?, ?, ?)
-	`, pluginID, details, now)
-	return err
+	repo := data.NewPluginRepo(db)
+	return repo.InsertAudit(ctx, nil, "permission_granted", pluginID, map[string]any{
+		"permission": permission,
+	}, time.Now())
 }
 
 // auditPermissionRevoke logs permission revocation to audit_log
 func auditPermissionRevoke(ctx context.Context, db *sql.DB, pluginID, permission string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	details := fmt.Sprintf("permission=%s", permission)
-
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
-		VALUES ('permission_revoked', 'plugin', ?, ?, ?)
-	`, pluginID, details, now)
-	return err
+	repo := data.NewPluginRepo(db)
+	return repo.InsertAudit(ctx, nil, "permission_revoked", pluginID, map[string]any{
+		"permission": permission,
+	}, time.Now())
 }

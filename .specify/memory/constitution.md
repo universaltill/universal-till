@@ -63,6 +63,17 @@ Cloud sync is optional, not required.
 - Every UI change must ship with automated tests (Go handler/UI smoke tests or equivalent) covering the rendered controls and workflows.
 - UI forms and controls must be wired to live backend data; no stubs or hardcoded payloads are permitted in production templates.
 
+### 8. Repository-Owned SQL
+- All SQL belongs in repository packages under `internal/data/*_repo.go`; business layers depend on repo interfaces, never inline SQL.
+- Repo methods accept `context.Context` and caller-managed `*sql.DB`/`*sql.Tx` (no hidden transactions); error/log handling is centralized at the repo boundary.
+- New data access goes through repos first; adding SQL outside repos is a constitution violation.
+
+### Current Repository Map (authoritative data owners)
+- POS/catalog/pricing/inventory/sales/shifts: `internal/data/pos_repo.go`, `internal/data/catalog_repo.go`
+- Plugins: `internal/data/plugin_repo.go`
+- Settings: `internal/data/settings_repo.go`
+- Shortcuts/buttons: `internal/data/shortcuts_repo.go`
+
 ---
 
 ## Domains & Current Feature Set

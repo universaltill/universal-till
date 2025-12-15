@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
-	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -34,27 +34,9 @@ func collectPaymentMethods(ctx context.Context, db *sql.DB) []string {
 	if db == nil {
 		return defaults
 	}
-	rows, err := db.QueryContext(ctx, `SELECT id FROM payment_methods WHERE is_active = 1 ORDER BY id`)
+	methods, err := data.NewPOSRepo(db).ListPaymentMethodIDs(ctx)
 	if err != nil {
 		return defaults
-	}
-	defer rows.Close()
-	seen := make(map[string]struct{})
-	var methods []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		methods = append(methods, id)
 	}
 	if len(methods) == 0 {
 		return defaults

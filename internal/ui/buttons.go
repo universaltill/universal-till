@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	pos "github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -40,13 +41,17 @@ func ToVM(b []Button) []ButtonVM {
 	return out
 }
 
-// ButtonStore persists shortcut buttons in the shortcut_buttons table.
+// ButtonStore persists shortcut buttons in the shortcut_buttons table via repo.
 type ButtonStore struct {
-	db *sql.DB
+	repo    *data.ShortcutsRepo
+	posRepo *data.POSRepo
 }
 
 func NewButtonStore(db *sql.DB) *ButtonStore {
-	return &ButtonStore{db: db}
+	return &ButtonStore{
+		repo:    data.NewShortcutsRepo(db),
+		posRepo: data.NewPOSRepo(db),
+	}
 }
 
 type SearchResult struct {
@@ -58,92 +63,50 @@ type SearchResult struct {
 
 // SearchItems finds items (and primary barcodes) to add as shortcuts.
 func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit int) ([]SearchResult, error) {
-	like := "%" + strings.TrimSpace(q) + "%"
-	if limit <= 0 {
-		limit = 10
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	rows, err := s.db.QueryContext(ctx, `
-SELECT i.id,
-       i.name,
-       (
-         SELECT ib.barcode
-         FROM item_barcodes ib
-         WHERE ib.item_id = i.id
-         ORDER BY ib.is_primary DESC
-         LIMIT 1
-       ) AS barcode,
-       COALESCE(img.path, '')
-FROM items i
-LEFT JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
-WHERE i.is_active = 1 AND (
-	  i.name LIKE ?
-	  OR i.sku LIKE ?
-	  OR EXISTS (SELECT 1 FROM item_barcodes ib2 WHERE ib2.item_id = i.id AND ib2.barcode LIKE ?)
-)
-ORDER BY i.name
-LIMIT ? OFFSET ?
-`, like, like, like, limit, offset)
+	repoResults, err := s.posRepo.SearchItemsForShortcuts(ctx, q, offset, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var res []SearchResult
-	for rows.Next() {
-		var r SearchResult
-		if err := rows.Scan(&r.ItemID, &r.Name, &r.Barcode, &r.Image); err != nil {
-			return nil, err
-		}
-		res = append(res, r)
+	out := make([]SearchResult, 0, len(repoResults))
+	for _, r := range repoResults {
+		out = append(out, SearchResult{
+			ItemID:  r.ItemID,
+			Name:    r.Name,
+			Barcode: r.Barcode,
+			Image:   r.Image,
+		})
 	}
-	return res, rows.Err()
+	return out, nil
 }
 
 func (s *ButtonStore) Load() ([]Button, error) {
-	rows, err := s.db.Query(`SELECT label, barcode, item_id, image_path FROM shortcut_buttons ORDER BY label`)
+	rows, err := s.repo.LoadButtons(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Button
-	for rows.Next() {
-		var b Button
-		var img sql.NullString
-		if err := rows.Scan(&b.Label, &b.Code, &b.ItemID, &img); err != nil {
-			return nil, err
-		}
-		if img.Valid {
-			b.ImageURL = img.String
-		}
-		out = append(out, b)
+	for _, b := range rows {
+		out = append(out, Button{
+			Label:    b.Label,
+			Code:     b.Barcode,
+			ItemID:   b.ItemID,
+			ImageURL: b.ImageURL,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *ButtonStore) Save(list []Button) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM shortcut_buttons`); err != nil {
-		tx.Rollback()
-		return err
-	}
-	stmt, err := tx.Prepare(`INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)`)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	defer stmt.Close()
+	var repoButtons []data.ShortcutButton
 	for _, b := range list {
-		if _, err := stmt.Exec(b.Code, b.Label, b.ItemID, nullIfEmpty(b.ImageURL)); err != nil {
-			tx.Rollback()
-			return err
-		}
+		repoButtons = append(repoButtons, data.ShortcutButton{
+			Label:    b.Label,
+			Barcode:  b.Code,
+			ItemID:   b.ItemID,
+			ImageURL: b.ImageURL,
+		})
 	}
-	return tx.Commit()
+	return s.repo.SaveButtons(context.Background(), repoButtons)
 }
 
 func (s *ButtonStore) Add(btn Button) error {
@@ -153,23 +116,16 @@ func (s *ButtonStore) Add(btn Button) error {
 	if btn.Label == "" || btn.Code == "" || btn.ItemID == "" {
 		return errors.New("label, code, and itemId are required")
 	}
-	// ensure item exists and is active
-	var exists int
-	if err := s.db.QueryRow(`SELECT 1 FROM items WHERE id = ? AND is_active = 1`, btn.ItemID).Scan(&exists); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("item not found or inactive")
-		}
-		return err
-	}
-	_, err := s.db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)
-	ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path`,
-		btn.Code, btn.Label, btn.ItemID, nullIfEmpty(btn.ImageURL))
-	return err
+	return s.repo.AddButton(context.Background(), data.ShortcutButton{
+		Label:    btn.Label,
+		Barcode:  btn.Code,
+		ItemID:   btn.ItemID,
+		ImageURL: btn.ImageURL,
+	})
 }
 
 func (s *ButtonStore) Remove(code string) error {
-	_, err := s.db.Exec(`DELETE FROM shortcut_buttons WHERE barcode=?`, strings.TrimSpace(code))
-	return err
+	return s.repo.RemoveButton(context.Background(), code)
 }
 
 /* ----------------- HTTP handlers (htmx-friendly) ----------------- */
@@ -276,89 +232,27 @@ func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
 }
 
 func (a PriceResolverAdapter) resolveVariant(ctx context.Context, code string) (pos.BasketLine, bool) {
-	row := a.Store.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0)
-FROM variant_barcodes vb
-JOIN item_variants v ON v.id = vb.variant_id
-JOIN items i ON i.id = v.item_id
-LEFT JOIN tax_codes t ON t.id = i.tax_code_id
-WHERE vb.barcode = ?
-  AND i.is_active = 1 AND v.is_active = 1
-LIMIT 1
-`, code)
-	var itemID, itemName, variantID, variantName, img sql.NullString
-	var price int64
-	var rateBP sql.NullInt64
-	var weighed sql.NullInt64
-	if err := row.Scan(&itemID, &itemName, &variantID, &variantName, &price, &weighed, &img, &rateBP); err != nil {
-		return pos.BasketLine{}, false
+	line, ok := a.resolve(ctx, code)
+	if ok && line.VariantID != "" {
+		return line, true
 	}
-	price = a.Store.currentPrice(ctx, nil, &variantID.String, price)
-	name := itemName.String
-	if variantName.String != "" {
-		name = name + " - " + variantName.String
-	}
-	line := pos.BasketLine{SKU: code, Name: name, Qty: 1, PriceCents: price, ItemID: itemID.String, VariantID: variantID.String, TaxRateBP: int(rateBP.Int64), IsWeighed: weighed.Int64 == 1}
-	if img.Valid {
-		line.ImageURL = img.String
-	}
-	return line, true
+	return pos.BasketLine{}, false
 }
 
 func (a PriceResolverAdapter) resolveItem(ctx context.Context, code string) (pos.BasketLine, bool) {
-	row := a.Store.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, i.base_price, i.is_weighed,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0)
-FROM item_barcodes ib
-JOIN items i ON i.id = ib.item_id
-LEFT JOIN tax_codes t ON t.id = i.tax_code_id
-WHERE ib.barcode = ?
-  AND i.is_active = 1
-LIMIT 1
-`, code)
-	var itemID, name, img sql.NullString
-	var price int64
-	var rateBP sql.NullInt64
-	var weighed sql.NullInt64
-	if err := row.Scan(&itemID, &name, &price, &weighed, &img, &rateBP); err != nil {
-		return pos.BasketLine{}, false
+	line, ok := a.resolve(ctx, code)
+	if ok && line.ItemID != "" && line.VariantID == "" {
+		return line, true
 	}
-	price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-	line := pos.BasketLine{SKU: code, Name: name.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64), IsWeighed: weighed.Int64 == 1}
-	if img.Valid {
-		line.ImageURL = img.String
-	}
-	return line, true
+	return pos.BasketLine{}, false
 }
 
 func (a PriceResolverAdapter) resolveShortcut(ctx context.Context, code string) (pos.BasketLine, bool) {
-	row := a.Store.db.QueryRowContext(ctx, `
-SELECT sb.item_id, sb.label, i.base_price, i.is_weighed,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0)
-FROM shortcut_buttons sb
-JOIN items i ON i.id = sb.item_id
-LEFT JOIN tax_codes t ON t.id = i.tax_code_id
-WHERE sb.barcode = ?
-  AND i.is_active = 1
-LIMIT 1
-`, code)
-	var itemID, label, img sql.NullString
-	var price int64
-	var rateBP sql.NullInt64
-	var weighed sql.NullInt64
-	if err := row.Scan(&itemID, &label, &price, &weighed, &img, &rateBP); err != nil {
-		return pos.BasketLine{}, false
+	line, ok := a.resolve(ctx, code)
+	if ok && line.ItemID != "" {
+		return line, true
 	}
-	price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-	line := pos.BasketLine{SKU: code, Name: label.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64), IsWeighed: weighed.Int64 == 1}
-	if img.Valid {
-		line.ImageURL = img.String
-	}
-	return line, true
+	return pos.BasketLine{}, false
 }
 
 // resolveTextSearch falls back to SKU or name search when barcode lookups miss.
@@ -368,58 +262,37 @@ func (a PriceResolverAdapter) resolveTextSearch(ctx context.Context, code string
 		return pos.BasketLine{}, false
 	}
 
-	// Try exact SKU match first
-	row := a.Store.db.QueryRowContext(ctx, `
-SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0)
-FROM items i
-LEFT JOIN tax_codes t ON t.id = i.tax_code_id
-WHERE i.is_active = 1 AND i.sku = ?
-LIMIT 1
-`, q)
-	var itemID, sku, name, img sql.NullString
-	var price int64
-	var rateBP sql.NullInt64
-	var weighed sql.NullInt64
-	if err := row.Scan(&itemID, &sku, &name, &price, &weighed, &img, &rateBP); err == nil {
-		price = a.Store.currentPrice(ctx, &itemID.String, nil, price)
-		line := pos.BasketLine{SKU: sku.String, Name: name.String, Qty: 1, PriceCents: price, ItemID: itemID.String, TaxRateBP: int(rateBP.Int64), IsWeighed: weighed.Int64 == 1}
-		if img.Valid {
-			line.ImageURL = img.String
-		}
+	line, ok := a.resolve(ctx, q)
+	if ok {
 		return line, true
 	}
+	return pos.BasketLine{}, false
+}
 
-	// Partial name match
-	like := "%" + q + "%"
-	row = a.Store.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, i.base_price, i.is_weighed,
-       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0)
-FROM items i
-LEFT JOIN tax_codes t ON t.id = i.tax_code_id
-WHERE i.is_active = 1 AND i.name LIKE ?
-ORDER BY i.name
-LIMIT 1
-`, like)
-	var name2, img2 sql.NullString
-	var price2 int64
-	var rateBP2 sql.NullInt64
-	var weighed2 sql.NullInt64
-	if err := row.Scan(&itemID, &name2, &price2, &weighed2, &img2, &rateBP2); err != nil {
+func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.BasketLine, bool) {
+	row, ok := a.Store.posRepo.ResolveShortcutLine(ctx, code)
+	if !ok {
 		return pos.BasketLine{}, false
 	}
-	price2 = a.Store.currentPrice(ctx, &itemID.String, nil, price2)
-	line := pos.BasketLine{SKU: q, Name: name2.String, Qty: 1, PriceCents: price2, ItemID: itemID.String, TaxRateBP: int(rateBP2.Int64), IsWeighed: weighed2.Int64 == 1}
-	if img2.Valid {
-		line.ImageURL = img2.String
+	line := pos.BasketLine{
+		SKU:        row.SKU,
+		Name:       row.Name,
+		Qty:        1,
+		PriceCents: row.Price,
+		ItemID:     row.ItemID,
+		VariantID:  row.VariantID,
+		TaxRateBP:  row.TaxRateBP,
+		IsWeighed:  row.IsWeighed,
+	}
+	if row.ImageURL != "" {
+		line.ImageURL = row.ImageURL
 	}
 	return line, true
 }
 
 func (s *ButtonStore) currentPrice(ctx context.Context, itemID *string, variantID *string, fallback int64) int64 {
-	price, err := pos.ResolveCurrentPrice(ctx, s.db, deref(itemID), deref(variantID))
+	// Unused after repo move; kept for interface compatibility if needed.
+	price, err := s.posRepo.ResolveCurrentPrice(ctx, deref(itemID), deref(variantID))
 	if err != nil {
 		return fallback
 	}
