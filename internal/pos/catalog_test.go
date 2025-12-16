@@ -5,28 +5,12 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func setupCatalogDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	stmts := []string{
-		`PRAGMA foreign_keys = ON;`,
-		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT UNIQUE, name TEXT NOT NULL, description TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', base_price INTEGER NOT NULL, tax_code_id TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0);`,
-		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, sku TEXT UNIQUE, name TEXT NOT NULL, price INTEGER NOT NULL, cost_price INTEGER, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
-		`CREATE TABLE variant_barcodes (barcode TEXT PRIMARY KEY, variant_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
-	}
-	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatalf("setup stmt failed: %v", err)
-		}
-	}
-	return db
+	return testsupport.NewCatalogTestDB(t)
 }
 
 func TestAddBarcode_XORValidation(t *testing.T) {
@@ -38,7 +22,7 @@ func TestAddBarcode_XORValidation(t *testing.T) {
 		t.Fatalf("expected xor validation error")
 	}
 
-	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm1','Apple',100,1)`)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Apple", BasePrice: 100, IsActive: true})
 	if err := AddBarcode(ctx, db, BarcodeInput{Barcode: "123", ItemID: "itm1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,7 +32,7 @@ func TestAddBarcode_InactiveItemFails(t *testing.T) {
 	ctx := context.Background()
 	db := setupCatalogDB(t)
 	defer db.Close()
-	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm1','Apple',100,0)`)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Apple", BasePrice: 100, IsActive: false})
 	if err := AddBarcode(ctx, db, BarcodeInput{Barcode: "123", ItemID: "itm1"}); err == nil {
 		t.Fatalf("expected inactive item failure")
 	}
@@ -58,9 +42,9 @@ func TestAddBarcode_CrossAssignmentBlocked(t *testing.T) {
 	ctx := context.Background()
 	db := setupCatalogDB(t)
 	defer db.Close()
-	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm1','Apple',100,1)`)
-	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm2','Banana',100,1)`)
-	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, name, price, is_active) VALUES('var1','itm1','500ml',150,1)`)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Apple", BasePrice: 100, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm2", SKU: "SKU2", Name: "Banana", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "var1", ItemID: "itm1", Name: "500ml", Price: 150, IsActive: true})
 
 	if err := AddBarcode(ctx, db, BarcodeInput{Barcode: "B1", ItemID: "itm1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -80,7 +64,7 @@ func TestCreateVariantAndBarcode(t *testing.T) {
 	ctx := context.Background()
 	db := setupCatalogDB(t)
 	defer db.Close()
-	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm1','Apple',100,1)`)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Apple", BasePrice: 100, IsActive: true})
 
 	varID, err := CreateVariant(ctx, db, VariantInput{ItemID: "itm1", Name: "500ml", Price: 150, IsActive: true})
 	if err != nil {
@@ -98,8 +82,8 @@ func TestUpdateItemAndVariant(t *testing.T) {
 	ctx := context.Background()
 	db := setupCatalogDB(t)
 	defer db.Close()
-	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple',100,1)`)
-	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, sku, name, price, is_active) VALUES('var1','itm1','VSKU','Old',150,1)`)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Apple", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "var1", ItemID: "itm1", SKU: "VSKU", Name: "Old", Price: 150, IsActive: true})
 
 	desc := "Fresh apples"
 	cat := "cat1"
@@ -155,8 +139,8 @@ func TestDeactivateItemAndVariants(t *testing.T) {
 	ctx := context.Background()
 	db := setupCatalogDB(t)
 	defer db.Close()
-	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm1','Apple',100,1)`)
-	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, name, price, is_active) VALUES('var1','itm1','500ml',150,1)`)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Apple", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "var1", ItemID: "itm1", Name: "500ml", Price: 150, IsActive: true})
 
 	if err := DeactivateItem(ctx, db, "itm1"); err != nil {
 		t.Fatalf("DeactivateItem error: %v", err)
@@ -176,8 +160,8 @@ func TestDeactivateVariant(t *testing.T) {
 	ctx := context.Background()
 	db := setupCatalogDB(t)
 	defer db.Close()
-	_, _ = db.Exec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm1','Apple',100,1)`)
-	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, name, price, is_active) VALUES('var1','itm1','500ml',150,1)`)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Apple", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "var1", ItemID: "itm1", Name: "500ml", Price: 150, IsActive: true})
 	if err := DeactivateVariant(ctx, db, "var1"); err != nil {
 		t.Fatalf("DeactivateVariant error: %v", err)
 	}

@@ -3,13 +3,13 @@ package pos
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 )
 
@@ -57,7 +57,9 @@ const receiptRetryLimit = 5
 
 var errReceiptConflictRetry = errors.New("receipt_conflict_retry")
 
-var receiptAllocator = nextReceiptNo
+var receiptAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo) (string, error) {
+	return repo.NextReceiptNo(ctx, tx)
+}
 
 func computeSaleTotals(in SaleInput) (subtotal, taxTotal, total int64, err error) {
 	for _, l := range in.Lines {
@@ -106,18 +108,6 @@ func netPayments(payments []PaymentInput) (int64, error) {
 	return sum, nil
 }
 
-func nextReceiptNo(ctx context.Context, tx *sql.Tx) (string, error) {
-	var maxVal sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(receipt_no AS INTEGER)), 0) FROM sales`).Scan(&maxVal); err != nil {
-		return "", fmt.Errorf("next receipt no: %w", err)
-	}
-	next := maxVal.Int64 + 1
-	if next < 1 {
-		next = 1
-	}
-	return fmt.Sprintf("%09d", next), nil
-}
-
 func isReceiptConflictErr(err error) bool {
 	if err == nil {
 		return false
@@ -129,6 +119,7 @@ func isReceiptConflictErr(err error) bool {
 // CompleteSale persists a sale (or return) with lines, payments, stock movements, discounts, and optional sale link.
 // It enforces payment coverage, FK constraints, and uses a single transaction for integrity.
 func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, error) {
+	repo := data.NewPOSRepo(sqlDB)
 	if len(in.Lines) == 0 {
 		return "", errors.New("sale requires at least one line")
 	}
@@ -162,7 +153,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 		err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 			if !in.AllowNegativeInventory {
 				for _, l := range in.Lines {
-					cur, found, err := currentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
+					cur, found, err := repo.CurrentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
 					if err != nil {
 						return err
 					}
@@ -183,30 +174,24 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			now := time.Now().UTC().Format(time.RFC3339)
 			if receiptNo == "" {
 				var err error
-				receiptNo, err = receiptAllocator(ctx, tx)
+				receiptNo, err = receiptAllocator(ctx, tx, repo)
 				if err != nil {
 					return err
 				}
 			}
-			if _, err := tx.ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, saleID, receiptNo, in.SaleType, nullIfEmpty(in.RegisterID), nullIfEmpty(in.CashierID), nullIfEmpty(in.CustomerID), in.Currency, subtotal, in.SaleDiscount, taxTotal, total, nullIfEmpty(in.Note), now, now); err != nil {
+			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal, in.SaleDiscount, taxTotal, total, in.Note, now); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}
-				return fmt.Errorf("insert sale: %w", err)
+				return err
 			}
 			in.ReceiptNo = receiptNo
 
 			var saleDiscountID string
 			if in.SaleDiscount > 0 {
 				saleDiscountID = uuid.NewString()
-				if _, err := tx.ExecContext(ctx, `
-INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason)
-VALUES (?, ?, NULL, 'fixed', ?, ?, 'sale_discount')
-`, saleDiscountID, saleID, in.SaleDiscount, in.SaleDiscount); err != nil {
-					return fmt.Errorf("insert sale discount: %w", err)
+				if err := repo.InsertSaleDiscount(ctx, tx, saleDiscountID, saleID, "", "fixed", in.SaleDiscount, in.SaleDiscount, "sale_discount"); err != nil {
+					return err
 				}
 			}
 
@@ -218,19 +203,13 @@ VALUES (?, ?, NULL, 'fixed', ?, ?, 'sale_discount')
 				totalBeforeTax := lineNet
 				totalAfterTax := lineNet + lineTax
 
-				if _, err := tx.ExecContext(ctx, `
-INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, lineID, saleID, i+1, nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice, l.LineDiscount, l.TaxRateBasisPoints, lineTax, totalBeforeTax, totalAfterTax); err != nil {
-					return fmt.Errorf("insert sale line: %w", err)
+				if err := repo.InsertSaleLine(ctx, tx, lineID, saleID, i+1, l.ItemID, l.VariantID, l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice, l.LineDiscount, l.TaxRateBasisPoints, lineTax, totalBeforeTax, totalAfterTax); err != nil {
+					return err
 				}
 
 				if l.LineDiscount > 0 {
-					if _, err := tx.ExecContext(ctx, `
-INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason)
-VALUES (?, ?, ?, 'fixed', ?, ?, 'line_discount')
-`, uuid.NewString(), saleID, lineID, l.LineDiscount, l.LineDiscount); err != nil {
-						return fmt.Errorf("insert line discount: %w", err)
+					if err := repo.InsertSaleDiscount(ctx, tx, uuid.NewString(), saleID, lineID, "fixed", l.LineDiscount, l.LineDiscount, "line_discount"); err != nil {
+						return err
 					}
 				}
 
@@ -242,53 +221,39 @@ VALUES (?, ?, ?, 'fixed', ?, ?, 'line_discount')
 				if in.SaleType == "return" {
 					// keep positive
 				}
-				if _, err := tx.ExecContext(ctx, `
-INSERT INTO stock_movements (id, item_id, variant_id, location_id, sale_line_id, type, quantity, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-`, uuid.NewString(), nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.LocationID, lineID, in.SaleType, qty, time.Now().UTC().Format(time.RFC3339)); err != nil {
-					return fmt.Errorf("insert stock movement: %w", err)
-				}
-
-				// inventory upsert with null-safe match
-				res, err := tx.ExecContext(ctx, `
-UPDATE inventory
-SET quantity = quantity + ?, updated_at = ?
-WHERE location_id = ?
-  AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL))
-`, qty, time.Now().UTC().Format(time.RFC3339), l.LocationID, nullString(l.ItemID), nullString(l.VariantID))
-				if err != nil {
-					return fmt.Errorf("update inventory: %w", err)
-				}
-				aff, _ := res.RowsAffected()
-				if aff == 0 {
-					if _, err := tx.ExecContext(ctx, `
-INSERT INTO inventory (id, item_id, variant_id, location_id, quantity, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
-`, uuid.NewString(), nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.LocationID, qty, time.Now().UTC().Format(time.RFC3339)); err != nil {
-						return fmt.Errorf("insert inventory: %w", err)
-					}
+				if _, err := repo.RecordStockMovement(ctx, tx, data.StockMovementInput{
+					ItemID:     l.ItemID,
+					VariantID:  l.VariantID,
+					LocationID: l.LocationID,
+					SaleLineID: lineID,
+					Type:       in.SaleType,
+					Quantity:   qty,
+					ActorID:    in.ActorID,
+				}); err != nil {
+					return err
 				}
 			}
 
 			for _, p := range in.Payments {
-				if _, err := tx.ExecContext(ctx, `
-INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, paid_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-`, uuid.NewString(), saleID, p.MethodID, p.Amount, valueOrDefault(p.Currency, in.Currency), nullIfEmpty(p.Reference), p.ChangeGiven, time.Now().UTC().Format(time.RFC3339)); err != nil {
-					return fmt.Errorf("insert payment: %w", err)
+				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount, valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven, time.Now().UTC().Format(time.RFC3339)); err != nil {
+					return err
 				}
 			}
 
 			if in.SaleType == "return" && in.OriginalSaleID != "" {
-				if _, err := tx.ExecContext(ctx, `
-INSERT INTO sale_links (id, sale_id, original_sale_id, reason)
-VALUES (?, ?, ?, 'return')
-`, uuid.NewString(), saleID, in.OriginalSaleID); err != nil {
-					return fmt.Errorf("insert sale link: %w", err)
+				if err := repo.InsertSaleLink(ctx, tx, uuid.NewString(), saleID, in.OriginalSaleID, "return"); err != nil {
+					return err
 				}
 			}
 
-			if err := insertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), in.Note, subtotal, taxTotal, total); err != nil {
+			if err := repo.InsertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), map[string]any{
+				"subtotal": subtotal,
+				"taxTotal": taxTotal,
+				"total":    total,
+				"action":   auditAction(in.SaleType),
+				"reason":   in.Note,
+				"ts":       time.Now().UTC().Format(time.RFC3339),
+			}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
 				return err
 			}
 
@@ -318,15 +283,19 @@ func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorI
 	default:
 		return fmt.Errorf("invalid status: %s", status)
 	}
+	repo := data.NewPOSRepo(sqlDB)
 	err := db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `
-UPDATE sales
-SET status = ?, voided_at = CASE WHEN ? = 'voided' THEN ? ELSE voided_at END
-WHERE id = ?
-`, status, status, time.Now().UTC().Format(time.RFC3339), saleID); err != nil {
-			return fmt.Errorf("update sale status: %w", err)
+		if err := repo.UpdateSaleStatus(ctx, tx, saleID, status); err != nil {
+			return err
 		}
-		if err := insertAudit(ctx, tx, actorID, "sale", saleID, status, reason, 0, 0, 0); err != nil {
+		if err := repo.InsertAudit(ctx, tx, actorID, "sale", saleID, status, map[string]any{
+			"reason":   reason,
+			"status":   status,
+			"ts":       time.Now().UTC().Format(time.RFC3339),
+			"subtotal": 0,
+			"taxTotal": 0,
+			"total":    0,
+		}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
 			return err
 		}
 		return nil
@@ -359,62 +328,11 @@ func generateReceiptNo() string {
 	return fmt.Sprintf("%09d", n)
 }
 
-func nullIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 func valueOrDefault(val, def string) string {
 	if val != "" {
 		return val
 	}
 	return def
-}
-
-func currentQty(ctx context.Context, tx *sql.Tx, locationID, itemID, variantID string) (float64, bool, error) {
-	var qty float64
-	err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(quantity, 0)
-FROM inventory
-WHERE location_id = ?
-  AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL))
-`, locationID, nullString(itemID), nullString(variantID)).Scan(&qty)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, nil
-		}
-		return 0, false, fmt.Errorf("read inventory: %w", err)
-	}
-	return qty, true, nil
-}
-
-func nullString(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func insertAudit(ctx context.Context, tx *sql.Tx, actorID, entityType, entityID, action, reason string, subtotal, taxTotal, total int64) error {
-	payload := map[string]any{
-		"subtotal": subtotal,
-		"taxTotal": taxTotal,
-		"total":    total,
-		"action":   action,
-		"reason":   reason,
-		"ts":       time.Now().UTC().Format(time.RFC3339),
-	}
-	data, _ := json.Marshal(payload)
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-`, uuid.NewString(), nullIfEmpty(actorID), entityType, entityID, action, string(data), time.Now().UTC().Format(time.RFC3339))
-	if err != nil {
-		return fmt.Errorf("insert audit_log: %w", err)
-	}
-	return nil
 }
 
 func auditAction(saleType string) string {
@@ -436,24 +354,22 @@ type PaymentFailure struct {
 
 // RecordPaymentFailure logs a recoverable payment failure attempt for later retry/audit.
 func RecordPaymentFailure(ctx context.Context, sqlDB *sql.DB, failure PaymentFailure) (string, error) {
-	saleID := failure.SaleID
-	if saleID == "" {
-		saleID = uuid.NewString()
+	repo := data.NewPOSRepo(sqlDB)
+	return repo.RecordPaymentFailure(ctx, data.PaymentFailure{
+		SaleID:   failure.SaleID,
+		ActorID:  failure.ActorID,
+		Reason:   failure.Reason,
+		Payments: toAnySlice(failure.Payments),
+		Lines:    toAnySlice(failure.Lines),
+		Total:    failure.Total,
+		Currency: failure.Currency,
+	})
+}
+
+func toAnySlice[T any](in []T) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		out[i] = v
 	}
-	payload := map[string]any{
-		"reason":   failure.Reason,
-		"payments": failure.Payments,
-		"lines":    failure.Lines,
-		"total":    failure.Total,
-		"currency": failure.Currency,
-		"ts":       time.Now().UTC().Format(time.RFC3339),
-	}
-	data, _ := json.Marshal(payload)
-	if _, err := sqlDB.ExecContext(ctx, `
-INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
-VALUES (?, ?, 'sale', ?, 'payment_failed', ?, ?)
-`, uuid.NewString(), nullIfEmpty(failure.ActorID), saleID, string(data), time.Now().UTC().Format(time.RFC3339)); err != nil {
-		return "", fmt.Errorf("record payment failure: %w", err)
-	}
-	return saleID, nil
+	return out
 }

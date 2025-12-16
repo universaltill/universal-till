@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -90,32 +91,19 @@ func (rc *RevocationChecker) SyncRevocations(ctx context.Context) (int, error) {
 // processRevocation disables a specific revoked plugin
 func (rc *RevocationChecker) processRevocation(ctx context.Context, entry RevocationEntry) error {
 	log := logging.L()
+	repo := data.NewPluginRepo(rc.db)
 
 	// Check if plugin is currently installed and active
-	var pluginID, version string
-	var isActive int
-
-	query := `SELECT id, version, is_active FROM plugins WHERE id = ? LIMIT 1`
-	if entry.Version != "" {
-		query = `SELECT id, version, is_active FROM plugins WHERE id = ? AND version = ? LIMIT 1`
-	}
-
-	var err error
-	if entry.Version != "" {
-		err = rc.db.QueryRowContext(ctx, query, entry.PluginID, entry.Version).Scan(&pluginID, &version, &isActive)
-	} else {
-		err = rc.db.QueryRowContext(ctx, query, entry.PluginID).Scan(&pluginID, &version, &isActive)
-	}
-
-	if err == sql.ErrNoRows {
-		// Plugin not installed, nothing to do
-		return nil
-	}
+	pluginRow, found, err := repo.GetPlugin(ctx, entry.PluginID, entry.Version)
 	if err != nil {
 		return fmt.Errorf("failed to query plugin: %w", err)
 	}
+	if !found {
+		// Plugin not installed, nothing to do
+		return nil
+	}
 
-	if isActive == 0 {
+	if !pluginRow.IsActive {
 		// Already disabled
 		return nil
 	}
@@ -123,60 +111,44 @@ func (rc *RevocationChecker) processRevocation(ctx context.Context, entry Revoca
 	// T031a: Check if plugin is currently running critical operations
 	// For now, stop immediately - production should check for active hooks
 	if rc.supervisor != nil {
-		if err := rc.supervisor.StopPlugin(ctx, pluginID); err != nil {
-			log.Warnf("[RevocationChecker] Failed to stop plugin %s: %v", pluginID, err)
+		if err := rc.supervisor.StopPlugin(ctx, entry.PluginID); err != nil {
+			log.Warnf("[RevocationChecker] Failed to stop plugin %s: %v", entry.PluginID, err)
 		}
 	}
 
 	// Disable the plugin in database
-	_, err = rc.db.ExecContext(ctx, `
-		UPDATE plugins 
-		SET is_active = 0, 
-		    install_state = 'revoked'
-		WHERE id = ? AND version = ?
-	`, pluginID, version)
-	if err != nil {
+	if err := repo.SetPluginState(ctx, entry.PluginID, pluginRow.Version, "revoked", false); err != nil {
 		return fmt.Errorf("failed to disable plugin: %w", err)
 	}
 
 	// Add audit log entry
-	_, err = rc.db.ExecContext(ctx, `
-		INSERT INTO audit_log (timestamp, actor, action, entity_type, entity_id, details)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, time.Now(), "system:revocation", "disable_revoked", "plugin", pluginID,
-		fmt.Sprintf("Plugin revoked: %s (version: %s)", entry.Reason, version))
-	if err != nil {
-		log.Warnf("[RevocationChecker] Failed to log audit entry: %v", err)
-	}
+	_ = repo.InsertAuditRaw(ctx, nil, "disable_revoked", "plugin", entry.PluginID, map[string]any{
+		"reason":       entry.Reason,
+		"version":      pluginRow.Version,
+		"actor":        "system:revocation",
+		"revoked_at":   time.Now().UTC().Format(time.RFC3339),
+		"developer_id": entry.DeveloperID,
+	}, time.Now())
 
-	log.Infof("[RevocationChecker] Disabled revoked plugin: %s v%s (reason: %s)", pluginID, version, entry.Reason)
+	log.Infof("[RevocationChecker] Disabled revoked plugin: %s v%s (reason: %s)", entry.PluginID, pluginRow.Version, entry.Reason)
 	return nil
 }
 
 // GetRevokedPlugins returns list of currently revoked plugins
 func (rc *RevocationChecker) GetRevokedPlugins(ctx context.Context) ([]RevocationEntry, error) {
-	rows, err := rc.db.QueryContext(ctx, `
-		SELECT id, version, install_state 
-		FROM plugins 
-		WHERE install_state = 'revoked'
-	`)
+	rows, err := data.NewPluginRepo(rc.db).ListRevokedPlugins(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var revoked []RevocationEntry
-	for rows.Next() {
-		var id, version, state string
-		if err := rows.Scan(&id, &version, &state); err != nil {
-			continue
-		}
+	for _, row := range rows {
 		revoked = append(revoked, RevocationEntry{
-			PluginID: id,
-			Version:  version,
+			PluginID: row.ID,
+			Version:  row.Version,
 			Reason:   "Revoked by marketplace",
 		})
 	}
 
-	return revoked, rows.Err()
+	return revoked, nil
 }

@@ -1,13 +1,13 @@
 package pages
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -171,6 +171,7 @@ type OverrideResponse struct {
 func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		repo := data.NewPOSRepo(dp.Db)
 
 		var req OverrideRequest
 
@@ -206,14 +207,13 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 		}
 
 		// Check manager/admin role
-		var role string
-		err := dp.Db.QueryRowContext(ctx, `SELECT role FROM users WHERE id = ?`, actorID).Scan(&role)
+		role, ok, err := repo.LookupUserRole(ctx, actorID)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				respondOverrideError(w, r, http.StatusForbidden, "user not found")
-			} else {
-				respondOverrideError(w, r, http.StatusInternalServerError, fmt.Sprintf("auth check failed: %v", err))
-			}
+			respondOverrideError(w, r, http.StatusInternalServerError, fmt.Sprintf("auth check failed: %v", err))
+			return
+		}
+		if !ok {
+			respondOverrideError(w, r, http.StatusForbidden, "user not found")
 			return
 		}
 		if role != "manager" && role != "admin" {
@@ -296,6 +296,7 @@ type ReturnResponse struct {
 func CreateReturn(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		repo := data.NewPOSRepo(dp.Db)
 
 		var req ReturnRequest
 
@@ -325,17 +326,19 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		}
 
 		// Lookup original sale by receipt_no if provided instead of ID
+		// Lookup original sale by receipt_no if provided instead of ID
 		originalSaleID := req.OriginalSaleID
 		if originalSaleID == "" && req.ReceiptNo != "" {
-			err := dp.Db.QueryRowContext(ctx, `SELECT id FROM sales WHERE receipt_no = ?`, req.ReceiptNo).Scan(&originalSaleID)
+			foundID, ok, err := repo.FindSaleIDByReceipt(ctx, req.ReceiptNo)
 			if err != nil {
-				if err == sql.ErrNoRows {
-					respondReturnError(w, r, http.StatusNotFound, "original sale not found")
-				} else {
-					respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("lookup failed: %v", err))
-				}
+				respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("lookup failed: %v", err))
 				return
 			}
+			if !ok {
+				respondReturnError(w, r, http.StatusNotFound, "original sale not found")
+				return
+			}
+			originalSaleID = foundID
 		}
 
 		// Validate input
@@ -349,36 +352,23 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		}
 
 		// Fetch original sale lines
-		rows, err := dp.Db.QueryContext(ctx, `
-SELECT id, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, tax_rate_bp
-FROM sale_lines
-WHERE sale_id = ?
-ORDER BY line_no`, originalSaleID)
+		snapshots, err := repo.ListSaleLineSnapshots(ctx, originalSaleID)
 		if err != nil {
 			respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("fetch lines: %v", err))
 			return
 		}
-		defer rows.Close()
-
 		originalLines := make(map[string]pos.SaleLineInput)
-		for rows.Next() {
-			var lineID, itemID, variantID, name, sku, barcode sql.NullString
-			var qty float64
-			var unitPrice, taxRateBP int64
-			if err := rows.Scan(&lineID, &itemID, &variantID, &name, &sku, &barcode, &qty, &unitPrice, &taxRateBP); err != nil {
-				respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("scan line: %v", err))
-				return
-			}
-			originalLines[lineID.String] = pos.SaleLineInput{
-				ItemID:             itemID.String,
-				VariantID:          variantID.String,
-				Name:               name.String,
-				SKU:                sku.String,
-				Barcode:            barcode.String,
-				Qty:                qty,
-				UnitPrice:          unitPrice,
-				TaxRateBasisPoints: int(taxRateBP),
-				LocationID:         "loc_main", // TODO: Get from original sale
+		for _, s := range snapshots {
+			originalLines[s.ID] = pos.SaleLineInput{
+				ItemID:             s.ItemID,
+				VariantID:          s.VariantID,
+				Name:               s.Name,
+				SKU:                s.SKU,
+				Barcode:            s.Barcode,
+				Qty:                s.Qty,
+				UnitPrice:          s.UnitPrice,
+				TaxRateBasisPoints: s.TaxRateBP,
+				LocationID:         defaultLocation(s.LocationID),
 			}
 		}
 
@@ -394,48 +384,55 @@ ORDER BY line_no`, originalSaleID)
 				respondReturnError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid return quantity %.2f for line %s (max %.2f)", reqLine.Quantity, reqLine.LineID, origLine.Qty))
 				return
 			}
-		returnLine := origLine
-		returnLine.Qty = reqLine.Quantity
-		returnLines = append(returnLines, returnLine)
-	}
+			returnLine := origLine
+			returnLine.Qty = reqLine.Quantity
+			returnLines = append(returnLines, returnLine)
+		}
 
-	// Calculate return total (sum of line totals)
-	var returnTotal int64
-	for _, line := range returnLines {
-		lineBase := int64(line.Qty * float64(line.UnitPrice))
-		lineTax := (lineBase * int64(line.TaxRateBasisPoints)) / 10000
-		returnTotal += lineBase + lineTax
-	}
+		// Calculate return total (sum of line totals)
+		var returnTotal int64
+		for _, line := range returnLines {
+			lineBase := int64(line.Qty * float64(line.UnitPrice))
+			lineTax := (lineBase * int64(line.TaxRateBasisPoints)) / 10000
+			returnTotal += lineBase + lineTax
+		}
 
-	// For returns, payment represents the refund amount
-	if returnTotal <= 0 {
-		respondReturnError(w, r, http.StatusBadRequest, "return total must be positive")
-		return
-	}
+		// For returns, payment represents the refund amount
+		if returnTotal <= 0 {
+			respondReturnError(w, r, http.StatusBadRequest, "return total must be positive")
+			return
+		}
 
-	// Create return sale
-	returnSaleID, err := pos.CompleteSale(ctx, dp.Db, pos.SaleInput{
-		SaleType:               "return",
-		OriginalSaleID:         originalSaleID,
-		Lines:                  returnLines,
-		Payments:               []pos.PaymentInput{{MethodID: "cash", Amount: returnTotal}},
-		ActorID:                actorID,
-		Note:                   req.Reason,
-		Currency:               "GBP",
-		AllowNegativeInventory: true, // Returns add inventory
-	})
-	if err != nil {
-		respondReturnError(w, r, http.StatusInternalServerError, err.Error())
-		return
-	}		// Fetch receipt_no
-		var receiptNo string
-		err = dp.Db.QueryRowContext(ctx, `SELECT receipt_no FROM sales WHERE id = ?`, returnSaleID).Scan(&receiptNo)
+		// Create return sale
+		returnSaleID, err := pos.CompleteSale(ctx, dp.Db, pos.SaleInput{
+			SaleType:               "return",
+			OriginalSaleID:         originalSaleID,
+			Lines:                  returnLines,
+			Payments:               []pos.PaymentInput{{MethodID: "cash", Amount: returnTotal}},
+			ActorID:                actorID,
+			Note:                   req.Reason,
+			Currency:               "GBP",
+			AllowNegativeInventory: true, // Returns add inventory
+		})
 		if err != nil {
+			respondReturnError(w, r, http.StatusInternalServerError, err.Error())
+			return
+		} // Fetch receipt_no
+		var receiptNo string
+		receiptNo, ok, err := repo.GetReceiptNo(ctx, returnSaleID)
+		if err != nil || !ok {
 			receiptNo = ""
 		}
 
 		respondReturnSuccess(w, r, ReturnResponse{ReturnSaleID: returnSaleID, ReceiptNo: receiptNo, Success: true})
 	}
+}
+
+func defaultLocation(loc string) string {
+	if strings.TrimSpace(loc) == "" {
+		return "loc_main"
+	}
+	return loc
 }
 
 // respondReturnError writes return error response
