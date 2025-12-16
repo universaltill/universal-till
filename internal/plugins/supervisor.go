@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // Supervisor manages plugin process lifecycle
@@ -288,24 +290,17 @@ func (s *Supervisor) Shutdown(ctx context.Context) error {
 
 // AutoStartPlugins starts all active plugins at boot (T023)
 func (s *Supervisor) AutoStartPlugins(ctx context.Context) error {
-	// Query all active, installed plugins
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, entrypoint, runtime
-		FROM plugins
-		WHERE is_active = 1 AND install_state = 'installed'
-		ORDER BY id
-	`)
+	repo := data.NewPluginRepo(s.db)
+	rows, err := repo.ListAutoStartPlugins(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to query plugins: %w", err)
 	}
-	defer rows.Close()
 
 	var started, failed []string
-	for rows.Next() {
-		var pluginID, entrypoint, runtime string
-		if err := rows.Scan(&pluginID, &entrypoint, &runtime); err != nil {
-			return fmt.Errorf("failed to scan plugin: %w", err)
-		}
+	for _, row := range rows {
+		pluginID := row.ID
+		entrypoint := row.Entrypoint
+		runtime := row.Runtime
 
 		// Skip non-executable runtimes for now
 		if runtime != "go" && runtime != "native" {
@@ -331,10 +326,6 @@ func (s *Supervisor) AutoStartPlugins(ctx context.Context) error {
 		started = append(started, pluginID)
 	}
 
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("failed to iterate plugins: %w", err)
-	}
-
 	fmt.Printf("Auto-started %d plugins (%d failed)\n", len(started), len(failed))
 	if len(failed) > 0 {
 		fmt.Printf("Failed to start: %v\n", failed)
@@ -345,11 +336,5 @@ func (s *Supervisor) AutoStartPlugins(ctx context.Context) error {
 
 // auditLifecycle logs plugin lifecycle events to audit_log
 func (s *Supervisor) auditLifecycle(ctx context.Context, pluginID, action, details string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
-		VALUES (?, 'plugin', ?, ?, ?)
-	`, action, pluginID, details, now)
-	return err
+	return data.NewPluginRepo(s.db).InsertAuditRaw(ctx, nil, action, "plugin", pluginID, details, time.Now())
 }

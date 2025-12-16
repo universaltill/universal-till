@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	_ "modernc.org/sqlite"
 )
 
@@ -433,14 +434,14 @@ VALUES ('existing', '000000001', 'completed', 'sale', 'GBP', 500, 0, 0, 500, 0, 
 	var mu sync.Mutex
 	allocations := map[*sql.Tx]string{}
 	seq := []string{"000000001", "000000002"}
-	receiptAllocator = func(ctx context.Context, tx *sql.Tx) (string, error) {
+	receiptAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if val, ok := allocations[tx]; ok {
 			return val, nil
 		}
 		if len(seq) == 0 {
-			return nextReceiptNo(ctx, tx)
+			return repo.NextReceiptNo(ctx, tx)
 		}
 		val := seq[0]
 		seq = seq[1:]

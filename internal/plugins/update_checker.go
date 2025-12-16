@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -28,6 +29,7 @@ type UpdateInfo struct {
 type UpdateChecker struct {
 	db          *sql.DB
 	catalogRepo *marketplace.CatalogRepository
+	repo        *data.PluginRepo
 }
 
 // NewUpdateChecker creates a new update checker
@@ -35,6 +37,7 @@ func NewUpdateChecker(db *sql.DB, catalogRepo *marketplace.CatalogRepository) *U
 	return &UpdateChecker{
 		db:          db,
 		catalogRepo: catalogRepo,
+		repo:        data.NewPluginRepo(db),
 	}
 }
 
@@ -117,26 +120,20 @@ type installedPlugin struct {
 
 // getInstalledPlugins retrieves all active installed plugins
 func (uc *UpdateChecker) getInstalledPlugins(ctx context.Context) ([]installedPlugin, error) {
-	rows, err := uc.db.QueryContext(ctx, `
-		SELECT id, name, version, COALESCE(author, '') 
-		FROM plugins 
-		WHERE is_active = 1 AND install_state = 'installed'
-	`)
+	rows, err := uc.repo.ListInstalledPlugins(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
 	var plugins []installedPlugin
-	for rows.Next() {
-		var p installedPlugin
-		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author); err != nil {
-			return nil, err
-		}
-		plugins = append(plugins, p)
+	for _, r := range rows {
+		plugins = append(plugins, installedPlugin{
+			ID:      r.ID,
+			Name:    r.Name,
+			Version: r.Version,
+			Author:  r.Author,
+		})
 	}
-
-	return plugins, rows.Err()
+	return plugins, nil
 }
 
 // compareVersions compares two semantic version strings

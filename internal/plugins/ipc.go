@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // EventDispatchMode defines how events are delivered to plugins
@@ -120,16 +121,13 @@ func (eb *EventBus) GetEventMode(eventType string) EventDispatchMode {
 
 func (eb *EventBus) subscribe(ctx context.Context, pluginID string, eventTypes []string, handler EventHandler) (<-chan Event, error) {
 	// Verify plugin has hooks for these events
+	repo := data.NewPluginRepo(eb.db)
 	for _, eventType := range eventTypes {
-		var count int
-		err := eb.db.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM plugin_hooks
-			WHERE plugin_id = ? AND event = ? AND is_active = 1
-		`, pluginID, eventType).Scan(&count)
+		hasHook, err := repo.HasActiveHook(ctx, pluginID, eventType)
 		if err != nil {
 			return nil, fmt.Errorf("check hooks: %w", err)
 		}
-		if count == 0 {
+		if !hasHook {
 			return nil, fmt.Errorf("no active hook for event %s", eventType)
 		}
 	}
@@ -238,7 +236,6 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 
 // Acknowledge records event acknowledgment from a plugin
 func (eb *EventBus) Acknowledge(ctx context.Context, eventID, pluginID string, success bool, errorMsg string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
 	status := "success"
 	if !success {
 		status = "error"
@@ -249,38 +246,23 @@ func (eb *EventBus) Acknowledge(ctx context.Context, eventID, pluginID string, s
 		details += fmt.Sprintf(", error=%s", errorMsg)
 	}
 
-	_, err := eb.db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
-		VALUES ('event_acknowledged', 'plugin', ?, ?, ?)
-	`, pluginID, details, now)
-
-	return err
+	return data.NewPluginRepo(eb.db).InsertAuditRaw(ctx, nil, "event_acknowledged", "plugin", pluginID, details, time.Now())
 }
 
 // auditEvent logs event publication to audit_log
 func (eb *EventBus) auditEvent(ctx context.Context, eventID, eventType string, subscriberCount int) error {
-	now := time.Now().UTC().Format(time.RFC3339)
 	details := fmt.Sprintf("event_type=%s, subscribers=%d", eventType, subscriberCount)
-
-	_, err := eb.db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
-		VALUES ('event_published', 'event', ?, ?, ?)
-	`, eventID, details, now)
-	return err
+	return data.NewPluginRepo(eb.db).InsertAuditRaw(ctx, nil, "event_published", "event", eventID, details, time.Now())
 }
 
 // auditDispatch logs per-plugin dispatch results. Errors are swallowed to avoid blocking core flows.
 func (eb *EventBus) auditDispatch(ctx context.Context, eventID, eventType, pluginID, status, errMsg string) {
-	now := time.Now().UTC().Format(time.RFC3339)
 	details := fmt.Sprintf("event_type=%s, plugin_id=%s, status=%s", eventType, pluginID, status)
 	if errMsg != "" {
 		details += fmt.Sprintf(", error=%s", errMsg)
 	}
 
-	if _, err := eb.db.ExecContext(ctx, `
-		INSERT INTO audit_log (action, entity_type, entity_id, data_json, created_at)
-		VALUES ('event_dispatch', 'plugin', ?, ?, ?)
-	`, pluginID, details, now); err != nil {
+	if err := data.NewPluginRepo(eb.db).InsertAuditRaw(ctx, nil, "event_dispatch", "plugin", pluginID, details, time.Now()); err != nil {
 		fmt.Printf("warning: failed to audit dispatch: %v\n", err)
 	}
 }

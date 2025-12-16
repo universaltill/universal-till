@@ -33,11 +33,11 @@ func TestResolveCurrentPrice_ItemHistoryPreferred(t *testing.T) {
 	ctx := context.Background()
 	db := setupPriceDB(t)
 	defer db.Close()
-
 	_, _ = db.Exec(`INSERT INTO items(id, base_price, is_active) VALUES('itm1', 1000, 1)`)
 	_, _ = db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph1','itm1',1500,datetime('now','-1 day'))`)
 
-	price, err := ResolveCurrentPrice(ctx, db, "itm1", "")
+	repo := &testPricingRepo{db: db}
+	price, err := ResolveCurrentPrice(ctx, repo, "itm1", "")
 	if err != nil {
 		t.Fatalf("ResolveCurrentPrice error: %v", err)
 	}
@@ -50,10 +50,10 @@ func TestResolveCurrentPrice_FallbackToBase(t *testing.T) {
 	ctx := context.Background()
 	db := setupPriceDB(t)
 	defer db.Close()
-
 	_, _ = db.Exec(`INSERT INTO items(id, base_price, is_active) VALUES('itm1', 999, 1)`)
 
-	price, err := ResolveCurrentPrice(ctx, db, "itm1", "")
+	repo := &testPricingRepo{db: db}
+	price, err := ResolveCurrentPrice(ctx, repo, "itm1", "")
 	if err != nil {
 		t.Fatalf("ResolveCurrentPrice error: %v", err)
 	}
@@ -66,12 +66,12 @@ func TestResolveCurrentPrice_FuturePriceNotActive(t *testing.T) {
 	ctx := context.Background()
 	db := setupPriceDB(t)
 	defer db.Close()
-
 	_, _ = db.Exec(`INSERT INTO items(id, base_price, is_active) VALUES('itm1', 1000, 1)`)
 	future := time.Now().Add(time.Hour)
 	_, _ = db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('phf','itm1',2000,?)`, future)
 
-	price, err := ResolveCurrentPrice(ctx, db, "itm1", "")
+	repo := &testPricingRepo{db: db}
+	price, err := ResolveCurrentPrice(ctx, repo, "itm1", "")
 	if err != nil {
 		t.Fatalf("ResolveCurrentPrice error: %v", err)
 	}
@@ -84,11 +84,11 @@ func TestResolveCurrentPrice_VariantHistoryPreferred(t *testing.T) {
 	ctx := context.Background()
 	db := setupPriceDB(t)
 	defer db.Close()
-
 	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, price, is_active) VALUES('var1','itm1', 500, 1)`)
 	_, _ = db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('phv1','var1',800,datetime('now','-1 hour'))`)
 
-	price, err := ResolveCurrentPrice(ctx, db, "", "var1")
+	repo := &testPricingRepo{db: db}
+	price, err := ResolveCurrentPrice(ctx, repo, "", "var1")
 	if err != nil {
 		t.Fatalf("ResolveCurrentPrice error: %v", err)
 	}
@@ -101,9 +101,9 @@ func TestResolveCurrentPrice_InactiveErrors(t *testing.T) {
 	ctx := context.Background()
 	db := setupPriceDB(t)
 	defer db.Close()
-
 	_, _ = db.Exec(`INSERT INTO items(id, base_price, is_active) VALUES('itm1', 100, 0)`)
-	if _, err := ResolveCurrentPrice(ctx, db, "itm1", ""); err == nil {
+	repo := &testPricingRepo{db: db}
+	if _, err := ResolveCurrentPrice(ctx, repo, "itm1", ""); err == nil {
 		t.Fatalf("expected error for inactive item")
 	}
 }
@@ -112,11 +112,11 @@ func TestResolveCurrentPrice_InvalidArgs(t *testing.T) {
 	ctx := context.Background()
 	db := setupPriceDB(t)
 	defer db.Close()
-
-	if _, err := ResolveCurrentPrice(ctx, db, "", ""); err == nil {
+	repo := &testPricingRepo{db: db}
+	if _, err := ResolveCurrentPrice(ctx, repo, "", ""); err == nil {
 		t.Fatalf("expected error when neither item nor variant provided")
 	}
-	if _, err := ResolveCurrentPrice(ctx, db, "itm1", "var1"); err == nil {
+	if _, err := ResolveCurrentPrice(ctx, repo, "itm1", "var1"); err == nil {
 		t.Fatalf("expected error when both item and variant provided")
 	}
 }
@@ -125,9 +125,26 @@ func TestResolveCurrentPrice_InactiveVariantErrors(t *testing.T) {
 	ctx := context.Background()
 	db := setupPriceDB(t)
 	defer db.Close()
-
 	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, price, is_active) VALUES('var1','itm1', 500, 0)`)
-	if _, err := ResolveCurrentPrice(ctx, db, "", "var1"); err == nil {
+	repo := &testPricingRepo{db: db}
+	if _, err := ResolveCurrentPrice(ctx, repo, "", "var1"); err == nil {
 		t.Fatalf("expected error for inactive variant")
 	}
+}
+
+// testPricingRepo provides minimal PricingRepo for tests without import cycles.
+type testPricingRepo struct {
+	db *sql.DB
+}
+
+func (r *testPricingRepo) ResolveCurrentPrice(ctx context.Context, itemID, variantID string) (int64, error) {
+	return resolveCurrentPriceSQL(ctx, r.db, itemID, variantID)
+}
+
+func (r *testPricingRepo) AppendPriceHistoryItem(ctx context.Context, itemID string, price int64, startsAt time.Time) error {
+	return appendPriceHistoryItemSQL(ctx, r.db, itemID, price, startsAt)
+}
+
+func (r *testPricingRepo) AppendPriceHistoryVariant(ctx context.Context, variantID string, price int64, startsAt time.Time) error {
+	return appendPriceHistoryVariantSQL(ctx, r.db, variantID, price, startsAt)
 }
