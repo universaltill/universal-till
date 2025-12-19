@@ -60,6 +60,29 @@ type SaleLineSnapshot struct {
 	LocationID string
 }
 
+type SaleJournalEntry struct {
+	ReceiptNo  string
+	Total      int64
+	TenderType string
+	SyncStatus string
+	CreatedAt  string
+}
+
+type QueuedSale struct {
+	ID                string
+	ReceiptNo          string
+	SyncAttempts      int
+	SyncNextAttemptAt string
+	SyncLastError     string
+	Total             int64
+	TenderType        string
+}
+
+type PluginVersionRow struct {
+	ID      string
+	Version string
+}
+
 // StockMovementInput captures data for a stock movement (receipt, adjustment, transfer, waste)
 type StockMovementInput struct {
 	ItemID     string
@@ -543,11 +566,15 @@ WHERE location_id = ?
 }
 
 // InsertSale writes the sale header row.
-func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total int64, note string, createdAt string) error {
+func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total int64, note, createdAt, tenderType string, offline bool, syncStatus string, syncAttempts int, syncNextAttemptAt, syncLastError string) error {
+	offlineVal := 0
+	if offline {
+		offlineVal = 1
+	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, saleID, receiptNo, saleType, nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, nullIfEmpty(note), createdAt, createdAt)
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+`, saleID, receiptNo, saleType, tenderType, offlineVal, syncStatus, syncAttempts, nullIfEmpty(syncNextAttemptAt), nullIfEmpty(syncLastError), nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, nullIfEmpty(note), createdAt, createdAt)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
@@ -941,6 +968,104 @@ func (r *POSRepo) SaleTotals(ctx context.Context, saleID string) (string, int64,
 	err := r.db.QueryRowContext(ctx, `SELECT receipt_no, subtotal, tax_total, total FROM sales WHERE id = ?`, saleID).
 		Scan(&receiptNo, &dbSubtotal, &dbTax, &dbTotal)
 	return receiptNo, dbSubtotal, dbTax, dbTotal, err
+}
+
+func (r *POSRepo) ListRecentSales(ctx context.Context, limit int) ([]SaleJournalEntry, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT receipt_no, total, tender_type, sync_status, created_at
+FROM sales
+ORDER BY created_at DESC
+LIMIT ?
+`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent sales: %w", err)
+	}
+	defer rows.Close()
+	var out []SaleJournalEntry
+	for rows.Next() {
+		var entry SaleJournalEntry
+		if err := rows.Scan(&entry.ReceiptNo, &entry.Total, &entry.TenderType, &entry.SyncStatus, &entry.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan recent sales: %w", err)
+		}
+		out = append(out, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list recent sales: %w", err)
+	}
+	return out, nil
+}
+
+func (r *POSRepo) ListQueuedSales(ctx context.Context, limit int, asOf string) ([]QueuedSale, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `
+SELECT id, receipt_no, sync_attempts, sync_next_attempt_at, sync_last_error, total, tender_type
+FROM sales
+WHERE sync_status = 'queued'
+  AND (sync_next_attempt_at IS NULL OR sync_next_attempt_at <= ?)
+ORDER BY created_at ASC
+LIMIT ?
+`
+	rows, err := r.db.QueryContext(ctx, query, asOf, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list queued sales: %w", err)
+	}
+	defer rows.Close()
+	var out []QueuedSale
+	for rows.Next() {
+		var entry QueuedSale
+		if err := rows.Scan(&entry.ID, &entry.ReceiptNo, &entry.SyncAttempts, &entry.SyncNextAttemptAt, &entry.SyncLastError, &entry.Total, &entry.TenderType); err != nil {
+			return nil, fmt.Errorf("scan queued sales: %w", err)
+		}
+		out = append(out, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list queued sales: %w", err)
+	}
+	return out, nil
+}
+
+func (r *POSRepo) BumpSaleSyncAttempt(ctx context.Context, tx *sql.Tx, saleID, nextAttemptAt, lastError string) error {
+	_, err := r.exec(tx).ExecContext(ctx, `
+UPDATE sales
+SET sync_attempts = sync_attempts + 1,
+    sync_next_attempt_at = ?,
+    sync_last_error = ?
+WHERE id = ?
+`, nullIfEmpty(nextAttemptAt), nullIfEmpty(lastError), saleID)
+	if err != nil {
+		return fmt.Errorf("bump sale sync attempt: %w", err)
+	}
+	return nil
+}
+
+func (r *POSRepo) ListActivePluginVersions(ctx context.Context, tx *sql.Tx) ([]PluginVersionRow, error) {
+	rows, err := r.exec(tx).QueryContext(ctx, `
+SELECT id, version
+FROM plugins
+WHERE is_active = 1
+ORDER BY id
+`)
+	if err != nil {
+		return nil, fmt.Errorf("list active plugins: %w", err)
+	}
+	defer rows.Close()
+	var out []PluginVersionRow
+	for rows.Next() {
+		var row PluginVersionRow
+		if err := rows.Scan(&row.ID, &row.Version); err != nil {
+			return nil, fmt.Errorf("scan active plugins: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list active plugins: %w", err)
+	}
+	return out, nil
 }
 
 // ListPaymentMethodIDs returns active payment method ids ordered by id.

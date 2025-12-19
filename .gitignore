@@ -32,6 +32,7 @@ go.work.sum
 # env file
 .env
 .env.*
+tests/e2e/.env
 
 # Logs and temp files
 *.log
@@ -52,3 +53,14 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/*.code-snippets
 !*.code-workspacepos.env
+
+# Playwright E2E artifacts
+tests/e2e/node_modules/
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+
+# Pact contract test artifacts
+tests/contract/pacts/
+tests/contract/logs/
+
+__debug*
