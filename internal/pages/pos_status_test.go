@@ -20,7 +20,7 @@ func setupStatusDB(t *testing.T) *sql.DB {
 	}
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
-		`CREATE TABLE sales (id TEXT PRIMARY KEY, status TEXT NOT NULL, voided_at TEXT);`,
+		`CREATE TABLE sales (id TEXT PRIMARY KEY, status TEXT NOT NULL, voided_at TEXT, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT);`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT, entity_id TEXT, action TEXT, data_json TEXT, created_at TEXT);`,
 	}
 	for _, s := range stmts {

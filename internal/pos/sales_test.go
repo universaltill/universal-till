@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -35,7 +36,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT);`,
 		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, base_price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
+		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_discounts (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_id TEXT, type TEXT NOT NULL, value INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT);`,
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, method_id TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT NOT NULL, reference TEXT, change_given INTEGER NOT NULL DEFAULT 0, paid_at TEXT NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
@@ -44,6 +45,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		`CREATE TABLE inventory (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, quantity REAL NOT NULL, updated_at TEXT NOT NULL, UNIQUE(item_id, variant_id, location_id));`,
 		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT, type TEXT, is_active INTEGER DEFAULT 1);`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL);`,
+		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER DEFAULT 1);`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -140,6 +142,84 @@ func TestCompleteSale_RejectsUnderpayment(t *testing.T) {
 
 	if _, err := CompleteSale(ctx, db, in); err == nil {
 		t.Fatalf("expected underpayment to fail")
+	}
+}
+
+func TestCompleteSale_OfflineSyncFlagsAndAuditPlugins(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+	_, _ = db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('p1','Test Plugin','1.2.3',1)`)
+
+	in := SaleInput{
+		SaleType:     "sale",
+		RegisterID:   "reg1",
+		CashierID:    "user1",
+		Currency:     "GBP",
+		TaxInclusive: false,
+		Lines: []SaleLineInput{
+			{
+				ItemID:             "itm1",
+				SKU:                "SKU1",
+				Name:               "Apple",
+				Qty:                1,
+				UnitPrice:          500,
+				TaxRateBasisPoints: 2000,
+				LineDiscount:       0,
+				LocationID:         "loc1",
+			},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 600, Currency: "GBP"},
+		},
+		AllowNegativeInventory: false,
+		Offline:                true,
+	}
+
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("CompleteSale error: %v", err)
+	}
+
+	var offline int
+	var syncStatus string
+	var syncAttempts int
+	var tenderType string
+	if err := db.QueryRow(`SELECT offline, sync_status, sync_attempts, tender_type FROM sales WHERE id = ?`, saleID).Scan(&offline, &syncStatus, &syncAttempts, &tenderType); err != nil {
+		t.Fatalf("read sale flags: %v", err)
+	}
+	if offline != 1 {
+		t.Fatalf("expected offline=1, got %d", offline)
+	}
+	if syncStatus != "queued" {
+		t.Fatalf("expected sync_status queued, got %s", syncStatus)
+	}
+	if syncAttempts != 0 {
+		t.Fatalf("expected sync_attempts 0, got %d", syncAttempts)
+	}
+	if tenderType != "cash" {
+		t.Fatalf("expected tender_type cash, got %s", tenderType)
+	}
+
+	var dataJSON string
+	if err := db.QueryRow(`SELECT data_json FROM audit_log WHERE entity_id = ? LIMIT 1`, saleID).Scan(&dataJSON); err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(dataJSON), &payload); err != nil {
+		t.Fatalf("decode audit log: %v", err)
+	}
+	pluginsRaw, ok := payload["plugins"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected plugins in audit payload")
+	}
+	if pluginsRaw["p1"] != "1.2.3" {
+		t.Fatalf("expected plugin version in audit payload, got %v", pluginsRaw["p1"])
 	}
 }
 

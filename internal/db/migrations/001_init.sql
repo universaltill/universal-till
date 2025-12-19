@@ -226,6 +226,12 @@ CREATE TABLE IF NOT EXISTS sales (
     receipt_no      TEXT NOT NULL UNIQUE,           -- visible receipt number
     status          TEXT NOT NULL DEFAULT 'completed', -- open|parked|completed|voided|refunded
     sale_type       TEXT NOT NULL DEFAULT 'sale',   -- sale|return
+    tender_type     TEXT NOT NULL DEFAULT 'unknown', -- cash|card|split
+    offline         INTEGER NOT NULL DEFAULT 0,     -- 0|1
+    sync_status     TEXT NOT NULL DEFAULT 'queued', -- queued|synced|failed
+    sync_attempts   INTEGER NOT NULL DEFAULT 0,
+    sync_next_attempt_at TEXT,
+    sync_last_error TEXT,
     register_id     TEXT,
     cashier_id      TEXT,
     customer_id     TEXT,
@@ -246,6 +252,7 @@ CREATE TABLE IF NOT EXISTS sales (
 
 CREATE INDEX IF NOT EXISTS idx_sales_created ON sales (created_at);
 CREATE INDEX IF NOT EXISTS idx_sales_status  ON sales (status);
+CREATE INDEX IF NOT EXISTS idx_sales_sync_queue ON sales (sync_status, sync_next_attempt_at);
 
 CREATE TABLE IF NOT EXISTS sale_lines (
     id               TEXT PRIMARY KEY,

@@ -274,12 +274,43 @@ func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadToken
 	// Map DeviceArch to arch and platform
 	arch, platform := mapDeviceArchToPlatform(req.DeviceArch)
 
-	path := fmt.Sprintf("/v1/downloads/%s/url?arch=%s&platform=%s&version=%s",
-		req.PluginID, arch, platform, version)
+	endpoint := c.cfg.EndpointURL
+	if c.cfg.DevOverrideURL != "" {
+		endpoint = c.cfg.DevOverrideURL
+	}
 
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	reqURL, err := url.JoinPath(endpoint, fmt.Sprintf("/v1/downloads/%s/url", req.PluginID))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid request URL: %w", err)
+	}
+
+	parsedURL, err := url.Parse(reqURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	query := parsedURL.Query()
+	query.Set("arch", arch)
+	query.Set("platform", platform)
+	query.Set("version", version)
+	parsedURL.RawQuery = query.Encode()
+
+	token, err := c.tokenClient.GetToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get auth token: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -379,11 +410,41 @@ type GetRevocationsResponse struct {
 
 // GetRevocations fetches plugin revocations since a given version.
 func (c *Client) GetRevocations(ctx context.Context, req *GetRevocationsRequest) (*GetRevocationsResponse, error) {
-	path := fmt.Sprintf("/v1/revocations?since_version=%d", req.SinceVersion)
+	endpoint := c.cfg.EndpointURL
+	if c.cfg.DevOverrideURL != "" {
+		endpoint = c.cfg.DevOverrideURL
+	}
 
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	reqURL, err := url.JoinPath(endpoint, "/v1/revocations")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid request URL: %w", err)
+	}
+
+	parsedURL, err := url.Parse(reqURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	query := parsedURL.Query()
+	query.Set("since_version", fmt.Sprintf("%d", req.SinceVersion))
+	parsedURL.RawQuery = query.Encode()
+
+	token, err := c.tokenClient.GetToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get auth token: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 

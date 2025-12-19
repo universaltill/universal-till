@@ -1,0 +1,175 @@
+{
+  "consumer": {
+    "name": "universal-till-pos"
+  },
+  "interactions": [
+    {
+      "description": "issue download token",
+      "providerState": "plugin artifact is available",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "x-marketplace-api-version": "1.0.0"
+        },
+        "method": "GET",
+        "path": "/v1/downloads/plugin-123/url",
+        "query": "arch=amd64&platform=linux&version=1%2e2%2e3"
+      },
+      "response": {
+        "body": {
+          "checksum": {
+            "sha256": "deadbeef"
+          },
+          "download_url": "http://example.test/plugin.tgz",
+          "expires_at": "2025-01-01T00:00:00Z",
+          "file_size_bytes": 1024,
+          "version": "1.2.3"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.checksum.sha256": {
+            "match": "type"
+          },
+          "$.body.download_url": {
+            "match": "type"
+          },
+          "$.body.expires_at": {
+            "match": "type"
+          },
+          "$.body.file_size_bytes": {
+            "match": "type"
+          },
+          "$.body.version": {
+            "match": "type"
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "list plugins",
+      "providerState": "catalog has plugins",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "x-marketplace-api-version": "1.0.0"
+        },
+        "method": "GET",
+        "path": "/v1/catalog/plugins",
+        "query": "arch=amd64&capability=payments&locale=en-US"
+      },
+      "response": {
+        "body": {
+          "pagination": {
+            "has_next": false,
+            "has_previous": false,
+            "page": 1,
+            "page_size": 20,
+            "total_items": 1,
+            "total_pages": 1
+          },
+          "plugins": [
+            {
+              "artifact_hash": "abc123",
+              "artifact_url": "http://example.test/plugin.tgz",
+              "canonical_type": "payment",
+              "capabilities": [
+                "payments"
+              ],
+              "description": "Payments plugin",
+              "device_arch": "amd64",
+              "id": "plugin-123",
+              "listing_id": "listing-123",
+              "name": "Sample Plugin",
+              "trust_tier": "trusted",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.pagination.has_next": {
+            "match": "type"
+          },
+          "$.body.pagination.has_previous": {
+            "match": "type"
+          },
+          "$.body.pagination.page": {
+            "match": "type"
+          },
+          "$.body.pagination.page_size": {
+            "match": "type"
+          },
+          "$.body.pagination.total_items": {
+            "match": "type"
+          },
+          "$.body.pagination.total_pages": {
+            "match": "type"
+          },
+          "$.body.plugins": {
+            "match": "type",
+            "min": 1
+          },
+          "$.body.plugins[*].artifact_hash": {
+            "match": "type"
+          },
+          "$.body.plugins[*].artifact_url": {
+            "match": "type"
+          },
+          "$.body.plugins[*].canonical_type": {
+            "match": "type"
+          },
+          "$.body.plugins[*].capabilities": {
+            "match": "type",
+            "min": 1
+          },
+          "$.body.plugins[*].capabilities[*]": {
+            "match": "type"
+          },
+          "$.body.plugins[*].description": {
+            "match": "type"
+          },
+          "$.body.plugins[*].device_arch": {
+            "match": "type"
+          },
+          "$.body.plugins[*].id": {
+            "match": "type"
+          },
+          "$.body.plugins[*].listing_id": {
+            "match": "type"
+          },
+          "$.body.plugins[*].name": {
+            "match": "type"
+          },
+          "$.body.plugins[*].trust_tier": {
+            "match": "type"
+          },
+          "$.body.plugins[*].version": {
+            "match": "type"
+          }
+        },
+        "status": 200
+      }
+    }
+  ],
+  "metadata": {
+    "pact-go": {
+      "version": "2.4.2"
+    },
+    "pactRust": {
+      "ffi": "0.4.23",
+      "mockserver": "1.2.10",
+      "models": "1.2.5"
+    },
+    "pactSpecification": {
+      "version": "2.0.0"
+    }
+  },
+  "provider": {
+    "name": "ut-marketplace"
+  }
+}
