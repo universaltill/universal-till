@@ -328,6 +328,12 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			receipt_no TEXT NOT NULL UNIQUE, 
 			status TEXT NOT NULL, 
 			sale_type TEXT NOT NULL, 
+			tender_type TEXT NOT NULL DEFAULT 'unknown',
+			offline INTEGER NOT NULL DEFAULT 0,
+			sync_status TEXT NOT NULL DEFAULT 'queued',
+			sync_attempts INTEGER NOT NULL DEFAULT 0,
+			sync_next_attempt_at TEXT,
+			sync_last_error TEXT,
 			register_id TEXT, 
 			cashier_id TEXT, 
 			customer_id TEXT, 
@@ -390,6 +396,7 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			data_json TEXT,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER DEFAULT 1)`,
 	}
 
 	for _, stmt := range stmts {

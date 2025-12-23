@@ -232,7 +232,7 @@
             'Content-Type': 'application/json',
             'Accept': 'text/html'
           },
-          body: JSON.stringify({ payments: payments })
+          body: JSON.stringify({ payments: payments, offline: offlineOverrideEnabled() || !navigator.onLine })
         });
         var text = await response.text();
         if (!response.ok) {
@@ -284,3 +284,45 @@
   document.addEventListener('htmx:load', initSplitTender);
 })();
 
+function offlineOverrideEnabled(){
+  var toggle = document.getElementById('offline-override');
+  if (!toggle) return false;
+  return !!toggle.checked;
+}
+
+function initOfflineOverride(updateFn){
+  var toggle = document.getElementById('offline-override');
+  if (!toggle) return;
+  try {
+    var stored = localStorage.getItem('ut_offline_override');
+    if (stored === '1') {
+      toggle.checked = true;
+    }
+  } catch (e) {
+    // localStorage may be unavailable; continue without persistence
+  }
+  toggle.addEventListener('change', function(){
+    try {
+      localStorage.setItem('ut_offline_override', toggle.checked ? '1' : '0');
+    } catch (e) {
+      // ignore storage failures
+    }
+    if (typeof updateFn === 'function') {
+      updateFn();
+    }
+  });
+}
+
+(function(){
+  function updateOfflineFlag(){
+    var input = document.getElementById('offline-flag');
+    if (!input) return;
+    var forcedOffline = offlineOverrideEnabled();
+    input.value = (forcedOffline || !navigator.onLine) ? '1' : '0';
+  }
+  initOfflineOverride(updateOfflineFlag);
+  updateOfflineFlag();
+  window.addEventListener('online', updateOfflineFlag);
+  window.addEventListener('offline', updateOfflineFlag);
+  document.addEventListener('htmx:configRequest', updateOfflineFlag);
+})();
