@@ -178,9 +178,33 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			Note          string `json:"note,omitempty"`
 			SimFail       bool   `json:"simulateFailure,omitempty"`
 			FailReason    string `json:"failureReason,omitempty"`
+			Offline       *bool  `json:"offline,omitempty"`
 		}
 		var in In
 		_ = json.NewDecoder(r.Body).Decode(&in)
+
+		offline := false
+		offlineSet := false
+		if in.Offline != nil {
+			offline = *in.Offline
+			offlineSet = true
+		}
+		if !offlineSet {
+			if err := r.ParseForm(); err == nil {
+				switch strings.ToLower(strings.TrimSpace(r.Form.Get("offline_override"))) {
+				case "1", "true", "yes", "on":
+					offline = true
+					offlineSet = true
+				}
+				if !offlineSet {
+					switch strings.ToLower(strings.TrimSpace(r.Form.Get("offline"))) {
+					case "1", "true", "yes", "on":
+						offline = true
+						offlineSet = true
+					}
+				}
+			}
+		}
 
 		lines := d.Engine.Lines()
 		if len(lines) == 0 {
@@ -347,6 +371,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			CustomerID:             customerID,
 			AllowNegativeInventory: allowNegative,
 			ActorID:                cashierID,
+			Offline:                offline,
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "insufficient stock") {
@@ -406,6 +431,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
+		journalView, jErr := ui.NewJournalView(funcs)
+		if jErr == nil {
+			entries, err := repo.ListRecentSales(r.Context(), 5)
+			if err == nil {
+				var journalBuf bytes.Buffer
+				_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true})
+				fmt.Fprintf(w, `<div id="basket">%s</div>%s`, receiptHTML, journalBuf.String())
+				return
+			}
+		}
 		fmt.Fprintf(w, `<div id="basket">%s</div>`, receiptHTML)
 	})
 

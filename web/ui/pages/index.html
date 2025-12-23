@@ -8,6 +8,9 @@
     <!-- Product buttons panel loads on page load -->
   <div hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 
+  <!-- Journal loads on page load -->
+  <div id="journal" hx-get="/ui/journal" hx-trigger="load" hx-swap="outerHTML"></div>
+
   <!-- Tender and Scan -->
   <div class="tender">
     <h2>{{ T "tender.title" }}</h2>
@@ -26,9 +29,17 @@
     <div class="card tender-quick">
       <h3>Quick Tender</h3>
       <p class="tender-help">Pays the full remaining balance with one tap.</p>
+      <div class="offline-toggle">
+        <label>
+          <input type="checkbox" id="offline-override">
+          Offline mode
+        </label>
+        <div class="offline-help">Force offline when connectivity is unreliable.</div>
+      </div>
+      <input type="hidden" id="offline-flag" name="offline" value="0">
       <div class="grid">
-        <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
-        <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
+        <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
+        <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
       </div>
     </div>
 

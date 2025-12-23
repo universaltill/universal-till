@@ -30,6 +30,7 @@ type SaleInput struct {
 	ReceiptNo              string
 	ActorID                string
 	AllowNegativeInventory bool
+	Offline                bool
 }
 
 type SaleLineInput struct {
@@ -56,6 +57,11 @@ type PaymentInput struct {
 const receiptRetryLimit = 5
 
 var errReceiptConflictRetry = errors.New("receipt_conflict_retry")
+
+const (
+	syncStatusQueued = "queued"
+	syncStatusSynced = "synced"
+)
 
 var receiptAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo) (string, error) {
 	return repo.NextReceiptNo(ctx, tx)
@@ -108,6 +114,23 @@ func netPayments(payments []PaymentInput) (int64, error) {
 	return sum, nil
 }
 
+func deriveTenderType(payments []PaymentInput) string {
+	if len(payments) == 0 {
+		return "unknown"
+	}
+	method := strings.ToLower(strings.TrimSpace(payments[0].MethodID))
+	if method == "" {
+		method = "unknown"
+	}
+	for i := 1; i < len(payments); i++ {
+		next := strings.ToLower(strings.TrimSpace(payments[i].MethodID))
+		if next != method {
+			return "split"
+		}
+	}
+	return method
+}
+
 func isReceiptConflictErr(err error) bool {
 	if err == nil {
 		return false
@@ -146,6 +169,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	}
 
 	providedReceipt := in.ReceiptNo
+	tenderType := deriveTenderType(in.Payments)
 
 	for attempt := 0; attempt < receiptRetryLimit; attempt++ {
 		in.ReceiptNo = providedReceipt
@@ -172,6 +196,12 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 
 			receiptNo := in.ReceiptNo
 			now := time.Now().UTC().Format(time.RFC3339)
+			syncStatus := syncStatusSynced
+			syncNextAttemptAt := ""
+			if in.Offline {
+				syncStatus = syncStatusQueued
+				syncNextAttemptAt = now
+			}
 			if receiptNo == "" {
 				var err error
 				receiptNo, err = receiptAllocator(ctx, tx, repo)
@@ -179,7 +209,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
-			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal, in.SaleDiscount, taxTotal, total, in.Note, now); err != nil {
+			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal, in.SaleDiscount, taxTotal, total, in.Note, now, tenderType, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}
@@ -246,12 +276,25 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				}
 			}
 
+			pluginVersions, err := repo.ListActivePluginVersions(ctx, tx)
+			if err != nil {
+				return err
+			}
+			plugins := make(map[string]string, len(pluginVersions))
+			for _, p := range pluginVersions {
+				plugins[p.ID] = p.Version
+			}
+
 			if err := repo.InsertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), map[string]any{
 				"subtotal": subtotal,
 				"taxTotal": taxTotal,
 				"total":    total,
 				"action":   auditAction(in.SaleType),
 				"reason":   in.Note,
+				"offline":  in.Offline,
+				"tender":   tenderType,
+				"sync":     syncStatus,
+				"plugins":  plugins,
 				"ts":       time.Now().UTC().Format(time.RFC3339),
 			}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
 				return err

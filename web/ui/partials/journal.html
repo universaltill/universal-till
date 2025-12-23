@@ -1,0 +1,25 @@
+{{ define "journal" }}
+<div class="journal" id="journal" {{ if .OOB }}hx-swap-oob="true"{{ end }}>
+  <h2>Journal</h2>
+  {{ if .Entries }}
+    <table>
+      <thead>
+        <tr><th>Receipt</th><th>Total</th><th>Tender</th><th>Sync</th><th>Time</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Entries }}
+          <tr>
+            <td>{{ .ReceiptNo }}</td>
+            <td>{{ money .Total }}</td>
+            <td>{{ .TenderType }}</td>
+            <td>{{ .SyncStatus }}</td>
+            <td>{{ .CreatedAt }}</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  {{ else }}
+    <div class="empty">No sales yet.</div>
+  {{ end }}
+</div>
+{{ end }}
