@@ -14,12 +14,24 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 	funcs := map[string]any{
 		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
 		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T": func(key string) string {
+			if key == "receipt.legal.plugin_label" {
+				return "Legal notice (%s v%s)"
+			}
+			if key == "receipt.printer.unavailable" {
+				return "Printer unavailable"
+			}
+			if key == "receipt.printer.retry" {
+				return "Retry print"
+			}
+			return key
+		},
 	}
 	lines := []pos.SaleLineInput{
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 10, Reference: "REF"}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10)
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10, nil, false)
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -34,5 +46,77 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 	}
 	if !strings.Contains(html, "Payments") || !strings.Contains(html, "cash") {
 		t.Fatalf("expected payments breakdown in receipt html: %s", html)
+	}
+}
+
+func TestRenderReceipt_LegalText(t *testing.T) {
+	chdirRoot(t)
+	funcs := map[string]any{
+		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T": func(key string) string {
+			if key == "receipt.legal.plugin_label" {
+				return "Legal notice (%s v%s)"
+			}
+			if key == "receipt.printer.unavailable" {
+				return "Printer unavailable"
+			}
+			if key == "receipt.printer.retry" {
+				return "Retry print"
+			}
+			return key
+		},
+	}
+	lines := []pos.SaleLineInput{
+		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
+	}
+	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 0}}
+	legalBlocks := []receiptLegalBlock{
+		{
+			PluginName:    "TaxPlugin",
+			PluginVersion: "1.2.3",
+			Lines:         []string{"VAT Reg 123"},
+		},
+	}
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, legalBlocks, false)
+	if err != nil {
+		t.Fatalf("renderReceipt error: %v", err)
+	}
+	if !strings.Contains(html, "VAT Reg 123") {
+		t.Fatalf("expected legal text in receipt html, got: %s", html)
+	}
+	if !strings.Contains(html, "TaxPlugin") || !strings.Contains(html, "1.2.3") {
+		t.Fatalf("expected plugin version context in receipt html, got: %s", html)
+	}
+}
+
+func TestRenderReceipt_NoLegalText(t *testing.T) {
+	chdirRoot(t)
+	funcs := map[string]any{
+		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T": func(key string) string {
+			if key == "receipt.legal.plugin_label" {
+				return "Legal notice (%s v%s)"
+			}
+			if key == "receipt.printer.unavailable" {
+				return "Printer unavailable"
+			}
+			if key == "receipt.printer.retry" {
+				return "Retry print"
+			}
+			return key
+		},
+	}
+	lines := []pos.SaleLineInput{
+		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
+	}
+	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 0}}
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false)
+	if err != nil {
+		t.Fatalf("renderReceipt error: %v", err)
+	}
+	if strings.Contains(html, `<div class="receipt-legal">`) {
+		t.Fatalf("did not expect legal text block in receipt html, got: %s", html)
 	}
 }
