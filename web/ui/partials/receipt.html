@@ -1,9 +1,8 @@
 {{ define "receipt" }}
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Libre+Barcode+39&display=swap');
   .receipt-wrap {max-width: 420px; margin: 0 auto; padding: 1rem; font-family: sans-serif;}
   .receipt-card {background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.05);}
-  .barcode {font-family: 'Libre Barcode 39', cursive; letter-spacing: 3px; font-size: 2.4rem; margin: 0.25rem 0;}
+  .barcode {font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; letter-spacing: 3px; font-size: 2.4rem; margin: 0.25rem 0;}
   .actions {display: flex; gap: 0.5rem; margin: 1rem 0;}
   .btn {padding: 0.5rem 0.75rem; border-radius: 4px; border: none; cursor: pointer;}
   .btn.primary {background: #2563eb; color: #fff;}
@@ -15,11 +14,17 @@
   .receipt-payments ul {list-style: none; padding: 0; margin: 0;}
   .receipt-payments li {display: flex; justify-content: space-between; margin-bottom: 0.35rem;}
   .receipt-payments small {color: #6b7280; display: block; text-align: right;}
+  .receipt-legal {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; color: #374151;}
+  .receipt-legal-label {font-weight: 600; margin-bottom: 0.25rem;}
+  .receipt-legal-line {margin: 0.15rem 0;}
+  .receipt-printer-warning {display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
+  .receipt-printer-message {font-size: 0.9rem;}
   @media print {
     body {background: #fff;}
     .actions {display: none;}
     .nav {display: none !important;}
     .pos-container > :not(#basket) {display: none !important;}
+    .receipt-printer-warning {display: none;}
   }
 </style>
 <div class="receipt-wrap">
@@ -55,6 +60,24 @@
           </li>
         {{ end }}
       </ul>
+    </div>
+    {{ end }}
+    {{ if .LegalBlocks }}
+    <div class="receipt-legal">
+      {{ range .LegalBlocks }}
+      <div class="receipt-legal-block">
+        <div class="receipt-legal-label">{{ printf (T "receipt.legal.plugin_label") .PluginName .PluginVersion }}</div>
+        {{ range .Lines }}
+        <div class="receipt-legal-line">{{ . }}</div>
+        {{ end }}
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+    {{ if .PrinterUnavailable }}
+    <div class="receipt-printer-warning">
+      <span class="receipt-printer-message">{{ T "receipt.printer.unavailable" }}</span>
+      <button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">{{ T "receipt.printer.retry" }}</button>
     </div>
     {{ end }}
     <div class="actions">
