@@ -1,16 +1,7 @@
 {{ define "basket" }}
 <div class="basket" id="basket">
-  <style>
-    .toast {position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 0.9rem 1.2rem; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); z-index: 2000; background: #0f172a; color: #e2e8f0; min-width: 240px; text-align: center;}
-    .toast.error {background: #7f1d1d; color: #fecaca; border: 1px solid #fecdd3;}
-    .toast.success {background: #14532d; color: #dcfce7; border: 1px solid #bbf7d0;}
-    .toast.info {background: #0f172a; color: #e2e8f0; border: 1px solid #1f2937;}
-  </style>
   {{ if .ToastMessage }}
     <div class="toast info" id="toast-message">{{ .ToastMessage }}</div>
-    <script>
-      setTimeout(function(){ var t=document.getElementById('toast-message'); if(t){ t.style.opacity='0'; t.style.transition='opacity 0.25s'; setTimeout(function(){t.remove();}, 250);} }, 1500);
-    </script>
   {{ end }}
   <h2>Basket</h2>
   <table>

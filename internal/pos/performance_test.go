@@ -380,6 +380,50 @@ func TestMicroInteractionLatency(t *testing.T) {
 	}
 }
 
+// TestScanTotalsLatency validates scan+totals update latency on low-end baseline.
+func TestScanTotalsLatency(t *testing.T) {
+	warn, fail := microInteractionThresholds()
+	resolver := &staticResolver{
+		lines: map[string]BasketLine{
+			"SKU001": {
+				SKU:        "SKU001",
+				Name:       "Test Item",
+				PriceCents: 500,
+				Qty:        1,
+				ItemID:     "itm1",
+				TaxRateBP:  2000,
+			},
+		},
+	}
+	svc := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+
+	const iterations = 50
+	var totalDuration time.Duration
+
+	for i := 0; i < iterations; i++ {
+		start := time.Now()
+		if _, err := svc.Scan("SKU001"); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		_ = svc.Basket()
+		totalDuration += time.Since(start)
+		svc.Reset()
+	}
+
+	avg := totalDuration / iterations
+	avgMS := avg.Milliseconds()
+
+	if testing.Short() {
+		t.Skip("skipping scan perf guard in -short")
+	}
+	if avgMS > int64(fail) {
+		t.Fatalf("scan+totals performance: average %dms exceeds fail threshold %dms (warn %dms)", avgMS, fail, warn)
+	}
+	if avgMS > int64(warn) {
+		t.Logf("⚠️ scan+totals performance warning: average %dms exceeds warn threshold %dms (fail %dms)", avgMS, warn, fail)
+	}
+}
+
 type staticResolver struct {
 	lines map[string]BasketLine
 }
