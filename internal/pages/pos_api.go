@@ -50,24 +50,47 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			d.Engine.SetCustomerID(cid)
 		}
 
-		// If the scan is a customer barcode, attach and return current basket.
-		if custID, custName, ok := repo.LookupCustomer(r.Context(), code); ok {
-			d.Engine.SetCustomer(custID, custName)
-			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-			basketView, _ := ui.NewBasketView(funcs)
-			b := d.Engine.Basket()
-			b.ToastMessage = fmt.Sprintf("Customer %s linked", custName)
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		render := func(b *pos.Basket) {
 			_ = basketView.Render(w, b)
-			return
-		} else if looksLikeCustomerCode(code) {
-			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-			basketView, _ := ui.NewBasketView(funcs)
+		}
+
+		if code == "" {
 			b := d.Engine.Basket()
-			b.ToastMessage = "Customer not found"
-			_ = basketView.Render(w, b)
+			b.ToastMessage = "Scan a barcode"
+			render(&b)
 			return
 		}
 
+		if d.Engine.HasScanCache(code) || d.Engine.HasLine(code) {
+			b, _, _ := d.Engine.ScanQtyWithResult(code, in.Qty)
+			render(b)
+			return
+		}
+
+		// If the scan is a customer barcode, attach and return current basket.
+		if looksLikeCustomerCode(code) {
+			if custID, custName, ok := repo.LookupCustomer(r.Context(), code); ok {
+				d.Engine.SetCustomer(custID, custName)
+				b := d.Engine.Basket()
+				b.ToastMessage = fmt.Sprintf("Customer %s linked", custName)
+				render(&b)
+				return
+			}
+			b := d.Engine.Basket()
+			b.ToastMessage = "Customer not found"
+			render(&b)
+			return
+		}
+
+		// Fast path: resolve item before any DB lookups to keep scan latency low.
+		if b, found, _ := d.Engine.ScanQtyWithResult(code, in.Qty); found {
+			render(b)
+			return
+		}
+
+		// Promo/discount codes checked only if item resolution fails.
 		customerID := d.Engine.CustomerID()
 		if promoType, value, ok := repo.FindActivePromo(r.Context(), customerID, code); ok {
 			if promoType == "percent" {
@@ -75,17 +98,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			} else {
 				d.Engine.SetDiscount(value)
 			}
-			funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-			basketView, _ := ui.NewBasketView(funcs)
 			b := d.Engine.Basket()
 			b.ToastMessage = fmt.Sprintf("Promotion %s applied", code)
-			_ = basketView.Render(w, b)
+			render(&b)
 			return
 		}
-		b, _ := d.Engine.ScanQty(code, in.Qty)
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		basketView, _ := ui.NewBasketView(funcs)
-		_ = basketView.Render(w, b)
+
+		b := d.Engine.Basket()
+		b.ToastMessage = "Item not found"
+		render(&b)
 	})
 
 	// Remove a line by SKU/code.
@@ -539,5 +560,12 @@ func looksLikeCustomerCode(code string) bool {
 	if c == "" {
 		return false
 	}
-	return strings.HasPrefix(c, "CUST") || strings.HasPrefix(c, "LOY-")
+	if strings.HasPrefix(c, "CUST") || strings.HasPrefix(c, "LOY-") {
+		return true
+	}
+	if strings.HasPrefix(c, "LOY") && len(c) > 3 {
+		next := c[3]
+		return next >= '0' && next <= '9'
+	}
+	return false
 }

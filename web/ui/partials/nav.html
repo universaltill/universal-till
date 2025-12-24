@@ -1,6 +1,6 @@
 {{ define "nav" -}}
 <nav class="nav">
-  <div class="logo">{{ T "app.name" }}</div>
+  <div class="logo" width="30px"><img src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till Logo" /></div>
   <div class="nav-links">
     {{ range .menuItems }}<a href="{{ .Href }}">{{ .Label }}</a>{{ end }}
     <span>|</span>

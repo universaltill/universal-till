@@ -31,6 +31,11 @@
 .basket th, .basket td { padding:.6rem; border-bottom:1px solid #eee; text-align:left }
 .basket .totals { margin-top:.6rem; display:grid; gap:.25rem }
 .basket .total { font-weight:700; }
+.toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 0.9rem 1.2rem; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); z-index: 2000; background: #0f172a; color: #e2e8f0; min-width: 240px; text-align: center; opacity: 1; transition: opacity 0.25s ease; }
+.toast.error { background: #7f1d1d; color: #fecaca; border: 1px solid #fecdd3; }
+.toast.success { background: #14532d; color: #dcfce7; border: 1px solid #bbf7d0; }
+.toast.info { background: #0f172a; color: #e2e8f0; border: 1px solid #1f2937; }
+.toast.hide { opacity: 0; }
 
 /* Journal */
 .journal table { width:100%; border-collapse: collapse; background:#fff; border-radius:12px; overflow:hidden }
