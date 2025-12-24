@@ -70,7 +70,7 @@ type SaleJournalEntry struct {
 
 type QueuedSale struct {
 	ID                string
-	ReceiptNo          string
+	ReceiptNo         string
 	SyncAttempts      int
 	SyncNextAttemptAt string
 	SyncLastError     string
@@ -968,6 +968,26 @@ func (r *POSRepo) SaleTotals(ctx context.Context, saleID string) (string, int64,
 	err := r.db.QueryRowContext(ctx, `SELECT receipt_no, subtotal, tax_total, total FROM sales WHERE id = ?`, saleID).
 		Scan(&receiptNo, &dbSubtotal, &dbTax, &dbTotal)
 	return receiptNo, dbSubtotal, dbTax, dbTotal, err
+}
+
+// SaleCompletedAt returns the completed_at timestamp for a sale.
+func (r *POSRepo) SaleCompletedAt(ctx context.Context, saleID string) (time.Time, bool, error) {
+	var completed string
+	err := r.db.QueryRowContext(ctx, `SELECT completed_at FROM sales WHERE id = ?`, saleID).Scan(&completed)
+	if err == sql.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("sale completed_at: %w", err)
+	}
+	if strings.TrimSpace(completed) == "" {
+		return time.Time{}, false, nil
+	}
+	ts, err := time.Parse(time.RFC3339, completed)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse completed_at: %w", err)
+	}
+	return ts, true, nil
 }
 
 func (r *POSRepo) ListRecentSales(ctx context.Context, limit int) ([]SaleJournalEntry, error) {

@@ -9,14 +9,28 @@
     if(!codeInput) return;
     codeInput.value = code;
     if (window.htmx) { window.htmx.trigger(form, 'submit'); } else { form.submit(); }
+    setTimeout(function(){ codeInput.value = ""; }, 0);
   }
-  window.addEventListener('keypress', function(e){
+  window.addEventListener('keydown', function(e){
+    if (e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
     var now = Date.now();
     if (now - last > 100) { buf = ""; }
     last = now;
     if (e.key === 'Enter') {
-      e.preventDefault();
-      if (buf.length > 0) submit(buf);
+      var code = buf;
+      if (!code) {
+        var form = document.querySelector('form[action="/api/pos/scan"], form[hx-post="/api/pos/scan"]');
+        if (form) {
+          var codeInput = form.querySelector('input[name="code"]');
+          if (codeInput && document.activeElement === codeInput) {
+            code = (codeInput.value || '').trim();
+          }
+        }
+      }
+      if (code) {
+        e.preventDefault();
+        submit(code);
+      }
       buf = "";
       return;
     }
