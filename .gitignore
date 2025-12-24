@@ -11,6 +11,9 @@ bin/
 build/
 dist/
 data/*.db
+.codex
+.github/agents
+.github/prompts
 
 # Test binary, built with `go test -c`
 *.test
