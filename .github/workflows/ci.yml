@@ -38,6 +38,11 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout docs repo for docs-hub tests
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/docs
+          path: ./docs
       - uses: actions/setup-go@v5
         with: { go-version: '1.25' }
       - uses: actions/setup-node@v4
@@ -47,7 +52,7 @@ jobs:
         run: UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go
       - name: Start app
         run: |
-          UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=:8080 go run . &
+          UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=:8080 UT_DEV_MODE=true go run . &
           for i in {1..30}; do
             if curl -sf http://127.0.0.1:8080/ >/dev/null; then
               echo "App is up"
@@ -66,6 +71,7 @@ jobs:
         working-directory: tests/e2e
         env:
           BASE_URL: http://127.0.0.1:8080
+          DOCS_ROOT: ${{ github.workspace }}/docs/docs
         run: npm run test:e2e
       - name: Upload Playwright report
         if: failure()
@@ -77,6 +83,9 @@ jobs:
   contract:
     runs-on: ubuntu-latest
     needs: build
+    env:
+      PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -94,10 +103,8 @@ jobs:
           LD_LIBRARY_PATH: /usr/local/lib
         run: go test -tags=contract ./tests/contract
       - name: Publish Pact contracts
-        if: ${{ secrets.PACT_BROKER_BASE_URL != '' && secrets.PACT_BROKER_TOKEN != '' }}
+        if: ${{ env.PACT_BROKER_BASE_URL != '' && env.PACT_BROKER_TOKEN != '' }}
         env:
-          PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
-          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
           PACT_CONSUMER_VERSION: ${{ github.sha }}
           PACT_CONSUMER_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
