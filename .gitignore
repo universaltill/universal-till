@@ -14,6 +14,9 @@ data/*.db
 .codex
 .github/agents
 .github/prompts
+copilot-instructions.md
+.specify/*
+!.specify/memory
 
 # Test binary, built with `go test -c`
 *.test
