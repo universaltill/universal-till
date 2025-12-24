@@ -228,6 +228,67 @@ func TestPOSTenderSplitPayments(t *testing.T) {
 	}
 }
 
+func TestPOSTender_PrinterFallbackAndLegalText(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	if _, err := db.Exec(`
+INSERT INTO plugins (id, name, version, is_active)
+VALUES ('com.tax.plugin', 'Tax Plugin', '1.2.3', 1)
+`); err != nil {
+		t.Fatalf("insert plugin: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO plugin_entries (plugin_id, key, route, label, menu_group, type, is_active, sort_order, config_json)
+VALUES ('com.tax.plugin', 'receipt_legal', '', 'Receipt Legal', '', 'receipt_template', 1, 10, '{"legal_text":"VAT Reg 123"}')
+`); err != nil {
+		t.Fatalf("insert receipt template entry: %v", err)
+	}
+
+	resolver := stubResolver{
+		"ABC": {SKU: "ABC", Name: "Test Item", Qty: 1, PriceCents: 250, ItemID: "itm1", TaxRateBP: 2000},
+	}
+	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
+	if _, err := engine.Scan("ABC"); err != nil {
+		t.Fatalf("scan seed item: %v", err)
+	}
+
+	setStore := settings.NewStore(db)
+	state := common.LoadState(t.Context(), setStore, &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	pm, err := plugins.Init(t.Context(), &config.Config{}, db)
+	if err != nil {
+		t.Fatalf("init plugins: %v", err)
+	}
+	dp := &common.Deps{
+		Db:       db,
+		State:    state,
+		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+		Engine:   engine,
+		Pm:       pm,
+		Settings: setStore,
+	}
+
+	mux := http.NewServeMux()
+	registerPOSAPI(mux, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(`{"payments":[{"method":"cash","amount":300}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tender failed: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "receipt-legal") || !strings.Contains(body, "VAT Reg 123") {
+		t.Fatalf("expected receipt legal text in response, got: %s", body)
+	}
+	if !strings.Contains(body, "receipt-printer-warning") || !strings.Contains(body, "receipt-printer-retry") {
+		t.Fatalf("expected printer fallback in response, got: %s", body)
+	}
+}
+
 // seedForPages creates minimal tables/rows for page rendering.
 func seedForPages(t *testing.T, db *sql.DB) {
 	t.Helper()
@@ -236,7 +297,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);`,
 		`CREATE TABLE plugin_catalog (id TEXT PRIMARY KEY, version TEXT, name TEXT, description TEXT, runtime TEXT, entrypoint TEXT, package_url TEXT, sha256 TEXT, author TEXT, website TEXT, tags_json TEXT, is_deprecated INTEGER DEFAULT 0);`,
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER DEFAULT 1);`,
-		`CREATE TABLE plugin_entries (plugin_id TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, type TEXT, is_active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0);`,
+		`CREATE TABLE plugin_entries (plugin_id TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, type TEXT, is_active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, config_json TEXT);`,
 		`CREATE TABLE plugin_permissions (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, permission TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 0, UNIQUE(plugin_id, permission));`,
 		`CREATE TABLE plugin_hooks (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, event TEXT NOT NULL, action TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 100, is_active INTEGER NOT NULL DEFAULT 1, config_json TEXT, UNIQUE(plugin_id, event, action));`,
 		`CREATE TABLE plugin_settings (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', scope_id TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(plugin_id, key, scope, scope_id));`,

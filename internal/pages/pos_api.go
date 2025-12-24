@@ -2,12 +2,16 @@ package pages
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -448,7 +452,21 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			discountRaw = in.Discount
 		}
 
-		receiptHTML, _ := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount, discountType, discountRaw)
+		completedAt, _, _ := repo.SaleCompletedAt(r.Context(), saleID)
+		legalBlocks, err := loadReceiptLegalBlocks(r.Context(), d.Db, completedAt)
+		if err != nil {
+			legalBlocks = nil
+		}
+		printerAvailable, err := data.NewPluginRepo(d.Db).HasActivePrinterCapability(r.Context())
+		if err != nil {
+			printerAvailable = false
+		}
+		printerUnavailable := !printerAvailable
+		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount, discountType, discountRaw, legalBlocks, printerUnavailable)
+		if renderErr != nil {
+			printerUnavailable = true
+			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
+		}
 
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
@@ -502,7 +520,87 @@ type receiptPayment struct {
 	Reference string
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64) (string, error) {
+type receiptLegalBlock struct {
+	PluginID      string
+	PluginName    string
+	PluginVersion string
+	Priority      int
+	Lines         []string
+}
+
+type receiptTemplateConfig struct {
+	LegalText  string   `json:"legal_text"`
+	LegalLines []string `json:"legal_lines"`
+	Priority   int      `json:"priority"`
+}
+
+func loadReceiptLegalBlocks(ctx context.Context, db *sql.DB, completedAt time.Time) ([]receiptLegalBlock, error) {
+	entries, err := data.NewPluginRepo(db).ListReceiptTemplates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var repo = data.NewPluginRepo(db)
+	var blocks []receiptLegalBlock
+	for _, entry := range entries {
+		var cfg receiptTemplateConfig
+		if entry.ConfigJSON != "" {
+			if err := json.Unmarshal([]byte(entry.ConfigJSON), &cfg); err != nil {
+				continue
+			}
+		}
+		lines := normalizeLegalLines(cfg.LegalText, cfg.LegalLines)
+		if len(lines) == 0 {
+			continue
+		}
+		priority := cfg.Priority
+		if priority == 0 {
+			priority = entry.SortOrder
+		}
+		version := entry.PluginVersion
+		if !completedAt.IsZero() {
+			if v, ok, _ := repo.GetPluginVersionAt(ctx, entry.PluginID, completedAt); ok && v != "" {
+				version = v
+			}
+		}
+		blocks = append(blocks, receiptLegalBlock{
+			PluginID:      entry.PluginID,
+			PluginName:    entry.PluginName,
+			PluginVersion: version,
+			Priority:      priority,
+			Lines:         lines,
+		})
+	}
+	sort.Slice(blocks, func(i, j int) bool {
+		if blocks[i].Priority != blocks[j].Priority {
+			return blocks[i].Priority < blocks[j].Priority
+		}
+		if blocks[i].PluginID != blocks[j].PluginID {
+			return blocks[i].PluginID < blocks[j].PluginID
+		}
+		return blocks[i].PluginVersion < blocks[j].PluginVersion
+	})
+	return blocks, nil
+}
+
+func normalizeLegalLines(text string, lines []string) []string {
+	var out []string
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if strings.TrimSpace(text) == "" {
+		return out
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFiles(
 		"web/ui/partials/receipt.html",
 	)
@@ -538,15 +636,17 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		})
 	}
 	data := map[string]any{
-		"ReceiptNo":        receiptNo,
-		"Lines":            rlines,
-		"Payments":         paymentViews,
-		"Subtotal":         subtotal,
-		"TaxTotal":         taxTotal,
-		"SaleDiscount":     saleDiscount,
-		"SaleDiscountType": saleDiscountType,
-		"SaleDiscountRaw":  saleDiscountRaw,
-		"Total":            total,
+		"ReceiptNo":          receiptNo,
+		"Lines":              rlines,
+		"Payments":           paymentViews,
+		"Subtotal":           subtotal,
+		"TaxTotal":           taxTotal,
+		"SaleDiscount":       saleDiscount,
+		"SaleDiscountType":   saleDiscountType,
+		"SaleDiscountRaw":    saleDiscountRaw,
+		"Total":              total,
+		"LegalBlocks":        legalBlocks,
+		"PrinterUnavailable": printerUnavailable,
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "receipt", data); err != nil {

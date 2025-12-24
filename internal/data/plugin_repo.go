@@ -524,6 +524,16 @@ type MenuEntryRow struct {
 	GrantedFlags        sql.NullString
 }
 
+// ReceiptTemplateRow represents receipt template metadata stored in plugin entries.
+type ReceiptTemplateRow struct {
+	PluginID      string
+	PluginName    string
+	PluginVersion string
+	EntryKey      string
+	SortOrder     int
+	ConfigJSON    string
+}
+
 // PluginInfoRow represents plugin state/metadata for control plane operations.
 type PluginInfoRow struct {
 	ID           string
@@ -629,6 +639,86 @@ ORDER BY pe.sort_order, pe.label
 		res = append(res, row)
 	}
 	return res, rows.Err()
+}
+
+// ListReceiptTemplates returns active receipt template entries with plugin metadata.
+func (r *PluginRepo) ListReceiptTemplates(ctx context.Context) ([]ReceiptTemplateRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT 
+    p.id,
+    p.name,
+    p.version,
+    pe.key,
+    pe.sort_order,
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'receipt_template' AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.plugin_id, pe.key
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_receipt_templates", err)
+	}
+	defer rows.Close()
+	var res []ReceiptTemplateRow
+	for rows.Next() {
+		var row ReceiptTemplateRow
+		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.PluginVersion, &row.EntryKey, &row.SortOrder, &row.ConfigJSON); err != nil {
+			return nil, pluginObs.wrap("list_receipt_templates", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
+// HasActivePrinterPermission reports whether any active plugin can access printers.
+func (r *PluginRepo) HasActivePrinterPermission(ctx context.Context) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM plugin_permissions pp
+JOIN plugins p ON p.id = pp.plugin_id
+WHERE pp.permission = 'devices:printer' AND pp.granted = 1 AND p.is_active = 1
+`).Scan(&count)
+	if err != nil {
+		return false, pluginObs.wrap("has_active_printer", err)
+	}
+	return count > 0, nil
+}
+
+// HasActivePrinterCapability checks if an active plugin is permitted to use printers.
+func (r *PluginRepo) HasActivePrinterCapability(ctx context.Context) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM plugin_permissions pp
+JOIN plugins p ON p.id = pp.plugin_id
+WHERE pp.permission = 'devices:printer' AND pp.granted = 1 AND p.is_active = 1 AND p.install_state = 'installed'
+`).Scan(&count)
+	if err != nil {
+		return false, pluginObs.wrap("has_printer_capability", err)
+	}
+	return count > 0, nil
+}
+
+// GetPluginVersionAt returns the plugin version active at or before the given timestamp.
+func (r *PluginRepo) GetPluginVersionAt(ctx context.Context, pluginID string, at time.Time) (string, bool, error) {
+	query := `
+SELECT version
+FROM plugins
+WHERE id = ? AND updated_at <= ?
+ORDER BY updated_at DESC
+LIMIT 1
+`
+	var version string
+	err := r.db.QueryRowContext(ctx, query, pluginID, at.UTC().Format(time.RFC3339)).Scan(&version)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, pluginObs.wrap("get_plugin_version_at", err)
+	}
+	return version, true, nil
 }
 
 // ListCatalog returns non-deprecated catalog entries.

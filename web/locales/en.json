@@ -12,5 +12,8 @@
   "designer.code": "Code",
   "designer.price": "Price (cents)",
   "designer.add": "Add",
-  "designer.buttons": "Buttons"
+  "designer.buttons": "Buttons",
+  "receipt.legal.plugin_label": "Legal notice (%s v%s)",
+  "receipt.printer.unavailable": "Printer unavailable.",
+  "receipt.printer.retry": "Retry print"
 }
