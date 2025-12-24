@@ -1,5 +1,7 @@
 package pos
 
+import "strings"
+
 type PriceResolver interface {
 	Resolve(code string) (BasketLine, bool)
 }
@@ -10,6 +12,7 @@ type Service struct {
 	resolver PriceResolver
 	tax      TaxEngine
 	lines    []BasketLine // persisted after completion
+	scanCache map[string]BasketLine
 	// discount can be fixed amount or percentage basis points (1% = 100)
 	discountType      string
 	discountValue     int64
@@ -29,7 +32,7 @@ func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
 		// default to 20% if not provided
 		tax.RateBasisPoints = 2000
 	}
-	return &Service{cfg: cfg, resolver: r, tax: tax}
+	return &Service{cfg: cfg, resolver: r, tax: tax, scanCache: map[string]BasketLine{}}
 }
 
 type BasketLine struct {
@@ -64,28 +67,111 @@ func (s *Service) Scan(code string) (*Basket, error) {
 }
 
 func (s *Service) ScanQty(code string, qty float64) (*Basket, error) {
+	b, _ := s.scanQty(code, qty)
+	return b, nil
+}
+
+func (s *Service) ScanQtyWithResult(code string, qty float64) (*Basket, bool, error) {
+	b, found := s.scanQty(code, qty)
+	return b, found, nil
+}
+
+func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 	if qty <= 0 {
 		qty = 1
 	}
-	item, ok := s.resolver.Resolve(code)
-	if !ok {
-		return &s.basket, nil
+	code = strings.TrimSpace(code)
+	var resolved BasketLine
+	var ok bool
+
+	if code != "" {
+		if cached, found := s.scanCache[code]; found {
+			cached.Qty = qty
+			s.mergeResolved(cached)
+			return &s.basket, true
+		}
 	}
-	item.Qty = qty
-	// merge with existing line if same SKU/item/variant
-	merged := false
-	for i := range s.lines {
-		if s.lines[i].SKU == item.SKU || (s.lines[i].ItemID == item.ItemID && s.lines[i].VariantID == item.VariantID) {
-			s.lines[i].Qty += qty
-			merged = true
+
+	if s.resolver != nil && code != "" {
+		resolved, ok = s.resolver.Resolve(code)
+	}
+	if ok {
+		resolved.Qty = qty
+		s.mergeResolved(resolved)
+		s.cacheScan(code, resolved)
+		return &s.basket, true
+	}
+
+	if code != "" {
+		if idx := s.findLineIndex(code); idx >= 0 {
+			s.lines[idx].Qty += qty
+			s.recomputeTotals()
+			return &s.basket, true
+		}
+	}
+	s.recomputeTotals()
+	return &s.basket, false
+}
+
+func (s *Service) HasLine(code string) bool {
+	code = strings.TrimSpace(code)
+	return code != "" && s.findLineIndex(code) >= 0
+}
+
+func (s *Service) HasScanCache(code string) bool {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false
+	}
+	_, ok := s.scanCache[code]
+	return ok
+}
+
+func (s *Service) cacheScan(code string, line BasketLine) {
+	if code == "" {
+		return
+	}
+	if s.scanCache == nil {
+		s.scanCache = map[string]BasketLine{}
+	}
+	if len(s.scanCache) >= 1024 {
+		// drop one entry to avoid unbounded growth in long sessions
+		for k := range s.scanCache {
+			delete(s.scanCache, k)
 			break
 		}
 	}
-	if !merged {
-		s.lines = append(s.lines, item)
+	s.scanCache[code] = line
+}
+
+func (s *Service) mergeResolved(line BasketLine) {
+	for i := range s.lines {
+		if s.lines[i].SKU == line.SKU || (s.lines[i].ItemID == line.ItemID && s.lines[i].VariantID == line.VariantID) {
+			s.lines[i].Qty += line.Qty
+			s.lines[i].Name = line.Name
+			s.lines[i].PriceCents = line.PriceCents
+			s.lines[i].TaxRateBP = line.TaxRateBP
+			s.lines[i].ItemID = line.ItemID
+			s.lines[i].VariantID = line.VariantID
+			s.lines[i].IsWeighed = line.IsWeighed
+			if line.ImageURL != "" {
+				s.lines[i].ImageURL = line.ImageURL
+			}
+			s.recomputeTotals()
+			return
+		}
 	}
+	s.lines = append(s.lines, line)
 	s.recomputeTotals()
-	return &s.basket, nil
+}
+
+func (s *Service) findLineIndex(code string) int {
+	for i := range s.lines {
+		if s.lines[i].SKU == code || s.lines[i].ItemID == code || s.lines[i].VariantID == code {
+			return i
+		}
+	}
+	return -1
 }
 
 func (s *Service) recomputeTotals() {
@@ -164,6 +250,7 @@ func (s *Service) Remove(sku string) {
 		filtered = append(filtered, l)
 	}
 	s.lines = filtered
+	s.clearCacheForCode(sku)
 	s.recomputeTotals()
 }
 
@@ -178,6 +265,18 @@ func (s *Service) Reset() {
 	s.customerName = ""
 	s.basket.CustomerID = ""
 	s.basket.CustomerName = ""
+	s.scanCache = map[string]BasketLine{}
+}
+
+func (s *Service) clearCacheForCode(code string) {
+	if code == "" || len(s.scanCache) == 0 {
+		return
+	}
+	for key, line := range s.scanCache {
+		if line.SKU == code || line.ItemID == code || line.VariantID == code {
+			delete(s.scanCache, key)
+		}
+	}
 }
 
 // UpdateLine sets qty/discount for a given SKU (or item/variant match) and recomputes totals.
