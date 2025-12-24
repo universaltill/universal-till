@@ -373,7 +373,7 @@ Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translatio
 | **Advanced Analytics** | ❌ | Basic | ✅ Advanced | ✅ Custom |
 | **Multi-location** | ❌ | ❌ | ✅ | ✅ |
 | **Support** | Community | Email | Priority | Dedicated |
-| **Price** | **FREE** | **$19/mo** | **$49/mo** | **Custom** |
+| **Price** | **FREE** | **$??/mo** | **$??/mo** | **Custom** |
 
 **Note:** Core POS is free forever. Cloud services are optional enhancements.
 
