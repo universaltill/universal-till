@@ -1,6 +1,12 @@
 {{ define "content" }}
 <h1>{{ T "app.name" }}</h1>
 
+  <div class="kiosk-actions">
+    <a class="btn primary" data-testid="kiosk-checkout-start" href="/">{{ T "kiosk.checkout_start" }}</a>
+    <a class="btn" data-testid="kiosk-inventory-link" href="/inventory">{{ T "kiosk.inventory" }}</a>
+    <div class="status-pill" data-testid="status-indicator">{{ T "status.online" }}</div>
+  </div>
+
   <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
     <!-- Basket loads on page load -->
     <div hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>

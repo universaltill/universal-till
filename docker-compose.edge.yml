@@ -9,7 +9,7 @@ services:
       - "8080:8080"
     volumes:
       - pos_data:/app/data
-      # - /Users/farshid/repos/unitill/images:/samples:ro
+      # - ~/repos/unitill/images:/samples:ro
     restart: unless-stopped
 volumes:
   pos_data:

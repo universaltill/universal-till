@@ -12,6 +12,10 @@ import (
 
 func registerIndex(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/help" {
+			renderHelpPage(w, r, d)
+			return
+		}
 		methods := collectPaymentMethods(r.Context(), d.Db)
 		defaultMethod := "cash"
 		if len(methods) > 0 {

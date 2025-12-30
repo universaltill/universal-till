@@ -87,12 +87,14 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerInventoryPage(mux, dp)
 	registerShiftsAPI(mux, dp)
 	registerShiftsPage(mux, dp)
+	registerHelp(mux, dp)
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerJournal(mux, dp)
 	registerHealth(mux)
 	registerExternalProxy(mux, dp)
 	registerPluginStore(mux, dp) // Marketplace plugin store
+	registerMarketplaceV1Stub(mux, dp)
 
 	return mux
 }
