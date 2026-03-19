@@ -5,7 +5,7 @@
 		<div class="mt-3">
 			<div class="flex items-center justify-between mb-4">
 				<h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
-					Installing Plugin
+					{{ T "plugins.install.modal.title" }}
 				</h3>
 				<button onclick="closeInstallModal()" class="text-gray-400 hover:text-gray-600">
 					<svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -16,14 +16,14 @@
 
 			<div class="mt-2">
 				<p class="text-sm text-gray-500" id="modal-description">
-					Please wait while we download and install the plugin...
+					{{ T "plugins.install.modal.description" }}
 				</p>
 			</div>
 
 			<!-- Progress bar -->
 			<div class="mt-4">
 				<div class="flex justify-between mb-1">
-					<span class="text-sm font-medium text-blue-700" id="progress-label">Downloading...</span>
+					<span class="text-sm font-medium text-blue-700" id="progress-label">{{ T "plugins.install.modal.progress.downloading" }}</span>
 					<span class="text-sm font-medium text-blue-700" id="progress-percent">0%</span>
 				</div>
 				<div class="w-full bg-gray-200 rounded-full h-2.5">
@@ -38,7 +38,7 @@
 						<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 						<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 					</svg>
-					<span id="status-text">Initializing...</span>
+					<span id="status-text">{{ T "plugins.install.modal.progress.initializing" }}</span>
 				</div>
 			</div>
 
@@ -47,7 +47,7 @@
 				<button 
 					onclick="closeInstallModal()"
 					class="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors">
-					Cancel
+					{{ T "plugins.install.modal.cancel" }}
 				</button>
 			</div>
 		</div>
@@ -55,12 +55,66 @@
 </div>
 
 <script>
+const pluginInstallText = {
+	title: '{{ T "plugins.install.modal.title" }}',
+	description: '{{ T "plugins.install.modal.description" }}',
+	progressFetching: '{{ T "plugins.install.modal.progress.fetching" }}',
+	progressDownloading: '{{ T "plugins.install.modal.progress.downloading" }}',
+	progressVerifying: '{{ T "plugins.install.modal.progress.verifying" }}',
+	progressInstalling: '{{ T "plugins.install.modal.progress.installing" }}',
+	progressInitializing: '{{ T "plugins.install.modal.progress.initializing" }}',
+	progressComplete: '{{ T "plugins.install.modal.progress.complete" }}',
+	progressFailed: '{{ T "plugins.install.modal.progress.failed" }}',
+	done: '{{ T "plugins.install.modal.done" }}',
+	close: '{{ T "plugins.install.modal.close" }}',
+	networkError: '{{ T "plugins.install.error.network" }}',
+	success: '{{ T "plugins.install.success" }}',
+	errorRetryable: '{{ T "plugins.install.error.retryable" }}',
+	errorInvalidPackage: '{{ T "plugins.install.error.invalid_package" }}',
+	errorIncompatible: '{{ T "plugins.install.error.incompatible" }}',
+	errorConfiguration: '{{ T "plugins.install.error.configuration" }}',
+	errorInvalidRequest: '{{ T "plugins.install.error.invalid_request" }}',
+	errorNotFound: '{{ T "plugins.install.error.not_found" }}'
+};
+
+function installMessage(messageKey, fallbackKey) {
+	if (messageKey && pluginInstallText[camelizeInstallKey(messageKey)]) {
+		return pluginInstallText[camelizeInstallKey(messageKey)];
+	}
+	if (fallbackKey && pluginInstallText[fallbackKey]) {
+		return pluginInstallText[fallbackKey];
+	}
+	return '';
+}
+
+function camelizeInstallKey(messageKey) {
+	switch (messageKey) {
+		case 'plugins.install.success':
+			return 'success';
+		case 'plugins.install.error.retryable':
+			return 'errorRetryable';
+		case 'plugins.install.error.invalid_package':
+			return 'errorInvalidPackage';
+		case 'plugins.install.error.incompatible':
+			return 'errorIncompatible';
+		case 'plugins.install.error.configuration':
+			return 'errorConfiguration';
+		case 'plugins.install.error.invalid_request':
+			return 'errorInvalidRequest';
+		case 'plugins.install.error.not_found':
+			return 'errorNotFound';
+		default:
+			return '';
+	}
+}
+
 function showInstallModal(pluginName) {
 	document.getElementById('install-modal').classList.remove('hidden');
-	document.getElementById('modal-title').textContent = 'Installing ' + pluginName;
+	document.getElementById('modal-title').textContent = pluginInstallText.title + ': ' + pluginName;
 	document.getElementById('progress-bar').style.width = '0%';
 	document.getElementById('progress-percent').textContent = '0%';
-	document.getElementById('status-text').textContent = 'Initializing...';
+	document.getElementById('progress-label').textContent = pluginInstallText.progressDownloading;
+	document.getElementById('status-text').textContent = pluginInstallText.progressInitializing;
 }
 
 function closeInstallModal() {
@@ -76,7 +130,7 @@ function updateInstallProgress(percent, statusText) {
 function showInstallSuccess(message) {
 	document.getElementById('progress-bar').style.width = '100%';
 	document.getElementById('progress-percent').textContent = '100%';
-	document.getElementById('progress-label').textContent = 'Complete';
+	document.getElementById('progress-label').textContent = pluginInstallText.progressComplete;
 	document.getElementById('install-status').innerHTML = `
 		<div class="flex items-center text-green-600">
 			<svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -89,13 +143,13 @@ function showInstallSuccess(message) {
 		<button 
 			onclick="closeInstallModal(); location.reload()"
 			class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">
-			Done
+			${pluginInstallText.done}
 		</button>
 	`;
 }
 
 function showInstallError(message) {
-	document.getElementById('progress-label').textContent = 'Failed';
+	document.getElementById('progress-label').textContent = pluginInstallText.progressFailed;
 	document.getElementById('install-status').innerHTML = `
 		<div class="flex items-center text-red-600">
 			<svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -108,7 +162,7 @@ function showInstallError(message) {
 		<button 
 			onclick="closeInstallModal()"
 			class="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors">
-			Close
+			${pluginInstallText.close}
 		</button>
 	`;
 }
@@ -116,7 +170,7 @@ function showInstallError(message) {
 // Install plugin function
 function installPlugin(listingId, pluginName) {
 	showInstallModal(pluginName);
-	updateInstallProgress(10, 'Fetching plugin details...');
+	updateInstallProgress(10, pluginInstallText.progressFetching);
 
 	fetch('/api/plugins/install-from-marketplace', {
 		method: 'POST',
@@ -128,17 +182,17 @@ function installPlugin(listingId, pluginName) {
 	.then(response => response.json())
 	.then(data => {
 		if (data.success) {
-			updateInstallProgress(50, 'Downloading artifact...');
+			updateInstallProgress(50, pluginInstallText.progressDownloading);
 			// Simulate progress updates (in production, this would be server-sent events or polling)
-			setTimeout(() => updateInstallProgress(75, 'Verifying checksum...'), 1000);
-			setTimeout(() => updateInstallProgress(90, 'Installing plugin...'), 2000);
-			setTimeout(() => showInstallSuccess(data.message), 3000);
+			setTimeout(() => updateInstallProgress(75, pluginInstallText.progressVerifying), 1000);
+			setTimeout(() => updateInstallProgress(90, pluginInstallText.progressInstalling), 2000);
+			setTimeout(() => showInstallSuccess(installMessage(data.message_key, 'success')), 3000);
 		} else {
-			showInstallError(data.message || 'Installation failed');
+			showInstallError(installMessage(data.message_key, 'errorRetryable'));
 		}
 	})
 	.catch(error => {
-		showInstallError('Network error: ' + error.message);
+		showInstallError(pluginInstallText.networkError + ': ' + error.message);
 	});
 }
 </script>

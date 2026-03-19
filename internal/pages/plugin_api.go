@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
 func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
@@ -439,31 +440,44 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		statusStore := plugins.NewInstallStatusStore(d.Db)
 
 		// Parse request
 		var req struct {
 			ListingID string `json:"listing_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.invalid_request")
 			return
 		}
 
 		if req.ListingID == "" {
-			http.Error(w, "listing_id is required", http.StatusBadRequest)
+			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.invalid_request")
 			return
 		}
 
 		// Check if catalog repository is available
 		if d.CatalogRepo == nil {
-			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:  req.ListingID,
+				State:      plugins.InstallStateFailed,
+				MessageKey: "plugins.install.error.configuration",
+				Retryable:  false,
+			})
+			writeInstallResponse(w, http.StatusServiceUnavailable, false, "", "plugins.install.error.configuration")
 			return
 		}
 
 		// Get plugin details from catalog
 		snapshot, _, err := d.CatalogRepo.Get()
 		if err != nil {
-			http.Error(w, "Failed to fetch catalog", http.StatusInternalServerError)
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:  req.ListingID,
+				State:      plugins.InstallStateFailed,
+				MessageKey: "plugins.install.error.retryable",
+				Retryable:  true,
+			})
+			writeInstallResponse(w, http.StatusInternalServerError, false, "", "plugins.install.error.retryable")
 			return
 		}
 
@@ -476,79 +490,90 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		}
 
 		if targetPlugin == nil {
-			http.Error(w, "Plugin not found in catalog", http.StatusNotFound)
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:  req.ListingID,
+				State:      plugins.InstallStateFailed,
+				MessageKey: "plugins.install.error.retryable",
+				Retryable:  true,
+			})
+			writeInstallResponse(w, http.StatusNotFound, false, "", "plugins.install.error.not_found")
 			return
 		}
+		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+			ListingID:     targetPlugin.ListingID,
+			PluginName:    targetPlugin.Name,
+			TargetVersion: targetPlugin.Version,
+			State:         plugins.InstallStateRequested,
+		})
 
 		// T019a: Verify compatibility before installation
 		systemArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 		if targetPlugin.DeviceArch != systemArch {
-			http.Error(w, fmt.Sprintf("Incompatible architecture: plugin requires %s, system is %s", targetPlugin.DeviceArch, systemArch), http.StatusBadRequest)
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:     targetPlugin.ListingID,
+				PluginName:    targetPlugin.Name,
+				TargetVersion: targetPlugin.Version,
+				State:         plugins.InstallStateFailed,
+				MessageKey:    "plugins.install.error.incompatible",
+				Retryable:     false,
+			})
+			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.incompatible")
 			return
 		}
 
-		// TODO T017: Check RBAC - require manager override if configured
-		// For now, allow all installs (RBAC will be added in T017 completion)
-
-		// Start installation process
-		downloadMgr := plugins.NewDownloadManager("./data/plugins/tmp")
-
-		// Download the artifact with resume support
-		downloadReq := &plugins.DownloadRequest{
-			URL:              targetPlugin.ArtifactURL,
-			PluginID:         targetPlugin.ListingID,
-			ExpectedChecksum: strings.TrimPrefix(targetPlugin.ArtifactHash, "sha256:"),
-			MaxSizeBytes:     200 * 1024 * 1024, // 200 MB limit
-		}
-
-		downloadResult, err := downloadMgr.Download(ctx, downloadReq)
+		client := marketplace.NewClient(&d.Cfg.Marketplace, oauth.NewTokenClient(&d.Cfg.Marketplace))
+		installer, err := plugins.NewMarketplaceInstaller(d.Cfg, client, d.Db)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusInternalServerError)
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:     targetPlugin.ListingID,
+				PluginName:    targetPlugin.Name,
+				TargetVersion: targetPlugin.Version,
+				State:         plugins.InstallStateFailed,
+				MessageKey:    "plugins.install.error.configuration",
+				Retryable:     false,
+			})
+			writeInstallResponse(w, http.StatusInternalServerError, false, "", "plugins.install.error.configuration")
 			return
 		}
-
-		// Extract archive (assuming tar.gz format)
-		pluginDir := filepath.Join("./data/plugins", targetPlugin.ListingID, targetPlugin.Version)
-		if err := os.MkdirAll(pluginDir, 0755); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create plugin directory: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		if err := extractTarGz(downloadResult.FilePath, pluginDir); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to extract plugin: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Verify manifest
-		manifestPath := filepath.Join(pluginDir, "manifest.json")
-		manifestFile, err := os.Open(manifestPath)
+		result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
+			ListingID:  targetPlugin.ListingID,
+			Version:    targetPlugin.Version,
+			TrustTier:  targetPlugin.TrustTier,
+			MerchantID: d.Cfg.Marketplace.ClientID,
+			StoreID:    d.Cfg.Marketplace.StoreID,
+			DeviceID:   marketplace.DeviceIDFromConfig(&d.Cfg.Marketplace),
+			DeviceArch: systemArch,
+			OnStateChange: func(state plugins.InstallLifecycleState) {
+				_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+					ListingID:      targetPlugin.ListingID,
+					PluginName:     targetPlugin.Name,
+					TargetVersion:  targetPlugin.Version,
+					CurrentVersion: targetPlugin.Version,
+					State:          state,
+				})
+			},
+		})
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Manifest not found: %v", err), http.StatusInternalServerError)
+			failure := plugins.ClassifyInstallError(err)
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:     targetPlugin.ListingID,
+				PluginName:    targetPlugin.Name,
+				TargetVersion: targetPlugin.Version,
+				State:         plugins.InstallStateFailed,
+				MessageKey:    failure.MessageKey,
+				Retryable:     failure.Retryable,
+			})
+			writeInstallResponse(w, http.StatusBadRequest, false, "", failure.MessageKey)
 			return
 		}
-		defer manifestFile.Close()
-
-		manifest, err := plugins.ParseManifest(manifestFile)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Invalid manifest: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		// Persist to database (T019)
-		installOpts := plugins.InstallOptions{
-			InstalledFromURL: targetPlugin.ArtifactURL,
-			SHA256:           downloadResult.ActualChecksum,
-			TrustLevel:       mapTrustTier(targetPlugin.TrustTier),
-			Uploader:         "marketplace", // TODO: Extract actual user from session
-		}
-
-		if err := plugins.PersistManifest(ctx, d.Db, manifest, installOpts); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to persist plugin: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Cleanup .part file
-		downloadMgr.CleanupPartFile(targetPlugin.ListingID)
+		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+			ListingID:      targetPlugin.ListingID,
+			PluginID:       result.PluginID,
+			PluginName:     result.Name,
+			TargetVersion:  targetPlugin.Version,
+			CurrentVersion: result.Version,
+			State:          plugins.InstallStateActive,
+		})
 
 		// Reload plugin manager to pick up new plugin
 		if err := d.Pm.Reload(ctx); err != nil {
@@ -558,11 +583,22 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":   true,
-			"message":   fmt.Sprintf("Plugin %s v%s installed successfully", manifest.Name, manifest.Version),
-			"plugin_id": manifest.ID,
+			"success":     true,
+			"message":     "",
+			"message_key": "plugins.install.success",
+			"plugin_id":   result.PluginID,
 		})
 	}
+}
+
+func writeInstallResponse(w http.ResponseWriter, status int, success bool, message string, messageKey string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     success,
+		"message":     message,
+		"message_key": messageKey,
+	})
 }
 
 // handleEnablePlugin handles enabling a plugin (T017)

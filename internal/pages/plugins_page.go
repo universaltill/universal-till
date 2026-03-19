@@ -6,13 +6,17 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/plugins", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		page := 1
 		size := 12
 		tag := r.URL.Query().Get("type")
@@ -30,6 +34,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		// LOCAL-FIRST: Use cached catalog if available
 		var items []map[string]interface{}
 		var tagsSet = make(map[string]struct{})
+		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
 
 		if d.CatalogRepo != nil {
 			// Try to get from cache first
@@ -42,11 +47,27 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 					enabled := false
 					currentVersion := ""
 					hasUpdate := false
+					statusState := ""
+					statusMessageKey := ""
+					retryable := false
 
-					if inst, exists := d.Pm.Installed[p.ListingID]; exists {
+					if status, exists := statuses[p.ListingID]; exists {
+						statusState = string(status.State)
+						currentVersion = status.CurrentVersion
+						statusMessageKey = status.MessageKey
+						retryable = status.Retryable
+						installed = status.State == plugins.InstallStateActive
+					}
+
+					if inst, exists := installedPluginForSummary(d.Pm, p); exists {
 						installed = true
 						enabled = inst.IsActive
-						currentVersion = inst.Version
+						if currentVersion == "" {
+							currentVersion = inst.Version
+						}
+						if statusState == "" {
+							statusState = string(plugins.InstallStateActive)
+						}
 
 						// Check if update available (simple string comparison - production should use semantic versioning)
 						if p.Version != currentVersion {
@@ -55,18 +76,21 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 					}
 
 					items = append(items, map[string]interface{}{
-						"id":             p.ListingID,
-						"name":           p.Name,
-						"version":        p.Version,
-						"currentVersion": currentVersion,
-						"description":    p.Description,
-						"author":         p.DeveloperID,
-						"packageUrl":     p.ArtifactURL,
-						"sha256":         p.ArtifactHash,
-						"tags":           []string{p.CanonicalType},
-						"installed":      installed,
-						"enabled":        enabled,
-						"hasUpdate":      hasUpdate,
+						"id":               p.ListingID,
+						"name":             p.Name,
+						"version":          p.Version,
+						"currentVersion":   currentVersion,
+						"description":      p.Description,
+						"author":           p.DeveloperID,
+						"packageUrl":       p.ArtifactURL,
+						"sha256":           p.ArtifactHash,
+						"tags":             []string{p.CanonicalType},
+						"installed":        installed,
+						"enabled":          enabled,
+						"hasUpdate":        hasUpdate,
+						"state":            statusState,
+						"statusMessageKey": statusMessageKey,
+						"retryable":        retryable,
 					})
 
 					// Collect tags
@@ -130,6 +154,26 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/plugins.html", data)(w, r)
 	})
+}
+
+func installedPluginForSummary(pm *plugins.Manager, summary marketplace.PluginSummary) (plugins.Plugin, bool) {
+	if pm == nil {
+		return plugins.Plugin{}, false
+	}
+
+	if listingID := strings.TrimSpace(summary.ListingID); listingID != "" {
+		if inst, exists := pm.Installed[listingID]; exists {
+			return inst, true
+		}
+	}
+
+	if pluginID := strings.TrimSpace(summary.ID); pluginID != "" {
+		if inst, exists := pm.Installed[pluginID]; exists {
+			return inst, true
+		}
+	}
+
+	return plugins.Plugin{}, false
 }
 
 // safeGetTags safely extracts plugin type as a tag, handling type assertion failures

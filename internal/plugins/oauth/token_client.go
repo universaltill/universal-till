@@ -182,10 +182,10 @@ func (tc *TokenClient) requestToken(ctx context.Context) (*CachedToken, error) {
 	}, nil
 }
 
-// getDeviceID returns a device identifier (using ClientSecret as device_id for now)
+// getDeviceID returns a stable device identifier for marketplace auth flows.
 func (tc *TokenClient) getDeviceID() string {
-	if tc.cfg.ClientSecret != "" {
-		return tc.cfg.ClientSecret
+	if tc.cfg.DeviceID != "" {
+		return tc.cfg.DeviceID
 	}
 	// Generate a stable device ID based on hostname
 	hostname, _ := os.Hostname()
