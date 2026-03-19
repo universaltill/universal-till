@@ -18,6 +18,10 @@ type ManifestVerifier struct {
 	publicKey ed25519.PublicKey
 }
 
+func (mv *ManifestVerifier) HasPublicKey() bool {
+	return mv != nil && len(mv.publicKey) == ed25519.PublicKeySize
+}
+
 // VerificationResult contains the outcome of manifest verification
 type VerificationResult struct {
 	Manifest          *Manifest

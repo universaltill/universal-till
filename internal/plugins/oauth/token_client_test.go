@@ -30,8 +30,8 @@ func TestTokenClient_GetToken_Success(t *testing.T) {
 		if reqBody["merchant_id"] != "test-client" {
 			t.Errorf("expected merchant_id 'test-client', got %s", reqBody["merchant_id"])
 		}
-		if reqBody["device_id"] != "test-secret" {
-			t.Errorf("expected device_id 'test-secret', got %s", reqBody["device_id"])
+		if reqBody["device_id"] != "test-device-1" {
+			t.Errorf("expected device_id 'test-device-1', got %s", reqBody["device_id"])
 		}
 		resp := TokenResponse{
 			Token:     "test-token-12345",
@@ -49,6 +49,7 @@ func TestTokenClient_GetToken_Success(t *testing.T) {
 		EndpointURL:  server.URL,
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
+		DeviceID:     "test-device-1",
 	}
 	client := NewTokenClient(cfg)
 	client.cachePath = filepath.Join(tmpDir, "token.json")

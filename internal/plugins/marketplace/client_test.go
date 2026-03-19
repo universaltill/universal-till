@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -96,6 +97,73 @@ func TestClient_ReportPluginStatus_OptOut(t *testing.T) {
 	err := client.ReportPluginStatus(ctx, req)
 	if err != nil {
 		t.Errorf("expected no error when telemetry is disabled, got: %v", err)
+	}
+}
+
+func TestClient_IssueDownloadToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/v1/downloads/tokens" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Fatalf("unexpected auth header %q", r.Header.Get("Authorization"))
+		}
+
+		var req IssueDownloadTokenRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.MerchantID != "merchant-1" || req.StoreID != "store-1" || req.DeviceID != "device-1" {
+			t.Fatalf("unexpected request payload %+v", req)
+		}
+
+		var body bytes.Buffer
+		if err := json.NewEncoder(&body).Encode(issueDownloadTokenEnvelope{
+			Data: &IssueDownloadTokenResponse{
+				Token:          "tok-1",
+				BundleURL:      "http://example.test/plugin.tar.gz",
+				ReleaseID:      "release-1",
+				Version:        "1.2.3",
+				ChecksumSHA256: "abc123",
+				Signature:      "sig123",
+				ExpiresAt:      "2026-03-16T16:00:00Z",
+			},
+		}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body.Bytes())
+	}))
+	defer server.Close()
+
+	cfg := &config.MarketplaceConfig{
+		EndpointURL:       server.URL,
+		APIVersion:        "1.0.0",
+		ClientID:          "test",
+		ClientSecret:      "secret",
+		RequestTimeoutSec: 30,
+	}
+	client := NewClient(cfg, &mockTokenClient{token: "test-token"})
+
+	resp, err := client.IssueDownloadToken(context.Background(), &IssueDownloadTokenRequest{
+		PluginID:   "listing-1",
+		Version:    "1.2.3",
+		MerchantID: "merchant-1",
+		StoreID:    "store-1",
+		DeviceID:   "device-1",
+		DeviceArch: "linux/amd64",
+	})
+	if err != nil {
+		t.Fatalf("IssueDownloadToken failed: %v", err)
+	}
+	if resp.BundleURL != "http://example.test/plugin.tar.gz" {
+		t.Fatalf("unexpected bundle url %q", resp.BundleURL)
+	}
+	if resp.Signature != "sig123" {
+		t.Fatalf("unexpected signature %q", resp.Signature)
 	}
 }
 

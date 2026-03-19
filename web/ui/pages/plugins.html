@@ -1,5 +1,6 @@
 {{ define "content" }}
 <h1>Plugins</h1>
+{{ template "plugin_install_modal" . }}
 
 <!-- Tab Navigation -->
 <div class="tabs mb-4" style="border-bottom: 2px solid #e5e7eb;">
@@ -20,6 +21,21 @@
 <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 1000;"></div>
 
 <script id="plugins-data" type="application/json">{{ .pluginsJSON }}</script>
+<script>
+  const pluginStatusLabels = {
+    requested: '{{ T "plugins.status.requested" }}',
+    downloading: '{{ T "plugins.status.downloading" }}',
+    installing: '{{ T "plugins.status.installing" }}',
+    active: '{{ T "plugins.status.active" }}',
+    failed: '{{ T "plugins.status.failed" }}'
+  };
+  const pluginStatusMessages = {
+    "plugins.install.error.retryable": '{{ T "plugins.install.error.retryable" }}',
+    "plugins.install.error.invalid_package": '{{ T "plugins.install.error.invalid_package" }}',
+    "plugins.install.error.incompatible": '{{ T "plugins.install.error.incompatible" }}',
+    "plugins.install.error.configuration": '{{ T "plugins.install.error.configuration" }}'
+  };
+</script>
 
 <div class="card" x-data="{ 
     q: '', 
@@ -42,6 +58,8 @@
       const term = this.q.toLowerCase();
       return this.items.filter(i => i.name.toLowerCase().includes(term) || (i.description || '').toLowerCase().includes(term));
     },
+    stateLabel(state) { return pluginStatusLabels[state] || state || ''; },
+    stateMessage(messageKey) { return pluginStatusMessages[messageKey] || ''; },
     totalPages() {
       const count = this.total || this.filtered().length || 1;
       return Math.max(1, Math.ceil(count / this.pageSize));
@@ -155,12 +173,27 @@
           <span x-show="p.hasUpdate" style="background:#ff9800; color:white; padding:.2rem .4rem; border-radius:4px; font-size:.8rem; font-weight:bold">UPDATE AVAILABLE</span>
           <span x-show="p.version" style="background:#e9ecef; padding:.2rem .4rem; border-radius:4px; font-size:.8rem" x-text="'v' + p.version"></span>
         </div>
-        </div>
         <p x-text="p.description"></p>
-        <div x-show="st.installed && p.version" style="color:#28a745; font-size:.9rem; margin-bottom:.5rem">
-          ✓ Installed (v<span x-text="p.version"></span>)
+        <div x-show="p.state" style="margin-bottom:.75rem">
+          <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.35rem">
+            <span style="background:#eef2ff; color:#4338ca; padding:.2rem .5rem; border-radius:999px; font-size:.8rem; font-weight:600" x-text="stateLabel(p.state)"></span>
+            <span x-show="p.currentVersion" style="color:#374151; font-size:.9rem">
+              {{ T "plugins.current_version" }} <strong x-text="'v' + p.currentVersion"></strong>
+            </span>
+          </div>
+          <p x-show="p.statusMessageKey" style="margin:0; color:#b91c1c; font-size:.9rem" x-text="stateMessage(p.statusMessageKey)"></p>
         </div>
         <div class="actions" style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
+          <template x-if="p.retryable && p.state === 'failed'">
+            <button
+              class="btn"
+              data-testid="plugin-retry-install"
+              :disabled="loading"
+              @click.prevent="installPlugin(p.id, p.name)">
+              <span x-show="!loading">{{ T "plugins.retry" }}</span>
+              <span x-show="loading">⏳</span>
+            </button>
+          </template>
           <template x-if="!st.downloaded">
             <button class="btn" :disabled="loading" @click.prevent="post('/api/plugins/download', { id: p.id, bundleUrl: p.bundleUrl || '' }, 'Download')">
               <span x-show="!loading">Download</span>

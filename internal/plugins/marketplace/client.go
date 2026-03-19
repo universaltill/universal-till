@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -87,6 +88,20 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 	log.Printf("[DEBUG] Marketplace response: %d for %s %s", resp.StatusCode, method, reqURL)
 
 	return resp, nil
+}
+
+func DeviceIDFromConfig(cfg *config.MarketplaceConfig) string {
+	if cfg == nil {
+		return "pos-device-1"
+	}
+	if cfg.DeviceID != "" {
+		return cfg.DeviceID
+	}
+	hostname, _ := os.Hostname()
+	if hostname != "" {
+		return hostname
+	}
+	return "pos-device-1"
 }
 
 // CatalogService implements catalog browsing operations.
@@ -236,128 +251,62 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 // IssueDownloadTokenRequest matches the proto contract (legacy fields maintained for compatibility).
 type IssueDownloadTokenRequest struct {
 	PluginID   string `json:"plugin_id"`
-	Version    string `json:"version"`
+	Version    string `json:"version,omitempty"`
+	MerchantID string `json:"merchant_id"`
+	StoreID    string `json:"store_id"`
 	DeviceID   string `json:"device_id"`
-	DeviceArch string `json:"device_arch"` // Will be mapped to 'arch' query param
+	DeviceArch string `json:"device_arch"`
 }
 
-// Checksum represents file integrity checksum.
-type Checksum struct {
-	SHA256 string `json:"sha256"`
+type issueDownloadTokenEnvelope struct {
+	Data  *IssueDownloadTokenResponse `json:"data"`
+	Error *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
-// IssueDownloadTokenResponse contains download authorization (matches OpenAPI DownloadURLResponse).
+// IssueDownloadTokenResponse contains download authorization.
 type IssueDownloadTokenResponse struct {
-	// OpenAPI fields
-	DownloadURL   string   `json:"download_url"`
-	ExpiresAt     string   `json:"expires_at"` // ISO 8601 timestamp
-	FileSizeBytes int64    `json:"file_size_bytes"`
-	Checksum      Checksum `json:"checksum"`
-	Version       string   `json:"version"`
-
-	// Legacy fields for backward compatibility
-	ArtifactURL   string `json:"artifact_url,omitempty"`
-	Token         string `json:"token,omitempty"`
-	ExpiresAtUnix int64  `json:"expires_at_unix,omitempty"`
-	SHA256        string `json:"sha256,omitempty"`
-	Signature     string `json:"signature,omitempty"`
+	Token              string `json:"token"`
+	BundleURL          string `json:"bundle_url"`
+	ReleaseID          string `json:"release_id"`
+	Version            string `json:"version"`
+	ChecksumSHA256     string `json:"checksum_sha256"`
+	Signature          string `json:"signature"`
+	ExpiresAt          string `json:"expires_at"`
+	ResumableSupported bool   `json:"resumable_supported"`
+	ResumableURL       string `json:"resumable_url"`
 }
 
 // IssueDownloadToken requests a pre-signed download URL for a plugin.
 func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadTokenRequest) (*IssueDownloadTokenResponse, error) {
-	// OpenAPI endpoint: GET /v1/downloads/{plugin_id}/url?arch=&platform=&version=
-	version := req.Version
-	if version == "" {
-		version = "latest"
-	}
-
-	// Map DeviceArch to arch and platform
-	arch, platform := mapDeviceArchToPlatform(req.DeviceArch)
-
-	endpoint := c.cfg.EndpointURL
-	if c.cfg.DevOverrideURL != "" {
-		endpoint = c.cfg.DevOverrideURL
-	}
-
-	reqURL, err := url.JoinPath(endpoint, fmt.Sprintf("/v1/downloads/%s/url", req.PluginID))
+	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("invalid request URL: %w", err)
+		return nil, fmt.Errorf("failed to marshal download request: %w", err)
 	}
 
-	parsedURL, err := url.Parse(reqURL)
+	resp, err := c.doRequest(ctx, http.MethodPost, "/v1/downloads/tokens", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL: %w", err)
-	}
-
-	query := parsedURL.Query()
-	query.Set("arch", arch)
-	query.Set("platform", platform)
-	query.Set("version", version)
-	parsedURL.RawQuery = query.Encode()
-
-	token, err := c.tokenClient.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth token: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download URL request failed: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("download token request failed: status %d", resp.StatusCode)
 	}
 
-	var result IssueDownloadTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode download URL response: %w", err)
+	var envelope issueDownloadTokenEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("failed to decode download token response: %w", err)
 	}
-
-	// Map OpenAPI fields to legacy fields for backward compatibility with existing code
-	if result.DownloadURL != "" && result.ArtifactURL == "" {
-		result.ArtifactURL = result.DownloadURL
+	if envelope.Error != nil {
+		return nil, fmt.Errorf("download token request failed: %s", envelope.Error.Message)
 	}
-	if result.Checksum.SHA256 != "" && len(result.SHA256) == 0 {
-		// Convert hex string to bytes if needed
-		result.SHA256 = result.Checksum.SHA256
+	if envelope.Data == nil {
+		return nil, fmt.Errorf("download token request failed: missing response data")
 	}
-	if result.ExpiresAt != "" && result.ExpiresAtUnix == 0 {
-		// Parse ISO 8601 to Unix timestamp
-		if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
-			result.ExpiresAtUnix = t.Unix()
-		}
-	}
-
-	return &result, nil
-}
-
-// mapDeviceArchToPlatform converts legacy DeviceArch to OpenAPI arch+platform.
-func mapDeviceArchToPlatform(deviceArch string) (arch, platform string) {
-	switch deviceArch {
-	case "linux/amd64", "amd64":
-		return "amd64", "linux"
-	case "linux/arm64", "arm64":
-		return "arm64", "linux"
-	case "linux/armv7", "armv7":
-		return "armv7", "linux"
-	case "darwin/amd64":
-		return "amd64", "darwin"
-	case "darwin/arm64":
-		return "arm64", "darwin"
-	default:
-		// Default to linux/amd64
-		return "amd64", "linux"
-	}
+	return envelope.Data, nil
 }
 
 // AckDownloadRequest reports download outcome.

@@ -18,6 +18,9 @@ type Locales struct {
 type MarketplaceConfig struct {
 	// Production/Staging/Custom endpoint (FR-015)
 	EndpointURL string
+	StoreID     string
+	DeviceID    string
+	PublicKey   string
 
 	// OAuth2 client credentials for marketplace authentication (FR-018)
 	ClientID     string
@@ -72,6 +75,9 @@ func Init() (*Config, error) {
 		DevMode:  devMode,
 		Marketplace: MarketplaceConfig{
 			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081"),
+			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", "My Store")),
+			DeviceID:              getenv("UT_MARKETPLACE_DEVICE_ID", ""),
+			PublicKey:             getenv("UT_MARKETPLACE_PUBLIC_KEY", ""),
 			ClientID:              getenv("UT_MARKETPLACE_CLIENT_ID", ""),
 			ClientSecret:          getenv("UT_MARKETPLACE_CLIENT_SECRET", ""),
 			APIVersion:            getenv("UT_MARKETPLACE_API_VERSION", "1.0.0"),
