@@ -21,6 +21,8 @@ type MarketplaceConfig struct {
 	StoreID     string
 	DeviceID    string
 	PublicKey   string
+	// UploadToken authenticates the install-intent status-report endpoint.
+	UploadToken string
 
 	// OAuth2 client credentials for marketplace authentication (FR-018)
 	ClientID     string
@@ -78,6 +80,7 @@ func Init() (*Config, error) {
 			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", "My Store")),
 			DeviceID:              getenv("UT_MARKETPLACE_DEVICE_ID", ""),
 			PublicKey:             getenv("UT_MARKETPLACE_PUBLIC_KEY", ""),
+			UploadToken:           getenv("UT_MARKETPLACE_UPLOAD_TOKEN", ""),
 			ClientID:              getenv("UT_MARKETPLACE_CLIENT_ID", ""),
 			ClientSecret:          getenv("UT_MARKETPLACE_CLIENT_SECRET", ""),
 			APIVersion:            getenv("UT_MARKETPLACE_API_VERSION", "1.0.0"),
