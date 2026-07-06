@@ -23,6 +23,7 @@ type MarketplaceInstaller struct {
 	pluginBaseDir  string
 	downloadTmpDir string
 	verifier       *ManifestVerifier
+	reporter       *MarketplaceReporter
 }
 
 type MarketplaceInstallRequest struct {
@@ -33,6 +34,9 @@ type MarketplaceInstallRequest struct {
 	StoreID    string
 	DeviceID   string
 	DeviceArch string
+	// IntentID, when set, is the marketplace install-intent this install is
+	// fulfilling; each state transition is reported back to it (story 1-1).
+	IntentID      string
 	OnStateChange func(InstallLifecycleState)
 }
 
@@ -56,13 +60,39 @@ func NewMarketplaceInstaller(cfg *config.Config, client *marketplace.Client, db 
 		pluginBaseDir:  "./data/plugins",
 		downloadTmpDir: "./data/plugins/tmp",
 		verifier:       verifier,
+		reporter:       NewMarketplaceReporter(cfg.Marketplace.EndpointURL, cfg.Marketplace.UploadToken),
 	}, nil
 }
 
-func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInstallRequest) (*MarketplaceInstallResult, error) {
+// emitState notifies the caller's OnStateChange callback and reports the state
+// to the marketplace install-intent (when IntentID is set).
+func (i *MarketplaceInstaller) emitState(ctx context.Context, req MarketplaceInstallRequest, state InstallLifecycleState, errDetail string) {
+	if req.OnStateChange != nil {
+		req.OnStateChange(state)
+	}
+	i.reporter.Report(ctx, req.IntentID, state, errDetail)
+}
+
+func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInstallRequest) (result *MarketplaceInstallResult, err error) {
 	if i == nil || i.client == nil || i.db == nil {
 		return nil, fmt.Errorf("marketplace installer not configured")
 	}
+	// Report the terminal state to the marketplace intent: active on success,
+	// failed (with the error) otherwise. i is non-nil past the guard above.
+	defer func() {
+		// Best-effort terminal report on a FRESH context: the install ctx may be
+		// cancelled precisely when we most want the failed report to land (F1).
+		// Report only to the marketplace here (not emitState) — the caller's
+		// OnStateChange for terminal states is handled after Install returns with
+		// complete data, so calling it here would double-write partial data (F2).
+		rCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err != nil {
+			i.reporter.Report(rCtx, req.IntentID, InstallStateFailed, err.Error())
+		} else {
+			i.reporter.Report(rCtx, req.IntentID, InstallStateActive, "")
+		}
+	}()
 	if !i.verifier.HasPublicKey() {
 		return nil, fmt.Errorf("marketplace public key not configured")
 	}
@@ -81,9 +111,7 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	if strings.TrimSpace(req.DeviceArch) == "" {
 		req.DeviceArch = runtime.GOOS + "/" + runtime.GOARCH
 	}
-	if req.OnStateChange != nil {
-		req.OnStateChange(InstallStateDownloading)
-	}
+	i.emitState(ctx, req, InstallStateDownloading, "")
 
 	tokenResp, err := i.client.IssueDownloadToken(ctx, &marketplace.IssueDownloadTokenRequest{
 		PluginID:   req.ListingID,
@@ -125,9 +153,7 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	if err := extractMarketplaceTarGz(downloadResult.FilePath, extractDir); err != nil {
 		return nil, fmt.Errorf("extract plugin bundle: %w", err)
 	}
-	if req.OnStateChange != nil {
-		req.OnStateChange(InstallStateInstalling)
-	}
+	i.emitState(ctx, req, InstallStateInstalling, "")
 
 	manifestPath := filepath.Join(extractDir, "manifest.json")
 	verification, err := i.verifier.VerifyManifest(manifestPath)
