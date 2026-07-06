@@ -80,10 +80,17 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	// Report the terminal state to the marketplace intent: active on success,
 	// failed (with the error) otherwise. i is non-nil past the guard above.
 	defer func() {
+		// Best-effort terminal report on a FRESH context: the install ctx may be
+		// cancelled precisely when we most want the failed report to land (F1).
+		// Report only to the marketplace here (not emitState) — the caller's
+		// OnStateChange for terminal states is handled after Install returns with
+		// complete data, so calling it here would double-write partial data (F2).
+		rCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 		if err != nil {
-			i.emitState(ctx, req, InstallStateFailed, err.Error())
+			i.reporter.Report(rCtx, req.IntentID, InstallStateFailed, err.Error())
 		} else {
-			i.emitState(ctx, req, InstallStateActive, "")
+			i.reporter.Report(rCtx, req.IntentID, InstallStateActive, "")
 		}
 	}()
 	if !i.verifier.HasPublicKey() {
