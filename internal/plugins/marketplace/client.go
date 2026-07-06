@@ -50,9 +50,12 @@ func NewClient(cfg *config.MarketplaceConfig, tokenClient oauth.TokenProvider) *
 
 // doRequest performs an authenticated HTTP request with API version metadata.
 func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	token, err := c.tokenClient.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth token: %w", err)
+	// Auth is optional: when marketplace OAuth2 credentials are not configured
+	// (or the marketplace has auth disabled), proceed unauthenticated.
+	token, tokenErr := c.tokenClient.GetToken(ctx)
+	if tokenErr != nil {
+		log.Printf("[DEBUG] proceeding without marketplace auth token: %v", tokenErr)
+		token = ""
 	}
 
 	endpoint := c.cfg.EndpointURL
@@ -73,8 +76,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Add OAuth2 bearer token
-	req.Header.Set("Authorization", "Bearer "+token)
+	// Add OAuth2 bearer token when present
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	// Add API version metadata per FR-016
 	req.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
 	req.Header.Set("Content-Type", "application/json")
@@ -88,6 +93,25 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 	log.Printf("[DEBUG] Marketplace response: %d for %s %s", resp.StatusCode, method, reqURL)
 
 	return resp, nil
+}
+
+// ResolveURL turns a possibly-relative marketplace URL (e.g. the bundle_url
+// "/api/v1/downloads/artifact/...") into an absolute URL against the configured
+// endpoint origin. Absolute inputs are returned unchanged.
+func (c *Client) ResolveURL(ref string) (string, error) {
+	endpoint := c.cfg.EndpointURL
+	if c.cfg.DevOverrideURL != "" {
+		endpoint = c.cfg.DevOverrideURL
+	}
+	base, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("invalid marketplace endpoint %q: %w", endpoint, err)
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return "", fmt.Errorf("invalid bundle url %q: %w", ref, err)
+	}
+	return base.ResolveReference(r).String(), nil
 }
 
 func DeviceIDFromConfig(cfg *config.MarketplaceConfig) string {
@@ -209,9 +233,12 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 	parsedURL.RawQuery = params.Encode()
 
 	// Get token
-	token, err := c.tokenClient.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth token: %w", err)
+	// Auth is optional: when marketplace OAuth2 credentials are not configured
+	// (or the marketplace has auth disabled), proceed unauthenticated.
+	token, tokenErr := c.tokenClient.GetToken(ctx)
+	if tokenErr != nil {
+		log.Printf("[DEBUG] proceeding without marketplace auth token: %v", tokenErr)
+		token = ""
 	}
 
 	// Create request
@@ -250,7 +277,7 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 
 // IssueDownloadTokenRequest matches the proto contract (legacy fields maintained for compatibility).
 type IssueDownloadTokenRequest struct {
-	PluginID   string `json:"plugin_id"`
+	PluginID   string `json:"listing_id"`
 	Version    string `json:"version,omitempty"`
 	MerchantID string `json:"merchant_id"`
 	StoreID    string `json:"store_id"`
@@ -378,9 +405,12 @@ func (c *Client) GetRevocations(ctx context.Context, req *GetRevocationsRequest)
 	query.Set("since_version", fmt.Sprintf("%d", req.SinceVersion))
 	parsedURL.RawQuery = query.Encode()
 
-	token, err := c.tokenClient.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth token: %w", err)
+	// Auth is optional: when marketplace OAuth2 credentials are not configured
+	// (or the marketplace has auth disabled), proceed unauthenticated.
+	token, tokenErr := c.tokenClient.GetToken(ctx)
+	if tokenErr != nil {
+		log.Printf("[DEBUG] proceeding without marketplace auth token: %v", tokenErr)
+		token = ""
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
