@@ -26,13 +26,13 @@ type MarketplaceInstaller struct {
 }
 
 type MarketplaceInstallRequest struct {
-	ListingID  string
-	Version    string
-	TrustTier  string
-	MerchantID string
-	StoreID    string
-	DeviceID   string
-	DeviceArch string
+	ListingID     string
+	Version       string
+	TrustTier     string
+	MerchantID    string
+	StoreID       string
+	DeviceID      string
+	DeviceArch    string
 	OnStateChange func(InstallLifecycleState)
 }
 
@@ -100,9 +100,14 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 		return nil, fmt.Errorf("marketplace download metadata is incomplete")
 	}
 
+	bundleURL, err := i.client.ResolveURL(tokenResp.BundleURL)
+	if err != nil {
+		return nil, err
+	}
+
 	downloadMgr := NewDownloadManager(i.downloadTmpDir)
 	downloadResult, err := downloadMgr.Download(ctx, &DownloadRequest{
-		URL:              tokenResp.BundleURL,
+		URL:              bundleURL,
 		PluginID:         req.ListingID,
 		ExpectedChecksum: tokenResp.ChecksumSHA256,
 		MaxSizeBytes:     200 * 1024 * 1024,
