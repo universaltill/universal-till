@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -57,7 +58,14 @@ func (e *Exporter) Export(ctx context.Context, req *ExportRequest) (*ExportResul
 		return nil, fmt.Errorf("destination path is required")
 	}
 
+	// Guard against path traversal: id/version may come from an HTTP request, so
+	// the resolved directory must stay under the plugin base dir.
 	srcDir := filepath.Join(e.pluginBaseDir, req.PluginID, req.Version)
+	cleanBase := filepath.Clean(e.pluginBaseDir)
+	if srcDir != cleanBase && !strings.HasPrefix(filepath.Clean(srcDir), cleanBase+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("invalid plugin id/version (path traversal)")
+	}
+
 	info, err := os.Stat(srcDir)
 	if err != nil {
 		return nil, fmt.Errorf("plugin %s v%s not found on disk: %w", req.PluginID, req.Version, err)

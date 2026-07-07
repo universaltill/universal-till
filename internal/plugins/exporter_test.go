@@ -123,6 +123,21 @@ func TestExport_Validation(t *testing.T) {
 	}
 }
 
+func TestExport_RejectsPathTraversal(t *testing.T) {
+	base := t.TempDir()
+	// Plant a manifest OUTSIDE the base to prove traversal can't reach it.
+	outside := filepath.Dir(base)
+	writeTestFile(t, filepath.Join(outside, "manifest.json"), `{"id":"x","version":"1"}`)
+
+	e := NewExporter(filepath.Join(base, "plugins"))
+	_, err := e.Export(context.Background(), &ExportRequest{
+		PluginID: "..", Version: "..", DestPath: filepath.Join(t.TempDir(), "o.tar.gz"),
+	})
+	if err == nil {
+		t.Fatal("expected path-traversal rejection")
+	}
+}
+
 func TestExport_MissingManifest(t *testing.T) {
 	base := t.TempDir()
 	writeTestFile(t, filepath.Join(base, "com.x", "1.0.0", "bin", "app"), "x") // no manifest.json
