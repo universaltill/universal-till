@@ -108,7 +108,7 @@ cd universal-till
 make build
 
 # Run
-./bin/edge
+make run          # or: ./bin/unitill-pos
 ```
 
 Open http://localhost:8080
@@ -120,9 +120,9 @@ Open http://localhost:8080
 git clone https://github.com/universaltill/universal-till.git
 cd universal-till
 
-# Copy and configure environment
-cp edge.env.example edge.env.dev
-# Edit edge.env.dev with your settings
+# Configure environment (docker-compose.edge.yml reads pos.env.dev)
+cp pos.env.example pos.env.dev
+# Edit pos.env.dev with your settings
 
 # Run with Docker Compose
 docker compose -f docker-compose.edge.yml up --build
@@ -130,26 +130,33 @@ docker compose -f docker-compose.edge.yml up --build
 
 Open http://localhost:8080
 
-### Option 4: Development Mode (with Mock Marketplace)
+### Option 4: Development Mode (with the marketplace)
 
-For development and testing with marketplace features:
+For development and testing with plugin-marketplace features:
 
 ```bash
-# 1. Start mock marketplace (in one terminal)
-go run scripts/mock-marketplace/main.go
-# Mock runs on :8082
-
-# 2. Start POS with dev environment (in another terminal)
+# Start the POS with the dev environment
 ./scripts/dev.sh
 # Or manually:
-# export $(grep -v '^#' pos.env.dev | grep -v '^$' | xargs)
+# set -a; source <(grep -v '^#' pos.env.dev | grep -v '^$'); set +a
 # make build && ./bin/unitill-pos
 ```
 
-This loads configuration from `pos.env.dev` which includes:
-- Mock marketplace endpoint (http://localhost:8082)
-- Dev OAuth credentials
-- BCP 47 locale settings
+`./scripts/dev.sh` loads `pos.env.dev`, which by default points at the **deployed
+dev marketplace** in the homelab cluster
+(`https://marketplace.home.taskrunnertech.co.uk/api`). It runs with auth disabled,
+so **no OAuth client secret / API key is required** — you can browse the plugin
+store and one-click install the FAQ plugin out of the box. `pos.env.dev` also
+carries the marketplace's Ed25519 signing public key, which the POS uses to verify
+plugin signatures before installing.
+
+**Fully offline?** Point `UT_MARKETPLACE_ENDPOINT_URL` at the mock instead and run
+it in another terminal:
+
+```bash
+go run scripts/mock-marketplace/main.go   # serves a stub marketplace on :8082
+# then set UT_MARKETPLACE_ENDPOINT_URL=http://localhost:8082 in pos.env.dev
+```
 
 ---
 
@@ -182,11 +189,14 @@ UT_CURRENCY=USD                        # Currency code (USD, GBP, EUR, etc.)
 UT_TAX_INCLUSIVE=true                  # Tax included in prices?
 UT_TAX_RATE=20                         # Tax rate percentage
 
-# Marketplace integration (cloud plugin store)
-UT_MARKETPLACE_ENDPOINT_URL=http://127.0.0.1:8081  # Production marketplace API
-# For local testing with mock: http://localhost:8082
-UT_MARKETPLACE_CLIENT_ID=              # OAuth2 client ID (leave empty for local dev)
-UT_MARKETPLACE_CLIENT_SECRET=          # OAuth2 client secret
+# Marketplace integration (cloud plugin store). The endpoint must include /api.
+UT_MARKETPLACE_ENDPOINT_URL=https://marketplace.home.taskrunnertech.co.uk/api  # Dev marketplace
+# Fully offline mock instead: http://localhost:8082 (go run scripts/mock-marketplace/main.go)
+UT_MARKETPLACE_PUBLIC_KEY=             # Ed25519 signing key (hex) used to verify plugin signatures
+UT_MARKETPLACE_CLIENT_ID=              # Doubles as merchant_id on the install path
+UT_MARKETPLACE_STORE_ID=               # Store identifier for entitlement/install
+UT_MARKETPLACE_DEVICE_ID=              # Device identifier (defaults to hostname)
+UT_MARKETPLACE_CLIENT_SECRET=          # OAuth2 client secret (only if the marketplace enforces auth)
 UT_MARKETPLACE_API_VERSION=1.0.0       # Marketplace API version
 UT_MARKETPLACE_TELEMETRY_OPT_IN=false  # Send usage telemetry to marketplace
 UT_DEV_MODE=false                      # Enable developer mode features
