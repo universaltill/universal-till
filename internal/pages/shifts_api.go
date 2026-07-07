@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -77,7 +78,7 @@ func OpenShift(dp *common.Deps) http.HandlerFunc {
 		shiftID, err := pos.OpenShift(ctx, dp.Db, pos.ShiftInput{
 			RegisterID:  req.RegisterID,
 			CashierID:   req.CashierID,
-			OpeningCash: req.OpeningCash,
+			OpeningCash: money.FromMinor(req.OpeningCash),
 		})
 		if err != nil {
 			respondShiftError(w, r, http.StatusInternalServerError, err.Error())
@@ -163,7 +164,7 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 		// Close shift
 		err = pos.CloseShift(ctx, dp.Db, pos.ShiftCloseInput{
 			ShiftID:     req.ShiftID,
-			ClosingCash: req.ClosingCash,
+			ClosingCash: money.FromMinor(req.ClosingCash),
 			Note:        req.Note,
 		})
 		if err != nil {
@@ -254,7 +255,7 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 		adjustmentID, err := pos.RecordCashAdjustment(ctx, dp.Db, pos.CashAdjustmentInput{
 			ShiftID: req.ShiftID,
 			Type:    req.Type,
-			Amount:  req.Amount,
+			Amount:  money.FromMinor(req.Amount),
 			Reason:  req.Reason,
 			ActorID: actorID,
 		})
