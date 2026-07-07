@@ -456,121 +456,58 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		// Check if catalog repository is available
-		if d.CatalogRepo == nil {
+		// Install directly from the listing ID. The download-token endpoint
+		// resolves the approved release for the listing, and the installer verifies
+		// the Ed25519 signature and manifest compatibility (device_arch,
+		// min_pos_version) itself — the signed manifest is the source of truth. We
+		// deliberately do not parse the marketplace catalog here: its summary schema
+		// differs from the client model, and the manifest check is authoritative.
+		systemArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+			ListingID: req.ListingID,
+			State:     plugins.InstallStateRequested,
+		})
+
+		client := marketplace.NewClient(&d.Cfg.Marketplace, oauth.NewTokenClient(&d.Cfg.Marketplace))
+		installer, err := plugins.NewMarketplaceInstaller(d.Cfg, client, d.Db)
+		if err != nil {
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 				ListingID:  req.ListingID,
 				State:      plugins.InstallStateFailed,
 				MessageKey: "plugins.install.error.configuration",
 				Retryable:  false,
 			})
-			writeInstallResponse(w, http.StatusServiceUnavailable, false, "", "plugins.install.error.configuration")
-			return
-		}
-
-		// Get plugin details from catalog
-		snapshot, _, err := d.CatalogRepo.Get()
-		if err != nil {
-			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-				ListingID:  req.ListingID,
-				State:      plugins.InstallStateFailed,
-				MessageKey: "plugins.install.error.retryable",
-				Retryable:  true,
-			})
-			writeInstallResponse(w, http.StatusInternalServerError, false, "", "plugins.install.error.retryable")
-			return
-		}
-
-		var targetPlugin *marketplace.PluginSummary
-		for _, p := range snapshot.Plugins {
-			if p.ListingID == req.ListingID {
-				targetPlugin = &p
-				break
-			}
-		}
-
-		if targetPlugin == nil {
-			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-				ListingID:  req.ListingID,
-				State:      plugins.InstallStateFailed,
-				MessageKey: "plugins.install.error.retryable",
-				Retryable:  true,
-			})
-			writeInstallResponse(w, http.StatusNotFound, false, "", "plugins.install.error.not_found")
-			return
-		}
-		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-			ListingID:     targetPlugin.ListingID,
-			PluginName:    targetPlugin.Name,
-			TargetVersion: targetPlugin.Version,
-			State:         plugins.InstallStateRequested,
-		})
-
-		// T019a: Verify compatibility before installation
-		systemArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-		if targetPlugin.DeviceArch != systemArch {
-			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-				ListingID:     targetPlugin.ListingID,
-				PluginName:    targetPlugin.Name,
-				TargetVersion: targetPlugin.Version,
-				State:         plugins.InstallStateFailed,
-				MessageKey:    "plugins.install.error.incompatible",
-				Retryable:     false,
-			})
-			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.incompatible")
-			return
-		}
-
-		client := marketplace.NewClient(&d.Cfg.Marketplace, oauth.NewTokenClient(&d.Cfg.Marketplace))
-		installer, err := plugins.NewMarketplaceInstaller(d.Cfg, client, d.Db)
-		if err != nil {
-			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-				ListingID:     targetPlugin.ListingID,
-				PluginName:    targetPlugin.Name,
-				TargetVersion: targetPlugin.Version,
-				State:         plugins.InstallStateFailed,
-				MessageKey:    "plugins.install.error.configuration",
-				Retryable:     false,
-			})
 			writeInstallResponse(w, http.StatusInternalServerError, false, "", "plugins.install.error.configuration")
 			return
 		}
 		result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
-			ListingID:  targetPlugin.ListingID,
-			Version:    targetPlugin.Version,
-			TrustTier:  targetPlugin.TrustTier,
+			ListingID:  req.ListingID,
 			MerchantID: d.Cfg.Marketplace.ClientID,
 			StoreID:    d.Cfg.Marketplace.StoreID,
 			DeviceID:   marketplace.DeviceIDFromConfig(&d.Cfg.Marketplace),
 			DeviceArch: systemArch,
 			OnStateChange: func(state plugins.InstallLifecycleState) {
 				_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-					ListingID:      targetPlugin.ListingID,
-					PluginName:     targetPlugin.Name,
-					TargetVersion:  targetPlugin.Version,
-					CurrentVersion: targetPlugin.Version,
-					State:          state,
+					ListingID: req.ListingID,
+					State:     state,
 				})
 			},
 		})
 		if err != nil {
 			failure := plugins.ClassifyInstallError(err)
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-				ListingID:     targetPlugin.ListingID,
-				PluginName:    targetPlugin.Name,
-				TargetVersion: targetPlugin.Version,
-				State:         plugins.InstallStateFailed,
-				MessageKey:    failure.MessageKey,
-				Retryable:     failure.Retryable,
+				ListingID:  req.ListingID,
+				State:      plugins.InstallStateFailed,
+				MessageKey: failure.MessageKey,
+				Retryable:  failure.Retryable,
 			})
 			writeInstallResponse(w, http.StatusBadRequest, false, "", failure.MessageKey)
 			return
 		}
 		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-			ListingID:      targetPlugin.ListingID,
+			ListingID:      req.ListingID,
 			PluginID:       result.PluginID,
 			PluginName:     result.Name,
-			TargetVersion:  targetPlugin.Version,
 			CurrentVersion: result.Version,
 			State:          plugins.InstallStateActive,
 		})
