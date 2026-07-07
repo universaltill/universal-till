@@ -1,22 +1,26 @@
 package pos
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/universaltill/universal-till/internal/money"
+)
 
 type PriceResolver interface {
 	Resolve(code string) (BasketLine, bool)
 }
 
 type Service struct {
-	cfg      Config
-	basket   Basket
-	resolver PriceResolver
-	tax      TaxEngine
-	lines    []BasketLine // persisted after completion
+	cfg       Config
+	basket    Basket
+	resolver  PriceResolver
+	tax       TaxEngine
+	lines     []BasketLine // persisted after completion
 	scanCache map[string]BasketLine
 	// discount can be fixed amount or percentage basis points (1% = 100)
 	discountType      string
-	discountValue     int64
-	discountPercentBP int64
+	discountValue     money.Money // fixed discount amount (minor units)
+	discountPercentBP int64       // percentage discount as basis points (a rate, not money)
 	customerID        string
 	customerName      string
 }
@@ -36,27 +40,27 @@ func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
 }
 
 type BasketLine struct {
-	SKU          string  `json:"sku"`
-	Name         string  `json:"name"`
-	Qty          float64 `json:"qty"`
-	PriceCents   int64   `json:"priceCents"`
-	LineDiscount int64   `json:"lineDiscount,omitempty"`
-	LineTotal    int64   `json:"lineTotal,omitempty"`
-	ImageURL     string  `json:"imageUrl,omitempty"`
-	ItemID       string  `json:"-"`
-	VariantID    string  `json:"-"`
-	TaxRateBP    int     `json:"-"`
-	IsWeighed    bool    `json:"-"`
+	SKU          string      `json:"sku"`
+	Name         string      `json:"name"`
+	Qty          float64     `json:"qty"`
+	PriceCents   money.Money `json:"priceCents"`
+	LineDiscount money.Money `json:"lineDiscount,omitempty"`
+	LineTotal    money.Money `json:"lineTotal,omitempty"`
+	ImageURL     string      `json:"imageUrl,omitempty"`
+	ItemID       string      `json:"-"`
+	VariantID    string      `json:"-"`
+	TaxRateBP    int         `json:"-"`
+	IsWeighed    bool        `json:"-"`
 }
 
 type Basket struct {
 	Lines        []BasketLine `json:"lines"`
-	Subtotal     int64        `json:"subtotal"`
-	Tax          int64        `json:"tax"`
-	Total        int64        `json:"total"`
-	Discount     int64        `json:"discount"`
+	Subtotal     money.Money  `json:"subtotal"`
+	Tax          money.Money  `json:"tax"`
+	Total        money.Money  `json:"total"`
+	Discount     money.Money  `json:"discount"`
 	DiscountType string       `json:"discountType,omitempty"` // amount|percent
-	DiscountRaw  int64        `json:"discountRaw,omitempty"`  // minor units or basis points
+	DiscountRaw  int64        `json:"discountRaw,omitempty"`  // minor units or basis points (kept raw)
 	CustomerID   string       `json:"customerId,omitempty"`
 	CustomerName string       `json:"customerName,omitempty"`
 	ToastMessage string       `json:"toastMessage,omitempty"`
@@ -175,30 +179,30 @@ func (s *Service) findLineIndex(code string) int {
 }
 
 func (s *Service) recomputeTotals() {
-	var sub int64
+	var sub money.Money
 	for i := range s.lines {
 		l := &s.lines[i]
 		lineBase := AmountForQuantity(l.PriceCents, l.Qty)
-		lineNet := lineBase - l.LineDiscount
-		if lineNet < 0 {
+		lineNet := lineBase.Sub(l.LineDiscount)
+		if lineNet.IsNegative() {
 			lineNet = 0
 		}
 		l.LineTotal = lineNet
-		sub += lineNet
+		sub = sub.Add(lineNet)
 	}
 	s.basket.Lines = append([]BasketLine{}, s.lines...)
 	s.basket.Subtotal = sub
-	discount := int64(0)
+	var discount money.Money
 	switch s.discountType {
 	case "percent":
-		if s.discountPercentBP > 0 && sub > 0 {
-			// round to nearest minor unit
-			discount = (sub*int64(s.discountPercentBP) + 9999) / 10000
+		if s.discountPercentBP > 0 && sub.IsPositive() {
+			// round to nearest minor unit (unchanged: (sub*bp + 9999)/10000)
+			discount = money.FromMinor((sub.Minor()*int64(s.discountPercentBP) + 9999) / 10000)
 		}
 	default:
 		discount = s.discountValue
 	}
-	if discount < 0 {
+	if discount.IsNegative() {
 		discount = 0
 	}
 	s.basket.Discount = discount
@@ -206,23 +210,23 @@ func (s *Service) recomputeTotals() {
 	if s.discountType == "percent" {
 		s.basket.DiscountRaw = s.discountPercentBP
 	} else {
-		s.basket.DiscountRaw = s.discountValue
+		s.basket.DiscountRaw = s.discountValue.Minor()
 	}
 	s.basket.CustomerID = s.customerID
 	s.basket.CustomerName = s.customerName
-	tax, total := int64(0), sub
+	tax, total := money.Zero, sub
 	if s.tax != nil {
 		tax, total = s.tax.Compute(sub)
 	}
 	s.basket.Tax = tax
-	total -= discount
-	if total < 0 {
+	total = total.Sub(discount)
+	if total.IsNegative() {
 		total = 0
 	}
 	s.basket.Total = total
 }
 
-func (s *Service) Tender(amount int64, method string) (map[string]any, error) {
+func (s *Service) Tender(amount money.Money, method string) (map[string]any, error) {
 	// reset basket for demo
 	s.basket = Basket{}
 	s.lines = nil
@@ -280,7 +284,7 @@ func (s *Service) clearCacheForCode(code string) {
 }
 
 // UpdateLine sets qty/discount for a given SKU (or item/variant match) and recomputes totals.
-func (s *Service) UpdateLine(code string, qty float64, discount int64) {
+func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 	if qty < 0 {
 		qty = 0
 	}
@@ -299,8 +303,8 @@ func (s *Service) UpdateLine(code string, qty float64, discount int64) {
 }
 
 // SetDiscount sets the sale-level discount (minor units) and recomputes totals.
-func (s *Service) SetDiscount(discount int64) {
-	if discount < 0 {
+func (s *Service) SetDiscount(discount money.Money) {
+	if discount.IsNegative() {
 		discount = 0
 	}
 	s.discountType = "amount"
@@ -310,7 +314,7 @@ func (s *Service) SetDiscount(discount int64) {
 }
 
 // SaleDiscount returns the current sale-level discount.
-func (s *Service) SaleDiscount() int64 {
+func (s *Service) SaleDiscount() money.Money {
 	s.recomputeTotals()
 	return s.basket.Discount
 }

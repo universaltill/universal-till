@@ -15,6 +15,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -100,7 +101,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			if promoType == "percent" {
 				d.Engine.SetDiscountPercent(value)
 			} else {
-				d.Engine.SetDiscount(value)
+				d.Engine.SetDiscount(money.FromMinor(value))
 			}
 			b := d.Engine.Basket()
 			b.ToastMessage = fmt.Sprintf("Promotion %s applied", code)
@@ -148,7 +149,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				discount = dVal
 			}
 		}
-		d.Engine.UpdateLine(code, qty, discount)
+		d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
@@ -164,7 +165,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				discount = dVal
 			}
 		}
-		d.Engine.SetDiscount(discount)
+		d.Engine.SetDiscount(money.FromMinor(discount))
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
@@ -278,10 +279,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			payments = append(payments, pos.PaymentInput{
 				MethodID:    p.Method,
-				Amount:      p.Amount,
+				Amount:      money.FromMinor(p.Amount),
 				Currency:    p.Currency,
 				Reference:   p.Reference,
-				ChangeGiven: p.Change,
+				ChangeGiven: money.FromMinor(p.Change),
 			})
 		}
 		// Fallback for form-encoded tender buttons (hx-vals)
@@ -300,30 +301,30 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					}
 					payments = append(payments, pos.PaymentInput{
 						MethodID: method,
-						Amount:   amount,
+						Amount:   money.FromMinor(amount),
 						Currency: d.State.Currency,
 					})
 				}
 			}
 		}
 		// compute totals for receipt and fallback payment
-		subtotal, taxTotal := int64(0), int64(0)
+		subtotal, taxTotal := money.Zero, money.Zero
 		for i := range saleLines {
 			lineBase := pos.AmountForQuantity(saleLines[i].UnitPrice, saleLines[i].Qty)
-			lineNet := lineBase - saleLines[i].LineDiscount
+			lineNet := lineBase.Sub(saleLines[i].LineDiscount)
 			lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, saleLines[i].TaxRateBasisPoints, d.State.TaxInclusive)
-			subtotal += lineNet
-			taxTotal += lineTax
+			subtotal = subtotal.Add(lineNet)
+			taxTotal = taxTotal.Add(lineTax)
 		}
-		discount := in.Discount
-		if discount == 0 {
+		discount := money.FromMinor(in.Discount)
+		if discount.IsZero() {
 			discount = d.Engine.SaleDiscount()
 		}
-		total := subtotal - discount
+		total := subtotal.Sub(discount)
 		if !d.State.TaxInclusive {
-			total += taxTotal
+			total = total.Add(taxTotal)
 		}
-		if total < 0 {
+		if total.IsNegative() {
 			total = 0
 		}
 		if len(payments) == 0 {
@@ -334,7 +335,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			})
 		}
 		for i := range payments {
-			if payments[i].Amount <= 0 {
+			if !payments[i].Amount.IsPositive() {
 				payments[i].Amount = total
 			}
 		}
@@ -373,7 +374,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Reason:   failureReason,
 				Payments: payments,
 				Lines:    saleLines,
-				Total:    total,
+				Total:    total.Minor(),
 				Currency: d.State.Currency,
 			}); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -462,7 +463,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			printerAvailable = false
 		}
 		printerUnavailable := !printerAvailable
-		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount, discountType, discountRaw, legalBlocks, printerUnavailable)
+		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable)
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
@@ -610,28 +611,28 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 	var rlines []receiptLine
 	for _, l := range lines {
 		lineBase := pos.AmountForQuantity(l.UnitPrice, l.Qty)
-		lineNet := lineBase - l.LineDiscount
+		lineNet := lineBase.Sub(l.LineDiscount)
 		lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, taxInclusive)
 		lineTotal := lineNet
 		if !taxInclusive {
-			lineTotal += lineTax
+			lineTotal = lineTotal.Add(lineTax)
 		}
 		rlines = append(rlines, receiptLine{
 			Name:          l.Name,
 			Qty:           int(l.Qty),
-			TotalAfterTax: lineTotal,
+			TotalAfterTax: lineTotal.Minor(),
 		})
 	}
 	var paymentViews []receiptPayment
 	for _, p := range payments {
-		applied := p.Amount - p.ChangeGiven
-		if applied < 0 {
+		applied := p.Amount.Sub(p.ChangeGiven)
+		if applied.IsNegative() {
 			applied = 0
 		}
 		paymentViews = append(paymentViews, receiptPayment{
 			Method:    p.MethodID,
-			Applied:   applied,
-			Change:    p.ChangeGiven,
+			Applied:   applied.Minor(),
+			Change:    p.ChangeGiven.Minor(),
 			Reference: p.Reference,
 		})
 	}

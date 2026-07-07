@@ -1,29 +1,32 @@
 package pos
 
-import "math"
+import "github.com/universaltill/universal-till/internal/money"
 
 const basisPointsDen = int64(10000) // 100.00% expressed in basis points
 
-// AmountForQuantity multiplies a unit price (minor units) by a quantity (REAL for weighed items) using half-up rounding.
-func AmountForQuantity(unitPrice int64, qty float64) int64 {
-	return int64(math.Round(float64(unitPrice) * qty))
+// AmountForQuantity multiplies a unit price by a quantity (REAL for weighed
+// items) using half-away-from-zero rounding.
+func AmountForQuantity(unitPrice money.Money, qty float64) money.Money {
+	return unitPrice.MulQty(qty)
 }
 
 // ComputeTaxBasisPoints calculates tax using basis points; returns (tax, total).
 // Inclusive: subtotal already includes tax → compute embedded tax with half-up rounding.
 // Exclusive: subtotal excludes tax → add tax on top with half-up rounding.
-func ComputeTaxBasisPoints(subtotal int64, rateBasisPoints int, inclusive bool) (int64, int64) {
-	if rateBasisPoints <= 0 || subtotal == 0 {
+func ComputeTaxBasisPoints(subtotal money.Money, rateBasisPoints int, inclusive bool) (money.Money, money.Money) {
+	if rateBasisPoints <= 0 || subtotal.IsZero() {
 		return 0, subtotal
 	}
 	rate := int64(rateBasisPoints)
 	if inclusive {
 		den := basisPointsDen + rate
-		// net = subtotal / (1 + rate); half-up rounding to avoid bias
-		net := (subtotal*basisPointsDen + den/2) / den
-		tax := subtotal - net
+		// net = subtotal / (1 + rate); half-up rounding to avoid bias.
+		// MulDiv(basisPointsDen, den) == (subtotal*10000 + den/2)/den (unchanged).
+		net := subtotal.MulDiv(basisPointsDen, den)
+		tax := subtotal.Sub(net)
 		return tax, subtotal
 	}
-	tax := (subtotal*rate + basisPointsDen/2) / basisPointsDen
-	return tax, subtotal + tax
+	// MulDiv(rate, basisPointsDen) == (subtotal*rate + 10000/2)/10000 (unchanged).
+	tax := subtotal.MulDiv(rate, basisPointsDen)
+	return tax, subtotal.Add(tax)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/money"
 )
 
 // SaleInput captures the data needed to persist a sale (or return).
@@ -22,7 +23,7 @@ type SaleInput struct {
 	CustomerID             string
 	Currency               string
 	TaxInclusive           bool
-	SaleDiscount           int64 // fixed discount (minor units) applied to whole sale
+	SaleDiscount           money.Money // fixed discount (minor units) applied to whole sale
 	Lines                  []SaleLineInput
 	Payments               []PaymentInput
 	OriginalSaleID         string // for returns; creates sale_links entry when set
@@ -39,19 +40,19 @@ type SaleLineInput struct {
 	SKU                string
 	Barcode            string
 	Name               string
-	Qty                float64 // REAL; supports weighed items
-	UnitPrice          int64   // minor units, before discount
+	Qty                float64     // REAL; supports weighed items
+	UnitPrice          money.Money // minor units, before discount
 	TaxRateBasisPoints int
-	LineDiscount       int64  // fixed minor units
-	LocationID         string // stock movement location
+	LineDiscount       money.Money // fixed minor units
+	LocationID         string      // stock movement location
 }
 
 type PaymentInput struct {
 	MethodID    string
-	Amount      int64
+	Amount      money.Money
 	Currency    string
 	Reference   string
-	ChangeGiven int64
+	ChangeGiven money.Money
 }
 
 const receiptRetryLimit = 5
@@ -67,32 +68,32 @@ var receiptAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo)
 	return repo.NextReceiptNo(ctx, tx)
 }
 
-func computeSaleTotals(in SaleInput) (subtotal, taxTotal, total int64, err error) {
+func computeSaleTotals(in SaleInput) (subtotal, taxTotal, total money.Money, err error) {
 	for _, l := range in.Lines {
 		if err := validateLine(l); err != nil {
 			return 0, 0, 0, err
 		}
 		lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
-		if l.LineDiscount < 0 || l.LineDiscount > lineBase {
+		if l.LineDiscount.IsNegative() || l.LineDiscount > lineBase {
 			return 0, 0, 0, fmt.Errorf("invalid line discount for item %s", l.ItemID)
 		}
-		lineNet := lineBase - l.LineDiscount
+		lineNet := lineBase.Sub(l.LineDiscount)
 		lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
-		subtotal += lineNet
-		taxTotal += lineTax
+		subtotal = subtotal.Add(lineNet)
+		taxTotal = taxTotal.Add(lineTax)
 	}
-	total = subtotal - in.SaleDiscount
+	total = subtotal.Sub(in.SaleDiscount)
 	if !in.TaxInclusive {
-		total += taxTotal
+		total = total.Add(taxTotal)
 	}
-	if total < 0 {
+	if total.IsNegative() {
 		total = 0
 	}
 	return subtotal, taxTotal, total, nil
 }
 
-func netPayments(payments []PaymentInput) (int64, error) {
-	var sum int64
+func netPayments(payments []PaymentInput) (money.Money, error) {
+	var sum money.Money
 	if len(payments) == 0 {
 		return 0, errors.New("sale requires at least one payment")
 	}
@@ -100,16 +101,16 @@ func netPayments(payments []PaymentInput) (int64, error) {
 		if p.MethodID == "" {
 			return 0, fmt.Errorf("payment %d missing method", i+1)
 		}
-		if p.Amount <= 0 {
+		if !p.Amount.IsPositive() {
 			return 0, fmt.Errorf("payment %d amount must be > 0", i+1)
 		}
-		if p.ChangeGiven < 0 {
+		if p.ChangeGiven.IsNegative() {
 			return 0, fmt.Errorf("payment %d change must be >= 0", i+1)
 		}
 		if p.ChangeGiven > p.Amount {
 			return 0, fmt.Errorf("payment %d change cannot exceed amount", i+1)
 		}
-		sum += p.Amount - p.ChangeGiven
+		sum = sum.Add(p.Amount.Sub(p.ChangeGiven))
 	}
 	return sum, nil
 }
@@ -209,7 +210,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
-			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal, in.SaleDiscount, taxTotal, total, in.Note, now, tenderType, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
+			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), in.Note, now, tenderType, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}
@@ -218,9 +219,9 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			in.ReceiptNo = receiptNo
 
 			var saleDiscountID string
-			if in.SaleDiscount > 0 {
+			if in.SaleDiscount.IsPositive() {
 				saleDiscountID = uuid.NewString()
-				if err := repo.InsertSaleDiscount(ctx, tx, saleDiscountID, saleID, "", "fixed", in.SaleDiscount, in.SaleDiscount, "sale_discount"); err != nil {
+				if err := repo.InsertSaleDiscount(ctx, tx, saleDiscountID, saleID, "", "fixed", in.SaleDiscount.Minor(), in.SaleDiscount.Minor(), "sale_discount"); err != nil {
 					return err
 				}
 			}
@@ -228,17 +229,17 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			for i, l := range in.Lines {
 				lineID := uuid.NewString()
 				lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
-				lineNet := lineBase - l.LineDiscount
+				lineNet := lineBase.Sub(l.LineDiscount)
 				lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
 				totalBeforeTax := lineNet
-				totalAfterTax := lineNet + lineTax
+				totalAfterTax := lineNet.Add(lineTax)
 
-				if err := repo.InsertSaleLine(ctx, tx, lineID, saleID, i+1, l.ItemID, l.VariantID, l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice, l.LineDiscount, l.TaxRateBasisPoints, lineTax, totalBeforeTax, totalAfterTax); err != nil {
+				if err := repo.InsertSaleLine(ctx, tx, lineID, saleID, i+1, l.ItemID, l.VariantID, l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice.Minor(), l.LineDiscount.Minor(), l.TaxRateBasisPoints, lineTax.Minor(), totalBeforeTax.Minor(), totalAfterTax.Minor()); err != nil {
 					return err
 				}
 
-				if l.LineDiscount > 0 {
-					if err := repo.InsertSaleDiscount(ctx, tx, uuid.NewString(), saleID, lineID, "fixed", l.LineDiscount, l.LineDiscount, "line_discount"); err != nil {
+				if l.LineDiscount.IsPositive() {
+					if err := repo.InsertSaleDiscount(ctx, tx, uuid.NewString(), saleID, lineID, "fixed", l.LineDiscount.Minor(), l.LineDiscount.Minor(), "line_discount"); err != nil {
 						return err
 					}
 				}
@@ -265,7 +266,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			}
 
 			for _, p := range in.Payments {
-				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount, valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), time.Now().UTC().Format(time.RFC3339)); err != nil {
 					return err
 				}
 			}
