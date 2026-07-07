@@ -551,6 +551,51 @@ type AutoStartRow struct {
 	Runtime    string
 }
 
+// CatalogUpsertRow is the input for upserting a marketplace catalog entry.
+type CatalogUpsertRow struct {
+	ID            string
+	Version       string
+	Name          string
+	Description   string
+	Author        string
+	Website       string
+	Runtime       string
+	Entrypoint    string
+	PackageURL    string
+	SHA256        string
+	Signature     string
+	MinPOSVersion string
+	PublishedAt   string
+}
+
+// UpsertCatalogEntry inserts or updates a plugin_catalog entry from a
+// marketplace install. Keeping the SQL here preserves the repository pattern
+// (data access lives only in internal/data).
+func (r *PluginRepo) UpsertCatalogEntry(ctx context.Context, in CatalogUpsertRow) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO plugin_catalog (
+	id, version, name, description, author, website, repository_url,
+	runtime, entrypoint, package_url, sha256, signature, size_bytes,
+	min_pos_version, max_pos_version, api_version, tags_json, capabilities_json,
+	published_at, is_deprecated
+) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 0, ?, '', '1.0.0', '', '', ?, 0)
+ON CONFLICT(id, version) DO UPDATE SET
+	name = excluded.name,
+	description = excluded.description,
+	author = excluded.author,
+	website = excluded.website,
+	runtime = excluded.runtime,
+	entrypoint = excluded.entrypoint,
+	package_url = excluded.package_url,
+	sha256 = excluded.sha256,
+	signature = excluded.signature,
+	min_pos_version = excluded.min_pos_version,
+	published_at = excluded.published_at,
+	is_deprecated = 0
+`, in.ID, in.Version, in.Name, in.Description, in.Author, in.Website, in.Runtime, in.Entrypoint, in.PackageURL, in.SHA256, in.Signature, in.MinPOSVersion, in.PublishedAt)
+	return pluginObs.wrap("upsert_catalog_entry", err)
+}
+
 // CatalogRow represents a catalog entry row from plugin_catalog.
 type CatalogRow struct {
 	ID          string
