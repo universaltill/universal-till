@@ -142,21 +142,16 @@ For development and testing with plugin-marketplace features:
 # make build && ./bin/unitill-pos
 ```
 
-`./scripts/dev.sh` loads `pos.env.dev`, which by default points at the **deployed
-dev marketplace** in the homelab cluster
+`./scripts/dev.sh` loads `pos.env.dev`, which points at the **deployed dev
+marketplace** in the homelab cluster
 (`https://marketplace.home.taskrunnertech.co.uk/api`). It runs with auth disabled,
 so **no OAuth client secret / API key is required** — you can browse the plugin
 store and one-click install the FAQ plugin out of the box. `pos.env.dev` also
 carries the marketplace's Ed25519 signing public key, which the POS uses to verify
 plugin signatures before installing.
 
-**Fully offline?** Point `UT_MARKETPLACE_ENDPOINT_URL` at the mock instead and run
-it in another terminal:
-
-```bash
-go run scripts/mock-marketplace/main.go   # serves a stub marketplace on :8082
-# then set UT_MARKETPLACE_ENDPOINT_URL=http://localhost:8082 in pos.env.dev
-```
+To point at a different marketplace, change `UT_MARKETPLACE_ENDPOINT_URL` (the URL
+must include `/api`) and `UT_MARKETPLACE_PUBLIC_KEY` in `pos.env.dev`.
 
 ---
 
@@ -191,7 +186,6 @@ UT_TAX_RATE=20                         # Tax rate percentage
 
 # Marketplace integration (cloud plugin store). The endpoint must include /api.
 UT_MARKETPLACE_ENDPOINT_URL=https://marketplace.home.taskrunnertech.co.uk/api  # Dev marketplace
-# Fully offline mock instead: http://localhost:8082 (go run scripts/mock-marketplace/main.go)
 UT_MARKETPLACE_PUBLIC_KEY=             # Ed25519 signing key (hex) used to verify plugin signatures
 UT_MARKETPLACE_CLIENT_ID=              # Doubles as merchant_id on the install path
 UT_MARKETPLACE_STORE_ID=               # Store identifier for entitlement/install
