@@ -579,24 +579,52 @@ func handleDisablePlugin(d *common.Deps) http.HandlerFunc {
 	}
 }
 
-// handleUninstallPlugin handles uninstalling a plugin (T017)
+// handleUninstallPlugin uninstalls a plugin: removes its DB rows (cascading its
+// menu entries / settings / hooks / permissions + an audit event), deletes the
+// installed files, and reloads the plugin manager so the nav/menu drops it.
 func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		pluginID := r.PathValue("id")
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
 		}
+		// The id indexes a directory under ./data/plugins; reject traversal.
+		if strings.ContainsAny(pluginID, `/\`) || strings.Contains(pluginID, "..") {
+			http.Error(w, "invalid plugin id", http.StatusBadRequest)
+			return
+		}
 
-		// TODO: Stop running plugin process
-		// TODO: Remove database entries
-		// TODO: Clean up plugin files
-		// TODO: Create audit log entry
+		// Remove DB rows (FK cascade removes entries/settings/hooks/permissions)
+		// and record the uninstall audit event.
+		if err := plugins.UninstallPlugin(ctx, d.Db, pluginID); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Uninstall failed: %v", err),
+			})
+			return
+		}
+
+		// Remove the installed files (best-effort; the DB is the source of truth).
+		pluginDir := filepath.Join("./data/plugins", pluginID)
+		if err := os.RemoveAll(pluginDir); err != nil {
+			log.Printf("warning: failed to remove plugin files %s: %v", pluginDir, err)
+		}
+
+		// Reload so the nav/menu no longer shows the plugin's entries.
+		if d.Pm != nil {
+			if err := d.Pm.Reload(ctx); err != nil {
+				log.Printf("warning: failed to reload plugin manager after uninstall %s: %v", pluginID, err)
+			}
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Plugin %s scheduled for uninstallation", pluginID),
+			"message": fmt.Sprintf("Plugin %s uninstalled", pluginID),
 		})
 	}
 }
