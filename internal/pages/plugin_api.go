@@ -434,6 +434,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/plugins/{id}/rollback", handleRollbackPlugin(d))
 	mux.HandleFunc("GET /api/plugins/check-updates", handleCheckUpdates(d))
 	mux.HandleFunc("POST /api/plugins/import-from-file", handleImportFromFile(d))
+	mux.HandleFunc("GET /api/plugins/{id}/export", handleExportPlugin(d))
 }
 
 // handleInstallFromMarketplace handles marketplace plugin installation (T017)
@@ -962,5 +963,57 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			"version":  result.Version,
 			"warnings": result.Warnings,
 		})
+	}
+}
+
+// handleExportPlugin streams an installed plugin as a downloadable .tar.gz bundle
+// (the offline-provisioning counterpart to import-from-file). The bundle
+// round-trips back through import-from-file on another, possibly offline, till.
+// Version is taken from ?version= since a plugin may have multiple installed.
+func handleExportPlugin(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		pluginID := strings.TrimSpace(r.PathValue("id"))
+		version := strings.TrimSpace(r.URL.Query().Get("version"))
+		if pluginID == "" || version == "" {
+			http.Error(w, "plugin id (path) and version (?version=) are required", http.StatusBadRequest)
+			return
+		}
+
+		tmpDir := filepath.Join("./data/plugins/tmp")
+		if err := os.MkdirAll(tmpDir, 0755); err != nil {
+			http.Error(w, "failed to create temp directory", http.StatusInternalServerError)
+			return
+		}
+		tmpFile := filepath.Join(tmpDir, fmt.Sprintf("export-%d.tar.gz", os.Getpid()))
+		defer os.Remove(tmpFile)
+
+		res, err := plugins.NewExporter("./data/plugins").Export(ctx, &plugins.ExportRequest{
+			PluginID: pluginID,
+			Version:  version,
+			DestPath: tmpFile,
+		})
+		if err != nil {
+			// Missing plugin/version or an invalid id -> 404; the exporter guards
+			// path traversal and manifest presence.
+			http.Error(w, fmt.Sprintf("export failed: %v", err), http.StatusNotFound)
+			return
+		}
+
+		f, err := os.Open(tmpFile)
+		if err != nil {
+			http.Error(w, "failed to read bundle", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		filename := fmt.Sprintf("%s-%s.tar.gz", strings.ReplaceAll(pluginID, "/", "_"), version)
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", res.Size))
+		w.Header().Set("X-Bundle-SHA256", res.SHA256)
+		if _, err := io.Copy(w, f); err != nil {
+			log.Printf("Warning: export stream interrupted for %s v%s: %v", pluginID, version, err)
+		}
 	}
 }

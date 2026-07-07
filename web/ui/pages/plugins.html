@@ -230,6 +230,13 @@
               <span x-show="loading">⏳</span>
             </button>
           </template>
+          <template x-if="st.installed && p.currentVersion">
+            <a class="btn secondary"
+               :href="'/api/plugins/' + encodeURIComponent(p.id) + '/export?version=' + encodeURIComponent(p.currentVersion)"
+               :download="p.id + '-' + p.currentVersion + '.tar.gz'">
+              Export
+            </a>
+          </template>
           <template x-if="st.installed">
             <button class="btn danger" :disabled="loading" @click.prevent="post('/api/plugins/uninstall', { id: p.id }, 'Uninstall')">
               <span x-show="!loading">Uninstall</span>
