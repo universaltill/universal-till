@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/money"
 )
 
 // ShiftInput captures data for opening a shift
@@ -17,21 +18,21 @@ type ShiftInput struct {
 	ShiftID     string
 	RegisterID  string
 	CashierID   string
-	OpeningCash int64 // minor units
+	OpeningCash money.Money
 }
 
 // ShiftCloseInput captures data for closing a shift
 type ShiftCloseInput struct {
 	ShiftID     string
-	ClosingCash int64 // minor units
+	ClosingCash money.Money
 	Note        string
 }
 
 // CashAdjustmentInput captures payouts or adjustments affecting expected cash
 type CashAdjustmentInput struct {
 	ShiftID string
-	Type    string // payout|adjustment
-	Amount  int64  // minor units, negative for payout
+	Type    string      // payout|adjustment
+	Amount  money.Money // negative for payout
 	Reason  string
 	ActorID string
 }
@@ -65,13 +66,13 @@ func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (string, error
 
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Format(time.RFC3339)
-		if err := repo.InsertShift(ctx, tx, shiftID, in.RegisterID, in.CashierID, in.OpeningCash, now); err != nil {
+		if err := repo.InsertShift(ctx, tx, shiftID, in.RegisterID, in.CashierID, in.OpeningCash.Minor(), now); err != nil {
 			return err
 		}
 		payload := map[string]any{
 			"register_id":  in.RegisterID,
 			"cashier_id":   in.CashierID,
-			"opening_cash": in.OpeningCash,
+			"opening_cash": in.OpeningCash.Minor(),
 		}
 		if err := repo.InsertAudit(ctx, tx, in.CashierID, "shift", shiftID, "open", payload, now, ""); err != nil {
 			return err
@@ -109,13 +110,14 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Format(time.RFC3339)
-		if err := repo.UpdateShiftClose(ctx, tx, in.ShiftID, in.ClosingCash, expectedCash, in.Note, now); err != nil {
+		if err := repo.UpdateShiftClose(ctx, tx, in.ShiftID, in.ClosingCash.Minor(), expectedCash, in.Note, now); err != nil {
 			return err
 		}
+		variance := in.ClosingCash - money.FromMinor(expectedCash)
 		payload := map[string]any{
-			"closing_cash":  in.ClosingCash,
+			"closing_cash":  in.ClosingCash.Minor(),
 			"expected_cash": expectedCash,
-			"variance":      in.ClosingCash - expectedCash,
+			"variance":      variance.Minor(),
 			"note":          in.Note,
 		}
 		if err := repo.InsertAudit(ctx, tx, cashierID, "shift", in.ShiftID, "close", payload, now, ""); err != nil {
@@ -162,7 +164,7 @@ func RecordCashAdjustment(ctx context.Context, sqlDB *sql.DB, in CashAdjustmentI
 	payload := map[string]any{
 		"shift_id": in.ShiftID,
 		"type":     in.Type,
-		"amount":   in.Amount,
+		"amount":   in.Amount.Minor(),
 		"reason":   in.Reason,
 	}
 	if err := repo.InsertAudit(ctx, nil, in.ActorID, "shift", in.ShiftID, "cash_adjustment", payload, now, adjustmentID); err != nil {
