@@ -22,6 +22,8 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+      - name: Data-access policy guard
+        run: bash scripts/ci/guard-data-access.sh
       - name: Build
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache

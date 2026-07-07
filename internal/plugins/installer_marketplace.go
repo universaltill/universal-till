@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
@@ -293,28 +294,21 @@ func marketplaceTrustTier(tier string) string {
 }
 
 func (i *MarketplaceInstaller) upsertCatalogEntry(ctx context.Context, manifest *Manifest, bundleURL, checksum, signature string) error {
-	_, err := i.db.ExecContext(ctx, `
-INSERT INTO plugin_catalog (
-	id, version, name, description, author, website, repository_url,
-	runtime, entrypoint, package_url, sha256, signature, size_bytes,
-	min_pos_version, max_pos_version, api_version, tags_json, capabilities_json,
-	published_at, is_deprecated
-) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 0, ?, '', '1.0.0', '', '', ?, 0)
-ON CONFLICT(id, version) DO UPDATE SET
-	name = excluded.name,
-	description = excluded.description,
-	author = excluded.author,
-	website = excluded.website,
-	runtime = excluded.runtime,
-	entrypoint = excluded.entrypoint,
-	package_url = excluded.package_url,
-	sha256 = excluded.sha256,
-	signature = excluded.signature,
-	min_pos_version = excluded.min_pos_version,
-	published_at = excluded.published_at,
-	is_deprecated = 0
-`, manifest.ID, manifest.Version, manifest.Name, manifest.Description, manifest.Author, manifest.Website, manifest.Runtime, manifest.Entrypoint, bundleURL, checksum, signature, minPOSVersion(manifest), time.Now().UTC().Format(time.RFC3339))
-	return err
+	return data.NewPluginRepo(i.db).UpsertCatalogEntry(ctx, data.CatalogUpsertRow{
+		ID:            manifest.ID,
+		Version:       manifest.Version,
+		Name:          manifest.Name,
+		Description:   manifest.Description,
+		Author:        manifest.Author,
+		Website:       manifest.Website,
+		Runtime:       manifest.Runtime,
+		Entrypoint:    manifest.Entrypoint,
+		PackageURL:    bundleURL,
+		SHA256:        checksum,
+		Signature:     signature,
+		MinPOSVersion: minPOSVersion(manifest),
+		PublishedAt:   time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 func minPOSVersion(manifest *Manifest) string {
