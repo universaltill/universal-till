@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/universaltill/universal-till/internal/config"
+	moneypkg "github.com/universaltill/universal-till/internal/money"
 )
 
 var baseFuncs = template.FuncMap{
@@ -59,7 +60,23 @@ var (
 
 func InitCurrency(code string) { currencyCode.Store(code) }
 
-func money(amountCents int64) string {
+// money formats a minor-unit amount for display. It accepts money.Money as well
+// as raw integer minor units so templates can pass either the typed basket
+// amounts or int64 display DTOs.
+func money(amount any) string {
+	var cents int64
+	switch v := amount.(type) {
+	case moneypkg.Money:
+		cents = v.Minor()
+	case int64:
+		cents = v
+	case int:
+		cents = int64(v)
+	case int32:
+		cents = int64(v)
+	default:
+		return ""
+	}
 	code := "GBP"
 	if v := currencyCode.Load(); v != nil {
 		if s, ok := v.(string); ok && s != "" {
@@ -70,7 +87,7 @@ func money(amountCents int64) string {
 	if symbol == "" {
 		symbol = code + " "
 	}
-	return fmt.Sprintf("%s%.2f", symbol, float64(amountCents)/100.0)
+	return fmt.Sprintf("%s%.2f", symbol, float64(cents)/100.0)
 }
 
 func toJSON(v any) template.JS {

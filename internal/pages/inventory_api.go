@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -366,7 +367,7 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 				SKU:                s.SKU,
 				Barcode:            s.Barcode,
 				Qty:                s.Qty,
-				UnitPrice:          s.UnitPrice,
+				UnitPrice:          money.FromMinor(s.UnitPrice),
 				TaxRateBasisPoints: s.TaxRateBP,
 				LocationID:         defaultLocation(s.LocationID),
 			}
@@ -389,16 +390,17 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			returnLines = append(returnLines, returnLine)
 		}
 
-		// Calculate return total (sum of line totals)
-		var returnTotal int64
+		// Calculate return total (sum of line totals). Arithmetic preserved
+		// exactly (truncating int64 conversion + integer tax division).
+		var returnTotal money.Money
 		for _, line := range returnLines {
-			lineBase := int64(line.Qty * float64(line.UnitPrice))
-			lineTax := (lineBase * int64(line.TaxRateBasisPoints)) / 10000
-			returnTotal += lineBase + lineTax
+			lineBase := money.FromMinor(int64(line.Qty * float64(line.UnitPrice.Minor())))
+			lineTax := money.FromMinor((lineBase.Minor() * int64(line.TaxRateBasisPoints)) / 10000)
+			returnTotal = returnTotal.Add(lineBase).Add(lineTax)
 		}
 
 		// For returns, payment represents the refund amount
-		if returnTotal <= 0 {
+		if !returnTotal.IsPositive() {
 			respondReturnError(w, r, http.StatusBadRequest, "return total must be positive")
 			return
 		}

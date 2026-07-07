@@ -1,13 +1,17 @@
 package pos
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/universaltill/universal-till/internal/money"
+)
 
 func TestAmountForQuantity(t *testing.T) {
 	tests := []struct {
 		name      string
-		unitPrice int64
+		unitPrice money.Money
 		qty       float64
-		want      int64
+		want      money.Money
 	}{
 		{"integer qty", 199, 2, 398},
 		{"weighed half up", 599, 0.5, 300},     // 599 * 0.5 = 299.5 -> 300
@@ -25,15 +29,15 @@ func TestAmountForQuantity(t *testing.T) {
 
 func TestComputeTaxBasisPoints(t *testing.T) {
 	type args struct {
-		subtotal int64
+		subtotal money.Money
 		rateBP   int
 		incl     bool
 	}
 	tests := []struct {
 		name  string
 		args  args
-		tax   int64
-		total int64
+		tax   money.Money
+		total money.Money
 	}{
 		{"exclusive 20%", args{subtotal: 10000, rateBP: 2000, incl: false}, 2000, 12000},
 		{"exclusive rounding", args{subtotal: 999, rateBP: 2000, incl: false}, 200, 1199},

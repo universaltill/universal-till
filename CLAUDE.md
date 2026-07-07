@@ -18,9 +18,15 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 - Surface offline/sync/install state with status chips/banners, never modal
   blockers in the kiosk flow. Status/lock/exit must always be reachable.
 
+## Money
+- Monetary amounts use the **`internal/money.Money`** type (integer minor units).
+  It's a distinct type, so the compiler blocks mixing money with quantities/rates.
+  Convert to/from raw `int64` only at DB / external-DTO boundaries via
+  `money.FromMinor(x)` / `m.Minor()`. Basis-point rates stay `int64` (not money).
+
 ## API, formats, i18n
-- Responses `{ "data": …, "error": null }`; JSON **snake_case**; dates ISO-8601;
-  **money = integer minor units**.
+- Responses `{ "data": …, "error": null }`; JSON **snake_case**; dates ISO-8601.
+  (`money.Money` marshals as the same integer, so the wire format is unchanged.)
 - **No hardcoded user-facing strings** — use locale files under `web/locales`.
 - Validate all external input (users, plugins, devices).
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 	pos "github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -278,7 +279,7 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.Bas
 		SKU:        row.SKU,
 		Name:       row.Name,
 		Qty:        1,
-		PriceCents: row.Price,
+		PriceCents: money.FromMinor(row.Price),
 		ItemID:     row.ItemID,
 		VariantID:  row.VariantID,
 		TaxRateBP:  row.TaxRateBP,

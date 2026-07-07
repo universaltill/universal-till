@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	config "github.com/universaltill/universal-till/internal/config"
+	moneypkg "github.com/universaltill/universal-till/internal/money"
 )
 
 func TestResolveLocaleQueryParamPrecedence(t *testing.T) {
@@ -60,11 +61,14 @@ func TestFuncsForExposesMoneyAndI18n(t *testing.T) {
 
 	funcs := FuncsFor("fa")
 
-	moneyFn, ok := funcs["money"].(func(int64) string)
+	moneyFn, ok := funcs["money"].(func(any) string)
 	if !ok {
 		t.Fatalf("money helper not found")
 	}
-	if got := moneyFn(12345); got != "€123.45" {
+	if got := moneyFn(int64(12345)); got != "€123.45" {
 		t.Fatalf("money helper returned %q", got)
+	}
+	if got := moneyFn(moneypkg.FromMinor(12345)); got != "€123.45" {
+		t.Fatalf("money helper (Money) returned %q", got)
 	}
 }
