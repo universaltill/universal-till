@@ -23,3 +23,18 @@ func TestHandleExportPlugin_RequiresVersion(t *testing.T) {
 		t.Fatalf("expected 400 for missing version, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// The uninstall handler removes files under ./data/plugins keyed by the id, so a
+// traversal id must be rejected before any filesystem work.
+func TestHandleUninstallPlugin_RejectsTraversalID(t *testing.T) {
+	h := handleUninstallPlugin(&common.Deps{})
+	for _, badID := range []string{"../etc", "a/b", `..\win`} {
+		req := httptest.NewRequest(http.MethodPost, "/api/plugins/x/uninstall", nil)
+		req.SetPathValue("id", badID)
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("id %q: expected 400, got %d", badID, rec.Code)
+		}
+	}
+}
