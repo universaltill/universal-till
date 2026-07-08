@@ -186,8 +186,11 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	if manifest.Entrypoint == "" && executable != "" {
 		manifest.Entrypoint = "./" + strings.TrimPrefix(executable, "./")
 	}
-	if err := i.verifier.VerifyExecutable(extractDir, executable); err != nil {
-		return nil, err
+	// Asset-only plugins (runtime "none", e.g. themes) ship no executable.
+	if manifest.Runtime != "none" {
+		if err := i.verifier.VerifyExecutable(extractDir, executable); err != nil {
+			return nil, err
+		}
 	}
 
 	finalDir := filepath.Join(i.pluginBaseDir, manifest.ID, manifest.Version)
