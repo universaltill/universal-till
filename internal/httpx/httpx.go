@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
@@ -127,6 +130,23 @@ func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 	return "en"
 }
 
+var kioskMode atomic.Value // bool
+
+// InitKiosk marks the process as running on a dedicated till (larger touch
+// targets, no text selection). Driven by UT_KIOSK=1.
+func InitKiosk(on bool) { kioskMode.Store(on) }
+
+// assetVersion returns a cache-busting version for a web asset: the file's
+// mtime, so browsers pick up redesigns without a manual hard refresh.
+func assetVersion(rel string) string {
+	if info, err := os.Stat(filepath.Join("web", rel)); err == nil {
+		return strconv.FormatInt(info.ModTime().Unix(), 10)
+	}
+	return strconv.FormatInt(bootTime, 10)
+}
+
+var bootTime = time.Now().Unix()
+
 // FuncsFor builds template funcs for a specific request/locale.
 func FuncsFor(locale string) template.FuncMap {
 	funcs := template.FuncMap{}
@@ -135,6 +155,14 @@ func FuncsFor(locale string) template.FuncMap {
 	}
 	funcs["money"] = money
 	funcs["toJson"] = toJSON
+	funcs["assetv"] = assetVersion
+	funcs["kiosk"] = func() bool {
+		if v := kioskMode.Load(); v != nil {
+			b, _ := v.(bool)
+			return b
+		}
+		return false
+	}
 	funcs["T"] = func(key string) string {
 		if tAny := i18nRef.Load(); tAny != nil {
 			return tAny.(*config.I18n).T(locale, key)

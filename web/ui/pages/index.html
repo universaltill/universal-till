@@ -2,7 +2,10 @@
 <div class="kiosk-header">
   <h1>{{ T "app.name" }}</h1>
   <div class="kiosk-actions">
-    <a class="btn primary" data-testid="kiosk-checkout-start" href="/">{{ T "kiosk.checkout_start" }}</a>
+    <button class="btn primary" data-testid="kiosk-checkout-start"
+            hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML"
+            onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
+      {{ T "kiosk.checkout_start" }}</button>
     <a class="btn secondary" data-testid="kiosk-inventory-link" href="/inventory">{{ T "kiosk.inventory" }}</a>
     <div class="status-pill" data-testid="status-indicator">{{ T "status.online" }}</div>
   </div>
