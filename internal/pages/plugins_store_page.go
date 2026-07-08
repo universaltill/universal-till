@@ -1,196 +1,253 @@
 package pages
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
-	"os"
-	"strconv"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
-// PluginStoreHandler handles the marketplace plugin store page
-func PluginStoreHandler(deps *common.Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Performance instrumentation
-		start := time.Now()
-		defer func() {
-			elapsed := time.Since(start)
-			elapsedMs := elapsed.Milliseconds()
-
-			// Get thresholds from env (defaults: warn=2000ms, fail=3000ms)
-			warnMs := int64(2000)
-			failMs := int64(3000)
-			if envWarn := os.Getenv("UT_MARKETPLACE_RENDER_WARN_MS"); envWarn != "" {
-				if parsed, err := strconv.ParseInt(envWarn, 10, 64); err == nil {
-					warnMs = parsed
-				}
-			}
-			if envFail := os.Getenv("UT_MARKETPLACE_RENDER_FAIL_MS"); envFail != "" {
-				if parsed, err := strconv.ParseInt(envFail, 10, 64); err == nil {
-					failMs = parsed
-				}
-			}
-
-			// Log performance metrics
-			if elapsedMs >= failMs {
-				logging.L().Errorf("Plugin store render FAILED threshold: %dms (threshold: %dms)", elapsedMs, failMs)
-			} else if elapsedMs >= warnMs {
-				logging.L().Warnf("Plugin store render exceeded warn threshold: %dms (threshold: %dms)", elapsedMs, warnMs)
-			} else {
-				logging.L().Debugf("Plugin store render completed in %dms", elapsedMs)
-			}
-		}()
-
-		// Check if marketplace is configured
-		if deps.CatalogRepo == nil {
-			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
-			return
-		}
-
-		// LOCAL-FIRST: Get catalog from cache only, don't auto-fetch
-		snapshot, isStale, err := deps.CatalogRepo.Get()
-		if err != nil {
-			// No cache available - show empty state, user must click "Sync" button
-			data := map[string]interface{}{
-				"title":     "Plugin Store",
-				"theme":     deps.State.Theme,
-				"menuItems": deps.Menu,
-				"Plugins":   []interface{}{},
-				"IsStale":   false,
-				"NoCache":   true, // Flag to show "Sync Now" button
-				"Filters": map[string]string{
-					"Type":      "",
-					"Developer": "",
-					"TrustTier": "",
-				},
-			}
-			httpx.Render("ui/pages/plugins_store.html", data)(w, r)
-			return
-		}
-
-		// Apply filters from query params
-		pluginType := r.URL.Query().Get("type")
-		developer := r.URL.Query().Get("developer")
-		trustTier := r.URL.Query().Get("trust_tier")
-
-		plugins := snapshot.Plugins
-		if pluginType != "" || developer != "" || trustTier != "" {
-			filtered, err := deps.CatalogRepo.Filter(pluginType, developer, trustTier)
-			if err != nil {
-				http.Error(w, "Failed to filter plugins", http.StatusInternalServerError)
-				return
-			}
-			plugins = filtered
-		}
-
-		data := map[string]interface{}{
-			"title":     "Plugin Store",
-			"theme":     deps.State.Theme,
-			"menuItems": deps.Menu,
-			"Plugins":   plugins,
-			"IsStale":   isStale,
-			"FetchedAt": snapshot.FetchedAt,
-			"Filters": map[string]string{
-				"Type":      pluginType,
-				"Developer": developer,
-				"TrustTier": trustTier,
-			},
-		}
-
-		httpx.Render("ui/pages/plugins_store.html", data)(w, r)
-	}
+// storeItem is one card on the plugin store page. Lifecycle:
+// available -> Download; downloaded -> Install / Delete download;
+// installed -> managed from /plugins (no store actions).
+type storeItem struct {
+	ListingID        string
+	Name             string
+	Version          string
+	Description      string
+	Type             string
+	Downloaded       bool
+	Installed        bool
+	StatusState      string // requested|downloading|installing|failed ("" otherwise)
+	StatusMessageKey string // operator-visible failure reason (locale key)
+	Retryable        bool
 }
 
-// PluginStoreRefreshHandler handles HTMX refresh requests
-func PluginStoreRefreshHandler(deps *common.Deps) http.HandlerFunc {
+// fetchEntitledListings asks the marketplace which listings this merchant is
+// approved for (the merchant-portal approve/unapprove decision). Returns
+// (ids, true) on success; (nil, false) when the endpoint is unavailable so the
+// caller can fall back to the whole catalog (older marketplace deployments).
+func fetchEntitledListings(ctx context.Context, d *common.Deps) (map[string]bool, bool) {
+	base := strings.TrimSuffix(strings.TrimRight(d.Cfg.Marketplace.EndpointURL, "/"), "/api")
+	url := fmt.Sprintf("%s/ui/api/merchant/entitlements?merchant_id=%s", base, d.Cfg.Marketplace.ClientID)
+
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	var payload struct {
+		Data struct {
+			Entitled []struct {
+				ListingID string `json:"listing_id"`
+			} `json:"entitled"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, false
+	}
+	ids := map[string]bool{}
+	for _, e := range payload.Data.Entitled {
+		ids[e.ListingID] = true
+	}
+	return ids, true
+}
+
+func storeInstaller(d *common.Deps) (*plugins.MarketplaceInstaller, error) {
+	client := marketplace.NewClient(&d.Cfg.Marketplace, oauth.NewTokenClient(&d.Cfg.Marketplace))
+	return plugins.NewMarketplaceInstaller(d.Cfg, client, d.Db)
+}
+
+// PluginStoreHandler renders the store: catalog listings the merchant is
+// approved for, each in its download/install lifecycle state.
+func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-
-		if deps.CatalogRepo == nil {
+		if d.CatalogRepo == nil {
 			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
 			return
 		}
 
-		// Force fetch fresh catalog (use configured locale)
-		locale := deps.Cfg.DefaultLocale
-		if locale == "" {
-			locale = "en-US" // fallback
-		}
-		snapshot, err := deps.CatalogRepo.Fetch(ctx, locale, "linux/amd64")
-		if err != nil {
-			http.Error(w, "Failed to refresh catalog", http.StatusInternalServerError)
-			return
-		}
+		deviceArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+		snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, deviceArch)
 
-		// Apply filters from query params (same as main handler)
-		pluginType := r.URL.Query().Get("type")
-		developer := r.URL.Query().Get("developer")
-		trustTier := r.URL.Query().Get("trust_tier")
+		entitled, entitledKnown := fetchEntitledListings(ctx, d)
 
-		plugins := snapshot.Plugins
-		if pluginType != "" || developer != "" || trustTier != "" {
-			filtered, err := deps.CatalogRepo.Filter(pluginType, developer, trustTier)
-			if err != nil {
-				http.Error(w, "Failed to filter plugins", http.StatusInternalServerError)
-				return
+		var downloads map[string]plugins.StoreDownload
+		if installer, ierr := storeInstaller(d); ierr == nil {
+			downloads = installer.ListStoreDownloads()
+		}
+		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
+
+		items := []storeItem{}
+		if err == nil && snapshot != nil {
+			for _, p := range snapshot.Plugins {
+				listingID := p.ListingID
+				if listingID == "" {
+					listingID = p.ID
+				}
+				// Only approved (entitled) listings appear in the store. When the
+				// marketplace doesn't expose entitlements yet, show everything.
+				if entitledKnown && !entitled[listingID] {
+					continue
+				}
+				item := storeItem{
+					ListingID:   listingID,
+					Name:        p.Name,
+					Version:     p.Version,
+					Description: p.Description,
+					Type:        p.CanonicalType,
+				}
+				if _, ok := downloads[listingID]; ok {
+					item.Downloaded = true
+				}
+				if st, ok := statuses[listingID]; ok {
+					switch st.State {
+					case plugins.InstallStateActive:
+						// Confirm against the actual installed set so a stale status
+						// (e.g. uninstalled plugin) doesn't freeze the store card.
+						if d.Pm != nil {
+							if _, installed := d.Pm.Installed[st.PluginID]; installed {
+								item.Installed = true
+							}
+						}
+					case plugins.InstallStateFailed:
+						// Operator-visible failure: keep the card actionable (retry
+						// via Download/Install) and say what went wrong.
+						item.StatusState = string(st.State)
+						item.StatusMessageKey = st.MessageKey
+						item.Retryable = st.Retryable
+					case plugins.InstallStateRequested, plugins.InstallStateDownloading, plugins.InstallStateInstalling:
+						item.StatusState = string(st.State)
+					}
+				}
+				items = append(items, item)
 			}
-			plugins = filtered
 		}
 
-		// Render the plugin grid HTML directly
-		w.Header().Set("Content-Type", "text/html")
-		if len(plugins) == 0 {
-			w.Write([]byte(`<div class="text-center py-12">
-				<h3 class="text-lg font-medium text-gray-900">No plugins found</h3>
-				<p class="mt-1 text-sm text-gray-500">Try adjusting your filters.</p>
-			</div>`))
-			return
-		}
-
-		// Build the plugin grid HTML
-		html := `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">`
-		for _, plugin := range plugins {
-			trustBadge := ""
-			switch plugin.TrustTier {
-			case "verified":
-				trustBadge = `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">✓ Verified</span>`
-			case "approved":
-				trustBadge = `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">Approved</span>`
-			default:
-				trustBadge = `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Community</span>`
-			}
-
-			html += `<div class="bg-white shadow rounded-lg p-6 hover:shadow-xl transition-shadow">
-				<div class="flex items-start justify-between mb-4">
-					<div>
-						<h3 class="text-xl font-semibold text-gray-900">` + plugin.Name + `</h3>
-						<p class="text-sm text-gray-500">v` + plugin.Version + ` by ` + plugin.DeveloperID + `</p>
-					</div>
-					` + trustBadge + `
-				</div>
-				<p class="text-gray-600 text-sm mb-4">` + plugin.Description + `</p>
-				<div class="flex items-center justify-between text-xs text-gray-500 mb-4">
-					<span>Type: ` + plugin.CanonicalType + `</span>
-					<span>` + plugin.DeviceArch + `</span>
-				</div>
-				<button 
-					onclick="installPlugin('` + plugin.ListingID + `', '` + plugin.Name + `')"
-					class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors">
-					Install
-				</button>
-			</div>`
-		}
-		html += `</div>`
-
-		w.Write([]byte(html))
+		httpx.Render("ui/pages/plugins_store.html", map[string]any{
+			"title":            "Plugin Store",
+			"theme":            d.State.Theme,
+			"menuItems":        d.Menu,
+			"Items":            items,
+			"EntitledFiltered": entitledKnown,
+			"CatalogError":     err != nil,
+		})(w, r)
 	}
 }
 
-// registerPluginStore registers the plugin store routes
+// registerPluginStoreAPI wires the store lifecycle actions.
+func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
+	respond := func(w http.ResponseWriter, status int, msg string) {
+		if status >= 400 {
+			logging.L().Warnf("[PluginStore] %s", msg)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": status < 400, "message": msg})
+	}
+
+	listingFrom := func(r *http.Request) string {
+		_ = r.ParseForm()
+		return strings.TrimSpace(r.FormValue("listing_id"))
+	}
+
+	mux.HandleFunc("POST /api/plugins/store/download", func(w http.ResponseWriter, r *http.Request) {
+		listingID := listingFrom(r)
+		if listingID == "" {
+			respond(w, http.StatusBadRequest, "listing_id required")
+			return
+		}
+		installer, err := storeInstaller(d)
+		if err != nil {
+			respond(w, http.StatusInternalServerError, "marketplace not configured")
+			return
+		}
+		sd, err := installer.DownloadToStore(r.Context(), plugins.MarketplaceInstallRequest{
+			ListingID:  listingID,
+			MerchantID: d.Cfg.Marketplace.ClientID,
+			StoreID:    d.Cfg.Marketplace.StoreID,
+			DeviceID:   marketplace.DeviceIDFromConfig(&d.Cfg.Marketplace),
+		})
+		if err != nil {
+			respond(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))
+			return
+		}
+		respond(w, http.StatusOK, fmt.Sprintf("downloaded v%s", sd.Version))
+	})
+
+	mux.HandleFunc("POST /api/plugins/store/install", func(w http.ResponseWriter, r *http.Request) {
+		listingID := listingFrom(r)
+		if listingID == "" {
+			respond(w, http.StatusBadRequest, "listing_id required")
+			return
+		}
+		installer, err := storeInstaller(d)
+		if err != nil {
+			respond(w, http.StatusInternalServerError, "marketplace not configured")
+			return
+		}
+		result, err := installer.InstallFromStore(r.Context(), listingID, "")
+		if err != nil {
+			respond(w, http.StatusBadRequest, fmt.Sprintf("install failed: %v", err))
+			return
+		}
+		_ = plugins.NewInstallStatusStore(d.Db).Save(r.Context(), plugins.InstallStatusRecord{
+			ListingID:      listingID,
+			PluginID:       result.PluginID,
+			PluginName:     result.Name,
+			CurrentVersion: result.Version,
+			State:          plugins.InstallStateActive,
+		})
+		if d.Pm != nil {
+			if err := d.Pm.Reload(r.Context()); err != nil {
+				logging.L().Warnf("[PluginStore] reload after install: %v", err)
+			}
+			d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
+		}
+		respond(w, http.StatusOK, fmt.Sprintf("installed %s v%s", result.Name, result.Version))
+	})
+
+	mux.HandleFunc("POST /api/plugins/store/delete-download", func(w http.ResponseWriter, r *http.Request) {
+		listingID := listingFrom(r)
+		if listingID == "" {
+			respond(w, http.StatusBadRequest, "listing_id required")
+			return
+		}
+		installer, err := storeInstaller(d)
+		if err != nil {
+			respond(w, http.StatusInternalServerError, "marketplace not configured")
+			return
+		}
+		if err := installer.DeleteStoreDownload(listingID); err != nil {
+			respond(w, http.StatusInternalServerError, fmt.Sprintf("delete failed: %v", err))
+			return
+		}
+		respond(w, http.StatusOK, "download deleted")
+	})
+}
+
+// registerPluginStore mounts the store page + its lifecycle API.
 func registerPluginStore(mux *http.ServeMux, deps *common.Deps) {
 	mux.HandleFunc("/plugins/store", PluginStoreHandler(deps))
-	mux.HandleFunc("/plugins/store/refresh", PluginStoreRefreshHandler(deps))
+	registerPluginStoreAPI(mux, deps)
 }

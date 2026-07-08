@@ -44,17 +44,27 @@ func NewI18n(localesDir string, fallback string) (*I18n, error) {
 	return i, nil
 }
 
-// T returns the translation for key in the given locale, falling back to default.
+// T returns the translation for key in the given locale, falling back to the
+// base language (en-US -> en), then the default locale, then its base. Locale
+// files are keyed by base language (en.json, fa.json) while configuration and
+// requests may carry full BCP 47 tags.
 func (i *I18n) T(locale, key string) string {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
-	if m, ok := i.messages[locale]; ok {
-		if v, ok := m[key]; ok {
-			return v
+	for _, loc := range []string{locale, baseLang(locale), i.fallback, baseLang(i.fallback)} {
+		if m, ok := i.messages[loc]; ok {
+			if v, ok := m[key]; ok {
+				return v
+			}
 		}
 	}
-	if v, ok := i.messages[i.fallback][key]; ok {
-		return v
-	}
 	return key
+}
+
+// baseLang strips the region from a BCP 47 tag: "en-US" -> "en".
+func baseLang(locale string) string {
+	if idx := strings.IndexAny(locale, "-_"); idx > 0 {
+		return locale[:idx]
+	}
+	return locale
 }
