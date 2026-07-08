@@ -94,7 +94,9 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	if m.Version == "" {
 		return nil, fmt.Errorf("manifest missing required field: version")
 	}
-	if m.Entrypoint == "" {
+	// Asset-only plugins (runtime "none", e.g. themes) ship no executable, so
+	// entrypoint is only required for runnable runtimes.
+	if m.Entrypoint == "" && m.Runtime != "none" {
 		return nil, fmt.Errorf("manifest missing required field: entrypoint")
 	}
 	if m.Runtime == "" {
@@ -131,7 +133,27 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 
 	now := time.Now().UTC()
 
-	// 1. Insert into plugins table
+	// 1. Ensure a plugin_catalog row exists — plugins(id,version) has a
+	// foreign key onto plugin_catalog, and locally imported plugins have no
+	// marketplace catalog entry. Existing rows are left untouched.
+	if err := repo.EnsureCatalogEntry(ctx, tx, data.CatalogUpsertRow{
+		ID:            m.ID,
+		Version:       m.Version,
+		Name:          m.Name,
+		Description:   m.Description,
+		Author:        m.Author,
+		Website:       m.Website,
+		Runtime:       m.Runtime,
+		Entrypoint:    m.Entrypoint,
+		PackageURL:    opts.InstalledFromURL,
+		SHA256:        opts.SHA256,
+		MinPOSVersion: m.MinPOSVersion,
+		PublishedAt:   now.Format(time.RFC3339),
+	}); err != nil {
+		return fmt.Errorf("ensure catalog entry: %w", err)
+	}
+
+	// 2. Insert into plugins table
 	trustLevel := "untrusted"
 	if opts.TrustLevel != "" {
 		trustLevel = opts.TrustLevel

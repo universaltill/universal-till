@@ -367,6 +367,30 @@ func setupTestDB(t *testing.T) *sql.DB {
 
 	// Create plugin tables
 	schema := `
+	CREATE TABLE plugin_catalog (
+		id TEXT NOT NULL,
+		version TEXT NOT NULL,
+		name TEXT NOT NULL,
+		description TEXT,
+		author TEXT,
+		website TEXT,
+		repository_url TEXT,
+		runtime TEXT NOT NULL,
+		entrypoint TEXT NOT NULL,
+		package_url TEXT NOT NULL,
+		sha256 TEXT NOT NULL,
+		signature TEXT,
+		size_bytes INTEGER,
+		min_pos_version TEXT NOT NULL,
+		max_pos_version TEXT,
+		api_version TEXT,
+		tags_json TEXT,
+		capabilities_json TEXT,
+		published_at TEXT,
+		is_deprecated INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (id, version)
+	);
+
 	CREATE TABLE plugins (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -456,4 +480,66 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 
 	return db
+}
+
+func TestParseManifest_RuntimeNoneNeedsNoEntrypoint(t *testing.T) {
+	m, err := ParseManifest(strings.NewReader(`{
+		"id":"com.x.theme","name":"Theme","version":"1.0.0","runtime":"none",
+		"entries":[{"type":"theme","key":"x","label":"X","config":{"css":"assets/theme.css"}}]
+	}`))
+	if err != nil {
+		t.Fatalf("runtime none without entrypoint should parse: %v", err)
+	}
+	if m.Runtime != "none" || len(m.Entries) != 1 || m.Entries[0].Type != "theme" {
+		t.Fatalf("unexpected manifest: %+v", m)
+	}
+
+	// Runnable runtimes still require an entrypoint.
+	if _, err := ParseManifest(strings.NewReader(`{"id":"a","name":"b","version":"1.0.0","runtime":"go"}`)); err == nil {
+		t.Fatal("go runtime without entrypoint must fail")
+	}
+}
+
+// TestShippedThemeManifestsParse guards the in-repo theme plugins
+// (plugins/themes/*) — each must parse and register exactly one theme entry
+// whose config points at a CSS file that exists in the plugin dir.
+func TestShippedThemeManifestsParse(t *testing.T) {
+	dirs, err := filepath.Glob(filepath.Join("..", "..", "plugins", "themes", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no theme plugin dirs found: %v", err)
+	}
+	for _, dir := range dirs {
+		f, err := os.Open(filepath.Join(dir, "manifest.json"))
+		if err != nil {
+			t.Errorf("%s: %v", dir, err)
+			continue
+		}
+		m, err := ParseManifest(f)
+		f.Close()
+		if err != nil {
+			t.Errorf("%s: parse: %v", dir, err)
+			continue
+		}
+		if m.Runtime != "none" {
+			t.Errorf("%s: runtime = %q, want none", dir, m.Runtime)
+		}
+		var themeEntries int
+		for _, e := range m.Entries {
+			if e.Type != "theme" {
+				continue
+			}
+			themeEntries++
+			css, _ := e.Config["css"].(string)
+			if css == "" {
+				t.Errorf("%s: theme entry %q missing config.css", dir, e.Key)
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(dir, css)); err != nil {
+				t.Errorf("%s: css %q not found: %v", dir, css, err)
+			}
+		}
+		if themeEntries != 1 {
+			t.Errorf("%s: expected exactly 1 theme entry, got %d", dir, themeEntries)
+		}
+	}
 }

@@ -17,6 +17,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		data := map[string]any{
 			"title":       "Settings",
 			"theme":       d.State.Theme,
+			"themes":      availableThemes(r.Context(), d),
 			"settings":    d.State,
 			"settingsMap": all,
 			"menuItems":   d.Menu,

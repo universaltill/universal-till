@@ -1,0 +1,23 @@
+/* Bigtouch — kiosk layout: the product buttons span the FULL WIDTH on top for
+   fast tapping; basket, journal and tender sit underneath. Touch targets and
+   text are enlarged throughout. */
+.pos-container {
+  grid-template-columns: 1.2fr 1fr 1fr;
+  grid-template-areas:
+    "products products products"
+    "basket journal tender";
+}
+
+/* Extra-large touch targets. */
+.grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:.75rem }
+.btn-tile { padding:.9rem; font-size:1.15rem; border-radius:14px }
+.btn { padding:.9rem 1.1rem; font-size:1.1rem; border-radius:12px }
+input, select { padding:.8rem; font-size:1.05rem }
+.basket th, .basket td { padding:.85rem; font-size:1.05rem }
+.basket .total { font-size:1.35rem }
+
+:root { --brand:#065f46; --accent:#059669; }
+.nav { background:var(--brand); color:#fff; padding:.7rem 1rem; display:flex; justify-content:space-between; align-items:center }
+.nav a { color:#fff; margin-left:.8rem; font-size:1.05rem }
+.logo img { height:32px }
+.btn { background:var(--accent) }

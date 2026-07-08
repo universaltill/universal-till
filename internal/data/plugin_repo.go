@@ -568,6 +568,30 @@ type CatalogUpsertRow struct {
 	PublishedAt   string
 }
 
+// EnsureCatalogEntry inserts a plugin_catalog row if one does not already
+// exist for (id, version). plugins(id,version) has a foreign key onto
+// plugin_catalog, so locally imported plugins (no marketplace catalog row)
+// need one before they can be persisted. Existing rows (e.g. written by the
+// marketplace installer) are left untouched.
+func (r *PluginRepo) EnsureCatalogEntry(ctx context.Context, tx *sql.Tx, in CatalogUpsertRow) error {
+	exec := r.executor(tx)
+	_, err := exec.ExecContext(ctx, `
+INSERT INTO plugin_catalog (
+	id, version, name, description, author, website, repository_url,
+	runtime, entrypoint, package_url, sha256, signature, size_bytes,
+	min_pos_version, max_pos_version, api_version, tags_json, capabilities_json,
+	published_at, is_deprecated
+) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 0, ?, '', '1.0.0', '', '', ?, 0)
+ON CONFLICT(id, version) DO NOTHING
+`, in.ID, in.Version, in.Name, in.Description, in.Author, in.Website,
+		in.Runtime, in.Entrypoint, in.PackageURL, in.SHA256, in.Signature,
+		in.MinPOSVersion, in.PublishedAt)
+	if err != nil {
+		return pluginObs.wrapf("ensure_catalog_entry", "ensure catalog entry %s@%s", err, in.ID, in.Version)
+	}
+	return nil
+}
+
 // UpsertCatalogEntry inserts or updates a plugin_catalog entry from a
 // marketplace install. Keeping the SQL here preserves the repository pattern
 // (data access lives only in internal/data).
@@ -710,6 +734,45 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 		var row ReceiptTemplateRow
 		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.PluginVersion, &row.EntryKey, &row.SortOrder, &row.ConfigJSON); err != nil {
 			return nil, pluginObs.wrap("list_receipt_templates", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
+// ThemeRow is a UI theme provided by an installed plugin (plugin_entries
+// type='theme'). ConfigJSON carries the theme config, e.g. {"css":"assets/theme.css"}.
+type ThemeRow struct {
+	PluginID      string
+	PluginVersion string
+	EntryKey      string
+	Label         string
+	ConfigJSON    string
+}
+
+// ListThemeEntries returns active theme entries from active plugins.
+func (r *PluginRepo) ListThemeEntries(ctx context.Context) ([]ThemeRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+    p.id,
+    p.version,
+    pe.key,
+    pe.label,
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'theme' AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.plugin_id, pe.key
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_theme_entries", err)
+	}
+	defer rows.Close()
+	var res []ThemeRow
+	for rows.Next() {
+		var row ThemeRow
+		if err := rows.Scan(&row.PluginID, &row.PluginVersion, &row.EntryKey, &row.Label, &row.ConfigJSON); err != nil {
+			return nil, pluginObs.wrap("list_theme_entries", err)
 		}
 		res = append(res, row)
 	}

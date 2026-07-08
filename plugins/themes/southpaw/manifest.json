@@ -1,0 +1,20 @@
+{
+  "id": "com.unitill.themes.southpaw",
+  "name": "Southpaw Theme",
+  "version": "1.0.0",
+  "description": "Left-handed layout — product buttons on the left, basket centre, tender on the right.",
+  "author": "Universal Till",
+  "runtime": "none",
+  "canonical_type": "page",
+  "device_arch": "any",
+  "entries": [
+    {
+      "type": "theme",
+      "key": "southpaw",
+      "label": "Southpaw (buttons left)",
+      "config": {
+        "css": "assets/theme.css"
+      }
+    }
+  ]
+}
