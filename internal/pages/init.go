@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -43,6 +44,8 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	}
 	httpx.InitI18n(i18n, cfg.Locales.Locale)
 	httpx.InitCurrency(state.Currency)
+	// Dedicated till: larger touch targets, no text selection (UT_KIOSK=1).
+	httpx.InitKiosk(os.Getenv("UT_KIOSK") == "1")
 
 	btnStore := ui.NewButtonStore(db)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}

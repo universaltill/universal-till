@@ -264,3 +264,37 @@ a.btn, a.btn:hover { text-decoration: none; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 1s linear infinite; display: inline-block; }
 svg.animate-spin { flex-shrink: 0; width: 1.25rem; height: 1.25rem; }
+
+/* ---------- Generic tables (settings, inventory, catalog, shifts…) ---------- */
+table.table, .card table {
+  width: 100%; border-collapse: collapse; background: var(--surface);
+  border-radius: var(--radius); overflow: hidden;
+}
+table.table th, .card table th {
+  font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); padding: .5rem .6rem; border-bottom: 2px solid var(--border);
+  text-align: left;
+}
+table.table td, .card table td {
+  padding: .5rem .6rem; border-bottom: 1px solid var(--border); text-align: left;
+}
+table.table tr:last-child td, .card table tr:last-child td { border-bottom: none; }
+
+/* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
+   Touch-first: bigger targets, no text selection or tap highlights, no
+   accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);
+   see deploy/raspberry-pi/. */
+body.kiosk { font-size: 17px; touch-action: manipulation; }
+body.kiosk * { -webkit-tap-highlight-color: transparent; }
+body.kiosk .btn, body.kiosk .nav-links a, body.kiosk .btn-tile,
+body.kiosk h1, body.kiosk h2, body.kiosk .status-pill, body.kiosk label,
+body.kiosk .basket th, body.kiosk .journal th {
+  -webkit-user-select: none; user-select: none;
+}
+body.kiosk .btn { min-height: 3rem; padding: .7rem 1.15rem; font-size: 1rem; }
+body.kiosk .btn-tile .btn { min-height: 2.8rem; font-size: .95rem; }
+body.kiosk input, body.kiosk select { min-height: 2.9rem; font-size: 1rem; }
+body.kiosk .nav-links a { padding: .55rem .8rem; font-size: 1rem; }
+body.kiosk .grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+body.kiosk .basket td { padding: .7rem .6rem; font-size: 1.02rem; }
+body.kiosk .basket .total { font-size: 1.5rem; }
