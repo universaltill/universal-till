@@ -740,6 +740,99 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 	return res, rows.Err()
 }
 
+// PageEntryRow is a plugin-provided page (plugin_entries type='page') with
+// the installed plugin version so callers can locate its on-disk content.
+type PageEntryRow struct {
+	PluginID      string
+	PluginName    string
+	PluginVersion string
+	EntryKey      string
+	Label         string
+	Route         string
+	ConfigJSON    string
+}
+
+// ListPageEntries returns active page entries from active plugins.
+func (r *PluginRepo) ListPageEntries(ctx context.Context) ([]PageEntryRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+    p.id,
+    p.name,
+    p.version,
+    pe.key,
+    pe.label,
+    COALESCE(pe.route, ''),
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'page' AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.plugin_id, pe.key
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_page_entries", err)
+	}
+	defer rows.Close()
+	var res []PageEntryRow
+	for rows.Next() {
+		var row PageEntryRow
+		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.PluginVersion, &row.EntryKey, &row.Label, &row.Route, &row.ConfigJSON); err != nil {
+			return nil, pluginObs.wrap("list_page_entries", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
+// ButtonEntryRow is a plugin-provided action button (plugin_entries
+// type='button'). TargetAction / TriggerEvent name the event the POS publishes
+// when the button is pressed.
+type ButtonEntryRow struct {
+	PluginID      string
+	PluginName    string
+	EntryKey      string
+	Label         string
+	IconPath      string
+	ParentPageKey string
+	TargetAction  string
+	TriggerEvent  string
+	SortOrder     int
+	ConfigJSON    string
+}
+
+// ListButtonEntries returns active button entries from active plugins.
+func (r *PluginRepo) ListButtonEntries(ctx context.Context) ([]ButtonEntryRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+    p.id,
+    p.name,
+    pe.key,
+    pe.label,
+    COALESCE(pe.icon_path, ''),
+    COALESCE(pe.parent_page_key, ''),
+    COALESCE(pe.target_action, ''),
+    COALESCE(pe.trigger_event, ''),
+    pe.sort_order,
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'button' AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.plugin_id, pe.key
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_button_entries", err)
+	}
+	defer rows.Close()
+	var res []ButtonEntryRow
+	for rows.Next() {
+		var row ButtonEntryRow
+		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.EntryKey, &row.Label, &row.IconPath, &row.ParentPageKey, &row.TargetAction, &row.TriggerEvent, &row.SortOrder, &row.ConfigJSON); err != nil {
+			return nil, pluginObs.wrap("list_button_entries", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
 // ThemeRow is a UI theme provided by an installed plugin (plugin_entries
 // type='theme'). ConfigJSON carries the theme config, e.g. {"css":"assets/theme.css"}.
 type ThemeRow struct {
