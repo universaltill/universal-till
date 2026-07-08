@@ -1,0 +1,19 @@
+/* Southpaw — repositions the POS panels for left-handed operators:
+   product buttons on the LEFT, basket in the centre, journal+tender stacked
+   on the right. Uses the pos-container grid areas from app.css. */
+.pos-container {
+  grid-template-columns: 1fr 1.2fr 0.7fr;
+  grid-template-areas:
+    "products basket journal"
+    "products basket tender";
+}
+
+/* Slightly larger tiles since the buttons column is the primary hand zone. */
+.grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+
+:root { --brand:#1e3a8a; --accent:#f59e0b; }
+.nav { background:var(--brand); color:#fff; padding:.6rem 1rem; display:flex; justify-content:space-between; align-items:center }
+.nav a { color:#fff; margin-left:.8rem }
+.logo img { height:30px }
+.btn { background:var(--accent); color:#1f2937 }
+.basket .total { color:var(--brand) }

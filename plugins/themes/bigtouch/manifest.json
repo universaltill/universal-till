@@ -1,0 +1,20 @@
+{
+  "id": "com.unitill.themes.bigtouch",
+  "name": "Bigtouch Theme",
+  "version": "1.0.0",
+  "description": "Kiosk layout — full-width product buttons on top with extra-large touch targets.",
+  "author": "Universal Till",
+  "runtime": "none",
+  "canonical_type": "page",
+  "device_arch": "any",
+  "entries": [
+    {
+      "type": "theme",
+      "key": "bigtouch",
+      "label": "Bigtouch (kiosk)",
+      "config": {
+        "css": "assets/theme.css"
+      }
+    }
+  ]
+}

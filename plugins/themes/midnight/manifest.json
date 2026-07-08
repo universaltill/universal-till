@@ -1,0 +1,20 @@
+{
+  "id": "com.unitill.themes.midnight",
+  "name": "Midnight Theme",
+  "version": "1.0.0",
+  "description": "Dark UI theme for Universal Till — low-glare palette for dim environments.",
+  "author": "Universal Till",
+  "runtime": "none",
+  "canonical_type": "page",
+  "device_arch": "any",
+  "entries": [
+    {
+      "type": "theme",
+      "key": "midnight",
+      "label": "Midnight (dark)",
+      "config": {
+        "css": "assets/theme.css"
+      }
+    }
+  ]
+}

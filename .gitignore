@@ -70,3 +70,6 @@ tests/contract/pacts/
 tests/contract/logs/
 
 __debug*
+
+# Runtime plugin data (installed plugins, catalog cache, auth tokens)
+data/plugins/

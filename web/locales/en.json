@@ -50,5 +50,7 @@
   "designer.buttons": "Buttons",
   "receipt.legal.plugin_label": "Legal notice (%s v%s)",
   "receipt.printer.unavailable": "Printer unavailable.",
-  "receipt.printer.retry": "Retry print"
+  "receipt.printer.retry": "Retry print",
+  "settings.theme.title": "Theme",
+  "settings.theme.apply": "Apply theme"
 }

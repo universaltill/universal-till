@@ -1,6 +1,18 @@
 {{ define "content" }}
 <h1>System Settings</h1>
 <div class="card">
+  <h2>{{ T "settings.theme.title" }}</h2>
+  <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="window.location.reload()">
+    <select name="theme">
+      {{ $current := .theme }}
+      {{ range .themes }}
+      <option value="{{ .Key }}" {{ if eq .Key $current }}selected{{ end }}>{{ .Label }}{{ if ne .Source "built-in" }} ({{ .Source }}){{ end }}</option>
+      {{ end }}
+    </select>
+    <button class="btn" type="submit">{{ T "settings.theme.apply" }}</button>
+  </form>
+</div>
+<div class="card">
   <h2>All Settings</h2>
   <table class="table">
     <thead>

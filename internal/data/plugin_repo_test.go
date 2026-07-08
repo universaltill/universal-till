@@ -17,7 +17,7 @@ func newPluginRepoTestDB(t *testing.T) *sql.DB {
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed');`,
-		`CREATE TABLE plugin_entries (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, type TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, sort_order INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE plugin_entries (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, type TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, config_json TEXT, sort_order INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE plugin_permissions (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, permission TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 0);`,
 	}
 	for _, s := range stmts {
@@ -91,5 +91,42 @@ func TestPluginRepo_ListInstalledPlugins_ActiveOnly(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ID != "active" {
 		t.Fatalf("expected only active plugin, got %+v", rows)
+	}
+}
+
+func TestPluginRepo_ListThemeEntries(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('t1','Midnight','1.0.0',1)`); err != nil {
+		t.Fatalf("seed plugin: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,config_json,is_active) VALUES('te1','t1','theme','midnight','Midnight (dark)','{"css":"assets/theme.css"}',1)`); err != nil {
+		t.Fatalf("seed theme entry: %v", err)
+	}
+	// Inactive plugin: theme must be filtered out.
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('t2','Old','0.1',0)`); err != nil {
+		t.Fatalf("seed plugin2: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('te2','t2','theme','old','Old',1)`); err != nil {
+		t.Fatalf("seed theme entry2: %v", err)
+	}
+	// Non-theme entry: excluded.
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('te3','t1','page','p','P',1)`); err != nil {
+		t.Fatalf("seed page entry: %v", err)
+	}
+
+	rows, err := repo.ListThemeEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListThemeEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 theme, got %d: %+v", len(rows), rows)
+	}
+	r := rows[0]
+	if r.PluginID != "t1" || r.PluginVersion != "1.0.0" || r.EntryKey != "midnight" ||
+		r.Label != "Midnight (dark)" || r.ConfigJSON != `{"css":"assets/theme.css"}` {
+		t.Fatalf("unexpected row: %+v", r)
 	}
 }

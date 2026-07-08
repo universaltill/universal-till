@@ -436,7 +436,7 @@ CREATE TABLE IF NOT EXISTS plugin_entries (
     id              TEXT PRIMARY KEY,                 -- uuid
     plugin_id       TEXT NOT NULL,
 
-    type            TEXT NOT NULL,                    -- page|button|popup|payment|device|integration|report|pricing|tax|import|export|hardware|background_job|scheduler|receipt_template|customer_facing|auth|notification|delivery
+    type            TEXT NOT NULL,                    -- page|button|popup|payment|device|integration|report|pricing|tax|import|export|hardware|background_job|scheduler|receipt_template|customer_facing|auth|notification|delivery|theme
     key             TEXT NOT NULL,                    -- unique inside plugin (e.g. "loyalty.page")
     label           TEXT NOT NULL,
 
@@ -479,7 +479,8 @@ CREATE TABLE IF NOT EXISTS plugin_entries (
         'customer_facing',
         'auth',
         'notification',
-        'delivery'
+        'delivery',
+        'theme'
     ))
 );
 
