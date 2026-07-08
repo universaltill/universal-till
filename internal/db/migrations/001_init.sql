@@ -3320,107 +3320,11 @@ VALUES (
         NULL
     );
 
-INSERT INTO plugin_catalog (
-    id, version, name, description, author, website, repository_url,
-    runtime, entrypoint, package_url, sha256, signature, size_bytes,
-    min_pos_version, max_pos_version, api_version, tags_json,
-    capabilities_json, published_at, is_deprecated
-) VALUES
--- FAQ
-(
-    'com.unitill.plugins.faq', '1.0.0',
-    'FAQ Page', 'Adds a Frequently Asked Questions page.',
-    'UniversalTill', '', '',  -- author, website, repository_url
-    'web', 'index.html',
-    'https://raw.githubusercontent.com/universaltill/plugins-faq/main/index.html',
-    '', '', 0,  -- sha256, signature, size_bytes
-    '1.0.0', '999.0.0', '1.0',
-    '["page"]', '{"ui":["page"]}',
-    CURRENT_TIMESTAMP, 0
-),
--- ESC/POS
-(
-    'com.unitill.plugins.escpos', '2.1.0',
-    'ESC/POS Printer', 'Print receipts on ESC/POS-compatible printers.',
-    'UniversalTill', '', '',
-    'native', 'driver.so', '', '', '', 0,
-    '1.0.0', '999.0.0', '1.0',
-    '["device"]', '{"devices":["printer"]}',
-    CURRENT_TIMESTAMP, 0
-),
--- UberEats
-(
-    'com.unitill.plugins.ubereats', '1.5.2',
-    'UberEats Integration', 'Pull orders from UberEats and push status updates.',
-    'UniversalTill', '', '',
-    'native', 'main', '', '', '', 0,
-    '1.0.0', '999.0.0', '1.0',
-    '["integration"]', '{"integrations":["orders"]}',
-    CURRENT_TIMESTAMP, 0
-),
--- QRPay
-(
-    'com.unitill.plugins.qrpay', '1.2.1',
-    'QR Payments', 'Accept local QR code payments.',
-    'UniversalTill', '', '',
-    'native', 'main', '', '', '', 0,
-    '1.0.0', '999.0.0', '1.0',
-    '["payment"]', '{"payments":["qr"]}',
-    CURRENT_TIMESTAMP, 0
-);
-
-INSERT INTO plugins (
-    id, name, version, install_state, description,
-    author, website, entrypoint, runtime,
-    installed_from_url, installed_sha256, is_active,
-    trust_level, installed_at, updated_at
-) VALUES
-('com.unitill.plugins.faq','FAQ Page','1.0.0','installed','Adds FAQ page.',
- 'UniversalTill','','index.html','web',
- 'https://raw.githubusercontent.com/universaltill/plugins-faq/main/index.html','',1,
- 'trusted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
-
-('com.unitill.plugins.escpos','ESC/POS Printer','2.1.0','installed','ESC/POS printing.',
- 'UniversalTill','','driver.so','native',
- '','',1,'trusted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
-
-('com.unitill.plugins.ubereats','UberEats Integration','1.5.2','installed','UberEats orders.',
- 'UniversalTill','','main','native',
- '','',1,'trusted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
-
-('com.unitill.plugins.qrpay','QR Payments','1.2.1','installed','QR Payments.',
- 'UniversalTill','','main','native',
- '','',1,'trusted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
--- ---------------------------
-
-INSERT INTO plugin_entries (
-    id, plugin_id, type, key, label,
-    icon_path, sort_order, is_active,
-    parent_page_key, menu_group, route,
-    target_action, trigger_event,
-    config_json, created_at, updated_at
-) VALUES
-(
-    'entry-faq-page', 'com.unitill.plugins.faq',
-    'page', 'faq_page', 'FAQ',
-    '', 10, 1,
-    NULL, 'Help', '/faq',
-    NULL, NULL,
-    '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-),
-(
-    'entry-qrpay-payment', 'com.unitill.plugins.qrpay',
-    'payment', 'qr_payment', 'QR Payment',
-    '', 20, 1,
-    NULL, NULL, NULL,
-    'payWithQR', 'sale.payment.requested',
-    '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-);
-
-INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES
-('perm-escpos-print', 'com.unitill.plugins.escpos', 'devices:printer', 1),
-('perm-ubereats-orders','com.unitill.plugins.ubereats','integrations:orders', 1),
-('perm-qrpay-charge','com.unitill.plugins.qrpay','payments:qr', 1);
+-- Demo plugins were previously seeded here (com.unitill.plugins.*). They were
+-- database rows with no files behind them: their pages rendered nothing, their
+-- menu entries duplicated real plugins (a decoy "FAQ" next to the marketplace
+-- FAQ) and their tiles confused the plugins manager. Real plugins come from
+-- the marketplace or file import.
 
 -- sample promotions (amount = minor units, percent = basis points)
 INSERT OR IGNORE INTO promotions (code, type, value, description, is_active) VALUES
@@ -3429,14 +3333,16 @@ INSERT OR IGNORE INTO promotions (code, type, value, description, is_active) VAL
 ('DISC10', 'percent', 1000, '10% off basket', 1);
 
 
+-- Shortcut labels MUST match the item the barcode maps to (itmNNN in items):
+-- a mislabelled tile charges the customer for a different product.
 INSERT INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES
   ('2000010000017', 'itm001', 'Coca-Cola 330ml', '/public/assets/items/itm001/thumb.png'),
   ('2000010000024', 'itm002', 'Pepsi 330ml', '/public/assets/items/itm002/thumb.png'),
-  ('2000010000031', 'itm003', 'Orange Juice 1L', '/public/assets/items/itm003/thumb.png'),
-  ('2000010000048', 'itm004', 'Bananas (kg)', '/public/assets/items/itm004/thumb.png'),
-  ('2000010000055', 'itm005', 'Whole Milk 2L', '/public/assets/items/itm005/thumb.png'),
-  ('2000010000062', 'itm006', 'Brown Bread', '/public/assets/items/itm006/thumb.png'),
-  ('2000010000079', 'itm007', 'Chocolate Bar', '/public/assets/items/itm007/thumb.png'),
-  ('2000010000086', 'itm008', 'Eggs (12 pack)', '/public/assets/items/itm008/thumb.png'),
-  ('2000010000093', 'itm009', 'Tomatoes (kg)', '/public/assets/items/itm009/thumb.png'),
-  ('2000010000109', 'itm010', 'Water 500ml', '/public/assets/items/itm010/thumb.png');
+  ('2000010000031', 'itm003', 'Sparkling Water 500ml', '/public/assets/items/itm003/thumb.png'),
+  ('2000010000048', 'itm004', 'Still Water 1.5L', '/public/assets/items/itm004/thumb.png'),
+  ('2000010000055', 'itm005', 'Orange Juice 1L', '/public/assets/items/itm005/thumb.png'),
+  ('2000010000062', 'itm006', 'Apple Juice 1L', '/public/assets/items/itm006/thumb.png'),
+  ('2000010000079', 'itm007', 'Semi-Skimmed Milk 2L', '/public/assets/items/itm007/thumb.png'),
+  ('2000010000086', 'itm008', 'Whole Milk 1L', '/public/assets/items/itm008/thumb.png'),
+  ('2000010000093', 'itm009', 'Butter 250g', '/public/assets/items/itm009/thumb.png'),
+  ('2000010000109', 'itm010', 'Cheddar Cheese 400g', '/public/assets/items/itm010/thumb.png');
