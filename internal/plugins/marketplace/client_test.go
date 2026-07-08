@@ -179,3 +179,85 @@ func (m *mockTokenClient) GetToken(ctx context.Context) (string, error) {
 func (m *mockTokenClient) ClearCache() error {
 	return nil
 }
+
+// TestPluginSummary_DecodesLiveWireFormat pins the flattened camelCase schema
+// the deployed marketplace actually returns from /v1/catalog/plugins (vendor is
+// a plain string, id doubles as the listing id, type/trustLevel are camelCase).
+// A previous regression: Vendor was typed as an object, so decoding the live
+// response failed and the POS plugins page rendered empty.
+func TestPluginSummary_DecodesLiveWireFormat(t *testing.T) {
+	live := []byte(`{
+		"plugins":[{
+			"id":"1295b44c-8226-4115-b8c8-4a02733b780d",
+			"name":"Universal Till FAQ",
+			"version":"0.1.2",
+			"type":"page",
+			"vendor":"unassigned",
+			"trustLevel":"unverified",
+			"requiredCapabilities":["ui.page"],
+			"minHostVersion":"",
+			"description":"Universal Till FAQ",
+			"iconUrl":"https://x/icon.png",
+			"paidListing":false
+		}],
+		"nextPageToken":"",
+		"snapshotVersion":1783463941
+	}`)
+
+	var resp ListPluginsResponse
+	if err := json.Unmarshal(live, &resp); err != nil {
+		t.Fatalf("decode live wire format: %v", err)
+	}
+	if len(resp.Plugins) != 1 {
+		t.Fatalf("expected 1 plugin, got %d", len(resp.Plugins))
+	}
+	p := resp.Plugins[0]
+	if p.ID != "1295b44c-8226-4115-b8c8-4a02733b780d" {
+		t.Errorf("ID = %q", p.ID)
+	}
+	if p.ListingID != p.ID {
+		t.Errorf("ListingID should fall back to id, got %q", p.ListingID)
+	}
+	if p.Vendor != "unassigned" || p.DeveloperID != "unassigned" {
+		t.Errorf("vendor mapping: Vendor=%q DeveloperID=%q", p.Vendor, p.DeveloperID)
+	}
+	if p.CanonicalType != "page" {
+		t.Errorf("CanonicalType = %q, want page (from 'type')", p.CanonicalType)
+	}
+	if p.TrustTier != "unverified" {
+		t.Errorf("TrustTier = %q, want unverified (from 'trustLevel')", p.TrustTier)
+	}
+	if len(p.Capabilities) != 1 || p.Capabilities[0] != "ui.page" {
+		t.Errorf("Capabilities = %v (from requiredCapabilities)", p.Capabilities)
+	}
+	if p.IconURL != "https://x/icon.png" {
+		t.Errorf("IconURL = %q (from iconUrl)", p.IconURL)
+	}
+}
+
+// TestPluginSummary_DecodesLegacySnakeCase keeps the older rich schema working
+// (listing_id, canonical_type, trust_tier, snake_case URLs).
+func TestPluginSummary_DecodesLegacySnakeCase(t *testing.T) {
+	legacy := []byte(`{
+		"listing_id":"L1","name":"X","version":"1.0.0",
+		"canonical_type":"payment","trust_tier":"verified",
+		"developer_id":"dev-1","artifact_url":"https://a","artifact_hash":"h",
+		"icon_url":"https://i","device_arch":"linux/amd64","paid_listing":true
+	}`)
+	var p PluginSummary
+	if err := json.Unmarshal(legacy, &p); err != nil {
+		t.Fatalf("decode legacy: %v", err)
+	}
+	if p.ListingID != "L1" || p.ID != "L1" {
+		t.Errorf("ids: ID=%q ListingID=%q", p.ID, p.ListingID)
+	}
+	if p.CanonicalType != "payment" || p.TrustTier != "verified" || p.DeveloperID != "dev-1" {
+		t.Errorf("legacy fields: %+v", p)
+	}
+	if p.ArtifactURL != "https://a" || p.ArtifactHash != "h" || p.IconURL != "https://i" {
+		t.Errorf("legacy urls: %+v", p)
+	}
+	if !p.PaidListing {
+		t.Error("paid_listing not mapped")
+	}
+}

@@ -2,8 +2,10 @@ package pages
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,8 +39,11 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
 
 		if d.CatalogRepo != nil {
-			// Try to get from cache first
-			snapshot, _, err := d.CatalogRepo.Get()
+			// Local-first: return the cached snapshot if present; otherwise fetch it
+			// live once (and cache it). Falls back to cache when the marketplace is
+			// unreachable, so the page still populates on first visit online.
+			deviceArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+			snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, deviceArch)
 			if err == nil && snapshot != nil {
 				// Transform catalog plugins to format expected by UI
 				for _, p := range snapshot.Plugins {

@@ -144,7 +144,8 @@ type PluginSummary struct {
 	ListingID     string   `json:"listing_id"` // For backward compatibility
 	Name          string   `json:"name"`
 	Description   string   `json:"description"`
-	Vendor        *Vendor  `json:"vendor,omitempty"`
+	Vendor        string   `json:"vendor,omitempty"` // catalog API returns a plain name string
+	PaidListing   bool     `json:"paid_listing,omitempty"`
 	DeveloperID   string   `json:"developer_id"` // For backward compatibility
 	Version       string   `json:"version"`
 	TrustTier     string   `json:"trust_tier"`
@@ -165,14 +166,87 @@ type PluginSummary struct {
 	UpdatedAt     string   `json:"updated_at,omitempty"`
 }
 
-// Vendor represents plugin vendor info
-type Vendor struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Email      string `json:"email,omitempty"`
-	Website    string `json:"website,omitempty"`
-	Verified   bool   `json:"verified"`
-	VerifiedAt string `json:"verified_at,omitempty"`
+// UnmarshalJSON maps the live catalog wire format onto PluginSummary. The
+// deployed marketplace returns a flattened camelCase schema (id, type,
+// trustLevel, vendor as a plain string, requiredCapabilities, minHostVersion,
+// paidListing); the POS historically expected a richer snake_case schema. We
+// accept both so the catalog decodes regardless of which the server sends.
+func (p *PluginSummary) UnmarshalJSON(data []byte) error {
+	var w struct {
+		ID                   string   `json:"id"`
+		ListingID            string   `json:"listing_id"`
+		Name                 string   `json:"name"`
+		Description          string   `json:"description"`
+		Vendor               string   `json:"vendor"`
+		DeveloperID          string   `json:"developer_id"`
+		Version              string   `json:"version"`
+		Type                 string   `json:"type"`
+		CanonicalType        string   `json:"canonical_type"`
+		TrustLevel           string   `json:"trustLevel"`
+		TrustTier            string   `json:"trust_tier"`
+		RequiredCapabilities []string `json:"requiredCapabilities"`
+		Capabilities         []string `json:"capabilities"`
+		MinHostVersion       string   `json:"minHostVersion"`
+		PriceFlag            string   `json:"price_flag"`
+		PaidListing          bool     `json:"paidListing"`
+		PaidListingSnake     bool     `json:"paid_listing"`
+		Architectures        []string `json:"architectures"`
+		DeviceArch           string   `json:"device_arch"`
+		IconURLCamel         string   `json:"iconUrl"`
+		IconURL              string   `json:"icon_url"`
+		Rating               float64  `json:"rating"`
+		ReviewCount          int      `json:"review_count"`
+		DownloadCount        int      `json:"download_count"`
+		ArtifactURL          string   `json:"artifact_url"`
+		ArtifactHash         string   `json:"artifact_hash"`
+		Locale               string   `json:"locale"`
+		ApprovedAt           string   `json:"approved_at"`
+		CreatedAt            string   `json:"created_at"`
+		UpdatedAt            string   `json:"updated_at"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+
+	// The catalog id IS the listing id used for install/download-token.
+	p.ID = firstNonEmptyStr(w.ID, w.ListingID)
+	p.ListingID = firstNonEmptyStr(w.ListingID, w.ID)
+	p.Name = w.Name
+	p.Description = w.Description
+	p.Vendor = w.Vendor
+	p.DeveloperID = firstNonEmptyStr(w.DeveloperID, w.Vendor)
+	p.Version = w.Version
+	p.CanonicalType = firstNonEmptyStr(w.CanonicalType, w.Type)
+	p.TrustTier = firstNonEmptyStr(w.TrustTier, w.TrustLevel)
+	p.PriceFlag = w.PriceFlag
+	p.PaidListing = w.PaidListing || w.PaidListingSnake
+	p.Architectures = w.Architectures
+	p.DeviceArch = w.DeviceArch
+	p.IconURL = firstNonEmptyStr(w.IconURL, w.IconURLCamel)
+	p.Rating = w.Rating
+	p.ReviewCount = w.ReviewCount
+	p.DownloadCount = w.DownloadCount
+	p.ArtifactURL = w.ArtifactURL
+	p.ArtifactHash = w.ArtifactHash
+	p.Locale = w.Locale
+	p.ApprovedAt = w.ApprovedAt
+	p.CreatedAt = w.CreatedAt
+	p.UpdatedAt = w.UpdatedAt
+
+	p.Capabilities = w.Capabilities
+	if len(p.Capabilities) == 0 {
+		p.Capabilities = w.RequiredCapabilities
+	}
+	return nil
+}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ListPluginsResponse contains paginated catalog results (matches OpenAPI schema).
