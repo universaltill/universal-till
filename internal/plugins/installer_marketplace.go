@@ -148,7 +148,35 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	}
 	defer downloadMgr.CleanupPartFile(req.ListingID)
 
-	extractDir := filepath.Join(i.downloadTmpDir, "extract-"+sanitizePathSegment(req.ListingID))
+	i.emitState(ctx, req, InstallStateInstalling, "")
+
+	return i.installBundleFile(ctx, bundleInstallSpec{
+		BundlePath: downloadResult.FilePath,
+		ListingID:  req.ListingID,
+		Checksum:   tokenResp.ChecksumSHA256,
+		Signature:  tokenResp.Signature,
+		SourceURL:  tokenResp.BundleURL,
+		TrustTier:  req.TrustTier,
+		DeviceArch: req.DeviceArch,
+	})
+}
+
+// bundleInstallSpec describes a verified-download bundle to install.
+type bundleInstallSpec struct {
+	BundlePath string // local .tar.gz path (checksum already verified)
+	ListingID  string
+	Checksum   string // marketplace-issued sha256 (hex)
+	Signature  string // marketplace-issued manifest signature (hex)
+	SourceURL  string
+	TrustTier  string
+	DeviceArch string
+}
+
+// installBundleFile extracts, verifies (signature, compatibility, executable)
+// and installs a plugin bundle that was downloaded from the marketplace. It is
+// shared by the direct install path and the store download->install flow.
+func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundleInstallSpec) (*MarketplaceInstallResult, error) {
+	extractDir := filepath.Join(i.downloadTmpDir, "extract-"+sanitizePathSegment(spec.ListingID))
 	if err := os.RemoveAll(extractDir); err != nil {
 		return nil, fmt.Errorf("cleanup extract dir: %w", err)
 	}
@@ -157,10 +185,9 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	if err := os.MkdirAll(extractDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create extract dir: %w", err)
 	}
-	if err := extractMarketplaceTarGz(downloadResult.FilePath, extractDir); err != nil {
+	if err := extractMarketplaceTarGz(spec.BundlePath, extractDir); err != nil {
 		return nil, fmt.Errorf("extract plugin bundle: %w", err)
 	}
-	i.emitState(ctx, req, InstallStateInstalling, "")
 
 	manifestPath := filepath.Join(extractDir, "manifest.json")
 	verification, err := i.verifier.VerifyManifest(manifestPath)
@@ -171,13 +198,13 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	if manifest == nil {
 		return nil, fmt.Errorf("verify manifest: manifest missing")
 	}
-	if manifest.Signature != tokenResp.Signature {
+	if manifest.Signature != spec.Signature {
 		return nil, fmt.Errorf("signature mismatch between marketplace metadata and manifest")
 	}
-	if manifest.ArtifactHash != "" && normalizeMarketplaceChecksum(manifest.ArtifactHash) != tokenResp.ChecksumSHA256 {
+	if manifest.ArtifactHash != "" && normalizeMarketplaceChecksum(manifest.ArtifactHash) != spec.Checksum {
 		return nil, fmt.Errorf("manifest artifact hash does not match marketplace checksum")
 	}
-	if err := i.verifier.VerifyCompatibility(manifest, req.DeviceArch, "2.5.0"); err != nil {
+	if err := i.verifier.VerifyCompatibility(manifest, spec.DeviceArch, "2.5.0"); err != nil {
 		return nil, err
 	}
 	executable := manifest.Executable
@@ -205,15 +232,15 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 		return nil, fmt.Errorf("move verified plugin into place: %w", err)
 	}
 
-	if err := i.upsertCatalogEntry(ctx, manifest, tokenResp.BundleURL, tokenResp.ChecksumSHA256, tokenResp.Signature); err != nil {
+	if err := i.upsertCatalogEntry(ctx, manifest, spec.SourceURL, spec.Checksum, spec.Signature); err != nil {
 		_ = os.RemoveAll(finalDir)
 		return nil, fmt.Errorf("persist plugin catalog entry: %w", err)
 	}
 
 	if err := PersistManifest(ctx, i.db, manifest, InstallOptions{
-		InstalledFromURL: tokenResp.BundleURL,
-		SHA256:           tokenResp.ChecksumSHA256,
-		TrustLevel:       marketplaceTrustTier(req.TrustTier),
+		InstalledFromURL: spec.SourceURL,
+		SHA256:           spec.Checksum,
+		TrustLevel:       marketplaceTrustTier(spec.TrustTier),
 		Uploader:         "marketplace",
 	}); err != nil {
 		_ = os.RemoveAll(finalDir)

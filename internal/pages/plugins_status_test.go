@@ -21,7 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
-func TestPluginsPageEmbedsLifecycleStatusAndRetryData(t *testing.T) {
+func TestStorePageShowsLifecycleStatusAndInstalledSplit(t *testing.T) {
 	chdirRoot(t)
 	initPagesI18n(t)
 
@@ -41,122 +41,70 @@ func TestPluginsPageEmbedsLifecycleStatusAndRetryData(t *testing.T) {
 
 	repo := newCatalogRepoWithSnapshot(t, marketplace.CatalogSnapshot{
 		Plugins: []marketplace.PluginSummary{
-			{
-				ID:            "p1",
-				ListingID:     "listing-active",
-				Name:          "Active Plugin",
-				Version:       "1.2.3",
-				Description:   "Shows active state",
-				DeveloperID:   "vendor-a",
-				CanonicalType: "payment",
-				DeviceArch:    runtime.GOOS + "/" + runtime.GOARCH,
-			},
-			{
-				ListingID:     "listing-installing",
-				Name:          "Installing Plugin",
-				Version:       "2.0.0",
-				Description:   "Shows in-flight state",
-				DeveloperID:   "vendor-b",
-				CanonicalType: "receipt",
-				DeviceArch:    runtime.GOOS + "/" + runtime.GOARCH,
-			},
-			{
-				ListingID:     "listing-failed",
-				Name:          "Failed Plugin",
-				Version:       "3.1.0",
-				Description:   "Shows retryable failure",
-				DeveloperID:   "vendor-c",
-				CanonicalType: "analytics",
-				DeviceArch:    runtime.GOOS + "/" + runtime.GOARCH,
-			},
-			{
-				ListingID:     "listing-failed-no-retry",
-				Name:          "Failed Non Retryable Plugin",
-				Version:       "3.2.0",
-				Description:   "Shows non-retryable failure",
-				DeveloperID:   "vendor-d",
-				CanonicalType: "analytics",
-				DeviceArch:    runtime.GOOS + "/" + runtime.GOARCH,
-			},
+			{ListingID: "listing-active", Name: "Active Plugin", Version: "1.2.3", CanonicalType: "payment"},
+			{ListingID: "listing-failed", Name: "Failed Plugin", Version: "3.1.0", CanonicalType: "page"},
+			{ListingID: "listing-fresh", Name: "Fresh Plugin", Version: "0.9.0", CanonicalType: "page"},
 		},
-		SnapshotVersion: 1,
-		FetchedAt:       time.Now(),
-		Locale:          "en",
-		DeviceArch:      runtime.GOOS + "/" + runtime.GOARCH,
 	})
 
 	statusStore := plugins.NewInstallStatusStore(db)
-	if err := statusStore.Save(t.Context(), plugins.InstallStatusRecord{
-		ListingID:      "listing-installing",
-		PluginName:     "Installing Plugin",
-		TargetVersion:  "2.0.0",
-		CurrentVersion: "2.0.0",
-		State:          plugins.InstallStateInstalling,
-	}); err != nil {
-		t.Fatalf("save installing status: %v", err)
+	// Installed and active (plugin row seeded by seedForPages as com.demo.active).
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('com.demo.active','Active Plugin','1.2.3',1)`); err != nil {
+		t.Fatalf("seed plugin: %v", err)
 	}
 	if err := statusStore.Save(t.Context(), plugins.InstallStatusRecord{
-		ListingID:      "listing-failed",
-		PluginName:     "Failed Plugin",
-		TargetVersion:  "3.1.0",
-		CurrentVersion: "3.1.0",
-		State:          plugins.InstallStateFailed,
-		MessageKey:     "plugins.install.error.retryable",
-		Retryable:      true,
+		ListingID: "listing-active", PluginID: "com.demo.active", CurrentVersion: "1.2.3",
+		State: plugins.InstallStateActive,
+	}); err != nil {
+		t.Fatalf("save active status: %v", err)
+	}
+	// Failed, retryable: operator must see why and be able to retry.
+	if err := statusStore.Save(t.Context(), plugins.InstallStatusRecord{
+		ListingID: "listing-failed", State: plugins.InstallStateFailed,
+		MessageKey: "plugins.install.error.retryable", Retryable: true,
 	}); err != nil {
 		t.Fatalf("save failed status: %v", err)
 	}
-	if err := statusStore.Save(t.Context(), plugins.InstallStatusRecord{
-		ListingID:      "listing-failed-no-retry",
-		PluginName:     "Failed Non Retryable Plugin",
-		TargetVersion:  "3.2.0",
-		CurrentVersion: "3.2.0",
-		State:          plugins.InstallStateFailed,
-		MessageKey:     "plugins.install.error.invalid_package",
-		Retryable:      false,
-	}); err != nil {
-		t.Fatalf("save non-retryable failed status: %v", err)
+
+	if err := pm.Reload(t.Context()); err != nil {
+		t.Fatalf("reload: %v", err)
 	}
 
 	deps := &common.Deps{
-		Cfg:         cfg,
-		Db:          db,
-		State:       state,
+		Cfg: cfg, Db: db, State: state, Pm: pm,
 		Menu:        []common.MenuItem{{Href: "/plugins", Label: "Plugins"}},
-		Pm:          pm,
 		Settings:    settings.NewStore(db),
 		CatalogRepo: repo,
 	}
 
 	mux := http.NewServeMux()
-	registerPluginsPage(mux, deps)
+	registerPluginStore(mux, deps)
 
-	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
+	req := httptest.NewRequest(http.MethodGet, "/plugins/store", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /plugins failed: code %d body %s", rec.Code, rec.Body.String())
+		t.Fatalf("GET /plugins/store failed: code %d body %s", rec.Code, rec.Body.String())
 	}
-
 	body := rec.Body.String()
+
 	for _, want := range []string{
-		`"id":"listing-active"`,
-		`"currentVersion":"1.0"`,
-		`"state":"active"`,
-		`"state":"installing"`,
-		`"state":"failed"`,
-		`"statusMessageKey":"plugins.install.error.retryable"`,
-		`"statusMessageKey":"plugins.install.error.invalid_package"`,
-		`"retryable":true`,
-		`"retryable":false`,
-		`Current version:`,
-		`Retry install`,
-		`data-testid="plugin-retry-install"`,
-		`/api/plugins/install-from-marketplace`,
+		// Installed listing: no store actions, points at the manager page.
+		"Active Plugin",
+		`data-testid="plugin-install-failed"`, // failure chip
+		// Failed listing stays actionable: Download retry affordance present.
+		`data-store-action="download" data-listing-id="listing-failed"`,
+		// Fresh listing is downloadable.
+		`data-store-action="download" data-listing-id="listing-fresh"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("expected plugins page to contain %q", want)
+			t.Fatalf("expected store page to contain %q", want)
 		}
+	}
+	// The installed card must NOT offer download/install.
+	if strings.Contains(body, `data-store-action="download" data-listing-id="listing-active"`) ||
+		strings.Contains(body, `data-store-action="install" data-listing-id="listing-active"`) {
+		t.Fatal("installed listing must not offer store actions")
 	}
 }
 

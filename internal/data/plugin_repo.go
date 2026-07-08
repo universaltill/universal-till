@@ -657,6 +657,39 @@ type PluginHookRow struct {
 	ConfigJSON string
 }
 
+// ManagedPluginRow is a plugin row for the management page — includes
+// disabled plugins (unlike ListInstalledPlugins) so they can be re-enabled.
+type ManagedPluginRow struct {
+	ID           string
+	Name         string
+	Version      string
+	IsActive     bool
+	TrustLevel   string
+	InstallState string
+}
+
+// ListManagedPlugins returns every plugin row regardless of active state.
+func (r *PluginRepo) ListManagedPlugins(ctx context.Context) ([]ManagedPluginRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, version, is_active, trust_level, install_state
+FROM plugins
+ORDER BY name COLLATE NOCASE
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_managed", err)
+	}
+	defer rows.Close()
+	var res []ManagedPluginRow
+	for rows.Next() {
+		var p ManagedPluginRow
+		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.IsActive, &p.TrustLevel, &p.InstallState); err != nil {
+			return nil, pluginObs.wrap("list_managed", err)
+		}
+		res = append(res, p)
+	}
+	return res, rows.Err()
+}
+
 func (r *PluginRepo) ListInstalledPlugins(ctx context.Context) ([]InstalledPluginRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, version, '' as author

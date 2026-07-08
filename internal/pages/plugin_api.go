@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -543,42 +544,46 @@ func writeInstallResponse(w http.ResponseWriter, status int, success bool, messa
 
 // handleEnablePlugin handles enabling a plugin (T017)
 func handleEnablePlugin(d *common.Deps) http.HandlerFunc {
+	return setPluginActiveHandler(d, true, "enabled")
+}
+
+// setPluginActiveHandler flips the plugin's is_active flag and refreshes the
+// manager + nav so the change takes effect immediately.
+func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		pluginID := r.PathValue("id")
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
 		}
-
-		// TODO: Update database to mark plugin as enabled
-		// TODO: Start plugin process if auto-start is configured
-
+		if err := data.NewPluginRepo(d.Db).SetPluginActive(ctx, nil, pluginID, active); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("failed to %s plugin: %v", verb, err),
+			})
+			return
+		}
+		if d.Pm != nil {
+			if err := d.Pm.Reload(ctx); err != nil {
+				log.Printf("warning: reload after %s %s: %v", verb, pluginID, err)
+			}
+			d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Plugin %s enabled", pluginID),
+			"message": fmt.Sprintf("Plugin %s %s", pluginID, verb),
 		})
 	}
 }
 
-// handleDisablePlugin handles disabling a plugin (T017)
+// handleDisablePlugin disables a plugin (is_active=0); its entries drop out of
+// menus/dispatch until re-enabled.
 func handleDisablePlugin(d *common.Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		pluginID := r.PathValue("id")
-		if pluginID == "" {
-			http.Error(w, "plugin ID is required", http.StatusBadRequest)
-			return
-		}
-
-		// TODO: Update database to mark plugin as disabled
-		// TODO: Stop plugin process if running
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("Plugin %s disabled", pluginID),
-		})
-	}
+	return setPluginActiveHandler(d, false, "disabled")
 }
 
 // handleUninstallPlugin uninstalls a plugin: removes its DB rows (cascading its

@@ -2,189 +2,97 @@ package pages
 
 import (
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"net/http"
-	"runtime"
-	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
+// registerPluginsPage renders the installed-plugins MANAGER: every plugin on
+// the till (enabled or disabled) with lifecycle actions. Discovering,
+// downloading and installing new plugins happens on /plugins/store.
 func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/plugins", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		page := 1
-		size := 12
-		tag := r.URL.Query().Get("type")
-		if v := r.URL.Query().Get("page"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				page = n
-			}
-		}
-		if v := r.URL.Query().Get("size"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				size = n
-			}
-		}
 
-		// LOCAL-FIRST: Use cached catalog if available
-		var items []map[string]interface{}
-		var tagsSet = make(map[string]struct{})
+		rows, err := data.NewPluginRepo(d.Db).ListManagedPlugins(ctx)
+		if err != nil {
+			http.Error(w, "failed to load plugins", http.StatusInternalServerError)
+			return
+		}
 		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
 
+		// Latest catalog versions (cache only — the manager page must work
+		// offline) keyed by plugin id via the install-status listing mapping.
+		latestByPlugin := map[string]string{}
 		if d.CatalogRepo != nil {
-			// Local-first: return the cached snapshot if present; otherwise fetch it
-			// live once (and cache it). Falls back to cache when the marketplace is
-			// unreachable, so the page still populates on first visit online.
-			deviceArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-			snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, deviceArch)
-			if err == nil && snapshot != nil {
-				// Transform catalog plugins to format expected by UI
+			if snapshot, _, err := d.CatalogRepo.Get(); err == nil && snapshot != nil {
+				latestByListing := map[string]string{}
 				for _, p := range snapshot.Plugins {
-					// Check if installed
-					installed := false
-					enabled := false
-					currentVersion := ""
-					hasUpdate := false
-					statusState := ""
-					statusMessageKey := ""
-					retryable := false
-
-					if status, exists := statuses[p.ListingID]; exists {
-						statusState = string(status.State)
-						currentVersion = status.CurrentVersion
-						statusMessageKey = status.MessageKey
-						retryable = status.Retryable
-						installed = status.State == plugins.InstallStateActive
+					id := p.ListingID
+					if id == "" {
+						id = p.ID
 					}
-
-					if inst, exists := installedPluginForSummary(d.Pm, p); exists {
-						installed = true
-						enabled = inst.IsActive
-						if currentVersion == "" {
-							currentVersion = inst.Version
-						}
-						if statusState == "" {
-							statusState = string(plugins.InstallStateActive)
-						}
-
-						// Check if update available (simple string comparison - production should use semantic versioning)
-						if p.Version != currentVersion {
-							hasUpdate = true
-						}
-					}
-
-					items = append(items, map[string]interface{}{
-						"id":               p.ListingID,
-						"name":             p.Name,
-						"version":          p.Version,
-						"currentVersion":   currentVersion,
-						"description":      p.Description,
-						"author":           p.DeveloperID,
-						"packageUrl":       p.ArtifactURL,
-						"sha256":           p.ArtifactHash,
-						"tags":             []string{p.CanonicalType},
-						"installed":        installed,
-						"enabled":          enabled,
-						"hasUpdate":        hasUpdate,
-						"state":            statusState,
-						"statusMessageKey": statusMessageKey,
-						"retryable":        retryable,
-					})
-
-					// Collect tags
-					if p.CanonicalType != "" {
-						tagsSet[p.CanonicalType] = struct{}{}
-					}
+					latestByListing[id] = p.Version
 				}
-			}
-		}
-		var tags []string
-		for t := range tagsSet {
-			tags = append(tags, t)
-		}
-		sort.Strings(tags)
-
-		// Apply type filter if specified
-		filteredItems := items
-		if tag != "" {
-			filteredItems = make([]map[string]interface{}, 0)
-			for _, item := range items {
-				itemTags, ok := item["tags"].([]string)
-				if ok {
-					for _, t := range itemTags {
-						if t == tag {
-							filteredItems = append(filteredItems, item)
-							break
-						}
+				for listingID, st := range statuses {
+					if v, ok := latestByListing[listingID]; ok && st.PluginID != "" {
+						latestByPlugin[st.PluginID] = v
 					}
 				}
 			}
 		}
 
-		offset := (page - 1) * size
-		total := len(filteredItems)
+		search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+		items := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			if search != "" && !strings.Contains(strings.ToLower(row.Name), search) &&
+				!strings.Contains(strings.ToLower(row.ID), search) {
+				continue
+			}
+			latest := latestByPlugin[row.ID]
+			items = append(items, map[string]any{
+				"id":        row.ID,
+				"name":      row.Name,
+				"version":   row.Version,
+				"enabled":   row.IsActive,
+				"trust":     row.TrustLevel,
+				"state":     row.InstallState,
+				"hasUpdate": latest != "" && latest != row.Version,
+				"latest":    latest,
+			})
+		}
 
-		// Apply client-side pagination
-		start := offset
-		end := offset + size
-		if start > len(filteredItems) {
-			start = len(filteredItems)
-		}
-		if end > len(filteredItems) {
-			end = len(filteredItems)
-		}
-		paged := filteredItems[start:end]
-
-		payload := map[string]any{
-			"items":    paged,
-			"total":    total,
-			"page":     page,
-			"pageSize": size,
-			"type":     tag,
-			"tags":     tags,
-		}
-		raw, _ := json.Marshal(payload)
-		data := map[string]any{
+		raw, _ := json.Marshal(map[string]any{"items": items, "q": search})
+		httpx.Render("ui/pages/plugins.html", map[string]any{
 			"title":       "Plugins",
 			"theme":       d.State.Theme,
 			"menuItems":   d.Menu,
 			"pluginsJSON": template.JS(raw),
-		}
-		httpx.Render("ui/pages/plugins.html", data)(w, r)
+		})(w, r)
 	})
 }
 
+// installedPluginForSummary maps a marketplace catalog summary to an installed
+// plugin (kept for the store/status pages).
 func installedPluginForSummary(pm *plugins.Manager, summary marketplace.PluginSummary) (plugins.Plugin, bool) {
 	if pm == nil {
 		return plugins.Plugin{}, false
 	}
-
 	if listingID := strings.TrimSpace(summary.ListingID); listingID != "" {
 		if inst, exists := pm.Installed[listingID]; exists {
 			return inst, true
 		}
 	}
-
 	if pluginID := strings.TrimSpace(summary.ID); pluginID != "" {
 		if inst, exists := pm.Installed[pluginID]; exists {
 			return inst, true
 		}
 	}
-
 	return plugins.Plugin{}, false
-}
-
-// safeGetTags safely extracts plugin type as a tag, handling type assertion failures
-func safeGetTags(typeVal interface{}) []string {
-	if typeStr, ok := typeVal.(string); ok && typeStr != "" {
-		return []string{typeStr}
-	}
-	return []string{}
 }
