@@ -200,6 +200,7 @@ func isValidCanonicalType(canonicalType string) bool {
 		"integration":    true,
 		"background_job": true,
 		"device":         true,
+		"theme":          true,
 	}
 	return validTypes[canonicalType]
 }
