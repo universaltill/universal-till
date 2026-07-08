@@ -1,12 +1,13 @@
 {{ define "nav" -}}
 <nav class="nav">
-  <div class="logo" width="30px"><img src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till Logo" /></div>
+  <div class="logo"><img src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till Logo" /></div>
   <div class="nav-links">
     {{ range .menuItems }}<a href="{{ .Href }}"{{ if eq .Href "/plugins" }} data-testid="nav-plugins"{{ end }}>{{ .Label }}</a>{{ end }}
     <a href="/help" data-testid="nav-help-support">{{ T "nav.help" }}</a>
-    <span>|</span>
-    <a href="/?lang=en">EN</a>
-    <a href="/?lang=fa">FA</a>
+    <span class="nav-lang">
+      <a href="/?lang=en">EN</a>
+      <a href="/?lang=fa">FA</a>
+    </span>
   </div>
 </nav>
 {{- end }}

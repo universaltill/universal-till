@@ -1,6 +1,95 @@
-/* POS screen layout. Panels carry named grid areas so a theme can reposition
-   them (e.g. buttons on the left, kiosk stacking) purely by overriding
-   grid-template-areas / -columns — no markup changes needed. */
+/* ============================================================================
+   Universal Till — base stylesheet.
+   Design tokens live in :root so themes (built-in or plugin) can re-skin the
+   POS by overriding variables and/or the pos-container grid areas.
+   ========================================================================== */
+
+:root {
+  --brand: #1e293b;        /* nav / headings accent */
+  --accent: #2563eb;       /* primary action */
+  --accent-contrast: #ffffff;
+  --bg: #f1f5f9;           /* page background */
+  --surface: #ffffff;      /* cards, tables */
+  --surface-2: #f8fafc;    /* subtle wells inside cards */
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08);
+}
+
+/* ---------- Base ---------- */
+* { box-sizing: border-box; }
+html { font-size: 16px; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+h2 { font-size: 1.02rem; font-weight: 600; margin: 0 0 .6rem 0; color: var(--brand);
+     text-transform: uppercase; letter-spacing: .04em; }
+h3 { font-size: 1rem; font-weight: 600; margin: .2rem 0; }
+a { color: var(--accent); }
+.container { max-width: 1500px; margin: 0 auto; padding: 1rem 1.25rem 2rem; }
+.muted { color: var(--muted); }
+.empty { text-align: center; color: var(--muted); padding: .75rem 0; }
+.tag {
+  display: inline-block; padding: .15rem .55rem; border-radius: 999px;
+  font-size: .75rem; font-weight: 600; background: var(--surface-2);
+  color: var(--muted); border: 1px solid var(--border);
+}
+
+/* ---------- Top navigation ---------- */
+.nav {
+  background: var(--brand); color: #fff;
+  padding: .55rem 1.25rem;
+  display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+}
+.logo { display: flex; align-items: center; }
+.logo img { height: 28px; display: block; }
+.nav-links { display: flex; align-items: center; gap: .15rem; flex-wrap: wrap; }
+.nav-links a {
+  color: #cbd5e1; text-decoration: none; font-size: .9rem; font-weight: 500;
+  padding: .35rem .6rem; border-radius: 8px; white-space: nowrap;
+}
+.nav-links a:hover { color: #fff; background: rgba(255,255,255,.09); }
+.nav-lang { display: flex; gap: .1rem; margin-left: .5rem; padding-left: .6rem;
+            border-left: 1px solid rgba(255,255,255,.18); }
+.nav-lang a { font-size: .8rem; font-weight: 700; color: #94a3b8; }
+
+/* ---------- Kiosk header row ---------- */
+.kiosk-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; margin: .25rem 0 1rem;
+}
+.kiosk-actions { display: flex; align-items: center; gap: .6rem; }
+.status-pill {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .3rem .7rem; border-radius: 999px;
+  font-size: .8rem; font-weight: 600;
+  background: rgba(22, 163, 74, .12); color: var(--success);
+  border: 1px solid rgba(22, 163, 74, .35);
+}
+.status-pill::before { content: ""; width: .5rem; height: .5rem; border-radius: 50%;
+                       background: var(--success); }
+.status-pill.offline { background: rgba(217, 119, 6, .12); color: var(--warning);
+                       border-color: rgba(217, 119, 6, .35); }
+.status-pill.offline::before { background: var(--warning); }
+
+/* ---------- POS screen layout ----------
+   Panels carry named grid areas so a theme can reposition them (e.g. buttons
+   on the left, kiosk stacking) purely by overriding grid-template-areas /
+   -columns — no markup changes needed. */
 .pos-container {
   display: grid;
   grid-template-columns: 1.2fr 1fr 0.6fr;
@@ -15,50 +104,17 @@
 .pos-container > .journal { grid-area: journal; }
 .pos-container > .tender { grid-area: tender; }
 
-/* Cards & forms */
-.card { background: #fff; border-radius: 12px; padding: .75rem; box-shadow: 0 1px 3px rgba(0,0,0,.08) }
-.form-row { display: grid; grid-template-columns: 1fr .6fr .6fr 1fr auto; gap: .5rem; align-items: center; margin-bottom: .75rem }
-.form-row input { padding: .55rem; border-radius: 8px; border: 1px solid #ddd }
-
-.grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
-.btn-tile { display: grid; grid-template-rows: auto auto auto; gap: .4rem; align-items: center; padding:.4rem; border:1px solid #eee; border-radius:10px; background:#fff }
-.btn { background:#0066ff; color:#fff; border:none; padding:.6rem; border-radius:8px; cursor:pointer }
-.btn:hover { background:#004ecc }
-.btn.primary { background:#0066ff }
-.btn.secondary { background:#6c757d; color:#fff }
-.btn.secondary:hover { background:#545b62 }
-.btn.danger { background:#c81e1e }
-.btn-actions { display: flex; gap: .25rem; justify-content: center; }
-.btn-actions .btn { padding: .4rem .6rem; font-size: .85rem; }
-
-.thumb { width:100%; height:100px; object-fit:cover; border-radius:8px; background:#f6f6f6 }
-.thumb.small { width:40px; height:40px; margin-right:.5rem; vertical-align:middle }
-
-.empty { text-align:center; color:#888 }
-
-/* Basket */
-.basket table { width:100%; border-collapse: collapse; background:#fff; border-radius:12px; overflow:hidden }
-.basket th, .basket td { padding:.6rem; border-bottom:1px solid #eee; text-align:left }
-.basket .totals { margin-top:.6rem; display:grid; gap:.25rem }
-.basket .total { font-weight:700; }
-.toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 0.9rem 1.2rem; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); z-index: 2000; background: #0f172a; color: #e2e8f0; min-width: 240px; text-align: center; opacity: 1; transition: opacity 0.25s ease; }
-.toast.error { background: #7f1d1d; color: #fecaca; border: 1px solid #fecdd3; }
-.toast.success { background: #14532d; color: #dcfce7; border: 1px solid #bbf7d0; }
-.toast.info { background: #0f172a; color: #e2e8f0; border: 1px solid #1f2937; }
-.toast.hide { opacity: 0; }
-
-/* Journal */
-.journal table { width:100%; border-collapse: collapse; background:#fff; border-radius:12px; overflow:hidden }
-.journal th, .journal td { padding:.5rem; border-bottom:1px solid #eee; text-align:left; font-size:.9rem }
-.journal td:nth-child(2),
-.journal td:nth-child(3),
-.journal td:nth-child(4) { white-space: nowrap; }
-.journal .empty { text-align:center; color:#888 }
-
-.offline-toggle { margin-top:.6rem; padding:.5rem .6rem; background:#f6f6f6; border-radius:10px }
-.offline-toggle label { display:flex; align-items:center; gap:.5rem; font-weight:600 }
-.offline-toggle input { accent-color:#111 }
-.offline-help { font-size:.85rem; color:#666; margin-top:.25rem }
+/* Panels are visually cards */
+.pos-container > .basket,
+.pos-container > .products,
+.pos-container > .journal,
+.pos-container > .tender {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: .9rem 1rem;
+  box-shadow: var(--shadow);
+}
 
 @media (max-width: 980px) {
   .pos-container {
@@ -67,77 +123,144 @@
   }
 }
 
-.tender .card { margin-bottom: .75rem; }
-.tender-quick h3,
-.tender-split h3 { margin-top: 0; }
-.tender-help { font-size: .85rem; color: #4b5563; margin-bottom: .6rem; }
-.split-tender-form label { display: flex; flex-direction: column; font-size: .85rem; gap: .25rem; margin-bottom: .5rem; }
-.split-tender-form input,
-.split-tender-form select { padding: .45rem; border-radius: 6px; border: 1px solid #d1d5db; }
+/* ---------- Cards & forms ---------- */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .8rem .9rem; box-shadow: var(--shadow);
+}
+.form-row { display: grid; grid-template-columns: 1fr .6fr .6fr 1fr auto; gap: .5rem;
+            align-items: center; margin-bottom: .75rem; }
+input, select, textarea {
+  font: inherit; color: var(--text);
+  padding: .5rem .65rem; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface);
+}
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--accent);
+}
+.form-row input { padding: .55rem; }
+label { font-size: .85rem; color: var(--text); }
+
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+  background: var(--accent); color: var(--accent-contrast);
+  border: 1px solid transparent; padding: .55rem .95rem; border-radius: 9px;
+  cursor: pointer; font: inherit; font-size: .9rem; font-weight: 600;
+  text-decoration: none; line-height: 1.2;
+  transition: background .12s ease, transform .05s ease;
+}
+.btn:hover { background: #1d4ed8; }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .55; cursor: default; transform: none; }
+.btn.primary { background: var(--accent); }
+.btn.secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+.btn.secondary:hover { background: var(--surface-2); border-color: #cbd5e1; }
+.btn.danger { background: var(--danger); }
+.btn.danger:hover { background: #b91c1c; }
+a.btn, a.btn:hover { text-decoration: none; }
+.btn-actions { display: flex; gap: .25rem; justify-content: center; }
+.btn-actions .btn { padding: .4rem .6rem; font-size: .85rem; }
+
+/* ---------- Product tiles ---------- */
+.grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.btn-tile {
+  display: flex; flex-direction: column; gap: .45rem;
+  padding: .45rem; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--shadow);
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
+.btn-tile .btn {
+  width: 100%; padding: .5rem .4rem; font-size: .85rem;
+  white-space: normal; text-align: center;
+}
+.thumb { width: 100%; aspect-ratio: 4 / 3; height: auto; object-fit: cover;
+         border-radius: 8px; background: var(--surface-2); }
+.thumb.small { width: 40px; height: 40px; aspect-ratio: auto; margin-right: .5rem;
+               vertical-align: middle; }
+
+/* ---------- Basket ---------- */
+.basket table { width: 100%; border-collapse: collapse; background: var(--surface);
+                border-radius: var(--radius); overflow: hidden; }
+.basket th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
+             color: var(--muted); padding: .5rem .6rem; border-bottom: 2px solid var(--border);
+             text-align: left; }
+.basket td { padding: .55rem .6rem; border-bottom: 1px solid var(--border); text-align: left; }
+.basket th:nth-child(n+2), .basket td:nth-child(n+2) { text-align: right; }
+.basket tr:last-child td { border-bottom: none; }
+.basket .totals {
+  margin-top: .75rem; display: grid; gap: .3rem; justify-items: end;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .6rem .8rem; font-variant-numeric: tabular-nums;
+}
+.basket .total { font-weight: 700; font-size: 1.25rem; color: var(--brand); }
+
+/* ---------- Toasts ---------- */
+.toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  padding: .9rem 1.2rem; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  z-index: 2000; background: #0f172a; color: #e2e8f0; min-width: 240px; text-align: center;
+  opacity: 1; transition: opacity .25s ease; }
+.toast.error { background: #7f1d1d; color: #fecaca; border: 1px solid #fecdd3; }
+.toast.success { background: #14532d; color: #dcfce7; border: 1px solid #bbf7d0; }
+.toast.info { background: #0f172a; color: #e2e8f0; border: 1px solid #1f2937; }
+.toast.hide { opacity: 0; }
+
+/* ---------- Journal ---------- */
+.journal table { width: 100%; border-collapse: collapse; background: var(--surface);
+                 border-radius: var(--radius); overflow: hidden; }
+.journal th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
+              color: var(--muted); padding: .45rem .5rem; border-bottom: 2px solid var(--border);
+              text-align: left; }
+.journal td { padding: .45rem .5rem; border-bottom: 1px solid var(--border);
+              text-align: left; font-size: .88rem; }
+.journal td:nth-child(2), .journal td:nth-child(3), .journal td:nth-child(4) { white-space: nowrap; }
+.journal .empty { text-align: center; color: var(--muted); }
+
+/* ---------- Tender ---------- */
+.tender .card { margin-bottom: .75rem; border: 1px solid var(--border); box-shadow: none;
+                background: var(--surface-2); }
+.tender-quick h3, .tender-split h3 { margin-top: 0; }
+.tender-help { font-size: .85rem; color: var(--muted); margin-bottom: .6rem; }
+.offline-toggle { margin-top: .6rem; padding: .5rem .6rem; background: var(--surface);
+                  border: 1px solid var(--border); border-radius: var(--radius); }
+.offline-toggle label { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
+.offline-toggle input { accent-color: var(--brand); }
+.offline-help { font-size: .85rem; color: var(--muted); margin-top: .25rem; }
+.split-tender-form label { display: flex; flex-direction: column; font-size: .85rem;
+                           gap: .25rem; margin-bottom: .5rem; }
+.split-tender-form input, .split-tender-form select { padding: .45rem; border-radius: 6px;
+                                                      border: 1px solid var(--border); }
 .split-tender-controls { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
 .split-tender-payments { margin: .75rem 0; display: flex; flex-direction: column; gap: .5rem; }
-.split-tender-payments.empty { color: #9ca3af; font-size: .9rem; }
-.payment-pill { display: flex; justify-content: space-between; align-items: center; border: 1px solid #e5e7eb; border-radius: 8px; padding: .45rem .6rem; background: #f9fafb; }
+.split-tender-payments.empty { color: var(--muted); font-size: .9rem; }
+.payment-pill { display: flex; justify-content: space-between; align-items: center;
+                border: 1px solid var(--border); border-radius: 8px; padding: .45rem .6rem;
+                background: var(--surface); }
 .payment-pill strong { font-size: .9rem; }
 .payment-pill span { font-weight: 600; }
-.payment-pill button { background: none; border: none; color: #b91c1c; cursor: pointer; }
+.payment-pill button { background: none; border: none; color: var(--danger); cursor: pointer; }
 .split-tender-status { min-height: 1.2rem; font-size: .85rem; margin-bottom: .5rem; }
-.split-tender-status.error { color: #b91c1c; }
+.split-tender-status.error { color: var(--danger); }
 .split-tender-status.success { color: #15803d; }
 .split-tender-status.info { color: #1d4ed8; }
 .tender-actions { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
 
-/* Plugin tabs styling */
-.tabs {
-  display: flex;
-  gap: 0;
-  margin-bottom: 1rem;
-}
+/* ---------- Plugin buttons group (products panel) ---------- */
+.plugin-buttons { margin-top: .8rem; padding-top: .7rem; border-top: 1px dashed var(--border); }
+.plugin-buttons h3 { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em;
+                     color: var(--muted); margin: 0 0 .45rem; }
 
-.tab, .tab-active {
-  transition: all 0.2s ease;
-}
+/* ---------- Tabs ---------- */
+.tabs { display: flex; gap: 0; margin-bottom: 1rem; }
+.tab, .tab-active { transition: all .2s ease; }
+.tab:hover { color: var(--accent); border-bottom-color: #93c5fd !important; }
+.tab-active:hover { border-bottom-color: #2563eb !important; }
 
-.tab:hover {
-  color: #3b82f6;
-  border-bottom-color: #93c5fd !important;
-}
-
-.tab-active:hover {
-  border-bottom-color: #2563eb !important;
-}
-
-/* HTMX Loading Indicators */
-.htmx-indicator {
-  display: none;
-}
-
-.htmx-request .htmx-indicator,
-.htmx-request.htmx-indicator {
-  display: inline-block;
-}
-
-/* Simple spinner animation for refresh indicator */
-#refresh-indicator {
-  margin-left: 0.5rem;
-  font-size: 1rem;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Spinner animation */
-.animate-spin {
-  animation: spin 1s linear infinite;
-  display: inline-block;
-}
-
-/* Ensure SVG spinners stay small */
-svg.animate-spin {
-  flex-shrink: 0;
-  width: 1.25rem;
-  height: 1.25rem;
-}
+/* ---------- HTMX loading indicators ---------- */
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline-block; }
+#refresh-indicator { margin-left: .5rem; font-size: 1rem; animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.animate-spin { animation: spin 1s linear infinite; display: inline-block; }
+svg.animate-spin { flex-shrink: 0; width: 1.25rem; height: 1.25rem; }
