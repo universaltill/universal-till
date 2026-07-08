@@ -614,6 +614,12 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			log.Printf("warning: failed to remove plugin files %s: %v", pluginDir, err)
 		}
 
+		// Clear marketplace install-status records so the plugins page doesn't
+		// keep reporting the listing as active after uninstall.
+		if err := plugins.NewInstallStatusStore(d.Db).ClearForPlugin(ctx, pluginID); err != nil {
+			log.Printf("warning: failed to clear install status for %s: %v", pluginID, err)
+		}
+
 		// Reload so the nav/menu no longer shows the plugin's entries.
 		if d.Pm != nil {
 			if err := d.Pm.Reload(ctx); err != nil {

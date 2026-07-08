@@ -98,6 +98,29 @@ func (s *InstallStatusStore) List(ctx context.Context) (map[string]InstallStatus
 	return result, nil
 }
 
+// ClearForPlugin removes install-status records that refer to the given plugin
+// ID (records are keyed by listing ID, so match on the stored PluginID). Called
+// on uninstall so the plugins page doesn't keep showing a stale "active" state.
+func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string) error {
+	pluginID = strings.TrimSpace(pluginID)
+	if s == nil || s.settings == nil || pluginID == "" {
+		return nil
+	}
+	records, err := s.List(ctx)
+	if err != nil {
+		return err
+	}
+	for listingID, record := range records {
+		if record.PluginID != pluginID {
+			continue
+		}
+		if err := s.settings.Delete(ctx, installStatusKey(listingID)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func installStatusKey(listingID string) string {
 	return installStatusKeyPrefix + strings.TrimSpace(listingID)
 }

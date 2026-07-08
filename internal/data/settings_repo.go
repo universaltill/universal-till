@@ -52,6 +52,18 @@ ON CONFLICT(key) DO UPDATE SET
 	return nil
 }
 
+// Delete removes a setting by key (no-op if absent).
+func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
+	var err error
+	done := settingsObs.trace("delete")
+	defer func() { done(err) }()
+	_, err = r.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)
+	if err != nil {
+		return settingsObs.wrapf("delete", "delete setting %s", err, key)
+	}
+	return nil
+}
+
 // All returns all key/value pairs from settings.
 func (r *SettingsRepo) All(ctx context.Context) (map[string]string, error) {
 	var err error
