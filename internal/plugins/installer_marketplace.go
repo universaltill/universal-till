@@ -15,6 +15,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
@@ -217,6 +218,17 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	}); err != nil {
 		_ = os.RemoveAll(finalDir)
 		return nil, fmt.Errorf("persist plugin manifest: %w", err)
+	}
+
+	// Marketplace installs are Ed25519-verified and their manifest (including
+	// the permission set) passed marketplace review, so grant the declared
+	// permissions. Menu entries and capabilities gate on granted permissions;
+	// without this, installed pages never surface in the menu. Manual imports
+	// stay ungranted for the operator to approve.
+	for _, perm := range manifest.Permissions {
+		if err := GrantPermission(ctx, i.db, manifest.ID, perm); err != nil {
+			logging.L().Warnf("[MarketplaceInstaller] grant declared permission %s to %s: %v", perm, manifest.ID, err)
+		}
 	}
 
 	return &MarketplaceInstallResult{

@@ -518,6 +518,8 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			// Non-fatal - plugin is installed but won't show until restart
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
+		// Rebuild the nav so newly registered pages appear immediately.
+		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -625,6 +627,7 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			if err := d.Pm.Reload(ctx); err != nil {
 				log.Printf("warning: failed to reload plugin manager after uninstall %s: %v", pluginID, err)
 			}
+			d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

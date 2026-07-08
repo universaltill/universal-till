@@ -52,5 +52,6 @@
   "receipt.printer.unavailable": "Printer unavailable.",
   "receipt.printer.retry": "Retry print",
   "settings.theme.title": "Theme",
-  "settings.theme.apply": "Apply theme"
+  "settings.theme.apply": "Apply theme",
+  "plugins.buttons.title": "Plugin actions"
 }

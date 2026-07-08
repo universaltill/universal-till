@@ -52,5 +52,6 @@
   "receipt.printer.unavailable": "چاپگر در دسترس نیست.",
   "receipt.printer.retry": "تلاش مجدد چاپ",
   "settings.theme.title": "پوسته",
-  "settings.theme.apply": "اعمال پوسته"
+  "settings.theme.apply": "اعمال پوسته",
+  "plugins.buttons.title": "عملیات افزونه‌ها"
 }

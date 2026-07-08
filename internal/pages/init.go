@@ -82,6 +82,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerThemes(mux, dp)
 	registerPluginsPage(mux, dp)
 	registerPluginAPI(mux, dp)
+	registerPluginPages(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
 	registerInventoryAPI(mux, dp)

@@ -16,6 +16,18 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			renderHelpPage(w, r, d)
 			return
 		}
+		// The "/" pattern catches every otherwise-unrouted path. Plugin page
+		// entries may register arbitrary routes (e.g. /faq), so dispatch those
+		// here; anything else unknown is a 404 rather than silently showing
+		// the home page.
+		if r.URL.Path != "/" {
+			if entry, ok := findPageEntry(r, d); ok {
+				renderPluginPage(w, r, d, entry)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
 		methods := collectPaymentMethods(r.Context(), d.Db)
 		defaultMethod := "cash"
 		if len(methods) > 0 {

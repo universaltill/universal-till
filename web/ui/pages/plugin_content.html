@@ -1,0 +1,16 @@
+{{ define "content" }}
+<h1>{{ .title }}</h1>
+<div class="card plugin-content" {{ if .bundle.RTL }}dir="rtl"{{ end }}>
+  {{ range .bundle.Categories }}
+  <section class="plugin-content-category">
+    <h2>{{ .Name }}</h2>
+    {{ range .Entries }}
+    <details class="plugin-content-entry">
+      <summary><strong>{{ .Question }}</strong></summary>
+      <p>{{ .Answer }}</p>
+    </details>
+    {{ end }}
+  </section>
+  {{ end }}
+</div>
+{{ end }}

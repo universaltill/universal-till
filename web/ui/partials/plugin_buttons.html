@@ -1,0 +1,21 @@
+{{ if .Buttons }}
+<div id="plugin-buttons" class="plugin-buttons">
+  <h3>{{ T "plugins.buttons.title" }}</h3>
+  <div class="grid">
+    {{ range .Buttons }}
+    <div class="btn-tile">
+      <button
+        class="btn secondary"
+        hx-post="/api/plugins/entries/{{ .PluginID }}/{{ .EntryKey }}/action"
+        hx-trigger="click"
+        hx-swap="none"
+        title="{{ .PluginName }}">
+        {{ .Label }}
+      </button>
+    </div>
+    {{ end }}
+  </div>
+</div>
+{{ else }}
+<div id="plugin-buttons"></div>
+{{ end }}

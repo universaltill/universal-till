@@ -22,5 +22,7 @@
       <p class="empty">No products yet. Add some in Designer.</p>
     {{ end }}
   </div>
+  <!-- Action buttons contributed by installed plugins -->
+  <div hx-get="/ui/plugin-buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
 {{ end }}
