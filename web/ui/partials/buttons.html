@@ -4,20 +4,17 @@
   <h2>Products</h2>
   <div id="buttons-grid" class="grid">
     {{ range .Buttons }}
-      <div class="btn-tile">
-        {{ if .ImageURL }}
-        <img class="thumb" src="{{ .ImageURL }}" alt="{{ .Label }}" />
-        {{ end }}
-        <button
-          class="btn primary"
-          hx-post="/api/pos/scan"
-          hx-vals='{"code":"{{ .Code }}"}'
-          hx-trigger="click"
-          hx-target="#basket"
-          hx-swap="outerHTML">
-          {{ .Label }}
-        </button>
-      </div>
+      <button
+        class="btn-tile"
+        hx-post="/api/pos/scan"
+        hx-vals='{"code":"{{ .Code }}"}'
+        hx-trigger="click"
+        hx-target="#basket"
+        hx-swap="outerHTML">
+        {{ if .ImageURL }}<img class="thumb" src="{{ .ImageURL }}" alt="" loading="lazy" />{{ end }}
+        <span class="tile-name">{{ .Label }}</span>
+        {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+      </button>
     {{ else }}
       <p class="empty">No products yet. Add some in Designer.</p>
     {{ end }}

@@ -10,12 +10,10 @@
     {{ if and .theme (ne .theme "default") }}
     <link rel="stylesheet" href="/themes/{{ .theme }}.css?v={{ assetv "public/app.css" }}" />
     {{ end }}
-    <script defer src="https://unpkg.com/htmx.org@1.9.12"></script>
-    <script
-      defer
-      src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"
-    ></script>
-    <script defer src="/public/app.js"></script>
+    <!-- Vendored locally: the till must work fully offline. -->
+    <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
+    <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
+    <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
   </head>
   <body{{ if kiosk }} class="kiosk"{{ end }}>
     {{ template "nav" . }}

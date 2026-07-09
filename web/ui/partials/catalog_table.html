@@ -1,25 +1,35 @@
 {{ define "catalog_table" }}
 <div class="card" id="catalog-table">
-  <h3>Active Items</h3>
-  <table>
-    <thead><tr><th>ID</th><th>Name</th><th>SKU</th><th>Unit</th><th>Weighed</th><th>Price</th><th>Tax</th><th>Category</th><th>Brand</th></tr></thead>
+  <table class="table">
+    <thead><tr><th>Name</th><th>SKU</th><th>Price</th><th>Unit</th><th>Tax</th><th></th></tr></thead>
     <tbody>
       {{ if .Items }}
         {{ range .Items }}
-          <tr>
-            <td>{{ .ID }}</td>
-            <td>{{ .Name }}</td>
-            <td>{{ .SKU }}</td>
-            <td>{{ if .Unit }}{{ .Unit }}{{ else }}each{{ end }}</td>
-            <td>{{ if .IsWeighed }}yes{{ else }}no{{ end }}</td>
+          <tr class="catalog-row"
+              data-id="{{ .ID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}"
+              data-description="{{ .Description }}" data-unit="{{ .Unit }}"
+              data-weighed="{{ if .IsWeighed }}1{{ else }}0{{ end }}"
+              data-category="{{ with .CategoryID }}{{ . }}{{ end }}"
+              data-brand="{{ with .BrandID }}{{ . }}{{ end }}"
+              data-price="{{ .BasePrice }}"
+              data-tax="{{ with .TaxCodeID }}{{ . }}{{ end }}">
+            <td class="catalog-name">{{ .Name }}</td>
+            <td class="muted">{{ .SKU }}</td>
             <td>{{ money .BasePrice }}</td>
-            <td>{{ if .TaxCodeID }}{{ .TaxCodeID }}{{ else }}—{{ end }}</td>
-            <td>{{ if .CategoryID }}{{ .CategoryID }}{{ else }}—{{ end }}</td>
-            <td>{{ if .BrandID }}{{ .BrandID }}{{ else }}—{{ end }}</td>
+            <td>{{ if .Unit }}{{ .Unit }}{{ else }}each{{ end }}{{ if .IsWeighed }} ⚖{{ end }}</td>
+            <td>{{ with .TaxCodeID }}{{ . }}{{ else }}—{{ end }}</td>
+            <td class="btn-actions">
+              <button class="btn secondary catalog-edit" type="button">Edit</button>
+              <button class="btn danger" type="button"
+                      hx-post="/api/catalog/item/deactivate"
+                      hx-vals='{"id":"{{ .ID }}"}'
+                      hx-confirm="Deactivate {{ .Name }}?"
+                      hx-target="#catalog-table" hx-swap="outerHTML">✕</button>
+            </td>
           </tr>
         {{ end }}
       {{ else }}
-        <tr><td colspan="9" class="empty">No items</td></tr>
+        <tr><td colspan="6" class="empty">No items</td></tr>
       {{ end }}
     </tbody>
   </table>

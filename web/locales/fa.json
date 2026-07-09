@@ -84,5 +84,19 @@
   "plugins.manage.import_btn": "درون‌ریزی",
   "plugins.store.state.failed": "نصب ناموفق",
   "plugins.store.state.retryable": "قابل تلاش مجدد",
-  "journal.title": "دفتر فروش"
+  "journal.title": "دفتر فروش",
+  "hold.action": "نگه‌داشتن فروش",
+  "hold.strip.title": "در انتظار:",
+  "hold.toast.held": "فروش نگه داشته شد — مشتری بعدی را بپذیرید",
+  "hold.toast.resumed": "فروش از سر گرفته شد",
+  "hold.error.empty": "سبد خالی است",
+  "hold.error.busy": "ابتدا فروش جاری را تمام یا نگه دارید",
+  "hold.error.not_found": "فروش نگه‌داشته یافت نشد",
+  "hold.error.failed": "نگه‌داشتن فروش ممکن نشد",
+  "tender.tab.pay": "پرداخت",
+  "tender.tab.split": "تقسیم پرداخت",
+  "tender.new_customer": "مشتری جدید",
+  "tender.scan.barcode": "بارکد",
+  "tender.scan.qty": "تعداد",
+  "tender.scan.add": "افزودن"
 }

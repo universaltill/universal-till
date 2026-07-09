@@ -1,85 +1,143 @@
 {{ define "content" }}
-<h1>Catalog</h1>
+<div class="page-head">
+  <h1>Catalog</h1>
+  <input type="search" id="catalog-search" placeholder="Search items…" autocomplete="off">
+</div>
 
 {{ template "catalog_lookups" . }}
 
-<div class="grid two">
-  <div class="card">
-    <h3>Add Item</h3>
-    <form hx-post="/api/catalog/item" hx-target="#catalog-table" hx-swap="outerHTML">
-      <label>Name <input type="text" name="name" required></label>
-      <label>SKU <input type="text" name="sku" placeholder="auto if blank"></label>
-      <label>Description <input type="text" name="description" placeholder="short description"></label>
-      <label>Unit <input type="text" name="unit" value="each"></label>
-      <label>Weighed? <input type="checkbox" name="isWeighed" value="1"></label>
-      <label>Category ID <input type="text" name="categoryId" list="categories-list" placeholder="search category"></label>
-      <label>Brand ID <input type="text" name="brandId" list="brands-list" placeholder="search brand"></label>
-      <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
-      <label>Tax Code <input type="text" name="taxCode" list="taxcodes-list" placeholder="tax_std"></label>
-      <label>Active? <input type="checkbox" name="isActive" value="1" checked></label>
-      <button class="btn" type="submit">Create</button>
-    </form>
+<div class="catalog-layout">
+  <div class="catalog-list">
+    {{ template "catalog_table" . }}
   </div>
 
-  <div class="card">
-    <h3>Update Item</h3>
-    <form hx-post="/api/catalog/item/update" hx-target="#catalog-table" hx-swap="outerHTML">
-      <label>Item ID <input type="text" name="id" required></label>
-      <label>Name <input type="text" name="name" required></label>
-      <label>SKU <input type="text" name="sku"></label>
-      <label>Description <input type="text" name="description"></label>
-      <label>Unit <input type="text" name="unit" value="each"></label>
-      <label>Weighed? <input type="checkbox" name="isWeighed" value="1"></label>
-      <label>Category ID <input type="text" name="categoryId" list="categories-list" placeholder="search category"></label>
-      <label>Brand ID <input type="text" name="brandId" list="brands-list" placeholder="search brand"></label>
-      <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
-      <label>Tax Code <input type="text" name="taxCode" list="taxcodes-list"></label>
-      <label>Active? <input type="checkbox" name="isActive" value="1" checked></label>
-      <button class="btn" type="submit">Update</button>
+  <div class="card catalog-form">
+    <div class="catalog-form-head">
+      <h3 id="item-form-title">New Item</h3>
+      <button class="btn secondary" type="button" id="item-form-reset" hidden>+ New</button>
+    </div>
+    <form id="item-form" autocomplete="off">
+      <input type="hidden" name="id" id="item-id">
+      <input type="hidden" name="price" id="item-price-minor">
+      <label>Name <input type="text" name="name" id="item-name" required></label>
+      <div class="field-pair">
+        <label>Price (£) <input type="number" id="item-price" min="0" step="0.01" placeholder="0.00" required></label>
+        <label>SKU <input type="text" name="sku" id="item-sku" placeholder="auto if blank"></label>
+      </div>
+      <label>Description <input type="text" name="description" id="item-description"></label>
+      <div class="field-pair">
+        <label>Unit <input type="text" name="unit" id="item-unit" value="each"></label>
+        <label>Tax code <input type="text" name="taxCode" id="item-tax" list="taxcodes-list" placeholder="tax_std"></label>
+      </div>
+      <div class="field-pair">
+        <label>Category <input type="text" name="categoryId" id="item-category" list="categories-list"></label>
+        <label>Brand <input type="text" name="brandId" id="item-brand" list="brands-list"></label>
+      </div>
+      <div class="field-checks">
+        <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> Sold by weight</label>
+        <label><input type="checkbox" name="isActive" id="item-active" value="1" checked> Active</label>
+      </div>
+      <button class="btn primary" type="submit" id="item-form-submit" style="width:100%">Create Item</button>
+      <div id="item-form-msg" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
     </form>
-  </div>
-</div>
 
-<div class="grid two">
-  <div class="card">
-    <h3>Add/Update Variant</h3>
-    <form hx-post="/api/catalog/variant" hx-target="#catalog-table" hx-swap="outerHTML">
-      <label>Variant ID (leave blank to create) <input type="text" name="id"></label>
-      <label>Item ID <input type="text" name="itemId" required></label>
-      <label>Name <input type="text" name="name" required></label>
-      <label>SKU <input type="text" name="sku"></label>
-      <label>Price (minor units) <input type="number" name="price" required min="0" step="1"></label>
-      <label>Cost Price (minor units) <input type="number" name="costPrice" min="0" step="1"></label>
-      <label>Active? <input type="checkbox" name="isActive" value="1" checked></label>
-      <button class="btn" type="submit">Save Variant</button>
-    </form>
-  </div>
+    <details class="catalog-extra">
+      <summary>Variants</summary>
+      <form hx-post="/api/catalog/variant" hx-target="#catalog-table" hx-swap="outerHTML">
+        <input type="hidden" name="id">
+        <label>Item <input type="text" name="itemId" class="pick-item" required placeholder="click a row to fill"></label>
+        <label>Name <input type="text" name="name" required></label>
+        <div class="field-pair">
+          <label>SKU <input type="text" name="sku"></label>
+          <label>Price (pence) <input type="number" name="price" required min="0" step="1"></label>
+        </div>
+        <input type="hidden" name="isActive" value="1">
+        <button class="btn" type="submit">Save Variant</button>
+      </form>
+    </details>
 
-  <div class="card">
-    <h3>Deactivate Item/Variant</h3>
-    <form hx-post="/api/catalog/item/deactivate" hx-target="#catalog-table" hx-swap="outerHTML">
-      <label>Item ID <input type="text" name="id" required></label>
-      <button class="btn warning" type="submit">Deactivate Item</button>
-    </form>
-    <form hx-post="/api/catalog/variant/deactivate" hx-target="#catalog-table" hx-swap="outerHTML" style="margin-top:1rem">
-      <label>Variant ID <input type="text" name="id" required></label>
-      <button class="btn warning" type="submit">Deactivate Variant</button>
-    </form>
+    <details class="catalog-extra">
+      <summary>Barcodes</summary>
+      <form hx-post="/api/catalog/barcode" hx-target="#catalog-table" hx-swap="outerHTML">
+        <label>Barcode <input type="text" name="barcode" required></label>
+        <label>Item <input type="text" name="itemId" class="pick-item" placeholder="click a row to fill"></label>
+        <label><input type="checkbox" name="isPrimary" value="1"> Primary</label>
+        <button class="btn" type="submit">Attach Barcode</button>
+      </form>
+    </details>
   </div>
 </div>
 
-<div class="grid two">
-  <div class="card">
-    <h3>Add Barcode</h3>
-    <form hx-post="/api/catalog/barcode" hx-target="#catalog-table" hx-swap="outerHTML">
-      <label>Barcode <input type="text" name="barcode" required></label>
-      <label>Item ID <input type="text" name="itemId"></label>
-      <label>Variant ID <input type="text" name="variantId"></label>
-      <label>Primary? <input type="checkbox" name="isPrimary" value="1"></label>
-      <button class="btn" type="submit">Attach</button>
-    </form>
-  </div>
-</div>
+<script>
+(function () {
+  var form = document.getElementById('item-form');
+  var title = document.getElementById('item-form-title');
+  var submit = document.getElementById('item-form-submit');
+  var resetBtn = document.getElementById('item-form-reset');
+  var msg = document.getElementById('item-form-msg');
 
-{{ template "catalog_table" . }}
+  function setMode(editing, name) {
+    title.textContent = editing ? 'Edit: ' + name : 'New Item';
+    submit.textContent = editing ? 'Save Changes' : 'Create Item';
+    resetBtn.hidden = !editing;
+  }
+
+  function clearForm() {
+    form.reset();
+    document.getElementById('item-id').value = '';
+    setMode(false);
+    msg.textContent = '';
+  }
+  resetBtn.addEventListener('click', clearForm);
+
+  // Row click fills the form; the table partial is re-rendered by the server
+  // after every mutation, so delegate from the document.
+  document.addEventListener('click', function (ev) {
+    var row = ev.target.closest('.catalog-row');
+    if (!row) return;
+    if (ev.target.closest('.btn') && !ev.target.classList.contains('catalog-edit')) return;
+    document.getElementById('item-id').value = row.dataset.id;
+    document.getElementById('item-name').value = row.dataset.name;
+    document.getElementById('item-sku').value = row.dataset.sku;
+    document.getElementById('item-description').value = row.dataset.description;
+    document.getElementById('item-unit').value = row.dataset.unit || 'each';
+    document.getElementById('item-category').value = row.dataset.category;
+    document.getElementById('item-brand').value = row.dataset.brand;
+    document.getElementById('item-tax').value = row.dataset.tax;
+    document.getElementById('item-weighed').checked = row.dataset.weighed === '1';
+    document.getElementById('item-active').checked = true;
+    document.getElementById('item-price').value = (parseInt(row.dataset.price || '0', 10) / 100).toFixed(2);
+    setMode(true, row.dataset.name);
+    document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
+  });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var pounds = parseFloat(document.getElementById('item-price').value || '0');
+    document.getElementById('item-price-minor').value = Math.round(pounds * 100);
+    var editing = document.getElementById('item-id').value !== '';
+    var url = editing ? '/api/catalog/item/update' : '/api/catalog/item';
+    msg.textContent = '⏳ saving…';
+    htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'outerHTML' })
+      .then(function () { msg.textContent = '✓ saved'; if (!editing) clearForm(); filterRows(); });
+  });
+  document.body.addEventListener('htmx:responseError', function (ev) {
+    msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+  });
+
+  // Client-side search over the (server-rendered) table; reapplied after swaps.
+  var search = document.getElementById('catalog-search');
+  function filterRows() {
+    var q = (search.value || '').toLowerCase();
+    document.querySelectorAll('.catalog-row').forEach(function (row) {
+      var hay = (row.dataset.name + ' ' + row.dataset.sku).toLowerCase();
+      row.hidden = q !== '' && hay.indexOf(q) === -1;
+    });
+  }
+  search.addEventListener('input', filterRows);
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    if (ev.detail.target && ev.detail.target.id === 'catalog-table') filterRows();
+  });
+})();
+</script>
 {{ end }}

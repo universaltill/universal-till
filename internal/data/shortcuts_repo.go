@@ -22,13 +22,18 @@ type ShortcutButton struct {
 	Barcode  string
 	ItemID   string
 	ImageURL string
+	Price    int64 // item base price in minor units, for display on the tile
 }
 
 func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, error) {
 	var err error
 	done := shortcutsObs.trace("load_buttons")
 	defer func() { done(err) }()
-	rows, err := r.db.QueryContext(ctx, `SELECT label, barcode, item_id, image_path FROM shortcut_buttons ORDER BY label`)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sb.label, sb.barcode, sb.item_id, sb.image_path, COALESCE(i.base_price, 0)
+FROM shortcut_buttons sb
+LEFT JOIN items i ON i.id = sb.item_id
+ORDER BY sb.label`)
 	if err != nil {
 		return nil, shortcutsObs.wrap("load_buttons", err)
 	}
@@ -37,7 +42,7 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 	for rows.Next() {
 		var b ShortcutButton
 		var img sql.NullString
-		if err := rows.Scan(&b.Label, &b.Barcode, &b.ItemID, &img); err != nil {
+		if err := rows.Scan(&b.Label, &b.Barcode, &b.ItemID, &img, &b.Price); err != nil {
 			err = shortcutsObs.wrap("load_buttons", err)
 			return nil, err
 		}

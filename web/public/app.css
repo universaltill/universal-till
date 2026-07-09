@@ -67,6 +67,29 @@ a { color: var(--accent); }
             border-left: 1px solid rgba(255,255,255,.18); }
 .nav-lang a { font-size: .8rem; font-weight: 700; color: #94a3b8; }
 
+/* ---------- Back-office pages (catalog / inventory) ---------- */
+.page-head { display: flex; align-items: center; justify-content: space-between;
+             gap: 1rem; margin: .25rem 0 1rem; }
+.page-head input[type="search"] { min-width: 260px; }
+.catalog-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px;
+                  gap: 1rem; align-items: start; }
+@media (max-width: 900px) { .catalog-layout { grid-template-columns: 1fr; } }
+.catalog-row { cursor: pointer; }
+.catalog-row:hover td { background: var(--surface-2); }
+.catalog-name { font-weight: 600; }
+.catalog-form-head { display: flex; justify-content: space-between; align-items: center;
+                     margin-bottom: .5rem; }
+.catalog-form label { display: flex; flex-direction: column; gap: .2rem;
+                      font-size: .82rem; margin-bottom: .55rem; }
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.field-checks { display: flex; gap: 1rem; margin: .3rem 0 .7rem; }
+.field-checks label { flex-direction: row; align-items: center; gap: .4rem; margin: 0; }
+.catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
+.catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
+                         font-size: .85rem; }
+.catalog-extra form { margin-top: .6rem; }
+.stock-low { color: var(--danger); font-weight: 700; }
+
 /* ---------- Kiosk header row ---------- */
 .kiosk-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -126,6 +149,8 @@ a { color: var(--accent); }
 
 /* Basket: lines scroll, totals pinned at the bottom of the panel. */
 .pos-container > .basket { display: flex; flex-direction: column; overflow: hidden; }
+/* Tender: the panel itself never scrolls — only the active tab body does. */
+.pos-container > .tender { overflow: hidden; }
 .basket-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .basket .totals { flex-shrink: 0; }
 
@@ -178,20 +203,22 @@ a.btn, a.btn:hover { text-decoration: none; }
 .btn-actions { display: flex; gap: .25rem; justify-content: center; }
 .btn-actions .btn { padding: .4rem .6rem; font-size: .85rem; }
 
-/* ---------- Product tiles ---------- */
+/* ---------- Product tiles ----------
+   The whole tile is one touch target: image, name, price. */
 .grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 .btn-tile {
-  display: flex; flex-direction: column; gap: .3rem;
-  padding: .35rem; border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--surface); box-shadow: var(--shadow);
-  transition: border-color .12s ease, box-shadow .12s ease;
+  display: flex; flex-direction: column; align-items: stretch; gap: .25rem;
+  padding: .35rem .35rem .45rem; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
+  font: inherit; color: var(--text); cursor: pointer; text-align: center;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
 }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
-.btn-tile .btn {
-  width: 100%; flex: 1; padding: .45rem .3rem; font-size: .8rem;
-  white-space: normal; text-align: center; min-height: 2.6rem;
-}
-.thumb { width: 100%; height: 54px; object-fit: cover;
+.btn-tile:active { transform: scale(.97); }
+.tile-name { font-weight: 600; font-size: .8rem; line-height: 1.15; white-space: normal; }
+.tile-price { font-size: .82rem; color: var(--accent); font-weight: 700;
+              font-variant-numeric: tabular-nums; }
+.thumb { width: 100%; height: 54px; object-fit: contain;
          border-radius: 7px; background: var(--surface-2); }
 .thumb.small { width: 40px; height: 40px; aspect-ratio: auto; margin-right: .5rem;
                vertical-align: middle; }
@@ -243,22 +270,49 @@ a.btn, a.btn:hover { text-decoration: none; }
 .journal td:nth-child(2), .journal td:nth-child(3), .journal td:nth-child(4) { white-space: nowrap; }
 .journal .empty { text-align: center; color: var(--muted); }
 
-/* ---------- Tender ---------- */
-.tender .card { margin-bottom: .75rem; border: 1px solid var(--border); box-shadow: none;
-                background: var(--surface-2); }
-.tender-quick h3, .tender-split h3 { margin-top: 0; }
-.tender-help { font-size: .85rem; color: var(--muted); margin-bottom: .6rem; }
-.offline-toggle { margin-top: .6rem; padding: .5rem .6rem; background: var(--surface);
-                  border: 1px solid var(--border); border-radius: var(--radius); }
-.offline-toggle label { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
+/* ---------- Tender ----------
+   Fixed panel that never scrolls: scan row + held strip + Pay/Split tabs +
+   footer actions. */
+[x-cloak] { display: none !important; }
+.tender { display: flex; flex-direction: column; gap: .55rem; }
+
+.scan-row { display: flex; gap: .4rem; }
+.scan-row input[name="code"] { flex: 1; min-width: 0; }
+.scan-row input[name="qty"] { width: 3.8rem; }
+
+.held-strip { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+.held-strip:empty { display: none; }
+.held-title { font-size: .78rem; font-weight: 700; text-transform: uppercase;
+              letter-spacing: .04em; color: var(--muted); }
+.held-chip { padding: .35rem .6rem; font-size: .8rem; min-height: 0;
+             border: 1px dashed var(--accent); color: var(--accent); background: var(--surface); }
+.held-chip:hover { background: var(--accent); color: #fff; }
+
+.tab-bar { display: flex; gap: .25rem; border-bottom: 2px solid var(--border); }
+.tab-bar .tab {
+  flex: 1; padding: .5rem .6rem; font: inherit; font-weight: 600; text-align: center;
+  background: none; border: none; border-bottom: 3px solid transparent;
+  color: var(--muted); cursor: pointer; margin-bottom: -2px;
+}
+.tab-bar .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-panel { flex: 1; min-height: 0; overflow-y: auto; display: flex;
+             flex-direction: column; gap: .5rem; }
+
+.pay-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.pay-btn { min-height: 4.2rem; font-size: 1.15rem; font-weight: 700; }
+
+.tender-footer { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: auto; }
+
+.offline-toggle { display: flex; align-items: center; gap: .5rem; font-weight: 600;
+                  font-size: .85rem; color: var(--muted); padding: .2rem .1rem; }
 .offline-toggle input { accent-color: var(--brand); }
-.offline-help { font-size: .85rem; color: var(--muted); margin-top: .25rem; }
-.split-tender-form label { display: flex; flex-direction: column; font-size: .85rem;
-                           gap: .25rem; margin-bottom: .5rem; }
+.split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem .5rem; }
+.split-tender-form label { display: flex; flex-direction: column; font-size: .8rem;
+                           gap: .2rem; margin-bottom: 0; }
 .split-tender-form input, .split-tender-form select { padding: .45rem; border-radius: 6px;
                                                       border: 1px solid var(--border); }
-.split-tender-controls { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
-.split-tender-payments { margin: .75rem 0; display: flex; flex-direction: column; gap: .5rem; }
+.split-controls { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+.split-tender-payments { margin: .25rem 0; display: flex; flex-direction: column; gap: .4rem; }
 .split-tender-payments.empty { color: var(--muted); font-size: .9rem; }
 .payment-pill { display: flex; justify-content: space-between; align-items: center;
                 border: 1px solid var(--border); border-radius: 8px; padding: .45rem .6rem;
@@ -322,7 +376,7 @@ body.kiosk .basket th, body.kiosk .journal th {
   -webkit-user-select: none; user-select: none;
 }
 body.kiosk .btn { min-height: 2.75rem; }
-body.kiosk .btn-tile .btn { min-height: 2.75rem; }
+body.kiosk .btn-tile { min-height: 5.4rem; }
 body.kiosk input, body.kiosk select { min-height: 2.4rem; }
 body.kiosk .qty-input, body.kiosk .disc-input { min-height: 2.1rem; }
 body.kiosk .basket .total { font-size: 1.45rem; }
