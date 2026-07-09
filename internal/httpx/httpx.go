@@ -104,6 +104,15 @@ func InitI18n(t *config.I18n, fallback string) {
 	defaultLocale.Store(fallback)
 }
 
+// T translates a key for a locale outside templates (handlers building toasts
+// or fragments). Falls back to the key itself, mirroring the template func.
+func T(locale, key string) string {
+	if tAny := i18nRef.Load(); tAny != nil {
+		return tAny.(*config.I18n).T(locale, key)
+	}
+	return key
+}
+
 // ResolveLocale determines the locale from query, cookie, then default.
 func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 	// query param takes precedence and sets cookie

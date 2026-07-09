@@ -19,6 +19,7 @@ type Button struct {
 	Code     string `json:"code"` // barcode/PLU associated with the shortcut
 	ItemID   string `json:"itemId"`
 	ImageURL string `json:"imageUrl,omitempty"`
+	Price    int64  `json:"price,omitempty"` // minor units, display only
 }
 
 // ButtonVM is the view-model passed to templates.
@@ -27,6 +28,7 @@ type ButtonVM struct {
 	Code     string `json:"code"`
 	ItemID   string `json:"itemId"`
 	ImageURL string `json:"imageUrl,omitempty"`
+	Price    int64  `json:"price,omitempty"` // minor units, display only
 }
 
 func ToVM(b []Button) []ButtonVM {
@@ -37,6 +39,7 @@ func ToVM(b []Button) []ButtonVM {
 			Code:     x.Code,
 			ItemID:   x.ItemID,
 			ImageURL: x.ImageURL,
+			Price:    x.Price,
 		})
 	}
 	return out
@@ -92,6 +95,7 @@ func (s *ButtonStore) Load() ([]Button, error) {
 			Code:     b.Barcode,
 			ItemID:   b.ItemID,
 			ImageURL: b.ImageURL,
+			Price:    b.Price,
 		})
 	}
 	return out, nil

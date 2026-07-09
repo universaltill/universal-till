@@ -18,60 +18,55 @@
     <!-- Product buttons panel loads on page load -->
     <div class="products" hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 
-  <!-- Tender and Scan -->
-  <div class="tender">
-    <h2>{{ T "tender.title" }}</h2>
-    <div class="card" style="margin-bottom:.75rem">
-      <form hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
-        <label>Barcode
-          <input type="text" name="code" placeholder="Scan or type code" autofocus required>
-        </label>
-        <label>Qty
-          <input type="number" name="qty" value="1" min="1" step="1" required>
-        </label>
-        <button class="btn" type="submit">Add</button>
-      </form>
+  <!-- Tender and Scan: fixed-height panel, tabs instead of stacked cards so
+       it never scrolls. Split-tender element IDs are load-bearing (app.js). -->
+  <div class="tender" x-data="{ tab: 'pay' }">
+    <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
+      <input type="text" name="code" placeholder="{{ T "tender.scan.barcode" }}" autofocus required>
+      <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}">
+      <button class="btn" type="submit">{{ T "tender.scan.add" }}</button>
+    </form>
+
+    <div id="held-sales" hx-get="/ui/held" hx-trigger="load" hx-swap="outerHTML"></div>
+
+    <div class="tab-bar" role="tablist">
+      <button type="button" class="tab" :class="tab === 'pay' && 'active'" @click="tab = 'pay'">{{ T "tender.tab.pay" }}</button>
+      <button type="button" class="tab" :class="tab === 'split' && 'active'" @click="tab = 'split'">{{ T "tender.tab.split" }}</button>
     </div>
 
-    <div class="card tender-quick">
-      <h3>Quick Tender</h3>
-      <p class="tender-help">Pays the full remaining balance with one tap.</p>
-      <div class="offline-toggle">
-        <label>
-          <input type="checkbox" id="offline-override">
-          Offline mode
-        </label>
-        <div class="offline-help">Force offline when connectivity is unreliable.</div>
-      </div>
+    <div class="tab-panel" x-show="tab === 'pay'">
       <input type="hidden" id="offline-flag" name="offline" value="0">
-      <div class="grid">
-        <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
-        <button class="btn"  hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
+      <div class="pay-grid">
+        <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
+        <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
       </div>
+      <label class="offline-toggle">
+        <input type="checkbox" id="offline-override"> Offline mode
+      </label>
     </div>
 
-    <div class="card tender-split" id="split-tender-card">
-      <h3>Split Tender</h3>
-      <p class="tender-help">Capture multiple tenders (e.g. part cash, part card) before completing the sale.</p>
+    <div class="tab-panel" x-show="tab === 'split'" x-cloak id="split-tender-card">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
-        <label>Method
-          <select name="method" id="split-tender-method" data-default="{{ $default }}" required>
-            {{ range .paymentMethods }}
-              <option value="{{ . }}" {{ if eq . $default }}selected{{ end }}>{{ . }}</option>
-            {{ end }}
-          </select>
-        </label>
-        <label>Amount (e.g. 12.50)
-          <input type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" required>
-        </label>
-        <label>Change (optional)
-          <input type="number" name="change" min="0" step="0.01" value="0.00">
-        </label>
-        <label>Reference (optional)
-          <input type="text" name="reference" placeholder="Last 4, auth code, etc.">
-        </label>
-        <div class="grid split-tender-controls">
+        <div class="split-grid">
+          <label>Method
+            <select name="method" id="split-tender-method" data-default="{{ $default }}" required>
+              {{ range .paymentMethods }}
+                <option value="{{ . }}" {{ if eq . $default }}selected{{ end }}>{{ . }}</option>
+              {{ end }}
+            </select>
+          </label>
+          <label>Amount
+            <input type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" required>
+          </label>
+          <label>Change
+            <input type="number" name="change" min="0" step="0.01" value="0.00">
+          </label>
+          <label>Reference
+            <input type="text" name="reference" placeholder="Last 4, auth code">
+          </label>
+        </div>
+        <div class="split-controls">
           <button class="btn" type="button" id="split-tender-add">Add Payment</button>
           <button class="btn secondary" type="button" id="split-tender-fill">Fill Remaining</button>
         </div>
@@ -80,13 +75,16 @@
         <p>No pending payments yet.</p>
       </div>
       <div id="split-tender-status" class="split-tender-status" aria-live="polite"></div>
-      <div class="grid tender-actions">
+      <div class="split-controls">
         <button class="btn primary" type="button" id="split-tender-submit">Complete Sale</button>
         <button class="btn secondary" type="button" id="split-tender-clear">Clear</button>
       </div>
     </div>
 
-    <button class="btn secondary" style="width:100%; margin-top:.75rem" hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">New Customer</button>
+    <div class="tender-footer">
+      <button class="btn secondary" hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML">{{ T "hold.action" }}</button>
+      <button class="btn secondary" hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.new_customer" }}</button>
+    </div>
   </div>
 </div>
 

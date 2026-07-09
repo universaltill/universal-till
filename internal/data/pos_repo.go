@@ -532,6 +532,61 @@ WHERE i.reorder_level > 0
 	return items, nil
 }
 
+// StockLocation is a named place stock lives (shop floor, back room, …).
+type StockLocation struct {
+	ID   string
+	Name string
+}
+
+// ListStockLocations returns all stock locations for pickers.
+func (r *POSRepo) ListStockLocations(ctx context.Context) ([]StockLocation, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM stock_locations ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list stock locations: %w", err)
+	}
+	defer rows.Close()
+	var out []StockLocation
+	for rows.Next() {
+		var l StockLocation
+		if err := rows.Scan(&l.ID, &l.Name); err != nil {
+			return nil, fmt.Errorf("scan stock location: %w", err)
+		}
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stock locations: %w", err)
+	}
+	return out, nil
+}
+
+// ListStockLevels returns current stock per item/location for the inventory page.
+func (r *POSRepo) ListStockLevels(ctx context.Context) ([]LowStockItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.id, i.name, COALESCE(i.sku, ''), inv.location_id, COALESCE(sl.name, ''),
+       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0)
+FROM inventory inv
+JOIN items i ON i.id = inv.item_id
+LEFT JOIN stock_locations sl ON sl.id = inv.location_id
+WHERE i.is_active = 1
+ORDER BY i.name, sl.name`)
+	if err != nil {
+		return nil, fmt.Errorf("query stock levels: %w", err)
+	}
+	defer rows.Close()
+	var items []LowStockItem
+	for rows.Next() {
+		var item LowStockItem
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
+			return nil, fmt.Errorf("scan stock level: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stock levels: %w", err)
+	}
+	return items, nil
+}
+
 // NextReceiptNo returns the next available receipt number.
 func (r *POSRepo) NextReceiptNo(ctx context.Context, tx *sql.Tx) (string, error) {
 	exec := r.exec(tx)

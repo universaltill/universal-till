@@ -1,112 +1,165 @@
 {{ define "content" }}
-<h1>Inventory Management</h1>
+<div class="page-head">
+  <h1>Inventory</h1>
+  <input type="search" id="stock-search" placeholder="Search stock…" autocomplete="off">
+</div>
 
-<div class="card">
-  <h2>Low Stock Alerts <span id="low-stock-badge" class="badge" style="background: #ef4444; color: white; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem;">0</span></h2>
-  <div id="low-stock-list" hx-get="/api/inventory/low-stock" hx-trigger="load" hx-swap="innerHTML">
-    Loading low stock items...
+<div class="catalog-layout">
+  <div class="catalog-list">
+    <div class="card">
+      <h2>Stock Levels</h2>
+      <table class="table" id="stock-table">
+        <thead><tr><th>Item</th><th>SKU</th><th>Location</th><th>Qty</th><th>Reorder at</th></tr></thead>
+        <tbody>
+          {{ if .StockLevels }}
+            {{ range .StockLevels }}
+              <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}">
+                <td class="catalog-name">{{ .Name }}</td>
+                <td class="muted">{{ .SKU }}</td>
+                <td>{{ .LocationName }}</td>
+                <td class="{{ if .Low }}stock-low{{ end }}">{{ .CurrentQty }}</td>
+                <td class="muted">{{ if .ReorderLevel }}{{ .ReorderLevel }}{{ else }}—{{ end }}</td>
+              </tr>
+            {{ end }}
+          {{ else }}
+            <tr><td colspan="5" class="empty">No stock recorded yet</td></tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card" style="margin-top:1rem">
+      <h2>Low Stock <span id="low-stock-badge" class="tag" style="background:rgba(220,38,38,.12); color:var(--danger)">0</span></h2>
+      <div id="low-stock-list" hx-get="/api/inventory/low-stock" hx-trigger="load" hx-swap="innerHTML">
+        Loading…
+      </div>
+    </div>
+  </div>
+
+  <div class="card catalog-form">
+    <h3>Receive / Adjust Stock</h3>
+    <form id="stock-form" hx-post="/api/inventory/receipt" hx-swap="innerHTML" hx-target="#result">
+      <label>Type
+        <select name="type" required>
+          <option value="receive">Stock receipt (goods in)</option>
+          <option value="adjust">Adjustment (count correction)</option>
+        </select>
+      </label>
+      <label>Item
+        <input type="text" id="stock-item-search" list="items-list" placeholder="Type item name or SKU" required>
+        <input type="hidden" name="item_id" id="stock-item-id">
+      </label>
+      <div class="field-pair">
+        <label>Location
+          <select name="location_id" id="stock-location" required>
+            {{ range .Locations }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+          </select>
+        </label>
+        <label>Quantity <input type="number" name="quantity" step="0.01" required placeholder="+ receive / ± adjust"></label>
+      </div>
+      <div class="field-pair">
+        <label>Cost (£, optional) <input type="number" id="stock-cost" step="0.01" min="0"></label>
+        <input type="hidden" name="cost_price" id="stock-cost-minor">
+      </div>
+      <label>Reason <input type="text" name="reason" placeholder="e.g. weekly delivery"></label>
+      <button type="submit" class="btn primary" style="width:100%">Submit</button>
+      <div id="result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
+    </form>
+
+    <details class="catalog-extra">
+      <summary>Manager override — negative stock</summary>
+      <form id="override-form" hx-post="/api/inventory/override" hx-swap="innerHTML" hx-target="#override-result">
+        <label>Item
+          <input type="text" list="items-list" class="override-item-search" placeholder="Type item name or SKU" required>
+          <input type="hidden" name="item_id" class="override-item-id">
+        </label>
+        <div class="field-pair">
+          <label>Location
+            <select name="location_id" required>
+              {{ range .Locations }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+            </select>
+          </label>
+          <label>Current qty <input type="number" name="qty_before" step="0.01" required></label>
+        </div>
+        <div class="field-pair">
+          <label>Requested qty <input type="number" name="qty_requested" step="0.01" required></label>
+          <label>Manager ID <input type="text" name="manager_id" required></label>
+        </div>
+        <label>Reason <input type="text" name="reason" required placeholder="why negative stock is needed"></label>
+        <button type="submit" class="btn">Authorize Override</button>
+        <div id="override-result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
+      </form>
+    </details>
+
+    <details class="catalog-extra">
+      <summary>Process a return</summary>
+      <form id="return-form" hx-post="/api/inventory/return" hx-swap="innerHTML" hx-target="#return-result">
+        <label>Original receipt no. <input type="text" name="receipt_no" required placeholder="000000123"></label>
+        <label>Reason <input type="text" name="reason" required placeholder="customer reason"></label>
+        <p class="muted" style="font-size:.8rem">Returns the entire sale (line selection coming later).</p>
+        <button type="submit" class="btn">Process Return</button>
+        <div id="return-result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
+      </form>
+    </details>
   </div>
 </div>
 
-<div class="card mt-4">
-  <h2>Stock Receipt / Adjustment</h2>
-  <form id="stock-form" hx-post="/api/inventory/receipt" hx-swap="innerHTML" hx-target="#result">
-    <div class="form-group">
-      <label for="type">Type</label>
-      <select name="type" id="type" required>
-        <option value="">Select type...</option>
-        <option value="receive">Stock Receipt</option>
-        <option value="adjust">Stock Adjustment</option>
-      </select>
-    </div>
+<datalist id="items-list"></datalist>
+<script id="inventory-items" type="application/json">{{ .ItemsJSON }}</script>
+<script>
+(function () {
+  var items = JSON.parse(document.getElementById('inventory-items').textContent || '[]');
+  var byLabel = {};
+  var dl = document.getElementById('items-list');
+  items.forEach(function (it) {
+    var label = it.name + (it.sku ? ' (' + it.sku + ')' : '');
+    byLabel[label.toLowerCase()] = it.id;
+    var opt = document.createElement('option');
+    opt.value = label;
+    dl.appendChild(opt);
+  });
 
-    <div class="form-group">
-      <label for="item_id">Item ID</label>
-      <input type="text" name="item_id" id="item_id" placeholder="item-uuid">
-    </div>
+  function bindPicker(searchEl, hiddenEl) {
+    function resolve() {
+      var v = (searchEl.value || '').toLowerCase();
+      hiddenEl.value = byLabel[v] || '';
+      searchEl.setCustomValidity(hiddenEl.value ? '' : 'Pick an item from the list');
+    }
+    searchEl.addEventListener('input', resolve);
+    searchEl.addEventListener('change', resolve);
+  }
+  bindPicker(document.getElementById('stock-item-search'), document.getElementById('stock-item-id'));
+  var os = document.querySelector('.override-item-search');
+  if (os) bindPicker(os, document.querySelector('.override-item-id'));
 
-    <div class="form-group">
-      <label for="variant_id">Variant ID (optional)</label>
-      <input type="text" name="variant_id" id="variant_id" placeholder="variant-uuid">
-    </div>
+  // Row click fills the receive form.
+  document.addEventListener('click', function (ev) {
+    var row = ev.target.closest('.stock-row');
+    if (!row) return;
+    var label = row.dataset.name + (row.dataset.sku ? ' (' + row.dataset.sku + ')' : '');
+    var searchEl = document.getElementById('stock-item-search');
+    searchEl.value = label;
+    document.getElementById('stock-item-id').value = row.dataset.item;
+    searchEl.setCustomValidity('');
+    var loc = document.getElementById('stock-location');
+    if (row.dataset.location) loc.value = row.dataset.location;
+  });
 
-    <div class="form-group">
-      <label for="location_id">Location ID</label>
-      <input type="text" name="location_id" id="location_id" required>
-    </div>
+  // Cost in pounds → minor units.
+  document.getElementById('stock-form').addEventListener('submit', function () {
+    var pounds = parseFloat(document.getElementById('stock-cost').value || '');
+    document.getElementById('stock-cost-minor').value = isNaN(pounds) ? '' : Math.round(pounds * 100);
+  });
 
-    <div class="form-group">
-      <label for="quantity">Quantity</label>
-      <input type="number" name="quantity" id="quantity" step="0.01" required>
-    </div>
-
-    <div class="form-group">
-      <label for="cost_price">Cost Price (minor units, optional)</label>
-      <input type="number" name="cost_price" id="cost_price" step="1">
-    </div>
-
-    <div class="form-group">
-      <label for="reason">Reason</label>
-      <textarea name="reason" id="reason" rows="3" placeholder="Optional explanation"></textarea>
-    </div>
-
-    <button type="submit" class="btn">Submit</button>
-  </form>
-  <div id="result" class="mt-2"></div>
-</div>
-
-<div class="card mt-4">
-  <h2>Manager Override - Negative Inventory</h2>
-  <form id="override-form" hx-post="/api/inventory/override" hx-swap="innerHTML" hx-target="#override-result">
-    <div class="form-group">
-      <label for="override_item_id">Item ID</label>
-      <input type="text" name="item_id" id="override_item_id" required>
-    </div>
-
-    <div class="form-group">
-      <label for="override_variant_id">Variant ID (optional)</label>
-      <input type="text" name="variant_id" id="override_variant_id">
-    </div>
-
-    <div class="form-group">
-      <label for="override_location_id">Location ID</label>
-      <input type="text" name="location_id" id="override_location_id" required>
-    </div>
-
-    <div class="form-group">
-      <label for="qty_before">Current Quantity</label>
-      <input type="number" name="qty_before" id="qty_before" step="0.01" required>
-    </div>
-
-    <div class="form-group">
-      <label for="override_reason">Reason (required)</label>
-      <textarea name="reason" id="override_reason" rows="3" placeholder="Explain why negative inventory is needed" required></textarea>
-    </div>
-
-    <button type="submit" class="btn">Authorize Override</button>
-  </form>
-  <div id="override-result" class="mt-2"></div>
-</div>
-
-<div class="card mt-4">
-  <h2>Process Return</h2>
-  <form id="return-form" hx-post="/api/inventory/return" hx-swap="innerHTML" hx-target="#return-result">
-    <div class="form-group">
-      <label for="receipt_no">Original Receipt Number</label>
-      <input type="text" name="receipt_no" id="receipt_no" required placeholder="RCP-123456">
-    </div>
-
-    <div class="form-group">
-      <label for="return_reason">Reason for Return</label>
-      <textarea name="reason" id="return_reason" rows="3" placeholder="Customer reason for return" required></textarea>
-    </div>
-
-    <div class="form-group">
-      <p><small>Note: Line selection will be implemented in a future enhancement. Currently returns entire sale.</small></p>
-    </div>
-
-    <button type="submit" class="btn">Process Return</button>
-  </form>
-  <div id="return-result" class="mt-2"></div>
-</div>
+  // Search filter over stock rows.
+  var search = document.getElementById('stock-search');
+  search.addEventListener('input', function () {
+    var q = search.value.toLowerCase();
+    document.querySelectorAll('.stock-row').forEach(function (row) {
+      var hay = (row.dataset.name + ' ' + row.dataset.sku).toLowerCase();
+      row.hidden = q !== '' && hay.indexOf(q) === -1;
+    });
+  });
+})();
+</script>
 {{ end }}
