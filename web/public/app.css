@@ -86,25 +86,31 @@ a { color: var(--accent); }
                        border-color: rgba(217, 119, 6, .35); }
 .status-pill.offline::before { background: var(--warning); }
 
-/* ---------- POS screen layout ----------
-   Panels carry named grid areas so a theme can reposition them (e.g. buttons
-   on the left, kiosk stacking) purely by overriding grid-template-areas /
-   -columns — no markup changes needed. */
+/* ---------- POS sale screen ----------
+   One-screen till layout like real POS systems: the transaction column
+   (basket with a pinned total + the tender actions) NEVER moves; the product
+   grid fills the rest; each panel scrolls internally — the page itself does
+   not scroll. The journal lives on its own page (/journal), not on the sale
+   screen. Panels carry named grid areas so a theme can still reposition them
+   by overriding grid-template-areas/-columns. */
 .pos-container {
   display: grid;
-  grid-template-columns: 1.2fr 1fr 0.6fr;
+  grid-template-columns: minmax(330px, 420px) 1fr;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1.15fr);
   grid-template-areas:
-    "basket products journal"
-    "tender products journal";
-  gap: 1rem;
-  align-items: start;
+    "basket products"
+    "tender products";
+  gap: .8rem;
+  align-items: stretch;
+  height: calc(100dvh - 128px); /* nav + kiosk header */
+  min-height: 420px;
 }
 .pos-container > .basket { grid-area: basket; }
 .pos-container > .products { grid-area: products; }
-.pos-container > .journal { grid-area: journal; }
+.pos-container > .journal { grid-area: journal; display: none; } /* own page */
 .pos-container > .tender { grid-area: tender; }
 
-/* Panels are visually cards */
+/* Panels are cards; each scrolls internally so nothing gets pushed around. */
 .pos-container > .basket,
 .pos-container > .products,
 .pos-container > .journal,
@@ -112,15 +118,25 @@ a { color: var(--accent); }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: .9rem 1rem;
+  padding: .7rem .8rem;
   box-shadow: var(--shadow);
+  min-height: 0;
+  overflow-y: auto;
 }
 
-@media (max-width: 980px) {
+/* Basket: lines scroll, totals pinned at the bottom of the panel. */
+.pos-container > .basket { display: flex; flex-direction: column; overflow: hidden; }
+.basket-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.basket .totals { flex-shrink: 0; }
+
+@media (max-width: 900px) {
   .pos-container {
     grid-template-columns: 1fr;
-    grid-template-areas: "basket" "products" "journal" "tender";
+    grid-template-rows: auto;
+    grid-template-areas: "basket" "tender" "products";
+    height: auto;
   }
+  .pos-container > .basket { max-height: 45dvh; }
 }
 
 /* ---------- Cards & forms ---------- */
@@ -163,24 +179,31 @@ a.btn, a.btn:hover { text-decoration: none; }
 .btn-actions .btn { padding: .4rem .6rem; font-size: .85rem; }
 
 /* ---------- Product tiles ---------- */
-.grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 .btn-tile {
-  display: flex; flex-direction: column; gap: .45rem;
-  padding: .45rem; border: 1px solid var(--border); border-radius: var(--radius);
+  display: flex; flex-direction: column; gap: .3rem;
+  padding: .35rem; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--surface); box-shadow: var(--shadow);
   transition: border-color .12s ease, box-shadow .12s ease;
 }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .btn-tile .btn {
-  width: 100%; padding: .5rem .4rem; font-size: .85rem;
-  white-space: normal; text-align: center;
+  width: 100%; flex: 1; padding: .45rem .3rem; font-size: .8rem;
+  white-space: normal; text-align: center; min-height: 2.6rem;
 }
-.thumb { width: 100%; aspect-ratio: 4 / 3; height: auto; object-fit: cover;
-         border-radius: 8px; background: var(--surface-2); }
+.thumb { width: 100%; height: 54px; object-fit: cover;
+         border-radius: 7px; background: var(--surface-2); }
 .thumb.small { width: 40px; height: 40px; aspect-ratio: auto; margin-right: .5rem;
                vertical-align: middle; }
 
 /* ---------- Basket ---------- */
+.line-item { max-width: 130px; }
+.line-name { display: block; font-weight: 600; font-size: .88rem; line-height: 1.2; }
+.line-item small { font-size: .68rem; }
+.qty-input { width: 3.6rem; padding: .3rem .35rem; font-size: .85rem; }
+.disc-input { width: 3.6rem; padding: .3rem .35rem; font-size: .8rem; margin-top: .2rem; }
+.btn-x { padding: .3rem .55rem; font-size: .8rem; min-height: 0; }
+
 .basket table { width: 100%; border-collapse: collapse; background: var(--surface);
                 border-radius: var(--radius); overflow: hidden; }
 .basket th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
@@ -190,11 +213,14 @@ a.btn, a.btn:hover { text-decoration: none; }
 .basket th:nth-child(n+2), .basket td:nth-child(n+2) { text-align: right; }
 .basket tr:last-child td { border-bottom: none; }
 .basket .totals {
-  margin-top: .75rem; display: grid; gap: .3rem; justify-items: end;
+  margin-top: .5rem; display: grid; gap: .2rem; justify-items: end;
   background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: .6rem .8rem; font-variant-numeric: tabular-nums;
+  border-radius: var(--radius); padding: .5rem .7rem; font-variant-numeric: tabular-nums;
+  font-size: .9rem;
 }
-.basket .total { font-weight: 700; font-size: 1.25rem; color: var(--brand); }
+.basket .total { font-weight: 700; font-size: 1.3rem; color: var(--brand); }
+.basket td { padding: .4rem .45rem; }
+.basket th { padding: .4rem .45rem; }
 
 /* ---------- Toasts ---------- */
 .toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -284,17 +310,19 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
    Touch-first: bigger targets, no text selection or tap highlights, no
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);
    see deploy/raspberry-pi/. */
-body.kiosk { font-size: 17px; touch-action: manipulation; }
+body.kiosk { font-size: 15px; touch-action: manipulation; overflow: hidden; }
+body.kiosk .container { padding: .6rem .8rem 0; }
+body.kiosk .kiosk-header { margin: 0 0 .6rem; }
+body.kiosk .kiosk-header h1 { font-size: 1.15rem; }
+body.kiosk .pos-container { height: calc(100dvh - 106px); }
 body.kiosk * { -webkit-tap-highlight-color: transparent; }
 body.kiosk .btn, body.kiosk .nav-links a, body.kiosk .btn-tile,
 body.kiosk h1, body.kiosk h2, body.kiosk .status-pill, body.kiosk label,
 body.kiosk .basket th, body.kiosk .journal th {
   -webkit-user-select: none; user-select: none;
 }
-body.kiosk .btn { min-height: 3rem; padding: .7rem 1.15rem; font-size: 1rem; }
-body.kiosk .btn-tile .btn { min-height: 2.8rem; font-size: .95rem; }
-body.kiosk input, body.kiosk select { min-height: 2.9rem; font-size: 1rem; }
-body.kiosk .nav-links a { padding: .55rem .8rem; font-size: 1rem; }
-body.kiosk .grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
-body.kiosk .basket td { padding: .7rem .6rem; font-size: 1.02rem; }
-body.kiosk .basket .total { font-size: 1.5rem; }
+body.kiosk .btn { min-height: 2.75rem; }
+body.kiosk .btn-tile .btn { min-height: 2.75rem; }
+body.kiosk input, body.kiosk select { min-height: 2.4rem; }
+body.kiosk .qty-input, body.kiosk .disc-input { min-height: 2.1rem; }
+body.kiosk .basket .total { font-size: 1.45rem; }

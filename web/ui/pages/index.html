@@ -13,13 +13,10 @@
 
   <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
     <!-- Basket loads on page load -->
-    <div hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
+    <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
 
     <!-- Product buttons panel loads on page load -->
-  <div hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
-
-  <!-- Journal loads on page load -->
-  <div id="journal" hx-get="/ui/journal" hx-trigger="load" hx-swap="outerHTML"></div>
+    <div class="products" hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 
   <!-- Tender and Scan -->
   <div class="tender">

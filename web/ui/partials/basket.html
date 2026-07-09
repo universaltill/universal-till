@@ -4,43 +4,45 @@
     <div class="toast info" id="toast-message">{{ .ToastMessage }}</div>
   {{ end }}
   <h2>Basket</h2>
-  <table>
-    <thead>
-      <tr><th>Item</th><th>Qty</th><th>Price</th><th>Line Total</th><th></th></tr>
-    </thead>
-    <tbody id="basket-lines">
-      {{ if .Lines }}
-        {{ range .Lines }}
-          <tr>
-            <td>
-              {{ if .ImageURL }}<img class="thumb small" src="{{ .ImageURL }}" alt="{{ .Name }}" />{{ end }}
-              {{ .Name }} ({{ .SKU }})
-            </td>
-            <td>
-              <input type="number" name="qty" value="{{ printf "%.2f" .Qty }}" min="0" step="{{ if .IsWeighed }}0.01{{ else }}1{{ end }}"
-                     hx-post="/api/pos/line"
-                     hx-vals='{"code":"{{ .SKU }}"}'
-                     hx-include="closest tr"
-                     hx-target="#basket"
-                     hx-swap="outerHTML" />
-              <small>Discount (minor units):</small>
-              <input type="number" name="discount" value="{{ .LineDiscount }}" min="0" step="1"
-                     hx-post="/api/pos/line"
-                     hx-vals='{"code":"{{ .SKU }}"}'
-                     hx-include="closest tr"
-                     hx-target="#basket"
-                     hx-swap="outerHTML" />
-            </td>
-            <td>{{ money .PriceCents }}</td>
-            <td>{{ money .LineTotal }}</td>
-            <td><button class="btn danger" hx-post="/api/pos/remove" hx-vals='{"code":"{{ .SKU }}"}' hx-target="#basket" hx-swap="outerHTML">Remove</button></td>
-          </tr>
+  <div class="basket-scroll">
+    <table>
+      <thead>
+        <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr>
+      </thead>
+      <tbody id="basket-lines">
+        {{ if .Lines }}
+          {{ range .Lines }}
+            <tr>
+              <td class="line-item">
+                <span class="line-name">{{ .Name }}</span>
+                <small class="muted">{{ .SKU }}</small>
+              </td>
+              <td>
+                <input class="qty-input" type="number" name="qty" value="{{ printf "%.2f" .Qty }}" min="0" step="{{ if .IsWeighed }}0.01{{ else }}1{{ end }}"
+                       hx-post="/api/pos/line"
+                       hx-vals='{"code":"{{ .SKU }}"}'
+                       hx-include="closest tr"
+                       hx-target="#basket"
+                       hx-swap="outerHTML" />
+                <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount }}" min="0" step="1"
+                       title="Discount (minor units)" placeholder="Disc."
+                       hx-post="/api/pos/line"
+                       hx-vals='{"code":"{{ .SKU }}"}'
+                       hx-include="closest tr"
+                       hx-target="#basket"
+                       hx-swap="outerHTML" />
+              </td>
+              <td>{{ money .PriceCents }}</td>
+              <td>{{ money .LineTotal }}</td>
+              <td><button class="btn danger btn-x" title="Remove" hx-post="/api/pos/remove" hx-vals='{"code":"{{ .SKU }}"}' hx-target="#basket" hx-swap="outerHTML">✕</button></td>
+            </tr>
+          {{ end }}
+        {{ else }}
+          <tr><td colspan="5" class="empty">No items</td></tr>
         {{ end }}
-      {{ else }}
-        <tr><td colspan="5" class="empty">No items</td></tr>
-      {{ end }}
-    </tbody>
-  </table>
+      </tbody>
+    </table>
+  </div>
   <div class="totals">
     {{ if .CustomerName }}<div>Customer: {{ .CustomerName }}</div>{{ end }}
     <div>Subtotal: {{ money .Subtotal }}</div>

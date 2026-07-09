@@ -83,5 +83,6 @@
   "plugins.manage.import_help": "Side-load a plugin bundle (.tar.gz) — for offline provisioning or development.",
   "plugins.manage.import_btn": "Import",
   "plugins.store.state.failed": "Install failed",
-  "plugins.store.state.retryable": "you can retry"
+  "plugins.store.state.retryable": "you can retry",
+  "journal.title": "Journal"
 }
