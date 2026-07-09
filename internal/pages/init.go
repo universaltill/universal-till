@@ -59,6 +59,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		{Href: "/designer", Label: "Designer"},
 		{Href: "/inventory", Label: "Inventory"},
 		{Href: "/shifts", Label: "Shifts"},
+		{Href: "/journal", Label: "Journal"},
 		{Href: "/settings", Label: "Settings"},
 		{Href: "/plugins", Label: "Plugins"},
 		{Href: "/catalog", Label: "Catalog"},

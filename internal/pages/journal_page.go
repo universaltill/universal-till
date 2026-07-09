@@ -10,6 +10,16 @@ import (
 )
 
 func registerJournal(mux *http.ServeMux, d *common.Deps) {
+	// Full journal page — receipts/sync history lives here, off the sale screen
+	// (real tills keep the checkout screen for the transaction only).
+	mux.HandleFunc("/journal", func(w http.ResponseWriter, r *http.Request) {
+		httpx.Render("ui/pages/journal.html", map[string]any{
+			"title":     "Journal",
+			"theme":     d.State.Theme,
+			"menuItems": d.Menu,
+		})(w, r)
+	})
+
 	mux.HandleFunc("/ui/journal", func(w http.ResponseWriter, r *http.Request) {
 		repo := data.NewPOSRepo(d.Db)
 		entries, err := repo.ListRecentSales(r.Context(), 5)

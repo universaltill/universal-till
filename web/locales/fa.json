@@ -83,5 +83,6 @@
   "plugins.manage.import_help": "بارگذاری بسته افزونه (.tar.gz)",
   "plugins.manage.import_btn": "درون‌ریزی",
   "plugins.store.state.failed": "نصب ناموفق",
-  "plugins.store.state.retryable": "قابل تلاش مجدد"
+  "plugins.store.state.retryable": "قابل تلاش مجدد",
+  "journal.title": "دفتر فروش"
 }
