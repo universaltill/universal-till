@@ -1,8 +1,6 @@
 package pages
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -643,77 +641,11 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 	}
 }
 
-// extractTarGz extracts a tar.gz archive to the specified directory
-func extractTarGz(archivePath, destDir string) error {
-	file, err := os.Open(archivePath)
-	if err != nil {
-		return fmt.Errorf("failed to open archive: %w", err)
-	}
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	if err != nil {
-		return fmt.Errorf("failed to create gzip reader: %w", err)
-	}
-	defer gzReader.Close()
-
-	tarReader := tar.NewReader(gzReader)
-
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("failed to read tar entry: %w", err)
-		}
-
-		target := filepath.Join(destDir, header.Name)
-
-		// Security: prevent path traversal
-		if !strings.HasPrefix(target, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in archive: %s", header.Name)
-		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return fmt.Errorf("failed to create directory: %w", err)
-			}
-		case tar.TypeReg:
-			dir := filepath.Dir(target)
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				return fmt.Errorf("failed to create parent directory: %w", err)
-			}
-
-			outFile, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
-			if err != nil {
-				return fmt.Errorf("failed to create file: %w", err)
-			}
-			defer outFile.Close()
-
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				return fmt.Errorf("failed to write file: %w", err)
-			}
-		}
-	}
-
-	return nil
-}
-
-// mapTrustTier maps marketplace trust tier to plugin trust level
-func mapTrustTier(tier string) string {
-	switch tier {
-	case "verified":
-		return "trusted"
-	case "approved":
-		return "trusted"
-	default:
-		return "untrusted"
-	}
-}
-
-// handleUpdatePlugin handles updating a plugin to the latest version (T025)
+// handleUpdatePlugin updates an installed plugin to the latest marketplace
+// version. It resolves the plugin's listing ID (install-status records map
+// listing → plugin) and delegates to the same MarketplaceInstaller used by
+// install-from-marketplace, so the update goes through the download-token +
+// Ed25519 verification path — never an unverified extract.
 func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -724,111 +656,88 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		// Check catalog for latest version
-		if d.CatalogRepo == nil {
-			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
-			return
-		}
-
-		snapshot, _, err := d.CatalogRepo.Get()
-		if err != nil {
-			http.Error(w, "Failed to fetch catalog", http.StatusInternalServerError)
-			return
-		}
-
-		var targetPlugin *marketplace.PluginSummary
-		for _, p := range snapshot.Plugins {
-			if p.ListingID == pluginID {
-				targetPlugin = &p
-				break
-			}
-		}
-
-		if targetPlugin == nil {
-			http.Error(w, "Plugin not found in catalog", http.StatusNotFound)
-			return
-		}
-
-		// Get current version
 		currentPlugin, exists := d.Pm.Installed[pluginID]
 		if !exists {
 			http.Error(w, "Plugin not installed", http.StatusNotFound)
 			return
 		}
 
-		// Store current version for rollback
+		// Marketplace installs record the listing↔plugin mapping in the
+		// install-status store; manual imports have no listing and cannot be
+		// updated from the marketplace.
+		statusStore := plugins.NewInstallStatusStore(d.Db)
+		listingID := ""
+		if records, err := statusStore.List(ctx); err == nil {
+			for id, record := range records {
+				if record.PluginID == pluginID {
+					listingID = id
+					break
+				}
+			}
+		}
+		if listingID == "" {
+			http.Error(w, "Plugin has no marketplace listing (manually imported?)", http.StatusNotFound)
+			return
+		}
+
+		// Keep the current version available for rollback.
 		rollbackMgr := plugins.NewRollbackManager(d.Db, "./data/plugins")
 		sourcePath := filepath.Join("./data/plugins", pluginID, currentPlugin.Version)
 		if err := rollbackMgr.StoreVersion(pluginID, currentPlugin.Version, sourcePath); err != nil {
 			log.Printf("Warning: Failed to store version for rollback: %v", err)
 		}
 
-		// Perform installation (similar to install flow)
-		downloadMgr := plugins.NewDownloadManager("./data/plugins/tmp")
-		downloadReq := &plugins.DownloadRequest{
-			URL:              targetPlugin.ArtifactURL,
-			PluginID:         targetPlugin.ListingID,
-			ExpectedChecksum: strings.TrimPrefix(targetPlugin.ArtifactHash, "sha256:"),
-			MaxSizeBytes:     200 * 1024 * 1024,
-		}
-
-		downloadResult, err := downloadMgr.Download(ctx, downloadReq)
+		client := marketplace.NewClient(&d.Cfg.Marketplace, oauth.NewTokenClient(&d.Cfg.Marketplace))
+		installer, err := plugins.NewMarketplaceInstaller(d.Cfg, client, d.Db)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusInternalServerError)
+			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
 			return
 		}
-
-		pluginDir := filepath.Join("./data/plugins", targetPlugin.ListingID, targetPlugin.Version)
-		if err := os.MkdirAll(pluginDir, 0755); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create plugin directory: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		if err := extractTarGz(downloadResult.FilePath, pluginDir); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to extract plugin: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		manifestPath := filepath.Join(pluginDir, "manifest.json")
-		manifestFile, err := os.Open(manifestPath)
+		result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
+			ListingID:  listingID,
+			MerchantID: d.Cfg.Marketplace.ClientID,
+			StoreID:    d.Cfg.Marketplace.StoreID,
+			DeviceID:   marketplace.DeviceIDFromConfig(&d.Cfg.Marketplace),
+			DeviceArch: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+			OnStateChange: func(state plugins.InstallLifecycleState) {
+				_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+					ListingID: listingID,
+					PluginID:  pluginID,
+					State:     state,
+				})
+			},
+		})
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Manifest not found: %v", err), http.StatusInternalServerError)
+			failure := plugins.ClassifyInstallError(err)
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:  listingID,
+				PluginID:   pluginID,
+				State:      plugins.InstallStateFailed,
+				MessageKey: failure.MessageKey,
+				Retryable:  failure.Retryable,
+			})
+			http.Error(w, fmt.Sprintf("Update failed: %v", err), http.StatusBadGateway)
 			return
 		}
-		defer manifestFile.Close()
-
-		manifest, err := plugins.ParseManifest(manifestFile)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Invalid manifest: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		installOpts := plugins.InstallOptions{
-			InstalledFromURL: targetPlugin.ArtifactURL,
-			SHA256:           downloadResult.ActualChecksum,
-			TrustLevel:       mapTrustTier(targetPlugin.TrustTier),
-			Uploader:         "marketplace",
-		}
-
-		if err := plugins.PersistManifest(ctx, d.Db, manifest, installOpts); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to persist plugin: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		downloadMgr.CleanupPartFile(targetPlugin.ListingID)
+		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+			ListingID:      listingID,
+			PluginID:       result.PluginID,
+			PluginName:     result.Name,
+			CurrentVersion: result.Version,
+			State:          plugins.InstallStateActive,
+		})
 
 		if err := d.Pm.Reload(ctx); err != nil {
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
-
-		// TODO: Track telemetry for update event
+		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":      true,
-			"message":      fmt.Sprintf("Plugin updated from %s to %s", currentPlugin.Version, targetPlugin.Version),
+			"message":      fmt.Sprintf("Plugin updated from %s to %s", currentPlugin.Version, result.Version),
 			"from_version": currentPlugin.Version,
-			"to_version":   targetPlugin.Version,
+			"to_version":   result.Version,
 		})
 	}
 }

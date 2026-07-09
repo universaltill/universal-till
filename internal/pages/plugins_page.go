@@ -10,7 +10,6 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
-	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 // registerPluginsPage renders the installed-plugins MANAGER: every plugin on
@@ -76,23 +75,4 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			"pluginsJSON": template.JS(raw),
 		})(w, r)
 	})
-}
-
-// installedPluginForSummary maps a marketplace catalog summary to an installed
-// plugin (kept for the store/status pages).
-func installedPluginForSummary(pm *plugins.Manager, summary marketplace.PluginSummary) (plugins.Plugin, bool) {
-	if pm == nil {
-		return plugins.Plugin{}, false
-	}
-	if listingID := strings.TrimSpace(summary.ListingID); listingID != "" {
-		if inst, exists := pm.Installed[listingID]; exists {
-			return inst, true
-		}
-	}
-	if pluginID := strings.TrimSpace(summary.ID); pluginID != "" {
-		if inst, exists := pm.Installed[pluginID]; exists {
-			return inst, true
-		}
-	}
-	return plugins.Plugin{}, false
 }
