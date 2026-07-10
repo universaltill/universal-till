@@ -15,7 +15,7 @@
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
   </head>
-  <body{{ if kiosk }} class="kiosk"{{ end }}>
+  <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}">
     {{ template "nav" . }}
     <main class="container">{{ template "content" . }}</main>
   </body>

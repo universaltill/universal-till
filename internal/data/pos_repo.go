@@ -695,6 +695,30 @@ FROM shifts ORDER BY opened_at DESC LIMIT ?`, limit)
 	return out, nil
 }
 
+// Register is a till/checkout station.
+type Register struct {
+	ID   string
+	Name string
+}
+
+// ListRegisters returns active registers for the shift-open picker.
+func (r *POSRepo) ListRegisters(ctx context.Context) ([]Register, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM registers WHERE is_active = 1 ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list registers: %w", err)
+	}
+	defer rows.Close()
+	var out []Register
+	for rows.Next() {
+		var reg Register
+		if err := rows.Scan(&reg.ID, &reg.Name); err != nil {
+			return nil, fmt.Errorf("scan register: %w", err)
+		}
+		out = append(out, reg)
+	}
+	return out, rows.Err()
+}
+
 // StockLocation is a named place stock lives (shop floor, back room, …).
 type StockLocation struct {
 	ID   string

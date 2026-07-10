@@ -381,7 +381,7 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);
    see deploy/raspberry-pi/. */
 body.kiosk { font-size: .9375rem; touch-action: manipulation; }
-body.kiosk:has(> main .pos-container) { overflow: hidden; }
+body.kiosk.sale-screen { overflow: hidden; }
 body.kiosk .container { padding: .6rem .8rem 0; }
 body.kiosk .kiosk-header { margin: 0 0 .6rem; }
 body.kiosk .kiosk-header h1 { font-size: 1.15rem; }

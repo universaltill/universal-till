@@ -70,7 +70,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		raw, _ := json.Marshal(map[string]any{"items": items, "q": search})
 		httpx.Render("ui/pages/plugins.html", map[string]any{
 			"title":       "Plugins",
-			"theme":       d.State.Theme,
+			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.Menu,
 			"pluginsJSON": template.JS(raw),
 		})(w, r)

@@ -24,6 +24,15 @@ import (
 func Register(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewCatalogRepo(d.Db)
 
+	// Every mutation endpoint answers with the refreshed items table.
+	renderCatalogTable := func(w http.ResponseWriter, r *http.Request) {
+		items, _ := repo.ListItems(r.Context())
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "partials", "catalog_table.html"),
+		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+	}
+
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		items, err := repo.ListItems(r.Context())
@@ -39,7 +48,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		data := map[string]any{
 			"title":      "Catalog",
 			"menuItems":  d.Menu,
-			"theme":      d.State.Theme,
+			"theme":      d.CurrentState().Theme,
 			"Items":      items,
 			"Categories": cats,
 			"Brands":     brands,
@@ -73,11 +82,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := repo.ListItems(r.Context())
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		httpx.RenderWith(files(
-			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+		renderCatalogTable(w, r)
 	})
 
 	// Update item
@@ -101,11 +106,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := repo.ListItems(r.Context())
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		httpx.RenderWith(files(
-			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+		renderCatalogTable(w, r)
 	})
 
 	// Deactivate item
@@ -124,11 +125,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := repo.ListItems(r.Context())
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		httpx.RenderWith(files(
-			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+		renderCatalogTable(w, r)
 	})
 
 	// Create or update variant (if id present => update)
@@ -180,11 +177,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		items, _ := repo.ListItems(r.Context())
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		httpx.RenderWith(files(
-			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+		renderCatalogTable(w, r)
 	})
 
 	// Deactivate variant
@@ -203,11 +196,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := repo.ListItems(r.Context())
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		httpx.RenderWith(files(
-			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+		renderCatalogTable(w, r)
 	})
 
 	// Item image upload → web/public/assets/items/<id>/thumb.png (the same
@@ -252,11 +241,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		items, _ := repo.ListItems(r.Context())
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		httpx.RenderWith(files(
-			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+		renderCatalogTable(w, r)
 	})
 
 	mux.HandleFunc("/api/catalog/barcode", func(w http.ResponseWriter, r *http.Request) {
@@ -282,11 +267,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		items, _ := repo.ListItems(r.Context())
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		httpx.RenderWith(files(
-			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+		renderCatalogTable(w, r)
 	})
 }
 

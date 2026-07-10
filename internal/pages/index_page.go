@@ -28,18 +28,23 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
-		methods := collectPaymentMethods(r.Context(), d.Db)
-		defaultMethod := "cash"
-		if len(methods) > 0 {
-			defaultMethod = methods[0]
-		}
-		// Full method rows (label + plugin provenance) drive the Pay tab.
+		// One query drives both tender UIs: full rows for the Pay tab,
+		// their ids for the split-tender select.
 		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
+		methods := make([]string, 0, len(payMethods))
+		for _, m := range payMethods {
+			methods = append(methods, m.ID)
+		}
+		if len(methods) == 0 {
+			methods = []string{"cash", "card"}
+		}
+		defaultMethod := methods[0]
 		data := map[string]any{
 			"title":                "Universal Till",
-			"theme":                d.State.Theme,
+			"saleScreen":           true,
+			"theme":                d.CurrentState().Theme,
 			"menuItems":            d.Menu,
-			"currency":             d.State.Currency,
+			"currency":             d.CurrentState().Currency,
 			"paymentMethods":       methods,
 			"paymentMethodDefault": defaultMethod,
 			"payMethods":           payMethods,

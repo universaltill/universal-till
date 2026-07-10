@@ -13,13 +13,15 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 		repo := data.NewPOSRepo(d.Db)
 		current, hasOpen, _ := repo.CurrentOpenShift(r.Context())
 		history, _ := repo.ListRecentShifts(r.Context(), 20)
+		registers, _ := repo.ListRegisters(r.Context())
 		data := map[string]any{
 			"title":     "Shifts",
-			"theme":     d.State.Theme,
+			"theme":     d.CurrentState().Theme,
 			"menuItems": d.Menu,
 			"Current":   current,
 			"HasOpen":   hasOpen,
 			"History":   history,
+			"Registers": registers,
 		}
 		httpx.Render("ui/pages/shifts.html", data)(w, r)
 	})

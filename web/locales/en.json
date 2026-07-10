@@ -158,5 +158,9 @@
   "reports.day": "Day",
   "reports.top_items": "Top items",
   "reports.by_method": "Payments by method",
-  "reports.none": "No data for this period"
+  "reports.none": "No data for this period",
+  "journal.detail.online": "online",
+  "journal.detail.offline": "offline",
+  "journal.detail.sync": "sync",
+  "journal.detail.sku": "SKU"
 }

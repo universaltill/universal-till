@@ -813,7 +813,9 @@ ORDER BY pe.sort_order, pe.label`)
 func (r *PluginRepo) SyncPluginPaymentMethods(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, `
 INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id)
-SELECT pe.key, pe.label, 'card', 1, 100 + pe.sort_order, pe.plugin_id
+SELECT pe.key, pe.label,
+       COALESCE(CASE WHEN json_valid(pe.config_json) THEN json_extract(pe.config_json, '$.method_type') END, 'card'),
+       1, 100 + pe.sort_order, pe.plugin_id
 FROM plugin_entries pe
 JOIN plugins p ON p.id = pe.plugin_id
 WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
