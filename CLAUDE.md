@@ -38,3 +38,15 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 - `go build ./... && go test ./...` and `bash scripts/ci/guard-data-access.sh`.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
+
+## Decisions & documentation (docs repo → adr/, ADR-0007)
+- **ADRs are binding.** Before implementing, check `docs/adr/` — do not
+  contradict an accepted ADR; changing course requires a superseding ADR first.
+- **Document-first:** significant/architectural choices get an ADR *before*
+  code; non-trivial features start from a short spec in the docs repo.
+- Key standing decisions: plugin runtime = in-process **WASM (wazero)**,
+  processes only for hardware plugins (ADR-0001); 20-type plugin taxonomy is
+  fixed (ADR-0002); offline-first, assets vendored (ADR-0003); server-rendered
+  HTMX UI, no SPA (ADR-0008).
+- Behaviour changes update the affected doc (`docs/reference/`, guides,
+  `architecture/plugin-architecture.md`) in the same session.
