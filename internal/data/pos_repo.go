@@ -532,6 +532,95 @@ WHERE i.reorder_level > 0
 	return items, nil
 }
 
+// ---- Reports ----
+
+type DailySales struct {
+	Day      string
+	Count    int
+	Total    int64
+	TaxTotal int64
+}
+
+type TopItem struct {
+	Name    string
+	Qty     float64
+	Revenue int64
+}
+
+type MethodTotal struct {
+	Method string
+	Count  int
+	Amount int64
+}
+
+// SalesByDay aggregates completed sales per day for the last N days.
+func (r *POSRepo) SalesByDay(ctx context.Context, days int) ([]DailySales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT date(created_at) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0)
+FROM sales
+WHERE status = 'completed' AND created_at >= datetime('now', ?)
+GROUP BY day ORDER BY day DESC`, fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, fmt.Errorf("sales by day: %w", err)
+	}
+	defer rows.Close()
+	var out []DailySales
+	for rows.Next() {
+		var d DailySales
+		if err := rows.Scan(&d.Day, &d.Count, &d.Total, &d.TaxTotal); err != nil {
+			return nil, fmt.Errorf("scan daily sales: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// TopItems returns the best sellers by revenue for the last N days.
+func (r *POSRepo) TopItems(ctx context.Context, days, limit int) ([]TopItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.name_snapshot, SUM(sl.quantity), COALESCE(SUM(sl.total_after_tax), 0) AS revenue
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+GROUP BY sl.name_snapshot ORDER BY revenue DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+	if err != nil {
+		return nil, fmt.Errorf("top items: %w", err)
+	}
+	defer rows.Close()
+	var out []TopItem
+	for rows.Next() {
+		var t TopItem
+		if err := rows.Scan(&t.Name, &t.Qty, &t.Revenue); err != nil {
+			return nil, fmt.Errorf("scan top item: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// PaymentBreakdown sums applied payments per method for the last N days.
+func (r *POSRepo) PaymentBreakdown(ctx context.Context, days int) ([]MethodTotal, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT p.method_id, COUNT(*), COALESCE(SUM(p.amount - p.change_given), 0) AS applied
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+GROUP BY p.method_id ORDER BY applied DESC`, fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, fmt.Errorf("payment breakdown: %w", err)
+	}
+	defer rows.Close()
+	var out []MethodTotal
+	for rows.Next() {
+		var m MethodTotal
+		if err := rows.Scan(&m.Method, &m.Count, &m.Amount); err != nil {
+			return nil, fmt.Errorf("scan method total: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // ShiftSummary is a row on the shifts page (current or historical).
 type ShiftSummary struct {
 	ID          string

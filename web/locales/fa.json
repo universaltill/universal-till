@@ -147,5 +147,16 @@
   "shifts.record": "ثبت",
   "shifts.open_new": "باز کردن شیفت",
   "shifts.formula_title": "نحوه محاسبه وجه مورد انتظار",
-  "shifts.formula": "مورد انتظار = وجه ابتدای شیفت + پرداخت‌های نقدی خالص + اصلاح‌ها. مغایرت = شمارش‌شده − مورد انتظار."
+  "shifts.formula": "مورد انتظار = وجه ابتدای شیفت + پرداخت‌های نقدی خالص + اصلاح‌ها. مغایرت = شمارش‌شده − مورد انتظار.",
+  "reports.title": "گزارش‌ها",
+  "reports.today": "امروز",
+  "reports.days": "روز",
+  "reports.revenue": "درآمد",
+  "reports.sales": "فروش‌ها",
+  "reports.tax": "مالیات",
+  "reports.by_day": "فروش روزانه",
+  "reports.day": "روز",
+  "reports.top_items": "پرفروش‌ترین‌ها",
+  "reports.by_method": "پرداخت به تفکیک روش",
+  "reports.none": "داده‌ای برای این بازه نیست"
 }

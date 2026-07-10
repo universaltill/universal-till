@@ -147,5 +147,16 @@
   "shifts.record": "Record",
   "shifts.open_new": "Open Shift",
   "shifts.formula_title": "How expected cash is calculated",
-  "shifts.formula": "Expected = opening cash + net cash payments + adjustments. Variance = counted − expected."
+  "shifts.formula": "Expected = opening cash + net cash payments + adjustments. Variance = counted − expected.",
+  "reports.title": "Reports",
+  "reports.today": "Today",
+  "reports.days": "days",
+  "reports.revenue": "Revenue",
+  "reports.sales": "Sales",
+  "reports.tax": "Tax",
+  "reports.by_day": "Sales by day",
+  "reports.day": "Day",
+  "reports.top_items": "Top items",
+  "reports.by_method": "Payments by method",
+  "reports.none": "No data for this period"
 }

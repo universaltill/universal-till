@@ -1,0 +1,63 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "reports.title" }}</h1>
+  <form method="get" action="/reports" style="display:flex; gap:.4rem; align-items:center">
+    <select name="days" onchange="this.form.submit()">
+      <option value="1"  {{ if eq .Days 1 }}selected{{ end }}>{{ T "reports.today" }}</option>
+      <option value="7"  {{ if eq .Days 7 }}selected{{ end }}>7 {{ T "reports.days" }}</option>
+      <option value="14" {{ if eq .Days 14 }}selected{{ end }}>14 {{ T "reports.days" }}</option>
+      <option value="30" {{ if eq .Days 30 }}selected{{ end }}>30 {{ T "reports.days" }}</option>
+      <option value="90" {{ if eq .Days 90 }}selected{{ end }}>90 {{ T "reports.days" }}</option>
+    </select>
+  </form>
+</div>
+
+<div class="report-cards">
+  <div class="card kpi"><div class="kpi-label">{{ T "reports.revenue" }}</div><div class="kpi-value">{{ money .GrandTotal }}</div></div>
+  <div class="card kpi"><div class="kpi-label">{{ T "reports.sales" }}</div><div class="kpi-value">{{ .GrandCount }}</div></div>
+  <div class="card kpi"><div class="kpi-label">{{ T "reports.tax" }}</div><div class="kpi-value">{{ money .GrandTax }}</div></div>
+</div>
+
+<div class="catalog-layout" style="margin-top:1rem">
+  <div class="card">
+    <h2>{{ T "reports.by_day" }}</h2>
+    <table class="table">
+      <thead><tr><th>{{ T "reports.day" }}</th><th>{{ T "reports.sales" }}</th><th>{{ T "reports.tax" }}</th><th>{{ T "reports.revenue" }}</th></tr></thead>
+      <tbody>
+        {{ range .Daily }}
+        <tr><td>{{ .Day }}</td><td>{{ .Count }}</td><td>{{ money .TaxTotal }}</td><td><strong>{{ money .Total }}</strong></td></tr>
+        {{ else }}
+        <tr><td colspan="4" class="empty">{{ T "reports.none" }}</td></tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>{{ T "reports.top_items" }}</h2>
+      <table class="table">
+        <tbody>
+          {{ range .Top }}
+          <tr><td>{{ .Name }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:right">{{ money .Revenue }}</td></tr>
+          {{ else }}
+          <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <h2>{{ T "reports.by_method" }}</h2>
+      <table class="table">
+        <tbody>
+          {{ range .Methods }}
+          <tr><td><strong>{{ .Method }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:right">{{ money .Amount }}</td></tr>
+          {{ else }}
+          <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{{ end }}
