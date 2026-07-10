@@ -190,19 +190,26 @@ func (mv *ManifestVerifier) VerifyExecutable(pluginDir, executableName string) e
 	return nil
 }
 
-// isValidCanonicalType checks if a canonical type is in the allowed list
-func isValidCanonicalType(canonicalType string) bool {
-	validTypes := map[string]bool{
-		"page":           true,
-		"button":         true,
-		"payment":        true,
-		"report":         true,
-		"integration":    true,
-		"background_job": true,
-		"device":         true,
-		"theme":          true,
+// CanonicalTypes is the full plugin-type taxonomy. It mirrors the
+// plugin_entries.type CHECK constraint in the schema — keep the two in sync.
+var CanonicalTypes = []string{
+	"page", "button", "popup", "payment", "device", "integration",
+	"report", "pricing", "tax", "import", "export", "hardware",
+	"background_job", "scheduler", "receipt_template", "customer_facing",
+	"auth", "notification", "delivery", "theme",
+}
+
+var canonicalTypeSet = func() map[string]bool {
+	m := make(map[string]bool, len(CanonicalTypes))
+	for _, t := range CanonicalTypes {
+		m[t] = true
 	}
-	return validTypes[canonicalType]
+	return m
+}()
+
+// isValidCanonicalType checks if a canonical type is in the allowed list.
+func isValidCanonicalType(canonicalType string) bool {
+	return canonicalTypeSet[canonicalType]
 }
 
 // VerifyCompatibility checks if a plugin is compatible with the current system

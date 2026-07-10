@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,7 @@ type Manifest struct {
 	Runtime     string `json:"runtime"`    // go|wasm|node|python|native
 
 	// Marketplace fields (T016 - 009-cloud-marketplace)
-	CanonicalType string `json:"canonical_type"`  // page|button|payment|report|integration|background_job|device
+	CanonicalType string `json:"canonical_type"`  // one of CanonicalTypes (see manifest_verifier.go)
 	DeviceArch    string `json:"device_arch"`     // linux/amd64, darwin/arm64, any
 	MinPOSVersion string `json:"min_pos_version"` // Minimum POS version required
 	Signature     string `json:"signature"`       // Ed25519 signature of manifest (hex)
@@ -101,6 +102,14 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	}
 	if m.Runtime == "" {
 		m.Runtime = "go" // default
+	}
+	// Entry types must be in the canonical taxonomy — fail here with a clear
+	// message instead of a DB CHECK-constraint error at persist time.
+	for _, e := range m.Entries {
+		if !isValidCanonicalType(e.Type) {
+			return nil, fmt.Errorf("manifest entry %q has invalid type %q (allowed: %s)",
+				e.Key, e.Type, strings.Join(CanonicalTypes, "|"))
+		}
 	}
 
 	return &m, nil
