@@ -507,10 +507,13 @@ type PermissionRow struct {
 
 // InstalledPluginRow represents installed plugin metadata.
 type InstalledPluginRow struct {
-	ID      string
-	Name    string
-	Version string
-	Author  string
+	ID         string
+	Name       string
+	Version    string
+	Author     string
+	Runtime    string
+	Entrypoint string
+	IsActive   bool
 }
 
 // MenuEntryRow represents a plugin menu entry with aggregated permissions.
@@ -692,7 +695,7 @@ ORDER BY name COLLATE NOCASE
 
 func (r *PluginRepo) ListInstalledPlugins(ctx context.Context) ([]InstalledPluginRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, version, '' as author
+SELECT id, name, version, '' as author, COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active
 FROM plugins 
 WHERE is_active = 1
 `)
@@ -703,7 +706,7 @@ WHERE is_active = 1
 	var res []InstalledPluginRow
 	for rows.Next() {
 		var p InstalledPluginRow
-		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author, &p.Runtime, &p.Entrypoint, &p.IsActive); err != nil {
 			return nil, pluginObs.wrap("list_installed", err)
 		}
 		res = append(res, p)
@@ -771,6 +774,27 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 		res = append(res, row)
 	}
 	return res, rows.Err()
+}
+
+// ListPluginHookEvents returns the events a plugin's active hooks subscribe
+// to (manifest "hooks" — what its wasm handler consumes).
+func (r *PluginRepo) ListPluginHookEvents(ctx context.Context, pluginID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT DISTINCT event FROM plugin_hooks
+WHERE plugin_id = ? AND is_active = 1`, pluginID)
+	if err != nil {
+		return nil, pluginObs.wrap("list_hook_events", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var ev string
+		if err := rows.Scan(&ev); err != nil {
+			return nil, pluginObs.wrap("list_hook_events", err)
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
 }
 
 // PaymentEntryRow is a tender method contributed by an active plugin.

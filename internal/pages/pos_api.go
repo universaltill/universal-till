@@ -442,7 +442,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			for _, e := range entries {
 				byMethod[e.EntryKey] = e
 			}
-			bus := plugins.NewEventBus(d.Db)
+			bus := plugins.SharedBus(d.Db)
 			for _, p := range payments {
 				if e, ok := byMethod[p.MethodID]; ok && e.TriggerEvent != "" {
 					_, _ = bus.Publish(r.Context(), e.TriggerEvent, map[string]any{

@@ -17,6 +17,7 @@ type Manager struct {
 	Installed   map[string]Plugin     // key = plugin id
 	Catalog     map[string]CatalogEntry
 	db          *sql.DB
+	Wasm        *WasmRuntime // in-process runtime for runtime:"wasm" plugins
 }
 
 type Plugin struct {
@@ -63,6 +64,7 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 		Installed:   make(map[string]Plugin),
 		Catalog:     make(map[string]CatalogEntry),
 		db:          db,
+		Wasm:        NewWasmRuntime("./data/plugins"),
 	}
 
 	if err := m.loadCatalog(ctx, repo); err != nil {
@@ -77,6 +79,7 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return nil, err
 	}
+	m.Wasm.Sync(ctx, db)
 	return m, nil
 }
 
@@ -96,6 +99,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return err
 	}
+	m.Wasm.Sync(ctx, m.db)
 	return nil
 }
 
