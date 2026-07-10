@@ -125,7 +125,7 @@ a { color: var(--accent); }
     "tender products";
   gap: .8rem;
   align-items: stretch;
-  height: calc(100dvh - 128px); /* nav + kiosk header */
+  height: calc(100dvh - 8rem); /* nav + kiosk header */
   min-height: 420px;
 }
 .pos-container > .basket { grid-area: basket; }
@@ -151,6 +151,9 @@ a { color: var(--accent); }
 .pos-container > .basket { display: flex; flex-direction: column; overflow: hidden; }
 /* Tender: the panel itself never scrolls — only the active tab body does. */
 .pos-container > .tender { overflow: hidden; }
+/* After a sale the receipt swaps into the basket slot; it keeps the grid area
+   and scrolls internally instead of bleeding over other panels. */
+.pos-container > .basket.receipt-view { display: block; overflow-y: auto; }
 .basket-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .basket .totals { flex-shrink: 0; }
 
@@ -364,11 +367,11 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
    Touch-first: bigger targets, no text selection or tap highlights, no
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);
    see deploy/raspberry-pi/. */
-body.kiosk { font-size: 15px; touch-action: manipulation; overflow: hidden; }
+body.kiosk { font-size: .9375rem; touch-action: manipulation; overflow: hidden; }
 body.kiosk .container { padding: .6rem .8rem 0; }
 body.kiosk .kiosk-header { margin: 0 0 .6rem; }
 body.kiosk .kiosk-header h1 { font-size: 1.15rem; }
-body.kiosk .pos-container { height: calc(100dvh - 106px); }
+body.kiosk .pos-container { height: calc(100dvh - 6.6rem); }
 body.kiosk * { -webkit-tap-highlight-color: transparent; }
 body.kiosk .btn, body.kiosk .nav-links a, body.kiosk .btn-tile,
 body.kiosk h1, body.kiosk h2, body.kiosk .status-pill, body.kiosk label,
