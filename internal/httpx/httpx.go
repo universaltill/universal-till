@@ -104,6 +104,28 @@ func InitI18n(t *config.I18n, fallback string) {
 	defaultLocale.Store(fallback)
 }
 
+var uiScale atomic.Value // float64
+
+// InitUIScale sets the interface scale factor for the POS screen
+// (UT_UI_SCALE, e.g. 0.8 for small 1024px tills, 1.3 for large displays).
+// Everything is rem-based, so scaling the root font-size scales the whole UI.
+func InitUIScale(scale float64) {
+	if scale < 0.5 || scale > 2.0 {
+		scale = 1.0
+	}
+	uiScale.Store(scale)
+}
+
+func uiScalePx() string {
+	scale := 1.0
+	if v := uiScale.Load(); v != nil {
+		if f, ok := v.(float64); ok {
+			scale = f
+		}
+	}
+	return strconv.FormatFloat(16*scale, 'f', -1, 64)
+}
+
 // T translates a key for a locale outside templates (handlers building toasts
 // or fragments). Falls back to the key itself, mirroring the template func.
 func T(locale, key string) string {
@@ -172,6 +194,7 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return false
 	}
+	funcs["uiscalepx"] = uiScalePx
 	funcs["T"] = func(key string) string {
 		if tAny := i18nRef.Load(); tAny != nil {
 			return tAny.(*config.I18n).T(locale, key)

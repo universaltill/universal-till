@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -46,6 +48,13 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	httpx.InitCurrency(state.Currency)
 	// Dedicated till: larger touch targets, no text selection (UT_KIOSK=1).
 	httpx.InitKiosk(os.Getenv("UT_KIOSK") == "1")
+	uiScale := 1.0
+	if v := strings.TrimSpace(os.Getenv("UT_UI_SCALE")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			uiScale = f
+		}
+	}
+	httpx.InitUIScale(uiScale)
 
 	btnStore := ui.NewButtonStore(db)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}

@@ -477,11 +477,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			if err == nil {
 				var journalBuf bytes.Buffer
 				_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true})
-				fmt.Fprintf(w, `<div id="basket">%s</div>%s`, receiptHTML, journalBuf.String())
+				fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>%s`, receiptHTML, journalBuf.String())
 				return
 			}
 		}
-		fmt.Fprintf(w, `<div id="basket">%s</div>`, receiptHTML)
+		fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>`, receiptHTML)
 	})
 
 	// Update sale status: park, void, refund (status string expected).

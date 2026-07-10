@@ -383,8 +383,11 @@ func TestInventoryFormRender(t *testing.T) {
 		t.Fatalf("GET /inventory failed: code %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Stock Receipt") {
-		t.Fatalf("expected 'Stock Receipt' in inventory page")
+	if !strings.Contains(body, "Receive / Adjust Stock") {
+		t.Fatalf("expected 'Receive / Adjust Stock' in inventory page")
+	}
+	if !strings.Contains(body, "Stock Levels") {
+		t.Fatalf("expected 'Stock Levels' table in inventory page")
 	}
 	if !strings.Contains(body, `name="quantity"`) {
 		t.Fatalf("expected quantity input in form")
@@ -442,8 +445,8 @@ func TestManagerOverrideForm(t *testing.T) {
 		t.Fatalf("GET /inventory failed: code %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Manager Override") {
-		t.Fatalf("expected 'Manager Override' section in inventory page")
+	if !strings.Contains(body, "Manager override") {
+		t.Fatalf("expected 'Manager override' section in inventory page")
 	}
 	if !strings.Contains(body, `name="reason"`) {
 		t.Fatalf("expected reason textarea in override form")
@@ -557,8 +560,8 @@ func TestLowStockBadge(t *testing.T) {
 		t.Fatalf("GET /inventory failed: code %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Low Stock Alerts") {
-		t.Fatalf("expected 'Low Stock Alerts' section in inventory page")
+	if !strings.Contains(body, "Low Stock") {
+		t.Fatalf("expected 'Low Stock' section in inventory page")
 	}
 	if !strings.Contains(body, "low-stock-badge") {
 		t.Fatalf("expected low-stock-badge element")
