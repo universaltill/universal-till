@@ -3,7 +3,7 @@
   {{ range .Buttons }}
     <div class="btn-tile draggable-tile" draggable="true" data-code="{{ .Code }}">
       {{ if .ImageURL }}
-      <img class="thumb" src="{{ .ImageURL }}" alt="" />
+      <img class="thumb" src="{{ imgv .ImageURL }}" alt="" />
       {{ end }}
       <span class="tile-name">{{ .Label }}</span>
       <div class="btn-actions">
