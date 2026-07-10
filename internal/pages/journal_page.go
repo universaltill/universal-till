@@ -20,9 +20,32 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		})(w, r)
 	})
 
+	// Sale detail: lines, payments, totals, sync state for one receipt.
+	mux.HandleFunc("/journal/{receipt}", func(w http.ResponseWriter, r *http.Request) {
+		sale, found, err := data.NewPOSRepo(d.Db).GetSaleDetail(r.Context(), r.PathValue("receipt"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		httpx.Render("ui/pages/journal_detail.html", map[string]any{
+			"title":     "Receipt " + sale.ReceiptNo,
+			"theme":     d.State.Theme,
+			"menuItems": d.Menu,
+			"Sale":      sale,
+		})(w, r)
+	})
+
 	mux.HandleFunc("/ui/journal", func(w http.ResponseWriter, r *http.Request) {
 		repo := data.NewPOSRepo(d.Db)
-		entries, err := repo.ListRecentSales(r.Context(), 5)
+		limit := 5
+		if r.URL.Query().Get("limit") == "full" {
+			limit = 100
+		}
+		entries, err := repo.ListRecentSales(r.Context(), limit)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

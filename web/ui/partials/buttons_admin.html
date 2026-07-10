@@ -1,17 +1,17 @@
 {{ define "buttons_admin_grid" }}
 <div id="buttons-grid-admin" class="grid">
   {{ range .Buttons }}
-    <div class="btn-tile">
+    <div class="btn-tile draggable-tile" draggable="true" data-code="{{ .Code }}">
       {{ if .ImageURL }}
-      <img class="thumb" src="{{ .ImageURL }}" alt="{{ .Label }}" />
+      <img class="thumb" src="{{ .ImageURL }}" alt="" />
       {{ end }}
-      <div>{{ .Label }}</div>
+      <span class="tile-name">{{ .Label }}</span>
       <div class="btn-actions">
         <form class="remove"
               hx-post="/api/buttons/remove"
               hx-target="#buttons-grid-admin" hx-swap="outerHTML">
           <input type="hidden" name="code" value="{{ .Code }}">
-          <button type="submit" class="btn danger">Remove</button>
+          <button type="submit" class="btn danger">✕</button>
         </form>
       </div>
     </div>
@@ -19,6 +19,36 @@
     <p class="empty">No products yet.</p>
   {{ end }}
 </div>
+<script>
+(function () {
+  var grid = document.getElementById('buttons-grid-admin');
+  var dragged = null;
+
+  grid.addEventListener('dragstart', function (ev) {
+    dragged = ev.target.closest('.draggable-tile');
+    if (dragged) { dragged.classList.add('dragging'); ev.dataTransfer.effectAllowed = 'move'; }
+  });
+  grid.addEventListener('dragend', function () {
+    if (dragged) dragged.classList.remove('dragging');
+    dragged = null;
+  });
+  grid.addEventListener('dragover', function (ev) {
+    ev.preventDefault();
+    var over = ev.target.closest('.draggable-tile');
+    if (!dragged || !over || over === dragged) return;
+    var rect = over.getBoundingClientRect();
+    var before = (ev.clientX - rect.left) < rect.width / 2;
+    grid.insertBefore(dragged, before ? over : over.nextSibling);
+  });
+  grid.addEventListener('drop', function (ev) {
+    ev.preventDefault();
+    var codes = Array.prototype.map.call(grid.querySelectorAll('.draggable-tile'), function (t) { return t.dataset.code; });
+    var fd = new FormData();
+    codes.forEach(function (c) { fd.append('codes', c); });
+    fetch('/api/buttons/reorder', { method: 'POST', body: fd });
+  });
+})();
+</script>
 {{ end }}
 
 {{ define "buttons_admin" }}

@@ -8,8 +8,8 @@
       </thead>
       <tbody>
         {{ range .Entries }}
-          <tr>
-            <td>{{ .ReceiptNo }}</td>
+          <tr class="journal-row" onclick="window.location='/journal/' + this.dataset.receipt" data-receipt="{{ .ReceiptNo }}">
+            <td><a href="/journal/{{ .ReceiptNo }}" onclick="event.stopPropagation()">{{ .ReceiptNo }}</a></td>
             <td>{{ money .Total }}</td>
             <td>{{ .TenderType }}</td>
             <td>{{ .SyncStatus }}</td>

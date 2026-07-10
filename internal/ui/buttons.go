@@ -114,6 +114,11 @@ func (s *ButtonStore) Save(list []Button) error {
 	return s.repo.SaveButtons(context.Background(), repoButtons)
 }
 
+// UpdateOrder persists a new tile order (codes in display order).
+func (s *ButtonStore) UpdateOrder(ctx context.Context, codes []string) error {
+	return s.repo.UpdateOrder(ctx, codes)
+}
+
 func (s *ButtonStore) Add(btn Button) error {
 	btn.Label = strings.TrimSpace(btn.Label)
 	btn.Code = strings.TrimSpace(btn.Code)

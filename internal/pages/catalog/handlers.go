@@ -3,7 +3,12 @@ package catalog
 import (
 	"context"
 	"errors"
+	"image"
+	_ "image/jpeg"
+	"image/png"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -196,6 +201,55 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		if err := pos.DeactivateVariant(r.Context(), d.Db, variantID); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, _ := repo.ListItems(r.Context())
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "partials", "catalog_table.html"),
+		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+	})
+
+	// Item image upload → web/public/assets/items/<id>/thumb.png (the same
+	// convention the product tiles and designer use).
+	mux.HandleFunc("POST /api/catalog/item/image", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			http.Error(w, "invalid upload", http.StatusBadRequest)
+			return
+		}
+		itemID := strings.TrimSpace(r.Form.Get("item_id"))
+		if itemID == "" || strings.ContainsAny(itemID, "/\\.") {
+			http.Error(w, "valid item_id required", http.StatusBadRequest)
+			return
+		}
+		if ok, err := repo.ItemExists(r.Context(), itemID); err != nil || !ok {
+			http.Error(w, "item not found", http.StatusNotFound)
+			return
+		}
+		file, _, err := r.FormFile("image")
+		if err != nil {
+			http.Error(w, "image file required", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+		img, _, err := image.Decode(io.LimitReader(file, 10<<20))
+		if err != nil {
+			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			return
+		}
+		dir := filepath.Join("web", "public", "assets", "items", itemID)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out, err := os.Create(filepath.Join(dir, "thumb.png"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer out.Close()
+		if err := png.Encode(out, img); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		items, _ := repo.ListItems(r.Context())
