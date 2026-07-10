@@ -1,99 +1,103 @@
 {{ define "content" }}
-<h1>Shift Management</h1>
-
-<div class="card">
-  <h2>Open Shift</h2>
-  <form id="open-shift-form" hx-post="/api/shifts/open" hx-swap="innerHTML" hx-target="#open-result">
-    <div class="form-group">
-      <label for="register_id">Register ID</label>
-      <input type="text" name="register_id" id="register_id" required placeholder="reg-uuid">
-    </div>
-
-    <div class="form-group">
-      <label for="cashier_id">Cashier ID (optional - uses session user)</label>
-      <input type="text" name="cashier_id" id="cashier_id" placeholder="user-uuid">
-    </div>
-
-    <div class="form-group">
-      <label for="opening_cash">Opening Cash (pence)</label>
-      <input type="number" name="opening_cash" id="opening_cash" required step="1" min="0" value="0">
-      <small>Enter amount in pence (e.g., 10000 for £100.00)</small>
-    </div>
-
-    <button type="submit" class="btn">Open Shift</button>
-  </form>
-  <div id="open-result" class="mt-2"></div>
+<div class="page-head">
+  <h1>{{ T "shifts.title" }}</h1>
+  {{ if .HasOpen }}<span class="tag" style="background:rgba(22,163,74,.12); color:var(--success)">{{ T "shifts.open_since" }} {{ .Current.OpenedAt }}</span>
+  {{ else }}<span class="tag">{{ T "shifts.none_open" }}</span>{{ end }}
 </div>
 
-<div class="card mt-4">
-  <h2>Close Shift</h2>
-  <form id="close-shift-form" hx-post="/api/shifts/close" hx-swap="innerHTML" hx-target="#close-result">
-    <div class="form-group">
-      <label for="shift_id">Shift ID</label>
-      <input type="text" name="shift_id" id="shift_id" required placeholder="shift-uuid">
+<div class="catalog-layout">
+  <div class="catalog-list">
+    {{ if .HasOpen }}
+    <div class="card">
+      <h2>{{ T "shifts.current" }}</h2>
+      <table class="table">
+        <tbody>
+          <tr><td>{{ T "shifts.register" }}</td><td>{{ .Current.RegisterID }}</td></tr>
+          <tr><td>{{ T "shifts.cashier" }}</td><td>{{ .Current.CashierID }}</td></tr>
+          <tr><td>{{ T "shifts.opened_at" }}</td><td>{{ .Current.OpenedAt }}</td></tr>
+          <tr><td>{{ T "shifts.opening_cash" }}</td><td>{{ money .Current.OpeningCash }}</td></tr>
+        </tbody>
+      </table>
     </div>
+    {{ end }}
 
-    <div class="form-group">
-      <label for="closing_cash">Closing Cash (pence)</label>
-      <input type="number" name="closing_cash" id="closing_cash" required step="1" min="0">
-      <small>Enter counted cash amount in pence</small>
+    <div class="card" {{ if .HasOpen }}style="margin-top:1rem"{{ end }}>
+      <h2>{{ T "shifts.history" }}</h2>
+      <table class="table">
+        <thead><tr><th>{{ T "shifts.opened_at" }}</th><th>{{ T "shifts.closed_at" }}</th><th>{{ T "shifts.opening_cash" }}</th><th>{{ T "shifts.counted" }}</th><th>{{ T "shifts.expected" }}</th><th>{{ T "shifts.variance" }}</th></tr></thead>
+        <tbody>
+          {{ if .History }}
+            {{ range .History }}
+            <tr>
+              <td>{{ .OpenedAt }}</td>
+              <td>{{ if .Open }}<span class="tag" style="color:var(--success)">{{ T "shifts.open" }}</span>{{ else }}{{ .ClosedAt }}{{ end }}</td>
+              <td>{{ money .OpeningCash }}</td>
+              <td>{{ if .Open }}—{{ else }}{{ money .ClosingCash }}{{ end }}</td>
+              <td>{{ if .Open }}—{{ else }}{{ money .Expected }}{{ end }}</td>
+              <td>{{ if .Open }}—{{ else }}<span {{ if ne .Variance 0 }}class="stock-low"{{ end }}>{{ money .Variance }}</span>{{ end }}</td>
+            </tr>
+            {{ end }}
+          {{ else }}
+            <tr><td colspan="6" class="empty">{{ T "shifts.no_history" }}</td></tr>
+          {{ end }}
+        </tbody>
+      </table>
     </div>
+  </div>
 
-    <div class="form-group">
-      <label for="note">Notes (optional)</label>
-      <textarea name="note" id="note" rows="3" placeholder="End of shift notes"></textarea>
-    </div>
+  <div class="card catalog-form">
+    {{ if .HasOpen }}
+    <h3>{{ T "shifts.close" }}</h3>
+    <form id="close-shift-form" hx-post="/api/shifts/close" hx-swap="innerHTML" hx-target="#shift-result"
+          hx-on::after-request="if (event.detail.successful) window.location.reload()">
+      <input type="hidden" name="shift_id" value="{{ .Current.ID }}">
+      <input type="hidden" name="closing_cash" id="closing-cash-minor">
+      <label>{{ T "shifts.counted_cash" }} (£)
+        <input type="number" id="closing-cash" step="0.01" min="0" required placeholder="0.00"
+               onchange="document.getElementById('closing-cash-minor').value = Math.round(parseFloat(this.value || 0) * 100)">
+      </label>
+      <label>{{ T "shifts.note" }} <input type="text" name="note" placeholder="{{ T "shifts.note_hint" }}"></label>
+      <button type="submit" class="btn primary" style="width:100%">{{ T "shifts.close" }}</button>
+    </form>
 
-    <button type="submit" class="btn">Close Shift</button>
-  </form>
-  <div id="close-result" class="mt-2"></div>
-</div>
+    <details class="catalog-extra">
+      <summary>{{ T "shifts.adjustment" }}</summary>
+      <form id="adjustment-form" hx-post="/api/shifts/adjustment" hx-swap="innerHTML" hx-target="#shift-result">
+        <input type="hidden" name="shift_id" value="{{ .Current.ID }}">
+        <input type="hidden" name="amount" id="adjust-minor">
+        <label>{{ T "shifts.adjust_type" }}
+          <select name="type" required>
+            <option value="payout">{{ T "shifts.payout" }}</option>
+            <option value="adjustment">{{ T "shifts.adjust" }}</option>
+          </select>
+        </label>
+        <label>{{ T "shifts.amount" }} (£, {{ T "shifts.amount_hint" }})
+          <input type="number" id="adjust-pounds" step="0.01" required placeholder="-50.00"
+                 onchange="document.getElementById('adjust-minor').value = Math.round(parseFloat(this.value || 0) * 100)">
+        </label>
+        <label>{{ T "shifts.reason" }} <input type="text" name="reason" required></label>
+        <button type="submit" class="btn">{{ T "shifts.record" }}</button>
+      </form>
+    </details>
+    {{ else }}
+    <h3>{{ T "shifts.open_new" }}</h3>
+    <form id="open-shift-form" hx-post="/api/shifts/open" hx-swap="innerHTML" hx-target="#shift-result"
+          hx-on::after-request="if (event.detail.successful) window.location.reload()">
+      <input type="hidden" name="register_id" value="reg-default">
+      <input type="hidden" name="opening_cash" id="opening-cash-minor" value="0">
+      <label>{{ T "shifts.opening_cash" }} (£)
+        <input type="number" id="opening-cash" step="0.01" min="0" required value="0.00"
+               onchange="document.getElementById('opening-cash-minor').value = Math.round(parseFloat(this.value || 0) * 100)">
+      </label>
+      <button type="submit" class="btn primary" style="width:100%">{{ T "shifts.open_new" }}</button>
+    </form>
+    {{ end }}
+    <div id="shift-result" class="muted" style="min-height:1.3rem; margin-top:.5rem"></div>
 
-<div class="card mt-4">
-  <h2>Cash Adjustment / Payout</h2>
-  <form id="adjustment-form" hx-post="/api/shifts/adjustment" hx-swap="innerHTML" hx-target="#adjustment-result">
-    <div class="form-group">
-      <label for="adjustment_shift_id">Shift ID</label>
-      <input type="text" name="shift_id" id="adjustment_shift_id" required placeholder="shift-uuid">
-    </div>
-
-    <div class="form-group">
-      <label for="type">Type</label>
-      <select name="type" id="type" required>
-        <option value="">Select type...</option>
-        <option value="payout">Payout (removes cash)</option>
-        <option value="adjustment">Adjustment (adds/removes cash)</option>
-      </select>
-    </div>
-
-    <div class="form-group">
-      <label for="amount">Amount (pence)</label>
-      <input type="number" name="amount" id="amount" required step="1">
-      <small>Use negative values for payouts (e.g., -5000 for £50 payout)</small>
-    </div>
-
-    <div class="form-group">
-      <label for="reason">Reason (required)</label>
-      <textarea name="reason" id="reason" rows="3" placeholder="Explain the adjustment or payout" required></textarea>
-    </div>
-
-    <button type="submit" class="btn">Record Adjustment</button>
-  </form>
-  <div id="adjustment-result" class="mt-2"></div>
-</div>
-
-<div class="card mt-4">
-  <h2>Expected Cash Formula</h2>
-  <p>
-    <strong>Expected Cash = Opening Cash + Net Cash Payments + Cash Adjustments</strong>
-  </p>
-  <ul>
-    <li><strong>Opening Cash:</strong> The starting cash in the drawer at shift open</li>
-    <li><strong>Net Cash Payments:</strong> Sum of cash payments minus change given during the shift</li>
-    <li><strong>Cash Adjustments:</strong> Payouts (negative) or adjustments (positive/negative) recorded during the shift</li>
-  </ul>
-  <p>
-    When closing a shift, the system calculates the expected cash and compares it with the actual counted cash to determine any variance.
-  </p>
+    <details class="catalog-extra">
+      <summary>{{ T "shifts.formula_title" }}</summary>
+      <p class="muted" style="font-size:.82rem">{{ T "shifts.formula" }}</p>
+    </details>
+  </div>
 </div>
 {{ end }}

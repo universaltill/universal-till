@@ -77,6 +77,10 @@ a { color: var(--accent); }
 .catalog-row { cursor: pointer; }
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
+.draggable-tile { cursor: grab; }
+.draggable-tile.dragging { opacity: .4; }
+.journal-row { cursor: pointer; }
+.journal-row:hover td { background: var(--surface-2); }
 .catalog-form-head { display: flex; justify-content: space-between; align-items: center;
                      margin-bottom: .5rem; }
 .catalog-form label { display: flex; flex-direction: column; gap: .2rem;

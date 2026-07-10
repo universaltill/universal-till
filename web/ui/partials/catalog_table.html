@@ -1,7 +1,7 @@
 {{ define "catalog_table" }}
 <div class="card" id="catalog-table">
   <table class="table">
-    <thead><tr><th>Name</th><th>SKU</th><th>Price</th><th>Unit</th><th>Tax</th><th></th></tr></thead>
+    <thead><tr><th></th><th>Name</th><th>SKU</th><th>Price</th><th>Unit</th><th>Tax</th><th></th></tr></thead>
     <tbody>
       {{ if .Items }}
         {{ range .Items }}
@@ -13,6 +13,7 @@
               data-brand="{{ with .BrandID }}{{ . }}{{ end }}"
               data-price="{{ .BasePrice }}"
               data-tax="{{ with .TaxCodeID }}{{ . }}{{ end }}">
+            <td class="catalog-thumb-cell"><img class="thumb small" src="/public/assets/items/{{ .ID }}/thumb.png" alt="" loading="lazy" onerror="this.style.visibility='hidden'"></td>
             <td class="catalog-name">{{ .Name }}</td>
             <td class="muted">{{ .SKU }}</td>
             <td>{{ money .BasePrice }}</td>
@@ -29,7 +30,7 @@
           </tr>
         {{ end }}
       {{ else }}
-        <tr><td colspan="6" class="empty">No items</td></tr>
+        <tr><td colspan="7" class="empty">No items</td></tr>
       {{ end }}
     </tbody>
   </table>

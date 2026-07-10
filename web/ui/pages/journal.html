@@ -1,6 +1,6 @@
 {{ define "content" }}
 <h1>{{ T "journal.title" }}</h1>
 <div class="card">
-  <div id="journal" hx-get="/ui/journal" hx-trigger="load" hx-swap="outerHTML"></div>
+  <div id="journal" hx-get="/ui/journal?limit=full" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
 {{ end }}

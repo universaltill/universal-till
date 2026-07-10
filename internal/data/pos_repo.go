@@ -532,6 +532,80 @@ WHERE i.reorder_level > 0
 	return items, nil
 }
 
+// ShiftSummary is a row on the shifts page (current or historical).
+type ShiftSummary struct {
+	ID          string
+	RegisterID  string
+	CashierID   string
+	OpenedAt    string
+	ClosedAt    string
+	OpeningCash int64
+	ClosingCash int64
+	Expected    int64
+	Note        string
+	Open        bool
+	Variance    int64 // counted - expected (closed shifts only)
+}
+
+// CurrentOpenShift returns the open shift (any register), if one exists.
+func (r *POSRepo) CurrentOpenShift(ctx context.Context) (ShiftSummary, bool, error) {
+	var s ShiftSummary
+	var closedAt, note sql.NullString
+	var closing, expected sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note
+FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`).Scan(
+		&s.ID, &s.RegisterID, &s.CashierID, &s.OpenedAt, &closedAt, &s.OpeningCash, &closing, &expected, &note)
+	if err == sql.ErrNoRows {
+		return ShiftSummary{}, false, nil
+	}
+	if err != nil {
+		return ShiftSummary{}, false, fmt.Errorf("current open shift: %w", err)
+	}
+	s.Open = true
+	s.ClosedAt = closedAt.String
+	s.ClosingCash = closing.Int64
+	s.Expected = expected.Int64
+	s.Note = note.String
+	return s, true, nil
+}
+
+// ListRecentShifts returns the latest shifts, newest first.
+func (r *POSRepo) ListRecentShifts(ctx context.Context, limit int) ([]ShiftSummary, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note
+FROM shifts ORDER BY opened_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list shifts: %w", err)
+	}
+	defer rows.Close()
+	var out []ShiftSummary
+	for rows.Next() {
+		var s ShiftSummary
+		var closedAt, note sql.NullString
+		var closing, expected sql.NullInt64
+		if err := rows.Scan(&s.ID, &s.RegisterID, &s.CashierID, &s.OpenedAt, &closedAt, &s.OpeningCash, &closing, &expected, &note); err != nil {
+			return nil, fmt.Errorf("scan shift: %w", err)
+		}
+		s.Open = !closedAt.Valid
+		s.ClosedAt = closedAt.String
+		s.ClosingCash = closing.Int64
+		s.Expected = expected.Int64
+		s.Note = note.String
+		if !s.Open {
+			s.Variance = s.ClosingCash - s.Expected
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shifts: %w", err)
+	}
+	return out, nil
+}
+
 // StockLocation is a named place stock lives (shop floor, back room, …).
 type StockLocation struct {
 	ID   string
@@ -1043,6 +1117,99 @@ func (r *POSRepo) SaleCompletedAt(ctx context.Context, saleID string) (time.Time
 		return time.Time{}, false, fmt.Errorf("parse completed_at: %w", err)
 	}
 	return ts, true, nil
+}
+
+// SaleDetail is everything the journal shows when a sale is opened.
+type SaleDetail struct {
+	ID            string
+	ReceiptNo     string
+	Status        string
+	SaleType      string
+	TenderType    string
+	Offline       bool
+	SyncStatus    string
+	Currency      string
+	Subtotal      int64
+	DiscountTotal int64
+	TaxTotal      int64
+	Total         int64
+	CreatedAt     string
+	Lines         []SaleDetailLine
+	Payments      []SaleDetailPayment
+}
+
+type SaleDetailLine struct {
+	Name         string
+	SKU          string
+	Qty          float64
+	UnitPrice    int64
+	LineDiscount int64
+	TaxAmount    int64
+	LineTotal    int64
+}
+
+type SaleDetailPayment struct {
+	Method      string
+	Amount      int64
+	ChangeGiven int64
+	Reference   string
+	PaidAt      string
+}
+
+// GetSaleDetail loads a sale with its lines and payments by receipt number.
+func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDetail, bool, error) {
+	var d SaleDetail
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, receipt_no, status, sale_type, tender_type, offline, sync_status,
+       currency, subtotal, discount_total, tax_total, total, created_at
+FROM sales WHERE receipt_no = ?`, receiptNo).Scan(
+		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.Offline,
+		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
+		&d.Total, &d.CreatedAt)
+	if err == sql.ErrNoRows {
+		return SaleDetail{}, false, nil
+	}
+	if err != nil {
+		return SaleDetail{}, false, fmt.Errorf("get sale detail: %w", err)
+	}
+
+	lineRows, err := r.db.QueryContext(ctx, `
+SELECT name_snapshot, COALESCE(sku_snapshot, ''), quantity, unit_price,
+       line_discount, tax_amount, total_after_tax
+FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
+	if err != nil {
+		return SaleDetail{}, false, fmt.Errorf("get sale lines: %w", err)
+	}
+	defer lineRows.Close()
+	for lineRows.Next() {
+		var l SaleDetailLine
+		if err := lineRows.Scan(&l.Name, &l.SKU, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal); err != nil {
+			return SaleDetail{}, false, fmt.Errorf("scan sale line: %w", err)
+		}
+		d.Lines = append(d.Lines, l)
+	}
+	if err := lineRows.Err(); err != nil {
+		return SaleDetail{}, false, fmt.Errorf("iterate sale lines: %w", err)
+	}
+
+	payRows, err := r.db.QueryContext(ctx, `
+SELECT method_id, amount, change_given, COALESCE(reference, ''), paid_at
+FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
+	if err != nil {
+		return SaleDetail{}, false, fmt.Errorf("get sale payments: %w", err)
+	}
+	defer payRows.Close()
+	for payRows.Next() {
+		var p SaleDetailPayment
+		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.Reference, &p.PaidAt); err != nil {
+			return SaleDetail{}, false, fmt.Errorf("scan sale payment: %w", err)
+		}
+		d.Payments = append(d.Payments, p)
+	}
+	if err := payRows.Err(); err != nil {
+		return SaleDetail{}, false, fmt.Errorf("iterate sale payments: %w", err)
+	}
+	return d, true, nil
 }
 
 func (r *POSRepo) ListRecentSales(ctx context.Context, limit int) ([]SaleJournalEntry, error) {

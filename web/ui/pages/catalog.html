@@ -42,6 +42,17 @@
     </form>
 
     <details class="catalog-extra">
+      <summary>Item image</summary>
+      <form id="image-form" enctype="multipart/form-data">
+        <label>Item <input type="text" class="pick-item" id="image-item-label" readonly placeholder="click a row to pick"></label>
+        <input type="hidden" id="image-item-id">
+        <label>Image (PNG/JPEG) <input type="file" id="image-file" accept="image/png,image/jpeg" required></label>
+        <button class="btn" type="submit">Upload Image</button>
+        <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
+      </form>
+    </details>
+
+    <details class="catalog-extra">
       <summary>Variants</summary>
       <form hx-post="/api/catalog/variant" hx-target="#catalog-table" hx-swap="outerHTML">
         <input type="hidden" name="id">
@@ -109,6 +120,8 @@
     document.getElementById('item-price').value = (parseInt(row.dataset.price || '0', 10) / 100).toFixed(2);
     setMode(true, row.dataset.name);
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
+    var imgLabel = document.getElementById('image-item-label');
+    if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
   });
 
   form.addEventListener('submit', function (ev) {
@@ -123,6 +136,30 @@
   });
   document.body.addEventListener('htmx:responseError', function (ev) {
     msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+  });
+
+  var imageForm = document.getElementById('image-form');
+  imageForm.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var id = document.getElementById('image-item-id').value;
+    var f = document.getElementById('image-file').files[0];
+    var imsg = document.getElementById('image-msg');
+    if (!id) { imsg.textContent = '✗ pick an item first (click a row)'; return; }
+    if (!f) { imsg.textContent = '✗ choose an image'; return; }
+    var fd = new FormData();
+    fd.append('item_id', id);
+    fd.append('image', f);
+    imsg.textContent = '⏳ uploading…';
+    fetch('/api/catalog/item/image', { method: 'POST', body: fd }).then(function (res) {
+      if (!res.ok) { return res.text().then(function (t) { imsg.textContent = '✗ ' + t; }); }
+      return res.text().then(function (html) {
+        var table = document.getElementById('catalog-table');
+        table.outerHTML = html;
+        htmx.process(document.getElementById('catalog-table'));
+        imsg.textContent = '✓ image updated';
+        filterRows();
+      });
+    }).catch(function (e) { imsg.textContent = '✗ ' + e; });
   });
 
   // Client-side search over the (server-rendered) table; reapplied after swaps.

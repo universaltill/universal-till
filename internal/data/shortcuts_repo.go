@@ -33,7 +33,7 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 SELECT sb.label, sb.barcode, sb.item_id, sb.image_path, COALESCE(i.base_price, 0)
 FROM shortcut_buttons sb
 LEFT JOIN items i ON i.id = sb.item_id
-ORDER BY sb.label`)
+ORDER BY sb.sort_order, sb.label`)
 	if err != nil {
 		return nil, shortcutsObs.wrap("load_buttons", err)
 	}
@@ -72,15 +72,15 @@ func (r *ShortcutsRepo) SaveButtons(ctx context.Context, list []ShortcutButton) 
 		err = shortcutsObs.wrap("save_buttons", err)
 		return err
 	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order) VALUES(?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		err = shortcutsObs.wrap("save_buttons", err)
 		return err
 	}
 	defer stmt.Close()
-	for _, b := range list {
-		if _, err := stmt.ExecContext(ctx, b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL)); err != nil {
+	for i, b := range list {
+		if _, err := stmt.ExecContext(ctx, b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL), i); err != nil {
 			tx.Rollback()
 			err = shortcutsObs.wrap("save_buttons", err)
 			return err
@@ -91,6 +91,33 @@ func (r *ShortcutsRepo) SaveButtons(ctx context.Context, list []ShortcutButton) 
 		err = shortcutsObs.wrap("save_buttons", err)
 	}
 	return err
+}
+
+// UpdateOrder persists the drag&drop tile order: sort_order = position in codes.
+func (r *ShortcutsRepo) UpdateOrder(ctx context.Context, codes []string) error {
+	var err error
+	done := shortcutsObs.trace("update_order")
+	defer func() { done(err) }()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return shortcutsObs.wrap("update_order", err)
+	}
+	stmt, err := tx.PrepareContext(ctx, `UPDATE shortcut_buttons SET sort_order = ? WHERE barcode = ?`)
+	if err != nil {
+		tx.Rollback()
+		return shortcutsObs.wrap("update_order", err)
+	}
+	defer stmt.Close()
+	for i, code := range codes {
+		if _, err = stmt.ExecContext(ctx, i, code); err != nil {
+			tx.Rollback()
+			return shortcutsObs.wrap("update_order", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return shortcutsObs.wrap("update_order", err)
+	}
+	return nil
 }
 
 func (r *ShortcutsRepo) AddButton(ctx context.Context, b ShortcutButton) error {
@@ -113,7 +140,8 @@ func (r *ShortcutsRepo) AddButton(ctx context.Context, b ShortcutButton) error {
 		err = shortcutsObs.wrap("add_button", err)
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path) VALUES(?,?,?,?)
+	_, err = r.db.ExecContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order)
+VALUES(?,?,?,?, (SELECT COALESCE(MAX(sort_order)+1, 0) FROM shortcut_buttons))
 ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path`,
 		b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL))
 	err = shortcutsObs.wrap("add_button", err)

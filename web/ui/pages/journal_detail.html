@@ -1,0 +1,63 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "journal.detail.title" }} #{{ .Sale.ReceiptNo }}</h1>
+  <a class="btn secondary" href="/journal">← {{ T "journal.title" }}</a>
+</div>
+
+<div class="catalog-layout">
+  <div class="card">
+    <div style="display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.7rem">
+      <span class="tag">{{ .Sale.Status }}</span>
+      <span class="tag">{{ .Sale.SaleType }}</span>
+      <span class="tag">{{ .Sale.TenderType }}</span>
+      <span class="tag">{{ if .Sale.Offline }}offline{{ else }}online{{ end }}</span>
+      <span class="tag">sync: {{ .Sale.SyncStatus }}</span>
+      <span class="tag">{{ .Sale.CreatedAt }}</span>
+    </div>
+    <table class="table">
+      <thead><tr><th>{{ T "journal.detail.item" }}</th><th>SKU</th><th>{{ T "journal.detail.qty" }}</th><th>{{ T "journal.detail.price" }}</th><th>{{ T "journal.detail.discount" }}</th><th>{{ T "journal.detail.total" }}</th></tr></thead>
+      <tbody>
+        {{ range .Sale.Lines }}
+          <tr>
+            <td class="catalog-name">{{ .Name }}</td>
+            <td class="muted">{{ .SKU }}</td>
+            <td>{{ .Qty }}</td>
+            <td>{{ money .UnitPrice }}</td>
+            <td>{{ if .LineDiscount }}-{{ money .LineDiscount }}{{ else }}—{{ end }}</td>
+            <td>{{ money .LineTotal }}</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <div class="card">
+      <h3>{{ T "journal.detail.totals" }}</h3>
+      <table class="table">
+        <tbody>
+          <tr><td>{{ T "journal.detail.subtotal" }}</td><td style="text-align:right">{{ money .Sale.Subtotal }}</td></tr>
+          {{ if .Sale.DiscountTotal }}<tr><td>{{ T "journal.detail.discount" }}</td><td style="text-align:right">-{{ money .Sale.DiscountTotal }}</td></tr>{{ end }}
+          <tr><td>{{ T "journal.detail.tax" }}</td><td style="text-align:right">{{ money .Sale.TaxTotal }}</td></tr>
+          <tr><td><strong>{{ T "journal.detail.total" }}</strong></td><td style="text-align:right"><strong>{{ money .Sale.Total }}</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <h3>{{ T "journal.detail.payments" }}</h3>
+      {{ if .Sale.Payments }}
+      <table class="table">
+        <tbody>
+          {{ range .Sale.Payments }}
+            <tr>
+              <td><strong>{{ .Method }}</strong>{{ if .Reference }}<br><small class="muted">{{ .Reference }}</small>{{ end }}</td>
+              <td style="text-align:right">{{ money .Amount }}{{ if .ChangeGiven }}<br><small class="muted">{{ T "journal.detail.change" }} {{ money .ChangeGiven }}</small>{{ end }}</td>
+            </tr>
+          {{ end }}
+        </tbody>
+      </table>
+      {{ else }}<p class="empty">—</p>{{ end }}
+    </div>
+  </div>
+</div>
+{{ end }}
