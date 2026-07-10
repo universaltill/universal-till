@@ -81,7 +81,7 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 			if eventType == "" {
 				eventType = "plugin.button.pressed"
 			}
-			eventID, err := plugins.NewEventBus(d.Db).Publish(r.Context(), eventType, map[string]any{
+			eventID, err := plugins.SharedBus(d.Db).Publish(r.Context(), eventType, map[string]any{
 				"plugin_id": b.PluginID,
 				"entry_key": b.EntryKey,
 				"label":     b.Label,

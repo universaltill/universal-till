@@ -215,7 +215,14 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 		manifest.Entrypoint = "./" + strings.TrimPrefix(executable, "./")
 	}
 	// Asset-only plugins (runtime "none", e.g. themes) ship no executable.
-	if manifest.Runtime != "none" {
+	// WASM modules must exist but are not native executables (no +x bit).
+	switch manifest.Runtime {
+	case "none":
+	case "wasm":
+		if _, err := os.Stat(filepath.Join(extractDir, executable)); err != nil {
+			return nil, fmt.Errorf("wasm module not found: %s", executable)
+		}
+	default:
 		if err := i.verifier.VerifyExecutable(extractDir, executable); err != nil {
 			return nil, err
 		}

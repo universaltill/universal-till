@@ -100,6 +100,24 @@ func NewEventBus(db *sql.DB) *EventBus {
 	return eb
 }
 
+// ResetSubscribers clears all in-memory subscriptions and closes their
+// channels so drainer goroutines exit; the wasm runtime re-subscribes active
+// plugins after every Manager.Reload.
+func (eb *EventBus) ResetSubscribers() {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	closed := map[chan Event]bool{}
+	for _, subs := range eb.subscribers {
+		for _, sub := range subs {
+			if sub.Channel != nil && !closed[sub.Channel] {
+				closed[sub.Channel] = true
+				close(sub.Channel)
+			}
+		}
+	}
+	eb.subscribers = make(map[string][]EventSubscriber)
+}
+
 // SetEventMode configures the dispatch mode for an event type
 // This allows runtime configuration of blocking vs non-blocking behavior
 func (eb *EventBus) SetEventMode(eventType string, mode EventDispatchMode) {

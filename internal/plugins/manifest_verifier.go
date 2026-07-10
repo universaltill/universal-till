@@ -113,9 +113,10 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	if manifest.CanonicalType == "" {
 		result.Errors = append(result.Errors, "manifest missing required field: canonical_type")
 	}
-	// Asset-only plugins (runtime "none", e.g. themes) ship no executable.
-	if manifest.Executable == "" && manifest.Runtime != "none" {
-		result.Errors = append(result.Errors, "manifest missing required field: executable")
+	// Asset-only plugins (runtime "none", e.g. themes) ship no executable;
+	// entrypoint is the canonical field, executable a legacy alias.
+	if manifest.Executable == "" && manifest.Entrypoint == "" && manifest.Runtime != "none" {
+		result.Errors = append(result.Errors, "manifest missing required field: executable or entrypoint")
 	}
 
 	// Validate canonical type
