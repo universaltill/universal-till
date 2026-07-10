@@ -74,6 +74,9 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	if err := m.loadMenuEntries(ctx, repo); err != nil {
 		return nil, err
 	}
+	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -86,6 +89,11 @@ func (m *Manager) Reload(ctx context.Context) error {
 		return err
 	}
 	if err := m.loadMenuEntries(ctx, repo); err != nil {
+		return err
+	}
+	// Payment methods are derived state: every lifecycle change funnels
+	// through Reload, so syncing here covers install/enable/disable/uninstall.
+	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return err
 	}
 	return nil
