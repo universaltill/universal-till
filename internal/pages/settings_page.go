@@ -14,6 +14,10 @@ import (
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		all, _ := d.Settings.All(r.Context())
+		scale := d.State.UIScale
+		if scale <= 0 {
+			scale = 1
+		}
 		data := map[string]any{
 			"title":       "Settings",
 			"theme":       d.State.Theme,
@@ -21,8 +25,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"settings":    d.State,
 			"settingsMap": all,
 			"menuItems":   d.Menu,
+			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
+	})
+
+	// Interface scale for this till's screen; saved and applied immediately.
+	mux.HandleFunc("POST /api/settings/ui-scale", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f, err := strconv.ParseFloat(strings.TrimSpace(r.Form.Get("scale")), 64)
+		if err != nil || f < 0.5 || f > 2.0 {
+			http.Error(w, "scale must be between 0.5 and 2.0", http.StatusBadRequest)
+			return
+		}
+		d.State.UIScale = f
+		common.SaveState(r.Context(), d.Settings, d.State)
+		httpx.InitUIScale(f)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("/api/settings/theme", func(w http.ResponseWriter, r *http.Request) {

@@ -48,13 +48,17 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	httpx.InitCurrency(state.Currency)
 	// Dedicated till: larger touch targets, no text selection (UT_KIOSK=1).
 	httpx.InitKiosk(os.Getenv("UT_KIOSK") == "1")
-	uiScale := 1.0
-	if v := strings.TrimSpace(os.Getenv("UT_UI_SCALE")); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			uiScale = f
+	// Interface scale: the saved setting wins; UT_UI_SCALE env is the
+	// provisioning default for a till that hasn't been configured yet.
+	if state.UIScale <= 0 {
+		state.UIScale = 1
+		if v := strings.TrimSpace(os.Getenv("UT_UI_SCALE")); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+				state.UIScale = f
+			}
 		}
 	}
-	httpx.InitUIScale(uiScale)
+	httpx.InitUIScale(state.UIScale)
 
 	btnStore := ui.NewButtonStore(db)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}

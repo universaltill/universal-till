@@ -12,7 +12,24 @@
     <button class="btn" type="submit">{{ T "settings.theme.apply" }}</button>
   </form>
 </div>
-<div class="card">
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "settings.display.title" }}</h2>
+  <p class="muted">{{ T "settings.display.help" }}</p>
+  <form hx-post="/api/settings/ui-scale" hx-swap="none" hx-on::after-request="window.location.reload()">
+    {{ $scale := .uiScale }}
+    <select name="scale">
+      <option value="0.7"  {{ if eq $scale "0.7" }}selected{{ end }}>70% — {{ T "settings.display.tiny" }}</option>
+      <option value="0.8"  {{ if eq $scale "0.8" }}selected{{ end }}>80% — {{ T "settings.display.small" }}</option>
+      <option value="0.9"  {{ if eq $scale "0.9" }}selected{{ end }}>90%</option>
+      <option value="1"    {{ if eq $scale "1" }}selected{{ end }}>100% — {{ T "settings.display.default" }}</option>
+      <option value="1.15" {{ if eq $scale "1.15" }}selected{{ end }}>115%</option>
+      <option value="1.3"  {{ if eq $scale "1.3" }}selected{{ end }}>130% — {{ T "settings.display.large" }}</option>
+      <option value="1.5"  {{ if eq $scale "1.5" }}selected{{ end }}>150%</option>
+    </select>
+    <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+  </form>
+</div>
+<div class="card" style="margin-top:1rem">
   <h2>All Settings</h2>
   <table class="table">
     <thead>

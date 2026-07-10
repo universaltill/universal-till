@@ -98,5 +98,12 @@
   "tender.new_customer": "مشتری جدید",
   "tender.scan.barcode": "بارکد",
   "tender.scan.qty": "تعداد",
-  "tender.scan.add": "افزودن"
+  "tender.scan.add": "افزودن",
+  "settings.display.title": "نمایشگر",
+  "settings.display.help": "مقیاس کل رابط را برای صفحه این صندوق تنظیم کنید. صفحه‌های لمسی کوچک: ۷۰–۸۰٪. نمایشگرهای بزرگ: ۱۳۰٪ به بالا.",
+  "settings.display.apply": "اعمال",
+  "settings.display.tiny": "صفحه‌های خیلی کوچک",
+  "settings.display.small": "پنل‌های لمسی کوچک",
+  "settings.display.default": "پیش‌فرض",
+  "settings.display.large": "نمایشگرهای بزرگ"
 }
