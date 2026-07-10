@@ -30,7 +30,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 
 		httpx.Render("ui/pages/reports.html", map[string]any{
 			"title":      "Reports",
-			"theme":      d.State.Theme,
+			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.Menu,
 			"Days":       days,
 			"Daily":      daily,

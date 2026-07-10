@@ -146,7 +146,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 
 		httpx.Render("ui/pages/plugins_store.html", map[string]any{
 			"title":            "Plugin Store",
-			"theme":            d.State.Theme,
+			"theme":            d.CurrentState().Theme,
 			"menuItems":        d.Menu,
 			"Items":            items,
 			"EntitledFiltered": entitledKnown,

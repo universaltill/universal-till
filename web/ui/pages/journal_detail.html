@@ -10,12 +10,12 @@
       <span class="tag">{{ .Sale.Status }}</span>
       <span class="tag">{{ .Sale.SaleType }}</span>
       <span class="tag">{{ .Sale.TenderType }}</span>
-      <span class="tag">{{ if .Sale.Offline }}offline{{ else }}online{{ end }}</span>
-      <span class="tag">sync: {{ .Sale.SyncStatus }}</span>
+      <span class="tag">{{ if .Sale.Offline }}{{ T "journal.detail.offline" }}{{ else }}{{ T "journal.detail.online" }}{{ end }}</span>
+      <span class="tag">{{ T "journal.detail.sync" }}: {{ .Sale.SyncStatus }}</span>
       <span class="tag">{{ .Sale.CreatedAt }}</span>
     </div>
     <table class="table">
-      <thead><tr><th>{{ T "journal.detail.item" }}</th><th>SKU</th><th>{{ T "journal.detail.qty" }}</th><th>{{ T "journal.detail.price" }}</th><th>{{ T "journal.detail.discount" }}</th><th>{{ T "journal.detail.total" }}</th></tr></thead>
+      <thead><tr><th>{{ T "journal.detail.item" }}</th><th>{{ T "journal.detail.sku" }}</th><th>{{ T "journal.detail.qty" }}</th><th>{{ T "journal.detail.price" }}</th><th>{{ T "journal.detail.discount" }}</th><th>{{ T "journal.detail.total" }}</th></tr></thead>
       <tbody>
         {{ range .Sale.Lines }}
           <tr>

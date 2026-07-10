@@ -83,7 +83,12 @@
     <h3>{{ T "shifts.open_new" }}</h3>
     <form id="open-shift-form" hx-post="/api/shifts/open" hx-swap="innerHTML" hx-target="#shift-result"
           hx-on::after-request="if (event.detail.successful) window.location.reload()">
-      <input type="hidden" name="register_id" value="reg-default">
+      <label>{{ T "shifts.register" }}
+        <select name="register_id" required>
+          {{ range .Registers }}<option value="{{ .ID }}">{{ .Name }}</option>
+          {{ else }}<option value="reg-default">Default</option>{{ end }}
+        </select>
+      </label>
       <input type="hidden" name="opening_cash" id="opening-cash-minor" value="0">
       <label>{{ T "shifts.opening_cash" }} (£)
         <input type="number" id="opening-cash" step="0.01" min="0" required value="0.00"

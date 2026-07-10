@@ -158,5 +158,9 @@
   "reports.day": "روز",
   "reports.top_items": "پرفروش‌ترین‌ها",
   "reports.by_method": "پرداخت به تفکیک روش",
-  "reports.none": "داده‌ای برای این بازه نیست"
+  "reports.none": "داده‌ای برای این بازه نیست",
+  "journal.detail.online": "برخط",
+  "journal.detail.offline": "برون‌خط",
+  "journal.detail.sync": "همگام‌سازی",
+  "journal.detail.sku": "کد کالا"
 }

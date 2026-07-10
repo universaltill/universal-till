@@ -122,7 +122,7 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 	pluginDir := filepath.Join(pluginPagesDir, entry.PluginID, entry.PluginVersion)
 	base := map[string]any{
 		"title":     entry.Label,
-		"theme":     d.State.Theme,
+		"theme":     d.CurrentState().Theme,
 		"menuItems": d.Menu,
 	}
 

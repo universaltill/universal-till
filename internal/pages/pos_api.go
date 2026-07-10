@@ -212,7 +212,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// body, so the later ParseForm calls saw nothing and every quick-tender
 		// button silently recorded "cash" whatever method was tapped.
 		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-			_ = json.NewDecoder(r.Body).Decode(&in)
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
+			}
 		} else {
 			_ = r.ParseForm()
 		}
@@ -256,7 +259,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for _, l := range lines {
 			taxBP := l.TaxRateBP
 			if taxBP == 0 {
-				taxBP = d.State.TaxRatePct * 100
+				taxBP = d.CurrentState().TaxRatePct * 100
 				if taxBP == 0 {
 					taxBP = 2000 // fallback to 20% if missing to avoid zero-tax totals
 				}
@@ -310,7 +313,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					payments = append(payments, pos.PaymentInput{
 						MethodID: method,
 						Amount:   money.FromMinor(amount),
-						Currency: d.State.Currency,
+						Currency: d.CurrentState().Currency,
 					})
 				}
 			}
@@ -320,7 +323,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for i := range saleLines {
 			lineBase := pos.AmountForQuantity(saleLines[i].UnitPrice, saleLines[i].Qty)
 			lineNet := lineBase.Sub(saleLines[i].LineDiscount)
-			lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, saleLines[i].TaxRateBasisPoints, d.State.TaxInclusive)
+			lineTax, _ := pos.ComputeTaxBasisPoints(lineNet, saleLines[i].TaxRateBasisPoints, d.CurrentState().TaxInclusive)
 			subtotal = subtotal.Add(lineNet)
 			taxTotal = taxTotal.Add(lineTax)
 		}
@@ -329,7 +332,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			discount = d.Engine.SaleDiscount()
 		}
 		total := subtotal.Sub(discount)
-		if !d.State.TaxInclusive {
+		if !d.CurrentState().TaxInclusive {
 			total = total.Add(taxTotal)
 		}
 		if total.IsNegative() {
@@ -339,7 +342,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			payments = append(payments, pos.PaymentInput{
 				MethodID: "cash",
 				Amount:   total,
-				Currency: d.State.Currency,
+				Currency: d.CurrentState().Currency,
 			})
 		}
 		for i := range payments {
@@ -355,7 +358,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		allowNegative := d.State.AllowNegativeInventory
+		allowNegative := d.CurrentState().AllowNegativeInventory
 		if in.AllowNegative != nil {
 			allowNegative = *in.AllowNegative
 		}
@@ -383,7 +386,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Payments: payments,
 				Lines:    saleLines,
 				Total:    total.Minor(),
-				Currency: d.State.Currency,
+				Currency: d.CurrentState().Currency,
 			}); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -394,8 +397,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, pos.SaleInput{
 			SaleType:               "sale",
-			Currency:               d.State.Currency,
-			TaxInclusive:           d.State.TaxInclusive,
+			Currency:               d.CurrentState().Currency,
+			TaxInclusive:           d.CurrentState().TaxInclusive,
 			SaleDiscount:           discount,
 			Lines:                  saleLines,
 			Payments:               payments,
@@ -492,7 +495,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			printerAvailable = false
 		}
 		printerUnavailable := !printerAvailable
-		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.State.TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable)
+		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable)
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`

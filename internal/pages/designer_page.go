@@ -13,7 +13,7 @@ func registerDesigner(mux *http.ServeMux, d *common.Deps) {
 		btns, _ := d.BtnStore.Load()
 		data := map[string]any{
 			"title":     "Designer",
-			"theme":     d.State.Theme,
+			"theme":     d.CurrentState().Theme,
 			"menuItems": d.Menu,
 			"Buttons":   ui.ToVM(btns),
 		}
