@@ -33,6 +33,7 @@ type RuntimeState struct {
 	TaxInclusive           bool
 	TaxRatePct             int
 	AllowNegativeInventory bool
+	UIScale                float64 // interface scale for this till's screen (0 = unset)
 }
 
 type MenuItem struct {

@@ -17,6 +17,7 @@ const (
 	KeyRegion       = "store.region"
 	KeyTaxInclusive = "store.tax_inclusive"
 	KeyTaxRate      = "store.tax_rate"
+	KeyUIScale      = "display.ui_scale"
 )
 
 // LoadState pulls settings from the DB-backed settings store with cfg defaults.
@@ -40,6 +41,11 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 	if v := get(KeyTaxInclusive, strconv.FormatBool(cfg.Locales.TaxInclusive)); v != "" {
 		st.TaxInclusive, _ = strconv.ParseBool(v)
 	}
+	if v := get(KeyUIScale, ""); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			st.UIScale = f
+		}
+	}
 	if v := get(KeyTaxRate, strconv.Itoa(cfg.Locales.TaxRate)); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			st.TaxRatePct = n
@@ -59,6 +65,9 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) {
 	_ = store.Set(ctx, KeyRegion, st.Region)
 	_ = store.Set(ctx, KeyTaxInclusive, strconv.FormatBool(st.TaxInclusive))
 	_ = store.Set(ctx, KeyTaxRate, strconv.Itoa(st.TaxRatePct))
+	if st.UIScale > 0 {
+		_ = store.Set(ctx, KeyUIScale, strconv.FormatFloat(st.UIScale, 'f', -1, 64))
+	}
 	_ = store.Set(ctx, "pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory))
 }
 

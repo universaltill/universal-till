@@ -98,5 +98,12 @@
   "tender.new_customer": "New Customer",
   "tender.scan.barcode": "Barcode",
   "tender.scan.qty": "Qty",
-  "tender.scan.add": "Add"
+  "tender.scan.add": "Add",
+  "settings.display.title": "Display",
+  "settings.display.help": "Scale the whole interface for this till's screen. Small touch panels: 70–80%. Large displays: 130%+.",
+  "settings.display.apply": "Apply",
+  "settings.display.tiny": "very small screens",
+  "settings.display.small": "small touch panels",
+  "settings.display.default": "default",
+  "settings.display.large": "large displays"
 }
