@@ -773,6 +773,68 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 	return res, rows.Err()
 }
 
+// PaymentEntryRow is a tender method contributed by an active plugin.
+type PaymentEntryRow struct {
+	PluginID     string
+	PluginName   string
+	EntryKey     string
+	Label        string
+	TriggerEvent string
+	ConfigJSON   string
+}
+
+// ListPaymentEntries returns payment entries from active plugins.
+func (r *PluginRepo) ListPaymentEntries(ctx context.Context) ([]PaymentEntryRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT p.id, p.name, pe.key, pe.label, COALESCE(pe.trigger_event, ''), COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.label`)
+	if err != nil {
+		return nil, fmt.Errorf("list payment entries: %w", err)
+	}
+	defer rows.Close()
+	var out []PaymentEntryRow
+	for rows.Next() {
+		var e PaymentEntryRow
+		if err := rows.Scan(&e.PluginID, &e.PluginName, &e.EntryKey, &e.Label, &e.TriggerEvent, &e.ConfigJSON); err != nil {
+			return nil, fmt.Errorf("scan payment entry: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// SyncPluginPaymentMethods derives payment_methods rows from active plugins'
+// payment entries: upserts a method per entry (id = entry key) and
+// deactivates plugin-backed methods whose plugin is gone or disabled.
+// Rows are never deleted — payments history references them.
+func (r *PluginRepo) SyncPluginPaymentMethods(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id)
+SELECT pe.key, pe.label, 'card', 1, 100 + pe.sort_order, pe.plugin_id
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    is_active = 1,
+    plugin_id = excluded.plugin_id`); err != nil {
+		return fmt.Errorf("sync plugin payment methods (upsert): %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+UPDATE payment_methods SET is_active = 0
+WHERE plugin_id IS NOT NULL AND id NOT IN (
+    SELECT pe.key FROM plugin_entries pe
+    JOIN plugins p ON p.id = pe.plugin_id
+    WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
+)`); err != nil {
+		return fmt.Errorf("sync plugin payment methods (deactivate): %w", err)
+	}
+	return nil
+}
+
 // PageEntryRow is a plugin-provided page (plugin_entries type='page') with
 // the installed plugin version so callers can locate its on-disk content.
 type PageEntryRow struct {

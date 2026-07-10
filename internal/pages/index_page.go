@@ -33,6 +33,8 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		if len(methods) > 0 {
 			defaultMethod = methods[0]
 		}
+		// Full method rows (label + plugin provenance) drive the Pay tab.
+		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
 		data := map[string]any{
 			"title":                "Universal Till",
 			"theme":                d.State.Theme,
@@ -40,6 +42,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"currency":             d.State.Currency,
 			"paymentMethods":       methods,
 			"paymentMethodDefault": defaultMethod,
+			"payMethods":           payMethods,
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})

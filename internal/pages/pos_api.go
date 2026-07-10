@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
@@ -207,7 +208,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			Offline       *bool  `json:"offline,omitempty"`
 		}
 		var in In
-		_ = json.NewDecoder(r.Body).Decode(&in)
+		// Only JSON-decode a JSON body: decoding unconditionally consumed the
+		// body, so the later ParseForm calls saw nothing and every quick-tender
+		// button silently recorded "cash" whatever method was tapped.
+		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+			_ = json.NewDecoder(r.Body).Decode(&in)
+		} else {
+			_ = r.ParseForm()
+		}
 
 		offline := false
 		offlineSet := false
@@ -423,6 +431,27 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		d.Engine.Reset()
+
+		// Plugin-provided tender methods: publish each entry's trigger_event so
+		// the owning plugin can react (charge a terminal, show a QR, …).
+		if entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(r.Context()); err == nil && len(entries) > 0 {
+			byMethod := map[string]data.PaymentEntryRow{}
+			for _, e := range entries {
+				byMethod[e.EntryKey] = e
+			}
+			bus := plugins.NewEventBus(d.Db)
+			for _, p := range payments {
+				if e, ok := byMethod[p.MethodID]; ok && e.TriggerEvent != "" {
+					_, _ = bus.Publish(r.Context(), e.TriggerEvent, map[string]any{
+						"sale_id":   saleID,
+						"method":    p.MethodID,
+						"amount":    p.Amount.Minor(),
+						"reference": p.Reference,
+						"plugin_id": e.PluginID,
+					})
+				}
+			}
+		}
 
 		// load receipt_no and totals from DB for rendering
 		receiptNo, dbSubtotal, dbTax, dbTotal, _ := repo.SaleTotals(r.Context(), saleID)

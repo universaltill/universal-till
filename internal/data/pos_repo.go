@@ -1399,6 +1399,34 @@ ORDER BY id
 	return out, nil
 }
 
+// PaymentMethod is an active tender method offered on the Pay tab.
+type PaymentMethod struct {
+	ID       string
+	Name     string
+	PluginID string // empty for built-ins
+}
+
+// ListActivePaymentMethods returns active methods for the tender UI,
+// built-ins first (sort_order), then plugin-provided ones.
+func (r *POSRepo) ListActivePaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(plugin_id, '')
+FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list payment methods: %w", err)
+	}
+	defer rows.Close()
+	var out []PaymentMethod
+	for rows.Next() {
+		var m PaymentMethod
+		if err := rows.Scan(&m.ID, &m.Name, &m.PluginID); err != nil {
+			return nil, fmt.Errorf("scan payment method: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // ListPaymentMethodIDs returns active payment method ids ordered by id.
 func (r *POSRepo) ListPaymentMethodIDs(ctx context.Context) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id FROM payment_methods WHERE is_active = 1 ORDER BY id`)

@@ -313,6 +313,9 @@ a.btn, a.btn:hover { text-decoration: none; }
 
 .pay-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 .pay-btn { min-height: 4.2rem; font-size: 1.15rem; font-weight: 700; }
+.pay-btn.pay-plugin { background: var(--surface); color: var(--accent);
+                      border: 2px dashed var(--accent); }
+.pay-btn.pay-plugin:hover { background: var(--accent); color: #fff; }
 
 .tender-footer { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: auto; }
 
