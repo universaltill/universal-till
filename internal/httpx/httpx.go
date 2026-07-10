@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -169,6 +170,15 @@ func InitKiosk(on bool) { kioskMode.Store(on) }
 
 // assetVersion returns a cache-busting version for a web asset: the file's
 // mtime, so browsers pick up redesigns without a manual hard refresh.
+// imgVersion appends a cache-busting mtime to a /public/... URL so replacing
+// a file (e.g. an item image upload) shows immediately despite browser cache.
+func imgVersion(url string) string {
+	if rel, ok := strings.CutPrefix(url, "/"); ok && strings.HasPrefix(rel, "public/") {
+		return url + "?v=" + assetVersion(rel)
+	}
+	return url
+}
+
 func assetVersion(rel string) string {
 	if info, err := os.Stat(filepath.Join("web", rel)); err == nil {
 		return strconv.FormatInt(info.ModTime().Unix(), 10)
@@ -187,6 +197,7 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["money"] = money
 	funcs["toJson"] = toJSON
 	funcs["assetv"] = assetVersion
+	funcs["imgv"] = imgVersion
 	funcs["kiosk"] = func() bool {
 		if v := kioskMode.Load(); v != nil {
 			b, _ := v.(bool)

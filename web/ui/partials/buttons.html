@@ -11,7 +11,7 @@
         hx-trigger="click"
         hx-target="#basket"
         hx-swap="outerHTML">
-        {{ if .ImageURL }}<img class="thumb" src="{{ .ImageURL }}" alt="" loading="lazy" />{{ end }}
+        {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
         <span class="tile-name">{{ .Label }}</span>
         {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
       </button>
