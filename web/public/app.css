@@ -67,6 +67,12 @@ a { color: var(--accent); }
             border-left: 1px solid rgba(255,255,255,.18); }
 .nav-lang a { font-size: .8rem; font-weight: 700; color: #94a3b8; }
 
+/* ---------- Reports ---------- */
+.report-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; }
+.kpi { text-align: center; padding: 1rem; }
+.kpi-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.kpi-value { font-size: 1.6rem; font-weight: 700; color: var(--brand); margin-top: .15rem; }
+
 /* ---------- Back-office pages (catalog / inventory) ---------- */
 .page-head { display: flex; align-items: center; justify-content: space-between;
              gap: 1rem; margin: .25rem 0 1rem; }

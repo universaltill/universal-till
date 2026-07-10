@@ -73,6 +73,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		{Href: "/inventory", Label: "Inventory"},
 		{Href: "/shifts", Label: "Shifts"},
 		{Href: "/journal", Label: "Journal"},
+		{Href: "/reports", Label: "Reports"},
 		{Href: "/settings", Label: "Settings"},
 		{Href: "/plugins", Label: "Plugins"},
 		{Href: "/catalog", Label: "Catalog"},
@@ -107,6 +108,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerInventoryPage(mux, dp)
 	registerShiftsAPI(mux, dp)
 	registerShiftsPage(mux, dp)
+	registerReportsPage(mux, dp)
 	registerHelp(mux, dp)
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
