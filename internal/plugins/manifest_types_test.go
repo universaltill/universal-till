@@ -22,7 +22,7 @@ func TestParseManifest_EntryTypeTaxonomy(t *testing.T) {
 }
 
 func TestCanonicalTypesMatchTaxonomy(t *testing.T) {
-	want := "page|button|popup|payment|device|integration|report|pricing|tax|import|export|hardware|background_job|scheduler|receipt_template|customer_facing|auth|notification|delivery|theme"
+	want := "page|button|popup|payment|device|integration|report|pricing|tax|import|export|hardware|background_job|scheduler|receipt_template|customer_facing|auth|notification|delivery|theme|language"
 	if got := strings.Join(CanonicalTypes, "|"); got != want {
 		t.Fatalf("taxonomy drifted:\n got %s\nwant %s", got, want)
 	}

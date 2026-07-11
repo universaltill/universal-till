@@ -197,7 +197,7 @@ var CanonicalTypes = []string{
 	"page", "button", "popup", "payment", "device", "integration",
 	"report", "pricing", "tax", "import", "export", "hardware",
 	"background_job", "scheduler", "receipt_template", "customer_facing",
-	"auth", "notification", "delivery", "theme",
+	"auth", "notification", "delivery", "theme", "language",
 }
 
 var canonicalTypeSet = func() map[string]bool {

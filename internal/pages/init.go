@@ -45,6 +45,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		log.Fatalf("failed to load locales: %v", err)
 	}
 	httpx.InitI18n(i18n, cfg.Locales.Locale)
+	pm.SetLocalizer(i18n) // language-pack plugins merge into the translator
 	httpx.InitCurrency(state.Currency)
 	// Dedicated till: larger touch targets, no text selection (UT_KIOSK=1).
 	httpx.InitKiosk(os.Getenv("UT_KIOSK") == "1")

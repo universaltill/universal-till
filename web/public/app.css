@@ -65,7 +65,7 @@ a { color: var(--accent); }
 .nav-links a:hover { color: #fff; background: rgba(255,255,255,.09); }
 .nav-lang { display: flex; gap: .1rem; margin-left: .5rem; padding-left: .6rem;
             border-left: 1px solid rgba(255,255,255,.18); }
-.nav-lang a { font-size: .8rem; font-weight: 700; color: #94a3b8; }
+.nav-lang a { font-size: .8rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; }
 
 /* ---------- Reports ---------- */
 .report-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; }
