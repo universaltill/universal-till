@@ -5,8 +5,7 @@
     {{ range .menuItems }}<a href="{{ .Href }}"{{ if eq .Href "/plugins" }} data-testid="nav-plugins"{{ end }}>{{ .Label }}</a>{{ end }}
     <a href="/help" data-testid="nav-help-support">{{ T "nav.help" }}</a>
     <span class="nav-lang">
-      <a href="/?lang=en">EN</a>
-      <a href="/?lang=fa">FA</a>
+      {{ range locales }}<a href="/?lang={{ . }}">{{ . }}</a>{{ end }}
     </span>
   </div>
 </nav>

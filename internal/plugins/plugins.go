@@ -3,8 +3,11 @@ package plugins
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -18,6 +21,58 @@ type Manager struct {
 	Catalog     map[string]CatalogEntry
 	db          *sql.DB
 	Wasm        *WasmRuntime // in-process runtime for runtime:"wasm" plugins
+	localizer   Localizer    // receives language-pack translations
+}
+
+// Localizer is where plugin-shipped locale files land (the config.I18n).
+type Localizer interface {
+	SetOverlays(map[string]map[string]string)
+}
+
+// SetLocalizer wires the translator and applies current plugin locales.
+func (m *Manager) SetLocalizer(l Localizer) {
+	m.localizer = l
+	m.syncLocales()
+}
+
+// syncLocales merges locales/*.json from every ACTIVE installed plugin into
+// the translator as overlays (base files win on conflict). Language packs are
+// asset-only plugins (runtime "none", canonical_type "language") but any
+// active plugin may ship translations for its own strings.
+func (m *Manager) syncLocales() {
+	if m.localizer == nil {
+		return
+	}
+	overlays := map[string]map[string]string{}
+	for id, p := range m.Installed {
+		dir := filepath.Join("./data/plugins", id, p.Version, "locales")
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				continue
+			}
+			var msgs map[string]string
+			if err := json.Unmarshal(raw, &msgs); err != nil {
+				log.Printf("plugin %s: bad locale file %s: %v", id, e.Name(), err)
+				continue
+			}
+			locale := strings.TrimSuffix(e.Name(), ".json")
+			if overlays[locale] == nil {
+				overlays[locale] = map[string]string{}
+			}
+			for k, v := range msgs {
+				overlays[locale][k] = v
+			}
+		}
+	}
+	m.localizer.SetOverlays(overlays)
 }
 
 type Plugin struct {
@@ -100,6 +155,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 		return err
 	}
 	m.Wasm.Sync(ctx, m.db)
+	m.syncLocales()
 	return nil
 }
 

@@ -206,6 +206,12 @@ func FuncsFor(locale string) template.FuncMap {
 		return false
 	}
 	funcs["uiscalepx"] = uiScalePx
+	funcs["locales"] = func() []string {
+		if tAny := i18nRef.Load(); tAny != nil {
+			return tAny.(*config.I18n).Available()
+		}
+		return []string{"en"}
+	}
 	funcs["T"] = func(key string) string {
 		if tAny := i18nRef.Load(); tAny != nil {
 			return tAny.(*config.I18n).T(locale, key)
