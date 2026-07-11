@@ -26,11 +26,13 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
 
-		// Latest catalog versions (cache only — the manager page must work
-		// offline) keyed by plugin id via the install-status listing mapping.
+		// Latest catalog versions keyed by plugin id via the install-status
+		// listing mapping. GetOrFetch serves the cache when present (offline-
+		// first) and only fetches when there is no cache at all — otherwise a
+		// fresh boot never shows "update available" until the store is visited.
 		latestByPlugin := map[string]string{}
 		if d.CatalogRepo != nil {
-			if snapshot, _, err := d.CatalogRepo.Get(); err == nil && snapshot != nil {
+			if snapshot, _, err := d.CatalogRepo.GetOrFetch(r.Context(), httpx.ResolveLocale(w, r), ""); err == nil && snapshot != nil {
 				latestByListing := map[string]string{}
 				for _, p := range snapshot.Plugins {
 					id := p.ListingID
