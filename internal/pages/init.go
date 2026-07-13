@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
@@ -48,6 +49,11 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	}
 	httpx.InitI18n(i18n, cfg.Locales.Locale)
 	pm.SetLocalizer(i18n) // language-pack plugins merge into the translator
+	// Shop translation overrides (manager edits) win over base + plugin
+	// strings; loaded once here, refreshed by the /translations editor.
+	if overrides, err := data.NewTranslationRepo(db).ListOverrides(ctx); err == nil {
+		i18n.SetShopOverrides(overrides)
+	}
 	httpx.InitCurrency(state.Currency)
 	// Dedicated till: larger touch targets, no text selection (UT_KIOSK=1).
 	httpx.InitKiosk(os.Getenv("UT_KIOSK") == "1")
@@ -141,6 +147,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	// the CI/dev-tooling escape hatch; a real till runs with auth on.
 	registerAuth(mux, dp, authSvc)
 	registerUsers(mux, dp, authSvc)
+	registerTranslations(mux, dp, i18n)
 	if auth.Disabled(os.Getenv("UT_AUTH")) {
 		log.Warnf("UT_AUTH=off — operator login disabled")
 		return mux

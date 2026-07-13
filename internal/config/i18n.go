@@ -15,11 +15,12 @@ type I18n struct {
 	mu       sync.RWMutex
 	messages map[string]map[string]string // locale -> key -> message (base files)
 	overlays map[string]map[string]string // locale -> key -> message (language-pack plugins)
+	shop     map[string]map[string]string // locale -> key -> message (manager edits; win over everything)
 	fallback string
 }
 
 func NewI18n(localesDir string, fallback string) (*I18n, error) {
-	i := &I18n{messages: make(map[string]map[string]string), overlays: make(map[string]map[string]string), fallback: fallback}
+	i := &I18n{messages: make(map[string]map[string]string), overlays: make(map[string]map[string]string), shop: make(map[string]map[string]string), fallback: fallback}
 	entries, err := os.ReadDir(localesDir)
 	if err != nil {
 		return nil, err
@@ -54,8 +55,14 @@ func (i *I18n) T(locale, key string) string {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	for _, loc := range []string{locale, baseLang(locale), i.fallback, baseLang(i.fallback)} {
-		// Base files win on conflict so a plugin cannot hijack core strings;
-		// overlays add new locales (language packs) and fill missing keys.
+		// Shop overrides (manager edits) win over everything; then base files,
+		// so a plugin cannot hijack core strings; overlays add new locales
+		// (language packs) and fill missing keys.
+		if m, ok := i.shop[loc]; ok {
+			if v, ok := m[key]; ok {
+				return v
+			}
+		}
 		if m, ok := i.messages[loc]; ok {
 			if v, ok := m[key]; ok {
 				return v
@@ -68,6 +75,76 @@ func (i *I18n) T(locale, key string) string {
 		}
 	}
 	return key
+}
+
+// SetShopOverrides atomically replaces all manager-edited translations
+// (docs repo: architecture/translation-editor.md).
+func (i *I18n) SetShopOverrides(shop map[string]map[string]string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if shop == nil {
+		shop = map[string]map[string]string{}
+	}
+	i.shop = shop
+}
+
+// TranslationEntry is one row of the translation editor: the key, its
+// effective value for a locale, which layer supplied it, and the reference
+// (fallback-locale) text shown beside the edit box.
+type TranslationEntry struct {
+	Key       string
+	Value     string
+	Source    string // "shop" | "base" | "plugin" | "" (untranslated)
+	Reference string
+}
+
+// Entries lists every known key (base fallback + locale base + plugin
+// overlays + shop overrides) with its effective value for the locale.
+func (i *I18n) Entries(locale string) []TranslationEntry {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	keys := map[string]bool{}
+	for _, loc := range []string{i.fallback, baseLang(i.fallback), locale, baseLang(locale)} {
+		for k := range i.messages[loc] {
+			keys[k] = true
+		}
+		for k := range i.overlays[loc] {
+			keys[k] = true
+		}
+		for k := range i.shop[loc] {
+			keys[k] = true
+		}
+	}
+	out := make([]TranslationEntry, 0, len(keys))
+	for k := range keys {
+		e := TranslationEntry{Key: k, Reference: i.lookupLocked(i.fallback, k)}
+		e.Value, e.Source = i.lookupWithSourceLocked(locale, k)
+		out = append(out, e)
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].Key < out[b].Key })
+	return out
+}
+
+func (i *I18n) lookupLocked(locale, key string) string {
+	v, _ := i.lookupWithSourceLocked(locale, key)
+	return v
+}
+
+// lookupWithSourceLocked mirrors T's precedence for ONE locale (no fallback
+// chain — the editor shows what this locale itself defines).
+func (i *I18n) lookupWithSourceLocked(locale, key string) (string, string) {
+	for _, loc := range []string{locale, baseLang(locale)} {
+		if v, ok := i.shop[loc][key]; ok {
+			return v, "shop"
+		}
+		if v, ok := i.messages[loc][key]; ok {
+			return v, "base"
+		}
+		if v, ok := i.overlays[loc][key]; ok {
+			return v, "plugin"
+		}
+	}
+	return "", ""
 }
 
 // SetOverlays atomically replaces all plugin-provided translations
