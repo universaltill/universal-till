@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -87,6 +88,13 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	// approvals share a single device-wide lockout.
 	authSvc := auth.NewService(db)
 
+	// Assistive AI (camera identify). No UT_AI_API_KEY → disabled and
+	// invisible; never on the checkout path (ADR-0003).
+	aiSvc := ai.New(ai.FromEnv())
+	if aiSvc.Enabled() {
+		log.Infof("AI features enabled (camera identify)")
+	}
+
 	dp := &common.Deps{
 		Cfg:         cfg,
 		Pm:          pm,
@@ -99,6 +107,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		BtnStore:    btnStore,
 		CatalogRepo: catalogRepo,
 		AuthSvc:     authSvc,
+		AI:          aiSvc,
 	}
 
 	// Register routes
@@ -112,6 +121,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPluginPages(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
+	registerAIAPI(mux, dp)
 	registerHoldAPI(mux, dp)
 	registerInventoryAPI(mux, dp)
 	registerInventoryPage(mux, dp)

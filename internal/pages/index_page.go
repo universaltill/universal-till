@@ -48,6 +48,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"paymentMethods":       methods,
 			"paymentMethodDefault": defaultMethod,
 			"payMethods":           payMethods,
+			"aiIdentify":           d.AI.Enabled(),
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})
