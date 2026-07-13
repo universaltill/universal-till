@@ -376,3 +376,139 @@ function initOfflineOverride(updateFn){
   window.addEventListener('offline', updateOfflineFlag);
   document.addEventListener('htmx:configRequest', updateOfflineFlag);
 })();
+
+// Camera identify (AI-assisted; strictly optional). The button only shows
+// when the server rendered it (UT_AI_API_KEY set) AND the till is online —
+// barcode scan stays the primary path and never waits on this.
+(function(){
+  var openBtn = document.getElementById('ai-identify-open');
+  var overlay = document.getElementById('ai-identify-overlay');
+  if (!openBtn || !overlay) return;
+
+  var video = document.getElementById('ai-identify-video');
+  var results = document.getElementById('ai-identify-results');
+  var status = document.getElementById('ai-identify-status');
+  var captureBtn = document.getElementById('ai-identify-capture');
+  var retakeBtn = document.getElementById('ai-identify-retake');
+  var closeBtn = document.getElementById('ai-identify-close');
+  var msgs = overlay.dataset;
+  var stream = null;
+  var lastPhoto = null;
+
+  function updateVisibility(){
+    openBtn.hidden = !navigator.onLine;
+    if (!navigator.onLine && !overlay.hidden) close();
+  }
+  window.addEventListener('online', updateVisibility);
+  window.addEventListener('offline', updateVisibility);
+  updateVisibility();
+
+  function setStatus(text){ status.textContent = text || ''; }
+
+  function open(){
+    overlay.hidden = false;
+    results.innerHTML = '';
+    setStatus('');
+    lastPhoto = null;
+    captureBtn.hidden = false;
+    retakeBtn.hidden = true;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function(s){ stream = s; video.srcObject = s; })
+      .catch(function(){ setStatus(msgs.msgCameraError); });
+  }
+
+  function close(){
+    overlay.hidden = true;
+    if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    video.srcObject = null;
+  }
+
+  // Bound the upload client-side: max 1024px long edge, JPEG.
+  function capture(cb){
+    var w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) { setStatus(msgs.msgCameraError); return; }
+    var scale = Math.min(1, 1024 / Math.max(w, h));
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(cb, 'image/jpeg', 0.85);
+  }
+
+  function renderMatches(data){
+    results.innerHTML = '';
+    var matches = (data && data.matches) || [];
+    if (!matches.length) {
+      var text = msgs.msgNoMatch;
+      if (data && data.suggested_name) text += ' — ' + msgs.msgSuggested + ' ' + data.suggested_name;
+      setStatus(text);
+      return;
+    }
+    setStatus('');
+    matches.forEach(function(m){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn ai-match';
+      if (m.thumb_url) {
+        var img = document.createElement('img');
+        img.src = m.thumb_url;
+        img.alt = '';
+        btn.appendChild(img);
+      }
+      var label = document.createElement('span');
+      label.textContent = m.name + ' · ' + m.price_display;
+      btn.appendChild(label);
+      btn.addEventListener('click', function(){ pick(m); });
+      results.appendChild(btn);
+    });
+  }
+
+  function pick(m){
+    // Add the line through the normal scan path (SKU exact match).
+    if (window.htmx) {
+      window.htmx.ajax('POST', '/api/pos/scan', {
+        target: '#basket', swap: 'outerHTML', values: { code: m.sku, qty: 1 }
+      });
+    }
+    // Save the confirmed photo as an ai_ref reference image (fire-and-forget).
+    if (lastPhoto) {
+      var fd = new FormData();
+      fd.append('item_id', m.item_id);
+      fd.append('photo', lastPhoto, 'capture.jpg');
+      fetch('/api/pos/identify/confirm', { method: 'POST', body: fd });
+    }
+    close();
+  }
+
+  function identify(){
+    capture(function(blob){
+      if (!blob) { setStatus(msgs.msgError); return; }
+      lastPhoto = blob;
+      setStatus(msgs.msgSearching);
+      captureBtn.hidden = true;
+      retakeBtn.hidden = false;
+      var fd = new FormData();
+      fd.append('photo', blob, 'capture.jpg');
+      fetch('/api/pos/identify', { method: 'POST', body: fd })
+        .then(function(r){ return r.json(); })
+        .then(function(body){
+          if (!body || body.error) { setStatus(msgs.msgError); return; }
+          renderMatches(body.data);
+        })
+        .catch(function(){ setStatus(msgs.msgError); });
+    });
+  }
+
+  function retake(){
+    results.innerHTML = '';
+    setStatus('');
+    lastPhoto = null;
+    captureBtn.hidden = false;
+    retakeBtn.hidden = true;
+  }
+
+  openBtn.addEventListener('click', open);
+  captureBtn.addEventListener('click', identify);
+  retakeBtn.addEventListener('click', retake);
+  closeBtn.addEventListener('click', close);
+})();

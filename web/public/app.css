@@ -443,3 +443,50 @@ body.login-screen {
 .users-inline input { width: 7.5rem; }
 .users-form form { display: flex; flex-direction: column; gap: .7rem; }
 @media (max-width: 900px) { .users-layout { grid-template-columns: 1fr; } }
+
+/* Camera identify overlay (opened on demand from the scan row) */
+.ai-identify-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.ai-identify-overlay[hidden] { display: none; }
+.ai-identify-panel {
+  background: var(--surface, #fff);
+  border-radius: 12px;
+  padding: 1rem;
+  inline-size: min(30rem, 92vw);
+  max-block-size: 90dvh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.ai-identify-panel h3 { margin: 0; }
+#ai-identify-video {
+  inline-size: 100%;
+  border-radius: 8px;
+  background: #000;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+.ai-identify-results { display: flex; flex-direction: column; gap: 0.5rem; }
+.ai-identify-results .ai-match {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  justify-content: flex-start;
+  text-align: start;
+}
+.ai-identify-results .ai-match img {
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.ai-identify-status { min-block-size: 1.2rem; color: var(--muted, #667); }
+.ai-identify-controls { display: flex; gap: 0.5rem; justify-content: flex-end; }

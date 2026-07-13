@@ -19,10 +19,17 @@
   .receipt-printer-warning {display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
   .receipt-printer-message {font-size: 0.9rem;}
   @media print {
-    body {background: #fff;}
+    /* Take the receipt OUT of the sale-screen grid: the fixed-height kiosk
+       grid pins the basket to a narrow side column (the opposite side in
+       RTL) and overflow:hidden clips anything past one page. Block flow +
+       visible overflow prints the same centered receipt in LTR and RTL. */
+    body, body.kiosk.sale-screen {background: #fff; overflow: visible !important;}
     .actions {display: none;}
     .nav {display: none !important;}
+    .kiosk-header {display: none !important;}
+    .pos-container {display: block !important; height: auto !important; min-height: 0 !important;}
     .pos-container > :not(#basket) {display: none !important;}
+    .pos-container > .basket.receipt-view {overflow: visible !important; height: auto !important; max-height: none !important;}
     .receipt-printer-warning {display: none;}
   }
 </style>

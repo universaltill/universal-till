@@ -25,6 +25,10 @@
       <input type="text" name="code" placeholder="{{ T "tender.scan.barcode" }}" autofocus required>
       <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}">
       <button class="btn" type="submit">{{ T "tender.scan.add" }}</button>
+      {{ if .aiIdentify }}
+      <button class="btn secondary" type="button" id="ai-identify-open" hidden
+              title="{{ T "ai.identify.button" }}">📷</button>
+      {{ end }}
     </form>
 
     <div id="held-sales" hx-get="/ui/held" hx-trigger="load" hx-swap="outerHTML"></div>
@@ -93,5 +97,28 @@
     </div>
   </div>
 </div>
+
+{{ if .aiIdentify }}
+<!-- Camera identify (assistive; opened on demand, never blocks checkout).
+     Message strings ride on data-* so app.js stays locale-free. -->
+<div id="ai-identify-overlay" class="ai-identify-overlay" hidden
+     data-msg-searching="{{ T "ai.identify.searching" }}"
+     data-msg-no-match="{{ T "ai.identify.no_match" }}"
+     data-msg-suggested="{{ T "ai.identify.suggested" }}"
+     data-msg-error="{{ T "ai.identify.error" }}"
+     data-msg-camera-error="{{ T "ai.identify.camera_error" }}">
+  <div class="ai-identify-panel">
+    <h3>{{ T "ai.identify.title" }}</h3>
+    <video id="ai-identify-video" autoplay playsinline muted></video>
+    <div id="ai-identify-results" class="ai-identify-results"></div>
+    <div id="ai-identify-status" class="ai-identify-status" aria-live="polite"></div>
+    <div class="ai-identify-controls">
+      <button type="button" class="btn primary" id="ai-identify-capture">{{ T "ai.identify.capture" }}</button>
+      <button type="button" class="btn secondary" id="ai-identify-retake" hidden>{{ T "ai.identify.retake" }}</button>
+      <button type="button" class="btn secondary" id="ai-identify-close">{{ T "ai.identify.close" }}</button>
+    </div>
+  </div>
+</div>
+{{ end }}
 
 {{ end }}
