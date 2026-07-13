@@ -56,7 +56,9 @@ jobs:
         run: UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go
       - name: Start app
         run: |
-          UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=:8080 UT_DEV_MODE=true go run . &
+          # UT_AUTH=off is the documented CI escape hatch — the e2e suite
+          # exercises the till flows, not the PIN login.
+          UT_AUTH=off UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=:8080 UT_DEV_MODE=true go run . &
           for i in {1..30}; do
             if curl -sf http://127.0.0.1:8080/ >/dev/null; then
               echo "App is up"
@@ -75,7 +77,7 @@ jobs:
         working-directory: tests/e2e
         env:
           BASE_URL: http://127.0.0.1:8080
-          DOCS_ROOT: ${{ github.workspace }}/docs/docs
+          DOCS_ROOT: ${{ github.workspace }}/docs
         run: npm run test:e2e
       - name: Upload Playwright report
         if: failure()

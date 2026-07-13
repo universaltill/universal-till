@@ -7,41 +7,77 @@
       "description": "issue download token",
       "providerState": "plugin artifact is available",
       "request": {
+        "body": {
+          "device_arch": "amd64",
+          "device_id": "device-1",
+          "listing_id": "listing-123",
+          "merchant_id": "merchant-1",
+          "store_id": "store-1",
+          "version": "1.2.3"
+        },
         "headers": {
           "Authorization": "Bearer test-token",
+          "Content-Type": "application/json",
           "x-marketplace-api-version": "1.0.0"
         },
-        "method": "GET",
-        "path": "/v1/downloads/plugin-123/url",
-        "query": "arch=amd64&platform=linux&version=1%2e2%2e3"
+        "matchingRules": {
+          "$.body.device_arch": {
+            "match": "type"
+          },
+          "$.body.device_id": {
+            "match": "type"
+          },
+          "$.body.listing_id": {
+            "match": "type"
+          },
+          "$.body.merchant_id": {
+            "match": "type"
+          },
+          "$.body.store_id": {
+            "match": "type"
+          },
+          "$.body.version": {
+            "match": "type"
+          }
+        },
+        "method": "POST",
+        "path": "/v1/downloads/tokens"
       },
       "response": {
         "body": {
-          "checksum": {
-            "sha256": "deadbeef"
-          },
-          "download_url": "http://example.test/plugin.tgz",
-          "expires_at": "2025-01-01T00:00:00Z",
-          "file_size_bytes": 1024,
-          "version": "1.2.3"
+          "data": {
+            "bundle_url": "/api/v1/downloads/artifact/listing-123",
+            "checksum_sha256": "deadbeef",
+            "expires_at": "2025-01-01T00:00:00Z",
+            "release_id": "rel-123",
+            "signature": "abc123",
+            "token": "tok-abc",
+            "version": "1.2.3"
+          }
         },
         "headers": {
           "Content-Type": "application/json"
         },
         "matchingRules": {
-          "$.body.checksum.sha256": {
+          "$.body.data.bundle_url": {
             "match": "type"
           },
-          "$.body.download_url": {
+          "$.body.data.checksum_sha256": {
             "match": "type"
           },
-          "$.body.expires_at": {
+          "$.body.data.expires_at": {
             "match": "type"
           },
-          "$.body.file_size_bytes": {
+          "$.body.data.release_id": {
             "match": "type"
           },
-          "$.body.version": {
+          "$.body.data.signature": {
+            "match": "type"
+          },
+          "$.body.data.token": {
+            "match": "type"
+          },
+          "$.body.data.version": {
             "match": "type"
           }
         },

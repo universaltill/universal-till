@@ -27,5 +27,6 @@ test('scan adds seeded item to basket', async ({ page, request }) => {
     page.getByRole('button', { name: 'Add', exact: true }).click(),
   ]);
 
-  await expect(basket).toContainText('(PLU001)');
+  // Compact basket rows show the SKU as plain small text (no parentheses).
+  await expect(basket).toContainText('PLU001');
 });

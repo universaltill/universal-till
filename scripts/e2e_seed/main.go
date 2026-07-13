@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,13 @@ func main() {
 	}
 
 	fmt.Printf("Seeding E2E DB: %s\n", path)
+	// data/ is gitignored — a fresh checkout (CI) has no parent directory and
+	// SQLite reports the missing dir as the misleading "out of memory (14)".
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fatalf("create db dir: %v", err)
+		}
+	}
 	conn, err := db.Open(path)
 	if err != nil {
 		fatalf("open db: %v", err)

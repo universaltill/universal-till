@@ -110,27 +110,37 @@ func TestMarketplaceIssueDownloadTokenContract(t *testing.T) {
 		t.Fatalf("pact setup: %v", err)
 	}
 
+	// Current wire contract (see internal/plugins/marketplace/client.go):
+	// POST /v1/downloads/tokens with listing_id, {data,error} envelope,
+	// bundle_url + checksum_sha256 + signature in the data.
 	mockProvider.
 		AddInteraction().
 		Given("plugin artifact is available").
 		UponReceiving("issue download token").
-		WithRequest("GET", "/v1/downloads/plugin-123/url", func(b *consumer.V2RequestBuilder) {
+		WithRequest("POST", "/v1/downloads/tokens", func(b *consumer.V2RequestBuilder) {
 			b.Header("Authorization", matchers.S("Bearer test-token"))
 			b.Header("x-marketplace-api-version", matchers.S("1.0.0"))
-			b.Query("arch", matchers.S("amd64"))
-			b.Query("platform", matchers.S("linux"))
-			b.Query("version", matchers.S("1.2.3"))
+			b.JSONBody(matchers.Map{
+				"listing_id":  matchers.Like("listing-123"),
+				"version":     matchers.Like("1.2.3"),
+				"merchant_id": matchers.Like("merchant-1"),
+				"store_id":    matchers.Like("store-1"),
+				"device_id":   matchers.Like("device-1"),
+				"device_arch": matchers.Like("amd64"),
+			})
 		}).
 		WillRespondWith(200, func(b *consumer.V2ResponseBuilder) {
 			b.Header("Content-Type", matchers.S("application/json"))
 			b.JSONBody(matchers.Map{
-				"download_url":    matchers.Like("http://example.test/plugin.tgz"),
-				"expires_at":      matchers.Like("2025-01-01T00:00:00Z"),
-				"file_size_bytes": matchers.Like(1024),
-				"checksum": matchers.StructMatcher{
-					"sha256": matchers.Like("deadbeef"),
+				"data": matchers.StructMatcher{
+					"token":           matchers.Like("tok-abc"),
+					"bundle_url":      matchers.Like("/api/v1/downloads/artifact/listing-123"),
+					"release_id":      matchers.Like("rel-123"),
+					"version":         matchers.Like("1.2.3"),
+					"checksum_sha256": matchers.Like("deadbeef"),
+					"signature":       matchers.Like("abc123"),
+					"expires_at":      matchers.Like("2025-01-01T00:00:00Z"),
 				},
-				"version": matchers.Like("1.2.3"),
 			})
 		}).
 		ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
@@ -142,15 +152,18 @@ func TestMarketplaceIssueDownloadTokenContract(t *testing.T) {
 			}, staticTokenProvider{token: "test-token"})
 
 			resp, err := client.IssueDownloadToken(context.Background(), &marketplace.IssueDownloadTokenRequest{
-				PluginID:   "plugin-123",
+				PluginID:   "listing-123",
 				Version:    "1.2.3",
+				MerchantID: "merchant-1",
+				StoreID:    "store-1",
+				DeviceID:   "device-1",
 				DeviceArch: "amd64",
 			})
 			if err != nil {
 				return err
 			}
-			if resp == nil || resp.DownloadURL == "" {
-				return fmt.Errorf("expected download_url in response")
+			if resp == nil || resp.BundleURL == "" || resp.Token == "" {
+				return fmt.Errorf("expected bundle_url and token in response")
 			}
 			return nil
 		})
