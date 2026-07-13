@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -21,7 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
-func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository) *http.ServeMux {
+func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository) http.Handler {
 	log := logging.L()
 	mux := http.NewServeMux()
 
@@ -78,7 +79,12 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		{Href: "/settings", Label: "Settings"},
 		{Href: "/plugins", Label: "Plugins"},
 		{Href: "/catalog", Label: "Catalog"},
+		{Href: "/users", Label: "Users"},
 	}
+
+	// One auth service for the whole till: login, sessions AND manager-PIN
+	// approvals share a single device-wide lockout.
+	authSvc := auth.NewService(db)
 
 	dp := &common.Deps{
 		Cfg:         cfg,
@@ -91,6 +97,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		Engine:      engine,
 		BtnStore:    btnStore,
 		CatalogRepo: catalogRepo,
+		AuthSvc:     authSvc,
 	}
 
 	// Register routes
@@ -119,5 +126,13 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPluginStore(mux, dp) // Marketplace plugin store
 	registerMarketplaceV1Stub(mux, dp)
 
-	return mux
+	// Operator PIN login (docs: architecture/pos-auth.md). UT_AUTH=off is
+	// the CI/dev-tooling escape hatch; a real till runs with auth on.
+	registerAuth(mux, dp, authSvc)
+	registerUsers(mux, dp, authSvc)
+	if auth.Disabled(os.Getenv("UT_AUTH")) {
+		log.Warnf("UT_AUTH=off — operator login disabled")
+		return mux
+	}
+	return auth.Middleware(mux, authSvc)
 }

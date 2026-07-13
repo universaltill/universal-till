@@ -2,11 +2,13 @@ package pages
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -114,10 +116,10 @@ func CreateStockReceipt(dp *common.Deps) http.HandlerFunc {
 	}
 }
 
-// getSessionUserID retrieves current user ID from session (stub for now)
+// getSessionUserID returns the logged-in operator's id ('system' only when
+// auth is disabled via UT_AUTH=off).
 func getSessionUserID(r *http.Request) string {
-	// TODO: Implement session management
-	return "system"
+	return auth.UserID(r)
 }
 
 // writeJSON writes JSON response
@@ -152,13 +154,16 @@ func respondSuccess(w http.ResponseWriter, r *http.Request, data StockReceiptRes
 	}
 }
 
-// OverrideRequest models manager override input
+// OverrideRequest models manager override input. ManagerPIN authorizes the
+// override when the signed-in operator is a cashier (docs:
+// architecture/pos-auth.md — the PIN's owner becomes the audit actor).
 type OverrideRequest struct {
 	Reason     string  `json:"reason"`
 	ItemID     string  `json:"item_id"`
 	VariantID  string  `json:"variant_id"`
 	LocationID string  `json:"location_id"`
 	QtyBefore  float64 `json:"qty_before"`
+	ManagerPIN string  `json:"manager_pin"`
 }
 
 // OverrideResponse models manager override response
@@ -192,6 +197,7 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 			req.ItemID = r.FormValue("item_id")
 			req.VariantID = r.FormValue("variant_id")
 			req.LocationID = r.FormValue("location_id")
+			req.ManagerPIN = r.FormValue("manager_pin")
 
 			if qtyStr := r.FormValue("qty_before"); qtyStr != "" {
 				if qty, err := strconv.ParseFloat(qtyStr, 64); err == nil {
@@ -200,14 +206,13 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 			}
 		}
 
-		// Extract actor from session and verify manager role
+		// Actor: a manager/admin session authorizes itself; a cashier needs
+		// a manager's PIN, and that manager becomes the audit actor.
 		actorID := getSessionUserID(r)
 		if actorID == "" {
 			respondOverrideError(w, r, http.StatusUnauthorized, "authentication required")
 			return
 		}
-
-		// Check manager/admin role
 		role, ok, err := repo.LookupUserRole(ctx, actorID)
 		if err != nil {
 			respondOverrideError(w, r, http.StatusInternalServerError, fmt.Sprintf("auth check failed: %v", err))
@@ -218,8 +223,29 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 		if role != "manager" && role != "admin" {
-			respondOverrideError(w, r, http.StatusForbidden, "manager or admin role required")
-			return
+			if req.ManagerPIN == "" {
+				respondOverrideError(w, r, http.StatusForbidden, "manager approval required")
+				return
+			}
+			svc := dp.AuthSvc
+			if svc == nil { // tests wiring handlers directly
+				svc = auth.NewService(dp.Db)
+			}
+			// Shares the login lockout, so this endpoint can't be used to
+			// brute-force a manager PIN.
+			approver, err := svc.AuthorizeManager(ctx, req.ManagerPIN)
+			switch {
+			case errors.Is(err, auth.ErrLockedOut):
+				respondOverrideError(w, r, http.StatusForbidden, "too many attempts")
+				return
+			case errors.Is(err, auth.ErrInvalidPIN):
+				respondOverrideError(w, r, http.StatusForbidden, "manager pin not recognised")
+				return
+			case err != nil:
+				respondOverrideError(w, r, http.StatusInternalServerError, "manager pin check failed")
+				return
+			}
+			actorID = approver.ID
 		}
 
 		// Validate input
