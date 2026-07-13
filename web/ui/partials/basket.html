@@ -14,8 +14,11 @@
           {{ range .Lines }}
             <tr>
               <td class="line-item">
-                <span class="line-name">{{ .Name }}</span>
-                <small class="muted">{{ .SKU }}</small>
+                {{ if .ImageURL }}<img class="line-thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="line-thumb line-thumb-empty"></span>{{ end }}
+                <span class="line-text">
+                  <span class="line-name">{{ .Name }}</span>
+                  <small class="muted">{{ .SKU }}</small>
+                </span>
               </td>
               <td>
                 <input class="qty-input" type="number" name="qty" value="{{ printf "%.2f" .Qty }}" min="0" step="{{ if .IsWeighed }}0.01{{ else }}1{{ end }}"
