@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" style="font-size: {{ uiscalepx }}px">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ T "auth.title" }}</title>
+    <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
+    <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
+    <!-- Vendored locally: the till must work fully offline. -->
+    <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
+  </head>
+  <body class="login-screen{{ if kiosk }} kiosk{{ end }}">
+    <main class="login-card">
+      <img class="login-logo" src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till" />
+
+      {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+      {{ if .firstBoot }}
+      <h1>{{ T "auth.setup.title" }}</h1>
+      <p class="muted">{{ T "auth.setup.hint" }}</p>
+      <form method="post" action="/api/auth/setup" class="login-setup">
+        <label>{{ T "auth.setup.pin" }}
+          <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required autofocus />
+        </label>
+        <label>{{ T "auth.setup.pin_confirm" }}
+          <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required />
+        </label>
+        <button type="submit" class="btn primary">{{ T "auth.setup.submit" }}</button>
+      </form>
+      {{ else }}
+      <h1>{{ T "auth.enter_pin" }}</h1>
+      <form method="post" action="/api/auth/login" x-data="{ pin: '' }" @submit="if (!pin) $event.preventDefault()">
+        <input type="hidden" name="pin" :value="pin" />
+        <div class="pin-dots" aria-live="polite">
+          <template x-for="i in 8"><span class="pin-dot" :class="{ filled: i <= pin.length }"></span></template>
+        </div>
+        <div class="pin-pad">
+          <template x-for="d in [1,2,3,4,5,6,7,8,9]">
+            <button type="button" class="btn pin-key" @click="if (pin.length < 8) pin += d" x-text="d"></button>
+          </template>
+          <button type="button" class="btn pin-key pin-clear" @click="pin = ''">{{ T "auth.clear" }}</button>
+          <button type="button" class="btn pin-key" @click="if (pin.length < 8) pin += '0'">0</button>
+          <button type="submit" class="btn primary pin-key" :disabled="pin.length < 4">{{ T "auth.sign_in" }}</button>
+        </div>
+      </form>
+      {{ end }}
+    </main>
+  </body>
+</html>

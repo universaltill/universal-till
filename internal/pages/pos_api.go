@@ -13,6 +13,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
@@ -365,7 +366,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		cashierID := in.CashierID
 		if cashierID == "" {
-			if cid, err := repo.EnsureUser(r.Context()); err == nil {
+			// Sales are attributed to the signed-in operator; the repo
+			// fallback only remains for UT_AUTH=off tooling runs.
+			if u, ok := auth.FromContext(r.Context()); ok {
+				cashierID = u.ID
+			} else if cid, err := repo.EnsureUser(r.Context()); err == nil {
 				cashierID = cid
 			}
 		}
