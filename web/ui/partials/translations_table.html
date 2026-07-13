@@ -1,0 +1,45 @@
+<div id="translations-table">
+  <table class="translations-grid">
+    <thead>
+      <tr>
+        <th>{{ T "translations.col.key" }}</th>
+        <th>{{ T "translations.col.reference" }}</th>
+        <th>{{ T "translations.col.value" }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ $locale := .editLocale }}
+      {{ $q := .q }}
+      {{ range .rows }}
+      <tr>
+        <td class="translations-key"><code>{{ .Key }}</code></td>
+        <td class="translations-ref">{{ .Reference }}</td>
+        <td>
+          <form class="translations-edit" hx-post="/api/translations/set" hx-target="#translations-table" hx-swap="outerHTML">
+            <input type="hidden" name="edit_locale" value="{{ $locale }}">
+            <input type="hidden" name="key" value="{{ .Key }}">
+            <input type="hidden" name="q" value="{{ $q }}">
+            <input type="text" name="value" value="{{ .Value }}" placeholder="{{ .Reference }}">
+            <button class="btn" type="submit">{{ T "translations.save" }}</button>
+          </form>
+        </td>
+        <td class="translations-source">
+          {{ if eq .Source "shop" }}
+          <form hx-post="/api/translations/clear" hx-target="#translations-table" hx-swap="outerHTML">
+            <input type="hidden" name="edit_locale" value="{{ $locale }}">
+            <input type="hidden" name="key" value="{{ .Key }}">
+            <input type="hidden" name="q" value="{{ $q }}">
+            <button class="btn secondary" type="submit">{{ T "translations.reset" }}</button>
+          </form>
+          {{ else if eq .Source "plugin" }}<span class="muted">{{ T "translations.source_plugin" }}</span>
+          {{ else if eq .Source "" }}<span class="muted">{{ T "translations.source_missing" }}</span>
+          {{ end }}
+        </td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="4" class="muted">{{ T "translations.empty" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>

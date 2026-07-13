@@ -1,0 +1,24 @@
+{{ define "content" }}
+<h1>{{ T "translations.title" }}</h1>
+<p class="help-intro">{{ T "translations.intro" }}</p>
+
+<div class="card">
+  <form class="translations-controls" hx-get="/ui/translations-table" hx-target="#translations-table" hx-swap="outerHTML" hx-trigger="change from:select, keyup changed delay:300ms from:input[name='q'], submit">
+    <label>{{ T "translations.locale" }}
+      <select name="edit_locale">
+        {{ $sel := .editLocale }}
+        {{ range .locales }}
+          <option value="{{ . }}" {{ if eq . $sel }}selected{{ end }}>{{ . }}</option>
+        {{ end }}
+      </select>
+    </label>
+    <label>{{ T "translations.search" }}
+      <input type="search" name="q" value="" placeholder="{{ T "translations.search" }}">
+    </label>
+  </form>
+
+  <div id="translations-table"
+       hx-get="/ui/translations-table?edit_locale={{ .editLocale }}"
+       hx-trigger="load" hx-swap="outerHTML"></div>
+</div>
+{{ end }}
