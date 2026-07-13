@@ -1,0 +1,67 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "users.title" }}</h1>
+</div>
+
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+<div class="users-layout">
+  <div class="card users-list">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "users.col.user" }}</th>
+          <th>{{ T "users.col.role" }}</th>
+          <th>{{ T "users.col.pin" }}</th>
+          <th>{{ T "users.col.status" }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .users }}
+        <tr>
+          <td>{{ .DisplayName }} <span class="muted">({{ .Username }})</span></td>
+          <td>{{ .Role }}</td>
+          <td>{{ if .HasPIN }}{{ T "users.pin_set" }}{{ else }}<span class="muted">{{ T "users.pin_unset" }}</span>{{ end }}</td>
+          <td>{{ if .IsActive }}{{ T "users.active" }}{{ else }}<span class="muted">{{ T "users.inactive" }}</span>{{ end }}</td>
+          <td class="users-actions">
+            {{ if .CanEdit }}
+            <form method="post" action="/api/users/{{ .ID }}/pin" class="users-inline">
+              <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8"
+                     placeholder="{{ T "users.new_pin" }}" required />
+              <button type="submit" class="btn secondary">{{ T "users.set_pin" }}</button>
+            </form>
+            <form method="post" action="/api/users/{{ .ID }}/active" class="users-inline">
+              <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
+              <button type="submit" class="btn secondary">
+                {{ if .IsActive }}{{ T "users.deactivate" }}{{ else }}{{ T "users.activate" }}{{ end }}
+              </button>
+            </form>
+            {{ end }}
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card users-form">
+    <h3>{{ T "users.new.title" }}</h3>
+    <form method="post" action="/api/users" autocomplete="off">
+      <label>{{ T "users.new.username" }} <input type="text" name="username" required /></label>
+      <label>{{ T "users.new.display" }} <input type="text" name="display_name" required /></label>
+      <label>{{ T "users.col.role" }}
+        <select name="role">
+          <option value="cashier">cashier</option>
+          {{ if .isAdmin }}
+          <option value="manager">manager</option>
+          <option value="admin">admin</option>
+          {{ end }}
+        </select>
+      </label>
+      <button type="submit" class="btn primary" style="width:100%">{{ T "users.new.submit" }}</button>
+    </form>
+    <p class="muted">{{ T "users.new.hint" }}</p>
+  </div>
+</div>
+{{ end }}

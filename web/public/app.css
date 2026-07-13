@@ -397,3 +397,43 @@ body.kiosk .btn-tile { min-height: 5.4rem; }
 body.kiosk input, body.kiosk select { min-height: 2.4rem; }
 body.kiosk .qty-input, body.kiosk .disc-input { min-height: 2.1rem; }
 body.kiosk .basket .total { font-size: 1.45rem; }
+
+/* ── Operator PIN login (docs: architecture/pos-auth.md) ─────────────────
+   Full-screen keypad; touch-first like the sale screen. */
+body.login-screen {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100dvh; margin: 0; background: var(--bg);
+}
+.login-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 2rem 2.4rem; width: min(24rem, 92vw);
+  text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,.12);
+}
+.login-logo { height: 2.2rem; margin-bottom: 1rem; }
+.login-card h1 { font-size: 1.2rem; margin: 0 0 1rem; }
+.login-error { color: var(--danger, #c0392b); font-weight: 600; min-height: 1.3rem; }
+.pin-dots { display: flex; gap: .45rem; justify-content: center; margin-bottom: 1.1rem; }
+.pin-dot {
+  width: .8rem; height: .8rem; border-radius: 50%;
+  border: 1px solid var(--border); background: transparent;
+}
+.pin-dot.filled { background: var(--brand); border-color: var(--brand); }
+.pin-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: .55rem; }
+.pin-key { min-height: 3.4rem; font-size: 1.25rem; }
+.pin-clear { font-size: .95rem; }
+.login-setup { display: flex; flex-direction: column; gap: .8rem; text-align: start; }
+.login-setup input { width: 100%; }
+
+/* Operator chip + lock button in the nav */
+.session-chip { display: inline-flex; align-items: center; gap: .5rem; margin-inline-start: .8rem; }
+.session-user { font-weight: 600; }
+.session-lock { display: inline; margin: 0; }
+.btn-lock { padding: .25rem .7rem; }
+
+/* Users admin page */
+.users-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: start; }
+.users-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.users-inline { display: inline-flex; gap: .35rem; margin: 0; }
+.users-inline input { width: 7.5rem; }
+.users-form form { display: flex; flex-direction: column; gap: .7rem; }
+@media (max-width: 900px) { .users-layout { grid-template-columns: 1fr; } }

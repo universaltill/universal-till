@@ -1,0 +1,6 @@
+<span class="session-chip">
+  <span class="session-user">{{ .name }}</span>
+  <form method="post" action="/api/auth/logout" class="session-lock">
+    <button type="submit" class="btn secondary btn-lock">{{ T "auth.lock" }}</button>
+  </form>
+</span>
