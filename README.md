@@ -199,11 +199,15 @@ UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode on
 # Optional
 UT_SAMPLES_DIR=/path/to/images        # Sample product images
 
-# Assistive AI (optional). Camera item identification on the sale screen —
-# strictly assistive: without a key the feature is invisible, and checkout
-# never depends on it. Photos and item names/SKUs are sent to the Claude API.
-UT_AI_API_KEY=                         # Anthropic API key (console.anthropic.com)
-UT_AI_MODEL=claude-haiku-4-5           # Default model (cheapest; override for quality)
+# Assistive AI (optional): camera item identification on the sale screen.
+# Self-hosted first — point at an Ollama server running an open vision model
+# (a machine in the store, your homelab, or a VM you provide); photos and item
+# names never leave your infrastructure. Nothing configured = invisible, and
+# checkout never depends on it.
+UT_AI_ENDPOINT=http://localhost:11434  # Ollama server URL (self-hosted)
+UT_AI_MODEL=llama3.2-vision            # Open vision model to use
+UT_AI_PROVIDER=                        # Optional: "claude" for the hosted paid API
+UT_AI_API_KEY=                         # Only for the claude provider
 ```
 
 ### System Settings
