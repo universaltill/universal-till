@@ -490,3 +490,9 @@ body.login-screen {
 }
 .ai-identify-status { min-block-size: 1.2rem; color: var(--muted, #667); }
 .ai-identify-controls { display: flex; gap: 0.5rem; justify-content: flex-end; }
+
+/* Beginner guide (/help) — large readable steps, two-column on wide screens */
+.help-intro { color: var(--muted); font-size: 1.05rem; max-inline-size: 44rem; }
+.help-guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: .8rem; }
+.help-steps { margin: 0; padding-inline-start: 1.4rem; font-size: 1.05rem; }
+.help-steps li { margin-block-end: .5rem; line-height: 1.55; }
