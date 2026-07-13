@@ -10,15 +10,15 @@
 			</div>
 			{{ if eq .TrustTier "verified" }}
 			<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-				✓ Verified
+				✓ {{ T "plugins.tier.verified" }}
 			</span>
 			{{ else if eq .TrustTier "approved" }}
 			<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-				Approved
+				{{ T "plugins.tier.approved" }}
 			</span>
 			{{ else }}
 			<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-				Community
+				{{ T "plugins.tier.community" }}
 			</span>
 			{{ end }}
 		</div>
@@ -26,14 +26,14 @@
 		<p class="text-gray-600 text-sm mb-4">{{ .Description }}</p>
 
 		<div class="flex items-center justify-between text-xs text-gray-500 mb-4">
-			<span>Type: {{ .CanonicalType }}</span>
+			<span>{{ T "plugins.type_label" }} {{ .CanonicalType }}</span>
 			<span>{{ .DeviceArch }}</span>
 		</div>
 
 		<button 
 			class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors"
 			disabled>
-			Install
+			{{ T "plugins.install" }}
 		</button>
 	</div>
 	{{ end }}
@@ -43,8 +43,8 @@
 	<svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 		<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
 	</svg>
-	<h3 class="mt-2 text-sm font-medium text-gray-900">No plugins found</h3>
-	<p class="mt-1 text-sm text-gray-500">Try adjusting your filters or refresh the catalog.</p>
+	<h3 class="mt-2 text-sm font-medium text-gray-900">{{ T "plugins.none_found" }}</h3>
+	<p class="mt-1 text-sm text-gray-500">{{ T "plugins.none_found_hint" }}</p>
 </div>
 {{ end }}
 {{ end }}

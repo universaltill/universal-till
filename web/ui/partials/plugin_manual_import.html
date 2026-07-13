@@ -11,7 +11,7 @@
   
   <div class="modal-content" style="max-width: 600px;">
     <div class="modal-header">
-      <h2>Manual Plugin Import</h2>
+      <h2>{{ T "plugins.import.title" }}</h2>
       <button class="btn-icon" @click="$store.pluginImport.showModal = false">
         <span aria-hidden="true">&times;</span>
       </button>
@@ -21,15 +21,15 @@
       <!-- Step 1: File Upload -->
       <div x-show="step === 'upload'">
         <div class="info-panel mb-3">
-          <p><strong>Upload a signed plugin archive</strong></p>
-          <p class="text-sm">Supported formats: .tar.gz, .tar.sig (paired files required)</p>
+          <p><strong>{{ T "plugins.import.upload_title" }}</strong></p>
+          <p class="text-sm">{{ T "plugins.import.formats" }}</p>
           <p class="text-sm text-warning">
-            ⚠️ Only install plugins from trusted sources. Manual imports bypass marketplace verification.
+            ⚠️ {{ T "plugins.import.warning" }}
           </p>
         </div>
 
         <div class="form-group">
-          <label for="pluginArchive">Plugin Archive (.tar.gz)</label>
+          <label for="pluginArchive">{{ T "plugins.import.archive" }}</label>
           <input type="file" 
                  id="pluginArchive"
                  accept=".tar.gz,.tgz"
@@ -38,7 +38,7 @@
         </div>
 
         <div class="form-group">
-          <label for="pluginSignature">Signature File (.tar.sig)</label>
+          <label for="pluginSignature">{{ T "plugins.import.signature" }}</label>
           <input type="file" 
                  id="pluginSignature"
                  accept=".sig"
@@ -49,11 +49,11 @@
           <button class="btn btn-primary"
                   @click="step = 'verify'"
                   :disabled="!importFile">
-            Next: Verify Signature
+            {{ T "plugins.import.next_verify" }}
           </button>
           <button class="btn btn-secondary"
                   @click="$store.pluginImport.showModal = false">
-            Cancel
+            {{ T "common.cancel" }}
           </button>
         </div>
       </div>
@@ -61,33 +61,33 @@
       <!-- Step 2: Signature Verification -->
       <div x-show="step === 'verify'">
         <div class="info-panel mb-3">
-          <h3>Signature Verification</h3>
-          <p class="text-sm">Verifying plugin authenticity and integrity...</p>
+          <h3>{{ T "plugins.import.verification" }}</h3>
+          <p class="text-sm">{{ T "plugins.import.verifying" }}</p>
         </div>
 
         <div class="verification-status">
           <div class="status-item">
             <span class="status-icon">⏳</span>
-            <span>Checking file integrity (SHA256)</span>
+            <span>{{ T "plugins.import.check_integrity" }}</span>
           </div>
           <div class="status-item">
             <span class="status-icon">⏳</span>
-            <span>Verifying developer signature</span>
+            <span>{{ T "plugins.import.check_signature" }}</span>
           </div>
           <div class="status-item">
             <span class="status-icon">⏳</span>
-            <span>Scanning manifest for malicious permissions</span>
+            <span>{{ T "plugins.import.check_manifest" }}</span>
           </div>
         </div>
 
         <div class="mt-3">
           <button class="btn btn-primary"
                   @click="step = 'confirm'">
-            Verification Passed - Continue
+            {{ T "plugins.import.verification_passed" }}
           </button>
           <button class="btn btn-secondary"
                   @click="step = 'upload'">
-            Back
+            {{ T "common.back" }}
           </button>
         </div>
       </div>
@@ -95,33 +95,33 @@
       <!-- Step 3: Confirmation -->
       <div x-show="step === 'confirm'">
         <div class="plugin-details mb-3">
-          <h3>Plugin Information</h3>
+          <h3>{{ T "plugins.import.info" }}</h3>
           <table class="table-sm">
             <tr>
-              <td><strong>Name:</strong></td>
+              <td><strong>{{ T "plugins.import.name" }}</strong></td>
               <td x-text="$store.pluginImport.pluginName || 'Sample Payment Plugin'"></td>
             </tr>
             <tr>
-              <td><strong>Version:</strong></td>
+              <td><strong>{{ T "plugins.import.version" }}</strong></td>
               <td x-text="$store.pluginImport.version || '1.0.0'"></td>
             </tr>
             <tr>
-              <td><strong>Developer:</strong></td>
+              <td><strong>{{ T "plugins.import.developer" }}</strong></td>
               <td x-text="$store.pluginImport.developer || 'Trusted Developer Inc.'"></td>
             </tr>
             <tr>
-              <td><strong>Trust Tier:</strong></td>
+              <td><strong>{{ T "plugins.import.trust_tier" }}</strong></td>
               <td>
-                <span class="badge badge-warning">Manual Import (Unverified)</span>
+                <span class="badge badge-warning">{{ T "plugins.import.unverified" }}</span>
               </td>
             </tr>
             <tr>
-              <td><strong>Permissions:</strong></td>
+              <td><strong>{{ T "plugins.import.permissions" }}</strong></td>
               <td>
                 <ul class="permission-list text-sm">
-                  <li>🔐 Network Access (payment.process)</li>
-                  <li>💳 Transaction Read/Write</li>
-                  <li>📊 Sales Data Read</li>
+                  <li>🔐 {{ T "plugins.import.perm_network" }}</li>
+                  <li>💳 {{ T "plugins.import.perm_transactions" }}</li>
+                  <li>📊 {{ T "plugins.import.perm_sales" }}</li>
                 </ul>
               </td>
             </tr>
@@ -131,7 +131,7 @@
         <div class="form-group">
           <label>
             <input type="checkbox" x-model="$store.pluginImport.acceptRisk">
-            I understand this plugin is manually imported and not marketplace-verified
+            {{ T "plugins.import.acknowledge" }}
           </label>
         </div>
 
@@ -139,11 +139,11 @@
           <button class="btn btn-primary"
                   @click="step = 'installing'"
                   :disabled="!$store.pluginImport.acceptRisk">
-            Install Plugin
+            {{ T "plugins.import.install" }}
           </button>
           <button class="btn btn-secondary"
                   @click="step = 'verify'">
-            Back
+            {{ T "common.back" }}
           </button>
         </div>
       </div>
@@ -151,7 +151,7 @@
       <!-- Step 4: Installing -->
       <div x-show="step === 'installing'">
         <div class="install-progress">
-          <h3>Installing Plugin...</h3>
+          <h3>{{ T "plugins.import.installing" }}</h3>
           <div class="progress-bar">
             <div class="progress-fill" 
                  :style="'width: ' + uploadProgress + '%'"></div>
@@ -176,17 +176,16 @@
       <div x-show="step === 'complete'">
         <div class="success-panel text-center">
           <div class="success-icon mb-3">✓</div>
-          <h3>Plugin Installed Successfully</h3>
+          <h3>{{ T "plugins.import.success" }}</h3>
           <p class="text-sm">
-            The plugin has been installed and is ready to use.
-            You may need to restart the POS for changes to take effect.
+            {{ T "plugins.import.success_note" }}
           </p>
         </div>
 
         <div class="mt-3 text-center">
           <button class="btn btn-primary"
                   @click="$store.pluginImport.showModal = false; window.location.reload()">
-            Done
+            {{ T "common.done" }}
           </button>
         </div>
       </div>

@@ -1,7 +1,7 @@
 <!-- web/ui/partials/buttons.html -->
 {{ define "buttons" }}
 <div class="products">
-  <h2>Products</h2>
+  <h2>{{ T "products.title" }}</h2>
   <div id="buttons-grid" class="grid">
     {{ range .Buttons }}
       <button
@@ -16,7 +16,7 @@
         {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
       </button>
     {{ else }}
-      <p class="empty">No products yet. Add some in Designer.</p>
+      <p class="empty">{{ T "products.empty" }}</p>
     {{ end }}
   </div>
   <!-- Action buttons contributed by installed plugins -->

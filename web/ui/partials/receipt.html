@@ -12,7 +12,7 @@
   .receipt-payments h3 {margin: 0 0 0.35rem; font-size: 1rem;}
   .receipt-payments ul {list-style: none; padding: 0; margin: 0;}
   .receipt-payments li {display: flex; justify-content: space-between; margin-bottom: 0.35rem;}
-  .receipt-payments small {color: #6b7280; display: block; text-align: right;}
+  .receipt-payments small {color: #6b7280; display: block; text-align: end;}
   .receipt-legal {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; color: #374151;}
   .receipt-legal-label {font-weight: 600; margin-bottom: 0.25rem;}
   .receipt-legal-line {margin: 0.15rem 0;}
@@ -28,8 +28,8 @@
 </style>
 <div class="receipt-wrap">
   <div class="receipt-card">
-    <h2>Receipt #{{ .ReceiptNo }}</h2>
-    {{ if .OriginalReceiptNo }}<p><small>Return for: {{ .OriginalReceiptNo }}</small></p>{{ end }}
+    <h2>{{ T "receipt.title" }} #{{ .ReceiptNo }}</h2>
+    {{ if .OriginalReceiptNo }}<p><small>{{ T "receipt.return_for" }}: {{ .OriginalReceiptNo }}</small></p>{{ end }}
     <div class="barcode">*{{ .ReceiptNo }}*</div>
     <ul class="receipt-lines">
       {{ range .Lines }}
@@ -37,14 +37,14 @@
       {{ end }}
     </ul>
     <div class="totals">
-      <div>Subtotal: {{ money .Subtotal }}</div>
-      <div>Tax: {{ money .TaxTotal }}</div>
-      {{ if gt .SaleDiscount 0 }}<div>Discount{{ if eq .SaleDiscountType "percent" }} ({{ bpPercent .SaleDiscountRaw }}){{ end }}: -{{ money .SaleDiscount }}</div>{{ end }}
-      <div><strong>Total: {{ money .Total }}</strong></div>
+      <div>{{ T "basket.subtotal" }}: {{ money .Subtotal }}</div>
+      <div>{{ T "basket.tax" }}: {{ money .TaxTotal }}</div>
+      {{ if gt .SaleDiscount 0 }}<div>{{ T "basket.discount" }}{{ if eq .SaleDiscountType "percent" }} ({{ bpPercent .SaleDiscountRaw }}){{ end }}: -{{ money .SaleDiscount }}</div>{{ end }}
+      <div><strong>{{ T "basket.total" }}: {{ money .Total }}</strong></div>
     </div>
     {{ if .Payments }}
     <div class="receipt-payments">
-      <h3>Payments</h3>
+      <h3>{{ T "receipt.payments" }}</h3>
       <ul>
         {{ range .Payments }}
           <li>
@@ -54,7 +54,7 @@
             </div>
             <div>
               {{ money .Applied }}
-              {{ if gt .Change 0 }}<small>Change {{ money .Change }}</small>{{ end }}
+              {{ if gt .Change 0 }}<small>{{ T "receipt.change" }} {{ money .Change }}</small>{{ end }}
             </div>
           </li>
         {{ end }}
@@ -80,10 +80,10 @@
     </div>
     {{ end }}
     <div class="actions">
-      <button class="btn primary" onclick="window.print()">Print</button>
-      <button class="btn secondary" onclick="window.location='/'">New Customer</button>
+      <button class="btn primary" onclick="window.print()">{{ T "receipt.print" }}</button>
+      <button class="btn secondary" onclick="window.location='/'">{{ T "receipt.new_customer" }}</button>
     </div>
-    <small>Auto-reset in 60s...</small>
+    <small>{{ T "receipt.auto_reset" }}</small>
   </div>
 </div>
 <script>

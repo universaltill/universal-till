@@ -69,17 +69,18 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		TaxRateBasisPoints: state.TaxRatePct * 100,
 	}, resolver)
 
+	// Labels are locale keys; the nav renders them through T (unknown keys —
+	// e.g. plugin menu labels from manifests — pass through unchanged).
 	baseMenu := []common.MenuItem{
-		{Href: "/", Label: "Home"},
-		{Href: "/designer", Label: "Designer"},
-		{Href: "/inventory", Label: "Inventory"},
-		{Href: "/shifts", Label: "Shifts"},
-		{Href: "/journal", Label: "Journal"},
-		{Href: "/reports", Label: "Reports"},
-		{Href: "/settings", Label: "Settings"},
-		{Href: "/plugins", Label: "Plugins"},
-		{Href: "/catalog", Label: "Catalog"},
-		{Href: "/users", Label: "Users"},
+		{Href: "/", Label: "nav.home"},
+		{Href: "/designer", Label: "nav.designer"},
+		{Href: "/inventory", Label: "nav.inventory"},
+		{Href: "/shifts", Label: "nav.shifts"},
+		{Href: "/journal", Label: "nav.journal"},
+		{Href: "/reports", Label: "nav.reports"},
+		{Href: "/settings", Label: "nav.settings"},
+		{Href: "/plugins", Label: "nav.plugins"},
+		{Href: "/catalog", Label: "nav.catalog"},
 	}
 
 	// One auth service for the whole till: login, sessions AND manager-PIN
