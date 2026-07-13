@@ -237,7 +237,13 @@ a.btn, a.btn:hover { text-decoration: none; }
                vertical-align: middle; }
 
 /* ---------- Basket ---------- */
-.line-item { max-width: 130px; }
+.line-item { max-width: 158px; display: flex; align-items: center; gap: .4rem; }
+.line-thumb {
+  flex: 0 0 auto; width: 2rem; height: 2rem; object-fit: cover;
+  border-radius: 6px; border: 1px solid var(--border);
+}
+.line-thumb-empty { background: var(--surface); display: inline-block; }
+.line-text { min-width: 0; }
 .line-name { display: block; font-weight: 600; font-size: .88rem; line-height: 1.2; }
 .line-item small { font-size: .68rem; }
 .qty-input { width: 3.6rem; padding: .3rem .35rem; font-size: .85rem; }
