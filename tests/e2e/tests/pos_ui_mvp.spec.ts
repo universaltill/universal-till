@@ -29,6 +29,8 @@ test.describe('POS UI MVP Uplift', () => {
     await page.goto('/');
 
     await expect(page.getByRole('button', { name: 'Add', exact: true })).toBeVisible();
+    // Complete Sale lives in the Split tender tab since the tabbed tender panel.
+    await page.getByRole('button', { name: 'Split', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Complete Sale', exact: true })).toBeVisible();
   });
 });
