@@ -45,7 +45,11 @@
     var codes = Array.prototype.map.call(grid.querySelectorAll('.draggable-tile'), function (t) { return t.dataset.code; });
     var fd = new FormData();
     codes.forEach(function (c) { fd.append('codes', c); });
-    fetch('/api/buttons/reorder', { method: 'POST', body: fd });
+    fetch('/api/buttons/reorder', { method: 'POST', body: fd }).then(function (res) {
+      // If the save failed, reload so the grid shows the real order instead
+      // of a reorder that only happened in the DOM.
+      if (!res.ok) location.reload();
+    });
   });
 })();
 </script>
