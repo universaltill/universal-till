@@ -120,13 +120,15 @@ func findPageEntry(r *http.Request, d *common.Deps) (data.PageEntryRow, bool) {
 // static content/index.html, else a plugin info card.
 func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, entry data.PageEntryRow) {
 	pluginDir := filepath.Join(pluginPagesDir, entry.PluginID, entry.PluginVersion)
+	locale := httpx.ResolveLocale(w, r)
 	base := map[string]any{
-		"title":     entry.Label,
+		// Entry labels are translator keys (plugins ship locales/ overlays);
+		// plain-text labels pass through T unchanged.
+		"title":     httpx.T(locale, entry.Label),
 		"theme":     d.CurrentState().Theme,
 		"menuItems": d.Menu,
 	}
 
-	locale := httpx.ResolveLocale(w, r)
 	if bundle, ok := loadContentBundle(filepath.Join(pluginDir, "content"), locale); ok {
 		base["bundle"] = bundleView(bundle)
 		httpx.Render("ui/pages/plugin_content.html", base)(w, r)
