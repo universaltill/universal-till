@@ -3,14 +3,11 @@ package plugins
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 )
-
-const installStatusKeyPrefix = "plugins.marketplace.install_status."
 
 type InstallLifecycleState string
 
@@ -40,60 +37,72 @@ type InstallFailure struct {
 	Retryable  bool
 }
 
+// InstallStatusStore keeps the marketplace installer's bookkeeping — one
+// record per listing — in the plugin_install_status table (migration 007
+// moved them out of the settings KV store).
 type InstallStatusStore struct {
-	settings *data.SettingsRepo
+	repo *data.InstallStatusRepo
 }
 
 func NewInstallStatusStore(db *sql.DB) *InstallStatusStore {
-	return &InstallStatusStore{settings: data.NewSettingsRepo(db)}
+	return &InstallStatusStore{repo: data.NewInstallStatusRepo(db)}
+}
+
+func recordFromRow(row data.InstallStatusRow) InstallStatusRecord {
+	return InstallStatusRecord{
+		ListingID:      row.ListingID,
+		PluginID:       row.PluginID,
+		PluginName:     row.PluginName,
+		TargetVersion:  row.TargetVersion,
+		CurrentVersion: row.CurrentVersion,
+		State:          InstallLifecycleState(row.State),
+		MessageKey:     row.MessageKey,
+		Retryable:      row.Retryable,
+		UpdatedAt:      row.UpdatedAt,
+	}
 }
 
 func (s *InstallStatusStore) Save(ctx context.Context, record InstallStatusRecord) error {
 	record.ListingID = strings.TrimSpace(record.ListingID)
-	if s == nil || s.settings == nil || record.ListingID == "" {
+	if s == nil || s.repo == nil || record.ListingID == "" {
 		return nil
 	}
 	record.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	payload, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
-	return s.settings.Set(ctx, installStatusKey(record.ListingID), string(payload))
+	return s.repo.Upsert(ctx, data.InstallStatusRow{
+		ListingID:      record.ListingID,
+		PluginID:       record.PluginID,
+		PluginName:     record.PluginName,
+		TargetVersion:  record.TargetVersion,
+		CurrentVersion: record.CurrentVersion,
+		State:          string(record.State),
+		MessageKey:     record.MessageKey,
+		Retryable:      record.Retryable,
+		UpdatedAt:      record.UpdatedAt,
+	})
 }
 
 func (s *InstallStatusStore) Get(ctx context.Context, listingID string) (InstallStatusRecord, bool, error) {
-	if s == nil || s.settings == nil {
+	if s == nil || s.repo == nil {
 		return InstallStatusRecord{}, false, nil
 	}
-	raw, ok, err := s.settings.Get(ctx, installStatusKey(listingID))
+	row, ok, err := s.repo.Get(ctx, strings.TrimSpace(listingID))
 	if err != nil || !ok {
 		return InstallStatusRecord{}, ok, err
 	}
-	var record InstallStatusRecord
-	if err := json.Unmarshal([]byte(raw), &record); err != nil {
-		return InstallStatusRecord{}, false, err
-	}
-	return record, true, nil
+	return recordFromRow(row), true, nil
 }
 
 func (s *InstallStatusStore) List(ctx context.Context) (map[string]InstallStatusRecord, error) {
-	if s == nil || s.settings == nil {
+	if s == nil || s.repo == nil {
 		return map[string]InstallStatusRecord{}, nil
 	}
-	all, err := s.settings.All(ctx)
+	rows, err := s.repo.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]InstallStatusRecord)
-	for key, value := range all {
-		if !strings.HasPrefix(key, installStatusKeyPrefix) {
-			continue
-		}
-		var record InstallStatusRecord
-		if err := json.Unmarshal([]byte(value), &record); err != nil {
-			return nil, err
-		}
-		result[record.ListingID] = record
+	result := make(map[string]InstallStatusRecord, len(rows))
+	for _, row := range rows {
+		result[row.ListingID] = recordFromRow(row)
 	}
 	return result, nil
 }
@@ -103,26 +112,10 @@ func (s *InstallStatusStore) List(ctx context.Context) (map[string]InstallStatus
 // on uninstall so the plugins page doesn't keep showing a stale "active" state.
 func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string) error {
 	pluginID = strings.TrimSpace(pluginID)
-	if s == nil || s.settings == nil || pluginID == "" {
+	if s == nil || s.repo == nil || pluginID == "" {
 		return nil
 	}
-	records, err := s.List(ctx)
-	if err != nil {
-		return err
-	}
-	for listingID, record := range records {
-		if record.PluginID != pluginID {
-			continue
-		}
-		if err := s.settings.Delete(ctx, installStatusKey(listingID)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func installStatusKey(listingID string) string {
-	return installStatusKeyPrefix + strings.TrimSpace(listingID)
+	return s.repo.DeleteForPlugin(ctx, pluginID)
 }
 
 func ClassifyInstallError(err error) InstallFailure {

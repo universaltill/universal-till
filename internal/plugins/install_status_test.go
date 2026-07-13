@@ -44,8 +44,11 @@ func TestInstallStatusStoreRoundTrip(t *testing.T) {
 	}
 	defer db.Close()
 
-	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
-		t.Fatalf("create settings: %v", err)
+	if _, err := db.Exec(`CREATE TABLE plugin_install_status (
+		listing_id TEXT PRIMARY KEY, plugin_id TEXT, plugin_name TEXT,
+		target_version TEXT, current_version TEXT, state TEXT NOT NULL,
+		message_key TEXT, retryable INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create plugin_install_status: %v", err)
 	}
 
 	store := NewInstallStatusStore(db)
