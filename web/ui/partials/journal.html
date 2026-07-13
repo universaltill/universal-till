@@ -1,10 +1,10 @@
 {{ define "journal" }}
 <div class="journal" id="journal" {{ if .OOB }}hx-swap-oob="true"{{ end }}>
-  <h2>Journal</h2>
+  <h2>{{ T "journal.title" }}</h2>
   {{ if .Entries }}
     <table>
       <thead>
-        <tr><th>Receipt</th><th>Total</th><th>Tender</th><th>Sync</th><th>Time</th></tr>
+        <tr><th>{{ T "journal.col.receipt" }}</th><th>{{ T "journal.col.total" }}</th><th>{{ T "journal.col.tender" }}</th><th>{{ T "journal.col.sync" }}</th><th>{{ T "journal.col.time" }}</th></tr>
       </thead>
       <tbody>
         {{ range .Entries }}
@@ -19,7 +19,7 @@
       </tbody>
     </table>
   {{ else }}
-    <div class="empty">No sales yet.</div>
+    <div class="empty">{{ T "journal.empty" }}</div>
   {{ end }}
 </div>
 {{ end }}

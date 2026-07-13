@@ -1,7 +1,7 @@
 {{ define "content" }}
 <div class="page-head">
-  <h1>Catalog</h1>
-  <input type="search" id="catalog-search" placeholder="Search items…" autocomplete="off">
+  <h1>{{ T "nav.catalog" }}</h1>
+  <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
 </div>
 
 {{ template "catalog_lookups" . }}
@@ -13,67 +13,67 @@
 
   <div class="card catalog-form">
     <div class="catalog-form-head">
-      <h3 id="item-form-title">New Item</h3>
-      <button class="btn secondary" type="button" id="item-form-reset" hidden>+ New</button>
+      <h3 id="item-form-title">{{ T "catalog.new_item" }}</h3>
+      <button class="btn secondary" type="button" id="item-form-reset" hidden>{{ T "catalog.plus_new" }}</button>
     </div>
     <form id="item-form" autocomplete="off">
       <input type="hidden" name="id" id="item-id">
       <input type="hidden" name="price" id="item-price-minor">
-      <label>Name <input type="text" name="name" id="item-name" required></label>
+      <label>{{ T "catalog.col.name" }} <input type="text" name="name" id="item-name" required></label>
       <div class="field-pair">
-        <label>Price (£) <input type="number" id="item-price" min="0" step="0.01" placeholder="0.00" required></label>
-        <label>SKU <input type="text" name="sku" id="item-sku" placeholder="auto if blank"></label>
+        <label>{{ T "catalog.price_major" }} <input type="number" id="item-price" min="0" step="0.01" placeholder="0.00" required></label>
+        <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" id="item-sku" placeholder="{{ T "catalog.auto_if_blank" }}"></label>
       </div>
-      <label>Description <input type="text" name="description" id="item-description"></label>
+      <label>{{ T "catalog.description" }} <input type="text" name="description" id="item-description"></label>
       <div class="field-pair">
-        <label>Unit <input type="text" name="unit" id="item-unit" value="each"></label>
-        <label>Tax code <input type="text" name="taxCode" id="item-tax" list="taxcodes-list" placeholder="tax_std"></label>
+        <label>{{ T "catalog.col.unit" }} <input type="text" name="unit" id="item-unit" value="each"></label>
+        <label>{{ T "catalog.tax_code" }} <input type="text" name="taxCode" id="item-tax" list="taxcodes-list" placeholder="tax_std"></label>
       </div>
       <div class="field-pair">
-        <label>Category <input type="text" name="categoryId" id="item-category" list="categories-list"></label>
-        <label>Brand <input type="text" name="brandId" id="item-brand" list="brands-list"></label>
+        <label>{{ T "catalog.category" }} <input type="text" name="categoryId" id="item-category" list="categories-list"></label>
+        <label>{{ T "catalog.brand" }} <input type="text" name="brandId" id="item-brand" list="brands-list"></label>
       </div>
       <div class="field-checks">
-        <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> Sold by weight</label>
-        <label><input type="checkbox" name="isActive" id="item-active" value="1" checked> Active</label>
+        <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
+        <label><input type="checkbox" name="isActive" id="item-active" value="1" checked> {{ T "catalog.active" }}</label>
       </div>
-      <button class="btn primary" type="submit" id="item-form-submit" style="width:100%">Create Item</button>
+      <button class="btn primary" type="submit" id="item-form-submit" style="width:100%">{{ T "catalog.create_item" }}</button>
       <div id="item-form-msg" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
     </form>
 
     <details class="catalog-extra">
-      <summary>Item image</summary>
+      <summary>{{ T "catalog.item_image" }}</summary>
       <form id="image-form" enctype="multipart/form-data">
-        <label>Item <input type="text" class="pick-item" id="image-item-label" readonly placeholder="click a row to pick"></label>
+        <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="image-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
         <input type="hidden" id="image-item-id">
-        <label>Image (PNG/JPEG) <input type="file" id="image-file" accept="image/png,image/jpeg" required></label>
-        <button class="btn" type="submit">Upload Image</button>
+        <label>{{ T "catalog.image_types" }} <input type="file" id="image-file" accept="image/png,image/jpeg" required></label>
+        <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
         <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
       </form>
     </details>
 
     <details class="catalog-extra">
-      <summary>Variants</summary>
+      <summary>{{ T "catalog.variants" }}</summary>
       <form hx-post="/api/catalog/variant" hx-target="#catalog-table" hx-swap="outerHTML">
         <input type="hidden" name="id">
-        <label>Item <input type="text" name="itemId" class="pick-item" required placeholder="click a row to fill"></label>
-        <label>Name <input type="text" name="name" required></label>
+        <label>{{ T "basket.col.item" }} <input type="text" name="itemId" class="pick-item" required placeholder="{{ T "catalog.pick_row" }}"></label>
+        <label>{{ T "catalog.col.name" }} <input type="text" name="name" required></label>
         <div class="field-pair">
-          <label>SKU <input type="text" name="sku"></label>
-          <label>Price (pence) <input type="number" name="price" required min="0" step="1"></label>
+          <label>{{ T "catalog.col.sku" }} <input type="text" name="sku"></label>
+          <label>{{ T "catalog.price_minor" }} <input type="number" name="price" required min="0" step="1"></label>
         </div>
         <input type="hidden" name="isActive" value="1">
-        <button class="btn" type="submit">Save Variant</button>
+        <button class="btn" type="submit">{{ T "catalog.save_variant" }}</button>
       </form>
     </details>
 
     <details class="catalog-extra">
-      <summary>Barcodes</summary>
+      <summary>{{ T "catalog.barcodes" }}</summary>
       <form hx-post="/api/catalog/barcode" hx-target="#catalog-table" hx-swap="outerHTML">
-        <label>Barcode <input type="text" name="barcode" required></label>
-        <label>Item <input type="text" name="itemId" class="pick-item" placeholder="click a row to fill"></label>
-        <label><input type="checkbox" name="isPrimary" value="1"> Primary</label>
-        <button class="btn" type="submit">Attach Barcode</button>
+        <label>{{ T "catalog.barcode" }} <input type="text" name="barcode" required></label>
+        <label>{{ T "basket.col.item" }} <input type="text" name="itemId" class="pick-item" placeholder="{{ T "catalog.pick_row" }}"></label>
+        <label><input type="checkbox" name="isPrimary" value="1"> {{ T "catalog.primary" }}</label>
+        <button class="btn" type="submit">{{ T "catalog.attach_barcode" }}</button>
       </form>
     </details>
   </div>

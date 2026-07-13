@@ -36,10 +36,10 @@
       <h3>{{ T "journal.detail.totals" }}</h3>
       <table class="table">
         <tbody>
-          <tr><td>{{ T "journal.detail.subtotal" }}</td><td style="text-align:right">{{ money .Sale.Subtotal }}</td></tr>
-          {{ if .Sale.DiscountTotal }}<tr><td>{{ T "journal.detail.discount" }}</td><td style="text-align:right">-{{ money .Sale.DiscountTotal }}</td></tr>{{ end }}
-          <tr><td>{{ T "journal.detail.tax" }}</td><td style="text-align:right">{{ money .Sale.TaxTotal }}</td></tr>
-          <tr><td><strong>{{ T "journal.detail.total" }}</strong></td><td style="text-align:right"><strong>{{ money .Sale.Total }}</strong></td></tr>
+          <tr><td>{{ T "journal.detail.subtotal" }}</td><td style="text-align:end">{{ money .Sale.Subtotal }}</td></tr>
+          {{ if .Sale.DiscountTotal }}<tr><td>{{ T "journal.detail.discount" }}</td><td style="text-align:end">-{{ money .Sale.DiscountTotal }}</td></tr>{{ end }}
+          <tr><td>{{ T "journal.detail.tax" }}</td><td style="text-align:end">{{ money .Sale.TaxTotal }}</td></tr>
+          <tr><td><strong>{{ T "journal.detail.total" }}</strong></td><td style="text-align:end"><strong>{{ money .Sale.Total }}</strong></td></tr>
         </tbody>
       </table>
     </div>
@@ -51,7 +51,7 @@
           {{ range .Sale.Payments }}
             <tr>
               <td><strong>{{ .Method }}</strong>{{ if .Reference }}<br><small class="muted">{{ .Reference }}</small>{{ end }}</td>
-              <td style="text-align:right">{{ money .Amount }}{{ if .ChangeGiven }}<br><small class="muted">{{ T "journal.detail.change" }} {{ money .ChangeGiven }}</small>{{ end }}</td>
+              <td style="text-align:end">{{ money .Amount }}{{ if .ChangeGiven }}<br><small class="muted">{{ T "journal.detail.change" }} {{ money .ChangeGiven }}</small>{{ end }}</td>
             </tr>
           {{ end }}
         </tbody>
