@@ -7,6 +7,7 @@
     <span class="nav-lang">
       {{ range locales }}<a href="/?lang={{ . }}">{{ . }}</a>{{ end }}
     </span>
+    <span id="session-chip" hx-get="/ui/session-chip" hx-trigger="load"></span>
   </div>
 </nav>
 {{- end }}

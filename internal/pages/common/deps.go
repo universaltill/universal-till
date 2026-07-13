@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"sync"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -27,6 +28,7 @@ type Deps struct {
 	Engine      *pos.Service
 	BtnStore    *ui.ButtonStore
 	CatalogRepo *marketplace.CatalogRepository
+	AuthSvc     *auth.Service
 }
 
 // RuntimeState mirrors fields needed from pages.state (theme, tax, currency).

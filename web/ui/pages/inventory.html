@@ -83,7 +83,7 @@
         </div>
         <div class="field-pair">
           <label>Requested qty <input type="number" name="qty_requested" step="0.01" required></label>
-          <label>Manager ID <input type="text" name="manager_id" required></label>
+          <label>Manager PIN <input type="password" name="manager_pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" placeholder="if signed in as cashier"></label>
         </div>
         <label>Reason <input type="text" name="reason" required placeholder="why negative stock is needed"></label>
         <button type="submit" class="btn">Authorize Override</button>
