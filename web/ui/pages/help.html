@@ -1,9 +1,88 @@
 {{ define "content" }}
-<h1>{{ T "help.title" }}</h1>
+<h1>{{ T "help.guide.title" }}</h1>
+<p class="help-intro">{{ T "help.guide.intro" }}</p>
 
-<div class="card">
-  <h2>{{ T "help.plugins" }}</h2>
-  <p>{{ T "help.plugins_description" }}</p>
-  <a class="btn" data-testid="plugin-faq-entry" href="/plugins">{{ T "help.faq_entry" }}</a>
+<div class="help-guide">
+  <div class="card">
+    <h2>{{ T "help.guide.login.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.login.s1" }}</li>
+      <li>{{ T "help.guide.login.s2" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.guide.sell.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.sell.s1" }}</li>
+      <li>{{ T "help.guide.sell.s2" }}</li>
+      <li>{{ T "help.guide.sell.s3" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.guide.pay.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.pay.s1" }}</li>
+      <li>{{ T "help.guide.pay.s2" }}</li>
+      <li>{{ T "help.guide.pay.s3" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.guide.receipt.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.receipt.s1" }}</li>
+      <li>{{ T "help.guide.receipt.s2" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.guide.hold.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.hold.s1" }}</li>
+      <li>{{ T "help.guide.hold.s2" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.guide.noscan.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.noscan.s1" }}</li>
+      <li>{{ T "help.guide.noscan.s2" }}</li>
+      <li>{{ T "help.guide.noscan.s3" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.guide.shift.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.shift.s1" }}</li>
+      <li>{{ T "help.guide.shift.s2" }}</li>
+      <li>{{ T "help.guide.shift.s3" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.guide.language.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.language.s1" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.guide.trouble.title" }}</h2>
+    <ol class="help-steps">
+      <li>{{ T "help.guide.trouble.s1" }}</li>
+      <li>{{ T "help.guide.trouble.s2" }}</li>
+      <li>{{ T "help.guide.trouble.s3" }}</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{{ T "help.plugins" }}</h2>
+    <p>{{ T "help.plugins_description" }}</p>
+    <a class="btn" data-testid="plugin-faq-entry" href="/plugins">{{ T "help.faq_entry" }}</a>
+  </div>
 </div>
 {{ end }}
