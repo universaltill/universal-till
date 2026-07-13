@@ -47,6 +47,11 @@ func fetchEntitledListings(ctx context.Context, d *common.Deps) (map[string]bool
 	if err != nil {
 		return nil, false
 	}
+	// Merchant portal token: required when the marketplace enforces merchant
+	// auth; without it a 401 lands in the full-catalog fallback below.
+	if tok := d.Cfg.Marketplace.MerchantToken; tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, false
