@@ -86,7 +86,7 @@
       <label>{{ T "shifts.register" }}
         <select name="register_id" required>
           {{ range .Registers }}<option value="{{ .ID }}">{{ .Name }}</option>
-          {{ else }}<option value="reg-default">Default</option>{{ end }}
+          {{ else }}<option value="reg-default">{{ T "shifts.default_register" }}</option>{{ end }}
         </select>
       </label>
       <input type="hidden" name="opening_cash" id="opening-cash-minor" value="0">

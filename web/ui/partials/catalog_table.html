@@ -1,7 +1,7 @@
 {{ define "catalog_table" }}
 <div class="card" id="catalog-table">
   <table class="table">
-    <thead><tr><th></th><th>Name</th><th>SKU</th><th>Price</th><th>Unit</th><th>Tax</th><th></th></tr></thead>
+    <thead><tr><th></th><th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "catalog.col.price" }}</th><th>{{ T "catalog.col.unit" }}</th><th>{{ T "catalog.col.tax" }}</th><th></th></tr></thead>
     <tbody>
       {{ if .Items }}
         {{ range .Items }}
@@ -20,7 +20,7 @@
             <td>{{ if .Unit }}{{ .Unit }}{{ else }}each{{ end }}{{ if .IsWeighed }} ⚖{{ end }}</td>
             <td>{{ with .TaxCodeID }}{{ . }}{{ else }}—{{ end }}</td>
             <td class="btn-actions">
-              <button class="btn secondary catalog-edit" type="button">Edit</button>
+              <button class="btn secondary catalog-edit" type="button">{{ T "common.edit" }}</button>
               <button class="btn danger" type="button"
                       hx-post="/api/catalog/item/deactivate"
                       hx-vals='{"id":"{{ .ID }}"}'
@@ -30,7 +30,7 @@
           </tr>
         {{ end }}
       {{ else }}
-        <tr><td colspan="7" class="empty">No items</td></tr>
+        <tr><td colspan="7" class="empty">{{ T "basket.empty" }}</td></tr>
       {{ end }}
     </tbody>
   </table>

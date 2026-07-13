@@ -3,11 +3,11 @@
   {{ if .ToastMessage }}
     <div class="toast info" id="toast-message">{{ .ToastMessage }}</div>
   {{ end }}
-  <h2>Basket</h2>
+  <h2>{{ T "basket.title" }}</h2>
   <div class="basket-scroll">
     <table>
       <thead>
-        <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr>
+        <tr><th>{{ T "basket.col.item" }}</th><th>{{ T "basket.col.qty" }}</th><th>{{ T "basket.col.price" }}</th><th>{{ T "basket.col.total" }}</th><th></th></tr>
       </thead>
       <tbody id="basket-lines">
         {{ if .Lines }}
@@ -28,7 +28,7 @@
                        hx-target="#basket"
                        hx-swap="outerHTML" />
                 <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount }}" min="0" step="1"
-                       title="Discount (minor units)" placeholder="Disc."
+                       title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
                        hx-post="/api/pos/line"
                        hx-vals='{"code":"{{ .SKU }}"}'
                        hx-include="closest tr"
@@ -37,25 +37,25 @@
               </td>
               <td>{{ money .PriceCents }}</td>
               <td>{{ money .LineTotal }}</td>
-              <td><button class="btn danger btn-x" title="Remove" hx-post="/api/pos/remove" hx-vals='{"code":"{{ .SKU }}"}' hx-target="#basket" hx-swap="outerHTML">✕</button></td>
+              <td><button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{"code":"{{ .SKU }}"}' hx-target="#basket" hx-swap="outerHTML">✕</button></td>
             </tr>
           {{ end }}
         {{ else }}
-          <tr><td colspan="5" class="empty">No items</td></tr>
+          <tr><td colspan="5" class="empty">{{ T "basket.empty" }}</td></tr>
         {{ end }}
       </tbody>
     </table>
   </div>
   <div class="totals">
-    {{ if .CustomerName }}<div>Customer: {{ .CustomerName }}</div>{{ end }}
-    <div>Subtotal: {{ money .Subtotal }}</div>
+    {{ if .CustomerName }}<div>{{ T "basket.customer" }}: {{ .CustomerName }}</div>{{ end }}
+    <div>{{ T "basket.subtotal" }}: {{ money .Subtotal }}</div>
     {{ if gt .Discount 0 }}
       <div>
-        Discount{{ if eq .DiscountType "percent" }} ({{ bpPercent .DiscountRaw }}){{ end }}: -{{ money .Discount }}
+        {{ T "basket.discount" }}{{ if eq .DiscountType "percent" }} ({{ bpPercent .DiscountRaw }}){{ end }}: -{{ money .Discount }}
       </div>
     {{ end }}
-    <div>Tax: {{ money .Tax }}</div>
-    <div class="total">Total: {{ money .Total }}</div>
+    <div>{{ T "basket.tax" }}: {{ money .Tax }}</div>
+    <div class="total">{{ T "basket.total" }}: {{ money .Total }}</div>
   </div>
 </div>
 {{ end }}

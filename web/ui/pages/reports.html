@@ -39,7 +39,7 @@
       <table class="table">
         <tbody>
           {{ range .Top }}
-          <tr><td>{{ .Name }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:right">{{ money .Revenue }}</td></tr>
+          <tr><td>{{ .Name }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
           {{ else }}
           <tr><td class="empty">{{ T "reports.none" }}</td></tr>
           {{ end }}
@@ -51,7 +51,7 @@
       <table class="table">
         <tbody>
           {{ range .Methods }}
-          <tr><td><strong>{{ .Method }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:right">{{ money .Amount }}</td></tr>
+          <tr><td><strong>{{ .Method }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Amount }}</td></tr>
           {{ else }}
           <tr><td class="empty">{{ T "reports.none" }}</td></tr>
           {{ end }}

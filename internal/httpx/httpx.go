@@ -127,6 +127,20 @@ func uiScalePx() string {
 	return strconv.FormatFloat(16*scale, 'f', -1, 64)
 }
 
+// IsRTL reports whether a locale reads right-to-left (language prefix match,
+// so "fa", "fa-IR", "ar-SA" all qualify).
+func IsRTL(locale string) bool {
+	lang := strings.ToLower(locale)
+	if i := strings.IndexAny(lang, "-_"); i > 0 {
+		lang = lang[:i]
+	}
+	switch lang {
+	case "ar", "fa", "he", "ur", "ps", "ckb", "dv", "yi":
+		return true
+	}
+	return false
+}
+
 // T translates a key for a locale outside templates (handlers building toasts
 // or fragments). Falls back to the key itself, mirroring the template func.
 func T(locale, key string) string {
@@ -206,6 +220,14 @@ func FuncsFor(locale string) template.FuncMap {
 		return false
 	}
 	funcs["uiscalepx"] = uiScalePx
+	funcs["locale"] = func() string { return locale }
+	// dir drives <html dir=…> so RTL locales lay out right-to-left.
+	funcs["dir"] = func() string {
+		if IsRTL(locale) {
+			return "rtl"
+		}
+		return "ltr"
+	}
 	funcs["locales"] = func() []string {
 		if tAny := i18nRef.Load(); tAny != nil {
 			return tAny.(*config.I18n).Available()

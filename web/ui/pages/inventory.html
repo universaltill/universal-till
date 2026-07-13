@@ -1,15 +1,15 @@
 {{ define "content" }}
 <div class="page-head">
-  <h1>Inventory</h1>
-  <input type="search" id="stock-search" placeholder="Search stock…" autocomplete="off">
+  <h1>{{ T "nav.inventory" }}</h1>
+  <input type="search" id="stock-search" placeholder="{{ T "inventory.search_placeholder" }}" autocomplete="off">
 </div>
 
 <div class="catalog-layout">
   <div class="catalog-list">
     <div class="card">
-      <h2>Stock Levels</h2>
+      <h2>{{ T "inventory.stock_levels" }}</h2>
       <table class="table" id="stock-table">
-        <thead><tr><th>Item</th><th>SKU</th><th>Location</th><th>Qty</th><th>Reorder at</th></tr></thead>
+        <thead><tr><th>{{ T "basket.col.item" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "inventory.location" }}</th><th>{{ T "basket.col.qty" }}</th><th>{{ T "inventory.reorder_at" }}</th></tr></thead>
         <tbody>
           {{ if .StockLevels }}
             {{ range .StockLevels }}
@@ -22,82 +22,82 @@
               </tr>
             {{ end }}
           {{ else }}
-            <tr><td colspan="5" class="empty">No stock recorded yet</td></tr>
+            <tr><td colspan="5" class="empty">{{ T "inventory.empty" }}</td></tr>
           {{ end }}
         </tbody>
       </table>
     </div>
 
     <div class="card" style="margin-top:1rem">
-      <h2>Low Stock <span id="low-stock-badge" class="tag" style="background:rgba(220,38,38,.12); color:var(--danger)">0</span></h2>
+      <h2>{{ T "inventory.low_stock" }} <span id="low-stock-badge" class="tag" style="background:rgba(220,38,38,.12); color:var(--danger)">0</span></h2>
       <div id="low-stock-list" hx-get="/api/inventory/low-stock" hx-trigger="load" hx-swap="innerHTML">
-        Loading…
+        {{ T "common.loading" }}
       </div>
     </div>
   </div>
 
   <div class="card catalog-form">
-    <h3>Receive / Adjust Stock</h3>
+    <h3>{{ T "inventory.receive_adjust" }}</h3>
     <form id="stock-form" hx-post="/api/inventory/receipt" hx-swap="innerHTML" hx-target="#result">
-      <label>Type
+      <label>{{ T "inventory.type" }}
         <select name="type" required>
-          <option value="receive">Stock receipt (goods in)</option>
-          <option value="adjust">Adjustment (count correction)</option>
+          <option value="receive">{{ T "inventory.type_receipt" }}</option>
+          <option value="adjust">{{ T "inventory.type_adjustment" }}</option>
         </select>
       </label>
-      <label>Item
-        <input type="text" id="stock-item-search" list="items-list" placeholder="Type item name or SKU" required>
+      <label>{{ T "basket.col.item" }}
+        <input type="text" id="stock-item-search" list="items-list" placeholder="{{ T "inventory.item_placeholder" }}" required>
         <input type="hidden" name="item_id" id="stock-item-id">
       </label>
       <div class="field-pair">
-        <label>Location
+        <label>{{ T "inventory.location" }}
           <select name="location_id" id="stock-location" required>
             {{ range .Locations }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
           </select>
         </label>
-        <label>Quantity <input type="number" name="quantity" step="0.01" required placeholder="+ receive / ± adjust"></label>
+        <label>{{ T "inventory.quantity" }} <input type="number" name="quantity" step="0.01" required placeholder="{{ T "inventory.qty_placeholder" }}"></label>
       </div>
       <div class="field-pair">
-        <label>Cost (£, optional) <input type="number" id="stock-cost" step="0.01" min="0"></label>
+        <label>{{ T "inventory.cost_optional" }} <input type="number" id="stock-cost" step="0.01" min="0"></label>
         <input type="hidden" name="cost_price" id="stock-cost-minor">
       </div>
-      <label>Reason <input type="text" name="reason" placeholder="e.g. weekly delivery"></label>
-      <button type="submit" class="btn primary" style="width:100%">Submit</button>
+      <label>{{ T "inventory.reason" }} <input type="text" name="reason" placeholder="{{ T "inventory.reason_placeholder" }}"></label>
+      <button type="submit" class="btn primary" style="width:100%">{{ T "common.submit" }}</button>
       <div id="result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
     </form>
 
     <details class="catalog-extra">
-      <summary>Manager override — negative stock</summary>
+      <summary>{{ T "inventory.override_title" }}</summary>
       <form id="override-form" hx-post="/api/inventory/override" hx-swap="innerHTML" hx-target="#override-result">
-        <label>Item
-          <input type="text" list="items-list" class="override-item-search" placeholder="Type item name or SKU" required>
+        <label>{{ T "basket.col.item" }}
+          <input type="text" list="items-list" class="override-item-search" placeholder="{{ T "inventory.item_placeholder" }}" required>
           <input type="hidden" name="item_id" class="override-item-id">
         </label>
         <div class="field-pair">
-          <label>Location
+          <label>{{ T "inventory.location" }}
             <select name="location_id" required>
               {{ range .Locations }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
             </select>
           </label>
-          <label>Current qty <input type="number" name="qty_before" step="0.01" required></label>
+          <label>{{ T "inventory.current_qty" }} <input type="number" name="qty_before" step="0.01" required></label>
         </div>
         <div class="field-pair">
-          <label>Requested qty <input type="number" name="qty_requested" step="0.01" required></label>
-          <label>Manager PIN <input type="password" name="manager_pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" placeholder="if signed in as cashier"></label>
+          <label>{{ T "inventory.requested_qty" }} <input type="number" name="qty_requested" step="0.01" required></label>
+          <label>{{ T "inventory.manager_pin" }} <input type="password" name="manager_pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" placeholder="{{ T "inventory.manager_pin_placeholder" }}"></label>
         </div>
-        <label>Reason <input type="text" name="reason" required placeholder="why negative stock is needed"></label>
-        <button type="submit" class="btn">Authorize Override</button>
+        <label>{{ T "inventory.reason" }} <input type="text" name="reason" required placeholder="{{ T "inventory.override_reason_placeholder" }}"></label>
+        <button type="submit" class="btn">{{ T "inventory.authorize_override" }}</button>
         <div id="override-result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
       </form>
     </details>
 
     <details class="catalog-extra">
-      <summary>Process a return</summary>
+      <summary>{{ T "inventory.return_title" }}</summary>
       <form id="return-form" hx-post="/api/inventory/return" hx-swap="innerHTML" hx-target="#return-result">
-        <label>Original receipt no. <input type="text" name="receipt_no" required placeholder="000000123"></label>
-        <label>Reason <input type="text" name="reason" required placeholder="customer reason"></label>
-        <p class="muted" style="font-size:.8rem">Returns the entire sale (line selection coming later).</p>
-        <button type="submit" class="btn">Process Return</button>
+        <label>{{ T "inventory.original_receipt" }} <input type="text" name="receipt_no" required placeholder="000000123"></label>
+        <label>{{ T "inventory.reason" }} <input type="text" name="reason" required placeholder="{{ T "inventory.return_reason_placeholder" }}"></label>
+        <p class="muted" style="font-size:.8rem">{{ T "inventory.return_note" }}</p>
+        <button type="submit" class="btn">{{ T "inventory.process_return" }}</button>
         <div id="return-result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
       </form>
     </details>

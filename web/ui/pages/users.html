@@ -52,10 +52,10 @@
       <label>{{ T "users.new.display" }} <input type="text" name="display_name" required /></label>
       <label>{{ T "users.col.role" }}
         <select name="role">
-          <option value="cashier">cashier</option>
+          <option value="cashier">{{ T "users.role.cashier" }}</option>
           {{ if .isAdmin }}
-          <option value="manager">manager</option>
-          <option value="admin">admin</option>
+          <option value="manager">{{ T "users.role.manager" }}</option>
+          <option value="admin">{{ T "users.role.admin" }}</option>
           {{ end }}
         </select>
       </label>
