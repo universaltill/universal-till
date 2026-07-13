@@ -21,7 +21,7 @@
       <input type="hidden" name="price" id="item-price-minor">
       <label>{{ T "catalog.col.name" }} <input type="text" name="name" id="item-name" required></label>
       <div class="field-pair">
-        <label>{{ T "catalog.price_major" }} <input type="number" id="item-price" min="0" step="0.01" placeholder="0.00" required></label>
+        <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="number" id="item-price" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}" required></label>
         <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" id="item-sku" placeholder="{{ T "catalog.auto_if_blank" }}"></label>
       </div>
       <label>{{ T "catalog.description" }} <input type="text" name="description" id="item-description"></label>
@@ -117,7 +117,7 @@
     document.getElementById('item-tax').value = row.dataset.tax;
     document.getElementById('item-weighed').checked = row.dataset.weighed === '1';
     document.getElementById('item-active').checked = true;
-    document.getElementById('item-price').value = (parseInt(row.dataset.price || '0', 10) / 100).toFixed(2);
+    document.getElementById('item-price').value = window.utCurrency.toMajor(parseInt(row.dataset.price || '0', 10));
     setMode(true, row.dataset.name);
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
     var imgLabel = document.getElementById('image-item-label');
@@ -126,8 +126,7 @@
 
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
-    var pounds = parseFloat(document.getElementById('item-price').value || '0');
-    document.getElementById('item-price-minor').value = Math.round(pounds * 100);
+    document.getElementById('item-price-minor').value = window.utCurrency.toMinor(document.getElementById('item-price').value || '0');
     var editing = document.getElementById('item-id').value !== '';
     var url = editing ? '/api/catalog/item/update' : '/api/catalog/item';
     msg.textContent = '⏳ saving…';
