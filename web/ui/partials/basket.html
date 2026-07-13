@@ -55,7 +55,7 @@
       </div>
     {{ end }}
     <div>{{ T "basket.tax" }}: {{ money .Tax }}</div>
-    <div class="total">{{ T "basket.total" }}: {{ money .Total }}</div>
+    <div class="total" data-minor="{{ .Total.Minor }}">{{ T "basket.total" }}: {{ money .Total }}</div>
   </div>
 </div>
 {{ end }}

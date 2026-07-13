@@ -64,35 +64,22 @@ var (
 
 func InitCurrency(code string) { currencyCode.Store(code) }
 
-// money formats a minor-unit amount for display. It accepts money.Money as well
-// as raw integer minor units so templates can pass either the typed basket
-// amounts or int64 display DTOs.
-func money(amount any) string {
-	var cents int64
+// minorUnits extracts an amount as integer minor units. Templates pass either
+// the typed money.Money basket amounts or int64 display DTOs.
+func minorUnits(amount any) (int64, bool) {
 	switch v := amount.(type) {
 	case moneypkg.Money:
-		cents = v.Minor()
+		return v.Minor(), true
 	case int64:
-		cents = v
+		return v, true
 	case int:
-		cents = int64(v)
+		return int64(v), true
 	case int32:
-		cents = int64(v)
-	default:
-		return ""
+		return int64(v), true
 	}
-	code := "GBP"
-	if v := currencyCode.Load(); v != nil {
-		if s, ok := v.(string); ok && s != "" {
-			code = s
-		}
-	}
-	symbol := map[string]string{"GBP": "£", "USD": "$", "EUR": "€"}[code]
-	if symbol == "" {
-		symbol = code + " "
-	}
-	return fmt.Sprintf("%s%.2f", symbol, float64(cents)/100.0)
+	return 0, false
 }
+
 
 func toJSON(v any) template.JS {
 	b, _ := json.Marshal(v)
@@ -208,7 +195,18 @@ func FuncsFor(locale string) template.FuncMap {
 	for k, v := range baseFuncs {
 		funcs[k] = v
 	}
-	funcs["money"] = money
+	// locale-bound: money digits and separators follow the request locale
+	// (fa/ar render ۱۲٬۳۴۵), the symbol/word and decimals follow the
+	// configured currency (see currency.go).
+	funcs["money"] = func(amount any) string {
+		cents, ok := minorUnits(amount)
+		if !ok {
+			return ""
+		}
+		return FormatMoney(cents, locale)
+	}
+	funcs["currency"] = ActiveCurrency // {{ currency.Code }} etc.
+	funcs["currencies"] = Currencies   // the Settings picker options
 	funcs["toJson"] = toJSON
 	funcs["assetv"] = assetVersion
 	funcs["imgv"] = imgVersion
