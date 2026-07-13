@@ -198,6 +198,12 @@ UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode on
 
 # Optional
 UT_SAMPLES_DIR=/path/to/images        # Sample product images
+
+# Assistive AI (optional). Camera item identification on the sale screen —
+# strictly assistive: without a key the feature is invisible, and checkout
+# never depends on it. Photos and item names/SKUs are sent to the Claude API.
+UT_AI_API_KEY=                         # Anthropic API key (console.anthropic.com)
+UT_AI_MODEL=claude-haiku-4-5           # Default model (cheapest; override for quality)
 ```
 
 ### System Settings
