@@ -31,7 +31,13 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Drag&drop reorder from the Designer: codes arrive in display order.
 	mux.HandleFunc("POST /api/buttons/reorder", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
+		// The Designer posts FormData (multipart) — ParseForm alone ignores
+		// multipart bodies, which silently dropped every reorder.
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			_ = r.ParseMultipartForm(1 << 20)
+		} else {
+			_ = r.ParseForm()
+		}
 		codes := r.Form["codes"]
 		if len(codes) == 1 && strings.Contains(codes[0], ",") {
 			codes = strings.Split(codes[0], ",")
