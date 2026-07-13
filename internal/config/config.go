@@ -23,6 +23,10 @@ type MarketplaceConfig struct {
 	PublicKey   string
 	// UploadToken authenticates the install-intent status-report endpoint.
 	UploadToken string
+	// MerchantToken is this merchant's portal token; sent as a bearer on the
+	// entitlements endpoint when the marketplace enforces merchant auth
+	// (docs repo: architecture/marketplace-merchant-auth.md).
+	MerchantToken string
 
 	// OAuth2 client credentials for marketplace authentication (FR-018)
 	ClientID     string
@@ -81,6 +85,7 @@ func Init() (*Config, error) {
 			DeviceID:              getenv("UT_MARKETPLACE_DEVICE_ID", ""),
 			PublicKey:             getenv("UT_MARKETPLACE_PUBLIC_KEY", ""),
 			UploadToken:           getenv("UT_MARKETPLACE_UPLOAD_TOKEN", ""),
+			MerchantToken:         getenv("UT_MARKETPLACE_MERCHANT_TOKEN", ""),
 			ClientID:              getenv("UT_MARKETPLACE_CLIENT_ID", ""),
 			ClientSecret:          getenv("UT_MARKETPLACE_CLIENT_SECRET", ""),
 			APIVersion:            getenv("UT_MARKETPLACE_API_VERSION", "1.0.0"),
