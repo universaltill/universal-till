@@ -1,5 +1,5 @@
 {{ define "content" }}
-<h1>System Settings</h1>
+<h1>{{ T "settings.title" }}</h1>
 <div class="card">
   <h2>{{ T "settings.theme.title" }}</h2>
   <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="window.location.reload()">
@@ -30,10 +30,10 @@
   </form>
 </div>
 <div class="card" style="margin-top:1rem">
-  <h2>All Settings</h2>
+  <h2>{{ T "settings.all" }}</h2>
   <table class="table">
     <thead>
-      <tr><th>Key</th><th>Value</th><th></th></tr>
+      <tr><th>{{ T "settings.key" }}</th><th>{{ T "settings.value" }}</th><th></th></tr>
     </thead>
     <tbody>
     {{ range $k, $v := .settingsMap }}
@@ -43,13 +43,13 @@
           <input type="text" name="value" value="{{ $v }}" hx-post="/api/settings/upsert" hx-include="closest tr" hx-swap="none">
           <input type="hidden" name="key" value="{{ $k }}">
         </td>
-        <td><button class="btn secondary" hx-post="/api/settings/upsert" hx-include="closest tr" hx-swap="none">Update</button></td>
+        <td><button class="btn secondary" hx-post="/api/settings/upsert" hx-include="closest tr" hx-swap="none">{{ T "settings.update" }}</button></td>
       </tr>
     {{ end }}
       <tr>
         <td><input type="text" name="key" placeholder="new.key" form="new-setting"></td>
         <td><input type="text" name="value" placeholder="value" form="new-setting"></td>
-        <td><button class="btn" type="submit" form="new-setting">Add / Update</button></td>
+        <td><button class="btn" type="submit" form="new-setting">{{ T "settings.add_update" }}</button></td>
       </tr>
     </tbody>
   </table>

@@ -1,4 +1,5 @@
 <span class="session-chip">
+  {{ if .isManager }}<a href="/users">{{ T "users.title" }}</a>{{ end }}
   <span class="session-user">{{ .name }}</span>
   <form method="post" action="/api/auth/logout" class="session-lock">
     <button type="submit" class="btn secondary btn-lock">{{ T "auth.lock" }}</button>

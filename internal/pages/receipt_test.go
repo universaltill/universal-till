@@ -15,14 +15,23 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
 		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
-			if key == "receipt.legal.plugin_label" {
+			switch key {
+			case "receipt.legal.plugin_label":
 				return "Legal notice (%s v%s)"
-			}
-			if key == "receipt.printer.unavailable" {
+			case "receipt.printer.unavailable":
 				return "Printer unavailable"
-			}
-			if key == "receipt.printer.retry" {
+			case "receipt.printer.retry":
 				return "Retry print"
+			case "basket.discount":
+				return "Discount"
+			case "basket.total":
+				return "Total"
+			case "basket.subtotal":
+				return "Subtotal"
+			case "basket.tax":
+				return "Tax"
+			case "receipt.payments":
+				return "Payments"
 			}
 			return key
 		},
@@ -55,14 +64,23 @@ func TestRenderReceipt_LegalText(t *testing.T) {
 		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
 		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
-			if key == "receipt.legal.plugin_label" {
+			switch key {
+			case "receipt.legal.plugin_label":
 				return "Legal notice (%s v%s)"
-			}
-			if key == "receipt.printer.unavailable" {
+			case "receipt.printer.unavailable":
 				return "Printer unavailable"
-			}
-			if key == "receipt.printer.retry" {
+			case "receipt.printer.retry":
 				return "Retry print"
+			case "basket.discount":
+				return "Discount"
+			case "basket.total":
+				return "Total"
+			case "basket.subtotal":
+				return "Subtotal"
+			case "basket.tax":
+				return "Tax"
+			case "receipt.payments":
+				return "Payments"
 			}
 			return key
 		},
@@ -96,14 +114,23 @@ func TestRenderReceipt_NoLegalText(t *testing.T) {
 		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
 		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
-			if key == "receipt.legal.plugin_label" {
+			switch key {
+			case "receipt.legal.plugin_label":
 				return "Legal notice (%s v%s)"
-			}
-			if key == "receipt.printer.unavailable" {
+			case "receipt.printer.unavailable":
 				return "Printer unavailable"
-			}
-			if key == "receipt.printer.retry" {
+			case "receipt.printer.retry":
 				return "Retry print"
+			case "basket.discount":
+				return "Discount"
+			case "basket.total":
+				return "Total"
+			case "basket.subtotal":
+				return "Subtotal"
+			case "basket.tax":
+				return "Tax"
+			case "receipt.payments":
+				return "Payments"
 			}
 			return key
 		},

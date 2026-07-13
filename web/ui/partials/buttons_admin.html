@@ -16,7 +16,7 @@
       </div>
     </div>
   {{ else }}
-    <p class="empty">No products yet.</p>
+    <p class="empty">{{ T "designer.empty" }}</p>
   {{ end }}
 </div>
 <script>
@@ -57,10 +57,10 @@
 
 {{ define "buttons_admin" }}
 <div class="products">
-  <h2>Search items to add as shortcuts</h2>
+  <h2>{{ T "designer.search_title" }}</h2>
 
   <div class="card form-row search-box" style="position: relative;">
-    <input type="search" name="search" id="search" placeholder="Search items (name, SKU, barcode)"
+    <input type="search" name="search" id="search" placeholder="{{ T "designer.search_placeholder" }}"
            hx-get="/api/buttons/search" hx-target="#search-results" hx-trigger="keyup changed delay:300ms"
            hx-params="*"
            autocomplete="off">
@@ -124,7 +124,7 @@ htmx.on('body', 'htmx:afterRequest', function(evt) {
       </span>
     </button>
   {{ else }}
-    <p class="empty">No matches.</p>
+    <p class="empty">{{ T "designer.no_matches" }}</p>
   {{ end }}
 </div>
 {{ end }}

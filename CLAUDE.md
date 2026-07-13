@@ -27,7 +27,16 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 ## API, formats, i18n
 - Responses `{ "data": …, "error": null }`; JSON **snake_case**; dates ISO-8601.
   (`money.Money` marshals as the same integer, so the wire format is unchanged.)
-- **No hardcoded user-facing strings** — use locale files under `web/locales`.
+- **No hardcoded user-facing strings** — every visible string in a template
+  goes through `{{ T "some.key" }}`, and the key must be added to **every**
+  file under `web/locales/` (en.json is the base; all locales must match its
+  key set). Enforced by `scripts/ci/guard-i18n.sh` — CI fails on a missing
+  key or a locale that drifts from en.json. Go-side menu labels are locale
+  keys too (`nav.*`), rendered through `T` in the nav template.
+- **RTL:** the document `dir` is derived from the locale (`httpx.IsRTL`);
+  style with **logical** CSS properties (`margin-inline-start`, `text-align:
+  start/end`, `padding-inline-*`) — never `left`/`right` — so RTL locales
+  (fa, ar, he, …) lay out correctly with no extra CSS.
 - Validate all external input (users, plugins, devices).
 
 ## Plugins

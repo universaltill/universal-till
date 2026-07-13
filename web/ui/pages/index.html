@@ -47,7 +47,7 @@
         {{ end }}
       </div>
       <label class="offline-toggle">
-        <input type="checkbox" id="offline-override"> Offline mode
+        <input type="checkbox" id="offline-override"> {{ T "kiosk.offline" }}
       </label>
     </div>
 
@@ -55,35 +55,35 @@
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
         <div class="split-grid">
-          <label>Method
+          <label>{{ T "tender.method" }}
             <select name="method" id="split-tender-method" data-default="{{ $default }}" required>
               {{ range .paymentMethods }}
                 <option value="{{ . }}" {{ if eq . $default }}selected{{ end }}>{{ . }}</option>
               {{ end }}
             </select>
           </label>
-          <label>Amount
+          <label>{{ T "tender.amount" }}
             <input type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" required>
           </label>
-          <label>Change
+          <label>{{ T "tender.change" }}
             <input type="number" name="change" min="0" step="0.01" value="0.00">
           </label>
-          <label>Reference
-            <input type="text" name="reference" placeholder="Last 4, auth code">
+          <label>{{ T "tender.reference" }}
+            <input type="text" name="reference" placeholder="{{ T "tender.reference_placeholder" }}">
           </label>
         </div>
         <div class="split-controls">
-          <button class="btn" type="button" id="split-tender-add">Add Payment</button>
-          <button class="btn secondary" type="button" id="split-tender-fill">Fill Remaining</button>
+          <button class="btn" type="button" id="split-tender-add">{{ T "tender.add_payment" }}</button>
+          <button class="btn secondary" type="button" id="split-tender-fill">{{ T "tender.fill_remaining" }}</button>
         </div>
       </form>
       <div id="split-tender-payments" class="split-tender-payments empty">
-        <p>No pending payments yet.</p>
+        <p>{{ T "tender.no_pending" }}</p>
       </div>
       <div id="split-tender-status" class="split-tender-status" aria-live="polite"></div>
       <div class="split-controls">
-        <button class="btn primary" type="button" id="split-tender-submit">Complete Sale</button>
-        <button class="btn secondary" type="button" id="split-tender-clear">Clear</button>
+        <button class="btn primary" type="button" id="split-tender-submit">{{ T "tender.complete_sale" }}</button>
+        <button class="btn secondary" type="button" id="split-tender-clear">{{ T "common.clear" }}</button>
       </div>
     </div>
 
