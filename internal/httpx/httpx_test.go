@@ -59,8 +59,8 @@ func TestFuncsForExposesMoneyAndI18n(t *testing.T) {
 	}
 	InitI18n(i18n, "en")
 
-	funcs := FuncsFor("fa")
-
+	// money is locale-bound now: an en locale keeps Latin digits…
+	funcs := FuncsFor("en")
 	moneyFn, ok := funcs["money"].(func(any) string)
 	if !ok {
 		t.Fatalf("money helper not found")
@@ -70,5 +70,10 @@ func TestFuncsForExposesMoneyAndI18n(t *testing.T) {
 	}
 	if got := moneyFn(moneypkg.FromMinor(12345)); got != "€123.45" {
 		t.Fatalf("money helper (Money) returned %q", got)
+	}
+	// …and a fa locale renders the same amount with Persian digits.
+	faMoney := FuncsFor("fa")["money"].(func(any) string)
+	if got := faMoney(int64(12345)); got != "€۱۲۳٫۴۵" {
+		t.Fatalf("fa money helper returned %q", got)
 	}
 }

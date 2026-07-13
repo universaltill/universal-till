@@ -15,7 +15,9 @@
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
   </head>
-  <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}">
+  <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}"
+        data-currency="{{ currency.Code }}" data-currency-decimals="{{ currency.Decimals }}"
+        data-currency-display="{{ currency.Display }}" data-currency-suffix="{{ if currency.Suffix }}1{{ end }}">
     {{ template "nav" . }}
     <main class="container">{{ template "content" . }}</main>
   </body>

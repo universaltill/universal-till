@@ -30,6 +30,20 @@
   </form>
 </div>
 <div class="card" style="margin-top:1rem">
+  <h2>{{ T "settings.currency.title" }}</h2>
+  <p class="muted">{{ T "settings.currency.help" }}</p>
+  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="window.location.reload()">
+    {{ $cur := currency }}
+    <select name="currency">
+      {{ range currencies }}
+      <option value="{{ .Code }}" {{ if eq .Code $cur.Code }}selected{{ end }}>{{ .Name }}</option>
+      {{ end }}
+    </select>
+    <button class="btn" type="submit">{{ T "settings.currency.apply" }}</button>
+  </form>
+  <p class="muted">{{ T "settings.currency.warning" }}</p>
+</div>
+<div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.all" }}</h2>
   <table class="table">
     <thead>

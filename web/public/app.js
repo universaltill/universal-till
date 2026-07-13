@@ -1,3 +1,33 @@
+// Currency metadata comes from <body data-currency-*> (set by base.html from
+// the configured currency). Decimals drive the major<->minor conversion:
+// GBP=2 (pence), IRR/IRT=0 (no subunit). Suffix currencies (rial/toman)
+// render the word after the number.
+window.utCurrency = (function(){
+  var d = document.body ? document.body.dataset : {};
+  var decimals = parseInt(d.currencyDecimals || '2', 10);
+  if (isNaN(decimals) || decimals < 0) decimals = 2;
+  var factor = Math.pow(10, decimals);
+  var display = d.currencyDisplay || '£';
+  var suffix = d.currencySuffix === '1';
+  function formatMinor(units){
+    var neg = units < 0; if (neg) units = -units;
+    var major = Math.floor(units / factor);
+    var num = major.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (decimals > 0) num += '.' + String(units % factor).padStart(decimals, '0');
+    if (neg) num = '-' + num;
+    return suffix ? num + ' ' + display : display + num;
+  }
+  return {
+    decimals: decimals, factor: factor, display: display, suffix: suffix,
+    toMinor: function(v){
+      var num = Number(String(v == null ? '' : v).trim());
+      return isNaN(num) ? 0 : Math.round(num * factor);
+    },
+    toMajor: function(units){ return (units / factor).toFixed(decimals); },
+    format: formatMinor
+  };
+})();
+
 (function(){
   var buf = "";
   var last = 0;
@@ -42,12 +72,7 @@
 
 (function(){
   function toMinor(value){
-    if (value === null || value === undefined) return 0;
-    var normalized = value.toString().trim();
-    if (!normalized) return 0;
-    var num = Number(normalized);
-    if (Number.isNaN(num)) return 0;
-    return Math.round(num * 100);
+    return window.utCurrency.toMinor(value);
   }
 
   function escapeHtml(str){
@@ -91,17 +116,8 @@
     }
 
     var payments = [];
-    var container = document.querySelector('.pos-container');
-    var currency = (container && container.getAttribute('data-currency')) || 'GBP';
-    var formatter;
-    try {
-      formatter = new Intl.NumberFormat(undefined, { style: 'currency', currency: currency });
-    } catch (err) {
-      formatter = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'GBP' });
-    }
-
     function formatMoney(units){
-      return formatter.format(units / 100);
+      return window.utCurrency.format(units);
     }
 
     function setStatus(message, level){
@@ -125,7 +141,7 @@
       }
       var changeInput = form.querySelector('input[name="change"]');
       if (changeInput) {
-        changeInput.value = '0.00';
+        changeInput.value = window.utCurrency.toMajor(0);
       }
     }
 
@@ -161,11 +177,14 @@
       if (!basket) return 0;
       var totalEl = basket.querySelector('.total');
       if (!totalEl) return 0;
+      // Rendered text may use localized digits (fa/ar) — the raw minor units
+      // ride on a data attribute instead.
+      var minor = parseInt(totalEl.getAttribute('data-minor') || '', 10);
+      if (!isNaN(minor)) return minor;
       var text = (totalEl.textContent || '').replace(/[^0-9.,-]/g, '').replace(/,/g, '');
-      if (!text) return 0;
       var num = Number(text);
-      if (Number.isNaN(num)) return 0;
-      return Math.round(num * 100);
+      if (!text || Number.isNaN(num)) return 0;
+      return window.utCurrency.toMinor(num);
     }
 
     function addPayment(){
@@ -214,12 +233,12 @@
       }
       var amountInput = form.querySelector('input[name="amount"]');
       if (amountInput) {
-        amountInput.value = (remaining / 100).toFixed(2);
+        amountInput.value = window.utCurrency.toMajor(remaining);
         amountInput.focus();
       }
       var changeInput = form.querySelector('input[name="change"]');
       if (changeInput) {
-        changeInput.value = '0.00';
+        changeInput.value = window.utCurrency.toMajor(0);
       }
       setStatus('Filled with remaining balance (' + formatMoney(remaining) + ').', 'info');
     }
