@@ -146,6 +146,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPrintAPI(mux, dp)
 	registerBackupAPI(mux, dp)
 	registerEODAPI(mux, dp)
+	registerImport(mux, dp)
 	StartEODScheduler(ctx, dp) // background Z-report (docs: G30)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
