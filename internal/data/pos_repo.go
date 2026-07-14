@@ -622,6 +622,125 @@ GROUP BY p.method_id ORDER BY applied DESC`, fmt.Sprintf("-%d days", days))
 	return out, rows.Err()
 }
 
+// EODMethod is one payment method's day: taken in on sales, paid out on
+// refunds (minor units).
+type EODMethod struct {
+	Method string `json:"method"`
+	In     int64  `json:"in"`
+	Out    int64  `json:"out"`
+}
+
+// EODReport is the classic Z-report for one business day.
+type EODReport struct {
+	Day          string      `json:"day"`
+	SalesCount   int         `json:"sales_count"`
+	Gross        int64       `json:"gross"`
+	RefundCount  int         `json:"refund_count"`
+	RefundTotal  int64       `json:"refund_total"`
+	Net          int64       `json:"net"`
+	TaxNet       int64       `json:"tax_net"`
+	Methods      []EODMethod `json:"methods"`
+	FirstReceipt string      `json:"first_receipt"`
+	LastReceipt  string      `json:"last_receipt"`
+	GeneratedAt  string      `json:"generated_at"`
+}
+
+// EndOfDay aggregates one day's completed sales and returns.
+func (r *POSRepo) EndOfDay(ctx context.Context, day string) (EODReport, error) {
+	rep := EODReport{Day: day, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
+	err := r.db.QueryRowContext(ctx, `
+SELECT
+  COALESCE(SUM(CASE WHEN sale_type = 'sale'   THEN 1 END), 0),
+  COALESCE(SUM(CASE WHEN sale_type = 'sale'   THEN total END), 0),
+  COALESCE(SUM(CASE WHEN sale_type = 'return' THEN 1 END), 0),
+  COALESCE(SUM(CASE WHEN sale_type = 'return' THEN total END), 0),
+  COALESCE(SUM(CASE WHEN sale_type = 'sale' THEN tax_total ELSE -tax_total END), 0),
+  COALESCE(MIN(receipt_no), ''), COALESCE(MAX(receipt_no), '')
+FROM sales
+WHERE status = 'completed' AND date(created_at) = ?`,
+		day).Scan(&rep.SalesCount, &rep.Gross, &rep.RefundCount, &rep.RefundTotal,
+		&rep.TaxNet, &rep.FirstReceipt, &rep.LastReceipt)
+	if err != nil {
+		return rep, fmt.Errorf("eod totals: %w", err)
+	}
+	rep.Net = rep.Gross - rep.RefundTotal
+
+	rows, err := r.db.QueryContext(ctx, `
+SELECT p.method_id,
+  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0),
+  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE s.status = 'completed' AND date(s.created_at) = ?
+GROUP BY p.method_id ORDER BY 2 DESC`, day)
+	if err != nil {
+		return rep, fmt.Errorf("eod methods: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m EODMethod
+		if err := rows.Scan(&m.Method, &m.In, &m.Out); err != nil {
+			return rep, fmt.Errorf("scan eod method: %w", err)
+		}
+		rep.Methods = append(rep.Methods, m)
+	}
+	return rep, rows.Err()
+}
+
+// ArchiveReport stores a generated report; kind+period is unique so the
+// scheduled job is idempotent. Returns false when it already existed.
+func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, content []byte) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+INSERT INTO report_archive (id, kind, period, content_json)
+VALUES (?, ?, ?, ?) ON CONFLICT (kind, period) DO NOTHING`,
+		uuid.NewString(), kind, period, string(content))
+	if err != nil {
+		return false, fmt.Errorf("archive report: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ArchivedReportRow lists an archived report for the Reports page.
+type ArchivedReportRow struct {
+	ID        string
+	Kind      string
+	Period    string
+	Content   string
+	CreatedAt string
+}
+
+// ListArchivedReports returns recent archived reports, newest first.
+func (r *POSRepo) ListArchivedReports(ctx context.Context, limit int) ([]ArchivedReportRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, kind, period, content_json, created_at
+FROM report_archive ORDER BY period DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list reports: %w", err)
+	}
+	defer rows.Close()
+	var out []ArchivedReportRow
+	for rows.Next() {
+		var a ArchivedReportRow
+		if err := rows.Scan(&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan report: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// HasArchivedReport reports whether kind+period was already generated.
+func (r *POSRepo) HasArchivedReport(ctx context.Context, kind, period string) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM report_archive WHERE kind = ? AND period = ?`,
+		kind, period).Scan(&n); err != nil {
+		return false, fmt.Errorf("has report: %w", err)
+	}
+	return n > 0, nil
+}
+
 // RefundLineKey identifies a refundable line across the original sale and
 // its return sales: same item/variant at the same unit price.
 func RefundLineKey(itemID, variantID string, unitPrice int64) string {

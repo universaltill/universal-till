@@ -18,6 +18,38 @@
   <div class="card kpi"><div class="kpi-label">{{ T "reports.tax" }}</div><div class="kpi-value">{{ money .GrandTax }}</div></div>
 </div>
 
+{{ if .IsManager }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.eod.title" }}</h2>
+  <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
+    <button class="btn primary" hx-post="/api/reports/eod/run" hx-target="#eod-msg" hx-swap="innerHTML">{{ T "reports.eod.run" }}</button>
+    <span id="eod-msg" aria-live="polite"></span>
+    <form hx-post="/api/settings/eod" hx-swap="none" style="display:flex; gap:.4rem; align-items:center; margin-inline-start:auto">
+      <label style="display:flex; gap:.3rem; align-items:center">
+        <input type="checkbox" name="enabled" {{ if .EODEnabled }}checked{{ end }}> {{ T "reports.eod.auto" }}
+      </label>
+      <input type="time" name="time" value="{{ .EODTime }}">
+      <button class="btn secondary" type="submit">{{ T "settings.printer.apply" }}</button>
+    </form>
+  </div>
+  {{ if .EODRows }}
+  <table class="table" style="margin-top:.6rem">
+    <thead><tr><th>{{ T "reports.day" }}</th><th>{{ T "reports.sales" }}</th><th>{{ T "reports.eod.net" }}</th><th></th></tr></thead>
+    <tbody>
+      {{ range .EODRows }}
+      <tr>
+        <td>{{ .Period }}</td>
+        <td>{{ .Sales }}</td>
+        <td>{{ money .Net }}</td>
+        <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+</div>
+{{ end }}
+
 {{ if .CanAsk }}
 <div class="card" style="margin-top:1rem">
   <h2>{{ T "reports.ask.title" }}</h2>
