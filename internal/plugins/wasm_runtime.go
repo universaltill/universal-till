@@ -41,6 +41,7 @@ type WasmRuntime struct {
 	mu         sync.Mutex
 	rt         wazero.Runtime
 	modules    map[string]wazero.CompiledModule // plugin id → compiled module
+	versions   map[string]string                // plugin id → compiled version
 	timeout    time.Duration
 	netTimeout time.Duration   // wider deadline for plugins holding net:*
 	hasNet     map[string]bool // plugin id → granted net:* permission
@@ -62,6 +63,7 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 	return &WasmRuntime{
 		rt:         rt,
 		modules:    map[string]wazero.CompiledModule{},
+		versions:   map[string]string{},
 		timeout:    2 * time.Second,
 		netTimeout: 10 * time.Second,
 		hasNet:     map[string]bool{},
@@ -98,6 +100,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		if !active[id] {
 			_ = mod.Close(context.Background())
 			delete(w.modules, id)
+			delete(w.versions, id)
 			delete(w.hasNet, id)
 		}
 	}
@@ -115,13 +118,20 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		}
 		modPath := filepath.Join(w.baseDir, row.ID, row.Version,
 			strings.TrimPrefix(row.Entrypoint, "./"))
-		if err := w.load(row.ID, modPath); err != nil {
+		if err := w.load(row.ID, row.Version, modPath); err != nil {
 			logging.L().Errorf("wasm load %s: %v", row.ID, err)
 			continue
 		}
 		events, err := repo.ListPluginHookEvents(ctx, row.ID)
 		if err != nil || len(events) == 0 {
 			continue
+		}
+		// Authorization events run BLOCKING: the tender waits for the
+		// verdict (docs: wasm-runtime.md payment authorization).
+		for _, evName := range events {
+			if strings.HasSuffix(evName, ".authorize") {
+				bus.SetEventMode(evName, Blocking)
+			}
 		}
 		pluginID := row.ID
 		handle := func(hctx context.Context, ev Event) error {
@@ -153,10 +163,13 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	}
 }
 
-func (w *WasmRuntime) load(pluginID, path string) error {
+func (w *WasmRuntime) load(pluginID, version, path string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if _, ok := w.modules[pluginID]; ok {
+	// Same version already compiled → keep it. A DIFFERENT version means
+	// the plugin was updated: recompile, or the till keeps running the old
+	// code until restart (bug found live on the 1.0.0→1.1.0 update).
+	if _, ok := w.modules[pluginID]; ok && w.versions[pluginID] == version {
 		return nil
 	}
 	raw, err := os.ReadFile(path)
@@ -167,7 +180,11 @@ func (w *WasmRuntime) load(pluginID, path string) error {
 	if err != nil {
 		return fmt.Errorf("compile module: %w", err)
 	}
+	if old, ok := w.modules[pluginID]; ok {
+		_ = old.Close(context.Background())
+	}
 	w.modules[pluginID] = compiled
+	w.versions[pluginID] = version
 	return nil
 }
 
