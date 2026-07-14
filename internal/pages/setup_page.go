@@ -11,7 +11,6 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
-	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // setupCountry prefills currency + tax for the wizard's country step (docs
@@ -109,10 +108,10 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		})
 		common.SaveState(r.Context(), d.Settings, st)
 		httpx.InitCurrency(st.Currency)
-		d.Engine = pos.NewServiceWithResolver(pos.Config{
+		d.Engine.SetConfig(pos.Config{
 			TaxInclusive:       st.TaxInclusive,
 			TaxRateBasisPoints: st.TaxRatePct * 100,
-		}, ui.PriceResolverAdapter{Store: d.BtnStore})
+		})
 
 		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {
 			_ = d.Settings.Set(r.Context(), "store.name", name)
