@@ -144,6 +144,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerAIAPI(mux, dp)
 	registerAskAPI(mux, dp)
 	registerPrintAPI(mux, dp)
+	registerBackupAPI(mux, dp)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
 	registerInventoryAPI(mux, dp)

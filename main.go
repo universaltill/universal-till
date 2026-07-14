@@ -38,7 +38,14 @@ func main() {
 		log.Fatalf("config init failed: %v", err)
 	}
 
-	// 2) DB + migrations
+	// 2) DB + migrations. A staged restore (Settings → Backups → Restore)
+	// applies first, before the DB is opened; the replaced file is kept
+	// in data/backups/.
+	if applied, err := db.ApplyPendingRestore(cfg.DBPath); err != nil {
+		log.Fatalf("apply staged restore failed: %v", err)
+	} else if applied {
+		log.Infof("staged backup restore applied to %s", cfg.DBPath)
+	}
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
 		log.Fatalf("db open/migrate failed: %v", err)

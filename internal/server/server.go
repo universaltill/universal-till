@@ -9,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	dbpkg "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -145,6 +146,44 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
 		jobs := NewBackgroundJobs(catalogRepo, db, supervisor, cfg, logger)
 		go jobs.Start(ctx)
+	}
+
+	// Daily local DB backup (docs: architecture/local-backup.md) — runs
+	// regardless of marketplace config. Checks hourly; snapshots when the
+	// newest backup is older than 24h; first check shortly after boot so a
+	// till powered off nightly still gets one.
+	if db != nil {
+		go func() {
+			run := func() {
+				list, err := dbpkg.ListBackups(cfg.DBPath)
+				if err == nil && len(list) > 0 && time.Since(list[0].ModTime) < 24*time.Hour {
+					return
+				}
+				path, err := dbpkg.Snapshot(db, cfg.DBPath)
+				if err != nil {
+					log.Printf("[Backup] snapshot failed: %v", err)
+					return
+				}
+				log.Printf("[Backup] daily snapshot: %s", path)
+				_ = dbpkg.PruneBackups(cfg.DBPath, 14)
+			}
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Minute):
+				run()
+			}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					run()
+				}
+			}
+		}()
 	}
 
 	// Related-items rebuild (docs: architecture/ai-integration.md §h):
