@@ -409,6 +409,38 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// Payment authorization (docs: wasm-runtime.md): a plugin method
+		// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
+		// BEFORE the sale completes — a declined card must stop the sale.
+		// Bounded by the module's event deadline; no subscriber = no gate
+		// (back-compat with post-settle-only plugins like qrpay).
+		if entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(r.Context()); err == nil && len(entries) > 0 {
+			byMethod := map[string]data.PaymentEntryRow{}
+			for _, e := range entries {
+				byMethod[e.EntryKey] = e
+			}
+			bus := plugins.SharedBus(d.Db)
+			for _, p := range payments {
+				e, ok := byMethod[p.MethodID]
+				if !ok || e.TriggerEvent == "" {
+					continue
+				}
+				authEvent := strings.TrimSuffix(e.TriggerEvent, ".requested") + ".authorize"
+				if !bus.HasSubscribers(authEvent) {
+					continue
+				}
+				if _, err := bus.Publish(r.Context(), authEvent, map[string]any{
+					"method":    p.MethodID,
+					"amount":    p.Amount.Minor(),
+					"reference": p.Reference,
+					"plugin_id": e.PluginID,
+				}); err != nil {
+					http.Error(w, "payment declined: "+p.MethodID, http.StatusPaymentRequired)
+					return
+				}
+			}
+		}
+
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, pos.SaleInput{
 			SaleType:               "sale",
 			Currency:               d.CurrentState().Currency,

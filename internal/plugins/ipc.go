@@ -126,6 +126,14 @@ func (eb *EventBus) SetEventMode(eventType string, mode EventDispatchMode) {
 	eb.eventModes[eventType] = mode
 }
 
+// HasSubscribers reports whether any plugin is subscribed to an event —
+// the tender path uses it to decide if a payment needs authorization.
+func (eb *EventBus) HasSubscribers(eventType string) bool {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return len(eb.subscribers[eventType]) > 0
+}
+
 // GetEventMode returns the dispatch mode for an event type
 // Defaults to NonBlocking if not explicitly configured
 func (eb *EventBus) GetEventMode(eventType string) EventDispatchMode {

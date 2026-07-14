@@ -111,7 +111,7 @@ func TestHostFunctions(t *testing.T) {
 	grantPerm(t, d, pluginID, "net:127.0.0.1")
 
 	w := NewWasmRuntime(t.TempDir())
-	if err := w.load(pluginID, guest); err != nil {
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	w.hasNet[pluginID] = true
@@ -146,7 +146,7 @@ func TestHostFunctionsDenied(t *testing.T) {
 	defer srv.Close()
 
 	w := NewWasmRuntime(t.TempDir())
-	if err := w.load(pluginID, guest); err != nil {
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	res := runGuest(t, w, d, pluginID, srv.URL)
@@ -169,7 +169,7 @@ func TestHostStorageDeniedWithoutPermission(t *testing.T) {
 	// Nothing granted at all: the guest's final results write fails, so run
 	// the event and assert no storage rows appeared.
 	w := NewWasmRuntime(t.TempDir())
-	if err := w.load(pluginID, guest); err != nil {
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	w.mu.Lock()
