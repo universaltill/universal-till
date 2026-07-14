@@ -110,9 +110,11 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 
 	// Assistive AI (camera identify). No UT_AI_API_KEY → disabled and
 	// invisible; never on the checkout path (ADR-0003).
-	aiSvc := ai.New(ai.FromEnv())
-	if aiSvc.Enabled() {
-		log.Infof("AI features enabled (camera identify)")
+	// AI resolves PER REQUEST via aiService (docs: ai-plugin.md): the
+	// marketplace AI plugin's settings first, env as the dev override,
+	// otherwise invisible. Deps.AI stays nil here — it is a test seam.
+	if ai.New(ai.FromEnv()).Enabled() {
+		log.Infof("AI env override present (UT_AI_*) — plugin settings take precedence when the AI plugin is active")
 	}
 
 	dp := &common.Deps{
@@ -127,7 +129,6 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		BtnStore:    btnStore,
 		CatalogRepo: catalogRepo,
 		AuthSvc:     authSvc,
-		AI:          aiSvc,
 	}
 
 	// Register routes
@@ -148,6 +149,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerEODAPI(mux, dp)
 	registerImport(mux, dp)
 	registerReceiptDesigner(mux, dp)
+	registerPluginSettings(mux, dp)
 	StartEODScheduler(ctx, dp) // background Z-report (docs: G30)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)

@@ -468,6 +468,64 @@ ORDER BY permission
 	return res, rows.Err()
 }
 
+// ListPluginSettings returns a plugin's global-scope settings (the
+// manager settings editor + host feature configs read these).
+func (r *PluginRepo) ListPluginSettings(ctx context.Context, pluginID string) ([]PluginSettingRow, error) {
+	rows, err := r.executor(nil).QueryContext(ctx, `
+SELECT id, plugin_id, key, value_json, scope, scope_id, updated_at
+FROM plugin_settings WHERE plugin_id = ? AND scope = 'global' ORDER BY key`, pluginID)
+	if err != nil {
+		return nil, pluginObs.wrap("list_settings", err)
+	}
+	defer rows.Close()
+	var out []PluginSettingRow
+	for rows.Next() {
+		var s PluginSettingRow
+		var updated string // stored as SQLite datetime TEXT
+		if err := rows.Scan(&s.ID, &s.PluginID, &s.Key, &s.ValueJSON, &s.Scope, &s.ScopeID, &updated); err != nil {
+			return nil, pluginObs.wrap("scan_setting", err)
+		}
+		s.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updated)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// UpsertPluginSetting sets one global-scope plugin setting. Update-then-
+// insert rather than ON CONFLICT: the unique index includes scope_id,
+// which is NULL for global rows, and SQLite treats NULLs as distinct.
+func (r *PluginRepo) UpsertPluginSetting(ctx context.Context, pluginID, key, valueJSON string) error {
+	res, err := r.executor(nil).ExecContext(ctx, `
+UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
+WHERE plugin_id = ? AND key = ? AND scope = 'global'`,
+		valueJSON, pluginID, key)
+	if err != nil {
+		return pluginObs.wrap("upsert_setting", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	_, err = r.executor(nil).ExecContext(ctx, `
+INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
+VALUES (?, ?, ?, ?, 'global')`,
+		uuid.NewString(), pluginID, key, valueJSON)
+	if err != nil {
+		return pluginObs.wrap("upsert_setting", err)
+	}
+	return nil
+}
+
+// PluginActive reports whether a plugin is installed and enabled.
+func (r *PluginRepo) PluginActive(ctx context.Context, pluginID string) (bool, error) {
+	var n int
+	err := r.executor(nil).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM plugins WHERE id = ? AND is_active = 1`, pluginID).Scan(&n)
+	if err != nil {
+		return false, pluginObs.wrap("plugin_active", err)
+	}
+	return n > 0, nil
+}
+
 // Plugin KV storage (wasm `storage` host function). Caps keep a plugin from
 // bloating a Pi's SD card; the host function surfaces violations as -4.
 const (

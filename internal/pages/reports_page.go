@@ -51,7 +51,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"title":      "Reports",
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.Menu,
-			"CanAsk":     d.AI != nil && d.AI.CanAsk() && isManagerOrAuthOff(r),
+			"CanAsk":     aiService(r.Context(), d).CanAsk() && isManagerOrAuthOff(r),
 			"IsManager":  isManagerOrAuthOff(r),
 			"EODRows":    eodRows,
 			"EODEnabled": eodEnabled == "true",
