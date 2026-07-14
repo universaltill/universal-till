@@ -1,0 +1,7 @@
+<span class="sync-chip {{ .class }}">
+  {{ if .isReplica -}}
+  <span title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}">⇅ {{ .label }}{{ if .offline }} ⚠{{ end }}{{ if .queued }} · {{ .queued }} {{ T "sync.chip_queued" }}{{ end }}</span>
+  {{- else -}}
+  <a href="/tills" title="{{ T "sync.chip_tills_title" }}">⇅ {{ .count }} {{ T "sync.chip_tills" }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
+  {{- end }}
+</span>
