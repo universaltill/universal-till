@@ -7,6 +7,11 @@
   </div>
 </div>
 
+{{ if .SyncPrimary }}
+<div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
+  <a href="{{ .SyncPrimary }}/catalog" target="_blank" rel="noopener">{{ T "sync.banner_open_primary" }}</a></div>
+{{ end }}
+
 {{ template "catalog_lookups" . }}
 
 <div class="catalog-layout">
