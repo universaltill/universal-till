@@ -98,7 +98,8 @@ func registerAskAPI(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	mux.HandleFunc("POST /api/reports/ask", func(w http.ResponseWriter, r *http.Request) {
-		if d.AI == nil || !d.AI.CanAsk() {
+		svc := aiService(r.Context(), d)
+		if !svc.CanAsk() {
 			http.Error(w, "ask is not configured", http.StatusNotFound)
 			return
 		}
@@ -120,7 +121,7 @@ func registerAskAPI(mux *http.ServeMux, d *common.Deps) {
 			CurrencyDecimals: cur.Decimals,
 			Locale:           locale,
 		}
-		text, err := d.AI.Ask(r.Context(), question, shop, askTools(posRepo))
+		text, err := svc.Ask(r.Context(), question, shop, askTools(posRepo))
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "ai", "-", "ai_ask",
 			map[string]any{"question": question, "ok": err == nil}, now, "")

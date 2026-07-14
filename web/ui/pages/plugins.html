@@ -34,6 +34,7 @@
           <span class="tag" x-show="p.hasUpdate" style="background:rgba(251,146,60,.25); color:#c2410c" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
         </div>
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">
+          <a class="btn secondary" x-show="p.enabled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
           <button class="btn secondary" x-show="p.enabled"
                   @click="act('/api/plugins/' + p.id + '/disable', 'POST')">{{ T "plugins.manage.action.disable" }}</button>
           <button class="btn" x-show="!p.enabled"

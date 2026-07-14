@@ -1,0 +1,23 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "plugins.settings.title" }}</h1>
+  <a class="btn secondary" href="/plugins">← {{ T "nav.plugins" }}</a>
+</div>
+
+<div class="card" style="max-width:32rem">
+  <p class="muted" style="font-family:monospace">{{ .PluginID }}</p>
+  {{ if .Settings }}
+  <form hx-post="/api/plugins/{{ .PluginID }}/settings" hx-target="#ps-msg" hx-swap="innerHTML">
+    {{ range .Settings }}
+    <label>{{ .Key }} <input type="text" name="setting_{{ .Key }}" value="{{ .Value }}"></label>
+    {{ end }}
+    <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
+      <button class="btn primary" type="submit">{{ T "plugins.settings.save" }}</button>
+      <span id="ps-msg" aria-live="polite"></span>
+    </div>
+  </form>
+  {{ else }}
+  <p class="muted">{{ T "plugins.settings.none" }}</p>
+  {{ end }}
+</div>
+{{ end }}

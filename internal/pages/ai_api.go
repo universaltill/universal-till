@@ -66,7 +66,8 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	mux.HandleFunc("POST /api/pos/identify", func(w http.ResponseWriter, r *http.Request) {
-		if !d.AI.Enabled() {
+		svc := aiService(r.Context(), d)
+		if !svc.Enabled() {
 			writeJSON(w, http.StatusNotFound, nil, "ai identify is not configured")
 			return
 		}
@@ -94,7 +95,7 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		refs := loadReferenceImages(items)
 
-		res, err := d.AI.Identify(r.Context(), photo, mediaType, items, refs)
+		res, err := svc.Identify(r.Context(), photo, mediaType, items, refs)
 		if err != nil {
 			log.Printf("warning: ai identify failed: %v", err)
 			writeJSON(w, http.StatusBadGateway, nil, "identification unavailable")
@@ -146,7 +147,8 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 	// that item (role "ai_ref"), so the shop's recognizer improves with use —
 	// per-shop, no fine-tuning, nothing shared between shops.
 	mux.HandleFunc("POST /api/pos/identify/confirm", func(w http.ResponseWriter, r *http.Request) {
-		if !d.AI.Enabled() {
+		svc := aiService(r.Context(), d)
+		if !svc.Enabled() {
 			writeJSON(w, http.StatusNotFound, nil, "ai identify is not configured")
 			return
 		}
