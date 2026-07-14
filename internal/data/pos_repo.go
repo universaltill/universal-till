@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -619,6 +620,87 @@ GROUP BY p.method_id ORDER BY applied DESC`, fmt.Sprintf("-%d days", days))
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// RefundLineKey identifies a refundable line across the original sale and
+// its return sales: same item/variant at the same unit price.
+func RefundLineKey(itemID, variantID string, unitPrice int64) string {
+	return itemID + "|" + variantID + "|" + strconv.FormatInt(unitPrice, 10)
+}
+
+// ReturnedQuantities sums, per line key, what previous returns linked to
+// the original sale already gave back — the double-refund guard's input.
+func (r *POSRepo) ReturnedQuantities(ctx context.Context, originalSaleID string) (map[string]float64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(l.item_id, ''), COALESCE(l.variant_id, ''), l.unit_price, SUM(l.quantity)
+FROM sale_lines l
+JOIN sale_links k ON k.sale_id = l.sale_id
+JOIN sales s ON s.id = l.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+WHERE k.original_sale_id = ?
+GROUP BY l.item_id, l.variant_id, l.unit_price`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("returned quantities: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var itemID, variantID string
+		var unitPrice int64
+		var qty float64
+		if err := rows.Scan(&itemID, &variantID, &unitPrice, &qty); err != nil {
+			return nil, fmt.Errorf("scan returned qty: %w", err)
+		}
+		out[RefundLineKey(itemID, variantID, unitPrice)] = qty
+	}
+	return out, rows.Err()
+}
+
+// OriginalReceiptFor resolves the original sale's receipt number for a
+// return sale (refund receipts reference it), and the reverse direction
+// lists returns made against a sale.
+func (r *POSRepo) OriginalReceiptFor(ctx context.Context, returnSaleID string) (string, bool, error) {
+	var receipt string
+	err := r.db.QueryRowContext(ctx, `
+SELECT s.receipt_no FROM sale_links k JOIN sales s ON s.id = k.original_sale_id
+WHERE k.sale_id = ?`, returnSaleID).Scan(&receipt)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("original receipt: %w", err)
+	}
+	return receipt, true, nil
+}
+
+// ReturnReceiptsFor lists receipt numbers of returns linked to a sale.
+func (r *POSRepo) ReturnReceiptsFor(ctx context.Context, originalSaleID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT s.receipt_no FROM sale_links k JOIN sales s ON s.id = k.sale_id
+WHERE k.original_sale_id = ? ORDER BY s.created_at`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("return receipts: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var rn string
+		if err := rows.Scan(&rn); err != nil {
+			return nil, fmt.Errorf("scan return receipt: %w", err)
+		}
+		out = append(out, rn)
+	}
+	return out, rows.Err()
+}
+
+// ReceiptExists reports whether a receipt number belongs to a sale — the
+// scan handler's fallback for scan-to-refund.
+func (r *POSRepo) ReceiptExists(ctx context.Context, receiptNo string) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sales WHERE receipt_no = ?`, receiptNo).Scan(&n); err != nil {
+		return false, fmt.Errorf("receipt exists: %w", err)
+	}
+	return n > 0, nil
 }
 
 // AuditActionCount aggregates till activity for "Ask your till" — counts
@@ -1287,6 +1369,9 @@ type SaleDetail struct {
 type SaleDetailLine struct {
 	Name         string
 	SKU          string
+	ItemID       string
+	VariantID    string
+	TaxRateBP    int
 	Qty          float64
 	UnitPrice    int64
 	LineDiscount int64
@@ -1320,7 +1405,8 @@ FROM sales WHERE receipt_no = ?`, receiptNo).Scan(
 	}
 
 	lineRows, err := r.db.QueryContext(ctx, `
-SELECT name_snapshot, COALESCE(sku_snapshot, ''), quantity, unit_price,
+SELECT name_snapshot, COALESCE(sku_snapshot, ''), COALESCE(item_id, ''),
+       COALESCE(variant_id, ''), COALESCE(tax_rate_bp, 0), quantity, unit_price,
        line_discount, tax_amount, total_after_tax
 FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 	if err != nil {
@@ -1329,7 +1415,7 @@ FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 	defer lineRows.Close()
 	for lineRows.Next() {
 		var l SaleDetailLine
-		if err := lineRows.Scan(&l.Name, &l.SKU, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal); err != nil {
+		if err := lineRows.Scan(&l.Name, &l.SKU, &l.ItemID, &l.VariantID, &l.TaxRateBP, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale line: %w", err)
 		}
 		d.Lines = append(d.Lines, l)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -108,6 +109,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			b := d.Engine.Basket()
 			b.ToastMessage = fmt.Sprintf("Promotion %s applied", code)
 			render(&b)
+			return
+		}
+
+		// Scan-to-refund (docs: refunds.md): a printed receipt carries its
+		// number as a barcode — scanning it opens the refund screen.
+		if exists, _ := repo.ReceiptExists(r.Context(), code); exists {
+			w.Header().Set("HX-Redirect", "/refund/"+url.PathEscape(code))
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 

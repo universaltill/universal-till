@@ -1,0 +1,57 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "refund.title" }} #{{ .Sale.ReceiptNo }}</h1>
+  <a class="btn secondary" href="/journal/{{ .Sale.ReceiptNo }}">← {{ T "journal.detail.title" }}</a>
+</div>
+
+<div class="card" style="max-width:46rem">
+  <p class="muted">{{ T "refund.help" }}</p>
+  <form id="refund-form" hx-post="/api/refund" hx-swap="none">
+    <input type="hidden" name="receipt" value="{{ .Sale.ReceiptNo }}">
+    <table class="table">
+      <thead><tr><th>{{ T "journal.detail.item" }}</th><th>{{ T "refund.col.sold" }}</th><th>{{ T "refund.col.remaining" }}</th><th>{{ T "journal.detail.price" }}</th><th>{{ T "refund.col.refund_qty" }}</th></tr></thead>
+      <tbody>
+        {{ range .Lines }}
+        <tr>
+          <td>{{ .Name }}{{ if .SKU }} <span class="muted">{{ .SKU }}</span>{{ end }}</td>
+          <td>{{ .Sold }}</td>
+          <td>{{ .Remaining }}</td>
+          <td>{{ money .UnitPrice }}</td>
+          <td>
+            {{ if gt .Remaining 0.0 }}
+            <input type="number" name="qty_{{ .Index }}" value="{{ .Remaining }}"
+                   min="0" max="{{ .Remaining }}" step="any" style="width:6rem">
+            {{ else }}
+            <span class="muted">{{ T "refund.fully_refunded" }}</span>
+            {{ end }}
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+
+    <div class="field-pair" style="margin-top:.6rem">
+      <label>{{ T "refund.method" }}
+        <select name="method">
+          {{ range .Methods }}<option value="{{ . }}">{{ . }}</option>{{ end }}
+        </select>
+      </label>
+      {{ if not .AuthOff }}
+      <label>{{ T "refund.manager_pin" }}
+        <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" required>
+      </label>
+      {{ end }}
+    </div>
+
+    <button class="btn primary" type="submit" style="margin-top:.6rem">{{ T "refund.submit" }}</button>
+    <div id="refund-msg" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
+  </form>
+</div>
+
+<script>
+document.body.addEventListener('htmx:responseError', function (ev) {
+  var msg = document.getElementById('refund-msg');
+  if (msg) msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+});
+</script>
+{{ end }}

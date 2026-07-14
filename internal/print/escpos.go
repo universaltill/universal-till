@@ -29,6 +29,9 @@ type Doc struct {
 	Totals    []KV // subtotal, tax, TOTAL (last is emphasised)
 	Payments  []KV
 	Footer    []string
+	// Barcode prints as CODE128 above the footer (receipt number — the
+	// cashier scans it to open the sale for a refund). ASCII only.
+	Barcode    string
 	KickDrawer bool
 	Charset    string // "utf8" (default) or "ascii"
 }
@@ -58,7 +61,32 @@ var (
 	cmdDoubleOff  = []byte{0x1d, 0x21, 0x00}
 	cmdFeedCut    = []byte{0x1d, 0x56, 0x42, 0x03} // feed 3 + partial cut
 	cmdKickDrawer = []byte{0x1b, 0x70, 0x00, 0x19, 0xfa}
+
+	cmdBarcodeHeight = []byte{0x1d, 0x68, 0x50}       // GS h 80 dots
+	cmdBarcodeWidth  = []byte{0x1d, 0x77, 0x02}       // GS w module 2
+	cmdBarcodeHRI    = []byte{0x1d, 0x48, 0x02}       // GS H print number below
+	cmdBarcodeCode128 = []byte{0x1d, 0x6b, 0x49}      // GS k 73 <len> <data>
 )
+
+// barcode emits a CODE128 symbol (code set B) for a printable-ASCII code.
+func barcode(b *bytes.Buffer, code string) {
+	if code == "" || len(code) > 60 {
+		return
+	}
+	for _, r := range code {
+		if r < 0x20 || r > 0x7e {
+			return // unencodable — skip rather than jam the printer
+		}
+	}
+	data := append([]byte{'{', 'B'}, []byte(code)...)
+	b.Write(cmdBarcodeHeight)
+	b.Write(cmdBarcodeWidth)
+	b.Write(cmdBarcodeHRI)
+	b.Write(cmdBarcodeCode128)
+	b.WriteByte(byte(len(data)))
+	b.Write(data)
+	b.WriteByte('\n')
+}
 
 // Render produces the full ESC/POS byte stream for a document.
 func Render(d Doc) []byte {
@@ -109,6 +137,13 @@ func Render(d Doc) []byte {
 		for _, p := range d.Payments {
 			line(kvRow(p.Label, p.Amount))
 		}
+	}
+
+	if d.Barcode != "" {
+		line("")
+		b.Write(cmdAlignMid)
+		barcode(&b, d.Barcode)
+		b.Write(cmdAlignLeft)
 	}
 
 	if len(d.Footer) > 0 {
