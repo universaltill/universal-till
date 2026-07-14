@@ -140,6 +140,49 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	return out, rows.Err()
 }
 
+// ExportRow is one catalog line for the CSV export (G22b — the
+// anti-lock-in half of import: a shop can always take its data and leave).
+// Columns are chosen so our own importer round-trips the file.
+type ExportRow struct {
+	Name        string
+	SKU         string
+	Barcode     string // primary barcode preferred, else any
+	PriceMinor  int64
+	Category    string
+	Description string
+	IsWeighed   bool
+	Stock       float64
+	IsActive    bool
+}
+
+// ExportRows reads the whole catalog for export, active items first.
+func (r *CatalogRepo) ExportRows(ctx context.Context) ([]ExportRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.name, COALESCE(i.sku, ''),
+       COALESCE((SELECT b.barcode FROM item_barcodes b WHERE b.item_id = i.id
+                 ORDER BY b.is_primary DESC, b.barcode LIMIT 1), ''),
+       i.base_price, COALESCE(c.name, ''), COALESCE(i.description, ''),
+       i.is_weighed,
+       COALESCE((SELECT SUM(v.quantity) FROM inventory v WHERE v.item_id = i.id), 0),
+       i.is_active
+FROM items i LEFT JOIN categories c ON c.id = i.category_id
+ORDER BY i.is_active DESC, i.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ExportRow
+	for rows.Next() {
+		var e ExportRow
+		if err := rows.Scan(&e.Name, &e.SKU, &e.Barcode, &e.PriceMinor, &e.Category,
+			&e.Description, &e.IsWeighed, &e.Stock, &e.IsActive); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 type Lookup struct {
 	ID   string
 	Name string
