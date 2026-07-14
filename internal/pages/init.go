@@ -150,6 +150,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerImport(mux, dp)
 	registerReceiptDesigner(mux, dp)
 	registerPluginSettings(mux, dp)
+	registerSyncAPI(mux, dp)
 	StartEODScheduler(ctx, dp) // background Z-report (docs: G30)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
