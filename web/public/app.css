@@ -265,6 +265,21 @@ a.btn, a.btn:hover { text-decoration: none; }
   font-size: .9rem;
 }
 .basket .total { font-weight: 700; font-size: 1.3rem; color: var(--brand); }
+
+/* "Customers also buy" strip — compact chips pinned under the totals;
+   scrolls sideways instead of growing so the fixed sale-screen grid holds. */
+.suggest-strip { flex-shrink: 0; display: flex; gap: .35rem; align-items: center;
+                 overflow-x: auto; margin-top: .45rem; padding-block: .1rem; }
+.suggest-strip[hidden] { display: none; }
+.suggest-title { font-size: .78rem; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: .04em; color: var(--muted); white-space: nowrap; }
+.suggest-chip { display: inline-flex; align-items: center; gap: .35rem;
+                padding: .3rem .55rem; font: inherit; font-size: .8rem; cursor: pointer;
+                border: 1px dashed var(--brand); border-radius: var(--radius);
+                color: var(--brand); background: var(--surface); white-space: nowrap; }
+.suggest-chip:hover { background: var(--brand); color: #fff; }
+.suggest-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 4px; }
+.suggest-price { font-variant-numeric: tabular-nums; opacity: .8; }
 .basket td { padding: .4rem .45rem; }
 .basket th { padding: .4rem .45rem; }
 

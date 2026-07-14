@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -144,6 +145,36 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
 		jobs := NewBackgroundJobs(catalogRepo, db, supervisor, cfg, logger)
 		go jobs.Start(ctx)
+	}
+
+	// Related-items rebuild (docs: architecture/ai-integration.md §h):
+	// market-basket stats from the shop's own sales history feed the
+	// "customers also buy" strip. Runs at startup (tills reboot daily) and
+	// every 24h for always-on installs. Local SQL only — no network.
+	if db != nil {
+		go func() {
+			repo := data.NewRelatedItemsRepo(db)
+			rebuild := func() {
+				jobCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer cancel()
+				if n, err := repo.Rebuild(jobCtx); err != nil {
+					log.Printf("[RelatedItems] rebuild failed: %v", err)
+				} else {
+					log.Printf("[RelatedItems] rebuilt %d co-occurrence pairs", n)
+				}
+			}
+			rebuild()
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					rebuild()
+				}
+			}
+		}()
 	}
 
 	srv := &http.Server{

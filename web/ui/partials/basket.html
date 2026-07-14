@@ -57,5 +57,7 @@
     <div>{{ T "basket.tax" }}: {{ money .Tax }}</div>
     <div class="total" data-minor="{{ .Total.Minor }}">{{ T "basket.total" }}: {{ money .Total }}</div>
   </div>
+  <!-- "Customers also buy" — reloads with every basket swap (local data only) -->
+  <div id="suggest-strip" hx-get="/ui/suggestions" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
 {{ end }}

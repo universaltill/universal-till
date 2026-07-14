@@ -1,0 +1,17 @@
+<!-- "Customers also buy" strip — computed locally from the shop's own sales
+     history (related_items table); re-fetched every time the basket partial
+     is swapped in, so it always reflects the current basket. -->
+<div id="suggest-strip" class="suggest-strip"{{ if not .Suggestions }} hidden{{ end }}>
+  {{ if .Suggestions }}
+    <span class="suggest-title">{{ T "suggest.title" }}</span>
+    {{ range .Suggestions }}
+      <button type="button" class="suggest-chip" title="{{ T "suggest.add" }}"
+              hx-post="/api/pos/scan" hx-vals='{"code":"{{ .SKU }}","qty":1}'
+              hx-target="#basket" hx-swap="outerHTML">
+        {{ if .ImageURL }}<img class="suggest-thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+        <span class="suggest-name">{{ .Name }}</span>
+        <span class="suggest-price">{{ money .PriceMinor }}</span>
+      </button>
+    {{ end }}
+  {{ end }}
+</div>
