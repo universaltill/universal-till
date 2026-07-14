@@ -190,3 +190,15 @@ func TestNetworkTransportUnreachableFailsFast(t *testing.T) {
 		t.Error("failure took too long — would stall the print goroutine")
 	}
 }
+
+func TestRenderLabel(t *testing.T) {
+	out := RenderLabel("Coca-Cola Can 330ml", "£1.40", "5000000000011", "utf8")
+	if !bytes.HasPrefix(out, cmdInit) || !bytes.HasSuffix(out, cmdFeedCut) {
+		t.Error("label must init and cut")
+	}
+	for _, want := range [][]byte{[]byte("Coca-Cola"), []byte("£1.40"), append([]byte("{B"), []byte("5000000000011")...), cmdDoubleOn} {
+		if !bytes.Contains(out, want) {
+			t.Errorf("label missing %q", want)
+		}
+	}
+}

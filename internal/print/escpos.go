@@ -223,3 +223,23 @@ func (d Doc) Validate() error {
 	}
 	return nil
 }
+
+// RenderLabel produces one product/shelf label (docs: receipt-printing.md
+// § label printing): name, price big, barcode, cut. Callers concatenate
+// copies.
+func RenderLabel(name, price, code, charset string) []byte {
+	var b bytes.Buffer
+	enc := func(s string) []byte { return encodeText(s, charset) }
+	b.Write(cmdInit)
+	b.Write(cmdAlignMid)
+	b.Write(enc(clip(name, Width)))
+	b.WriteByte('\n')
+	b.Write(cmdDoubleOn)
+	b.Write(enc(clip(price, Width/2)))
+	b.WriteByte('\n')
+	b.Write(cmdDoubleOff)
+	barcode(&b, code)
+	b.Write(cmdAlignLeft)
+	b.Write(cmdFeedCut)
+	return b.Bytes()
+}

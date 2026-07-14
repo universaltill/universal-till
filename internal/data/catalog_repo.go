@@ -19,6 +19,36 @@ func NewCatalogRepo(db *sql.DB) *CatalogRepo {
 	return &CatalogRepo{db: db}
 }
 
+// ItemLabel is what a printed product label needs.
+type ItemLabel struct {
+	Name       string
+	PriceMinor int64
+	Code       string // primary barcode, else SKU
+}
+
+// GetItemLabel loads label data for one item: name, price, and the primary
+// barcode (falling back to any barcode, then the SKU).
+func (r *CatalogRepo) GetItemLabel(ctx context.Context, itemID string) (ItemLabel, bool, error) {
+	var l ItemLabel
+	var sku string
+	err := r.db.QueryRowContext(ctx, `
+SELECT name, base_price, COALESCE(sku, '') FROM items WHERE id = ?`, itemID).
+		Scan(&l.Name, &l.PriceMinor, &sku)
+	if err == sql.ErrNoRows {
+		return ItemLabel{}, false, nil
+	}
+	if err != nil {
+		return ItemLabel{}, false, fmt.Errorf("item label: %w", err)
+	}
+	_ = r.db.QueryRowContext(ctx, `
+SELECT barcode FROM item_barcodes WHERE item_id = ?
+ORDER BY is_primary DESC LIMIT 1`, itemID).Scan(&l.Code)
+	if l.Code == "" {
+		l.Code = sku
+	}
+	return l, true, nil
+}
+
 // ItemExists reports whether an item row exists (any active state).
 func (r *CatalogRepo) ItemExists(ctx context.Context, itemID string) (bool, error) {
 	var one int
