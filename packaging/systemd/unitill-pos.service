@@ -1,0 +1,17 @@
+# Universal Till POS — installed by the .deb package.
+[Unit]
+Description=Universal Till POS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pos
+WorkingDirectory=/opt/unitill
+EnvironmentFile=-/opt/unitill/pos.env
+ExecStart=/opt/unitill/bin/unitill-pos
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

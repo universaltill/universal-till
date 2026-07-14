@@ -1,0 +1,77 @@
+# Universal Till POS releases (docs: architecture/packaging.md).
+# Local test: goreleaser release --snapshot --clean
+# Real release: push a v* tag — .github/workflows/release.yml runs this.
+version: 2
+
+project_name: unitill-pos
+
+builds:
+  - id: unitill-pos
+    binary: unitill-pos
+    main: .
+    env:
+      - CGO_ENABLED=0 # pure-Go SQLite — cross-compiles everywhere
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: darwin
+        goarch: amd64
+
+# The binary reads web/ (templates, locales, assets) from disk at runtime —
+# every artifact must carry it.
+archives:
+  - id: bundle
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - web/**
+      - src: packaging/pos.env.example
+        dst: pos.env.example
+      - src: packaging/windows/run-unitill.bat
+        dst: run-unitill.bat
+      - README.md
+      - LICENSE*
+
+nfpms:
+  - id: deb
+    package_name: unitill-pos
+    formats: [deb]
+    # arm64 = Raspberry Pi OS 64-bit; amd64 = any Debian/Ubuntu box.
+    maintainer: Task Runner Technology LTD <support@universaltill.com>
+    description: |-
+      Universal Till — offline-first point of sale.
+      Free, open POS with a plugin marketplace. Runs fully offline;
+      first-boot wizard at http://localhost:8080.
+    homepage: https://universaltill.com
+    license: MIT
+    bindir: /opt/unitill/bin
+    contents:
+      - src: web
+        dst: /opt/unitill/web
+      - src: packaging/systemd/unitill-pos.service
+        dst: /etc/systemd/system/unitill-pos.service
+      - src: packaging/pos.env.example
+        dst: /opt/unitill/pos.env
+        type: config|noreplace
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  draft: false
+  footer: |
+    **Raspberry Pi / Debian:** `sudo apt install ./unitill-pos_*_arm64.deb`
+    then open http://localhost:8080 — the first-boot wizard does the rest.
+
+    **Windows:** unzip, double-click `run-unitill.bat`.
