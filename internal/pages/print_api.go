@@ -40,6 +40,47 @@ func printerConfig(ctx context.Context, d *common.Deps) print.Config {
 	}
 }
 
+// receiptDesign mirrors the receipt.* settings (docs: receipt-designer.md).
+type receiptDesign struct {
+	Header      []string // up to 3 lines under the shop name
+	Footer      string
+	ShowSKU     bool
+	ShowTax     bool // subtotal+tax rows; off = TOTAL only
+	ShowBarcode bool
+}
+
+const (
+	keyReceiptHeader1     = "receipt.header1"
+	keyReceiptHeader2     = "receipt.header2"
+	keyReceiptHeader3     = "receipt.header3"
+	keyReceiptFooter      = "receipt.footer"
+	keyReceiptShowSKU     = "receipt.show_sku"
+	keyReceiptShowTax     = "receipt.show_tax"
+	keyReceiptShowBarcode = "receipt.show_barcode"
+)
+
+// receiptDesignFromSettings loads the saved design with friendly defaults.
+func receiptDesignFromSettings(ctx context.Context, d *common.Deps) receiptDesign {
+	get := func(key, def string) string {
+		if v, ok, _ := d.Settings.Get(ctx, key); ok {
+			return strings.TrimSpace(v)
+		}
+		return def
+	}
+	rd := receiptDesign{
+		Footer:      get(keyReceiptFooter, "Thank you!"),
+		ShowSKU:     get(keyReceiptShowSKU, "false") == "true",
+		ShowTax:     get(keyReceiptShowTax, "true") != "false",
+		ShowBarcode: get(keyReceiptShowBarcode, "true") != "false",
+	}
+	for _, k := range []string{keyReceiptHeader1, keyReceiptHeader2, keyReceiptHeader3} {
+		if v := get(k, ""); v != "" {
+			rd.Header = append(rd.Header, v)
+		}
+	}
+	return rd
+}
+
 // buildReceiptDoc assembles the printable receipt for a completed sale.
 func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (print.Doc, error) {
 	detail, ok, err := data.NewPOSRepo(d.Db).GetSaleDetail(ctx, receiptNo)
@@ -50,18 +91,22 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		return print.Doc{}, fmt.Errorf("receipt %s not found", receiptNo)
 	}
 	cfg := printerConfig(ctx, d)
+	rd := receiptDesignFromSettings(ctx, d)
 	locale := "en" // receipts print with latin digits; RTL needs bitmap mode (spec)
 	money := func(minor int64) string { return httpx.FormatMoney(minor, locale) }
 
 	doc := print.Doc{
 		StoreName: storeNameOrDefault(ctx, d),
+		Header:    rd.Header,
 		Meta: []string{
 			"Receipt " + detail.ReceiptNo,
 			detail.CreatedAt,
 		},
-		// Scan-to-refund (G28): the receipt number as a barcode.
-		Barcode: detail.ReceiptNo,
 		Charset: cfg.Charset,
+	}
+	if rd.ShowBarcode {
+		// Scan-to-refund (G28): the receipt number as a barcode.
+		doc.Barcode = detail.ReceiptNo
 	}
 	if detail.SaleType == "return" {
 		meta := []string{"*** REFUND ***"}
@@ -72,16 +117,22 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	}
 	for _, l := range detail.Lines {
 		qty := strconv.FormatFloat(l.Qty, 'f', -1, 64)
-		doc.Lines = append(doc.Lines, print.Line{Name: l.Name, Qty: qty, Amount: money(l.LineTotal)})
+		name := l.Name
+		if rd.ShowSKU && l.SKU != "" {
+			name += " [" + l.SKU + "]"
+		}
+		doc.Lines = append(doc.Lines, print.Line{Name: name, Qty: qty, Amount: money(l.LineTotal)})
 	}
-	doc.Totals = []print.KV{{Label: "Subtotal", Amount: money(detail.Subtotal)}}
+	if rd.ShowTax {
+		doc.Totals = []print.KV{{Label: "Subtotal", Amount: money(detail.Subtotal)}}
+	}
 	if detail.DiscountTotal != 0 {
 		doc.Totals = append(doc.Totals, print.KV{Label: "Discount", Amount: "-" + money(detail.DiscountTotal)})
 	}
-	doc.Totals = append(doc.Totals,
-		print.KV{Label: "Tax", Amount: money(detail.TaxTotal)},
-		print.KV{Label: "TOTAL", Amount: money(detail.Total), Strong: true},
-	)
+	if rd.ShowTax {
+		doc.Totals = append(doc.Totals, print.KV{Label: "Tax", Amount: money(detail.TaxTotal)})
+	}
+	doc.Totals = append(doc.Totals, print.KV{Label: "TOTAL", Amount: money(detail.Total), Strong: true})
 	for _, p := range detail.Payments {
 		doc.Payments = append(doc.Payments, print.KV{Label: strings.ToUpper(p.Method[:1]) + p.Method[1:], Amount: money(p.Amount)})
 		if p.ChangeGiven > 0 {
@@ -91,7 +142,9 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 			doc.KickDrawer = true
 		}
 	}
-	doc.Footer = []string{"Thank you!"}
+	if rd.Footer != "" {
+		doc.Footer = []string{rd.Footer}
+	}
 	return doc, nil
 }
 

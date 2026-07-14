@@ -57,3 +57,31 @@ func TestBuildEODDoc(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTextPreviewLayout(t *testing.T) {
+	rd := receiptDesign{
+		Header:      []string{"12 High Street", "VAT GB123"},
+		Footer:      "See you soon!",
+		ShowSKU:     true,
+		ShowTax:     false,
+		ShowBarcode: true,
+	}
+	txt := print.RenderText(sampleReceiptDoc("My Shop", rd))
+	for _, want := range []string{"My Shop", "12 High Street", "VAT GB123", "[SKU-001]", "See you soon!", "000000123", "TOTAL"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("preview missing %q", want)
+		}
+	}
+	if strings.Contains(txt, "Subtotal") || strings.Contains(txt, "Tax") {
+		t.Error("ShowTax=false must hide subtotal/tax rows")
+	}
+	if !strings.Contains(txt, "║█║") {
+		t.Error("barcode placeholder missing when enabled")
+	}
+	rd.ShowBarcode = false
+	rd.ShowSKU = false
+	txt = print.RenderText(sampleReceiptDoc("My Shop", rd))
+	if strings.Contains(txt, "║█║") || strings.Contains(txt, "[SKU-001]") {
+		t.Error("disabled barcode/SKU still rendered")
+	}
+}

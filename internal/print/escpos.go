@@ -224,6 +224,57 @@ func (d Doc) Validate() error {
 	return nil
 }
 
+// RenderText lays the document out exactly like Render but as plain text —
+// the receipt designer's live preview shows what the printer will produce,
+// with the barcode as a placeholder row.
+func RenderText(d Doc) string {
+	var b strings.Builder
+	center := func(s string) {
+		s = clip(s, Width)
+		pad := (Width - len(s)) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		b.WriteString(strings.Repeat(" ", pad) + s + "\n")
+	}
+	center(d.StoreName)
+	for _, h := range d.Header {
+		center(h)
+	}
+	b.WriteString(strings.Repeat("-", Width) + "\n")
+	for _, m := range d.Meta {
+		b.WriteString(clip(m, Width) + "\n")
+	}
+	b.WriteString(strings.Repeat("-", Width) + "\n")
+	for _, l := range d.Lines {
+		for _, row := range layoutLine(l) {
+			b.WriteString(row + "\n")
+		}
+	}
+	b.WriteString(strings.Repeat("-", Width) + "\n")
+	for _, t := range d.Totals {
+		b.WriteString(kvRow(t.Label, t.Amount) + "\n")
+	}
+	if len(d.Payments) > 0 {
+		b.WriteString("\n")
+		for _, p := range d.Payments {
+			b.WriteString(kvRow(p.Label, p.Amount) + "\n")
+		}
+	}
+	if d.Barcode != "" {
+		b.WriteString("\n")
+		center("║█║▌║█║▌║▌█║█║▌║")
+		center(d.Barcode)
+	}
+	if len(d.Footer) > 0 {
+		b.WriteString("\n")
+		for _, f := range d.Footer {
+			center(f)
+		}
+	}
+	return b.String()
+}
+
 // RenderLabel produces one product/shelf label (docs: receipt-printing.md
 // § label printing): name, price big, barcode, cut. Callers concatenate
 // copies.

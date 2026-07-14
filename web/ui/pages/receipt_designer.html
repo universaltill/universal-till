@@ -1,0 +1,37 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "designer.receipt.title" }}</h1>
+  <a class="btn secondary" href="/settings">← {{ T "settings.title" }}</a>
+</div>
+
+<div class="catalog-layout">
+  <div class="card">
+    <p class="muted">{{ T "designer.receipt.help" }}</p>
+    <form id="rd-form"
+          hx-post="/api/receipt-designer/preview" hx-target="#rd-preview" hx-swap="innerHTML"
+          hx-trigger="input delay:300ms from:closest form, change from:closest form">
+      <label>{{ T "designer.receipt.header" }} 1 <input type="text" name="header1" value="{{ .H1 }}" maxlength="42" placeholder="{{ T "designer.receipt.header_ph1" }}"></label>
+      <label>{{ T "designer.receipt.header" }} 2 <input type="text" name="header2" value="{{ .H2 }}" maxlength="42" placeholder="{{ T "designer.receipt.header_ph2" }}"></label>
+      <label>{{ T "designer.receipt.header" }} 3 <input type="text" name="header3" value="{{ .H3 }}" maxlength="42" placeholder="{{ T "designer.receipt.header_ph3" }}"></label>
+      <label>{{ T "designer.receipt.footer" }} <input type="text" name="footer" value="{{ .D.Footer }}" maxlength="42"></label>
+      <div class="field-checks">
+        <label><input type="checkbox" name="show_sku" {{ if .D.ShowSKU }}checked{{ end }}> {{ T "designer.receipt.show_sku" }}</label>
+        <label><input type="checkbox" name="show_tax" {{ if .D.ShowTax }}checked{{ end }}> {{ T "designer.receipt.show_tax" }}</label>
+        <label><input type="checkbox" name="show_barcode" {{ if .D.ShowBarcode }}checked{{ end }}> {{ T "designer.receipt.show_barcode" }}</label>
+      </div>
+      <div style="display:flex; gap:.4rem; align-items:center; margin-top:.6rem">
+        <button class="btn primary" type="button"
+                hx-post="/api/receipt-designer/save" hx-include="#rd-form" hx-target="#rd-msg" hx-swap="innerHTML">{{ T "designer.receipt.save" }}</button>
+        <button class="btn secondary" type="button"
+                hx-post="/api/receipt-designer/test" hx-include="#rd-form" hx-target="#rd-msg" hx-swap="innerHTML">{{ T "settings.printer.test" }}</button>
+        <span id="rd-msg" aria-live="polite"></span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>{{ T "designer.receipt.preview" }}</h3>
+    <pre id="rd-preview" style="background:#fff; color:#111; border:1px dashed #d1d5db; padding:.8rem; font-size:.78rem; line-height:1.25; overflow-x:auto">{{ .Preview }}</pre>
+  </div>
+</div>
+{{ end }}
