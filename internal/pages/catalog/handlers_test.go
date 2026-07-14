@@ -85,6 +85,53 @@ func TestCatalogCreateAndDeactivate(t *testing.T) {
 	}
 }
 
+func TestCatalogLookupRejectsInvalidBarcode(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}})
+
+	for _, q := range []string{"", "abc", "12345", "123456789012345"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/catalog/lookup?barcode="+q, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("barcode %q: expected 400, got %d: %s", q, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Errorf("barcode %q: expected JSON error envelope, got %s", q, rec.Body.String())
+		}
+	}
+}
+
+func TestCatalogCreateWithBarcodeAttachesPrimary(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}})
+
+	form := strings.NewReader("name=Cola&price=150&isActive=1&barcode=5449000000996")
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on create, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var itemID string
+	var isPrimary int
+	err := db.QueryRow(`SELECT item_id, is_primary FROM item_barcodes WHERE barcode = '5449000000996'`).
+		Scan(&itemID, &isPrimary)
+	if err != nil {
+		t.Fatalf("barcode not attached: %v", err)
+	}
+	if itemID != extractItemID(t, db) || isPrimary != 1 {
+		t.Errorf("barcode attached wrong: item=%s primary=%d", itemID, isPrimary)
+	}
+}
+
 func extractItemID(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	var id string
