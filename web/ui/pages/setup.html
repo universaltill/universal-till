@@ -31,6 +31,7 @@
           </div>
           <div class="setup-nav">
             <button type="button" class="btn primary" @click="step = 2">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = 99" style="margin-top:.4rem">{{ T "setup.join.title" }}</button>
           </div>
         </section>
 
@@ -91,6 +92,26 @@
           </div>
         </section>
       </form>
+
+      <!-- Alternate path: join an existing shop (ADR-0011 D2). The primary's
+           QR code enrols this till and copies the whole shop over. -->
+      <section x-show="step === 99" x-cloak>
+        <h1>{{ T "setup.join.title" }}</h1>
+        <p class="muted">{{ T "setup.join.help" }}</p>
+        <form hx-post="/api/setup/join" hx-target="#setup-join-msg" hx-swap="innerHTML">
+          <label>{{ T "tills.join_code" }}
+            <input type="text" name="code" placeholder='{"token":"…","url":"http://…"}' required>
+          </label>
+          <label>{{ T "tills.join_name" }}
+            <input type="text" name="name" placeholder="Till 2">
+          </label>
+          <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
+          <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
+        </form>
+        <div class="setup-nav">
+          <button type="button" class="btn secondary" @click="step = 1">{{ T "setup.back" }}</button>
+        </div>
+      </section>
     </main>
   </body>
 </html>

@@ -52,6 +52,14 @@ func main() {
 	}
 	defer database.Close()
 
+	// Joined-shop replica: the snapshot restore above brought the
+	// primary's DB; re-apply THIS till's identity (ADR-0011 D2).
+	if applied, err := db.ApplyReplicaIdentity(database.DB, cfg.DBPath); err != nil {
+		log.Fatalf("apply replica identity failed: %v", err)
+	} else if applied {
+		log.Infof("replica identity applied — this till is now part of the shop")
+	}
+
 	settingsStore := settings.NewStore(database.DB)
 
 	// Bootstrap: create plugin cache directories (T002 - 009-cloud-marketplace)
