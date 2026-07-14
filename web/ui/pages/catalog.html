@@ -1,7 +1,10 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "nav.catalog" }}</h1>
-  <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
+  <div style="display:flex; gap:.5rem; align-items:center">
+    <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
+    <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
+  </div>
 </div>
 
 {{ template "catalog_lookups" . }}

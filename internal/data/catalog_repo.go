@@ -19,6 +19,54 @@ func NewCatalogRepo(db *sql.DB) *CatalogRepo {
 	return &CatalogRepo{db: db}
 }
 
+// BarcodeExists reports whether a barcode is already attached to any item
+// or variant (import dedupe).
+func (r *CatalogRepo) BarcodeExists(ctx context.Context, barcode string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT (SELECT COUNT(*) FROM item_barcodes WHERE barcode = ?)
+     + (SELECT COUNT(*) FROM variant_barcodes WHERE barcode = ?)`,
+		barcode, barcode).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("barcode exists: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SKUExists reports whether an item SKU is taken (import dedupe).
+func (r *CatalogRepo) SKUExists(ctx context.Context, sku string) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM items WHERE sku = ?`, sku).Scan(&n); err != nil {
+		return false, fmt.Errorf("sku exists: %w", err)
+	}
+	return n > 0, nil
+}
+
+// EnsureCategory returns the id of a category by name, creating it if
+// missing (imports carry category names, not ids).
+func (r *CatalogRepo) EnsureCategory(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	var id string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id FROM categories WHERE name = ? COLLATE NOCASE`, name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", fmt.Errorf("find category: %w", err)
+	}
+	id = uuid.NewString()
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO categories (id, name) VALUES (?, ?)`, id, name); err != nil {
+		return "", fmt.Errorf("create category: %w", err)
+	}
+	return id, nil
+}
+
 // ItemLabel is what a printed product label needs.
 type ItemLabel struct {
 	Name       string
