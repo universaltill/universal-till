@@ -38,12 +38,15 @@ func SharedBus(db *sql.DB) *EventBus {
 // docs architecture/wasm-runtime.md). Modules are WASI commands: compiled
 // once at load, instantiated per event with the event JSON on stdin.
 type WasmRuntime struct {
-	mu       sync.Mutex
-	rt       wazero.Runtime
-	modules  map[string]wazero.CompiledModule // plugin id → compiled module
-	timeout  time.Duration
-	baseDir  string
-	unsubGen int // bumped per sync so stale handlers no-op
+	mu         sync.Mutex
+	rt         wazero.Runtime
+	modules    map[string]wazero.CompiledModule // plugin id → compiled module
+	timeout    time.Duration
+	netTimeout time.Duration   // wider deadline for plugins holding net:*
+	hasNet     map[string]bool // plugin id → granted net:* permission
+	db         *sql.DB         // for host functions; set by Sync
+	baseDir    string
+	unsubGen   int // bumped per sync so stale handlers no-op
 }
 
 // NewWasmRuntime creates the runtime; baseDir is the plugin install root
@@ -52,11 +55,17 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 	ctx := context.Background()
 	rt := wazero.NewRuntime(ctx)
 	wasi_snapshot_preview1.MustInstantiate(ctx, rt)
+	if err := instantiateHostModule(ctx, rt); err != nil {
+		// Modules that import "ut" will fail to instantiate; log, don't crash.
+		logging.L().Errorf("wasm host module: %v", err)
+	}
 	return &WasmRuntime{
-		rt:      rt,
-		modules: map[string]wazero.CompiledModule{},
-		timeout: 2 * time.Second,
-		baseDir: baseDir,
+		rt:         rt,
+		modules:    map[string]wazero.CompiledModule{},
+		timeout:    2 * time.Second,
+		netTimeout: 10 * time.Second,
+		hasNet:     map[string]bool{},
+		baseDir:    baseDir,
 	}
 }
 
@@ -77,6 +86,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	w.mu.Lock()
 	w.unsubGen++
 	gen := w.unsubGen
+	w.db = db // host functions resolve storage/permissions through this
 	// Drop compiled modules for plugins that are gone/disabled.
 	active := map[string]bool{}
 	for _, row := range rows {
@@ -88,7 +98,11 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		if !active[id] {
 			_ = mod.Close(context.Background())
 			delete(w.modules, id)
+			delete(w.hasNet, id)
 		}
+	}
+	for id := range active {
+		w.hasNet[id] = pluginHasNetPermission(ctx, db, id)
 	}
 	w.mu.Unlock()
 
@@ -162,6 +176,11 @@ func (w *WasmRuntime) load(pluginID, path string) error {
 func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event) error {
 	w.mu.Lock()
 	compiled, ok := w.modules[pluginID]
+	timeout := w.timeout
+	if w.hasNet[pluginID] {
+		timeout = w.netTimeout // room for the http_request host call
+	}
+	db := w.db
 	w.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("module not loaded: %s", pluginID)
@@ -177,8 +196,10 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 		return fmt.Errorf("encode event: %w", err)
 	}
 
-	cctx, cancel := context.WithTimeout(ctx, w.timeout)
+	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// Host functions ("ut" module) resolve the caller through this state.
+	cctx = withHostState(cctx, &hostState{pluginID: pluginID, db: db})
 
 	var stdout, stderr bytes.Buffer
 	cfg := wazero.NewModuleConfig().

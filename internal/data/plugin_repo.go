@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -465,6 +466,69 @@ ORDER BY permission
 		res = append(res, p)
 	}
 	return res, rows.Err()
+}
+
+// Plugin KV storage (wasm `storage` host function). Caps keep a plugin from
+// bloating a Pi's SD card; the host function surfaces violations as -4.
+const (
+	StorageMaxKeyBytes   = 128
+	StorageMaxValueBytes = 64 << 10
+	StorageMaxKeys       = 1024
+)
+
+var (
+	ErrStorageNotFound = errors.New("plugin storage: key not found")
+	ErrStorageTooLarge = errors.New("plugin storage: key/value over size cap or key quota reached")
+)
+
+// StorageGet reads one value from the plugin's namespace.
+func (r *PluginRepo) StorageGet(ctx context.Context, pluginID, key string) ([]byte, error) {
+	var v []byte
+	err := r.executor(nil).QueryRowContext(ctx,
+		`SELECT value FROM plugin_storage WHERE plugin_id = ? AND key = ?`,
+		pluginID, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return nil, ErrStorageNotFound
+	}
+	if err != nil {
+		return nil, pluginObs.wrap("storage_get", err)
+	}
+	return v, nil
+}
+
+// StorageSet upserts one value in the plugin's namespace, enforcing the caps.
+func (r *PluginRepo) StorageSet(ctx context.Context, pluginID, key string, value []byte) error {
+	if len(key) == 0 || len(key) > StorageMaxKeyBytes || len(value) > StorageMaxValueBytes {
+		return ErrStorageTooLarge
+	}
+	var n int
+	if err := r.executor(nil).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM plugin_storage WHERE plugin_id = ? AND key != ?`,
+		pluginID, key).Scan(&n); err != nil {
+		return pluginObs.wrap("storage_set", err)
+	}
+	if n >= StorageMaxKeys {
+		return ErrStorageTooLarge
+	}
+	_, err := r.executor(nil).ExecContext(ctx, `
+INSERT INTO plugin_storage (plugin_id, key, value, updated_at)
+VALUES (?, ?, ?, datetime('now'))
+ON CONFLICT (plugin_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		pluginID, key, value)
+	if err != nil {
+		return pluginObs.wrap("storage_set", err)
+	}
+	return nil
+}
+
+// DeleteStorage clears a plugin's namespace (uninstall housekeeping).
+func (r *PluginRepo) DeleteStorage(ctx context.Context, pluginID string) error {
+	_, err := r.executor(nil).ExecContext(ctx,
+		`DELETE FROM plugin_storage WHERE plugin_id = ?`, pluginID)
+	if err != nil {
+		return pluginObs.wrap("storage_delete", err)
+	}
+	return nil
 }
 
 // Types for repo inputs

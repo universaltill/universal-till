@@ -86,6 +86,11 @@ func UninstallPlugin(ctx context.Context, db *sql.DB, pluginID string) error {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
 
+	// plugin_storage is namespaced KV without an FK — clear it explicitly.
+	if err := repo.DeleteStorage(ctx, pluginID); err != nil {
+		fmt.Printf("warning: failed to clear plugin storage: %v\n", err)
+	}
+
 	// Record uninstall event
 	if err := repo.InsertAudit(ctx, nil, "plugin_uninstall", pluginID, map[string]any{}, time.Now()); err != nil {
 		fmt.Printf("warning: failed to record uninstall audit: %v\n", err)
