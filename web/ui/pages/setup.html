@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}" dir="{{ dir }}" style="font-size: {{ uiscalepx }}px">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ T "setup.title" }}</title>
+    <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
+    <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
+    <!-- Vendored locally: the till must work fully offline. -->
+    <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
+  </head>
+  <body class="login-screen{{ if kiosk }} kiosk{{ end }}">
+    <main class="setup-card" x-data="{ step: {{ if .errKey }}4{{ else }}1{{ end }}, last: 5,
+                                       country: '', currency: '', tax: '', taxinc: 'on' }">
+      <img class="login-logo" src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till" />
+      <div class="setup-dots" aria-hidden="true">
+        <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
+      </div>
+
+      {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+      <form method="post" action="/api/setup">
+        <!-- Step 1 · language (reloads with the chosen locale) -->
+        <section x-show="step === 1" x-cloak.important>
+          <h1>{{ T "setup.language.title" }}</h1>
+          <div class="setup-langs">
+            {{ $current := locale }}
+            {{ range locales }}
+              <a class="btn{{ if eq . $current }} primary{{ end }}" href="/setup?lang={{ . }}">{{ . }}</a>
+            {{ end }}
+          </div>
+          <div class="setup-nav">
+            <button type="button" class="btn primary" @click="step = 2">{{ T "setup.next" }}</button>
+          </div>
+        </section>
+
+        <!-- Step 2 · country → prefills currency + tax (all editable later) -->
+        <section x-show="step === 2" x-cloak>
+          <h1>{{ T "setup.country.title" }}</h1>
+          <p class="muted">{{ T "setup.country.hint" }}</p>
+          <select name="country" x-model="country"
+                  @change="const o = $event.target.selectedOptions[0]; currency = o.dataset.currency || currency; tax = o.dataset.tax ?? tax; taxinc = o.dataset.taxinc || taxinc;">
+            <option value="">{{ T "setup.country.choose" }}</option>
+            {{ range .countries }}
+            <option value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}">{{ T .NameKey }}</option>
+            {{ end }}
+          </select>
+          <input type="hidden" name="currency" :value="currency">
+          <input type="hidden" name="tax_rate_pct" :value="tax">
+          <input type="hidden" name="tax_inclusive" :value="taxinc">
+          <p class="muted" x-show="currency"><span x-text="currency"></span> · <span x-text="tax"></span>% </p>
+          <div class="setup-nav">
+            <button type="button" class="btn secondary" @click="step = 1">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 3">{{ T "setup.next" }}</button>
+          </div>
+        </section>
+
+        <!-- Step 3 · shop name -->
+        <section x-show="step === 3" x-cloak>
+          <h1>{{ T "setup.store.title" }}</h1>
+          <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}">
+          <div class="setup-nav">
+            <button type="button" class="btn secondary" @click="step = 2">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 4">{{ T "setup.next" }}</button>
+          </div>
+        </section>
+
+        <!-- Step 4 · admin PIN -->
+        <section x-show="step === 4" x-cloak>
+          <h1>{{ T "auth.setup.title" }}</h1>
+          <p class="muted">{{ T "auth.setup.hint" }}</p>
+          <label>{{ T "auth.setup.pin" }}
+            <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
+          </label>
+          <label>{{ T "auth.setup.pin_confirm" }}
+            <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
+          </label>
+          <div class="setup-nav">
+            <button type="button" class="btn secondary" @click="step = 3">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 5">{{ T "setup.next" }}</button>
+          </div>
+        </section>
+
+        <!-- Step 5 · done -->
+        <section x-show="step === 5" x-cloak>
+          <h1>{{ T "setup.done.title" }}</h1>
+          <p class="muted">{{ T "setup.done.hint" }}</p>
+          <div class="setup-nav">
+            <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
+            <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>
+          </div>
+        </section>
+      </form>
+    </main>
+  </body>
+</html>

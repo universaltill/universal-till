@@ -18,7 +18,9 @@ func Disabled(env string) bool {
 // exempt paths never require a session: the login flow itself, static
 // assets the login page needs, and health checks.
 func exempt(path string) bool {
-	if path == "/login" || path == "/healthz" {
+	// /setup + /api/setup are the first-boot wizard; both refuse to run once
+	// an operator exists, so exempting them leaks nothing.
+	if path == "/login" || path == "/healthz" || path == "/setup" || path == "/api/setup" {
 		return true
 	}
 	for _, p := range []string{"/api/auth/", "/public/", "/themes/"} {
