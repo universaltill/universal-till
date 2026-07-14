@@ -260,6 +260,50 @@ func TestCompleteSale_InclusiveTaxNoDoubleCount(t *testing.T) {
 	if taxTotal <= 0 {
 		t.Fatalf("expected tax_total > 0 for inclusive tax, got %d", taxTotal)
 	}
+	// The LINE must agree with the header: with inclusive pricing the
+	// after-tax total IS the ticket price; before-tax is net of the tax.
+	// (Regression: after-tax used to get the tax added ON TOP → 140.)
+	var before, after, lineTax int64
+	if err := db.QueryRow(`SELECT total_before_tax, total_after_tax, tax_amount FROM sale_lines WHERE sale_id = ?`, saleID).
+		Scan(&before, &after, &lineTax); err != nil {
+		t.Fatalf("read line: %v", err)
+	}
+	if after != 120 {
+		t.Fatalf("inclusive line total_after_tax = %d, want 120 (the ticket price)", after)
+	}
+	if before != 120-lineTax {
+		t.Fatalf("inclusive line total_before_tax = %d, want %d", before, 120-lineTax)
+	}
+}
+
+func TestCompleteSale_ExclusiveLineTotalsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 100, 1)`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+
+	in := SaleInput{
+		SaleType: "sale", Currency: "GBP", TaxInclusive: false,
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 2000, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{{MethodID: "cash", Amount: 120, Currency: "GBP"}},
+	}
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("CompleteSale: %v", err)
+	}
+	var before, after int64
+	if err := db.QueryRow(`SELECT total_before_tax, total_after_tax FROM sale_lines WHERE sale_id = ?`, saleID).
+		Scan(&before, &after); err != nil {
+		t.Fatalf("read line: %v", err)
+	}
+	if before != 100 || after != 120 {
+		t.Fatalf("exclusive line totals = %d/%d, want 100/120", before, after)
+	}
 }
 
 func TestCompleteSale_RollsBackOnPaymentFailure(t *testing.T) {

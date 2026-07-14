@@ -231,8 +231,17 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
 				lineNet := lineBase.Sub(l.LineDiscount)
 				lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
+				// Inclusive pricing: the ticket price already contains the
+				// tax — after-tax IS the price, before-tax is net of it.
+				// Exclusive: tax goes on top. (Was unconditionally on-top:
+				// inflated total_after_tax + TopItems revenue for inclusive
+				// shops; repaired by migration 012.)
 				totalBeforeTax := lineNet
 				totalAfterTax := lineNet.Add(lineTax)
+				if in.TaxInclusive {
+					totalBeforeTax = lineNet.Sub(lineTax)
+					totalAfterTax = lineNet
+				}
 
 				if err := repo.InsertSaleLine(ctx, tx, lineID, saleID, i+1, l.ItemID, l.VariantID, l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice.Minor(), l.LineDiscount.Minor(), l.TaxRateBasisPoints, lineTax.Minor(), totalBeforeTax.Minor(), totalAfterTax.Minor()); err != nil {
 					return err
