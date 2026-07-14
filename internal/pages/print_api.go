@@ -59,7 +59,16 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 			"Receipt " + detail.ReceiptNo,
 			detail.CreatedAt,
 		},
+		// Scan-to-refund (G28): the receipt number as a barcode.
+		Barcode: detail.ReceiptNo,
 		Charset: cfg.Charset,
+	}
+	if detail.SaleType == "return" {
+		meta := []string{"*** REFUND ***"}
+		if orig, ok, _ := data.NewPOSRepo(d.Db).OriginalReceiptFor(ctx, detail.ID); ok {
+			meta = append(meta, "For receipt "+orig)
+		}
+		doc.Meta = append(meta, doc.Meta...)
 	}
 	for _, l := range detail.Lines {
 		qty := strconv.FormatFloat(l.Qty, 'f', -1, 64)

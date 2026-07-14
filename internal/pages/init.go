@@ -164,6 +164,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	// Operator PIN login (docs: architecture/pos-auth.md). UT_AUTH=off is
 	// the CI/dev-tooling escape hatch; a real till runs with auth on.
 	registerAuth(mux, dp, authSvc)
+	registerRefund(mux, dp, authSvc)
 	registerUsers(mux, dp, authSvc)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)

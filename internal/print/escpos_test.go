@@ -53,6 +53,29 @@ func TestRenderStructure(t *testing.T) {
 	}
 }
 
+func TestRenderBarcode(t *testing.T) {
+	d := sampleDoc()
+	d.Barcode = "000000042"
+	out := Render(d)
+	// GS k 73 <len> { B <data> — CODE128 code set B of the receipt no.
+	want := append([]byte{0x1d, 0x6b, 0x49, byte(len("{B000000042"))}, []byte("{B000000042")...)
+	if !bytes.Contains(out, want) {
+		t.Error("CODE128 barcode sequence missing")
+	}
+	if !bytes.Contains(out, cmdBarcodeHRI) {
+		t.Error("HRI (number under the bars) missing")
+	}
+	// No barcode block when empty or unencodable.
+	d.Barcode = ""
+	if bytes.Contains(Render(d), cmdBarcodeCode128) {
+		t.Error("barcode printed for empty code")
+	}
+	d.Barcode = "رسید"
+	if bytes.Contains(Render(d), cmdBarcodeCode128) {
+		t.Error("barcode printed for non-ASCII code")
+	}
+}
+
 func TestRenderKickDrawer(t *testing.T) {
 	d := sampleDoc()
 	d.KickDrawer = true

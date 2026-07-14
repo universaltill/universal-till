@@ -31,11 +31,18 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
+		// Cross-links for refunds: a sale lists its returns; a return
+		// points back at its original receipt.
+		repo := data.NewPOSRepo(d.Db)
+		returns, _ := repo.ReturnReceiptsFor(r.Context(), sale.ID)
+		original, _, _ := repo.OriginalReceiptFor(r.Context(), sale.ID)
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
 			"title":     "Receipt " + sale.ReceiptNo,
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.Menu,
 			"Sale":      sale,
+			"Returns":   returns,
+			"Original":  original,
 		})(w, r)
 	})
 
