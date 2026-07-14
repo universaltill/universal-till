@@ -15,6 +15,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -160,15 +161,40 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_enrolled",
 			map[string]any{"name": name}, time.Now().UTC().Format(time.RFC3339), "")
+		// The primary is till 1; replicas number from 2 (receipt prefixes).
+		tillNo := 2
+		if list, err := repo.ListTills(r.Context()); err == nil {
+			tillNo = len(list) + 1
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]string{
+			"data": map[string]any{
 				"till_id":   tillID,
 				"bearer":    bearer,
 				"shop_name": storeNameOrDefault(r.Context(), d),
+				"till_no":   tillNo,
 			},
 			"error": nil,
 		})
+	})
+
+	// D2: full-DB snapshot for a joining replica (bearer-gated). Uses the
+	// backup mechanism (VACUUM INTO) — safe while selling.
+	mux.HandleFunc("GET /api/sync/snapshot", func(w http.ResponseWriter, r *http.Request) {
+		till, ok := syncTill(r, repo)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		path, err := db.Snapshot(d.Db, d.Cfg.DBPath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", till.ID, "snapshot_served",
+			nil, time.Now().UTC().Format(time.RFC3339), "")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		http.ServeFile(w, r, path)
 	})
 
 	// Bearer-gated liveness — the first consumer of the sync surface;
@@ -203,57 +229,115 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	// Replica side: join a primary (manager). Stores the enrolment; the
-	// snapshot/pull loop lands with D2.
+	// Replica side (manager): join a primary. Enrols, downloads the full
+	// snapshot, stages restore + identity — takes effect on restart (D2).
 	mux.HandleFunc("POST /api/sync/join", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
 		_ = r.ParseForm()
-		code := strings.TrimSpace(r.Form.Get("code")) // the QR JSON, scanned or pasted
-		var payload struct {
-			URL   string `json:"url"`
-			Token string `json:"token"`
-		}
-		if err := json.Unmarshal([]byte(code), &payload); err != nil || payload.URL == "" || payload.Token == "" {
-			http.Error(w, "paste the full code from the primary till's QR", http.StatusBadRequest)
-			return
-		}
-		name := strings.TrimSpace(r.Form.Get("name"))
-		body, _ := json.Marshal(map[string]string{"token": payload.Token, "name": name})
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-			strings.TrimSuffix(payload.URL, "/")+"/api/sync/enroll", strings.NewReader(string(body)))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, "cannot reach the primary till: "+err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		var out struct {
-			Data struct {
-				TillID   string `json:"till_id"`
-				Bearer   string `json:"bearer"`
-				ShopName string `json:"shop_name"`
-			} `json:"data"`
-		}
-		if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Bearer == "" {
-			http.Error(w, "primary refused the enrolment (token used or expired?)", http.StatusBadGateway)
-			return
-		}
-		_ = d.Settings.Set(r.Context(), "sync.primary_url", payload.URL)
-		_ = d.Settings.Set(r.Context(), "sync.till_id", out.Data.TillID)
-		_ = d.Settings.Set(r.Context(), "sync.bearer", out.Data.Bearer)
-		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",
-			map[string]any{"primary": payload.URL}, time.Now().UTC().Format(time.RFC3339), "")
+		shopName, err := joinPrimary(r, d,
+			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("name")))
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<span>✓ %s: %s</span>`, httpx.T(locale, "tills.joined"), out.Data.ShopName)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, err.Error())
+			return
+		}
+		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
+			shopName, httpx.T(locale, "tills.restart_to_finish"))
 	})
+
+	// First-boot wizard fork (middleware-exempt like /setup, and refuses
+	// once an operator exists): a brand-new till joins the shop before any
+	// local setup — the snapshot brings catalog, settings AND operators.
+	mux.HandleFunc("POST /api/setup/join", func(w http.ResponseWriter, r *http.Request) {
+		if firstBoot, err := d.AuthSvc.NeedsFirstBoot(r.Context()); err != nil || !firstBoot {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		_ = r.ParseForm()
+		shopName, err := joinPrimary(r, d,
+			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("name")))
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, err.Error())
+			return
+		}
+		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
+			shopName, httpx.T(locale, "tills.restart_to_finish"))
+	})
+}
+
+// joinPrimary runs the whole replica-side join: enrol with the one-time
+// code, download the snapshot, stage restore + identity for the restart.
+func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, error) {
+	var payload struct {
+		URL   string `json:"url"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(code), &payload); err != nil || payload.URL == "" || payload.Token == "" {
+		return "", fmt.Errorf("paste the full code from the primary till's QR")
+	}
+	base := strings.TrimSuffix(payload.URL, "/")
+	client := &http.Client{Timeout: 60 * time.Second}
+
+	body, _ := json.Marshal(map[string]string{"token": payload.Token, "name": name})
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		base+"/api/sync/enroll", strings.NewReader(string(body)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("cannot reach the primary till: %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Data struct {
+			TillID   string `json:"till_id"`
+			Bearer   string `json:"bearer"`
+			ShopName string `json:"shop_name"`
+			TillNo   int    `json:"till_no"`
+		} `json:"data"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Bearer == "" {
+		return "", fmt.Errorf("primary refused the enrolment (code used or expired?)")
+	}
+
+	// Download the shop snapshot with our new bearer and stage it.
+	sreq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/api/sync/snapshot", nil)
+	if err != nil {
+		return "", err
+	}
+	sreq.Header.Set("Authorization", "Bearer "+out.Data.Bearer)
+	sresp, err := client.Do(sreq)
+	if err != nil {
+		return "", fmt.Errorf("snapshot download failed: %w", err)
+	}
+	defer sresp.Body.Close()
+	if sresp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("snapshot download failed: %s", sresp.Status)
+	}
+	if err := db.StageRestoreFromReader(d.Cfg.DBPath, sresp.Body); err != nil {
+		return "", fmt.Errorf("stage snapshot: %w", err)
+	}
+	if err := db.StageReplicaIdentity(d.Cfg.DBPath, db.ReplicaIdentity{
+		PrimaryURL:    payload.URL,
+		TillID:        out.Data.TillID,
+		Bearer:        out.Data.Bearer,
+		ReceiptPrefix: fmt.Sprintf("T%d-", out.Data.TillNo),
+		TillName:      name,
+	}); err != nil {
+		return "", fmt.Errorf("stage identity: %w", err)
+	}
+	posRepo := data.NewPOSRepo(d.Db)
+	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",
+		map[string]any{"primary": payload.URL}, time.Now().UTC().Format(time.RFC3339), "")
+	return out.Data.ShopName, nil
 }

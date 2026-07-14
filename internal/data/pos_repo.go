@@ -1008,18 +1008,27 @@ ORDER BY i.name, sl.name`)
 	return items, nil
 }
 
-// NextReceiptNo returns the next available receipt number.
+// NextReceiptNo returns the next available receipt number. On a synced
+// replica (ADR-0011) the till's prefix (settings sync.receipt_prefix,
+// e.g. "T2-") namespaces the sequence so tills never collide; the counter
+// is the max within this till's own prefix.
 func (r *POSRepo) NextReceiptNo(ctx context.Context, tx *sql.Tx) (string, error) {
 	exec := r.exec(tx)
+	var prefix string
+	_ = exec.QueryRowContext(ctx,
+		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&prefix)
 	var maxVal sql.NullInt64
-	if err := exec.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(receipt_no AS INTEGER)), 0) FROM sales`).Scan(&maxVal); err != nil {
+	if err := exec.QueryRowContext(ctx, `
+SELECT COALESCE(MAX(CAST(substr(receipt_no, ?) AS INTEGER)), 0)
+FROM sales WHERE receipt_no LIKE ? || '%'`,
+		len(prefix)+1, prefix).Scan(&maxVal); err != nil {
 		return "", fmt.Errorf("next receipt no: %w", err)
 	}
 	next := maxVal.Int64 + 1
 	if next < 1 {
 		next = 1
 	}
-	return fmt.Sprintf("%09d", next), nil
+	return fmt.Sprintf("%s%09d", prefix, next), nil
 }
 
 // CurrentQty returns quantity and whether a matching inventory row existed.
