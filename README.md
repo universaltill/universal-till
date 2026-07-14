@@ -82,20 +82,27 @@
 
 ## 🚀 Quick Start
 
-### Option 1: Download Pre-Built Binary
+### Option 1: Install a release (no toolchain needed)
+
+**Raspberry Pi / Debian / Ubuntu** — the recommended shop install
+(creates the `pos` service user, installs a systemd service, survives
+upgrades, keeps item photos in `/var/lib/unitill`):
 
 ```bash
-# Download latest release
-wget https://github.com/universaltill/universal-till/releases/latest/download/universal-till-linux-amd64
-
-# Make executable
-chmod +x universal-till-linux-amd64
-
-# Run
-./universal-till-linux-amd64
+# arm64 = Raspberry Pi OS 64-bit; use _amd64.deb on a PC
+sudo apt install ./unitill-pos_*_arm64.deb
 ```
 
-Open http://localhost:8080 in your browser.
+**Windows**: download the `windows_amd64.zip`, extract anywhere,
+double-click `run-unitill.bat`.
+
+**macOS / manual Linux**: download the `.tar.gz`, extract, and run
+`./unitill-pos` from inside the extracted folder (it needs the bundled
+`web/` directory next to it).
+
+All downloads: https://github.com/universaltill/universal-till/releases —
+then open http://localhost:8080; the first-boot wizard sets language,
+currency and the admin PIN.
 
 ### Option 2: Build from Source
 
