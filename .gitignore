@@ -73,3 +73,4 @@ __debug*
 
 # Runtime plugin data (installed plugins, catalog cache, auth tokens)
 data/plugins/
+data/backups/
