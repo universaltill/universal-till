@@ -14,19 +14,19 @@ import (
 // registerAuth wires the PIN login flow (docs: architecture/pos-auth.md):
 // the /login keypad (with one-time first-boot admin setup), session
 // create/revoke, and the nav operator chip.
+func setSessionCookie(w http.ResponseWriter, token string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.CookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
 func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
-
-	setSessionCookie := func(w http.ResponseWriter, token string, maxAge int) {
-		http.SetCookie(w, &http.Cookie{
-			Name:     auth.CookieName,
-			Value:    token,
-			Path:     "/",
-			MaxAge:   maxAge,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
-	}
 
 	renderLogin := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
@@ -46,6 +46,12 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				http.Redirect(w, r, "/", http.StatusSeeOther)
 				return
 			}
+		}
+		// A brand-new till goes through the guided wizard instead of the
+		// bare PIN form (docs repo: architecture/zero-touch-setup.md).
+		if firstBoot, err := svc.NeedsFirstBoot(r.Context()); err == nil && firstBoot {
+			http.Redirect(w, r, "/setup", http.StatusSeeOther)
+			return
 		}
 		renderLogin(w, r, "")
 	})

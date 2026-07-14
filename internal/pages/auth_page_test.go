@@ -33,6 +33,7 @@ func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) 
 	mux := http.NewServeMux()
 	registerAuth(mux, d, svc)
 	registerUsers(mux, d, svc)
+	registerSetup(mux, d, svc)
 	return mux, svc, d
 }
 
@@ -50,12 +51,20 @@ func postForm(mux *http.ServeMux, path string, form url.Values, user *auth.User)
 func TestFirstBootSetupThenLogin(t *testing.T) {
 	mux, svc, _ := newAuthTestMux(t)
 
-	// Fresh DB: /login renders the one-time admin setup form.
+	// Fresh DB: /login redirects to the guided setup wizard.
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "/api/auth/setup") {
-		t.Fatalf("first-boot login page: code=%d body=%s", rec.Code, rec.Body.String()[:min(300, rec.Body.Len())])
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
+		t.Fatalf("first-boot /login should redirect to /setup: code=%d loc=%s", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// The wizard page renders and posts to /api/setup.
+	req = httptest.NewRequest(http.MethodGet, "/setup", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "/api/setup") {
+		t.Fatalf("first-boot wizard: code=%d", rec.Code)
 	}
 
 	// Mismatched PINs are refused.

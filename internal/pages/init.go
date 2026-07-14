@@ -148,6 +148,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerAuth(mux, dp, authSvc)
 	registerUsers(mux, dp, authSvc)
 	registerTranslations(mux, dp, i18n)
+	registerSetup(mux, dp, authSvc)
 	if auth.Disabled(os.Getenv("UT_AUTH")) {
 		log.Warnf("UT_AUTH=off — operator login disabled")
 		return mux

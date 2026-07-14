@@ -507,3 +507,21 @@ body.login-screen {
 .translations-ref { color: var(--muted); max-inline-size: 18rem; }
 .translations-edit { display: flex; gap: .4rem; }
 .translations-edit input[type="text"] { min-inline-size: 16rem; }
+
+/* First-boot setup wizard */
+.setup-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 1.6rem; inline-size: min(26rem, 92vw); margin: 8dvh auto 0;
+  display: flex; flex-direction: column; gap: .9rem; text-align: center;
+}
+.setup-card h1 { font-size: 1.3rem; margin: 0; }
+.setup-card input[type="text"], .setup-card input[type="password"], .setup-card select {
+  inline-size: 100%; padding: .6rem .7rem; font-size: 1.05rem;
+}
+.setup-card label { display: block; text-align: start; margin-block-end: .6rem; }
+.setup-dots { display: flex; gap: .4rem; justify-content: center; }
+.setup-dot { inline-size: .6rem; block-size: .6rem; border-radius: 50%; background: var(--border); }
+.setup-dot.active { background: var(--accent); }
+.setup-langs { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
+.setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; }
+[x-cloak] { display: none !important; }
