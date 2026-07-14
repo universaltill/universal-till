@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -43,6 +44,12 @@ func (u User) IsManager() bool { return u.Role == "manager" || u.Role == "admin"
 // Service owns login, session resolution and the failed-attempt lockout.
 type Service struct {
 	repo *data.AuthRepo
+
+	// idleLockMinutes > 0 revokes sessions idle for longer than the window
+	// (docs: pos-auth.md idle auto-lock). 0 = disabled.
+	idleLockMinutes atomic.Int64
+	// onIdleLock is the audit seam (set by pages.Init; auth stays SQL-free).
+	onIdleLock atomic.Value // func(ctx context.Context, userID string)
 
 	mu       sync.Mutex
 	failures int
@@ -165,14 +172,56 @@ func (s *Service) CreateSession(ctx context.Context, userID string) (string, err
 	return token, nil
 }
 
+// SetIdleLockMinutes applies the auth.idle_lock_minutes setting (0 disables).
+func (s *Service) SetIdleLockMinutes(minutes int) {
+	if minutes < 0 {
+		minutes = 0
+	}
+	s.idleLockMinutes.Store(int64(minutes))
+}
+
+// IdleLockMinutes returns the active idle window (0 = disabled).
+func (s *Service) IdleLockMinutes() int { return int(s.idleLockMinutes.Load()) }
+
+// SetIdleLockAudit installs the callback fired when a session is idle-locked.
+func (s *Service) SetIdleLockAudit(fn func(ctx context.Context, userID string)) {
+	if fn != nil {
+		s.onIdleLock.Store(fn)
+	}
+}
+
+// touchInterval keeps last_seen_at fresh enough for the idle window without
+// a SQLite write per request: well under the window, at most once a minute.
+func touchInterval(window time.Duration) time.Duration {
+	interval := time.Minute
+	if window > 0 && window/4 < interval {
+		interval = window / 4
+	}
+	return interval
+}
+
 // Resolve returns the operator for a session token, if the session is live.
+// A session idle for longer than the configured window is revoked here —
+// the server is authoritative; the client-side timer is cosmetic.
 func (s *Service) Resolve(ctx context.Context, token string) (User, bool) {
 	if token == "" {
 		return User{}, false
 	}
-	row, ok, err := s.repo.LookupSession(ctx, hashToken(token))
+	hash := hashToken(token)
+	row, ok, err := s.repo.LookupSession(ctx, hash)
 	if err != nil || !ok {
 		return User{}, false
+	}
+	idle := time.Since(row.LastSeenAt)
+	if window := time.Duration(s.idleLockMinutes.Load()) * time.Minute; window > 0 && idle > window {
+		_ = s.repo.RevokeSession(ctx, hash)
+		if fn, k := s.onIdleLock.Load().(func(context.Context, string)); k {
+			fn(ctx, row.UserID)
+		}
+		return User{}, false
+	}
+	if idle >= touchInterval(time.Duration(s.idleLockMinutes.Load())*time.Minute) {
+		_ = s.repo.TouchSession(ctx, hash)
 	}
 	return User{ID: row.UserID, Username: row.Username, DisplayName: row.DisplayName, Role: row.Role}, true
 }

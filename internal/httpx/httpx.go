@@ -104,6 +104,20 @@ func InitUIScale(scale float64) {
 	uiScale.Store(scale)
 }
 
+// idleLockSecs drives the cosmetic client-side idle timer (data-idle-lock on
+// <body>); 0/unset renders no attribute. The server-side check in auth.Service
+// is authoritative — pages.Init keeps both in sync.
+var idleLockSecs atomic.Int64
+
+// InitIdleLock publishes the idle auto-lock window to templates (minutes;
+// 0 disables). Called at startup and when the setting changes.
+func InitIdleLock(minutes int) {
+	if minutes < 0 {
+		minutes = 0
+	}
+	idleLockSecs.Store(int64(minutes) * 60)
+}
+
 func uiScalePx() string {
 	scale := 1.0
 	if v := uiScale.Load(); v != nil {
@@ -218,6 +232,7 @@ func FuncsFor(locale string) template.FuncMap {
 		return false
 	}
 	funcs["uiscalepx"] = uiScalePx
+	funcs["idlelocksecs"] = func() int64 { return idleLockSecs.Load() }
 	funcs["locale"] = func() string { return locale }
 	// dir drives <html dir=…> so RTL locales lay out right-to-left.
 	funcs["dir"] = func() string {

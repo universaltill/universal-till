@@ -29,6 +29,25 @@
     <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
   </form>
 </div>
+{{ if .isManager }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "settings.idle_lock.title" }}</h2>
+  <p class="muted">{{ T "settings.idle_lock.help" }}</p>
+  <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="window.location.reload()">
+    {{ $idle := .settings.IdleLockMinutes }}
+    <select name="minutes">
+      <option value="0"  {{ if eq $idle 0 }}selected{{ end }}>{{ T "settings.idle_lock.off" }}</option>
+      <option value="2"  {{ if eq $idle 2 }}selected{{ end }}>2 {{ T "settings.idle_lock.minutes" }}</option>
+      <option value="5"  {{ if eq $idle 5 }}selected{{ end }}>5 {{ T "settings.idle_lock.minutes" }}</option>
+      <option value="10" {{ if eq $idle 10 }}selected{{ end }}>10 {{ T "settings.idle_lock.minutes" }}</option>
+      <option value="15" {{ if eq $idle 15 }}selected{{ end }}>15 {{ T "settings.idle_lock.minutes" }}</option>
+      <option value="30" {{ if eq $idle 30 }}selected{{ end }}>30 {{ T "settings.idle_lock.minutes" }}</option>
+      <option value="60" {{ if eq $idle 60 }}selected{{ end }}>60 {{ T "settings.idle_lock.minutes" }}</option>
+    </select>
+    <button class="btn" type="submit">{{ T "settings.idle_lock.apply" }}</button>
+  </form>
+</div>
+{{ end }}
 <div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.currency.title" }}</h2>
   <p class="muted">{{ T "settings.currency.help" }}</p>

@@ -512,3 +512,19 @@ function initOfflineOverride(updateFn){
   retakeBtn.addEventListener('click', retake);
   closeBtn.addEventListener('click', close);
 })();
+
+// Idle auto-lock, cosmetic half (docs: pos-auth.md). The server revokes the
+// session authoritatively; this timer just sends an abandoned till to the
+// keypad without waiting for the next request. Absent when the feature is off.
+(function () {
+  var secs = parseInt(document.body.dataset.idleLock || '0', 10);
+  if (!secs || window.location.pathname === '/login') return;
+  var last = Date.now();
+  function bump() { last = Date.now(); }
+  ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) {
+    document.addEventListener(ev, bump, { passive: true });
+  });
+  setInterval(function () {
+    if ((Date.now() - last) / 1000 > secs) window.location.replace('/login');
+  }, 5000);
+})();

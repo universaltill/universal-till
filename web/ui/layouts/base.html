@@ -17,7 +17,8 @@
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}"
         data-currency="{{ currency.Code }}" data-currency-decimals="{{ currency.Decimals }}"
-        data-currency-display="{{ currency.Display }}" data-currency-suffix="{{ if currency.Suffix }}1{{ end }}">
+        data-currency-display="{{ currency.Display }}" data-currency-suffix="{{ if currency.Suffix }}1{{ end }}"
+        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
     {{ template "nav" . }}
     <main class="container">{{ template "content" . }}</main>
   </body>

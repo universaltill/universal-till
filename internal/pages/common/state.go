@@ -18,7 +18,12 @@ const (
 	KeyTaxInclusive = "store.tax_inclusive"
 	KeyTaxRate      = "store.tax_rate"
 	KeyUIScale      = "display.ui_scale"
+	KeyIdleLock     = "auth.idle_lock_minutes"
 )
+
+// DefaultIdleLockMinutes locks an unattended till after 10 minutes unless
+// configured otherwise (docs: pos-auth.md idle auto-lock).
+const DefaultIdleLockMinutes = 10
 
 // LoadState pulls settings from the DB-backed settings store with cfg defaults.
 func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) RuntimeState {
@@ -54,6 +59,12 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 	if v := get("pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
 		st.AllowNegativeInventory, _ = strconv.ParseBool(v)
 	}
+	st.IdleLockMinutes = DefaultIdleLockMinutes
+	if v := get(KeyIdleLock, ""); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			st.IdleLockMinutes = n
+		}
+	}
 
 	return st
 }
@@ -69,6 +80,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) {
 		_ = store.Set(ctx, KeyUIScale, strconv.FormatFloat(st.UIScale, 'f', -1, 64))
 	}
 	_ = store.Set(ctx, "pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory))
+	_ = store.Set(ctx, KeyIdleLock, strconv.Itoa(st.IdleLockMinutes))
 }
 
 func BuildMenu(base []MenuItem, pm *plugins.Manager) []MenuItem {

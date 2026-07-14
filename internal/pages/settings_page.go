@@ -2,14 +2,26 @@ package pages
 
 import (
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
+
+// isManagerOrAuthOff gates manager-only settings; with UT_AUTH=off there is
+// no session to check, so dev/CI tooling passes.
+func isManagerOrAuthOff(r *http.Request) bool {
+	if auth.Disabled(os.Getenv("UT_AUTH")) {
+		return true
+	}
+	u, ok := auth.FromContext(r.Context())
+	return ok && u.IsManager()
+}
 
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -27,8 +39,31 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"settingsMap": all,
 			"menuItems":   d.Menu,
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
+			"isManager":   isManagerOrAuthOff(r),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
+	})
+
+	// Idle auto-lock window (docs: pos-auth.md). Manager/admin only — an
+	// unattended till's security posture is not a cashier decision.
+	mux.HandleFunc("POST /api/settings/idle-lock", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		n, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("minutes")))
+		if err != nil || n < 0 || n > 480 {
+			http.Error(w, "minutes must be between 0 and 480", http.StatusBadRequest)
+			return
+		}
+		st := d.UpdateState(func(s *common.RuntimeState) { s.IdleLockMinutes = n })
+		common.SaveState(r.Context(), d.Settings, st)
+		d.AuthSvc.SetIdleLockMinutes(n)
+		if !auth.Disabled(os.Getenv("UT_AUTH")) {
+			httpx.InitIdleLock(n)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	// Interface scale for this till's screen; saved and applied immediately.
