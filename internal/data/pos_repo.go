@@ -621,6 +621,39 @@ GROUP BY p.method_id ORDER BY applied DESC`, fmt.Sprintf("-%d days", days))
 	return out, rows.Err()
 }
 
+// AuditActionCount aggregates till activity for "Ask your till" — counts
+// only, never payloads, so no customer data can reach the model.
+type AuditActionCount struct {
+	ActorID    string `json:"actor_id"`
+	EntityType string `json:"entity_type"`
+	Action     string `json:"action"`
+	Count      int    `json:"count"`
+}
+
+// AuditActionSummary counts audit actions per actor over the last N days
+// (voids, no-sales, logins, overrides — the shrinkage-relevant signals).
+func (r *POSRepo) AuditActionSummary(ctx context.Context, days, limit int) ([]AuditActionCount, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(actor_id, ''), entity_type, action, COUNT(*)
+FROM audit_log
+WHERE created_at >= datetime('now', ?)
+GROUP BY actor_id, entity_type, action
+ORDER BY COUNT(*) DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+	if err != nil {
+		return nil, fmt.Errorf("audit summary: %w", err)
+	}
+	defer rows.Close()
+	var out []AuditActionCount
+	for rows.Next() {
+		var a AuditActionCount
+		if err := rows.Scan(&a.ActorID, &a.EntityType, &a.Action, &a.Count); err != nil {
+			return nil, fmt.Errorf("scan audit summary: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // ShiftSummary is a row on the shifts page (current or historical).
 type ShiftSummary struct {
 	ID          string
