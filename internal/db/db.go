@@ -13,12 +13,18 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_foreign_keys=on", path)
+	// _pragma= is how modernc.org/sqlite applies a pragma to EVERY pooled
+	// connection — an Exec'd PRAGMA reaches only the one connection that
+	// ran it (the old `_foreign_keys=on` was mattn syntax and silently
+	// ignored, so FK enforcement was missing on pooled connections). The
+	// busy timeout keeps a concurrent writer (e.g. the sync pull's apply
+	// transaction) from surfacing SQLITE_BUSY to a sale mid-checkout.
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", path)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	// Harden FK enforcement even if DSN flags are ignored.
+	// Belt-and-braces for the first connection.
 	if _, err := sqlDB.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		return nil, fmt.Errorf("enable foreign_keys pragma: %w", err)
 	}

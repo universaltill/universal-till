@@ -785,6 +785,18 @@ ORDER BY created_at LIMIT ?`, cursor, limit)
 	return out, rows.Err()
 }
 
+// CountLocalSalesSince is the replica's push-queue depth (D4 status chip).
+func (r *POSRepo) CountLocalSalesSince(ctx context.Context, cursor string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM sales
+WHERE status = 'completed' AND till_id = '' AND created_at > ?`, cursor).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count local sales: %w", err)
+	}
+	return n, nil
+}
+
 // OriginalSaleIDFor returns the linked original sale id for a return.
 func (r *POSRepo) OriginalSaleIDFor(ctx context.Context, returnSaleID string) (string, error) {
 	var id string

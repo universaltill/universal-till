@@ -143,65 +143,56 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 // sales past the cursor to the primary. Failures just wait for the next
 // tick — checkout never depends on it (ADR-0003).
 func StartSyncPush(ctx context.Context, d *common.Deps) {
-	go func() {
-		repo := data.NewPOSRepo(d.Db)
-		client := &http.Client{Timeout: 30 * time.Second}
-		tick := func() {
-			get := func(k string) string {
-				v, _, _ := d.Settings.Get(ctx, k)
-				return strings.TrimSpace(v)
-			}
-			primary, bearer := get("sync.primary_url"), get("sync.bearer")
-			if primary == "" || bearer == "" {
-				return
-			}
-			cursor := get("sync.push_cursor")
-			receipts, err := repo.LocalSalesSince(ctx, cursor, 50)
-			if err != nil || len(receipts) == 0 {
-				return
-			}
-			var batch []journalSale
-			maxCreated := cursor
-			for _, rn := range receipts {
-				j, found, err := buildJournal(ctx, repo, rn)
-				if err != nil || !found {
-					return
-				}
-				batch = append(batch, j)
-				if j.Sale.CreatedAt > maxCreated {
-					maxCreated = j.Sale.CreatedAt
-				}
-			}
-			raw, _ := json.Marshal(batch)
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-				strings.TrimSuffix(primary, "/")+"/api/sync/sales", bytes.NewReader(raw))
-			if err != nil {
-				return
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+bearer)
-			resp, err := client.Do(req)
-			if err != nil {
-				logging.L().Infof("sync push: primary unreachable (%v) — will retry", err)
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				logging.L().Errorf("sync push rejected: %s", resp.Status)
-				return
-			}
-			_ = d.Settings.Set(ctx, "sync.push_cursor", maxCreated)
-			logging.L().Infof("sync push: %d sale(s) journaled to the primary", len(batch))
+	repo := data.NewPOSRepo(d.Db)
+	client := &http.Client{Timeout: 30 * time.Second}
+	runSyncLoop(ctx, func() {
+		get := func(k string) string {
+			v, _, _ := d.Settings.Get(ctx, k)
+			return strings.TrimSpace(v)
 		}
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
+		primary, bearer := get("sync.primary_url"), get("sync.bearer")
+		if primary == "" || bearer == "" {
+			return
+		}
+		cursor := get("sync.push_cursor")
+		receipts, err := repo.LocalSalesSince(ctx, cursor, 50)
+		if err != nil || len(receipts) == 0 {
+			return
+		}
+		var batch []journalSale
+		maxCreated := cursor
+		for _, rn := range receipts {
+			j, found, err := buildJournal(ctx, repo, rn)
+			if err != nil || !found {
 				return
-			case <-ticker.C:
-				tick()
+			}
+			batch = append(batch, j)
+			if j.Sale.CreatedAt > maxCreated {
+				maxCreated = j.Sale.CreatedAt
 			}
 		}
-	}()
+		raw, _ := json.Marshal(batch)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			strings.TrimSuffix(primary, "/")+"/api/sync/sales", bytes.NewReader(raw))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		resp, err := client.Do(req)
+		if err != nil {
+			logging.L().Infof("sync push: primary unreachable (%v) — will retry", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			logging.L().Errorf("sync push rejected: %s", resp.Status)
+			return
+		}
+		_ = d.Settings.Set(ctx, "sync.push_cursor", maxCreated)
+		now := time.Now().UTC().Format(time.RFC3339)
+		_ = d.Settings.Set(ctx, "sync.last_push_at", now)
+		_ = d.Settings.Set(ctx, "sync.last_contact_at", now)
+		logging.L().Infof("sync push: %d sale(s) journaled to the primary", len(batch))
+	})
 }

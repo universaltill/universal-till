@@ -86,13 +86,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		data := map[string]any{
-			"title":      "Catalog",
-			"menuItems":  d.Menu,
-			"theme":      d.CurrentState().Theme,
-			"Items":      items,
-			"Categories": cats,
-			"Brands":     brands,
-			"TaxCodes":   taxCodes,
+			"title":       "Catalog",
+			"menuItems":   d.Menu,
+			"theme":       d.CurrentState().Theme,
+			"Items":       items,
+			"Categories":  cats,
+			"Brands":      brands,
+			"TaxCodes":    taxCodes,
+			"SyncPrimary": d.SyncPrimaryURL(r.Context()),
 		}
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
