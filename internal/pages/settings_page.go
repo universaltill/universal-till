@@ -10,7 +10,6 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
-	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // isManagerOrAuthOff gates manager-only settings; with UT_AUTH=off there is
@@ -113,11 +112,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		})
 		common.SaveState(r.Context(), d.Settings, st)
 		httpx.InitCurrency(st.Currency)
-		resolver := ui.PriceResolverAdapter{Store: d.BtnStore}
-		d.Engine = pos.NewServiceWithResolver(pos.Config{
+		// In place: replacing the engine would empty a basket in progress.
+		d.Engine.SetConfig(pos.Config{
 			TaxInclusive:       st.TaxInclusive,
 			TaxRateBasisPoints: st.TaxRatePct * 100,
-		}, resolver)
+		})
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -160,11 +159,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		case common.KeyCurrency:
 			httpx.InitCurrency(st.Currency)
 		case common.KeyTaxInclusive:
-			resolver := ui.PriceResolverAdapter{Store: d.BtnStore}
-			d.Engine = pos.NewServiceWithResolver(pos.Config{
+			// In place: replacing the engine would empty a basket in progress.
+			d.Engine.SetConfig(pos.Config{
 				TaxInclusive:       st.TaxInclusive,
 				TaxRateBasisPoints: st.TaxRatePct * 100,
-			}, resolver)
+			})
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
