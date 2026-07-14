@@ -152,7 +152,38 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPluginSettings(mux, dp)
 	registerSyncAPI(mux, dp)
 	registerSyncSales(mux, dp)
+	registerSyncAdmin(mux, dp)
 	StartSyncPush(ctx, dp) // replica journal loop (ADR-0011 D3)
+	// Replica drift loop (ADR-0011 D2b): after a pull applies, re-derive
+	// everything Init computed from settings — same moves as the settings
+	// handlers make on a manual edit.
+	StartSyncPull(ctx, dp, func(c context.Context) {
+		st := common.LoadState(c, setStore, cfg)
+		applied := dp.UpdateState(func(s *common.RuntimeState) {
+			// display.ui_scale is per-till; when unset keep the env-derived
+			// value Init resolved instead of LoadState's zero.
+			if st.UIScale <= 0 {
+				st.UIScale = s.UIScale
+			}
+			*s = st
+		})
+		httpx.InitCurrency(applied.Currency)
+		// In-place tax swap: replacing the engine (as the settings
+		// handlers do) would empty the basket of a sale in progress.
+		if newCfg := (pos.Config{
+			TaxInclusive:       applied.TaxInclusive,
+			TaxRateBasisPoints: applied.TaxRatePct * 100,
+		}); dp.Engine.Config() != newCfg {
+			dp.Engine.SetConfig(newCfg)
+		}
+		authSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
+		if !authDisabled {
+			httpx.InitIdleLock(applied.IdleLockMinutes)
+		}
+		if overrides, err := data.NewTranslationRepo(dp.Db).ListOverrides(c); err == nil {
+			i18n.SetShopOverrides(overrides)
+		}
+	})
 	StartEODScheduler(ctx, dp) // background Z-report (docs: G30)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)

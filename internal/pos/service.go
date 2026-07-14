@@ -39,6 +39,22 @@ func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
 	return &Service{cfg: cfg, resolver: r, tax: tax, scanCache: map[string]BasketLine{}}
 }
 
+// SetConfig swaps the tax configuration IN PLACE, keeping the basket.
+// Background config refreshes (e.g. the LAN-sync pull) must use this
+// rather than replacing the service — a replacement engine is empty and
+// would silently discard a sale in progress.
+func (s *Service) SetConfig(cfg Config) {
+	tax := BasisPointsTaxEngine{RateBasisPoints: cfg.TaxRateBasisPoints, Inclusive: cfg.TaxInclusive}
+	if cfg.TaxRateBasisPoints == 0 {
+		tax.RateBasisPoints = 2000
+	}
+	s.cfg, s.tax = cfg, tax
+	s.recomputeTotals()
+}
+
+// Config returns the service's current tax configuration.
+func (s *Service) Config() Config { return s.cfg }
+
 type BasketLine struct {
 	SKU          string      `json:"sku"`
 	Name         string      `json:"name"`

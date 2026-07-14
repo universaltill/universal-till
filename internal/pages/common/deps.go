@@ -1,7 +1,9 @@
 package common
 
 import (
+	"context"
 	"database/sql"
+	"strings"
 	"sync"
 
 	"github.com/universaltill/universal-till/internal/ai"
@@ -65,4 +67,15 @@ func (d *Deps) UpdateState(fn func(*RuntimeState)) RuntimeState {
 type MenuItem struct {
 	Href  string
 	Label string
+}
+
+// SyncPrimaryURL returns the primary's URL when this till is a replica
+// (empty otherwise) — admin pages use it for the "edit on the primary"
+// banner (ADR-0011 D4: catalog is primary-wins, local edits get overwritten).
+func (d *Deps) SyncPrimaryURL(ctx context.Context) string {
+	if d.Settings == nil {
+		return ""
+	}
+	v, _, _ := d.Settings.Get(ctx, "sync.primary_url")
+	return strings.TrimSpace(v)
 }

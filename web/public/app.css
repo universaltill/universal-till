@@ -445,6 +445,16 @@ body.login-screen {
 .login-setup { display: flex; flex-direction: column; gap: .8rem; text-align: start; }
 .login-setup input { width: 100%; }
 
+/* Multi-till sync chip in the nav (ADR-0011 D4) */
+.sync-chip { display: inline-flex; align-items: center; margin-inline-start: .6rem;
+  padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
+.sync-chip.ok { background: #dcfce7; color: #166534; }
+.sync-chip.warn { background: #fef3c7; color: #92400e; }
+.sync-chip a { color: inherit; }
+.sync-banner { background: #fef3c7; color: #92400e; border-radius: .5rem;
+  padding: .6rem .9rem; margin-block-end: .8rem; }
+.sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
+
 /* Operator chip + lock button in the nav */
 .session-chip { display: inline-flex; align-items: center; gap: .5rem; margin-inline-start: .8rem; }
 .session-user { font-weight: 600; }

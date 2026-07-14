@@ -24,10 +24,11 @@ func exempt(path string) bool {
 		return true
 	}
 	// Machine-to-machine sync surface (ADR-0011): enroll is one-time-token
-	// authed; ping/snapshot are per-till-bearer authed — enforced in the
-	// handlers. /api/setup/join refuses once an operator exists (wizard).
+	// authed; ping/snapshot/sales/admin are per-till-bearer authed —
+	// enforced in the handlers. /api/setup/join refuses once an operator
+	// exists (wizard).
 	switch path {
-	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/setup/join":
+	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin", "/api/setup/join":
 		return true
 	}
 	for _, p := range []string{"/api/auth/", "/public/", "/themes/"} {
