@@ -142,6 +142,59 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	})
 
+	// Self-service PIN change (pos-auth follow-up): any operator, own PIN
+	// only; wrong current PIN counts against the shared device lockout;
+	// success revokes the user's sessions → sign back in with the new PIN.
+	mux.HandleFunc("GET /pin", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := auth.FromContext(r.Context()); !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		httpx.Render("ui/pages/pin.html", map[string]any{
+			"title":     "Change PIN",
+			"theme":     d.CurrentState().Theme,
+			"menuItems": d.Menu,
+			"errKey":    r.URL.Query().Get("err"),
+		})(w, r)
+	})
+
+	// NOT under /api/auth/ — that prefix is middleware-exempt for the login
+	// flow, and this endpoint needs the authenticated operator in context.
+	mux.HandleFunc("POST /api/pin/change", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := auth.FromContext(r.Context())
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		_ = r.ParseForm()
+		newPIN := r.PostFormValue("new_pin")
+		if newPIN != r.PostFormValue("new_pin2") {
+			http.Redirect(w, r, "/pin?err=auth.error.pin_mismatch", http.StatusSeeOther)
+			return
+		}
+		err := svc.ChangeOwnPIN(r.Context(), u.ID, r.PostFormValue("current_pin"), newPIN)
+		now := time.Now().UTC().Format(time.RFC3339)
+		switch {
+		case errors.Is(err, auth.ErrLockedOut):
+			_ = posRepo.InsertAudit(r.Context(), nil, u.ID, "user", u.ID, "pin_change_locked_out", nil, now, "")
+			http.Redirect(w, r, "/pin?err=auth.error.locked", http.StatusSeeOther)
+			return
+		case errors.Is(err, auth.ErrInvalidPIN):
+			_ = posRepo.InsertAudit(r.Context(), nil, u.ID, "user", u.ID, "pin_change_failed", nil, now, "")
+			http.Redirect(w, r, "/pin?err=auth.error.invalid", http.StatusSeeOther)
+			return
+		case errors.Is(err, auth.ErrPINTaken):
+			http.Redirect(w, r, "/pin?err=users.error.pin_taken", http.StatusSeeOther)
+			return
+		case err != nil:
+			http.Redirect(w, r, "/pin?err=auth.error.pin_format", http.StatusSeeOther)
+			return
+		}
+		_ = posRepo.InsertAudit(r.Context(), nil, u.ID, "user", u.ID, "pin_changed", nil, now, "")
+		setSessionCookie(w, "", -1)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	})
+
 	// Operator chip in the nav: shows who is signed in + the Lock button.
 	mux.HandleFunc("GET /ui/session-chip", func(w http.ResponseWriter, r *http.Request) {
 		u, ok := auth.FromContext(r.Context())

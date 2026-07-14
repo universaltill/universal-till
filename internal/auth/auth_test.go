@@ -338,3 +338,38 @@ func TestTouchIntervalStaysUnderWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestChangeOwnPIN(t *testing.T) {
+	db := openAuthTestDB(t)
+	seedOperator(t, db, "op1", "cashier", "1234")
+	seedOperator(t, db, "op2", "cashier", "5678")
+	svc := NewService(db)
+	ctx := context.Background()
+	token := loginFor(t, svc, "1234")
+
+	// Wrong current PIN → refused and counts toward the lockout.
+	if err := svc.ChangeOwnPIN(ctx, "op1", "0000", "4321"); err != ErrInvalidPIN {
+		t.Fatalf("wrong current pin: %v, want ErrInvalidPIN", err)
+	}
+	// New PIN owned by someone else → refused.
+	if err := svc.ChangeOwnPIN(ctx, "op1", "1234", "5678"); err != ErrPINTaken {
+		t.Fatalf("taken pin: %v, want ErrPINTaken", err)
+	}
+	// Bad format → refused.
+	if err := svc.ChangeOwnPIN(ctx, "op1", "1234", "12"); err == nil {
+		t.Fatal("short pin accepted")
+	}
+	// Success: old PIN dead, new PIN logs in, old session revoked.
+	if err := svc.ChangeOwnPIN(ctx, "op1", "1234", "4321"); err != nil {
+		t.Fatalf("change: %v", err)
+	}
+	if _, ok := svc.Resolve(ctx, token); ok {
+		t.Error("old session must be revoked after a PIN change")
+	}
+	if _, _, err := svc.Login(ctx, "1234"); err != ErrInvalidPIN {
+		t.Errorf("old pin still works: %v", err)
+	}
+	if u, _, err := svc.Login(ctx, "4321"); err != nil || u.ID != "op1" {
+		t.Errorf("new pin login: %+v %v", u, err)
+	}
+}
