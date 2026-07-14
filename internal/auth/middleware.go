@@ -23,6 +23,11 @@ func exempt(path string) bool {
 	if path == "/login" || path == "/healthz" || path == "/setup" || path == "/api/setup" {
 		return true
 	}
+	// Machine-to-machine sync surface (ADR-0011): enroll is one-time-token
+	// authed, ping is per-till-bearer authed — enforced in the handlers.
+	if path == "/api/sync/enroll" || path == "/api/sync/ping" {
+		return true
+	}
 	for _, p := range []string{"/api/auth/", "/public/", "/themes/"} {
 		if strings.HasPrefix(path, p) {
 			return true
