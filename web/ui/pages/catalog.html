@@ -59,6 +59,17 @@
     </details>
 
     <details class="catalog-extra">
+      <summary>{{ T "catalog.labels" }}</summary>
+      <form hx-post="/api/print/labels" hx-target="#labels-msg" hx-swap="innerHTML">
+        <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="labels-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
+        <input type="hidden" name="item_id" id="labels-item-id">
+        <label>{{ T "catalog.labels.copies" }} <input type="number" name="copies" value="1" min="1" max="50"></label>
+        <button class="btn" type="submit">{{ T "catalog.labels.print" }}</button>
+        <div id="labels-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+      </form>
+    </details>
+
+    <details class="catalog-extra">
       <summary>{{ T "catalog.variants" }}</summary>
       <form hx-post="/api/catalog/variant" hx-target="#catalog-table" hx-swap="outerHTML">
         <input type="hidden" name="id">
@@ -183,6 +194,8 @@
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
     var imgLabel = document.getElementById('image-item-label');
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
+    var lblLabel = document.getElementById('labels-item-label');
+    if (lblLabel) { lblLabel.value = row.dataset.name; document.getElementById('labels-item-id').value = row.dataset.id; }
   });
 
   form.addEventListener('submit', function (ev) {

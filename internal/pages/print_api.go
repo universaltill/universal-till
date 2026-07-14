@@ -194,6 +194,55 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.printer.test_ok"))
 	})
 
+	// Product/shelf labels (docs: receipt-printing.md § G9). Any operator —
+	// labelling shelves is normal staff work.
+	mux.HandleFunc("POST /api/print/labels", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("item_id"))
+		copies, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("copies")))
+		if copies < 1 {
+			copies = 1
+		}
+		if copies > 50 {
+			copies = 50
+		}
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fail := func(status int, key string) {
+			w.WriteHeader(status)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, key))
+		}
+		label, found, err := data.NewCatalogRepo(d.Db).GetItemLabel(r.Context(), itemID)
+		if err != nil || !found {
+			fail(http.StatusNotFound, "catalog.labels.no_item")
+			return
+		}
+		if strings.TrimSpace(label.Code) == "" {
+			fail(http.StatusBadRequest, "catalog.labels.no_code")
+			return
+		}
+		cfg := printerConfig(r.Context(), d)
+		tr, terr := print.NewTransport(cfg)
+		if terr != nil || tr == nil {
+			fail(http.StatusBadGateway, "settings.printer.test_failed")
+			return
+		}
+		one := print.RenderLabel(label.Name, httpx.FormatMoney(label.PriceMinor, "en"), label.Code, cfg.Charset)
+		job := make([]byte, 0, len(one)*copies)
+		for range copies {
+			job = append(job, one...)
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		if err := tr.Print(ctx, job); err != nil {
+			fail(http.StatusBadGateway, "settings.printer.test_failed")
+			return
+		}
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "item", itemID, "labels_printed",
+			map[string]any{"copies": copies, "code": label.Code}, time.Now().UTC().Format(time.RFC3339), "")
+		fmt.Fprintf(w, `<span>✓ %s (%d)</span>`, httpx.T(locale, "catalog.labels.done"), copies)
+	})
+
 	// Reprint a receipt from the journal.
 	mux.HandleFunc("POST /api/print/receipt/{receiptNo}", func(w http.ResponseWriter, r *http.Request) {
 		receiptNo := r.PathValue("receiptNo")
