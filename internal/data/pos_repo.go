@@ -741,6 +741,64 @@ func (r *POSRepo) HasArchivedReport(ctx context.Context, kind, period string) (b
 	return n > 0, nil
 }
 
+// SaleExists reports whether a sale id is already recorded (sync idempotency).
+func (r *POSRepo) SaleExists(ctx context.Context, saleID string) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sales WHERE id = ?`, saleID).Scan(&n); err != nil {
+		return false, fmt.Errorf("sale exists: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SetSaleProvenance stamps a journaled-in sale with its source till and
+// original timestamp (CompleteSale wrote "now").
+func (r *POSRepo) SetSaleProvenance(ctx context.Context, saleID, tillID, createdAt string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE sales SET till_id = ?, created_at = ? WHERE id = ?`, tillID, createdAt, saleID)
+	if err != nil {
+		return fmt.Errorf("set provenance: %w", err)
+	}
+	return nil
+}
+
+// LocalSalesSince lists this till's OWN completed sales after the cursor
+// (created_at), oldest first — the replica's push queue. Journaled-in
+// sales (till_id != '') are excluded.
+func (r *POSRepo) LocalSalesSince(ctx context.Context, cursor string, limit int) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT receipt_no FROM sales
+WHERE status = 'completed' AND till_id = '' AND created_at > ?
+ORDER BY created_at LIMIT ?`, cursor, limit)
+	if err != nil {
+		return nil, fmt.Errorf("local sales since: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var rn string
+		if err := rows.Scan(&rn); err != nil {
+			return nil, fmt.Errorf("scan local sale: %w", err)
+		}
+		out = append(out, rn)
+	}
+	return out, rows.Err()
+}
+
+// OriginalSaleIDFor returns the linked original sale id for a return.
+func (r *POSRepo) OriginalSaleIDFor(ctx context.Context, returnSaleID string) (string, error) {
+	var id string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT original_sale_id FROM sale_links WHERE sale_id = ?`, returnSaleID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("original sale id: %w", err)
+	}
+	return id, nil
+}
+
 // RefundLineKey identifies a refundable line across the original sale and
 // its return sales: same item/variant at the same unit price.
 func RefundLineKey(itemID, variantID string, unitPrice int64) string {
@@ -1490,6 +1548,7 @@ type SaleDetail struct {
 	TaxTotal      int64
 	Total         int64
 	CreatedAt     string
+	CashierID     string
 	Lines         []SaleDetailLine
 	Payments      []SaleDetailPayment
 }
@@ -1520,11 +1579,12 @@ func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDeta
 	var d SaleDetail
 	err := r.db.QueryRowContext(ctx, `
 SELECT id, receipt_no, status, sale_type, tender_type, offline, sync_status,
-       currency, subtotal, discount_total, tax_total, total, created_at
+       currency, subtotal, discount_total, tax_total, total, created_at,
+       COALESCE(cashier_id, '')
 FROM sales WHERE receipt_no = ?`, receiptNo).Scan(
 		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.Offline,
 		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
-		&d.Total, &d.CreatedAt)
+		&d.Total, &d.CreatedAt, &d.CashierID)
 	if err == sql.ErrNoRows {
 		return SaleDetail{}, false, nil
 	}
