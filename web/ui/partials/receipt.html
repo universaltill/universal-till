@@ -4,7 +4,9 @@
      matches the rest of the till and theme plugins. */
   .receipt-wrap {max-width: 420px; margin: 0 auto;}
   .receipt-card {background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: .8rem .9rem;}
-  .barcode {font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; letter-spacing: 2px; font-size: 1.4rem; margin: 0.25rem 0;}
+  .barcode {text-align: center; margin: 0.4rem 0;}
+  .barcode .receipt-barcode {max-width: 100%; height: 44px;}
+  .barcode small {display: block; letter-spacing: 3px; color: #374151;}
   .actions {display: flex; gap: 0.5rem; margin: .75rem 0 .25rem;}
   .receipt-lines {list-style: none; padding: 0; margin: 0.5rem 0;}
   .receipt-lines li {display: flex; justify-content: space-between; margin-bottom: 0.25rem;}
@@ -37,7 +39,7 @@
   <div class="receipt-card">
     <h2>{{ T "receipt.title" }} #{{ .ReceiptNo }}</h2>
     {{ if .OriginalReceiptNo }}<p><small>{{ T "receipt.return_for" }}: {{ .OriginalReceiptNo }}</small></p>{{ end }}
-    <div class="barcode">*{{ .ReceiptNo }}*</div>
+    <div class="barcode">{{ barcodesvg .ReceiptNo }}<small>{{ .ReceiptNo }}</small></div>
     <ul class="receipt-lines">
       {{ range .Lines }}
       <li><span>{{ .Name }} x{{ .Qty }}</span><span>{{ money .TotalAfterTax }}</span></li>
@@ -87,8 +89,9 @@
     </div>
     {{ end }}
     <div class="actions">
-      <button class="btn primary" onclick="window.print()">{{ T "receipt.print" }}</button>
+      <button class="btn primary" onclick="var b=this;fetch('/api/print/receipt/{{ .ReceiptNo }}',{method:'POST'}).then(function(r){if(r.ok){b.textContent='✓ {{ T "receipt.print" }}';}else{window.print();}}).catch(function(){window.print();})">{{ T "receipt.print" }}</button>
       <button class="btn secondary" onclick="window.location='/'">{{ T "receipt.new_customer" }}</button>
+      <button class="btn secondary" onclick="window.location='/refund/{{ .ReceiptNo }}'">↩ {{ T "refund.title" }}</button>
     </div>
     <small>{{ T "receipt.auto_reset" }}</small>
   </div>

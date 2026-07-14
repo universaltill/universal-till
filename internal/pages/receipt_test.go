@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -12,7 +13,8 @@ import (
 func TestRenderReceipt_DiscountShown(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
 			switch key {
@@ -61,7 +63,8 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 func TestRenderReceipt_LegalText(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
 			switch key {
@@ -111,7 +114,8 @@ func TestRenderReceipt_LegalText(t *testing.T) {
 func TestRenderReceipt_NoLegalText(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":     func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
 			switch key {
