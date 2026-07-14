@@ -18,6 +18,21 @@
   <div class="card kpi"><div class="kpi-label">{{ T "reports.tax" }}</div><div class="kpi-value">{{ money .GrandTax }}</div></div>
 </div>
 
+{{ if .CanAsk }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.ask.title" }}</h2>
+  <p class="muted">{{ T "reports.ask.hint" }}</p>
+  <form hx-post="/api/reports/ask" hx-target="#ask-answer" hx-swap="innerHTML"
+        hx-indicator="#ask-busy" style="display:flex; gap:.4rem">
+    <input type="text" name="question" maxlength="500" required style="flex:1"
+           placeholder="{{ T "reports.ask.placeholder" }}" autocomplete="off">
+    <button class="btn primary" type="submit">{{ T "reports.ask.button" }}</button>
+  </form>
+  <div id="ask-busy" class="muted htmx-indicator" style="margin-top:.4rem">⏳ {{ T "reports.ask.thinking" }}</div>
+  <div id="ask-answer" aria-live="polite"></div>
+</div>
+{{ end }}
+
 <div class="catalog-layout" style="margin-top:1rem">
   <div class="card">
     <h2>{{ T "reports.by_day" }}</h2>

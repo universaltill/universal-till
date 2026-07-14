@@ -32,6 +32,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"title":      "Reports",
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.Menu,
+			"CanAsk":     d.AI != nil && d.AI.CanAsk() && isManagerOrAuthOff(r),
 			"Days":       days,
 			"Daily":      daily,
 			"Top":        top,

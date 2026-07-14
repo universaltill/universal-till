@@ -199,15 +199,18 @@ UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode on
 # Optional
 UT_SAMPLES_DIR=/path/to/images        # Sample product images
 
-# Assistive AI (optional): camera item identification on the sale screen.
-# Self-hosted first — point at an Ollama server running an open vision model
-# (a machine in the store, your homelab, or a VM you provide); photos and item
-# names never leave your infrastructure. Nothing configured = invisible, and
-# checkout never depends on it.
+# Assistive AI (optional): camera item identification on the sale screen and
+# "Ask your till" — plain-language questions about sales/stock on /reports
+# (managers only, every question audited).
+# Self-hosted first — point at an Ollama server running open models
+# (a machine in the store, your homelab, or a VM you provide); photos, item
+# names and sales figures never leave your infrastructure. Nothing configured
+# = invisible, and checkout never depends on it.
 UT_AI_ENDPOINT=http://localhost:11434  # Ollama server URL (self-hosted)
-UT_AI_MODEL=llama3.2-vision            # Open vision model to use
+UT_AI_MODEL=llama3.2-vision            # Open vision model (camera identify)
+UT_AI_ASK_MODEL=llama3.2               # Tool-capable text model (Ask your till)
 UT_AI_PROVIDER=                        # Optional: "claude" for the hosted paid API
-UT_AI_API_KEY=                         # Only for the claude provider
+UT_AI_API_KEY=                         # Only for the claude provider (no ask loop yet)
 ```
 
 ### System Settings

@@ -25,6 +25,7 @@ type Config struct {
 	Provider string // "ollama" (self-hosted, default) or "claude" (optional)
 	Endpoint string // Ollama base URL, e.g. http://localhost:11434
 	Model    string
+	AskModel string // tool-capable text model for "Ask your till" (ollama)
 	APIKey   string // claude provider only
 }
 
@@ -36,6 +37,7 @@ func FromEnv() Config {
 		Provider: strings.ToLower(strings.TrimSpace(os.Getenv("UT_AI_PROVIDER"))),
 		Endpoint: strings.TrimSpace(os.Getenv("UT_AI_ENDPOINT")),
 		Model:    strings.TrimSpace(os.Getenv("UT_AI_MODEL")),
+		AskModel: strings.TrimSpace(os.Getenv("UT_AI_ASK_MODEL")),
 		APIKey:   strings.TrimSpace(os.Getenv("UT_AI_API_KEY")),
 	}
 	if cfg.Provider == "" {
@@ -53,6 +55,11 @@ func FromEnv() Config {
 		case "claude":
 			cfg.Model = "claude-haiku-4-5"
 		}
+	}
+	// The vision model does camera identify; the ask loop needs a
+	// tool-capable TEXT model (vision models don't do function calling).
+	if cfg.AskModel == "" && cfg.Provider == "ollama" {
+		cfg.AskModel = "llama3.2"
 	}
 	return cfg
 }
@@ -107,7 +114,7 @@ func New(cfg Config) *Service {
 		if cfg.Endpoint == "" {
 			return &Service{}
 		}
-		return &Service{p: newOllamaProvider(cfg.Endpoint, cfg.Model), enabled: true}
+		return &Service{p: newOllamaProvider(cfg.Endpoint, cfg.Model, cfg.AskModel), enabled: true}
 	case "claude":
 		if cfg.APIKey == "" {
 			return &Service{}

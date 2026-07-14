@@ -19,14 +19,16 @@ import (
 // training a custom per-shop matcher later.
 type ollamaProvider struct {
 	endpoint string
-	model    string
+	model    string // vision model (camera identify)
+	askModel string // tool-capable text model ("Ask your till")
 	client   *http.Client
 }
 
-func newOllamaProvider(endpoint, model string) *ollamaProvider {
+func newOllamaProvider(endpoint, model, askModel string) *ollamaProvider {
 	return &ollamaProvider{
 		endpoint: strings.TrimSuffix(endpoint, "/"),
 		model:    model,
+		askModel: askModel,
 		client:   &http.Client{}, // per-call deadline comes from the caller's ctx
 	}
 }
