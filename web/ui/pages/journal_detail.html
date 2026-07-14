@@ -12,6 +12,8 @@
   </div>
 </div>
 
+<div style="text-align:center; margin:.4rem 0">{{ barcodesvg .Sale.ReceiptNo }}</div>
+
 {{ if or .Original .Returns }}
 <p class="muted" style="margin-bottom:.6rem">
   {{ if .Original }}{{ T "refund.original_ref" }}: <a href="/journal/{{ .Original }}">#{{ .Original }}</a>{{ end }}

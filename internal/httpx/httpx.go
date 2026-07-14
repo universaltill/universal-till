@@ -233,6 +233,7 @@ func FuncsFor(locale string) template.FuncMap {
 	}
 	funcs["uiscalepx"] = uiScalePx
 	funcs["idlelocksecs"] = func() int64 { return idleLockSecs.Load() }
+	funcs["barcodesvg"] = BarcodeSVG // scannable CODE39 for receipt numbers
 	funcs["locale"] = func() string { return locale }
 	// dir drives <html dir=…> so RTL locales lay out right-to-left.
 	funcs["dir"] = func() string {
