@@ -1,20 +1,26 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"image"
 	_ "image/jpeg"
 	"image/png"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	productlookup "github.com/universaltill/universal-till/internal/lookup"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -23,6 +29,40 @@ import (
 // func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
 func Register(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewCatalogRepo(d.Db)
+	posRepo := data.NewPOSRepo(d.Db)
+	lookupClient := productlookup.NewClient(nil, nil)
+
+	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		var errField any
+		if errMsg != "" {
+			errField = errMsg
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "error": errField})
+	}
+
+	// Barcode → open product databases; pre-fills the new-item form
+	// (G15 increment 1). Back-office convenience only, fails soft offline.
+	mux.HandleFunc("GET /api/catalog/lookup", func(w http.ResponseWriter, r *http.Request) {
+		barcode := strings.TrimSpace(r.URL.Query().Get("barcode"))
+		if !productlookup.ValidBarcode(barcode) {
+			writeJSON(w, http.StatusBadRequest, nil, "barcode must be 6-14 digits")
+			return
+		}
+		product, err := lookupClient.Lookup(r.Context(), barcode)
+		now := time.Now().UTC().Format(time.RFC3339)
+		_ = posRepo.InsertAudit(r.Context(), nil, auth.UserID(r), "catalog", barcode, "barcode_lookup",
+			map[string]any{"found": err == nil, "source": product.Source}, now, "")
+		switch {
+		case errors.Is(err, productlookup.ErrNotFound):
+			writeJSON(w, http.StatusNotFound, nil, "barcode not found in product databases")
+		case err != nil:
+			writeJSON(w, http.StatusBadGateway, nil, "product databases unreachable")
+		default:
+			writeJSON(w, http.StatusOK, product, "")
+		}
+	})
 
 	// Every mutation endpoint answers with the refreshed items table.
 	renderCatalogTable := func(w http.ResponseWriter, r *http.Request) {
@@ -78,9 +118,25 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if _, err := pos.CreateItem(r.Context(), d.Db, itemInput); err != nil {
+		itemID, err := pos.CreateItem(r.Context(), d.Db, itemInput)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		// Auto-fill flow: attach the looked-up barcode so the new item is
+		// instantly scannable, and save the source image as the tile thumb.
+		if barcode := strings.TrimSpace(r.Form.Get("barcode")); barcode != "" {
+			if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
+				Barcode: barcode, ItemID: itemID, IsPrimary: true,
+			}); err != nil {
+				http.Error(w, "item created, but barcode attach failed: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		if imgURL := strings.TrimSpace(r.Form.Get("imageUrl")); imgURL != "" {
+			if err := saveLookupImage(r.Context(), lookupClient, itemID, imgURL); err != nil {
+				log.Printf("[catalog] lookup image for item %s skipped: %v", itemID, err)
+			}
 		}
 		renderCatalogTable(w, r)
 	})
@@ -269,6 +325,30 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		renderCatalogTable(w, r)
 	})
+}
+
+// saveLookupImage downloads an allowlisted product-database image and stores
+// it as the item's thumb.png (same convention as the manual upload path).
+// Best-effort: the item is fine without it.
+func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgURL string) error {
+	raw, err := c.FetchImage(ctx, imgURL)
+	if err != nil {
+		return err
+	}
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join("web", "public", "assets", "items", itemID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(filepath.Join(dir, "thumb.png"))
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	return png.Encode(out, img)
 }
 
 func strPtr(s string) *string {

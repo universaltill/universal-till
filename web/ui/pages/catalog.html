@@ -19,6 +19,12 @@
     <form id="item-form" autocomplete="off">
       <input type="hidden" name="id" id="item-id">
       <input type="hidden" name="price" id="item-price-minor">
+      <input type="hidden" name="imageUrl" id="item-image-url">
+      <div class="field-pair">
+        <label>{{ T "catalog.barcode" }} <input type="text" name="barcode" id="item-barcode" inputmode="numeric" placeholder="{{ T "catalog.autofill_placeholder" }}"></label>
+        <button class="btn secondary" type="button" id="autofill-btn" style="align-self:end">{{ T "catalog.autofill" }}</button>
+      </div>
+      <div id="autofill-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
       <label>{{ T "catalog.col.name" }} <input type="text" name="name" id="item-name" required></label>
       <div class="field-pair">
         <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="number" id="item-price" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}" required></label>
@@ -96,10 +102,62 @@
   function clearForm() {
     form.reset();
     document.getElementById('item-id').value = '';
+    document.getElementById('item-image-url').value = '';
     setMode(false);
     msg.textContent = '';
+    document.getElementById('autofill-msg').textContent = '';
   }
   resetBtn.addEventListener('click', clearForm);
+
+  // Barcode auto-fill from open product databases (G15 increment 1).
+  var autofillMsg = document.getElementById('autofill-msg');
+  var barcodeInput = document.getElementById('item-barcode');
+  var AUTOFILL_MSG = {
+    searching: "{{ T "catalog.autofill_searching" }}",
+    found: "{{ T "catalog.autofill_found" }}",
+    notFound: "{{ T "catalog.autofill_not_found" }}",
+    failed: "{{ T "catalog.autofill_failed" }}"
+  };
+  function runAutofill() {
+    var code = (barcodeInput.value || '').trim();
+    if (!code) { barcodeInput.focus(); return; }
+    autofillMsg.textContent = '⏳ ' + AUTOFILL_MSG.searching;
+    fetch('/api/catalog/lookup?barcode=' + encodeURIComponent(code))
+      .then(function (res) {
+        return res.json().then(function (body) { return { ok: res.ok, status: res.status, body: body }; });
+      })
+      .then(function (r) {
+        if (!r.ok) {
+          autofillMsg.textContent = '✗ ' + (r.status === 404 ? AUTOFILL_MSG.notFound
+            : (r.body && r.body.error) || AUTOFILL_MSG.failed);
+          return;
+        }
+        var p = r.body.data;
+        document.getElementById('item-name').value = p.name;
+        var bits = [];
+        if (p.description && p.description.toLowerCase() !== p.name.toLowerCase()) bits.push(p.description);
+        if (p.brand) bits.push(p.brand);
+        if (p.quantity) bits.push(p.quantity);
+        document.getElementById('item-description').value = bits.join(' · ');
+        document.getElementById('item-image-url').value = p.image_url || '';
+        if (p.brand) {
+          document.querySelectorAll('#brands-list option').forEach(function (opt) {
+            if (opt.textContent.trim().toLowerCase() === p.brand.toLowerCase()) {
+              document.getElementById('item-brand').value = opt.value;
+            }
+          });
+        }
+        autofillMsg.textContent = '✓ ' + AUTOFILL_MSG.found + ' (' + p.source + ')';
+        document.getElementById('item-price').focus();
+      })
+      .catch(function () { autofillMsg.textContent = '✗ ' + AUTOFILL_MSG.failed; });
+  }
+  document.getElementById('autofill-btn').addEventListener('click', runAutofill);
+  // Barcode scanners terminate with Enter — scan straight into a lookup
+  // instead of submitting the half-empty form.
+  barcodeInput.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); runAutofill(); }
+  });
 
   // Row click fills the form; the table partial is re-rendered by the server
   // after every mutation, so delegate from the document.
@@ -108,6 +166,9 @@
     if (!row) return;
     if (ev.target.closest('.btn') && !ev.target.classList.contains('catalog-edit')) return;
     document.getElementById('item-id').value = row.dataset.id;
+    document.getElementById('item-barcode').value = '';
+    document.getElementById('item-image-url').value = '';
+    document.getElementById('autofill-msg').textContent = '';
     document.getElementById('item-name').value = row.dataset.name;
     document.getElementById('item-sku').value = row.dataset.sku;
     document.getElementById('item-description').value = row.dataset.description;
