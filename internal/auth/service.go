@@ -28,6 +28,7 @@ const (
 var (
 	ErrInvalidPIN = errors.New("invalid pin")
 	ErrLockedOut  = errors.New("too many failed attempts")
+	ErrPINTaken   = errors.New("pin already in use")
 )
 
 // User is the authenticated operator attached to a request.
@@ -232,6 +233,42 @@ func (s *Service) Logout(ctx context.Context, token string) {
 		return
 	}
 	_ = s.repo.RevokeSession(ctx, hashToken(token))
+}
+
+// ChangeOwnPIN lets an operator change their own PIN: current PIN proves
+// identity (wrong attempts count against the shared device lockout), the
+// new PIN must be valid and unique (login is PIN-only), and all the user's
+// sessions are revoked — a changed credential invalidates sessions, so the
+// operator signs back in with the new PIN.
+func (s *Service) ChangeOwnPIN(ctx context.Context, userID, currentPIN, newPIN string) error {
+	if s.locked() {
+		return ErrLockedOut
+	}
+	u, found, err := s.repo.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !found || !VerifyPIN(currentPIN, u.PinHash) {
+		s.recordFailure()
+		return ErrInvalidPIN
+	}
+	s.recordSuccess()
+	if err := ValidatePINFormat(newPIN); err != nil {
+		return err
+	}
+	if owner, taken, err := s.FindUserByPIN(ctx, newPIN); err != nil {
+		return err
+	} else if taken && owner.ID != userID {
+		return ErrPINTaken
+	}
+	hash, err := HashPIN(newPIN)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SetUserPIN(ctx, userID, hash); err != nil {
+		return err
+	}
+	return s.repo.RevokeUserSessions(ctx, userID)
 }
 
 // NeedsFirstBoot reports whether no operator can log in yet, which switches
