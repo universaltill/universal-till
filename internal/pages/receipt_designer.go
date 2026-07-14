@@ -1,0 +1,145 @@
+package pages
+
+import (
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/print"
+)
+
+// designFromForm reads UNSAVED designer values (live preview posts these).
+func designFromForm(r *http.Request) receiptDesign {
+	rd := receiptDesign{
+		Footer:      strings.TrimSpace(r.Form.Get("footer")),
+		ShowSKU:     r.Form.Get("show_sku") == "on",
+		ShowTax:     r.Form.Get("show_tax") == "on",
+		ShowBarcode: r.Form.Get("show_barcode") == "on",
+	}
+	for _, f := range []string{"header1", "header2", "header3"} {
+		if v := strings.TrimSpace(r.Form.Get(f)); v != "" {
+			rd.Header = append(rd.Header, v)
+		}
+	}
+	return rd
+}
+
+// sampleReceiptDoc builds the designer's example ticket from a design.
+func sampleReceiptDoc(storeName string, rd receiptDesign) print.Doc {
+	line := func(name, sku, qty, amount string) print.Line {
+		if rd.ShowSKU && sku != "" {
+			name += " [" + sku + "]"
+		}
+		return print.Line{Name: name, Qty: qty, Amount: amount}
+	}
+	doc := print.Doc{
+		StoreName: storeName,
+		Header:    rd.Header,
+		Meta:      []string{"Receipt 000000123", time.Now().Format("2006-01-02 15:04")},
+		Lines: []print.Line{
+			line("Apples", "SKU-001", "2", "£4.32"),
+			line("Orange Juice 1L", "SKU-002", "1", "£2.64"),
+		},
+		Payments: []print.KV{{Label: "Cash", Amount: "£10.00"}, {Label: "Change", Amount: "£3.04"}},
+	}
+	if rd.ShowTax {
+		doc.Totals = []print.KV{
+			{Label: "Subtotal", Amount: "£5.80"},
+			{Label: "Tax", Amount: "£1.16"},
+		}
+	}
+	doc.Totals = append(doc.Totals, print.KV{Label: "TOTAL", Amount: "£6.96", Strong: true})
+	if rd.ShowBarcode {
+		doc.Barcode = "000000123"
+	}
+	if rd.Footer != "" {
+		doc.Footer = []string{rd.Footer}
+	}
+	return doc
+}
+
+// registerReceiptDesigner mounts the designer page, live preview, save and
+// test print (docs: architecture/receipt-designer.md, G29).
+func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
+	posRepo := data.NewPOSRepo(d.Db)
+
+	mux.HandleFunc("GET /receipt-designer", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Redirect(w, r, "/settings", http.StatusSeeOther)
+			return
+		}
+		rd := receiptDesignFromSettings(r.Context(), d)
+		header := make([]string, 3)
+		copy(header, rd.Header)
+		httpx.Render("ui/pages/receipt_designer.html", map[string]any{
+			"title":     "Receipt designer",
+			"theme":     d.CurrentState().Theme,
+			"menuItems": d.Menu,
+			"D":         rd,
+			"H1":        header[0], "H2": header[1], "H3": header[2],
+			"Preview": print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd)),
+		})(w, r)
+	})
+
+	mux.HandleFunc("POST /api/receipt-designer/preview", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		rd := designFromForm(r)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd))))
+	})
+
+	mux.HandleFunc("POST /api/receipt-designer/save", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		set := func(key, val string) { _ = d.Settings.Set(r.Context(), key, val) }
+		set(keyReceiptHeader1, strings.TrimSpace(r.Form.Get("header1")))
+		set(keyReceiptHeader2, strings.TrimSpace(r.Form.Get("header2")))
+		set(keyReceiptHeader3, strings.TrimSpace(r.Form.Get("header3")))
+		set(keyReceiptFooter, strings.TrimSpace(r.Form.Get("footer")))
+		set(keyReceiptShowSKU, fmt.Sprintf("%t", r.Form.Get("show_sku") == "on"))
+		set(keyReceiptShowTax, fmt.Sprintf("%t", r.Form.Get("show_tax") == "on"))
+		set(keyReceiptShowBarcode, fmt.Sprintf("%t", r.Form.Get("show_barcode") == "on"))
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "settings", "receipt", "receipt_design_saved",
+			nil, time.Now().UTC().Format(time.RFC3339), "")
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "designer.receipt.saved"))
+	})
+
+	mux.HandleFunc("POST /api/receipt-designer/test", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		rd := designFromForm(r)
+		cfg := printerConfig(r.Context(), d)
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		tr, err := print.NewTransport(cfg)
+		if err != nil || tr == nil {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
+			return
+		}
+		doc := sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd)
+		doc.Charset = cfg.Charset
+		if perr := tr.Print(r.Context(), print.Render(doc)); perr != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
+			return
+		}
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.printer.test_ok"))
+	})
+}
