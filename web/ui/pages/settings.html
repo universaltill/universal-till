@@ -31,6 +31,38 @@
 </div>
 {{ if .isManager }}
 <div class="card" style="margin-top:1rem">
+  <h2>{{ T "settings.printer.title" }}</h2>
+  <p class="muted">{{ T "settings.printer.help" }}</p>
+  <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="window.location.reload()">
+    {{ $p := .printer }}
+    <div class="field-pair">
+      <label>{{ T "settings.printer.mode" }}
+        <select name="mode">
+          <option value="off"     {{ if eq $p.Mode "off" }}selected{{ end }}>{{ T "settings.printer.mode_off" }}</option>
+          <option value="network" {{ if eq $p.Mode "network" }}selected{{ end }}>{{ T "settings.printer.mode_network" }}</option>
+          <option value="device"  {{ if eq $p.Mode "device" }}selected{{ end }}>{{ T "settings.printer.mode_device" }}</option>
+        </select>
+      </label>
+      <label>{{ T "settings.printer.charset" }}
+        <select name="charset">
+          <option value="utf8"  {{ if eq $p.Charset "utf8" }}selected{{ end }}>UTF-8</option>
+          <option value="ascii" {{ if eq $p.Charset "ascii" }}selected{{ end }}>ASCII</option>
+        </select>
+      </label>
+    </div>
+    <div class="field-pair">
+      <label>{{ T "settings.printer.address" }} <input type="text" name="address" value="{{ $p.Address }}" placeholder="192.168.1.50:9100"></label>
+      <label>{{ T "settings.printer.device" }} <input type="text" name="device" value="{{ $p.Device }}" placeholder="/dev/usb/lp0"></label>
+    </div>
+    <label><input type="checkbox" name="autoPrint" {{ if $p.AutoPrint }}checked{{ end }}> {{ T "settings.printer.auto" }}</label>
+    <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
+      <button class="btn" type="submit">{{ T "settings.printer.apply" }}</button>
+      <button class="btn secondary" type="button" hx-post="/api/print/test" hx-target="#print-test-msg" hx-swap="innerHTML">{{ T "settings.printer.test" }}</button>
+      <span id="print-test-msg" aria-live="polite"></span>
+    </div>
+  </form>
+</div>
+<div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.idle_lock.title" }}</h2>
   <p class="muted">{{ T "settings.idle_lock.help" }}</p>
   <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="window.location.reload()">

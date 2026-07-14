@@ -1,0 +1,190 @@
+// Package print renders receipts to ESC/POS bytes and delivers them to a
+// thermal printer (docs: architecture/receipt-printing.md). The document
+// model is plain strings — callers format money and translate labels; this
+// package stays dumb and byte-for-byte testable. Printing is never on the
+// checkout critical path: callers fire it async and treat failure as a log
+// line, not a sale blocker.
+package print
+
+import (
+	"bytes"
+	"fmt"
+	"strings"
+	"unicode"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
+)
+
+// Width is the character width of an 80mm printer's default font.
+const Width = 42
+
+// Doc is one printable receipt.
+type Doc struct {
+	StoreName string
+	Header    []string // address/contact lines, optional
+	Meta      []string // receipt no, date, operator
+	Lines     []Line
+	Totals    []KV // subtotal, tax, TOTAL (last is emphasised)
+	Payments  []KV
+	Footer    []string
+	KickDrawer bool
+	Charset    string // "utf8" (default) or "ascii"
+}
+
+// Line is one sale line.
+type Line struct {
+	Name   string
+	Qty    string // pre-formatted ("2" / "0.350 kg")
+	Amount string // pre-formatted money
+}
+
+// KV is a label/amount pair right-aligned on one row.
+type KV struct {
+	Label  string
+	Amount string
+	Strong bool
+}
+
+// ESC/POS command sequences (Epson dialect — the de-facto standard).
+var (
+	cmdInit       = []byte{0x1b, 0x40}
+	cmdAlignLeft  = []byte{0x1b, 0x61, 0x00}
+	cmdAlignMid   = []byte{0x1b, 0x61, 0x01}
+	cmdBoldOn     = []byte{0x1b, 0x45, 0x01}
+	cmdBoldOff    = []byte{0x1b, 0x45, 0x00}
+	cmdDoubleOn   = []byte{0x1d, 0x21, 0x11}
+	cmdDoubleOff  = []byte{0x1d, 0x21, 0x00}
+	cmdFeedCut    = []byte{0x1d, 0x56, 0x42, 0x03} // feed 3 + partial cut
+	cmdKickDrawer = []byte{0x1b, 0x70, 0x00, 0x19, 0xfa}
+)
+
+// Render produces the full ESC/POS byte stream for a document.
+func Render(d Doc) []byte {
+	var b bytes.Buffer
+	enc := func(s string) []byte { return encodeText(s, d.Charset) }
+	line := func(s string) {
+		b.Write(enc(s))
+		b.WriteByte('\n')
+	}
+
+	b.Write(cmdInit)
+	if d.KickDrawer {
+		b.Write(cmdKickDrawer)
+	}
+
+	b.Write(cmdAlignMid)
+	b.Write(cmdDoubleOn)
+	line(clip(d.StoreName, Width/2)) // double-width font halves the columns
+	b.Write(cmdDoubleOff)
+	for _, h := range d.Header {
+		line(clip(h, Width))
+	}
+	b.Write(cmdAlignLeft)
+	line(strings.Repeat("-", Width))
+	for _, m := range d.Meta {
+		line(clip(m, Width))
+	}
+	line(strings.Repeat("-", Width))
+
+	for _, l := range d.Lines {
+		for _, row := range layoutLine(l) {
+			line(row)
+		}
+	}
+	line(strings.Repeat("-", Width))
+
+	for _, t := range d.Totals {
+		if t.Strong {
+			b.Write(cmdBoldOn)
+		}
+		line(kvRow(t.Label, t.Amount))
+		if t.Strong {
+			b.Write(cmdBoldOff)
+		}
+	}
+	if len(d.Payments) > 0 {
+		line("")
+		for _, p := range d.Payments {
+			line(kvRow(p.Label, p.Amount))
+		}
+	}
+
+	if len(d.Footer) > 0 {
+		line("")
+		b.Write(cmdAlignMid)
+		for _, f := range d.Footer {
+			line(clip(f, Width))
+		}
+		b.Write(cmdAlignLeft)
+	}
+
+	b.Write(cmdFeedCut)
+	return b.Bytes()
+}
+
+// layoutLine renders one sale line: "qty x name" left, amount right; long
+// names wrap onto their own row with the amount on the last row.
+func layoutLine(l Line) []string {
+	label := l.Name
+	if l.Qty != "" && l.Qty != "1" {
+		label = l.Qty + " x " + l.Name
+	}
+	if len(label)+1+len(l.Amount) <= Width {
+		return []string{kvRow(label, l.Amount)}
+	}
+	return []string{clip(label, Width), kvRow("", l.Amount)}
+}
+
+// kvRow right-aligns amount against label on one fixed-width row.
+func kvRow(label, amount string) string {
+	space := Width - len(label) - len(amount)
+	if space < 1 {
+		label = clip(label, Width-len(amount)-1)
+		space = 1
+	}
+	return label + strings.Repeat(" ", space) + amount
+}
+
+func clip(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
+}
+
+// encodeText prepares a string for the printer. utf8 passes through (many
+// modern thermals accept it); ascii strips diacritics and replaces anything
+// unmappable with '?' so column math and cheap CP437 printers stay sane.
+func encodeText(s, charset string) []byte {
+	if charset != "ascii" {
+		return []byte(s)
+	}
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	folded, _, err := transform.String(t, s)
+	if err != nil {
+		folded = s
+	}
+	out := make([]byte, 0, len(folded))
+	for _, r := range folded {
+		if r < 0x20 || r > 0x7e {
+			if r == '\t' {
+				out = append(out, ' ')
+				continue
+			}
+			out = append(out, '?')
+			continue
+		}
+		out = append(out, byte(r))
+	}
+	return out
+}
+
+// Validate reports a friendly error for an obviously broken document.
+func (d Doc) Validate() error {
+	if strings.TrimSpace(d.StoreName) == "" {
+		return fmt.Errorf("store name required")
+	}
+	return nil
+}
