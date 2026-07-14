@@ -27,7 +27,7 @@ func exempt(path string) bool {
 	// authed; ping/snapshot are per-till-bearer authed — enforced in the
 	// handlers. /api/setup/join refuses once an operator exists (wizard).
 	switch path {
-	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/setup/join":
+	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/setup/join":
 		return true
 	}
 	for _, p := range []string{"/api/auth/", "/public/", "/themes/"} {

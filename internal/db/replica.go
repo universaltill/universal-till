@@ -12,9 +12,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const replicaIdentityName = "replica-identity.json"
+
+func nowUTC() string { return time.Now().UTC().Format(time.RFC3339) }
 
 // ReplicaIdentity is written by the join flow next to the DB file.
 type ReplicaIdentity struct {
@@ -87,6 +90,11 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 		if err := set(k, v); err != nil {
 			return false, fmt.Errorf("apply identity %s: %w", k, err)
 		}
+	}
+	// Sales before the join came in the snapshot — push only what THIS
+	// till sells from now on.
+	if err := set("sync.push_cursor", nowUTC()); err != nil {
+		return false, fmt.Errorf("apply identity cursor: %w", err)
 	}
 	// The snapshot brought the primary's sessions; they mean nothing here.
 	if _, err := sqlDB.Exec(`DELETE FROM sessions`); err != nil {
