@@ -37,6 +37,7 @@ type SessionRow struct {
 	DisplayName string
 	Role        string
 	ExpiresAt   time.Time
+	LastSeenAt  time.Time
 }
 
 const userCols = `id, username, display_name, role, COALESCE(pin_hash, ''), is_active`
@@ -172,12 +173,13 @@ func (r *AuthRepo) InsertSession(ctx context.Context, tokenHash, userID string, 
 // LookupSession resolves a live (unexpired, unrevoked, active-user) session.
 func (r *AuthRepo) LookupSession(ctx context.Context, tokenHash string) (SessionRow, bool, error) {
 	var s SessionRow
-	var expires string
+	var expires, lastSeen string
 	err := r.db.QueryRowContext(ctx,
-		`SELECT s.id, u.id, u.username, u.display_name, u.role, s.expires_at
+		`SELECT s.id, u.id, u.username, u.display_name, u.role, s.expires_at,
+		        COALESCE(s.last_seen_at, s.created_at)
 		 FROM sessions s JOIN users u ON u.id = s.user_id
 		 WHERE s.token_hash = ? AND s.revoked_at IS NULL AND u.is_active = 1`,
-		tokenHash).Scan(&s.SessionID, &s.UserID, &s.Username, &s.DisplayName, &s.Role, &expires)
+		tokenHash).Scan(&s.SessionID, &s.UserID, &s.Username, &s.DisplayName, &s.Role, &expires, &lastSeen)
 	if err == sql.ErrNoRows {
 		return SessionRow{}, false, nil
 	}
@@ -192,7 +194,27 @@ func (r *AuthRepo) LookupSession(ctx context.Context, tokenHash string) (Session
 		return SessionRow{}, false, nil
 	}
 	s.ExpiresAt = t
+	// last_seen_at is written as RFC3339; created_at (the COALESCE fallback)
+	// is SQLite datetime('now') format — accept both.
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05"} {
+		if ls, perr := time.Parse(layout, lastSeen); perr == nil {
+			s.LastSeenAt = ls
+			break
+		}
+	}
 	return s, true, nil
+}
+
+// TouchSession records session activity for the idle auto-lock. Callers
+// throttle it (at most ~once a minute) so SQLite isn't written per request.
+func (r *AuthRepo) TouchSession(ctx context.Context, tokenHash string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE sessions SET last_seen_at = ? WHERE token_hash = ? AND revoked_at IS NULL`,
+		time.Now().UTC().Format(time.RFC3339), tokenHash)
+	if err != nil {
+		return fmt.Errorf("touch session: %w", err)
+	}
+	return nil
 }
 
 // RevokeSession revokes one session (logout / lock).

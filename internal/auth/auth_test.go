@@ -23,7 +23,7 @@ func openAuthTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
 		 role TEXT NOT NULL DEFAULT 'cashier', pin_hash TEXT, is_active INTEGER NOT NULL DEFAULT 1)`,
 		`CREATE TABLE sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
-		 created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, revoked_at TEXT)`,
+		 created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, revoked_at TEXT, last_seen_at TEXT)`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatalf("setup: %v", err)
@@ -237,5 +237,104 @@ func TestMiddleware(t *testing.T) {
 	// Garbage cookies redirect too.
 	if rec := do("/", "not-a-token"); rec.Code != http.StatusSeeOther {
 		t.Errorf("bad token = %d, want 303", rec.Code)
+	}
+}
+
+func loginFor(t *testing.T, svc *Service, pin string) string {
+	t.Helper()
+	_, token, err := svc.Login(context.Background(), pin)
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	return token
+}
+
+func setLastSeen(t *testing.T, db *sql.DB, ago time.Duration) {
+	t.Helper()
+	stamp := time.Now().Add(-ago).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`UPDATE sessions SET last_seen_at = ?`, stamp); err != nil {
+		t.Fatalf("set last_seen: %v", err)
+	}
+}
+
+func TestIdleAutoLock(t *testing.T) {
+	db := openAuthTestDB(t)
+	seedOperator(t, db, "op1", "cashier", "1234")
+	svc := NewService(db)
+	svc.SetIdleLockMinutes(10)
+	var lockedUser string
+	svc.SetIdleLockAudit(func(_ context.Context, userID string) { lockedUser = userID })
+	token := loginFor(t, svc, "1234")
+
+	// Fresh session resolves.
+	if _, ok := svc.Resolve(context.Background(), token); !ok {
+		t.Fatal("fresh session should resolve")
+	}
+	// Idle past the window → revoked + audited.
+	setLastSeen(t, db, 11*time.Minute)
+	if _, ok := svc.Resolve(context.Background(), token); ok {
+		t.Fatal("idle session should be locked")
+	}
+	if lockedUser != "op1" {
+		t.Errorf("idle lock audit got user %q, want op1", lockedUser)
+	}
+	// Revocation is permanent — activity can't resurrect it.
+	setLastSeen(t, db, 0)
+	if _, ok := svc.Resolve(context.Background(), token); ok {
+		t.Fatal("revoked session must stay dead")
+	}
+}
+
+func TestIdleAutoLockDisabled(t *testing.T) {
+	db := openAuthTestDB(t)
+	seedOperator(t, db, "op1", "cashier", "1234")
+	svc := NewService(db) // window 0 = off
+	token := loginFor(t, svc, "1234")
+	setLastSeen(t, db, 5*time.Hour)
+	if _, ok := svc.Resolve(context.Background(), token); !ok {
+		t.Fatal("idle lock disabled: long-idle session should still resolve")
+	}
+}
+
+func TestIdleActivityRefreshesLastSeen(t *testing.T) {
+	db := openAuthTestDB(t)
+	seedOperator(t, db, "op1", "cashier", "1234")
+	svc := NewService(db)
+	svc.SetIdleLockMinutes(10)
+	token := loginFor(t, svc, "1234")
+
+	// Old-but-inside-window activity: resolves AND touches last_seen so the
+	// session survives past the original stamp + window.
+	setLastSeen(t, db, 9*time.Minute)
+	if _, ok := svc.Resolve(context.Background(), token); !ok {
+		t.Fatal("session inside window should resolve")
+	}
+	var lastSeen string
+	if err := db.QueryRow(`SELECT last_seen_at FROM sessions`).Scan(&lastSeen); err != nil {
+		t.Fatalf("read last_seen: %v", err)
+	}
+	ts, err := time.Parse(time.RFC3339, lastSeen)
+	if err != nil {
+		t.Fatalf("parse last_seen %q: %v", lastSeen, err)
+	}
+	if time.Since(ts) > time.Minute {
+		t.Errorf("last_seen not refreshed by activity: %s", lastSeen)
+	}
+}
+
+func TestTouchIntervalStaysUnderWindow(t *testing.T) {
+	cases := []struct {
+		window time.Duration
+		want   time.Duration
+	}{
+		{0, time.Minute},                 // off: housekeeping cadence only
+		{time.Minute, 15 * time.Second},  // 1-min window: touch every 15s
+		{10 * time.Minute, time.Minute},  // capped at a minute
+		{480 * time.Minute, time.Minute}, // capped at a minute
+	}
+	for _, c := range cases {
+		if got := touchInterval(c.window); got != c.want {
+			t.Errorf("touchInterval(%v) = %v, want %v", c.window, got, c.want)
+		}
 	}
 }

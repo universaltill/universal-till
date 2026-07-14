@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
@@ -93,6 +94,19 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	// One auth service for the whole till: login, sessions AND manager-PIN
 	// approvals share a single device-wide lockout.
 	authSvc := auth.NewService(db)
+	authDisabled := auth.Disabled(os.Getenv("UT_AUTH"))
+	// Idle auto-lock (docs: pos-auth.md): server-side check + audit hook.
+	// The cosmetic client timer (data-idle-lock) is only published when the
+	// middleware actually enforces sessions.
+	authSvc.SetIdleLockMinutes(state.IdleLockMinutes)
+	idleAuditRepo := data.NewPOSRepo(db)
+	authSvc.SetIdleLockAudit(func(ctx context.Context, userID string) {
+		_ = idleAuditRepo.InsertAudit(ctx, nil, userID, "user", userID, "idle_lock", nil,
+			time.Now().UTC().Format(time.RFC3339), "")
+	})
+	if !authDisabled {
+		httpx.InitIdleLock(state.IdleLockMinutes)
+	}
 
 	// Assistive AI (camera identify). No UT_AI_API_KEY → disabled and
 	// invisible; never on the checkout path (ADR-0003).
@@ -150,7 +164,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerUsers(mux, dp, authSvc)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)
-	if auth.Disabled(os.Getenv("UT_AUTH")) {
+	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
 		return mux
 	}
