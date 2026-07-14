@@ -1,7 +1,12 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "journal.detail.title" }} #{{ .Sale.ReceiptNo }}</h1>
-  <a class="btn secondary" href="/journal">← {{ T "journal.title" }}</a>
+  <div style="display:flex; gap:.4rem; align-items:center">
+    <button class="btn" hx-post="/api/print/receipt/{{ .Sale.ReceiptNo }}"
+            hx-target="#reprint-msg" hx-swap="innerHTML">🖨 {{ T "journal.reprint" }}</button>
+    <span id="reprint-msg" aria-live="polite"></span>
+    <a class="btn secondary" href="/journal">← {{ T "journal.title" }}</a>
+  </div>
 </div>
 
 <div class="catalog-layout">

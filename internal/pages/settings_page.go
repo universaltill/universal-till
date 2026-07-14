@@ -40,6 +40,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.Menu,
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			"isManager":   isManagerOrAuthOff(r),
+			"printer":     printerConfig(r.Context(), d),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})

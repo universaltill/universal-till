@@ -467,6 +467,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			receiptNo = saleID
 		}
 
+		// Silent receipt print (docs: receipt-printing.md) — fired async,
+		// never blocks or fails the tender.
+		printReceiptAsync(d, receiptNo, getSessionUserID(r))
+
 		// Render receipt JSON if requested
 		if r.Header.Get("Accept") == "application/json" {
 			resp := map[string]any{
@@ -498,6 +502,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		printerAvailable, err := data.NewPluginRepo(d.Db).HasActivePrinterCapability(r.Context())
 		if err != nil {
 			printerAvailable = false
+		}
+		// The built-in ESC/POS path counts as a printer too.
+		if printerConfig(r.Context(), d).Enabled() {
+			printerAvailable = true
 		}
 		printerUnavailable := !printerAvailable
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable)
