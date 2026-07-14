@@ -1,8 +1,10 @@
 package pages
 
 import (
+	"encoding/csv"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +32,44 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.Menu,
 		})(w, r)
+	})
+
+	// G22b — catalog export. The CSV round-trips with our own importer
+	// (column names come from its synonym table), so "export → import on a
+	// fresh till" is a supported migration path, not an accident.
+	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		rows, err := repo.ExportRows(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		decimals := httpx.ActiveCurrency().Decimals
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			`attachment; filename="catalog-`+time.Now().UTC().Format("2006-01-02")+`.csv"`)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
+			"Description", "Sold by weight", "In stock", "Active"})
+		for _, e := range rows {
+			yn := func(b bool) string {
+				if b {
+					return "Y"
+				}
+				return "N"
+			}
+			_ = cw.Write([]string{
+				e.Name, e.SKU, e.Barcode, minorToDecimal(e.PriceMinor, decimals),
+				e.Category, e.Description, yn(e.IsWeighed),
+				strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
+			})
+		}
+		cw.Flush()
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "export",
+			map[string]any{"rows": len(rows)}, time.Now().UTC().Format(time.RFC3339), "")
 	})
 
 	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
@@ -158,6 +198,23 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))
 	})
+}
+
+// minorToDecimal renders minor units as a plain decimal ("1.20") — the
+// exact shape the importer's price parser reads back.
+func minorToDecimal(minor int64, decimals int) string {
+	if decimals <= 0 {
+		return strconv.FormatInt(minor, 10)
+	}
+	div := int64(1)
+	for range decimals {
+		div *= 10
+	}
+	sign := ""
+	if minor < 0 {
+		sign, minor = "-", -minor
+	}
+	return fmt.Sprintf("%s%d.%0*d", sign, minor/div, decimals, minor%div)
 }
 
 func htmlEscape(s string) string {
