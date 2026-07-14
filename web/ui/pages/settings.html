@@ -31,6 +31,40 @@
 </div>
 {{ if .isManager }}
 <div class="card" style="margin-top:1rem">
+  <h2>{{ T "settings.backup.title" }}</h2>
+  <p class="muted">{{ T "settings.backup.help" }}</p>
+  <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem">
+    <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML">{{ T "settings.backup.now" }}</button>
+    <span id="backup-msg" aria-live="polite"></span>
+  </div>
+  {{ if .backups }}
+  <table class="table">
+    <thead><tr><th>{{ T "settings.backup.col_file" }}</th><th>{{ T "settings.backup.col_date" }}</th><th>{{ T "settings.backup.col_size" }}</th><th></th></tr></thead>
+    <tbody>
+      {{ range .backups }}
+      <tr>
+        <td style="font-family:monospace">{{ .Name }}</td>
+        <td>{{ .Date }}</td>
+        <td>{{ .Size }}</td>
+        <td style="display:flex; gap:.3rem">
+          <a class="btn secondary" href="/api/backup/download/{{ .Name }}">{{ T "settings.backup.download" }}</a>
+          <form hx-post="/api/backup/restore" hx-target="#restore-msg" hx-swap="innerHTML" style="display:flex; gap:.3rem">
+            <input type="hidden" name="name" value="{{ .Name }}">
+            <input type="text" name="confirm" placeholder="{{ T "settings.backup.confirm_placeholder" }}" style="width:8rem" required>
+            <button class="btn secondary" type="submit">{{ T "settings.backup.restore" }}</button>
+          </form>
+        </td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  <div id="restore-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+  <p class="muted">{{ T "settings.backup.restore_note" }}</p>
+  {{ else }}
+  <p class="muted">{{ T "settings.backup.none_yet" }}</p>
+  {{ end }}
+</div>
+<div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.printer.title" }}</h2>
   <p class="muted">{{ T "settings.printer.help" }}</p>
   <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="window.location.reload()">
