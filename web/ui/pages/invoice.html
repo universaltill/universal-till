@@ -1,0 +1,56 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ if .IsCreditNote }}{{ T "invoice.credit_note" }}{{ else }}{{ T "invoice.title" }}{{ end }} {{ .Inv.DisplayNo }}</h1>
+  <div style="display:flex; gap:.4rem; align-items:center">
+    <button class="btn" onclick="window.print()">🖨 {{ T "invoice.print" }}</button>
+    <a class="btn secondary" href="/journal/{{ .Sale.ReceiptNo }}">← {{ T "journal.detail.title" }}</a>
+  </div>
+</div>
+
+<div class="card invoice-sheet">
+  <div style="display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap">
+    <div>
+      <h3>{{ .Seller.Name }}</h3>
+      {{ if .Seller.Address }}<p class="muted">{{ .Seller.Address }}</p>{{ end }}
+      {{ if .Seller.VATNo }}<p class="muted">{{ T "invoice.vat_no" }}: {{ .Seller.VATNo }}</p>{{ end }}
+    </div>
+    <div style="text-align:end">
+      <p><strong>{{ .Inv.DisplayNo }}</strong></p>
+      <p class="muted">{{ .Inv.IssuedAt }}</p>
+      <p class="muted">{{ T "invoice.for_sale" }} {{ .Sale.ReceiptNo }}</p>
+      {{ if .OrigDisplay }}<p class="muted">{{ T "invoice.credits" }} <a href="/invoice/{{ .OrigDisplay }}">{{ .OrigDisplay }}</a></p>{{ end }}
+    </div>
+  </div>
+
+  <hr style="margin:.8rem 0; border:none; border-top:1px solid var(--border, #d1d5db)">
+  <p><strong>{{ T "invoice.bill_to" }}:</strong> {{ .Inv.CustomerName }}
+    {{ if .Inv.CustomerAddress }} · {{ .Inv.CustomerAddress }}{{ end }}
+    {{ if .Inv.CustomerVATNo }} · {{ T "invoice.vat_no" }}: {{ .Inv.CustomerVATNo }}{{ end }}</p>
+
+  <table class="table" style="margin-top:.6rem">
+    <thead><tr><th>{{ T "catalog.col.name" }}</th><th>{{ T "tender.scan.qty" }}</th><th style="text-align:end">{{ T "catalog.col.price" }}</th></tr></thead>
+    <tbody>
+      {{ range .Sale.Lines }}
+      <tr><td>{{ .Name }}</td><td>{{ .Qty }}</td><td style="text-align:end">{{ money .LineTotal }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+
+  <table class="table" style="margin-top:.6rem; max-width:32rem; margin-inline-start:auto">
+    <thead><tr><th>{{ T "invoice.vat" }}</th><th style="text-align:end">{{ T "invoice.net" }}</th><th style="text-align:end">{{ T "invoice.tax" }}</th><th style="text-align:end">{{ T "invoice.gross" }}</th></tr></thead>
+    <tbody>
+      {{ range .Bands }}
+      <tr><td>{{ .Rate }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Tax }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+      {{ end }}
+      <tr>
+        <td><strong>{{ T "invoice.total" }}</strong></td>
+        <td style="text-align:end"><strong>{{ money .Inv.NetTotal }}</strong></td>
+        <td style="text-align:end"><strong>{{ money .Inv.TaxTotal }}</strong></td>
+        <td style="text-align:end"><strong>{{ money .Inv.GrossTotal }}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="text-align:center; margin-top:.8rem">{{ barcodesvg .Inv.DisplayNo }}</div>
+</div>
+{{ end }}

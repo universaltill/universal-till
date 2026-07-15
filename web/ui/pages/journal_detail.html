@@ -23,6 +23,27 @@
 </p>
 {{ end }}
 
+{{ if .InvoicingOn }}
+<div class="card" style="margin-bottom:.8rem">
+  {{ if .HasInvoice }}
+  <p>🧾 {{ if eq .Invoice.Kind "credit_note" }}{{ T "invoice.credit_note" }}{{ else }}{{ T "invoice.title" }}{{ end }}:
+    <a href="/invoice/{{ .Invoice.DisplayNo }}"><strong>{{ .Invoice.DisplayNo }}</strong></a>
+    — {{ .Invoice.CustomerName }}</p>
+  {{ else if and (eq .Sale.SaleType "sale") (eq .Sale.Status "completed") }}
+  <h3>🧾 {{ T "invoice.issue_title" }}</h3>
+  <form hx-post="/api/invoices/issue" hx-target="#invoice-msg" hx-swap="innerHTML"
+        style="display:flex; gap:.4rem; flex-wrap:wrap; align-items:end">
+    <input type="hidden" name="receipt_no" value="{{ .Sale.ReceiptNo }}">
+    <label>{{ T "invoice.customer_name" }} <input type="text" name="customer_name" required></label>
+    <label>{{ T "invoice.customer_address" }} <input type="text" name="customer_address"></label>
+    <label>{{ T "invoice.customer_vat_no" }} <input type="text" name="customer_vat_no"></label>
+    <button class="btn" type="submit">{{ T "invoice.issue_btn" }}</button>
+  </form>
+  <div id="invoice-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+  {{ end }}
+</div>
+{{ end }}
+
 <div class="catalog-layout">
   <div class="card">
     <div style="display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.7rem">
