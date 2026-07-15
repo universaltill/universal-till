@@ -764,7 +764,7 @@ func (r *POSRepo) SetSaleProvenance(ctx context.Context, saleID, tillID, created
 
 // LocalSalesSince lists this till's OWN completed sales after the cursor
 // (created_at), oldest first — the replica's push queue. Journaled-in
-// sales (till_id != '') are excluded.
+// sales (till_id != ”) are excluded.
 func (r *POSRepo) LocalSalesSince(ctx context.Context, cursor string, limit int) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT receipt_no FROM sales
@@ -1222,6 +1222,58 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 		return fmt.Errorf("insert audit_log: %w", err)
 	}
 	return nil
+}
+
+// ResetTransactionHistory permanently clears ALL transactional data — sales,
+// payments, invoices, shifts, held sales, stock movements and report archives —
+// for a clean start after testing (go-live). It KEEPS the catalog, users,
+// settings and tills. It is all-or-nothing by design (it cannot cherry-pick
+// individual sales, so it can't be used to hide specific takings) and records
+// an audit entry with how many sales were removed. Manager-gated at the handler.
+func (r *POSRepo) ResetTransactionHistory(ctx context.Context, actorID string) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Sale children first (some FKs don't cascade), then sales, then the
+	// standalone transactional tables.
+	for _, s := range []string{
+		`DELETE FROM invoices`,
+		`DELETE FROM sale_links`,
+		`DELETE FROM payments`,
+		`DELETE FROM sale_discounts`,
+		`DELETE FROM sale_lines`,
+	} {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return 0, fmt.Errorf("reset (%s): %w", s, err)
+		}
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM sales`)
+	if err != nil {
+		return 0, fmt.Errorf("reset sales: %w", err)
+	}
+	count, _ := res.RowsAffected()
+	for _, s := range []string{
+		`DELETE FROM held_sales`,
+		`DELETE FROM shifts`,
+		`DELETE FROM stock_movements`,
+		`DELETE FROM report_archive`,
+	} {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return 0, fmt.Errorf("reset (%s): %w", s, err)
+		}
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_history_reset",
+		map[string]any{"sales_deleted": count}, now, ""); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // UpdateSaleStatus updates sale status (and optionally voided_at when voided).
