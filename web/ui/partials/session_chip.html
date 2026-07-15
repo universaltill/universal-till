@@ -1,5 +1,5 @@
 <span class="session-chip">
-  {{ if .isManager }}<a href="/users">{{ T "users.title" }}</a> <a href="/translations">{{ T "translations.title" }}</a>{{ end }}
+  {{ if .isManager }}<a class="session-admin-link" href="/users">{{ T "users.title" }}</a> <a class="session-admin-link" href="/translations">{{ T "translations.title" }}</a>{{ end }}
   <a class="session-user" href="/pin" title="{{ T "auth.change_pin" }}">{{ .name }}</a>
   <form method="post" action="/api/auth/logout" class="session-lock">
     <button type="submit" class="btn secondary btn-lock">{{ T "auth.lock" }}</button>
