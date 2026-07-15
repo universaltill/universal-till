@@ -75,4 +75,4 @@ __debug*
 data/plugins/
 data/backups/
 unitill-pos-setup-*.exe
-unitill-desktop
+/unitill-desktop
