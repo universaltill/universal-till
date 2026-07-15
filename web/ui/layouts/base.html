@@ -27,6 +27,10 @@
         <span class="sb-dot"></span>
         <span class="sb-conn-text">{{ T "status.online" }}</span>
       </span>
+      {{ if updateavailable }}
+      <a class="sb-item sb-update" href="https://www.universaltill.com/download"
+         target="_blank" rel="noopener">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}</a>
+      {{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
     </footer>
     <script>

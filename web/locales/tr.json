@@ -580,6 +580,7 @@
   "shifts.variance": "Fark",
   "status.offline": "Çevrimdışı",
   "status.online": "Çevrimiçi",
+  "status.update_available": "Güncelleme mevcut",
   "suggest.add": "Sepete ekle",
   "suggest.title": "Müşteriler ayrıca alıyor",
   "sync.banner_open_primary": "Birincilde düzenle",

@@ -635,3 +635,12 @@ body.login-screen {
   box-shadow: 0 0 0 3px rgba(34,197,94,.15); }
 .sb-conn.is-offline { color: #fca5a5; }
 .sb-conn.is-offline .sb-dot { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.15); }
+
+/* "Update available" chip in the status bar (shown only when a newer release
+   is detected — best-effort, offline-tolerant). */
+.statusbar .sb-update {
+  color: #052e16; background: #4ade80; text-decoration: none;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar .sb-update:hover { background: #22c55e; }
