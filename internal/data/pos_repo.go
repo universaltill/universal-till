@@ -1276,6 +1276,77 @@ func (r *POSRepo) ResetTransactionHistory(ctx context.Context, actorID string) (
 	return count, nil
 }
 
+// CustomerSummary is a row in the customer picker for data management.
+type CustomerSummary struct {
+	ID    string
+	Name  string
+	Phone string
+	Email string
+}
+
+// SearchCustomers finds customers by name/phone/email for the erasure picker.
+func (r *POSRepo) SearchCustomers(ctx context.Context, q string, limit int) ([]CustomerSummary, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	like := "%" + strings.TrimSpace(q) + "%"
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(phone,''), COALESCE(email,'')
+FROM customers
+WHERE name LIKE ? OR phone LIKE ? OR email LIKE ?
+ORDER BY name LIMIT ?`, like, like, like, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search customers: %w", err)
+	}
+	defer rows.Close()
+	var out []CustomerSummary
+	for rows.Next() {
+		var c CustomerSummary
+		if err := rows.Scan(&c.ID, &c.Name, &c.Phone, &c.Email); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// EraseCustomer removes a customer's personal data (GDPR right to erasure):
+// it unlinks the customer from sales and promotions (keeping the sales, which
+// are financial records, but anonymous) and deletes the customer row. Audited.
+// Returns false if no such customer.
+func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID string) (bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, q := range []string{
+		`UPDATE sales SET customer_id = NULL WHERE customer_id = ?`,
+		`UPDATE promotions SET customer_id = NULL WHERE customer_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return false, fmt.Errorf("erase customer unlink: %w", err)
+		}
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM customers WHERE id = ?`, id)
+	if err != nil {
+		return false, fmt.Errorf("erase customer: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return false, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := r.InsertAudit(ctx, tx, actorID, "customer", id, "customer_erased", nil, now, ""); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // UpdateSaleStatus updates sale status (and optionally voided_at when voided).
 func (r *POSRepo) UpdateSaleStatus(ctx context.Context, tx *sql.Tx, saleID, status string) error {
 	now := time.Now().UTC().Format(time.RFC3339)

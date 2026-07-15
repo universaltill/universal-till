@@ -58,3 +58,45 @@ func TestResetTransactionHistoryClearsSalesKeepsCatalog(t *testing.T) {
 		t.Fatalf("reset not audited: %v", err)
 	}
 }
+
+func TestEraseCustomer(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "erase.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	x := func(q string, a ...any) {
+		if _, err := d.DB.Exec(q, a...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	x(`INSERT INTO customers (id, name, phone, email) VALUES ('c1','Ada Lovelace','555','ada@x.com')`)
+	x(`INSERT INTO sales (id, receipt_no, subtotal, total, customer_id) VALUES ('s1','R1',100,100,'c1')`)
+
+	repo := data.NewPOSRepo(d.DB)
+	found, err := repo.SearchCustomers(context.Background(), "ada", 10)
+	if err != nil || len(found) != 1 || found[0].ID != "c1" {
+		t.Fatalf("search: err=%v found=%+v", err, found)
+	}
+	ok, err := repo.EraseCustomer(context.Background(), "c1", "")
+	if err != nil || !ok {
+		t.Fatalf("erase: ok=%v err=%v", ok, err)
+	}
+	var custs int
+	d.DB.QueryRow(`SELECT count(*) FROM customers WHERE id='c1'`).Scan(&custs)
+	if custs != 0 {
+		t.Fatalf("customer not erased")
+	}
+	// The sale is KEPT but anonymised (customer_id NULL).
+	var cid *string
+	var saleCount int
+	d.DB.QueryRow(`SELECT count(*) FROM sales WHERE id='s1'`).Scan(&saleCount)
+	d.DB.QueryRow(`SELECT customer_id FROM sales WHERE id='s1'`).Scan(&cid)
+	if saleCount != 1 || cid != nil {
+		t.Fatalf("sale should be kept + unlinked: count=%d cid=%v", saleCount, cid)
+	}
+	var action string
+	if err := d.DB.QueryRow(`SELECT action FROM audit_log WHERE action='customer_erased'`).Scan(&action); err != nil {
+		t.Fatalf("erasure not audited: %v", err)
+	}
+}

@@ -41,4 +41,43 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		// in memory and unaffected; the next receipt number restarts from 1.
 		respond(w, http.StatusOK, true, fmt.Sprintf("cleared %d sales and related records", n))
 	})
+
+	// GDPR: find a customer to erase.
+	mux.HandleFunc("GET /api/data/customers", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			respond(w, http.StatusForbidden, false, "manager only")
+			return
+		}
+		list, err := data.NewPOSRepo(d.Db).SearchCustomers(r.Context(), r.URL.Query().Get("q"), 25)
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"customers": list})
+	})
+
+	// GDPR: erase a customer's personal data (keeps their sales, anonymised).
+	mux.HandleFunc("POST /api/data/customers/erase", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			respond(w, http.StatusForbidden, false, "manager only")
+			return
+		}
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.FormValue("id"))
+		if id == "" {
+			respond(w, http.StatusBadRequest, false, "customer id required")
+			return
+		}
+		ok, err := data.NewPOSRepo(d.Db).EraseCustomer(r.Context(), id, auth.UserID(r))
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+		if !ok {
+			respond(w, http.StatusNotFound, false, "customer not found")
+			return
+		}
+		respond(w, http.StatusOK, true, "customer erased")
+	})
 }
