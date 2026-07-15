@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -55,49 +56,43 @@ type InvoiceInput struct {
 }
 
 // Create allocates the next number in the series and inserts the invoice.
+// Allocation happens INSIDE one INSERT…SELECT — a single write statement,
+// so there is no reader→writer upgrade window for two concurrent issues
+// to deadlock in; a lost race surfaces as a UNIQUE violation and is
+// retried.
 func (r *InvoiceRepo) Create(ctx context.Context, in InvoiceInput) (InvoiceRow, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return InvoiceRow{}, fmt.Errorf("create invoice: %w", err)
-	}
-	defer tx.Rollback()
-
-	var next int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(invoice_no), 0) + 1 FROM invoices WHERE series = ?`,
-		in.Series).Scan(&next); err != nil {
-		return InvoiceRow{}, fmt.Errorf("allocate invoice no: %w", err)
-	}
-	display := fmt.Sprintf("%sINV-%06d", in.Series, next)
-
-	row := InvoiceRow{
-		ID: uuid.NewString(), Series: in.Series, InvoiceNo: next, DisplayNo: display,
-		Kind: in.Kind, SaleID: in.SaleID, OriginalInvoiceID: in.OriginalInvoiceID,
-		CustomerName: in.CustomerName, CustomerAddress: in.CustomerAddress,
-		CustomerVATNo: in.CustomerVATNo, SellerJSON: in.SellerJSON,
-		NetTotal: in.NetTotal, TaxTotal: in.TaxTotal, GrossTotal: in.GrossTotal,
-		VATBreakdownJSON: in.VATBreakdownJSON, IssuedAt: in.IssuedAt, IssuedBy: in.IssuedBy,
-	}
 	var orig any
-	if row.OriginalInvoiceID != "" {
-		orig = row.OriginalInvoiceID
+	if in.OriginalInvoiceID != "" {
+		orig = in.OriginalInvoiceID
 	}
-	if _, err := tx.ExecContext(ctx, `
+	id := uuid.NewString()
+	var lastErr error
+	for range 3 {
+		_, err := r.db.ExecContext(ctx, `
 INSERT INTO invoices (id, series, invoice_no, display_no, kind, sale_id,
   original_invoice_id, customer_name, customer_address, customer_vat_no,
   seller_json, net_total, tax_total, gross_total, vat_breakdown_json,
   issued_at, issued_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.ID, row.Series, row.InvoiceNo, row.DisplayNo, row.Kind, row.SaleID,
-		orig, row.CustomerName, row.CustomerAddress, row.CustomerVATNo,
-		row.SellerJSON, row.NetTotal, row.TaxTotal, row.GrossTotal,
-		row.VATBreakdownJSON, row.IssuedAt, row.IssuedBy); err != nil {
-		return InvoiceRow{}, fmt.Errorf("insert invoice: %w", err)
+SELECT ?, ?, n, ? || 'INV-' || printf('%06d', n), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+FROM (SELECT COALESCE(MAX(invoice_no), 0) + 1 AS n FROM invoices WHERE series = ?)`,
+			id, in.Series, in.Series, in.Kind, in.SaleID,
+			orig, in.CustomerName, in.CustomerAddress, in.CustomerVATNo,
+			in.SellerJSON, in.NetTotal, in.TaxTotal, in.GrossTotal,
+			in.VATBreakdownJSON, in.IssuedAt, in.IssuedBy, in.Series)
+		if err == nil {
+			row, ok, err := r.ByID(ctx, id)
+			if err != nil || !ok {
+				return InvoiceRow{}, fmt.Errorf("read back invoice: %w", err)
+			}
+			return row, nil
+		}
+		lastErr = err
+		// UNIQUE(sale_id, kind) means "already invoiced" — never retry that.
+		if strings.Contains(err.Error(), "sale_id") {
+			break
+		}
 	}
-	if err := tx.Commit(); err != nil {
-		return InvoiceRow{}, fmt.Errorf("commit invoice: %w", err)
-	}
-	return row, nil
+	return InvoiceRow{}, fmt.Errorf("insert invoice: %w", lastErr)
 }
 
 const invoiceCols = `id, series, invoice_no, display_no, kind, sale_id,

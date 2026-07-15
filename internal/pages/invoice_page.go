@@ -57,9 +57,12 @@ type vatBand struct {
 }
 
 // vatBreakdown aggregates a sale's lines by their RECORDED tax rate —
-// the sale's own tax signature, never today's settings.
+// the sale's own tax signature, never today's settings. A whole-sale
+// discount (sale_discounts, not folded into any line) is prorated across
+// the bands so the invoice total equals what the customer actually paid.
 func vatBreakdown(sale data.SaleDetail) []vatBand {
 	byRate := map[int]*vatBand{}
+	var grossSum int64
 	for _, l := range sale.Lines {
 		b, ok := byRate[l.TaxRateBP]
 		if !ok {
@@ -69,12 +72,37 @@ func vatBreakdown(sale data.SaleDetail) []vatBand {
 		b.Gross += l.LineTotal
 		b.Tax += l.TaxAmount
 		b.Net += l.LineTotal - l.TaxAmount
+		grossSum += l.LineTotal
 	}
 	out := make([]vatBand, 0, len(byRate))
 	for _, b := range byRate {
 		out = append(out, *b)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RateBP < out[j].RateBP })
+
+	if d := sale.DiscountTotal; d > 0 && grossSum > 0 {
+		inclusive := saleIsTaxInclusive(sale)
+		remaining := d
+		for i := range out {
+			share := d * out[i].Gross / grossSum
+			if i == len(out)-1 {
+				share = remaining // largest-remainder: the pennies land here
+			}
+			remaining -= share
+			if inclusive {
+				// Discount comes off the gross; re-derive net/tax at the
+				// band's rate (mirrors the engine: total = subtotal − d).
+				out[i].Gross -= share
+				out[i].Net = out[i].Gross * 10000 / (10000 + int64(out[i].RateBP))
+				out[i].Tax = out[i].Gross - out[i].Net
+			} else {
+				// Exclusive engine discounts the NET base and keeps line
+				// tax as computed (total = subtotal − d + tax).
+				out[i].Net -= share
+				out[i].Gross = out[i].Net + out[i].Tax
+			}
+		}
+	}
 	return out
 }
 
@@ -254,7 +282,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			strings.TrimSpace(r.Form.Get("customer_vat_no")), getSessionUserID(r))
 		if err != nil {
 			w.WriteHeader(http.StatusConflict)
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, err.Error())
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, htmlEscape(err.Error()))
 			return
 		}
 		// Best-effort thermal print, same posture as receipts.
