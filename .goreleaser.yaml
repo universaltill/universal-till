@@ -44,6 +44,8 @@ archives:
       - web/**
       - src: packaging/pos.env.example
         dst: pos.env.example
+      - src: packaging/pos.env.example
+        dst: pos.env
       - src: packaging/linux/run-unitill.sh
         dst: run-unitill.sh
         info: { mode: 0o755 }
@@ -56,6 +58,8 @@ archives:
       - web/**
       - src: packaging/pos.env.example
         dst: pos.env.example
+      - src: packaging/pos.env.example
+        dst: pos.env
       - src: packaging/macos/run-unitill.command
         dst: run-unitill.command
         info: { mode: 0o755 }
@@ -68,6 +72,8 @@ archives:
       - web/**
       - src: packaging/pos.env.example
         dst: pos.env.example
+      - src: packaging/pos.env.example
+        dst: pos.env
       - src: packaging/windows/run-unitill.bat
         dst: run-unitill.bat
       - README.md
