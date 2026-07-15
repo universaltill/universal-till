@@ -15,12 +15,15 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/updates"
 )
 
 var baseFuncs = template.FuncMap{
-	"div100":     func(cents int64) float64 { return float64(cents) / 100.0 },
-	"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-	"appversion": func() string { return buildinfo.Version },
+	"div100":          func(cents int64) float64 { return float64(cents) / 100.0 },
+	"bpPercent":       func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+	"appversion":      func() string { return buildinfo.Version },
+	"updateavailable": func() bool { return updates.Current().Available },
+	"latestversion":   func() string { return updates.Current().Latest },
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.

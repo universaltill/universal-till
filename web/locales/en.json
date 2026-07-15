@@ -580,6 +580,7 @@
   "shifts.variance": "Variance",
   "status.offline": "Offline",
   "status.online": "Online",
+  "status.update_available": "Update available",
   "suggest.add": "Add to basket",
   "suggest.title": "Customers also buy",
   "sync.banner_open_primary": "Edit on the primary",

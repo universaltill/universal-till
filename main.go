@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/server"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/updates"
 )
 
 func main() {
@@ -110,6 +111,9 @@ func main() {
 	} else {
 		log.Warnf("Marketplace not configured (UT_MARKETPLACE_ENDPOINT_URL not set)")
 	}
+
+	// Best-effort background "update available" check (status-bar hint).
+	updates.Start(ctx)
 
 	// 4) Pages: pass db and catalog repo so handlers can use them
 	mux := pages.Init(ctx, cfg, pluginManager, database.DB, catalogRepo)
