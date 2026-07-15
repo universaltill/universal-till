@@ -177,6 +177,17 @@ func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 	return "en"
 }
 
+// DefaultLocale returns the till's configured locale — for output that has
+// no request to resolve from (background prints, scheduled jobs).
+func DefaultLocale() string {
+	if v := defaultLocale.Load(); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return "en"
+}
+
 var kioskMode atomic.Value // bool
 
 // InitKiosk marks the process as running on a dedicated till (larger touch

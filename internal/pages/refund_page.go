@@ -213,6 +213,8 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			map[string]any{"original": detail.ReceiptNo, "amount": refundTotal.Minor(), "method": method},
 			time.Now().UTC().Format(time.RFC3339), "")
 		printReceiptAsync(d, newReceipt, actorID)
+		// Invoiced sale? A credit note follows automatically (G31).
+		maybeIssueCreditNote(r.Context(), d, newReceipt, detail.ID, actorID)
 		w.Header().Set("HX-Redirect", "/journal/"+newReceipt)
 		w.WriteHeader(http.StatusOK)
 	})

@@ -1,0 +1,84 @@
+package pages
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/db"
+)
+
+func TestVATBreakdownGroupsByRecordedRate(t *testing.T) {
+	sale := data.SaleDetail{Lines: []data.SaleDetailLine{
+		{TaxRateBP: 2000, LineTotal: 120, TaxAmount: 20},
+		{TaxRateBP: 2000, LineTotal: 240, TaxAmount: 40},
+		{TaxRateBP: 0, LineTotal: 100, TaxAmount: 0},
+	}}
+	bands := vatBreakdown(sale)
+	if len(bands) != 2 {
+		t.Fatalf("expected 2 bands, got %v", bands)
+	}
+	if bands[0].RateBP != 0 || bands[0].Net != 100 || bands[0].Tax != 0 {
+		t.Fatalf("zero band wrong: %+v", bands[0])
+	}
+	if bands[1].RateBP != 2000 || bands[1].Net != 300 || bands[1].Tax != 60 || bands[1].Gross != 360 {
+		t.Fatalf("20%% band wrong: %+v", bands[1])
+	}
+}
+
+// Invoice numbers are gapless per series and the display number carries
+// the till prefix — the legal core of the feature.
+func TestInvoiceNumberingPerSeries(t *testing.T) {
+	ctx := context.Background()
+	d, err := db.Open(filepath.Join(t.TempDir(), "inv.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	// invoices.sale_id has an FK — use seeded demo sales? None exist.
+	// Insert two minimal sales to hang invoices off.
+	for _, id := range []string{"s1", "s2", "s3"} {
+		if _, err := d.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, currency)
+			VALUES (?, ?, 'completed', 'sale', 100, 20, 120, 'GBP')`, id, "R-"+id); err != nil {
+			t.Fatalf("seed sale: %v", err)
+		}
+	}
+	repo := data.NewInvoiceRepo(d.DB)
+	mk := func(series, saleID, kind string) data.InvoiceRow {
+		row, err := repo.Create(ctx, data.InvoiceInput{
+			Series: series, Kind: kind, SaleID: saleID, CustomerName: "ACME",
+			SellerJSON: "{}", VATBreakdownJSON: "[]",
+			NetTotal: 100, TaxTotal: 20, GrossTotal: 120,
+			IssuedAt: "2026-07-15T00:00:00Z", IssuedBy: "test",
+		})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		return row
+	}
+	a := mk("", "s1", "invoice")
+	b := mk("", "s2", "invoice")
+	c := mk("T2-", "s3", "invoice")
+	if a.DisplayNo != "INV-000001" || b.DisplayNo != "INV-000002" {
+		t.Fatalf("primary series wrong: %s %s", a.DisplayNo, b.DisplayNo)
+	}
+	if c.DisplayNo != "T2-INV-000001" {
+		t.Fatalf("replica series wrong: %s", c.DisplayNo)
+	}
+	// One invoice per sale, ever.
+	if _, err := repo.Create(ctx, data.InvoiceInput{
+		Series: "", Kind: "invoice", SaleID: "s1", CustomerName: "X",
+		SellerJSON: "{}", VATBreakdownJSON: "[]",
+		IssuedAt: "2026-07-15T00:00:00Z", IssuedBy: "test",
+	}); err == nil {
+		t.Fatal("duplicate invoice for the same sale was allowed")
+	}
+	// But a credit note for the same sale is fine.
+	if _, exists, _ := repo.BySale(ctx, "s1", "invoice"); !exists {
+		t.Fatal("BySale lost the invoice")
+	}
+	if got, ok, _ := repo.ByDisplayNo(ctx, "T2-INV-000001"); !ok || got.ID != c.ID {
+		t.Fatal("ByDisplayNo lookup failed")
+	}
+}

@@ -1586,6 +1586,21 @@ type SaleDetailPayment struct {
 	PaidAt      string
 }
 
+// GetSaleDetailByID is GetSaleDetail keyed on the sale id (invoices store
+// sale ids, not receipt numbers).
+func (r *POSRepo) GetSaleDetailByID(ctx context.Context, saleID string) (SaleDetail, bool, error) {
+	var receiptNo string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT receipt_no FROM sales WHERE id = ?`, saleID).Scan(&receiptNo)
+	if err == sql.ErrNoRows {
+		return SaleDetail{}, false, nil
+	}
+	if err != nil {
+		return SaleDetail{}, false, fmt.Errorf("sale by id: %w", err)
+	}
+	return r.GetSaleDetail(ctx, receiptNo)
+}
+
 // GetSaleDetail loads a sale with its lines and payments by receipt number.
 func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDetail, bool, error) {
 	var d SaleDetail
