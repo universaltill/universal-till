@@ -3,7 +3,7 @@
   <div class="logo"><img src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till Logo" /></div>
   <!-- Sale screen: one big touch button opens the full menu page. Other
        pages show the links inline. -->
-  <a href="/menu" class="nav-toggle">☰ {{ T "nav.menu" }}</a>
+  <a href="/menu" class="nav-toggle" data-testid="nav-menu">☰ {{ T "nav.menu" }}</a>
   <div class="nav-links">
     {{ range .menuItems }}<a href="{{ .Href }}"{{ if eq .Href "/plugins" }} data-testid="nav-plugins"{{ end }}>{{ T .Label }}</a>{{ end }}
     <a href="/help" data-testid="nav-help-support">{{ T "nav.help" }}</a>
