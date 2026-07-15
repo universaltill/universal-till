@@ -53,6 +53,9 @@ func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
 	if !res.Items[1].IsWeighed || res.Items[1].PriceMinor != 95 {
 		t.Fatalf("weighed item did not round-trip: %+v", res.Items[1])
 	}
+	if !cola.HasStock || cola.Stock != 24 || res.Items[1].Stock != 12.5 {
+		t.Fatalf("stock did not round-trip: %+v / %+v", cola, res.Items[1])
+	}
 	if cola.Issue != "" || res.Items[1].Issue != "" {
 		t.Fatalf("round-trip rows carry issues: %q %q", cola.Issue, res.Items[1].Issue)
 	}
