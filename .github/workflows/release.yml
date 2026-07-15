@@ -40,7 +40,12 @@ jobs:
           STAGE="$(mktemp -d)"
           unzip -q "dist/unitill-pos_${VERSION}_windows_amd64.zip" -d "$STAGE"
           makensis -DVERSION="${VERSION}" -DSRCDIR="$STAGE" packaging/windows/installer.nsi
-          gh release upload "${GITHUB_REF_NAME}" "unitill-pos-setup-${VERSION}.exe" --clobber
+          # NSIS writes OutFile relative to the script dir, so locate it rather
+          # than assume the repo root.
+          EXE="$(find "$PWD" -name "unitill-pos-setup-${VERSION}.exe" -print -quit)"
+          echo "built installer: $EXE"
+          test -n "$EXE" && test -f "$EXE"
+          gh release upload "${GITHUB_REF_NAME}" "$EXE" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # No website notification needed: universaltill.com/download reads the
