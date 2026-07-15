@@ -14,7 +14,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: [-s -w]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
     goos: [linux]
     goarch: [amd64, arm64]
   - id: windows
@@ -22,7 +22,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: [-s -w]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
     goos: [windows]
     goarch: [amd64]
   - id: darwin
@@ -30,7 +30,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: [-s -w]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
     goos: [darwin]
     goarch: [arm64]
 
