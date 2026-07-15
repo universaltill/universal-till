@@ -380,6 +380,7 @@
   "plugins.store.empty": "No plugins are approved for this store yet. Ask your merchant manager to approve plugins in the marketplace portal.",
   "plugins.store.filtered_note": "Showing plugins approved for your store by your merchant manager.",
   "plugins.store.manage_link": "Manage installed plugins",
+  "plugins.store.no_matches": "No plugins match your search.",
   "plugins.store.none_available": "No plugins are available yet.",
   "plugins.store.offline": "Can't reach the plugin store right now — check the connection. Sales keep working offline; the store fills in when it's back.",
   "plugins.store.search_ph": "Search plugins…",
