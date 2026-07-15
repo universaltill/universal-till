@@ -42,7 +42,7 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 10, Reference: "REF"}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10, nil, false)
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true})
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestRenderReceipt_LegalText(t *testing.T) {
 			Lines:         []string{"VAT Reg 123"},
 		},
 	}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, legalBlocks, false)
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, legalBlocks, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true})
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -143,11 +143,44 @@ func TestRenderReceipt_NoLegalText(t *testing.T) {
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 0}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false)
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true})
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
 	if strings.Contains(html, `<div class="receipt-legal">`) {
 		t.Fatalf("did not expect legal text block in receipt html, got: %s", html)
+	}
+}
+
+// The on-screen receipt must follow the same owner design as the thermal
+// print (docs: receipt-designer.md).
+func TestRenderReceiptHonorsDesign(t *testing.T) {
+	chdirRoot(t)
+	funcs := map[string]any{
+		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"barcodesvg": httpx.BarcodeSVG,
+		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":          func(key string) string { return key },
+	}
+	lines := []pos.SaleLineInput{
+		{Name: "Apple", SKU: "SKU-9", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
+	}
+	design := receiptDesign{
+		Header:  []string{"12 High Street", "Tel 0123"},
+		Footer:  "Thanks for shopping!",
+		ShowSKU: true,
+		// ShowTax and ShowBarcode off: subtotal/tax rows + barcode hidden.
+	}
+	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, "Corner Shop", design)
+	if err != nil {
+		t.Fatalf("renderReceipt error: %v", err)
+	}
+	for _, want := range []string{"Corner Shop", "12 High Street", "Thanks for shopping!", "SKU-9"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("design element %q missing from receipt html", want)
+		}
+	}
+	if strings.Contains(html, "basket.subtotal") || strings.Contains(html, `class="barcode"`) {
+		t.Fatal("hidden design sections still rendered")
 	}
 }

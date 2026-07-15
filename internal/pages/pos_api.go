@@ -549,7 +549,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			printerAvailable = true
 		}
 		printerUnavailable := !printerAvailable
-		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable)
+		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable,
+			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d))
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
@@ -596,6 +597,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 type receiptLine struct {
 	Name          string
+	SKU           string // only set when the receipt design shows SKUs
 	Qty           int
 	TotalAfterTax int64
 }
@@ -687,7 +689,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, storeName string, design receiptDesign) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFiles(
 		"web/ui/partials/receipt.html",
 	)
@@ -703,11 +705,15 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		if !taxInclusive {
 			lineTotal = lineTotal.Add(lineTax)
 		}
-		rlines = append(rlines, receiptLine{
+		rl := receiptLine{
 			Name:          l.Name,
 			Qty:           int(l.Qty),
 			TotalAfterTax: lineTotal.Minor(),
-		})
+		}
+		if design.ShowSKU {
+			rl.SKU = l.SKU
+		}
+		rlines = append(rlines, rl)
 	}
 	var paymentViews []receiptPayment
 	for _, p := range payments {
@@ -734,6 +740,13 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		"Total":              total,
 		"LegalBlocks":        legalBlocks,
 		"PrinterUnavailable": printerUnavailable,
+		// Receipt design (docs: receipt-designer.md): the on-screen copy
+		// follows the same owner-styled design as the thermal print.
+		"StoreName":    storeName,
+		"DesignHeader": design.Header,
+		"DesignFooter": design.Footer,
+		"ShowTax":      design.ShowTax,
+		"ShowBarcode":  design.ShowBarcode,
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "receipt", data); err != nil {
