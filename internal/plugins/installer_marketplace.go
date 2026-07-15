@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
@@ -59,8 +60,8 @@ func NewMarketplaceInstaller(cfg *config.Config, client *marketplace.Client, db 
 	return &MarketplaceInstaller{
 		client:         client,
 		db:             db,
-		pluginBaseDir:  "./data/plugins",
-		downloadTmpDir: "./data/plugins/tmp",
+		pluginBaseDir:  paths.Plugins(),
+		downloadTmpDir: paths.Plugins("tmp"),
 		verifier:       verifier,
 		reporter:       NewMarketplaceReporter(cfg.Marketplace.EndpointURL, cfg.Marketplace.UploadToken),
 	}, nil

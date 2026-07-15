@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // TokenResponse represents JWT token response (actual marketplace uses camelCase)
@@ -56,7 +57,7 @@ type TokenClient struct {
 func NewTokenClient(cfg *config.MarketplaceConfig) *TokenClient {
 	return &TokenClient{
 		cfg:       cfg,
-		cachePath: "./data/plugins/auth/token.json",
+		cachePath: paths.Plugins("auth", "token.json"),
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},

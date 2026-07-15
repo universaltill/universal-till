@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 type Manager struct {
@@ -45,7 +46,7 @@ func (m *Manager) syncLocales() {
 	}
 	overlays := map[string]map[string]string{}
 	for id, p := range m.Installed {
-		dir := filepath.Join("./data/plugins", id, p.Version, "locales")
+		dir := filepath.Join(paths.Plugins(), id, p.Version, "locales")
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -119,7 +120,7 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 		Installed:   make(map[string]Plugin),
 		Catalog:     make(map[string]CatalogEntry),
 		db:          db,
-		Wasm:        NewWasmRuntime("./data/plugins"),
+		Wasm:        NewWasmRuntime(paths.Plugins()),
 	}
 
 	if err := m.loadCatalog(ctx, repo); err != nil {
