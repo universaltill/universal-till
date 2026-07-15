@@ -153,6 +153,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerAskAPI(mux, dp)
 	registerPrintAPI(mux, dp)
 	registerBackupAPI(mux, dp)
+	registerDataAPI(mux, dp)
 	registerEODAPI(mux, dp)
 	registerImport(mux, dp)
 	registerReceiptDesigner(mux, dp)

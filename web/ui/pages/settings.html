@@ -64,6 +64,40 @@
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
   {{ end }}
 </div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>🧹 {{ T "settings.data.title" }}</h2>
+  <p class="muted">{{ T "settings.data.help" }}</p>
+  <p class="muted" style="color:#b45309">{{ T "settings.data.warn" }}</p>
+  <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+    <input type="text" id="data-reset-confirm" placeholder="{{ T "settings.data.confirm_ph" }}" style="width:9rem">
+    <button class="btn secondary" id="data-reset-btn" data-testid="data-reset">{{ T "settings.data.reset_btn" }}</button>
+    <span id="data-reset-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+  </div>
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById('data-reset-btn');
+  if (!btn) return;
+  var msg = document.getElementById('data-reset-msg');
+  var inp = document.getElementById('data-reset-confirm');
+  btn.addEventListener('click', function () {
+    if (inp.value.trim() !== 'RESET') { msg.textContent = '✗ type RESET to confirm'; return; }
+    if (!confirm('Permanently clear ALL sales, shifts and invoices? The catalog, users and settings are kept. This cannot be undone.')) return;
+    btn.disabled = true; msg.textContent = '⏳ clearing…';
+    fetch('/api/data/reset-transactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
+    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+      btn.disabled = false;
+      msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
+      if (r.ok) inp.value = '';
+    }); }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+  });
+})();
+</script>
 <div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.printer.title" }}</h2>
   <p class="muted">{{ T "settings.printer.help" }}</p>
