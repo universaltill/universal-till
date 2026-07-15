@@ -36,13 +36,24 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		repo := data.NewPOSRepo(d.Db)
 		returns, _ := repo.ReturnReceiptsFor(r.Context(), sale.ID)
 		original, _, _ := repo.OriginalReceiptFor(r.Context(), sale.ID)
+		// Invoicing (G31): show the issue form / existing invoice link
+		// only when the seller identity is configured.
+		_, invoicingOn := sellerConfig(r.Context(), d)
+		invKind := "invoice"
+		if sale.SaleType == "return" {
+			invKind = "credit_note"
+		}
+		inv, hasInvoice, _ := data.NewInvoiceRepo(d.Db).BySale(r.Context(), sale.ID, invKind)
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
-			"title":     "Receipt " + sale.ReceiptNo,
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
-			"Sale":      sale,
-			"Returns":   returns,
-			"Original":  original,
+			"title":       "Receipt " + sale.ReceiptNo,
+			"theme":       d.CurrentState().Theme,
+			"menuItems":   d.Menu,
+			"Sale":        sale,
+			"Returns":     returns,
+			"Original":    original,
+			"InvoicingOn": invoicingOn,
+			"HasInvoice":  hasInvoice,
+			"Invoice":     inv,
 		})(w, r)
 	})
 

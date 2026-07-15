@@ -99,6 +99,23 @@
   </form>
 </div>
 <div class="card" style="margin-top:1rem">
+  <h2>🧾 {{ T "settings.invoice.title" }}</h2>
+  <p class="muted">{{ T "settings.invoice.help" }}</p>
+  <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="window.location.reload()">
+    <div class="field-pair">
+      <label>{{ T "settings.invoice.seller_name" }}
+        <input type="text" name="seller_name" value="{{ index .settingsMap "invoice.seller_name" }}"></label>
+      <label>{{ T "settings.invoice.seller_vat_no" }}
+        <input type="text" name="seller_vat_no" value="{{ index .settingsMap "invoice.seller_vat_no" }}"></label>
+    </div>
+    <label>{{ T "settings.invoice.seller_address" }}
+      <input type="text" name="seller_address" value="{{ index .settingsMap "invoice.seller_address" }}"></label>
+    <div style="margin-top:.5rem">
+      <button class="btn" type="submit">{{ T "settings.invoice.apply" }}</button>
+    </div>
+  </form>
+</div>
+<div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.idle_lock.title" }}</h2>
   <p class="muted">{{ T "settings.idle_lock.help" }}</p>
   <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="window.location.reload()">
