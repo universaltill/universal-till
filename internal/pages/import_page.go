@@ -125,6 +125,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 
 		created, failed := 0, 0
 		if commit {
+			// Opening stock from the source file lands as a "receive"
+			// movement at the default location (same path as the
+			// inventory page), so the migration carries quantities too.
+			locID, locErr := posRepo.EnsureStockLocation(r.Context())
 			for i := range rows {
 				if rows[i].Status != "ok" {
 					continue
@@ -153,6 +157,17 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						Barcode: it.Barcode, ItemID: itemID, IsPrimary: true,
 					}); err != nil {
 						rows[i].Status = "created; barcode attach failed"
+						created++
+						continue
+					}
+				}
+				if it.HasStock && it.Stock > 0 && locErr == nil {
+					if _, err := pos.RecordStockMovement(r.Context(), d.Db, pos.StockMovementInput{
+						ItemID: itemID, LocationID: locID, Type: "receive",
+						Quantity: it.Stock, Reason: "catalog import",
+						ActorID: getSessionUserID(r),
+					}); err != nil {
+						rows[i].Status = "created; stock not carried: " + err.Error()
 						created++
 						continue
 					}
