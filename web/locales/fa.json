@@ -382,6 +382,7 @@
   "plugins.store.manage_link": "مدیریت افزونه‌های نصب‌شده",
   "plugins.store.none_available": "هنوز افزونه‌ای در دسترس نیست.",
   "plugins.store.offline": "در حال حاضر به فروشگاه افزونه دسترسی نیست — اتصال را بررسی کنید. فروش به‌صورت آفلاین کار می‌کند؛ با بازگشت اتصال، فروشگاه پر می‌شود.",
+  "plugins.store.search_ph": "جست‌وجوی افزونه‌ها…",
   "plugins.store.state.downloaded": "دانلودشده",
   "plugins.store.state.failed": "نصب ناموفق",
   "plugins.store.state.installed": "نصب‌شده",

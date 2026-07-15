@@ -382,6 +382,7 @@
   "plugins.store.manage_link": "Manage installed plugins",
   "plugins.store.none_available": "No plugins are available yet.",
   "plugins.store.offline": "Can't reach the plugin store right now — check the connection. Sales keep working offline; the store fills in when it's back.",
+  "plugins.store.search_ph": "Search plugins…",
   "plugins.store.state.downloaded": "Downloaded",
   "plugins.store.state.failed": "Install failed",
   "plugins.store.state.installed": "Installed",
