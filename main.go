@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
@@ -44,6 +45,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("config init failed: %v", err)
 	}
+
+	// One-time: bring an old cwd-relative ./data database into the stable data
+	// directory so an in-place upgrade keeps its data (no-op for fresh installs).
+	paths.MigrateLegacyDB(cfg.DBPath)
 
 	// 2) DB + migrations. A staged restore (Settings → Backups → Restore)
 	// applies first, before the DB is opened; the replaced file is kept
@@ -97,7 +102,7 @@ func main() {
 
 		// Create catalog repository
 		var err error
-		catalogRepo, err = marketplace.NewCatalogRepository(marketplaceClient, "./data/plugins/cache")
+		catalogRepo, err = marketplace.NewCatalogRepository(marketplaceClient, paths.Plugins("cache"))
 		if err != nil {
 			log.Fatalf("failed to create catalog repository: %v", err)
 		}
@@ -120,8 +125,8 @@ func main() {
 // as specified in 009-cloud-marketplace feature (T002)
 func bootstrapPluginDirectories() error {
 	dirs := []string{
-		"./data/plugins/cache",
-		"./data/plugins/tmp",
+		paths.Plugins("cache"),
+		paths.Plugins("tmp"),
 	}
 
 	for _, dir := range dirs {

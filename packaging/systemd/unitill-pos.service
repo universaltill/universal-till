@@ -8,6 +8,9 @@ Wants=network-online.target
 Type=simple
 User=pos
 WorkingDirectory=/opt/unitill
+# Pin the data dir: the pos system user has no per-user home, and this keeps
+# the database where it already lives (persists across .deb upgrades).
+Environment=UT_DATA_DIR=/opt/unitill/data
 EnvironmentFile=-/opt/unitill/pos.env
 ExecStart=/opt/unitill/bin/unitill-pos
 Restart=always

@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -28,6 +29,12 @@ import (
 func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository) http.Handler {
 	log := logging.L()
 	mux := http.NewServeMux()
+
+	// Point the plugin page/theme asset dirs at the resolved data directory
+	// (paths.Init ran in config.Init). These stay package vars so tests can
+	// override them, but production reads them from the stable data dir.
+	pluginPagesDir = paths.Plugins()
+	pluginThemesDir = paths.Plugins()
 
 	// settings + state
 	setStore := settings.NewStore(db)
@@ -186,7 +193,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		}
 	})
 	StartEODScheduler(ctx, dp) // background Z-report (docs: G30)
-	registerInvoices(mux, dp) // VAT invoices + credit notes (G31)
+	registerInvoices(mux, dp)  // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
 	registerInventoryAPI(mux, dp)
