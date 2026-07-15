@@ -87,10 +87,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.Render("ui/pages/tills.html", map[string]any{
-			"title":     "Tills",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
-			"Tills":     list,
+			"title":       "Tills",
+			"theme":       d.CurrentState().Theme,
+			"menuItems":   d.Menu,
+			"Tills":       list,
+			"SyncPrimary": d.SyncPrimaryURL(r.Context()),
 		})(w, r)
 	})
 
@@ -227,6 +228,38 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 			nil, time.Now().UTC().Format(time.RFC3339), "")
 		w.Header().Set("HX-Refresh", "true")
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Promote a replica to standalone/primary (D4): clears the sync
+	// identity (keeping the receipt prefix — numbering must not collide
+	// with the old primary) so the push/pull loops stop on their next tick
+	// and the Tills page can pair new replicas from here. Documented
+	// procedure: docs architecture/lan-sync.md "Promoting a replica".
+	mux.HandleFunc("POST /api/sync/promote", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if strings.TrimSpace(r.Form.Get("confirm")) != "PROMOTE" {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "tills.promote_confirm_hint"))
+			return
+		}
+		if d.SyncPrimaryURL(r.Context()) == "" {
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "tills.promote_not_replica"))
+			return
+		}
+		if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", "-", "till_promoted",
+			nil, time.Now().UTC().Format(time.RFC3339), "")
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "tills.promoted"))
 	})
 
 	// Replica side (manager): join a primary. Enrols, downloads the full
