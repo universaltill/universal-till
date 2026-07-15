@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,7 @@ type receiptDesign struct {
 	ShowSKU     bool
 	ShowTax     bool // subtotal+tax rows; off = TOTAL only
 	ShowBarcode bool
+	ShowLogo    bool // uploaded logo as a GS v 0 raster above the name
 }
 
 const (
@@ -57,7 +59,24 @@ const (
 	keyReceiptShowSKU     = "receipt.show_sku"
 	keyReceiptShowTax     = "receipt.show_tax"
 	keyReceiptShowBarcode = "receipt.show_barcode"
+	keyReceiptShowLogo    = "receipt.show_logo"
+
+	// receiptLogoPath is where the designer stores the uploaded logo.
+	receiptLogoPath = "web/public/assets/logo/receipt-logo.png"
 )
+
+// receiptLogoRaster loads and encodes the uploaded logo when the design
+// wants it; nil (no logo) on any failure — never block a receipt.
+func receiptLogoRaster(rd receiptDesign) []byte {
+	if !rd.ShowLogo {
+		return nil
+	}
+	raw, err := os.ReadFile(receiptLogoPath)
+	if err != nil {
+		return nil
+	}
+	return print.RasterLogo(raw)
+}
 
 // receiptDesignFromSettings loads the saved design with friendly defaults.
 func receiptDesignFromSettings(ctx context.Context, d *common.Deps) receiptDesign {
@@ -72,6 +91,7 @@ func receiptDesignFromSettings(ctx context.Context, d *common.Deps) receiptDesig
 		ShowSKU:     get(keyReceiptShowSKU, "false") == "true",
 		ShowTax:     get(keyReceiptShowTax, "true") != "false",
 		ShowBarcode: get(keyReceiptShowBarcode, "true") != "false",
+		ShowLogo:    get(keyReceiptShowLogo, "false") == "true",
 	}
 	for _, k := range []string{keyReceiptHeader1, keyReceiptHeader2, keyReceiptHeader3} {
 		if v := get(k, ""); v != "" {
@@ -97,6 +117,7 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 
 	doc := print.Doc{
 		StoreName: storeNameOrDefault(ctx, d),
+		Logo:      receiptLogoRaster(rd),
 		Header:    rd.Header,
 		Meta: []string{
 			"Receipt " + detail.ReceiptNo,
