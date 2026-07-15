@@ -82,6 +82,13 @@ body.sale-screen .nav-toggle { display: inline-flex; align-items: center; }
 body.sale-screen .nav-links { display: none; }
 body.sale-screen .nav-right { margin-inline-start: .5rem; }
 
+/* Menu page: the big touch tiles ARE the navigation, so collapse the small-text
+   nav (and the redundant Users/Translations links) from the header — keep just
+   the logo, operator and Lock. */
+body.menu-screen .nav-links { display: none; }
+body.menu-screen .session-admin-link { display: none; }
+body.menu-screen .nav-right { margin-inline-start: auto; }
+
 /* Menu launcher page: a grid of large touch tiles. */
 .menu-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

@@ -65,10 +65,9 @@ test.describe('Plugin Install Flow (CLI + Marketplace + POS)', () => {
     await page.goto('/');
 
     // Touch nav: reach Help/Support (and its FAQ plugin entry) via the ☰ Menu
-    // button on the sale screen rather than an always-visible top-nav link.
+    // button → the Help tile on the touch menu page.
     await page.getByTestId('nav-menu').click();
-    await expect(page.getByTestId('nav-help-support')).toBeVisible();
-    await page.getByTestId('nav-help-support').click();
+    await page.locator('.menu-tile[href="/help"]').click();
     await expect(page.getByTestId('plugin-faq-entry')).toBeVisible();
   });
 });
