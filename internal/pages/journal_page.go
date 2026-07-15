@@ -13,10 +13,12 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 	// Full journal page — receipts/sync history lives here, off the sale screen
 	// (real tills keep the checkout screen for the transaction only).
 	mux.HandleFunc("/journal", func(w http.ResponseWriter, r *http.Request) {
+		_, invoicingOn := sellerConfig(r.Context(), d)
 		httpx.Render("ui/pages/journal.html", map[string]any{
-			"title":     "Journal",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"title":       "Journal",
+			"theme":       d.CurrentState().Theme,
+			"menuItems":   d.Menu,
+			"InvoicingOn": invoicingOn && isManagerOrAuthOff(r),
 		})(w, r)
 	})
 
