@@ -12,4 +12,11 @@
   </a>
   {{ end }}
 </div>
+
+<div class="menu-lang">
+  <span class="menu-lang-label">🌐 {{ T "setup.language.title" }}</span>
+  <div class="menu-lang-btns">
+    {{ range locales }}<a class="btn btn-touch menu-lang-btn{{ if eq . locale }} primary{{ else }} secondary{{ end }}" href="/menu?lang={{ . }}">{{ . }}</a>{{ end }}
+  </div>
+</div>
 {{ end }}
