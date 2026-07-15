@@ -38,7 +38,13 @@ h2 { font-size: 1.02rem; font-weight: 600; margin: 0 0 .6rem 0; color: var(--bra
      text-transform: uppercase; letter-spacing: .04em; }
 h3 { font-size: 1rem; font-weight: 600; margin: .2rem 0; }
 a { color: var(--accent); }
-.container { max-width: 1500px; margin: 0 auto; padding: 1rem 1.25rem 2rem; }
+/* Column layout so the sale screen fills the viewport exactly below the
+   nav, whatever height the nav ends up (one row or two). */
+body { display: flex; flex-direction: column; min-height: 100dvh; margin: 0; }
+.container { max-width: 1500px; margin: 0 auto; padding: 1rem 1.25rem 2rem; width: 100%; }
+body.sale-screen { overflow: hidden; }
+body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex;
+  flex-direction: column; padding-top: .6rem; padding-bottom: 0; }
 .muted { color: var(--muted); }
 .empty { text-align: center; color: var(--muted); padding: .75rem 0; }
 .tag {
@@ -57,7 +63,45 @@ a { color: var(--accent); }
 }
 .logo { display: flex; align-items: center; }
 .logo img { height: 28px; display: block; }
+.nav-right { display: flex; align-items: center; gap: .5rem; margin-inline-start: auto; }
+/* The ☰ toggle only appears on the sale screen (see below). Sized as a
+   proper touch target. */
+.nav-toggle { display: none; background: rgba(255,255,255,.12); color: #fff; border: 0;
+  border-radius: 10px; padding: .6rem 1.1rem; min-height: 46px; font-size: 1rem;
+  font-weight: 600; cursor: pointer; }
+.nav-toggle:hover, .nav-toggle:active { background: rgba(255,255,255,.22); }
 .nav-links { display: flex; align-items: center; gap: .15rem; flex-wrap: wrap; }
+
+/* Sale screen: touch-first. Hide the inline text menu; the ☰ button opens
+   the full /menu launcher page of big touch tiles instead. */
+body.sale-screen .nav { flex-wrap: nowrap; }
+body.sale-screen .nav-toggle { display: inline-flex; align-items: center; }
+body.sale-screen .nav-links { display: none; }
+body.sale-screen .nav-right { margin-inline-start: .5rem; }
+
+/* Menu launcher page: a grid of large touch tiles. */
+.menu-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem; margin-top: 1rem;
+}
+.menu-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .6rem; min-height: 130px; padding: 1.2rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow);
+  color: var(--text); text-decoration: none; text-align: center;
+  transition: transform .06s ease, border-color .15s ease;
+}
+.menu-tile:hover, .menu-tile:active { border-color: var(--brand); transform: translateY(-2px); }
+.menu-ico { font-size: 2.4rem; line-height: 1; }
+.menu-label { font-size: 1.05rem; font-weight: 600; }
+.btn-touch { min-height: 46px; display: inline-flex; align-items: center; }
+
+/* Sale screen top bar is touch-first: the manager links live in the ☰
+   menu now, so hide them here; keep the operator + a big Lock button. */
+body.sale-screen .session-admin-link { display: none; }
+body.sale-screen .btn-lock { min-height: 46px; padding: .5rem 1.2rem; font-size: 1rem; }
+body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .nav-links a {
   color: #cbd5e1; text-decoration: none; font-size: .9rem; font-weight: 500;
   padding: .35rem .6rem; border-radius: 8px; white-space: nowrap;
@@ -135,8 +179,11 @@ a { color: var(--accent); }
     "tender products";
   gap: .8rem;
   align-items: stretch;
-  height: calc(100dvh - 8rem); /* nav + kiosk header */
-  min-height: 420px;
+  /* Fill whatever space is left below the nav + kiosk header — robust to
+     the nav wrapping to two rows (a fixed calc() assumed one row and
+     pushed the tender panel off-screen). */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .pos-container > .basket { grid-area: basket; }
 .pos-container > .products { grid-area: products; }
