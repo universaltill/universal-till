@@ -23,7 +23,9 @@ type ImportItem struct {
 	Category    string
 	Description string
 	IsWeighed   bool
-	Issue       string // non-empty = row cannot be imported (reason)
+	Stock       float64 // opening quantity from the source system
+	HasStock    bool    // the file carried a parseable stock value
+	Issue       string  // non-empty = row cannot be imported (reason)
 }
 
 // Result is a parsed file.
@@ -128,6 +130,13 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 		}
 		price, perr := ParsePrice(get(rec, "price"), currencyDecimals)
 		item.PriceMinor = price
+		// Opening stock is optional and never blocks a row: a blank or
+		// unparseable value just means "no stock carried over".
+		if raw := get(rec, "stock"); raw != "" {
+			if qty, err := strconv.ParseFloat(strings.ReplaceAll(raw, ",", ""), 64); err == nil {
+				item.Stock, item.HasStock = qty, true
+			}
+		}
 		switch {
 		case item.Name == "":
 			item.Issue = "missing name"
