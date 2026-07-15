@@ -153,6 +153,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerSyncAPI(mux, dp)
 	registerSyncSales(mux, dp)
 	registerSyncAdmin(mux, dp)
+	registerSyncAssets(mux, dp)
 	StartSyncPush(ctx, dp) // replica journal loop (ADR-0011 D3)
 	// Replica drift loop (ADR-0011 D2b): after a pull applies, re-derive
 	// everything Init computed from settings — same moves as the settings

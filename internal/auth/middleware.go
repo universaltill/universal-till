@@ -28,7 +28,8 @@ func exempt(path string) bool {
 	// enforced in the handlers. /api/setup/join refuses once an operator
 	// exists (wizard).
 	switch path {
-	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin", "/api/setup/join":
+	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
+		"/api/sync/assets", "/api/sync/assets/file", "/api/setup/join":
 		return true
 	}
 	for _, p := range []string{"/api/auth/", "/public/", "/themes/"} {

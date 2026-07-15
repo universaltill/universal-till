@@ -166,6 +166,10 @@ func StartSyncPull(ctx context.Context, d *common.Deps, refresh func(context.Con
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = d.Settings.Set(ctx, "sync.last_contact_at", now)
+		// Files ride alongside the row data: item images can change
+		// without moving the admin fingerprint, so this runs every tick
+		// (the manifest is cheap; only missing/changed files download).
+		syncItemAssets(ctx, client, primary, bearer)
 		if out.Data.Unchanged {
 			return
 		}
