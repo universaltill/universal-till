@@ -581,6 +581,7 @@
   "status.offline": "Çevrimdışı",
   "status.online": "Çevrimiçi",
   "status.update_available": "Güncelleme mevcut",
+  "status.update_now": "Şimdi güncelle",
   "suggest.add": "Sepete ekle",
   "suggest.title": "Müşteriler ayrıca alıyor",
   "sync.banner_open_primary": "Birincilde düzenle",

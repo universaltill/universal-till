@@ -28,8 +28,13 @@
         <span class="sb-conn-text">{{ T "status.online" }}</span>
       </span>
       {{ if updateavailable }}
-      <a class="sb-item sb-update" href="https://www.universaltill.com/download"
-         target="_blank" rel="noopener">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}</a>
+        {{ if canselfupdate }}
+        <button type="button" class="sb-item sb-update" id="sb-update-btn"
+                data-latest="{{ latestversion }}">⬆&nbsp;{{ T "status.update_now" }}&nbsp;v{{ latestversion }}</button>
+        {{ else }}
+        <a class="sb-item sb-update" href="https://www.universaltill.com/download"
+           target="_blank" rel="noopener">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}</a>
+        {{ end }}
       {{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
     </footer>
@@ -47,6 +52,30 @@
         window.addEventListener('online', update);
         window.addEventListener('offline', update);
         update();
+      })();
+      (function () {
+        var btn = document.getElementById('sb-update-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          if (!confirm('Update to v' + btn.getAttribute('data-latest') + '? The till will restart.')) return;
+          btn.disabled = true; btn.textContent = 'Updating…';
+          fetch('/api/update/apply', { method: 'POST' })
+            .then(function (r) { return r.json().catch(function () { return {}; }); })
+            .then(function () { /* server re-execs; reconnect below */ })
+            .catch(function () { /* expected: connection drops on restart */ })
+            .finally(function () {
+              btn.textContent = 'Restarting…';
+              // Poll until the new build is back, then reload.
+              var tries = 0;
+              var iv = setInterval(function () {
+                tries++;
+                fetch('/healthz', { cache: 'no-store' }).then(function (r) {
+                  if (r.ok) { clearInterval(iv); location.reload(); }
+                }).catch(function () {});
+                if (tries > 60) { clearInterval(iv); }
+              }, 2000);
+            });
+        });
       })();
     </script>
   </body>

@@ -581,6 +581,7 @@
   "status.offline": "Offline",
   "status.online": "Online",
   "status.update_available": "Update available",
+  "status.update_now": "Update now",
   "suggest.add": "Add to basket",
   "suggest.title": "Customers also buy",
   "sync.banner_open_primary": "Edit on the primary",
