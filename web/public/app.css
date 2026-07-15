@@ -430,8 +430,13 @@ body.login-screen {
   border-radius: 12px; padding: 2rem 2.4rem; width: min(24rem, 92vw);
   text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,.12);
 }
-.login-logo { height: 2.2rem; margin-bottom: 1rem; }
+.login-logo { height: 2.6rem; margin-bottom: .5rem; }
+.login-tagline { margin: 0 0 1.4rem; color: var(--muted, #64748b); font-size: .85rem; }
 .login-card h1 { font-size: 1.2rem; margin: 0 0 1rem; }
+.login-footer {
+  margin-top: 1.6rem; padding-top: 1rem; border-top: 1px solid var(--border);
+  color: var(--muted, #94a3b8); font-size: .72rem; letter-spacing: .02em;
+}
 .login-error { color: var(--danger, #c0392b); font-weight: 600; min-height: 1.3rem; }
 .pin-dots { display: flex; gap: .45rem; justify-content: center; margin-bottom: 1.1rem; }
 .pin-dot {
