@@ -1,0 +1,15 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "nav.menu" }}</h1>
+  <a class="btn primary btn-touch" href="/">← {{ T "menu.back_to_sale" }}</a>
+</div>
+
+<div class="menu-grid">
+  {{ range .Tiles }}
+  <a class="menu-tile" href="{{ .Href }}">
+    <span class="menu-ico">{{ .Icon }}</span>
+    <span class="menu-label">{{ T .Label }}</span>
+  </a>
+  {{ end }}
+</div>
+{{ end }}
