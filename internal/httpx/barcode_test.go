@@ -17,7 +17,13 @@ func TestBarcodeSVG(t *testing.T) {
 	if got := strings.Count(svg, "<rect"); got != 56 {
 		t.Errorf("rect count = %d, want 56", got)
 	}
-	if BarcodeSVG("ABC") != "" || BarcodeSVG("") != "" {
-		t.Error("non-digit/empty input must render nothing")
+	if BarcodeSVG("~") != "" || BarcodeSVG("abc") != "" || BarcodeSVG("") != "" {
+		t.Error("unencodable/empty input must render nothing")
+	}
+	// Invoice numbers carry letters and a dash (review find: these
+	// rendered BLANK when only digits were mapped).
+	inv := string(BarcodeSVG("T2-INV-000001"))
+	if !strings.Contains(inv, "<svg") || !strings.Contains(inv, `aria-label="T2-INV-000001"`) {
+		t.Fatal("invoice display number did not render")
 	}
 }
