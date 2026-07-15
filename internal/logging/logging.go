@@ -130,6 +130,10 @@ func (l *Logger) Errorf(format string, args ...any) {
 	l.logf(Error, format, args...)
 }
 
+// Fatalf logs at Error level and then terminates the process. Callers rely on
+// this NOT returning (e.g. main.go treats a failed db.Open as fatal and would
+// otherwise fall through to a nil-pointer deref). Never make this return.
 func (l *Logger) Fatalf(format string, args ...any) {
 	l.logf(Error, format, args...)
+	os.Exit(1)
 }
