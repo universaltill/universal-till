@@ -202,6 +202,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerShiftsPage(mux, dp)
 	registerReportsPage(mux, dp)
 	registerHelp(mux, dp)
+	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)

@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 )
 
@@ -24,6 +25,7 @@ var baseFuncs = template.FuncMap{
 	"appversion":      func() string { return buildinfo.Version },
 	"updateavailable": func() bool { return updates.Current().Available },
 	"latestversion":   func() string { return updates.Current().Latest },
+	"canselfupdate":   func() bool { return selfupdate.Supported() },
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.
@@ -84,7 +86,6 @@ func minorUnits(amount any) (int64, bool) {
 	}
 	return 0, false
 }
-
 
 func toJSON(v any) template.JS {
 	b, _ := json.Marshal(v)
