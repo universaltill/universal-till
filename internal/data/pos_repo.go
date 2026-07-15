@@ -1347,6 +1347,95 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID string) (bool, 
 	return true, nil
 }
 
+// obsoleteItemsWhere selects items that are safe to permanently delete during
+// catalog cleanup: they are already deactivated (is_active = 0) AND have no
+// financial or stock history whatsoever — neither the item nor any of its
+// variants appears in sale_lines or stock_movements. Anything ever sold or
+// moved is KEPT (deactivated at most) so audit/tax history stays intact.
+const obsoleteItemsWhere = `
+is_active = 0
+AND id NOT IN (SELECT item_id FROM sale_lines WHERE item_id IS NOT NULL)
+AND id NOT IN (SELECT item_id FROM stock_movements WHERE item_id IS NOT NULL)
+AND id NOT IN (SELECT v.item_id FROM item_variants v
+              WHERE v.id IN (SELECT variant_id FROM sale_lines WHERE variant_id IS NOT NULL))
+AND id NOT IN (SELECT v.item_id FROM item_variants v
+              WHERE v.id IN (SELECT variant_id FROM stock_movements WHERE variant_id IS NOT NULL))`
+
+// ObsoleteItem is a row in the catalog-cleanup preview.
+type ObsoleteItem struct {
+	ID   string
+	SKU  string
+	Name string
+}
+
+// ListObsoleteItems returns the inactive, never-sold items that CleanupObsoleteItems
+// would remove, so the manager can preview before confirming.
+func (r *POSRepo) ListObsoleteItems(ctx context.Context, limit int) ([]ObsoleteItem, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, COALESCE(sku,''), name FROM items
+WHERE `+obsoleteItemsWhere+`
+ORDER BY name LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list obsolete items: %w", err)
+	}
+	defer rows.Close()
+	var out []ObsoleteItem
+	for rows.Next() {
+		var it ObsoleteItem
+		if err := rows.Scan(&it.ID, &it.SKU, &it.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// CleanupObsoleteItems permanently deletes inactive, never-sold items and their
+// operational children (inventory levels, price history; barcodes/images/variants
+// cascade). Items with any sale or stock history are left untouched. Audited.
+// Returns the number of items removed.
+func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID string) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// The set of item ids we're about to delete, and the variants under them.
+	itemSet := `SELECT id FROM items WHERE ` + obsoleteItemsWhere
+	variantSet := `SELECT id FROM item_variants WHERE item_id IN (` + itemSet + `)`
+
+	// Operational children without ON DELETE CASCADE must go first.
+	for _, s := range []string{
+		`DELETE FROM inventory     WHERE item_id IN (` + itemSet + `) OR variant_id IN (` + variantSet + `)`,
+		`DELETE FROM price_history WHERE item_id IN (` + itemSet + `) OR variant_id IN (` + variantSet + `)`,
+	} {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return 0, fmt.Errorf("cleanup children: %w", err)
+		}
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM items WHERE `+obsoleteItemsWhere)
+	if err != nil {
+		return 0, fmt.Errorf("cleanup items: %w", err)
+	}
+	count, _ := res.RowsAffected()
+	if count == 0 {
+		return 0, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := r.InsertAudit(ctx, tx, actorID, "system", "catalog", "catalog_cleanup",
+		map[string]any{"items_deleted": count}, now, ""); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // UpdateSaleStatus updates sale status (and optionally voided_at when voided).
 func (r *POSRepo) UpdateSaleStatus(ctx context.Context, tx *sql.Tx, saleID, status string) error {
 	now := time.Now().UTC().Format(time.RFC3339)

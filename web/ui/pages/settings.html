@@ -84,6 +84,17 @@
     <span id="cust-msg" class="muted" aria-live="polite"></span>
   </div>
   <div id="cust-results" style="margin-top:.5rem"></div>
+
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.data.catalog_title" }}</h3>
+  <p class="muted">{{ T "settings.data.catalog_help" }}</p>
+  <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+    <button class="btn secondary" id="cat-preview-btn">{{ T "settings.data.catalog_preview_btn" }}</button>
+    <input type="text" id="cat-confirm" placeholder="{{ T "settings.data.catalog_confirm_ph" }}" style="width:9rem">
+    <button class="btn secondary" id="cat-cleanup-btn" data-testid="data-cleanup" disabled>{{ T "settings.data.catalog_cleanup_btn" }}</button>
+    <span id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+  </div>
+  <div id="cat-results" style="margin-top:.5rem"></div>
 </div>
 
 <script>
@@ -143,6 +154,43 @@
       msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
       if (r.ok) { b.closest('div').remove(); } else { b.disabled = false; }
     }); }).catch(function (e) { b.disabled = false; msg.textContent = '✗ ' + e; });
+  });
+})();
+(function () {
+  var pv = document.getElementById('cat-preview-btn');
+  if (!pv) return;
+  var run = document.getElementById('cat-cleanup-btn');
+  var conf = document.getElementById('cat-confirm');
+  var out = document.getElementById('cat-results');
+  var msg = document.getElementById('cat-msg');
+  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  pv.addEventListener('click', function () {
+    msg.textContent = '…';
+    fetch('/api/data/obsolete-items')
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        msg.textContent = '';
+        var list = (j.items) || [];
+        run.disabled = list.length === 0;
+        if (!list.length) { out.innerHTML = '<p class="muted">Nothing to remove — no inactive, never-sold products.</p>'; return; }
+        out.innerHTML = '<p class="muted">' + list.length + ' product(s) will be removed:</p>'
+          + list.map(function (it) {
+              return '<div style="margin:.15rem 0">' + esc(it.Name) + (it.SKU ? ' · ' + esc(it.SKU) : '') + '</div>';
+            }).join('');
+      }).catch(function (e) { msg.textContent = '✗ ' + e; });
+  });
+  run.addEventListener('click', function () {
+    if (conf.value.trim() !== 'CLEANUP') { msg.textContent = '✗ type CLEANUP to confirm'; return; }
+    if (!confirm('Permanently delete these inactive, never-sold products? This cannot be undone.')) return;
+    run.disabled = true; msg.textContent = '⏳ removing…';
+    fetch('/api/data/cleanup-catalog', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ confirm: conf.value.trim() }).toString()
+    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+      msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
+      if (r.ok) { conf.value = ''; out.innerHTML = ''; run.disabled = true; }
+      else { run.disabled = false; }
+    }); }).catch(function (e) { run.disabled = false; msg.textContent = '✗ ' + e; });
   });
 })();
 </script>

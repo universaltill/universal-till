@@ -80,4 +80,38 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		respond(w, http.StatusOK, true, "customer erased")
 	})
+
+	// Catalog cleanup: preview the inactive, never-sold items that can be removed.
+	mux.HandleFunc("GET /api/data/obsolete-items", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			respond(w, http.StatusForbidden, false, "manager only")
+			return
+		}
+		list, err := data.NewPOSRepo(d.Db).ListObsoleteItems(r.Context(), 200)
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": list})
+	})
+
+	// Catalog cleanup: permanently remove the previewed obsolete items.
+	mux.HandleFunc("POST /api/data/cleanup-catalog", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			respond(w, http.StatusForbidden, false, "manager only")
+			return
+		}
+		_ = r.ParseForm()
+		if strings.TrimSpace(r.FormValue("confirm")) != "CLEANUP" {
+			respond(w, http.StatusBadRequest, false, "type CLEANUP to confirm")
+			return
+		}
+		n, err := data.NewPOSRepo(d.Db).CleanupObsoleteItems(r.Context(), auth.UserID(r))
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+		respond(w, http.StatusOK, true, fmt.Sprintf("removed %d obsolete products", n))
+	})
 }
