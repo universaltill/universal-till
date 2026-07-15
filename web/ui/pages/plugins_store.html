@@ -80,7 +80,16 @@
 </div>
 {{ else }}
 <div class="card">
+  {{ if .CatalogError }}
+  {{/* The catalog didn't load (offline / blocked) — NOT an approvals problem. */}}
+  <p class="empty">{{ T "plugins.store.offline" }}</p>
+  {{ else if .EntitledFiltered }}
+  {{/* Catalog reached, entitlements known, but nothing approved for this store. */}}
   <p class="empty">{{ T "plugins.store.empty" }}</p>
+  {{ else }}
+  {{/* Catalog reached, approvals unknown, but the catalog itself is empty. */}}
+  <p class="empty">{{ T "plugins.store.none_available" }}</p>
+  {{ end }}
 </div>
 {{ end }}
 
