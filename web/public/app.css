@@ -42,7 +42,10 @@ a { color: var(--accent); }
    nav, whatever height the nav ends up (one row or two). */
 body { display: flex; flex-direction: column; min-height: 100dvh; margin: 0; }
 .container { max-width: 1500px; margin: 0 auto; padding: 1rem 1.25rem 2rem; width: 100%; }
-body.sale-screen { overflow: hidden; }
+/* Sale screen gets a DEFINITE height (not just min-height) so the grid's
+   1fr rows resolve and the basket scrolls internally instead of growing
+   and pushing the tender panel off-screen. */
+body.sale-screen { height: 100dvh; overflow: hidden; }
 body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex;
   flex-direction: column; padding-top: .6rem; padding-bottom: 0; }
 .muted { color: var(--muted); }
