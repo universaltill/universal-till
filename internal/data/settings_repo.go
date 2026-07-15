@@ -64,6 +64,21 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// ClearReplicaIdentity promotes a replica (ADR-0011 D4): every sync.* key
+// goes EXCEPT the receipt prefix — the till keeps stamping T<n>- receipts
+// so its numbering never collides with the old primary's.
+func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
+	var err error
+	done := settingsObs.trace("clear_replica_identity")
+	defer func() { done(err) }()
+	_, err = r.db.ExecContext(ctx,
+		`DELETE FROM settings WHERE key LIKE 'sync.%' AND key != 'sync.receipt_prefix'`)
+	if err != nil {
+		return settingsObs.wrapf("clear_replica_identity", "clear replica identity", err)
+	}
+	return nil
+}
+
 // All returns all key/value pairs from settings.
 func (r *SettingsRepo) All(ctx context.Context) (map[string]string, error) {
 	var err error
