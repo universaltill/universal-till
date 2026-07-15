@@ -619,3 +619,19 @@ body.login-screen {
 .setup-langs { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
 .setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; }
 [x-cloak] { display: none !important; }
+
+/* Bottom status bar: always-visible version + live connectivity. Bookends the
+   dark top nav; part of the body flex column so it sits at the bottom. */
+.statusbar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 1rem;
+  padding: .28rem 1rem; font-size: .78rem;
+  background: #0f172a; color: #94a3b8;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+.statusbar .sb-item { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
+.statusbar .sb-ver { margin-inline-start: auto; font-variant-numeric: tabular-nums; }
+.sb-dot { width: .6rem; height: .6rem; border-radius: 50%; background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34,197,94,.15); }
+.sb-conn.is-offline { color: #fca5a5; }
+.sb-conn.is-offline .sb-dot { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.15); }

@@ -21,6 +21,30 @@
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
     {{ template "nav" . }}
     <main class="container">{{ template "content" . }}</main>
+    <footer class="statusbar" aria-label="Status">
+      <span class="sb-item sb-conn" id="sb-conn"
+            data-online="{{ T "status.online" }}" data-offline="{{ T "status.offline" }}">
+        <span class="sb-dot"></span>
+        <span class="sb-conn-text">{{ T "status.online" }}</span>
+      </span>
+      <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
+    </footer>
+    <script>
+      (function () {
+        var el = document.getElementById('sb-conn');
+        if (!el) return;
+        var txt = el.querySelector('.sb-conn-text');
+        var on = el.getAttribute('data-online'), off = el.getAttribute('data-offline');
+        function update() {
+          var online = navigator.onLine;
+          el.classList.toggle('is-offline', !online);
+          txt.textContent = online ? on : off;
+        }
+        window.addEventListener('online', update);
+        window.addEventListener('offline', update);
+        update();
+      })();
+    </script>
   </body>
 </html>
 {{- end }}

@@ -12,13 +12,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 )
 
 var baseFuncs = template.FuncMap{
-	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
-	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+	"div100":     func(cents int64) float64 { return float64(cents) / 100.0 },
+	"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+	"appversion": func() string { return buildinfo.Version },
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.
