@@ -27,3 +27,24 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tell the website to refresh its download manifest + installers from
+      # this new release (universaltill.com/download reads it). Needs a
+      # cross-repo token in the WEBSITE_DISPATCH_TOKEN secret (fine-grained
+      # PAT with contents:read + actions:write on universaltill/website);
+      # skipped gracefully if the secret is absent.
+      - name: Notify the website of the new release
+        env:
+          DISPATCH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "WEBSITE_DISPATCH_TOKEN not set — skipping website refresh"
+            exit 0
+          fi
+          curl -sf -X POST \
+            -H "Authorization: Bearer $DISPATCH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/universaltill/website/dispatches \
+            -d "{\"event_type\":\"new-release\",\"client_payload\":{\"tag\":\"$TAG\"}}" \
+            && echo "website notified" || echo "website dispatch failed (non-fatal)"
