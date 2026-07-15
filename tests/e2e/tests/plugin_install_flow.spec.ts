@@ -64,6 +64,9 @@ test.describe('Plugin Install Flow (CLI + Marketplace + POS)', () => {
   test('FAQ plugin entrypoint is visible in POS UI', async ({ page }) => {
     await page.goto('/');
 
+    // Touch nav: reach Help/Support (and its FAQ plugin entry) via the ☰ Menu
+    // button on the sale screen rather than an always-visible top-nav link.
+    await page.getByTestId('nav-menu').click();
     await expect(page.getByTestId('nav-help-support')).toBeVisible();
     await page.getByTestId('nav-help-support').click();
     await expect(page.getByTestId('plugin-faq-entry')).toBeVisible();
