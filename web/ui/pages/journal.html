@@ -1,5 +1,8 @@
 {{ define "content" }}
-<h1>{{ T "journal.title" }}</h1>
+<div class="page-head">
+  <h1>{{ T "journal.title" }}</h1>
+  {{ if .InvoicingOn }}<a class="btn secondary" href="/invoices">🧾 {{ T "invoice.list_title" }}</a>{{ end }}
+</div>
 <div class="card">
   <div id="journal" hx-get="/ui/journal?limit=full" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
