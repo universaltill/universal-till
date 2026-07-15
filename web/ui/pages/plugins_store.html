@@ -1,4 +1,19 @@
 {{ define "content" }}
+<style>
+  .store-cats { display:flex; flex-wrap:wrap; gap:.5rem; margin:0 0 1rem; }
+  .cat-chip {
+    display:inline-flex; align-items:center; gap:.4rem;
+    padding:.5rem .85rem; min-height:44px; border-radius:999px;
+    border:1px solid var(--border, #d1d5db); background:var(--surface, #fff);
+    color:var(--text, #111827); font-weight:600; font-size:.95rem; cursor:pointer;
+    transition:background .12s, border-color .12s;
+  }
+  .cat-chip:hover { border-color:var(--brand, #4f46e5); }
+  .cat-chip.active { background:var(--brand, #4f46e5); border-color:var(--brand, #4f46e5); color:#fff; }
+  .cat-chip .cat-n { font-size:.78rem; opacity:.7; font-weight:700; }
+  .cat-chip.active .cat-n { opacity:.85; }
+  .store-card[hidden] { display:none; }
+</style>
 <h1>{{ T "plugins.store.title" }}</h1>
 
 <div class="card" style="margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center">
@@ -18,16 +33,24 @@
 <div id="store-msg" class="muted" style="min-height:1.4rem; margin-bottom:.5rem" aria-live="polite"></div>
 
 {{ if .Items }}
-<div class="grid" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:1rem">
+{{ if .Categories }}
+<div class="store-cats" role="group" aria-label="{{ T "plugins.store.browse" }}">
+  <button type="button" class="cat-chip active" data-cat="">{{ T "plugins.store.all" }} <span class="cat-n">{{ len .Items }}</span></button>
+  {{ range .Categories }}
+  <button type="button" class="cat-chip" data-cat="{{ .Type }}">{{ T (printf "plugins.type.%s" .Type) }} <span class="cat-n">{{ .Count }}</span></button>
+  {{ end }}
+</div>
+{{ end }}
+<div id="store-grid" class="grid" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:1rem">
   {{ range .Items }}
-  <div class="card store-card" data-listing-id="{{ .ListingID }}">
+  <div class="card store-card" data-listing-id="{{ .ListingID }}" data-type="{{ .Type }}">
     <div style="display:flex; justify-content:space-between; align-items:baseline">
       <h3 style="margin:.2rem 0">{{ .Name }}</h3>
       <span class="tag">v{{ .Version }}</span>
     </div>
     <p class="muted" style="min-height:2.4rem">{{ .Description }}</p>
     <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem">
-      <span class="tag">{{ .Type }}</span>
+      <span class="tag">{{ T (printf "plugins.type.%s" .Type) }}</span>
       {{ if .Installed }}
       <span class="tag" style="background:rgba(34,197,94,.2); color:#15803d">{{ T "plugins.store.state.installed" }}</span>
       {{ else if .Downloaded }}
@@ -62,6 +85,24 @@
 {{ end }}
 
 <script>
+(function () {
+  // Category browsing: chips filter the grid client-side (instant, works
+  // offline — the whole catalog is already rendered).
+  var cats = document.querySelector('.store-cats');
+  if (cats) {
+    cats.addEventListener('click', function (ev) {
+      var chip = ev.target.closest('.cat-chip');
+      if (!chip) return;
+      var want = chip.getAttribute('data-cat');
+      cats.querySelectorAll('.cat-chip').forEach(function (c) {
+        c.classList.toggle('active', c === chip);
+      });
+      document.querySelectorAll('#store-grid .store-card').forEach(function (card) {
+        card.hidden = want !== '' && card.getAttribute('data-type') !== want;
+      });
+    });
+  }
+})();
 (function () {
   var msg = document.getElementById('store-msg');
   document.addEventListener('click', function (ev) {

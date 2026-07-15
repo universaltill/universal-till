@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -154,10 +155,36 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 			"theme":            d.CurrentState().Theme,
 			"menuItems":        d.Menu,
 			"Items":            items,
+			"Categories":       storeCategories(items),
 			"EntitledFiltered": entitledKnown,
 			"CatalogError":     err != nil,
 		})(w, r)
 	}
+}
+
+// storeCategory is one "browse by category" chip: a plugin type present in the
+// catalog and how many listings carry it. Cards filter to it client-side.
+type storeCategory struct {
+	Type  string
+	Count int
+}
+
+// storeCategories reduces the visible listings to the distinct plugin types
+// present, with counts, sorted by type so the chip row is stable. The type IS
+// the merchandising category (payment, theme, report, delivery, …).
+func storeCategories(items []storeItem) []storeCategory {
+	counts := map[string]int{}
+	for _, it := range items {
+		if it.Type != "" {
+			counts[it.Type]++
+		}
+	}
+	cats := make([]storeCategory, 0, len(counts))
+	for t, c := range counts {
+		cats = append(cats, storeCategory{Type: t, Count: c})
+	}
+	sort.Slice(cats, func(i, j int) bool { return cats[i].Type < cats[j].Type })
+	return cats
 }
 
 // registerPluginStoreAPI wires the store lifecycle actions.
