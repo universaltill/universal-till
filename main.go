@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/joho/godotenv"
 	"github.com/universaltill/universal-till/internal/config"
@@ -17,7 +19,12 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	// Cancel the context on Ctrl-C (SIGINT), a service/`kill` (SIGTERM), or a
+	// closed terminal (SIGHUP). That triggers the server's graceful shutdown
+	// (server.Start) so the till always stops cleanly instead of lingering as
+	// an orphaned process when its terminal goes away.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
 
 	// Load pos.env if it exists (created during installation/setup)
 	// For development, you can manually create pos.env or use UT_ENV=dev for pos.env.dev
