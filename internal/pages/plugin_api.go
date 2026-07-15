@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
@@ -614,7 +615,7 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 		}
 
 		// Remove the installed files (best-effort; the DB is the source of truth).
-		pluginDir := filepath.Join("./data/plugins", pluginID)
+		pluginDir := filepath.Join(paths.Plugins(), pluginID)
 		if err := os.RemoveAll(pluginDir); err != nil {
 			log.Printf("warning: failed to remove plugin files %s: %v", pluginDir, err)
 		}
@@ -681,8 +682,8 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 		}
 
 		// Keep the current version available for rollback.
-		rollbackMgr := plugins.NewRollbackManager(d.Db, "./data/plugins")
-		sourcePath := filepath.Join("./data/plugins", pluginID, currentPlugin.Version)
+		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
+		sourcePath := filepath.Join(paths.Plugins(), pluginID, currentPlugin.Version)
 		if err := rollbackMgr.StoreVersion(pluginID, currentPlugin.Version, sourcePath); err != nil {
 			log.Printf("Warning: Failed to store version for rollback: %v", err)
 		}
@@ -766,7 +767,7 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		rollbackMgr := plugins.NewRollbackManager(d.Db, "./data/plugins")
+		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
 		// TODO: Extract actual user from session
 		if err := rollbackMgr.Rollback(ctx, pluginID, req.Version, "system"); err != nil {
 			http.Error(w, fmt.Sprintf("Rollback failed: %v", err), http.StatusInternalServerError)
@@ -850,7 +851,7 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 		}
 
 		// Save uploaded file to temporary location
-		tmpDir := filepath.Join("./data/plugins/tmp")
+		tmpDir := filepath.Join(paths.Plugins("tmp"))
 		if err := os.MkdirAll(tmpDir, 0755); err != nil {
 			http.Error(w, "Failed to create temp directory", http.StatusInternalServerError)
 			return
@@ -883,7 +884,7 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			log.Printf("Warning: failed to create verifier: %v", err)
 			verifier = nil // Allow import without verification in dev-mode
 		}
-		importer := plugins.NewImporter(d.Db, "./data/plugins", verifier)
+		importer := plugins.NewImporter(d.Db, paths.Plugins(), verifier)
 
 		// Import plugin
 		importReq := &plugins.ImportRequest{
@@ -931,7 +932,7 @@ func handleExportPlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		tmpDir := filepath.Join("./data/plugins/tmp")
+		tmpDir := filepath.Join(paths.Plugins("tmp"))
 		if err := os.MkdirAll(tmpDir, 0755); err != nil {
 			http.Error(w, "failed to create temp directory", http.StatusInternalServerError)
 			return
@@ -939,7 +940,7 @@ func handleExportPlugin(d *common.Deps) http.HandlerFunc {
 		tmpFile := filepath.Join(tmpDir, fmt.Sprintf("export-%d.tar.gz", os.Getpid()))
 		defer os.Remove(tmpFile)
 
-		res, err := plugins.NewExporter("./data/plugins").Export(ctx, &plugins.ExportRequest{
+		res, err := plugins.NewExporter(paths.Plugins()).Export(ctx, &plugins.ExportRequest{
 			PluginID: pluginID,
 			Version:  version,
 			DestPath: tmpFile,
