@@ -27,6 +27,49 @@ func TestVATBreakdownGroupsByRecordedRate(t *testing.T) {
 	}
 }
 
+// A whole-sale discount is not folded into any line — the bands must
+// absorb it so the invoice equals what the customer paid (review find).
+func TestVATBreakdownProratesSaleDiscount(t *testing.T) {
+	t.Run("inclusive", func(t *testing.T) {
+		sale := data.SaleDetail{
+			Subtotal: 220, DiscountTotal: 22, TaxTotal: 20, Total: 198, // 198 == 220-22 → inclusive
+			Lines: []data.SaleDetailLine{
+				{TaxRateBP: 2000, LineTotal: 120, TaxAmount: 20},
+				{TaxRateBP: 0, LineTotal: 100, TaxAmount: 0},
+			},
+		}
+		bands := vatBreakdown(sale)
+		var gross int64
+		for _, b := range bands {
+			gross += b.Gross
+			if b.Net+b.Tax != b.Gross {
+				t.Fatalf("band does not add up: %+v", b)
+			}
+		}
+		if gross != sale.Total {
+			t.Fatalf("bands gross %d != sale total %d", gross, sale.Total)
+		}
+		if bands[1].RateBP != 2000 || bands[1].Gross != 108 || bands[1].Tax != 18 {
+			t.Fatalf("20%% band wrong after discount: %+v", bands[1])
+		}
+	})
+	t.Run("exclusive", func(t *testing.T) {
+		sale := data.SaleDetail{
+			Subtotal: 100, DiscountTotal: 10, TaxTotal: 20, Total: 110, // 110 != 100-10 → exclusive
+			Lines: []data.SaleDetailLine{
+				{TaxRateBP: 2000, LineTotal: 120, TaxAmount: 20},
+			},
+		}
+		bands := vatBreakdown(sale)
+		if len(bands) != 1 || bands[0].Net != 90 || bands[0].Tax != 20 || bands[0].Gross != 110 {
+			t.Fatalf("exclusive discount wrong: %+v", bands)
+		}
+		if bands[0].Gross != sale.Total {
+			t.Fatalf("band gross %d != sale total %d", bands[0].Gross, sale.Total)
+		}
+	})
+}
+
 // Invoice numbers are gapless per series and the display number carries
 // the till prefix — the legal core of the feature.
 func TestInvoiceNumberingPerSeries(t *testing.T) {
