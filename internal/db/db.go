@@ -2,6 +2,9 @@ package db
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"fmt"
 
@@ -13,6 +16,17 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
+	// A fresh install extracts to a folder with no data/ directory, so the
+	// default ./data/unitill-pos.db path can't be opened (SQLite CANTOPEN,
+	// reported as "out of memory (14)"). Create the parent directory first.
+	// Skip in-memory DBs used by tests (":memory:", "file::memory:...").
+	if !strings.Contains(path, ":memory:") {
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, fmt.Errorf("create data dir %q: %w", dir, err)
+			}
+		}
+	}
 	// _pragma= is how modernc.org/sqlite applies a pragma to EVERY pooled
 	// connection — an Exec'd PRAGMA reaches only the one connection that
 	// ran it (the old `_foreign_keys=on` was mattn syntax and silently
