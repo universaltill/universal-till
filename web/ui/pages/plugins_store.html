@@ -83,6 +83,7 @@
   </div>
   {{ end }}
 </div>
+<p class="empty" id="store-no-matches" hidden>{{ T "plugins.store.no_matches" }}</p>
 {{ else }}
 <div class="card">
   {{ if .CatalogError }}
@@ -106,15 +107,20 @@
   var cats = document.querySelector('.store-cats');
   var search = document.getElementById('store-search');
   var cards = Array.prototype.slice.call(document.querySelectorAll('#store-grid .store-card'));
+  var noMatch = document.getElementById('store-no-matches');
   var activeCat = '';
   function apply() {
     var q = (search && search.value || '').trim().toLowerCase();
+    var shown = 0;
     cards.forEach(function (card) {
       var catOk = activeCat === '' || card.getAttribute('data-type') === activeCat;
       var hay = ((card.getAttribute('data-name') || '') + ' ' + (card.getAttribute('data-desc') || '')).toLowerCase();
       var textOk = q === '' || hay.indexOf(q) !== -1;
-      card.hidden = !(catOk && textOk);
+      var visible = catOk && textOk;
+      card.hidden = !visible;
+      if (visible) { shown++; }
     });
+    if (noMatch) { noMatch.hidden = shown !== 0; }
   }
   if (cats) {
     cats.addEventListener('click', function (ev) {

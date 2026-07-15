@@ -380,6 +380,7 @@
   "plugins.store.empty": "Bu mağaza için henüz onaylı eklenti yok. Marketplace portalında eklentileri onaylaması için işletme yöneticinize danışın.",
   "plugins.store.filtered_note": "İşletme yöneticinizin mağazanız için onayladığı eklentiler gösteriliyor.",
   "plugins.store.manage_link": "Kurulu eklentileri yönet",
+  "plugins.store.no_matches": "Aramanızla eşleşen eklenti yok.",
   "plugins.store.none_available": "Henüz kullanılabilir eklenti yok.",
   "plugins.store.offline": "Eklenti mağazasına şu anda ulaşılamıyor — bağlantıyı kontrol edin. Satışlar çevrimdışı çalışmaya devam eder; bağlantı gelince mağaza dolar.",
   "plugins.store.search_ph": "Eklenti ara…",
