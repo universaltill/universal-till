@@ -21,6 +21,20 @@
     </form>
   </div>
 
+  {{ if .SyncPrimary }}
+  <div class="card">
+    <h3>{{ T "tills.promote_title" }}</h3>
+    <p class="muted">{{ T "tills.promote_help" }}</p>
+    <form hx-post="/api/sync/promote" hx-target="#promote-msg" hx-swap="innerHTML"
+          hx-confirm="{{ T "tills.promote_confirm" }}">
+      <label>{{ T "tills.promote_confirm_label" }}
+        <input type="text" name="confirm" placeholder="PROMOTE" autocomplete="off" required></label>
+      <button class="btn" type="submit">{{ T "tills.promote_btn" }}</button>
+      <div id="promote-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+    </form>
+  </div>
+  {{ end }}
+
   <div class="card">
     <h3>{{ T "tills.enrolled" }}</h3>
     {{ if .Tills }}
