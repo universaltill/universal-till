@@ -27,6 +27,22 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Windows installer (NSIS): a guided Setup.exe wizard is friendlier than
+      # unzip-and-run for shop owners. goreleaser already built + published the
+      # archives above, so a hiccup here never blocks the core release.
+      - name: Build & attach Windows installer (NSIS)
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          sudo apt-get update
+          sudo apt-get install -y nsis
+          STAGE="$(mktemp -d)"
+          unzip -q "dist/unitill-pos_${VERSION}_windows_amd64.zip" -d "$STAGE"
+          makensis -DVERSION="${VERSION}" -DSRCDIR="$STAGE" packaging/windows/installer.nsi
+          gh release upload "${GITHUB_REF_NAME}" "unitill-pos-setup-${VERSION}.exe" --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # No website notification needed: universaltill.com/download reads the
       # public Releases API (/releases/latest) at page load, so it picks up
       # this release automatically. The site's staged mirror is only a

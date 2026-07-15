@@ -108,7 +108,9 @@ release:
     **Raspberry Pi / Debian:** `sudo apt install ./unitill-pos_*_arm64.deb`
     then open http://localhost:8080 — the first-boot wizard does the rest.
 
-    **Windows:** unzip, then double-click `run-unitill.bat`.
+    **Windows (recommended):** run **`unitill-pos-setup-*.exe`** — a guided
+    installer that adds Start-menu and desktop shortcuts. Or, for a portable
+    copy, unzip the `.zip` and double-click `run-unitill.bat`.
 
     **macOS:** unzip, then double-click `run-unitill.command`. The first time,
     macOS may say the developer is unidentified — right-click the file, choose
