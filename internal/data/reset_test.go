@@ -100,3 +100,52 @@ func TestEraseCustomer(t *testing.T) {
 		t.Fatalf("erasure not audited: %v", err)
 	}
 }
+
+func TestCleanupObsoleteItems(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cleanup.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	x := func(q string, a ...any) {
+		if _, err := d.DB.Exec(q, a...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	// obs: inactive + never sold -> removable.
+	x(`INSERT INTO stock_locations (id, name) VALUES ('loc1','Main')`)
+	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('obs','Old Test Product',100,0)`)
+	x(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv1','obs','loc1',0)`)
+	// sold: inactive BUT has a sale line -> must be kept.
+	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('sold','Discontinued But Sold',100,0)`)
+	x(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s1','R1',100,100)`)
+	x(`INSERT INTO sale_lines (id, sale_id, line_no, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, item_id)
+	   VALUES ('l1','s1',1,'Discontinued But Sold',1,100,0,0,100,100,'sold')`)
+	// active: not a cleanup target.
+	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('live','Current Product',100,1)`)
+
+	repo := data.NewPOSRepo(d.DB)
+	preview, err := repo.ListObsoleteItems(context.Background(), 100)
+	if err != nil || len(preview) != 1 || preview[0].ID != "obs" {
+		t.Fatalf("preview should list only 'obs': err=%v got=%+v", err, preview)
+	}
+	n, err := repo.CleanupObsoleteItems(context.Background(), "")
+	if err != nil || n != 1 {
+		t.Fatalf("cleanup: n=%d err=%v", n, err)
+	}
+	has := func(id string) bool {
+		var c int
+		d.DB.QueryRow(`SELECT count(*) FROM items WHERE id=?`, id).Scan(&c)
+		return c == 1
+	}
+	if has("obs") {
+		t.Fatal("obsolete item not removed")
+	}
+	if !has("sold") || !has("live") {
+		t.Fatal("sold/active items must be kept")
+	}
+	var action string
+	if err := d.DB.QueryRow(`SELECT action FROM audit_log WHERE action='catalog_cleanup'`).Scan(&action); err != nil {
+		t.Fatalf("cleanup not audited: %v", err)
+	}
+}
