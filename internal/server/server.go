@@ -3,8 +3,14 @@ package server
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -231,8 +237,63 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	}()
 
 	log.Printf("listening on %s", cfg.ListenAddr)
+
+	// Convenience: open the setup/sale page in the operator's browser once the
+	// server accepts connections. Skipped on kiosk tills (they launch their own
+	// browser) and when UT_OPEN_BROWSER is set falsy.
+	if shouldOpenBrowser() {
+		go openSetupPage(cfg.ListenAddr)
+	}
+
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
+}
+
+// shouldOpenBrowser decides whether to auto-open the browser. UT_OPEN_BROWSER
+// wins when set; otherwise default on, except on kiosk tills.
+func shouldOpenBrowser() bool {
+	if v := os.Getenv("UT_OPEN_BROWSER"); v != "" {
+		on, err := strconv.ParseBool(v)
+		return err == nil && on
+	}
+	if k, _ := strconv.ParseBool(os.Getenv("UT_KIOSK")); k {
+		return false
+	}
+	return true
+}
+
+// openSetupPage waits for the listener to accept, then opens the local URL in
+// the default browser. Entirely best-effort — any failure is silently ignored
+// (headless boxes, no browser, SSH sessions).
+func openSetupPage(listenAddr string) {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	// Wait up to ~5s for the server to start accepting connections.
+	addr := net.JoinHostPort(host, port)
+	for range 50 {
+		conn, derr := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if derr == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	url := fmt.Sprintf("http://%s:%s", host, port)
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
 }

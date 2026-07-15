@@ -5,32 +5,65 @@ version: 2
 
 project_name: unitill-pos
 
+# One build per OS so each archive can carry that OS's launcher (a mac
+# download must not ship a Windows .bat — and vice-versa). Pure-Go SQLite
+# (CGO off) cross-compiles all three from the Linux release runner.
 builds:
-  - id: unitill-pos
+  - id: linux
     binary: unitill-pos
     main: .
-    env:
-      - CGO_ENABLED=0 # pure-Go SQLite — cross-compiles everywhere
-    flags:
-      - -trimpath
-    ldflags:
-      - -s -w
-    goos: [linux, windows, darwin]
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    goos: [linux]
     goarch: [amd64, arm64]
-    ignore:
-      - goos: windows
-        goarch: arm64
-      - goos: darwin
-        goarch: amd64
+  - id: windows
+    binary: unitill-pos
+    main: .
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    goos: [windows]
+    goarch: [amd64]
+  - id: darwin
+    binary: unitill-pos
+    main: .
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    goos: [darwin]
+    goarch: [arm64]
 
 # The binary reads web/ (templates, locales, assets) from disk at runtime —
-# every artifact must carry it.
+# every artifact must carry it, plus the right double-click launcher.
 archives:
-  - id: bundle
+  - id: linux
+    ids: [linux]
     formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
+    files:
+      - web/**
+      - src: packaging/pos.env.example
+        dst: pos.env.example
+      - src: packaging/linux/run-unitill.sh
+        dst: run-unitill.sh
+        info: { mode: 0o755 }
+      - README.md
+      - LICENSE*
+  - id: macos
+    ids: [darwin]
+    formats: [tar.gz]
+    files:
+      - web/**
+      - src: packaging/pos.env.example
+        dst: pos.env.example
+      - src: packaging/macos/run-unitill.command
+        dst: run-unitill.command
+        info: { mode: 0o755 }
+      - README.md
+      - LICENSE*
+  - id: windows
+    ids: [windows]
+    formats: [zip]
     files:
       - web/**
       - src: packaging/pos.env.example
@@ -42,6 +75,7 @@ archives:
 
 nfpms:
   - id: deb
+    ids: [linux]
     package_name: unitill-pos
     formats: [deb]
     # arm64 = Raspberry Pi OS 64-bit; amd64 = any Debian/Ubuntu box.
@@ -74,4 +108,12 @@ release:
     **Raspberry Pi / Debian:** `sudo apt install ./unitill-pos_*_arm64.deb`
     then open http://localhost:8080 — the first-boot wizard does the rest.
 
-    **Windows:** unzip, double-click `run-unitill.bat`.
+    **Windows:** unzip, then double-click `run-unitill.bat`.
+
+    **macOS:** unzip, then double-click `run-unitill.command`. The first time,
+    macOS may say the developer is unidentified — right-click the file, choose
+    **Open**, then **Open** again (a one-time step until we ship a signed build).
+
+    **Linux (other):** extract, then `./run-unitill.sh`.
+
+    Every download opens the setup wizard at http://localhost:8080.
