@@ -74,6 +74,16 @@
     <button class="btn secondary" id="data-reset-btn" data-testid="data-reset">{{ T "settings.data.reset_btn" }}</button>
     <span id="data-reset-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
   </div>
+
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.data.gdpr_title" }}</h3>
+  <p class="muted">{{ T "settings.data.gdpr_help" }}</p>
+  <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+    <input type="text" id="cust-q" placeholder="{{ T "settings.data.customer_search_ph" }}" style="width:14rem">
+    <button class="btn secondary" id="cust-search-btn">{{ T "settings.data.search_btn" }}</button>
+    <span id="cust-msg" class="muted" aria-live="polite"></span>
+  </div>
+  <div id="cust-results" style="margin-top:.5rem"></div>
 </div>
 
 <script>
@@ -95,6 +105,44 @@
       msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
       if (r.ok) inp.value = '';
     }); }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+  });
+})();
+(function () {
+  var sb = document.getElementById('cust-search-btn');
+  if (!sb) return;
+  var q = document.getElementById('cust-q');
+  var out = document.getElementById('cust-results');
+  var msg = document.getElementById('cust-msg');
+  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  function search() {
+    msg.textContent = '…';
+    fetch('/api/data/customers?q=' + encodeURIComponent(q.value.trim()))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        msg.textContent = '';
+        var list = (j.customers) || [];
+        if (!list.length) { out.innerHTML = '<p class="muted">No matches.</p>'; return; }
+        out.innerHTML = list.map(function (c) {
+          return '<div style="display:flex;gap:.5rem;align-items:center;margin:.2rem 0">'
+            + '<span>' + esc(c.Name) + (c.Phone ? ' · ' + esc(c.Phone) : '') + (c.Email ? ' · ' + esc(c.Email) : '') + '</span>'
+            + '<button class="btn secondary" data-erase="' + esc(c.ID) + '">Erase</button></div>';
+        }).join('');
+      }).catch(function (e) { msg.textContent = '✗ ' + e; });
+  }
+  sb.addEventListener('click', search);
+  q.addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });
+  out.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-erase]');
+    if (!b) return;
+    if (!confirm("Erase this customer's personal data? Their sales are kept but anonymised. This cannot be undone.")) return;
+    b.disabled = true;
+    fetch('/api/data/customers/erase', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ id: b.getAttribute('data-erase') }).toString()
+    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+      msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
+      if (r.ok) { b.closest('div').remove(); } else { b.disabled = false; }
+    }); }).catch(function (e) { b.disabled = false; msg.textContent = '✗ ' + e; });
   });
 })();
 </script>
