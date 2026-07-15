@@ -13,6 +13,10 @@
   .cat-chip .cat-n { font-size:.78rem; opacity:.7; font-weight:700; }
   .cat-chip.active .cat-n { opacity:.85; }
   .store-card[hidden] { display:none; }
+  .store-search { width:100%; max-width:360px; padding:.6rem .9rem; min-height:44px;
+    font-size:.95rem; border:1px solid var(--border, #d1d5db); border-radius:999px;
+    background:var(--surface, #fff); color:var(--text, #111827); margin:0 0 1rem; }
+  .store-search:focus { outline:none; border-color:var(--brand, #4f46e5); }
 </style>
 <h1>{{ T "plugins.store.title" }}</h1>
 
@@ -33,6 +37,7 @@
 <div id="store-msg" class="muted" style="min-height:1.4rem; margin-bottom:.5rem" aria-live="polite"></div>
 
 {{ if .Items }}
+<input type="search" id="store-search" class="store-search" placeholder="{{ T "plugins.store.search_ph" }}" aria-label="{{ T "plugins.store.search_ph" }}" autocomplete="off">
 {{ if .Categories }}
 <div class="store-cats" role="group" aria-label="{{ T "plugins.store.browse" }}">
   <button type="button" class="cat-chip active" data-cat="">{{ T "plugins.store.all" }} <span class="cat-n">{{ len .Items }}</span></button>
@@ -43,7 +48,7 @@
 {{ end }}
 <div id="store-grid" class="grid" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:1rem">
   {{ range .Items }}
-  <div class="card store-card" data-listing-id="{{ .ListingID }}" data-type="{{ .Type }}">
+  <div class="card store-card" data-listing-id="{{ .ListingID }}" data-type="{{ .Type }}" data-name="{{ .Name }}" data-desc="{{ .Description }}">
     <div style="display:flex; justify-content:space-between; align-items:baseline">
       <h3 style="margin:.2rem 0">{{ .Name }}</h3>
       <span class="tag">v{{ .Version }}</span>
@@ -95,22 +100,34 @@
 
 <script>
 (function () {
-  // Category browsing: chips filter the grid client-side (instant, works
-  // offline — the whole catalog is already rendered).
+  // Category browsing + search: filter the grid client-side (instant, works
+  // offline — the whole catalog is already rendered). Category and search
+  // combine (AND).
   var cats = document.querySelector('.store-cats');
+  var search = document.getElementById('store-search');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('#store-grid .store-card'));
+  var activeCat = '';
+  function apply() {
+    var q = (search && search.value || '').trim().toLowerCase();
+    cards.forEach(function (card) {
+      var catOk = activeCat === '' || card.getAttribute('data-type') === activeCat;
+      var hay = ((card.getAttribute('data-name') || '') + ' ' + (card.getAttribute('data-desc') || '')).toLowerCase();
+      var textOk = q === '' || hay.indexOf(q) !== -1;
+      card.hidden = !(catOk && textOk);
+    });
+  }
   if (cats) {
     cats.addEventListener('click', function (ev) {
       var chip = ev.target.closest('.cat-chip');
       if (!chip) return;
-      var want = chip.getAttribute('data-cat');
+      activeCat = chip.getAttribute('data-cat');
       cats.querySelectorAll('.cat-chip').forEach(function (c) {
         c.classList.toggle('active', c === chip);
       });
-      document.querySelectorAll('#store-grid .store-card').forEach(function (card) {
-        card.hidden = want !== '' && card.getAttribute('data-type') !== want;
-      });
+      apply();
     });
   }
+  if (search) { search.addEventListener('input', apply); }
 })();
 (function () {
   var msg = document.getElementById('store-msg');
