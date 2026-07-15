@@ -100,6 +100,13 @@ body.sale-screen .nav-right { margin-inline-start: .5rem; }
 .menu-label { font-size: 1.05rem; font-weight: 600; }
 .btn-touch { min-height: 46px; display: inline-flex; align-items: center; }
 
+/* Language switcher on the touch menu page — big, obvious buttons so a
+   Turkish/Persian operator can find their language at a glance. */
+.menu-lang { margin-top: 1.6rem; display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.menu-lang-label { font-weight: 600; color: var(--muted); }
+.menu-lang-btns { display: flex; flex-wrap: wrap; gap: .5rem; }
+.menu-lang-btn { min-width: 64px; justify-content: center; text-transform: uppercase; font-weight: 700; letter-spacing: .04em; }
+
 /* Sale screen top bar is touch-first: the manager links live in the ☰
    menu now, so hide them here; keep the operator + a big Lock button. */
 body.sale-screen .session-admin-link { display: none; }
