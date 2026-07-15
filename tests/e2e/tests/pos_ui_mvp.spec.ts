@@ -12,12 +12,10 @@ test.describe('POS UI MVP Uplift', () => {
   test('plugin entrypoints are accessible from navigation', async ({ page }) => {
     await page.goto('/');
 
-    // Touch nav: the sale screen shows a ☰ Menu button (small text links are
-    // not touch-friendly) that opens the menu page, where Help/Support and
-    // plugin entrypoints live.
+    // Touch nav: the sale screen shows a ☰ Menu button that opens the menu
+    // page of big touch tiles; Help/Support is a tile there.
     await page.getByTestId('nav-menu').click();
-    await expect(page.getByTestId('nav-help-support')).toBeVisible();
-    await page.getByTestId('nav-help-support').click();
+    await page.locator('.menu-tile[href="/help"]').click();
     await expect(page.getByTestId('plugin-faq-entry')).toBeVisible();
   });
 
