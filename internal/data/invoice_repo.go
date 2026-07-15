@@ -137,3 +137,48 @@ func (r *InvoiceRepo) ByID(ctx context.Context, id string) (InvoiceRow, bool, er
 	return scanInvoice(r.db.QueryRowContext(ctx,
 		`SELECT `+invoiceCols+` FROM invoices WHERE id = ?`, id))
 }
+
+// InvoiceListItem is one row of the invoices page / accountant export,
+// joined with the sale's receipt number.
+type InvoiceListItem struct {
+	DisplayNo     string
+	Kind          string
+	IssuedAt      string
+	CustomerName  string
+	CustomerVATNo string
+	ReceiptNo     string
+	NetTotal      int64
+	TaxTotal      int64
+	GrossTotal    int64
+}
+
+// List returns invoices issued in [from, to] (RFC3339 date prefixes are
+// fine — comparison is lexicographic on the stored RFC3339 strings),
+// newest first. Empty bounds mean open-ended.
+func (r *InvoiceRepo) List(ctx context.Context, from, to string) ([]InvoiceListItem, error) {
+	if to != "" {
+		to += "￿" // include the whole final day for date-only bounds
+	} else {
+		to = "￿"
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.display_no, i.kind, i.issued_at, i.customer_name, i.customer_vat_no,
+       s.receipt_no, i.net_total, i.tax_total, i.gross_total
+FROM invoices i JOIN sales s ON s.id = i.sale_id
+WHERE i.issued_at >= ? AND i.issued_at <= ?
+ORDER BY i.issued_at DESC, i.display_no DESC`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("list invoices: %w", err)
+	}
+	defer rows.Close()
+	var out []InvoiceListItem
+	for rows.Next() {
+		var it InvoiceListItem
+		if err := rows.Scan(&it.DisplayNo, &it.Kind, &it.IssuedAt, &it.CustomerName,
+			&it.CustomerVATNo, &it.ReceiptNo, &it.NetTotal, &it.TaxTotal, &it.GrossTotal); err != nil {
+			return nil, fmt.Errorf("scan invoice list: %w", err)
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
