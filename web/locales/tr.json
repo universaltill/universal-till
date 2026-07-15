@@ -393,7 +393,7 @@
   "plugins.tier.verified": "Doğrulanmış",
   "plugins.type.auth": "Kimlik doğrulama",
   "plugins.type.background_job": "Arka plan görevi",
-  "plugins.type.button": "Düğme",
+  "plugins.type.button": "Eylem",
   "plugins.type.customer_facing": "Müşteriye dönük",
   "plugins.type.delivery": "Teslimat",
   "plugins.type.device": "Cihaz",

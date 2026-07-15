@@ -393,7 +393,7 @@
   "plugins.tier.verified": "معتبر",
   "plugins.type.auth": "احراز هویت",
   "plugins.type.background_job": "کار پس‌زمینه",
-  "plugins.type.button": "دکمه",
+  "plugins.type.button": "کنش",
   "plugins.type.customer_facing": "روبه‌روی مشتری",
   "plugins.type.delivery": "تحویل",
   "plugins.type.device": "دستگاه",

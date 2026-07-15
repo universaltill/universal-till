@@ -393,7 +393,7 @@
   "plugins.tier.verified": "Verified",
   "plugins.type.auth": "Authentication",
   "plugins.type.background_job": "Background Job",
-  "plugins.type.button": "Button",
+  "plugins.type.button": "Action",
   "plugins.type.customer_facing": "Customer-facing",
   "plugins.type.delivery": "Delivery",
   "plugins.type.device": "Device",
