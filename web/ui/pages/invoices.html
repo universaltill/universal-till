@@ -1,0 +1,54 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>🧾 {{ T "invoice.list_title" }}</h1>
+  <div style="display:flex; gap:.4rem; align-items:center">
+    <a class="btn" href="/api/invoices/export?from={{ .From }}&to={{ .To }}" download>{{ T "invoice.export_btn" }}</a>
+    <a class="btn secondary" href="/journal">← {{ T "journal.title" }}</a>
+  </div>
+</div>
+
+<div class="card">
+  <form method="get" action="/invoices" style="display:flex; gap:.5rem; align-items:end; flex-wrap:wrap">
+    <label>{{ T "invoice.from" }} <input type="date" name="from" value="{{ .From }}"></label>
+    <label>{{ T "invoice.to" }} <input type="date" name="to" value="{{ .To }}"></label>
+    <button class="btn" type="submit">{{ T "invoice.filter" }}</button>
+  </form>
+
+  {{ if .Items }}
+  <table class="table" style="margin-top:.7rem">
+    <thead><tr>
+      <th>{{ T "invoice.title" }}</th><th>{{ T "invoice.issued_col" }}</th>
+      <th>{{ T "invoice.customer_name" }}</th><th>{{ T "invoice.vat_no" }}</th>
+      <th>{{ T "journal.col.receipt" }}</th>
+      <th style="text-align:end">{{ T "invoice.net" }}</th>
+      <th style="text-align:end">{{ T "invoice.tax" }}</th>
+      <th style="text-align:end">{{ T "invoice.gross" }}</th>
+    </tr></thead>
+    <tbody>
+      {{ range .Items }}
+      <tr{{ if eq .Kind "credit_note" }} class="muted"{{ end }}>
+        <td><a href="/invoice/{{ .DisplayNo }}"><strong>{{ .DisplayNo }}</strong></a>
+          {{ if eq .Kind "credit_note" }} <span class="tag">{{ T "invoice.credit_note" }}</span>{{ end }}</td>
+        <td class="muted">{{ .IssuedAt }}</td>
+        <td>{{ .CustomerName }}</td>
+        <td class="muted">{{ .CustomerVATNo }}</td>
+        <td><a href="/journal/{{ .ReceiptNo }}">#{{ .ReceiptNo }}</a></td>
+        <td style="text-align:end">{{ money .NetTotal }}</td>
+        <td style="text-align:end">{{ money .TaxTotal }}</td>
+        <td style="text-align:end">{{ money .GrossTotal }}</td>
+      </tr>
+      {{ end }}
+      <tr>
+        <td colspan="5"><strong>{{ T "invoice.range_total" }}</strong></td>
+        <td style="text-align:end"><strong>{{ money .NetSum }}</strong></td>
+        <td style="text-align:end"><strong>{{ money .TaxSum }}</strong></td>
+        <td style="text-align:end"><strong>{{ money .GrossSum }}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="muted">{{ T "invoice.sum_note" }}</p>
+  {{ else }}
+  <p class="muted" style="margin-top:.7rem">{{ T "invoice.none" }}</p>
+  {{ end }}
+</div>
+{{ end }}

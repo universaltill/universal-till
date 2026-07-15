@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -270,6 +271,83 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}()
 		fmt.Fprintf(w, `<span>✓ %s <a href="/invoice/%s"><strong>%s</strong></a></span>`,
 			httpx.T(locale, "invoice.issued"), inv.DisplayNo, inv.DisplayNo)
+	})
+
+	// Invoice register (manager): date-range list + accountant CSV.
+	mux.HandleFunc("GET /invoices", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Redirect(w, r, "/journal", http.StatusSeeOther)
+			return
+		}
+		if _, on := sellerConfig(r.Context(), d); !on {
+			http.Redirect(w, r, "/settings", http.StatusSeeOther)
+			return
+		}
+		from := strings.TrimSpace(r.URL.Query().Get("from"))
+		to := strings.TrimSpace(r.URL.Query().Get("to"))
+		list, err := invRepo.List(r.Context(), from, to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var net, tax, gross int64
+		for _, it := range list {
+			sign := int64(1)
+			if it.Kind == "credit_note" {
+				sign = -1
+			}
+			net += sign * it.NetTotal
+			tax += sign * it.TaxTotal
+			gross += sign * it.GrossTotal
+		}
+		httpx.Render("ui/pages/invoices.html", map[string]any{
+			"title":     "Invoices",
+			"theme":     d.CurrentState().Theme,
+			"menuItems": d.Menu,
+			"Items":     list,
+			"From":      from,
+			"To":        to,
+			"NetSum":    net,
+			"TaxSum":    tax,
+			"GrossSum":  gross,
+		})(w, r)
+	})
+
+	// Accountant handoff: the same range as CSV (credit notes negative).
+	mux.HandleFunc("GET /api/invoices/export", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		from := strings.TrimSpace(r.URL.Query().Get("from"))
+		to := strings.TrimSpace(r.URL.Query().Get("to"))
+		list, err := invRepo.List(r.Context(), from, to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		decimals := httpx.ActiveCurrency().Decimals
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			`attachment; filename="invoices-`+time.Now().UTC().Format("2006-01-02")+`.csv"`)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"Invoice", "Kind", "Issued", "Customer", "Customer VAT no",
+			"Receipt", "Net", "VAT", "Gross"})
+		for _, it := range list {
+			sign := int64(1)
+			if it.Kind == "credit_note" {
+				sign = -1
+			}
+			_ = cw.Write([]string{it.DisplayNo, it.Kind, it.IssuedAt, it.CustomerName,
+				it.CustomerVATNo, it.ReceiptNo,
+				minorToDecimal(sign*it.NetTotal, decimals),
+				minorToDecimal(sign*it.TaxTotal, decimals),
+				minorToDecimal(sign*it.GrossTotal, decimals)})
+		}
+		cw.Flush()
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "invoice", "-", "invoices_exported",
+			map[string]any{"rows": len(list), "from": from, "to": to},
+			time.Now().UTC().Format(time.RFC3339), "")
 	})
 
 	// On-screen invoice — the browser-printable "PDF" of v1.
