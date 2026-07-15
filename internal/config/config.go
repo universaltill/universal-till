@@ -2,7 +2,10 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
+
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 type Locales struct {
@@ -55,6 +58,7 @@ type Config struct {
 	StoreName     string
 	ListenAddr    string
 	Env           string
+	DataDir       string
 	DBPath        string
 	Locales       Locales
 	LogLevel      string
@@ -66,6 +70,13 @@ type Config struct {
 }
 
 func Init() (*Config, error) {
+	// Resolve the stable data directory FIRST so every data path (DB, backups,
+	// plugins, caches) hangs off it. Defaults to a per-user OS location so data
+	// survives version upgrades; override with UT_DATA_DIR (the .deb uses
+	// /var/lib/unitill). paths.Init makes it available to the plugin subsystem.
+	dataDir := getenv("UT_DATA_DIR", paths.Default())
+	paths.Init(dataDir)
+
 	devMode, _ := strconv.ParseBool(getenv("UT_DEV_MODE", "false"))
 	telemetryOptIn, _ := strconv.ParseBool(getenv("UT_MARKETPLACE_TELEMETRY_OPT_IN", "false"))
 	healthCheckTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "5"))
@@ -75,7 +86,8 @@ func Init() (*Config, error) {
 		StoreName:  getenv("UT_STORE_NAME", "My Store"),
 		ListenAddr: getenv("UT_LISTEN_ADDR", ":8080"),
 		// Env:        getenv("UT_ENV", "local"),
-		DBPath:   getenv("UT_DB_PATH", "./data/unitill-pos.db"),
+		DataDir:  dataDir,
+		DBPath:   getenv("UT_DB_PATH", filepath.Join(dataDir, "unitill-pos.db")),
 		LogLevel: getenv("UT_LOG_LEVEL", "info"),
 		Theme:    getenv("UT_THEME", "monarch"),
 		DevMode:  devMode,
