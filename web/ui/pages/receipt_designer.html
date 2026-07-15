@@ -18,6 +18,7 @@
         <label><input type="checkbox" name="show_sku" {{ if .D.ShowSKU }}checked{{ end }}> {{ T "designer.receipt.show_sku" }}</label>
         <label><input type="checkbox" name="show_tax" {{ if .D.ShowTax }}checked{{ end }}> {{ T "designer.receipt.show_tax" }}</label>
         <label><input type="checkbox" name="show_barcode" {{ if .D.ShowBarcode }}checked{{ end }}> {{ T "designer.receipt.show_barcode" }}</label>
+        <label><input type="checkbox" name="show_logo" {{ if .D.ShowLogo }}checked{{ end }}> {{ T "designer.receipt.show_logo" }}</label>
       </div>
       <div style="display:flex; gap:.4rem; align-items:center; margin-top:.6rem">
         <button class="btn primary" type="button"
@@ -26,6 +27,17 @@
                 hx-post="/api/receipt-designer/test" hx-include="#rd-form" hx-target="#rd-msg" hx-swap="innerHTML">{{ T "settings.printer.test" }}</button>
         <span id="rd-msg" aria-live="polite"></span>
       </div>
+    </form>
+    <hr style="margin:.8rem 0; border:none; border-top:1px dashed #d1d5db">
+    <h3>{{ T "designer.receipt.logo_title" }}</h3>
+    <p class="muted">{{ T "designer.receipt.logo_help" }}</p>
+    {{ if .HasLogo }}<p><img src="/public/assets/logo/receipt-logo.png?v={{ .LogoV }}" alt="logo" style="max-width:12rem; max-height:5rem; background:#fff; border:1px dashed #d1d5db; padding:.3rem"></p>{{ end }}
+    <form hx-post="/api/receipt-designer/logo" hx-target="#logo-msg" hx-swap="innerHTML" enctype="multipart/form-data"
+          style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+      <input type="file" name="logo" accept="image/png,image/jpeg,image/gif">
+      <button class="btn" type="submit">{{ T "designer.receipt.logo_upload" }}</button>
+      {{ if .HasLogo }}<button class="btn secondary" type="submit" name="remove" value="1">{{ T "designer.receipt.logo_remove" }}</button>{{ end }}
+      <span id="logo-msg" aria-live="polite"></span>
     </form>
   </div>
 

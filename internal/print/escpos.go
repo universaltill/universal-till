@@ -34,6 +34,9 @@ type Doc struct {
 	Barcode    string
 	KickDrawer bool
 	Charset    string // "utf8" (default) or "ascii"
+	// Logo is a pre-encoded GS v 0 raster block (RasterLogo), printed
+	// centered above the store name when present.
+	Logo []byte
 }
 
 // Line is one sale line.
@@ -103,6 +106,10 @@ func Render(d Doc) []byte {
 	}
 
 	b.Write(cmdAlignMid)
+	if len(d.Logo) > 0 {
+		b.Write(d.Logo) // pre-encoded GS v 0 raster (RasterLogo)
+		b.WriteByte('\n')
+	}
 	b.Write(cmdDoubleOn)
 	line(clip(d.StoreName, Width/2)) // double-width font halves the columns
 	b.Write(cmdDoubleOff)
