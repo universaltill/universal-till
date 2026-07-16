@@ -524,6 +524,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// Silent receipt print (docs: receipt-printing.md) — fired async,
 		// never blocks or fails the tender.
 		printReceiptAsync(d, receiptNo, getSessionUserID(r))
+		// Kitchen ticket to the separate kitchen printer, if one is
+		// configured (docs: arch/restaurant-phone-orders.md) — also async
+		// and best-effort; a no-op when no kitchen printer is set.
+		printKitchenAsync(d, receiptNo, getSessionUserID(r))
 
 		// Render receipt JSON if requested
 		if r.Header.Get("Accept") == "application/json" {
