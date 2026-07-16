@@ -191,18 +191,16 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 
 func printReceipt(ctx context.Context, d *common.Deps, receiptNo string) error {
 	cfg := printerConfig(ctx, d)
-	tr, err := print.NewTransport(cfg)
-	if err != nil {
-		return err
-	}
-	if tr == nil {
+	if !cfg.Enabled() {
 		return fmt.Errorf("no printer configured")
 	}
 	doc, err := buildReceiptDoc(ctx, d, receiptNo)
 	if err != nil {
 		return err
 	}
-	return tr.Print(ctx, print.Render(doc))
+	// PrintDoc renders ESC/POS for a thermal printer or plain text via lp for a
+	// regular (system) printer, per the configured type.
+	return print.PrintDoc(ctx, cfg, doc)
 }
 
 // registerPrintAPI mounts printer settings, test print and reprint.
@@ -217,8 +215,8 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
-		if mode != "off" && mode != "network" && mode != "device" {
-			http.Error(w, "mode must be off, network or device", http.StatusBadRequest)
+		if mode != "off" && mode != "network" && mode != "device" && mode != "system" {
+			http.Error(w, "mode must be off, network, device or system", http.StatusBadRequest)
 			return
 		}
 		charset := strings.TrimSpace(r.Form.Get("charset"))
@@ -247,9 +245,9 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		cfg := printerConfig(ctx, d)
-		tr, err := print.NewTransport(cfg)
-		if err == nil && tr == nil {
-			err = fmt.Errorf("printer is off — pick network or device first")
+		var err error
+		if !cfg.Enabled() {
+			err = fmt.Errorf("printer is off — pick a printer type first")
 		}
 		locale := httpx.ResolveLocale(w, r)
 		if err == nil {
@@ -260,7 +258,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 				Footer:    []string{"Universal Till"},
 				Charset:   cfg.Charset,
 			}
-			err = tr.Print(ctx, print.Render(doc))
+			err = print.PrintDoc(ctx, cfg, doc)
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {

@@ -298,9 +298,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			if !cfg.Enabled() {
 				return
 			}
-			if tr, err := print.NewTransport(cfg); err == nil && tr != nil {
-				_ = tr.Print(ctx, print.Render(buildInvoiceDoc(ctx, d, inv, sale)))
-			}
+			_ = print.PrintDoc(ctx, cfg, buildInvoiceDoc(ctx, d, inv, sale))
 		}()
 		fmt.Fprintf(w, `<span>✓ %s <a href="/invoice/%s"><strong>%s</strong></a></span>`,
 			httpx.T(locale, "invoice.issued"), inv.DisplayNo, inv.DisplayNo)
