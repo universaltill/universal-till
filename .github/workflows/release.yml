@@ -72,14 +72,19 @@ jobs:
           go-version-file: go.mod
       # Import the Developer ID cert into a throwaway keychain when configured.
       # MACOS_CERT_P12 = base64 of the exported .p12; MACOS_CERT_PASSWORD its
-      # export password. Skipped (→ ad-hoc build) when the secret is absent.
+      # export password. No-ops (→ ad-hoc build) when the secret is absent.
+      # NB: the `secrets` context isn't allowed in `if:`, so the guard lives in
+      # the script, not a step condition.
       - name: Import signing certificate
-        if: ${{ secrets.MACOS_CERT_P12 != '' }}
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
         run: |
           set -euo pipefail
+          if [ -z "${MACOS_CERT_P12:-}" ]; then
+            echo "No signing certificate configured — ad-hoc build."
+            exit 0
+          fi
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
           KP="$(openssl rand -base64 24)"
           security create-keychain -p "$KP" "$KEYCHAIN"
