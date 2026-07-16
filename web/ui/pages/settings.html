@@ -6,6 +6,9 @@
     <p>✅ {{ T "settings.enrol.registered" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
+    <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" style="margin-top:.4rem">
+      <span class="muted">{{ T "settings.enrol.fleet_loading" }}</span>
+    </div>
   {{ else }}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>

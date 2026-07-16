@@ -26,6 +26,11 @@ type ReplicaIdentity struct {
 	Bearer        string `json:"bearer"`
 	ReceiptPrefix string `json:"receipt_prefix"`
 	TillName      string `json:"till_name"`
+	// DeviceID is a fresh marketplace device id for this replica. The snapshot
+	// carried the primary's device id; overwriting it here keeps the shared
+	// store identity (id/token/key) but gives each till its OWN device — so the
+	// store's fleet lists distinct devices (ADR-0013 two-tier enrolment).
+	DeviceID string `json:"device_id"`
 }
 
 // ReplicaIdentityPath locates the identity file for a DB path.
@@ -89,6 +94,17 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	} {
 		if err := set(k, v); err != nil {
 			return false, fmt.Errorf("apply identity %s: %w", k, err)
+		}
+	}
+	// Give this replica its own marketplace device id (the snapshot carried the
+	// primary's), so it registers as a distinct device under the shared store.
+	// Clear the "already registered" marker so enrolment re-registers it.
+	if id.DeviceID != "" {
+		if err := set("marketplace.device_id", id.DeviceID); err != nil {
+			return false, fmt.Errorf("apply identity device: %w", err)
+		}
+		if _, err := sqlDB.Exec(`DELETE FROM settings WHERE key = 'marketplace.device_registered'`); err != nil {
+			return false, fmt.Errorf("clear device_registered: %w", err)
 		}
 	}
 	// Sales before the join came in the snapshot — push only what THIS
