@@ -37,18 +37,32 @@ var ErrUnsupported = errors.New("in-app update is only for archive (.tar.gz) ins
 
 // Supported reports whether Apply can run for this build/install.
 func Supported() bool {
-	if runtime.GOOS == "windows" {
-		return false
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		return false
 	}
+	return supportedFor(exe, runtime.GOOS)
+}
+
+// supportedFor is the testable core of Supported: in-app self-update only works
+// for the portable archive (.tar.gz) installs, where swapping the binary in
+// place is safe.
+func supportedFor(exe, goos string) bool {
+	if goos == "windows" {
+		return false // updates via the installer
+	}
 	// Packaged installs update via their package manager, not a self-swap.
 	for _, p := range []string{"/usr/", "/opt/unitill/"} {
 		if strings.HasPrefix(exe, p) {
-			return false
+			return false // .deb → apt
 		}
+	}
+	// A macOS .app is code-signed and its binary lives in Contents/MacOS while
+	// web/ lives in Contents/Resources; swapping the binary breaks the bundle,
+	// and the release archive ships an UNSIGNED binary that won't run on Apple
+	// Silicon. Update a .app by reinstalling the .dmg instead.
+	if strings.Contains(exe, ".app/Contents/") {
+		return false
 	}
 	return true
 }
