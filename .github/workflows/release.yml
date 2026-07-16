@@ -1,21 +1,83 @@
-# Release pipeline (docs repo: architecture/packaging.md): push a v* tag →
-# cross-platform archives + .deb packages land on the GitHub release.
+# Release pipeline (docs repo: architecture/packaging.md).
+#
+# Two ways to cut a release, both land the same cross-platform artifacts on the
+# GitHub release (archives, .deb, Windows installer, macOS .dmg):
+#   1. One-click: Actions → "Release" → Run workflow → pick patch/minor/major
+#      (or type an explicit version). The `prepare` job computes + pushes the
+#      tag, then the build jobs run.
+#   2. Manual: `git tag vX.Y.Z && git push origin vX.Y.Z` (or scripts/release.sh).
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump (ignored when 'version' is set)"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Explicit version without the 'v' (e.g. 0.3.0). Overrides bump."
+        default: ""
 
 permissions:
   contents: write
 
 jobs:
+  # Resolve the version/tag for this release. On a tag push it just reads the
+  # ref; on manual dispatch it computes the next version from the latest tag
+  # (or uses the explicit input) and creates + pushes the tag.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+          else
+            if [ -n "${{ inputs.version }}" ]; then
+              VERSION="${{ inputs.version }}"
+            else
+              LATEST="$(git tag -l 'v*' | sort -V | tail -1)"; LATEST="${LATEST#v}"; LATEST="${LATEST:-0.0.0}"
+              IFS=. read -r MA MI PA <<< "$LATEST"
+              case "${{ inputs.bump }}" in
+                major) MA=$((MA + 1)); MI=0; PA=0 ;;
+                minor) MI=$((MI + 1)); PA=0 ;;
+                patch) PA=$((PA + 1)) ;;
+              esac
+              VERSION="${MA}.${MI}.${PA}"
+            fi
+            TAG="v${VERSION}"
+            if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+              echo "::error::tag ${TAG} already exists"; exit 1
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "### Release ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+
   goreleaser:
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -32,9 +94,12 @@ jobs:
       # unzip-and-run for shop owners. goreleaser already built + published the
       # archives above, so a hiccup here never blocks the core release.
       - name: Build & attach Windows installer (NSIS)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
           sudo apt-get update
           sudo apt-get install -y nsis
           STAGE="$(mktemp -d)"
@@ -45,9 +110,7 @@ jobs:
           EXE="$(find "$PWD" -name "unitill-pos-setup-${VERSION}.exe" -print -quit)"
           echo "built installer: $EXE"
           test -n "$EXE" && test -f "$EXE"
-          gh release upload "${GITHUB_REF_NAME}" "$EXE" --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          gh release upload "${TAG}" "$EXE" --clobber
       # No website notification needed: universaltill.com/download reads the
       # public Releases API (/releases/latest) at page load, so it picks up
       # this release automatically. The site's staged mirror is only a
@@ -60,6 +123,7 @@ jobs:
   # configured, otherwise ad-hoc signs (Apple Silicon requires a signature to
   # run; ad-hoc downloads need right-click → Open). See docs/arch/desktop-app.md.
   macos-app:
+    needs: prepare
     runs-on: macos-14 # Apple Silicon
     permissions:
       contents: write
@@ -67,6 +131,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -103,12 +168,14 @@ jobs:
           MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
           packaging/macos/build-app.sh "$VERSION" dist/macos
           packaging/macos/make-dmg.sh "$VERSION" dist/macos
       - name: Attach the .dmg to the release
-        run: gh release upload "${GITHUB_REF_NAME}" "dist/macos/unitill-pos-${GITHUB_REF_NAME#v}-macOS-arm64.dmg" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release upload "${TAG}" "dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg" --clobber
