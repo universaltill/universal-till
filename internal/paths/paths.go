@@ -47,12 +47,22 @@ func Plugins(parts ...string) string {
 	return filepath.Join(append([]string{DataDir(), "plugins"}, parts...)...)
 }
 
-// MigrateLegacyDB moves an old cwd-relative database into the resolved data
-// directory the first time a build with the stable data dir runs, so an
-// in-place upgrade (extracting a new version over the old folder) keeps its
-// data. Best-effort: it only acts when the target is absent and a legacy
-// ./data/unitill-pos.db exists, and it copies (leaving the original intact).
-func MigrateLegacyDB(dbPath string) {
+// MigrateLegacyData brings an old cwd-relative ./data tree into the resolved
+// data directory: the database (first run only) and any installed plugin
+// bundles that are missing from the stable location. Plugin migration is
+// per-plugin, not all-or-nothing, because earlier builds migrated ONLY the DB
+// — the registry then pointed at bundles whose files (locales, wasm modules,
+// assets) were left behind in ./data/plugins, silently breaking every
+// installed plugin. Best-effort and copy-only: the legacy tree stays intact.
+func MigrateLegacyData(dbPath string) {
+	migrateLegacyDB(dbPath)
+	migrateLegacyPlugins()
+}
+
+// migrateLegacyDB copies an old cwd-relative database into the resolved data
+// directory. It only acts when the target is absent and a legacy
+// ./data/unitill-pos.db exists.
+func migrateLegacyDB(dbPath string) {
 	const legacy = "data/unitill-pos.db" // the old default, relative to cwd
 	if dbPath == legacy || dbPath == "./"+legacy {
 		return // still using the legacy location
@@ -78,6 +88,42 @@ func MigrateLegacyDB(dbPath string) {
 	defer dst.Close()
 	if _, err := io.Copy(dst, src); err != nil {
 		_ = os.Remove(dbPath) // don't leave a half-copied DB
+	}
+}
+
+// transientPluginDirs are runtime scratch areas under plugins/ that must not
+// be treated as installed plugin bundles.
+var transientPluginDirs = map[string]bool{"cache": true, "tmp": true, "downloads": true, "auth": true, "versions": true}
+
+// migrateLegacyPlugins copies each installed plugin bundle from the legacy
+// ./data/plugins tree into the stable plugins dir when it is missing there.
+func migrateLegacyPlugins() {
+	const legacy = "data/plugins"
+	target := Plugins()
+	if abs, err := filepath.Abs(legacy); err == nil {
+		if tabs, err := filepath.Abs(target); err == nil && tabs == abs {
+			return // still using the legacy location
+		}
+	}
+	entries, err := os.ReadDir(legacy)
+	if err != nil {
+		return // no legacy plugins to migrate
+	}
+	for _, e := range entries {
+		if !e.IsDir() || transientPluginDirs[e.Name()] {
+			continue
+		}
+		dst := filepath.Join(target, e.Name())
+		if _, err := os.Stat(dst); err == nil {
+			continue // already present in the stable location
+		}
+		src := filepath.Join(legacy, e.Name())
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			continue
+		}
+		if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
+			_ = os.RemoveAll(dst) // don't leave a half-copied bundle
+		}
 	}
 }
 

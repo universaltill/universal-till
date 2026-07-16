@@ -42,6 +42,9 @@ a { color: var(--accent); }
    nav, whatever height the nav ends up (one row or two). */
 body { display: flex; flex-direction: column; min-height: 100dvh; margin: 0; }
 .container { max-width: 1500px; margin: 0 auto; padding: 1rem 1.25rem 2rem; width: 100%; }
+/* Main grows to fill the viewport so the status bar never floats mid-screen
+   on short pages (menu, settings, …). */
+body > main.container { flex: 1 0 auto; }
 /* Sale screen gets a DEFINITE height (not just min-height) so the grid's
    1fr rows resolve and the basket scrolls internally instead of growing
    and pushing the tender panel off-screen. */
@@ -66,28 +69,20 @@ body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex
 }
 .logo { display: flex; align-items: center; }
 .logo img { height: 28px; display: block; }
-.nav-right { display: flex; align-items: center; gap: .5rem; margin-inline-start: auto; }
-/* The ☰ toggle only appears on the sale screen (see below). Sized as a
-   proper touch target. */
-.nav-toggle { display: none; background: rgba(255,255,255,.12); color: #fff; border: 0;
+.nav-right { display: flex; align-items: center; gap: .5rem; margin-inline-start: .5rem; }
+/* The shared touch header: EVERY page shows the same ☰ Menu button (a proper
+   touch target) that opens the /menu launcher of big tiles — no page has its
+   own small-text link row. */
+.nav { flex-wrap: nowrap; }
+.nav-toggle { display: inline-flex; align-items: center; background: rgba(255,255,255,.12);
+  color: #fff; border: 0; text-decoration: none;
   border-radius: 10px; padding: .6rem 1.1rem; min-height: 46px; font-size: 1rem;
   font-weight: 600; cursor: pointer; }
 .nav-toggle:hover, .nav-toggle:active { background: rgba(255,255,255,.22); }
-.nav-links { display: flex; align-items: center; gap: .15rem; flex-wrap: wrap; }
 
-/* Sale screen: touch-first. Hide the inline text menu; the ☰ button opens
-   the full /menu launcher page of big touch tiles instead. */
-body.sale-screen .nav { flex-wrap: nowrap; }
-body.sale-screen .nav-toggle { display: inline-flex; align-items: center; }
-body.sale-screen .nav-links { display: none; }
-body.sale-screen .nav-right { margin-inline-start: .5rem; }
-
-/* Menu page: the big touch tiles ARE the navigation, so collapse the small-text
-   nav (and the redundant Users/Translations links) from the header — keep just
-   the logo, operator and Lock. */
-body.menu-screen .nav-links { display: none; }
+/* Menu page: the tiles ARE the navigation — drop the redundant admin link
+   from the session chip; keep logo, ☰, operator and Lock. */
 body.menu-screen .session-admin-link { display: none; }
-body.menu-screen .nav-right { margin-inline-start: auto; }
 
 /* Menu launcher page: a grid of large touch tiles. */
 .menu-grid {
@@ -119,14 +114,6 @@ body.menu-screen .nav-right { margin-inline-start: auto; }
 body.sale-screen .session-admin-link { display: none; }
 body.sale-screen .btn-lock { min-height: 46px; padding: .5rem 1.2rem; font-size: 1rem; }
 body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
-.nav-links a {
-  color: #cbd5e1; text-decoration: none; font-size: .9rem; font-weight: 500;
-  padding: .35rem .6rem; border-radius: 8px; white-space: nowrap;
-}
-.nav-links a:hover { color: #fff; background: rgba(255,255,255,.09); }
-.nav-lang { display: flex; gap: .1rem; margin-inline-start: .5rem; padding-inline-start: .6rem;
-            border-inline-start: 1px solid rgba(255,255,255,.18); }
-.nav-lang a { font-size: .8rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; }
 
 /* ---------- Reports ---------- */
 .report-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; }
@@ -472,7 +459,7 @@ body.kiosk .kiosk-header { margin: 0 0 .6rem; }
 body.kiosk .kiosk-header h1 { font-size: 1.15rem; }
 body.kiosk .pos-container { height: calc(100dvh - 6.6rem); }
 body.kiosk * { -webkit-tap-highlight-color: transparent; }
-body.kiosk .btn, body.kiosk .nav-links a, body.kiosk .btn-tile,
+body.kiosk .btn, body.kiosk .nav-toggle, body.kiosk .btn-tile,
 body.kiosk h1, body.kiosk h2, body.kiosk .status-pill, body.kiosk label,
 body.kiosk .basket th, body.kiosk .journal th {
   -webkit-user-select: none; user-select: none;
@@ -624,6 +611,9 @@ body.login-screen {
    dark top nav; part of the body flex column so it sits at the bottom. */
 .statusbar {
   flex: 0 0 auto;
+  /* Pinned to the bottom of the screen: flex-grow on main handles short
+     pages, sticky keeps it visible when a page scrolls. */
+  position: sticky; bottom: 0; z-index: 90;
   display: flex; align-items: center; gap: 1rem;
   padding: .28rem 1rem; font-size: .78rem;
   background: #0f172a; color: #94a3b8;
@@ -644,3 +634,10 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar .sb-update:hover { background: #22c55e; }
+/* Encouragement chip shown until the till is registered with the marketplace. */
+.statusbar .sb-enrol {
+  color: #451a03; background: #fbbf24; text-decoration: none;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar .sb-enrol:hover { background: #f59e0b; }

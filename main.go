@@ -48,9 +48,10 @@ func main() {
 		log.Fatalf("config init failed: %v", err)
 	}
 
-	// One-time: bring an old cwd-relative ./data database into the stable data
-	// directory so an in-place upgrade keeps its data (no-op for fresh installs).
-	paths.MigrateLegacyDB(cfg.DBPath)
+	// One-time: bring an old cwd-relative ./data database AND installed plugin
+	// bundles into the stable data directory so an in-place upgrade keeps its
+	// data (no-op for fresh installs).
+	paths.MigrateLegacyData(cfg.DBPath)
 
 	// 2) DB + migrations. A staged restore (Settings → Backups → Restore)
 	// applies first, before the DB is opened; the replaced file is kept

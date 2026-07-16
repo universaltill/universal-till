@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 )
@@ -26,6 +27,9 @@ var baseFuncs = template.FuncMap{
 	"updateavailable": func() bool { return updates.Current().Available },
 	"latestversion":   func() string { return updates.Current().Latest },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
+	"enrolled":        func() bool { return enroll.CurrentStatus().Registered },
+	"enrolstore":      func() string { return enroll.CurrentStatus().StoreID },
+	"enroldevice":     func() string { return enroll.CurrentStatus().DeviceID },
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.

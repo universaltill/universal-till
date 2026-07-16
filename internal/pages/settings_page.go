@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -43,6 +44,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"backups":     listBackupsForUI(d),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
+	})
+
+	// Immediate marketplace registration attempt (the Settings card's
+	// "Register now" button). Registration also runs automatically in the
+	// background; this just gives the operator a button and instant feedback.
+	mux.HandleFunc("POST /api/enrol/now", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		locale := httpx.ResolveLocale(w, r)
+		status, err := enroll.RegisterNow(r.Context(), d.Cfg, d.Settings)
+		if err != nil || !status.Registered {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(httpx.T(locale, "settings.enrol.failed")))
+			return
+		}
+		_, _ = w.Write([]byte("✅ " + httpx.T(locale, "settings.enrol.registered")))
 	})
 
 	// Idle auto-lock window (docs: pos-auth.md). Manager/admin only — an
