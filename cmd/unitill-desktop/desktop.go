@@ -5,6 +5,10 @@
 // the sibling `unitill-pos` binary, waits for it to accept connections, then
 // opens the window; closing the window stops the server.
 //
+// The window itself is platform-specific (showWindow): macOS uses a native
+// WKWebView shell with clipboard, file pickers, camera permission and popups
+// (webkit_darwin.go); other platforms use webview_go (webview_fallback.go).
+//
 // Build (macOS/Windows/Linux, needs CGO + the system WebView):
 //
 //	go build -tags desktop -o unitill-desktop ./cmd/unitill-desktop
@@ -17,14 +21,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
-
-	webview "github.com/webview/webview_go"
 )
 
 func main() {
-	// Pick a free port up front (falling back to 8080) and hand it to the
-	// server, so a busy 8080 doesn't stop the app and the window always points
-	// at the port the server actually uses.
+	// Prefer :8080 (so the operator can also open the till in a normal browser
+	// at a known address), falling back to any free port if it's taken.
 	port := freePort("8080")
 	addr := "127.0.0.1:" + port
 
@@ -70,26 +71,30 @@ func main() {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	w := webview.New(false)
-	defer w.Destroy()
-	w.SetTitle("Universal Till")
-	w.SetSize(1280, 860, webview.HintNone)
-	w.Navigate("http://" + addr)
-	w.Run() // blocks until the window closes
+	// Blocks until the window closes. On macOS closing the window terminates the
+	// process (skipping the deferred Kill), so showWindow is told the server PID
+	// to stop it first.
+	showWindow("http://"+addr, "Universal Till", cmd.Process.Pid)
 }
 
-// freePort returns a free TCP port on the loopback interface, or def if one
-// can't be found. The tiny window between closing the probe listener and the
-// server binding is covered by the server's own next-free-port fallback.
-func freePort(def string) string {
+// freePort returns `preferred` when that port is free (so the till lives at a
+// predictable address), else a free loopback port chosen by the OS. The server
+// has its own next-free-port fallback for the small probe→bind race.
+func freePort(preferred string) string {
+	if preferred != "" {
+		if ln, err := net.Listen("tcp", "127.0.0.1:"+preferred); err == nil {
+			_ = ln.Close()
+			return preferred
+		}
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return def
+		return preferred
 	}
 	defer ln.Close()
 	_, p, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {
-		return def
+		return preferred
 	}
 	return p
 }
