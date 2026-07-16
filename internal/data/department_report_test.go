@@ -81,3 +81,41 @@ func TestSalesByDepartment_RollsSubcategoriesToDepartment(t *testing.T) {
 		t.Log("DepartmentsForDay returned no rows for 'now' (timezone/date boundary)")
 	}
 }
+
+// SalesByTill groups completed sales by register; the primary till's blank
+// till_id rolls up under "" (UI: "This till"), named replicas by their id.
+func TestSalesByTill_GroupsByRegister(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "till.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	x := func(q string, args ...any) {
+		if _, err := d.DB.Exec(q, args...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	x(`INSERT INTO tills (id, name, bearer_hash) VALUES ('t2','Register 2','h2')`)
+	// Primary (blank till_id) makes two sales; replica t2 makes one bigger sale.
+	x(`INSERT INTO sales (id, receipt_no, status, total, till_id) VALUES ('a','RA','completed',1000,'')`)
+	x(`INSERT INTO sales (id, receipt_no, status, total, till_id) VALUES ('b','RB','completed',1500,'')`)
+	x(`INSERT INTO sales (id, receipt_no, status, total, till_id) VALUES ('c','RC','completed',9000,'t2')`)
+
+	rows, err := data.NewPOSRepo(d.DB).SalesByTill(context.Background(), 30)
+	if err != nil {
+		t.Fatalf("SalesByTill: %v", err)
+	}
+	got := map[string]data.TillSales{}
+	for _, r := range rows {
+		got[r.TillID] = r
+	}
+	if p := got[""]; p.Count != 2 || p.Revenue != 2500 {
+		t.Fatalf("primary till = %+v, want count 2 revenue 2500", p)
+	}
+	if r2 := got["t2"]; r2.Count != 1 || r2.Revenue != 9000 || r2.Name != "Register 2" {
+		t.Fatalf("t2 = %+v, want count 1 revenue 9000 name 'Register 2'", r2)
+	}
+	if rows[0].TillID != "t2" { // ordered by revenue desc
+		t.Fatalf("first till = %q, want t2 (highest revenue)", rows[0].TillID)
+	}
+}

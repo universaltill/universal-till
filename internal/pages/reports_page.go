@@ -21,6 +21,12 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		top, _ := repo.TopItems(r.Context(), days, 10)
 		methods, _ := repo.PaymentBreakdown(r.Context(), days)
 		departments, _ := repo.SalesByDepartment(r.Context(), days)
+		// Per-till breakdown is only meaningful once a shop runs more than one
+		// register (department stores) — hide it for single-till shops.
+		tills, _ := repo.SalesByTill(r.Context(), days)
+		if len(tills) < 2 {
+			tills = nil
+		}
 		archived, _ := repo.ListArchivedReports(r.Context(), 14)
 		type eodRow struct {
 			Period string
@@ -61,6 +67,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"Daily":       daily,
 			"Top":         top,
 			"Departments": departments,
+			"Tills":       tills,
 			"Methods":     methods,
 			"GrandTotal":  grandTotal,
 			"GrandTax":    grandTax,

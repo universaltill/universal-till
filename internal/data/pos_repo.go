@@ -604,6 +604,44 @@ ORDER BY revenue DESC`, fmt.Sprintf("-%d days", days))
 	return out, rows.Err()
 }
 
+// TillSales is one register's revenue for a reporting window. Department stores
+// run many tills; per-register totals drive cash-up and reconciliation
+// (docs/arch/enterprise-department-stores.md, increment E4).
+type TillSales struct {
+	TillID  string `json:"till_id"`
+	Name    string `json:"name"`
+	Count   int    `json:"count"`
+	Revenue int64  `json:"revenue"`
+}
+
+// SalesByTill aggregates completed-sale revenue per till for the last N days.
+// sales.till_id is ” for the primary till / pre-sync history (ADR-0011 D3);
+// that rolls up under an empty id, which the UI labels "This till". Named
+// replicas resolve through the tills table.
+func (r *POSRepo) SalesByTill(ctx context.Context, days int) ([]TillSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT s.till_id, COALESCE(t.name, '') AS name,
+       COUNT(*) AS cnt, COALESCE(SUM(s.total), 0) AS revenue
+FROM sales s
+LEFT JOIN tills t ON t.id = s.till_id
+WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+GROUP BY s.till_id
+ORDER BY revenue DESC`, fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, fmt.Errorf("sales by till: %w", err)
+	}
+	defer rows.Close()
+	var out []TillSales
+	for rows.Next() {
+		var t TillSales
+		if err := rows.Scan(&t.TillID, &t.Name, &t.Count, &t.Revenue); err != nil {
+			return nil, fmt.Errorf("scan till sales: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // DepartmentsForDay is SalesByDepartment for a single business day (used by the
 // EOD Z-report). day is "YYYY-MM-DD".
 func (r *POSRepo) DepartmentsForDay(ctx context.Context, day string) ([]DeptSales, error) {
