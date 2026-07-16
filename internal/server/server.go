@@ -223,9 +223,21 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	}
 
 	srv := &http.Server{
-		Addr:    cfg.ListenAddr,
 		Handler: handler,
 	}
+
+	// Bind the configured port, or the next free one if it's already taken (a
+	// second till on the same machine, or another app on :8080) so a busy port
+	// never blocks startup. cfg.ListenAddr is updated to what we actually bound
+	// so the browser-open below points at the right place.
+	ln, actualAddr, err := listenWithFallback(cfg.ListenAddr)
+	if err != nil {
+		return err
+	}
+	if actualAddr != cfg.ListenAddr {
+		log.Printf("port %s was busy — listening on %s instead", cfg.ListenAddr, actualAddr)
+	}
+	cfg.ListenAddr = actualAddr
 
 	// Graceful shutdown when context is cancelled
 	go func() {
@@ -245,10 +257,38 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		go openSetupPage(cfg.ListenAddr)
 	}
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
+}
+
+// listenWithFallback binds addr, or the next free port when addr's port is
+// already in use, so a busy port doesn't stop the till from starting. It tries
+// the configured port, then the next 20, then lets the OS pick any free port.
+// Returns the listener and the address actually bound. If the configured port
+// binds cleanly the behaviour is unchanged.
+func listenWithFallback(addr string) (net.Listener, string, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err == nil {
+		return ln, ln.Addr().String(), nil
+	}
+	host, portStr, serr := net.SplitHostPort(addr)
+	base, aerr := strconv.Atoi(portStr)
+	if serr != nil || aerr != nil {
+		return nil, "", err // unparseable addr — surface the original bind error
+	}
+	for p := base + 1; p <= base+20; p++ {
+		cand := net.JoinHostPort(host, strconv.Itoa(p))
+		if l, e := net.Listen("tcp", cand); e == nil {
+			return l, l.Addr().String(), nil
+		}
+	}
+	// Last resort: port 0 → the OS hands us any free port.
+	if l, e := net.Listen("tcp", net.JoinHostPort(host, "0")); e == nil {
+		return l, l.Addr().String(), nil
+	}
+	return nil, "", err // nothing free — report the original failure
 }
 
 // shouldOpenBrowser decides whether to auto-open the browser. UT_OPEN_BROWSER
