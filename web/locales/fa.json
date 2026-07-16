@@ -371,6 +371,8 @@
   "plugins.settings.none": "این افزونه تنظیماتی ندارد.",
   "plugins.settings.save": "ذخیرهٔ تنظیمات",
   "plugins.settings.saved": "تنظیمات ذخیره شد — بلافاصله اعمال می‌شود",
+  "plugins.settings.secret_empty": "تنظیم‌نشده",
+  "plugins.settings.secret_set": "•••••••• تنظیم شده — برای حفظ خالی بگذارید",
   "plugins.settings.title": "تنظیمات",
   "plugins.status.active": "فعال",
   "plugins.status.downloading": "در حال دانلود",

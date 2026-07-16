@@ -9,7 +9,11 @@
   {{ if .Settings }}
   <form hx-post="/api/plugins/{{ .PluginID }}/settings" hx-target="#ps-msg" hx-swap="innerHTML">
     {{ range .Settings }}
+    {{ if .Secret }}
+    <label>{{ .Key }} <input type="password" name="setting_{{ .Key }}" autocomplete="off" value="" placeholder="{{ if .IsSet }}{{ T "plugins.settings.secret_set" }}{{ else }}{{ T "plugins.settings.secret_empty" }}{{ end }}"></label>
+    {{ else }}
     <label>{{ .Key }} <input type="text" name="setting_{{ .Key }}" value="{{ .Value }}"></label>
+    {{ end }}
     {{ end }}
     <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
       <button class="btn primary" type="submit">{{ T "plugins.settings.save" }}</button>
