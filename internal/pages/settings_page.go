@@ -7,8 +7,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -84,6 +86,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
+	})
+
+	// Deregister (testing/support): clear the marketplace identity so the till
+	// shows the unregistered state and the operator can exercise "Register now".
+	mux.HandleFunc("POST /api/enrol/reset", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		if err := enroll.Reset(r.Context(), d.Settings); err != nil {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<span class="error">%s</span>`, err.Error())
+			return
+		}
+		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, getSessionUserID(r), "till", "-", "enrolment_reset",
+			nil, time.Now().UTC().Format(time.RFC3339), "")
+		w.Header().Set("HX-Refresh", "true")
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	// The store's fleet: every till registered under this store. Lazy-loaded
