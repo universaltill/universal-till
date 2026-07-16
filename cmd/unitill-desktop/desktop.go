@@ -22,7 +22,10 @@ import (
 )
 
 func main() {
-	const port = "8080"
+	// Pick a free port up front (falling back to 8080) and hand it to the
+	// server, so a busy 8080 doesn't stop the app and the window always points
+	// at the port the server actually uses.
+	port := freePort("8080")
 	addr := "127.0.0.1:" + port
 
 	// The POS binary ships next to this executable; fall back to PATH in dev.
@@ -50,7 +53,7 @@ func main() {
 	cmd := exec.Command(posBin)
 	cmd.Dir = workDir // so web/ resolves; data/ defaults to the per-user dir
 	// We supply the window ourselves, so tell the server not to also pop a browser.
-	cmd.Env = append(os.Environ(), "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR=:"+port)
+	cmd.Env = append(os.Environ(), "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR="+addr)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to start the till:", err)
@@ -73,6 +76,22 @@ func main() {
 	w.SetSize(1280, 860, webview.HintNone)
 	w.Navigate("http://" + addr)
 	w.Run() // blocks until the window closes
+}
+
+// freePort returns a free TCP port on the loopback interface, or def if one
+// can't be found. The tiny window between closing the probe listener and the
+// server binding is covered by the server's own next-free-port fallback.
+func freePort(def string) string {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return def
+	}
+	defer ln.Close()
+	_, p, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		return def
+	}
+	return p
 }
 
 // dirHasWeb reports whether dir contains a web/ subdirectory.
