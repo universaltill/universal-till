@@ -208,6 +208,8 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Mirror the restock to inventory connectors (best-effort, non-blocking).
+		publishStockAdjustedForSale(r.Context(), d, saleInput)
 		newReceipt, _, _, _, _ := repo.SaleTotals(r.Context(), saleID)
 		_ = repo.InsertAudit(r.Context(), nil, actorID, "sale", newReceipt, "refund",
 			map[string]any{"original": detail.ReceiptNo, "amount": refundTotal.Minor(), "method": method},

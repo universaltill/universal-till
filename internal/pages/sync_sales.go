@@ -94,6 +94,10 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	if _, err := pos.CompleteSale(ctx, d.Db, in); err != nil {
 		return false, err
 	}
+	// This node's stock genuinely changed when replaying the remote sale, so
+	// mirror it to inventory connectors (best-effort, non-blocking). Guarded by
+	// the SaleExists idempotency check above, so it fires at most once per sale.
+	publishStockAdjustedForSale(ctx, d, in)
 	return true, repo.SetSaleProvenance(ctx, j.Sale.ID, tillID, j.Sale.CreatedAt)
 }
 

@@ -95,6 +95,24 @@ type SalePayment struct {
 	Reference   string `json:"reference"`
 }
 
+// StockAdjustedEvent is the payload published on "stock.adjusted" whenever an
+// item's on-hand quantity changes (a sale removes stock, a refund/return adds
+// it back, plus manual adjustments and goods received). It is the stable
+// contract external-integration plugins (ERP/inventory connectors — SAP,
+// Dynamics/LS Central, … per ADR-0014) consume to keep external stock levels
+// in sync. Quantities are decimal to support weighed goods: a negative
+// delta_qty reduces stock, a positive one increases it.
+type StockAdjustedEvent struct {
+	ItemID     string    `json:"item_id"`
+	VariantID  string    `json:"variant_id"`
+	SKU        string    `json:"sku"`
+	DeltaQty   float64   `json:"delta_qty"`         // signed change in on-hand units
+	NewQty     float64   `json:"new_qty,omitempty"` // resulting on-hand, when readily available
+	Reason     string    `json:"reason"`            // "sale" | "refund" | "adjustment" | "received"
+	Location   string    `json:"location"`
+	AdjustedAt time.Time `json:"adjusted_at"`
+}
+
 // EventHandler executes a blocking handler for an event; returning an error signals rollback.
 type EventHandler func(ctx context.Context, event Event) error
 
@@ -109,6 +127,7 @@ func NewEventBus(db *sql.DB) *EventBus {
 	// Configure default event modes
 	// Non-blocking (default): Most events should not block the core transaction
 	eb.eventModes["sale.completed"] = NonBlocking
+	eb.eventModes["stock.adjusted"] = NonBlocking
 	eb.eventModes["sale.viewed"] = NonBlocking
 	eb.eventModes["inventory.adjusted"] = NonBlocking
 	eb.eventModes["report.generated"] = NonBlocking
@@ -319,6 +338,11 @@ func (eb *EventBus) auditDispatch(ctx context.Context, eventID, eventType, plugi
 // PublishSaleCompleted is a helper to publish sale.completed events
 func (eb *EventBus) PublishSaleCompleted(ctx context.Context, saleEvent SaleCompletedEvent) (string, error) {
 	return eb.Publish(ctx, "sale.completed", saleEvent)
+}
+
+// PublishStockAdjusted is a helper to publish stock.adjusted events
+func (eb *EventBus) PublishStockAdjusted(ctx context.Context, stockEvent StockAdjustedEvent) (string, error) {
+	return eb.Publish(ctx, "stock.adjusted", stockEvent)
 }
 
 // Unsubscribe removes a plugin's subscription

@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -111,6 +112,16 @@ func CreateStockReceipt(dp *common.Deps) http.HandlerFunc {
 			respondError(w, r, http.StatusInternalServerError, err.Error())
 			return
 		}
+
+		// Mirror the manual adjustment/receipt to inventory connectors
+		// (best-effort, non-blocking).
+		publishStockAdjusted(ctx, dp, plugins.StockAdjustedEvent{
+			ItemID:    req.ItemID,
+			VariantID: req.VariantID,
+			DeltaQty:  req.Quantity,
+			Reason:    stockMovementReason(req.Type),
+			Location:  req.LocationID,
+		})
 
 		respondSuccess(w, r, StockReceiptResponse{MovementID: movementID, Success: true})
 	}
@@ -432,7 +443,7 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		}
 
 		// Create return sale
-		returnSaleID, err := pos.CompleteSale(ctx, dp.Db, pos.SaleInput{
+		returnInput := pos.SaleInput{
 			SaleType:               "return",
 			OriginalSaleID:         originalSaleID,
 			Lines:                  returnLines,
@@ -441,11 +452,15 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			Note:                   req.Reason,
 			Currency:               "GBP",
 			AllowNegativeInventory: true, // Returns add inventory
-		})
+		}
+		returnSaleID, err := pos.CompleteSale(ctx, dp.Db, returnInput)
 		if err != nil {
 			respondReturnError(w, r, http.StatusInternalServerError, err.Error())
 			return
-		} // Fetch receipt_no
+		}
+		// Mirror the restock to inventory connectors (best-effort, non-blocking).
+		publishStockAdjustedForSale(ctx, dp, returnInput)
+		// Fetch receipt_no
 		var receiptNo string
 		receiptNo, ok, err := repo.GetReceiptNo(ctx, returnSaleID)
 		if err != nil || !ok {
