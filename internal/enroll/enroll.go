@@ -107,31 +107,6 @@ func CurrentStatus() Status {
 	}
 }
 
-// Reset clears the stored marketplace identity so the till returns to the
-// unregistered state — a testing/support aid so an operator can exercise the
-// manual "Register now" flow (first boot auto-enrols in the background, so the
-// registered state is otherwise reached before anyone can watch it). The stable
-// device id and the pinned signing key are kept; a restart auto-enrols again.
-// Refuses when the identity came from the environment (nothing to clear).
-func Reset(ctx context.Context, kv Settings) error {
-	mu.RLock()
-	explicit := explicitConfigured
-	mu.RUnlock()
-	if explicit {
-		return fmt.Errorf("identity is configured via the environment; cannot reset")
-	}
-	for _, k := range []string{keyStoreID, keyMerchantID, keyToken, keyEnrolledAt, keyDeviceRegistered} {
-		if err := kv.Set(ctx, k, ""); err != nil {
-			return err
-		}
-	}
-	mu.Lock()
-	cur.StoreID, cur.MerchantID, cur.Token = "", "", ""
-	displayStoreID = ""
-	mu.Unlock()
-	return nil
-}
-
 // RegisterNow performs one immediate, synchronous registration (and signing
 // key fetch) attempt — the Settings "Register now" button. The background
 // retry loop keeps running regardless; attempts are serialized.
