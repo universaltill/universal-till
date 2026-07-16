@@ -9,6 +9,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -85,6 +86,12 @@ func main() {
 	err = settingsStore.SaveRuntimeConfig(ctx, cfg)
 	if err != nil { /* handle */
 	}
+
+	// First-boot store enrolment (ADR-0013): give this till a stable device_id
+	// and register it with the marketplace in the background, filling the empty
+	// marketplace identity fields. Explicit env config always wins; a till that
+	// never reaches the marketplace still works fully offline.
+	enroll.Init(ctx, cfg, settingsStore)
 
 	// 3) Plugins (and pass db if needed)
 	pluginManager, err := plugins.Init(ctx, cfg, database.DB)

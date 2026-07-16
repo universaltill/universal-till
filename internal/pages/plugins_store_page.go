@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -39,8 +41,9 @@ type storeItem struct {
 // (ids, true) on success; (nil, false) when the endpoint is unavailable so the
 // caller can fall back to the whole catalog (older marketplace deployments).
 func fetchEntitledListings(ctx context.Context, d *common.Deps) (map[string]bool, bool) {
-	base := strings.TrimSuffix(strings.TrimRight(d.Cfg.Marketplace.EndpointURL, "/"), "/api")
-	url := fmt.Sprintf("%s/ui/api/merchant/entitlements?merchant_id=%s", base, d.Cfg.Marketplace.ClientID)
+	effCfg := enroll.Effective(d.Cfg)
+	base := strings.TrimSuffix(strings.TrimRight(effCfg.Marketplace.EndpointURL, "/"), "/api")
+	url := fmt.Sprintf("%s/ui/api/merchant/entitlements?merchant_id=%s", base, effCfg.Marketplace.ClientID)
 
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -50,7 +53,7 @@ func fetchEntitledListings(ctx context.Context, d *common.Deps) (map[string]bool
 	}
 	// Merchant portal token: required when the marketplace enforces merchant
 	// auth; without it a 401 lands in the full-catalog fallback below.
-	if tok := d.Cfg.Marketplace.MerchantToken; tok != "" {
+	if tok := effCfg.Marketplace.MerchantToken; tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := http.DefaultClient.Do(req)
@@ -78,9 +81,15 @@ func fetchEntitledListings(ctx context.Context, d *common.Deps) (map[string]bool
 	return ids, true
 }
 
-func storeInstaller(d *common.Deps) (*plugins.MarketplaceInstaller, error) {
-	client := marketplace.NewClient(&d.Cfg.Marketplace, oauth.NewTokenClient(&d.Cfg.Marketplace))
-	return plugins.NewMarketplaceInstaller(d.Cfg, client, d.Db)
+// storeInstaller builds a marketplace installer on the EFFECTIVE config — the
+// enrolled identity (device token, signing key) fills fields the operator
+// didn't set, so a freshly enrolled till installs without a restart. The
+// effective config is returned too for request identity fields.
+func storeInstaller(d *common.Deps) (*plugins.MarketplaceInstaller, *config.Config, error) {
+	effCfg := enroll.Effective(d.Cfg)
+	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
+	return installer, &effCfg, err
 }
 
 // PluginStoreHandler renders the store: catalog listings the merchant is
@@ -99,7 +108,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 		entitled, entitledKnown := fetchEntitledListings(ctx, d)
 
 		var downloads map[string]plugins.StoreDownload
-		if installer, ierr := storeInstaller(d); ierr == nil {
+		if installer, _, ierr := storeInstaller(d); ierr == nil {
 			downloads = installer.ListStoreDownloads()
 		}
 		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
@@ -209,16 +218,16 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, "listing_id required")
 			return
 		}
-		installer, err := storeInstaller(d)
+		installer, effCfg, err := storeInstaller(d)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, "marketplace not configured")
 			return
 		}
 		sd, err := installer.DownloadToStore(r.Context(), plugins.MarketplaceInstallRequest{
 			ListingID:  listingID,
-			MerchantID: d.Cfg.Marketplace.ClientID,
-			StoreID:    d.Cfg.Marketplace.StoreID,
-			DeviceID:   marketplace.DeviceIDFromConfig(&d.Cfg.Marketplace),
+			MerchantID: effCfg.Marketplace.ClientID,
+			StoreID:    effCfg.Marketplace.StoreID,
+			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 		})
 		if err != nil {
 			respond(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))
@@ -233,7 +242,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, "listing_id required")
 			return
 		}
-		installer, err := storeInstaller(d)
+		installer, _, err := storeInstaller(d)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, "marketplace not configured")
 			return
@@ -265,7 +274,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, "listing_id required")
 			return
 		}
-		installer, err := storeInstaller(d)
+		installer, _, err := storeInstaller(d)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, "marketplace not configured")
 			return
