@@ -22,6 +22,7 @@ const (
 	keyPrinterDevice  = "printer.device"   // /dev/usb/lp0
 	keyPrinterCharset = "printer.charset"  // utf8 | ascii
 	keyPrinterAuto    = "printer.auto_print"
+	keyPrinterKitchen = "printer.kitchen_addr" // kitchen printer host[:port] or device path
 )
 
 // printerConfig reads the printer.* settings into a print.Config.
@@ -33,11 +34,12 @@ func printerConfig(ctx context.Context, d *common.Deps) print.Config {
 		return def
 	}
 	return print.Config{
-		Mode:      get(keyPrinterMode, "off"),
-		Address:   get(keyPrinterAddress, ""),
-		Device:    get(keyPrinterDevice, ""),
-		Charset:   get(keyPrinterCharset, "utf8"),
-		AutoPrint: get(keyPrinterAuto, "true") == "true",
+		Mode:           get(keyPrinterMode, "off"),
+		Address:        get(keyPrinterAddress, ""),
+		Device:         get(keyPrinterDevice, ""),
+		Charset:        get(keyPrinterCharset, "utf8"),
+		AutoPrint:      get(keyPrinterAuto, "true") == "true",
+		KitchenAddress: get(keyPrinterKitchen, ""),
 	}
 }
 
@@ -227,6 +229,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Settings.Set(r.Context(), keyPrinterAddress, strings.TrimSpace(r.Form.Get("address")))
 		_ = d.Settings.Set(r.Context(), keyPrinterDevice, strings.TrimSpace(r.Form.Get("device")))
 		_ = d.Settings.Set(r.Context(), keyPrinterCharset, charset)
+		_ = d.Settings.Set(r.Context(), keyPrinterKitchen, strings.TrimSpace(r.Form.Get("kitchenAddr")))
 		auto := "false"
 		if r.Form.Get("autoPrint") == "on" || r.Form.Get("autoPrint") == "1" {
 			auto = "true"
