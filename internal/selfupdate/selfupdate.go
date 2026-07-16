@@ -57,14 +57,19 @@ func supportedFor(exe, goos string) bool {
 			return false // .deb → apt
 		}
 	}
-	// A macOS .app is code-signed and its binary lives in Contents/MacOS while
-	// web/ lives in Contents/Resources; swapping the binary breaks the bundle,
-	// and the release archive ships an UNSIGNED binary that won't run on Apple
-	// Silicon. Update a .app by reinstalling the .dmg instead.
-	if strings.Contains(exe, ".app/Contents/") {
-		return false
-	}
+	// A macOS .app updates via the .dmg (whole-bundle replace + relaunch), not by
+	// swapping the inner binary — handled by applyMacApp. Still supported.
 	return true
+}
+
+// appBundlePath returns the path of the enclosing macOS .app bundle when the
+// executable runs inside one (…/Something.app/Contents/MacOS/binary), else "".
+func appBundlePath(exe string) string {
+	const marker = ".app/Contents/MacOS/"
+	if i := strings.Index(exe, marker); i != -1 {
+		return exe[:i+len(".app")]
+	}
+	return ""
 }
 
 type ghAsset struct {
@@ -88,6 +93,14 @@ func Apply(ctx context.Context) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("locate executable: %w", err)
+	}
+
+	// macOS .app: replace the whole bundle from the .dmg and relaunch, instead
+	// of swapping the inner (signed) binary with an unsigned archive one.
+	if runtime.GOOS == "darwin" {
+		if app := appBundlePath(exe); app != "" {
+			return applyMacApp(ctx, app)
+		}
 	}
 	installDir := filepath.Dir(exe)
 
