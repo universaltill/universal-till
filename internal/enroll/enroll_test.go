@@ -46,6 +46,8 @@ func resetState() {
 	mu.Lock()
 	cur = identity{}
 	storeIDExplicit = false
+	explicitConfigured = false
+	displayStoreID = ""
 	mu.Unlock()
 }
 

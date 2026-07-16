@@ -1,6 +1,23 @@
 {{ define "content" }}
 <h1>{{ T "settings.title" }}</h1>
-<div class="card">
+<div class="card" id="registration">
+  <h2>{{ T "settings.enrol.title" }}</h2>
+  {{ if enrolled }}
+    <p>✅ {{ T "settings.enrol.registered" }}</p>
+    {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
+    {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
+  {{ else }}
+    <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
+    <p class="muted">{{ T "settings.enrol.benefits" }}</p>
+    {{ if .isManager }}
+    <div style="display:flex; gap:.4rem; align-items:center">
+      <button class="btn btn-touch" hx-post="/api/enrol/now" hx-target="#enrol-msg" hx-swap="innerHTML">{{ T "settings.enrol.retry" }}</button>
+      <span id="enrol-msg" aria-live="polite"></span>
+    </div>
+    {{ end }}
+  {{ end }}
+</div>
+<div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.theme.title" }}</h2>
   <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="window.location.reload()">
     <select name="theme">
