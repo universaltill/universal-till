@@ -40,6 +40,12 @@ echo "==> staging web assets"
 # ~/Library/Application Support/UniversalTill (internal/paths default).
 cp -R web "$APP/Contents/Resources/web"
 
+# Runtime config: main.go loads pos.env from the working dir (Contents/Resources
+# here). Without it the marketplace endpoint falls back to the dev default
+# 127.0.0.1:8081 and store registration / the plugin store can never reach the
+# marketplace. Ship the production endpoint so a fresh app enrols out of the box.
+cp packaging/pos.env.example "$APP/Contents/Resources/pos.env"
+
 echo "==> Info.plist"
 sed "s/__VERSION__/${VERSION}/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
 
