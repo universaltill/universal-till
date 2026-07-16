@@ -83,8 +83,42 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostStorageGet).Export("storage_get").
 		NewFunctionBuilder().WithFunc(hostStorageSet).Export("storage_set").
 		NewFunctionBuilder().WithFunc(hostHTTPRequest).Export("http_request").
+		NewFunctionBuilder().WithFunc(hostSettingsGet).Export("settings_get").
 		Instantiate(ctx)
 	return err
+}
+
+// hostSettingsGet lets a plugin read one of its OWN declared settings (the
+// values a manager enters in the plugin settings editor). This is what makes
+// configurable WASM plugins possible — e.g. an ERP connector reading its
+// endpoint URL and auth token (ADR-0014). Own-settings only; no cross-plugin
+// access, no extra permission. Returns the plain string value; hostErrNotFound
+// when the key isn't set.
+func hostSettingsGet(ctx context.Context, m api.Module, keyPtr, keyLen, dstPtr, dstCap uint32) int32 {
+	s, ok := stateFrom(ctx)
+	if !ok {
+		return hostErrInternal
+	}
+	key, ok := readGuest(m, keyPtr, keyLen)
+	if !ok || len(key) == 0 {
+		return hostErrInvalid
+	}
+	val, found, err := data.NewPluginRepo(s.db).GetPluginSetting(ctx, s.pluginID, string(key))
+	if err != nil {
+		return hostErrInternal
+	}
+	if !found {
+		return hostErrNotFound
+	}
+	// Settings are stored as JSON; unwrap a JSON string so the plugin gets the
+	// plain value ("http://host" not "\"http://host\""). Non-string JSON
+	// (numbers, objects) is passed through raw.
+	out := []byte(val)
+	var str string
+	if json.Unmarshal(out, &str) == nil {
+		out = []byte(str)
+	}
+	return writeGuest(m, dstPtr, dstCap, out)
 }
 
 func hostLogWrite(ctx context.Context, m api.Module, ptr, length uint32) {
@@ -173,8 +207,14 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	if !hostAllowedScheme(u) {
 		return hostErrInvalid
 	}
+	// Grant the call when the plugin holds either the exact host permission
+	// (net:<host>) or the wildcard (net:*). Configurable connectors (ERP
+	// webhooks, ADR-0014) don't know their target host until install-time
+	// settings, so they declare net:* and are review-gated accordingly.
 	if err := CheckPermission(ctx, s.db, s.pluginID, "net:"+u.Hostname()); err != nil {
-		return hostErrDenied
+		if err2 := CheckPermission(ctx, s.db, s.pluginID, "net:*"); err2 != nil {
+			return hostErrDenied
+		}
 	}
 	body, err := base64.StdEncoding.DecodeString(req.BodyB64)
 	if err != nil {
