@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -50,18 +51,30 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// "Register now" button). Registration also runs automatically in the
 	// background; this just gives the operator a button and instant feedback.
 	mux.HandleFunc("POST /api/enrol/now", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// Always answer 200: this is an hx-swap target, and HTMX silently drops
+		// non-2xx responses — a 403/502 here is exactly why the button looked
+		// dead. The message carries the outcome (and the reason on failure).
 		if !isManagerOrAuthOff(r) {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
-		locale := httpx.ResolveLocale(w, r)
 		status, err := enroll.RegisterNow(r.Context(), d.Cfg, d.Settings)
 		if err != nil || !status.Registered {
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = w.Write([]byte(httpx.T(locale, "settings.enrol.failed")))
+			// Show the concrete reason (and the endpoint we tried) so the
+			// operator can see e.g. an unreachable/misconfigured marketplace.
+			reason := httpx.T(locale, "settings.enrol.not_registered")
+			if err != nil {
+				reason = err.Error()
+			}
+			endpoint := enroll.Effective(d.Cfg).Marketplace.EndpointURL
+			fmt.Fprintf(w, `<span class="error">❌ %s: %s (%s)</span>`,
+				httpx.T(locale, "settings.enrol.failed"), reason, endpoint)
 			return
 		}
-		_, _ = w.Write([]byte("✅ " + httpx.T(locale, "settings.enrol.registered")))
+		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
+			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
 	})
 
 	// Idle auto-lock window (docs: pos-auth.md). Manager/admin only — an
