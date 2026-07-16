@@ -441,7 +441,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		saleID, err := pos.CompleteSale(r.Context(), d.Db, pos.SaleInput{
+		saleInput := pos.SaleInput{
 			SaleType:               "sale",
 			Currency:               d.CurrentState().Currency,
 			TaxInclusive:           d.CurrentState().TaxInclusive,
@@ -455,7 +455,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			AllowNegativeInventory: allowNegative,
 			ActorID:                cashierID,
 			Offline:                offline,
-		})
+		}
+		saleID, err := pos.CompleteSale(r.Context(), d.Db, saleInput)
 		if err != nil {
 			if strings.Contains(err.Error(), "insufficient stock") {
 				locale := httpx.ResolveLocale(w, r)
@@ -508,6 +509,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// effort and NON-BLOCKING (offline-first): a slow or absent connector
 		// never delays or fails the tender.
 		publishSaleCompleted(r.Context(), d, saleID)
+
+		// Mirror the resulting stock movements to external systems: one
+		// stock.adjusted per line so inventory connectors can sync levels.
+		// Best-effort and NON-BLOCKING, same as sale.completed.
+		publishStockAdjustedForSale(r.Context(), d, saleInput)
 
 		// load receipt_no and totals from DB for rendering
 		receiptNo, dbSubtotal, dbTax, dbTotal, _ := repo.SaleTotals(r.Context(), saleID)
@@ -823,4 +829,56 @@ func publishSaleCompleted(ctx context.Context, d *common.Deps, saleID string) {
 		})
 	}
 	_, _ = plugins.SharedBus(d.Db).PublishSaleCompleted(ctx, ev)
+}
+
+// publishStockAdjusted publishes a single "stock.adjusted" event for
+// integration plugins (ERP/inventory connectors — ADR-0014). Best-effort and
+// NON-BLOCKING: any error is swallowed and dispatch is non-blocking on the bus,
+// so it never delays or fails the underlying sale/refund/adjustment
+// (offline-first). A zero delta is ignored.
+func publishStockAdjusted(ctx context.Context, d *common.Deps, ev plugins.StockAdjustedEvent) {
+	if ev.DeltaQty == 0 {
+		return
+	}
+	if ev.AdjustedAt.IsZero() {
+		ev.AdjustedAt = time.Now().UTC()
+	}
+	_, _ = plugins.SharedBus(d.Db).PublishStockAdjusted(ctx, ev)
+}
+
+// publishStockAdjustedForSale emits one stock.adjusted per line for a completed
+// sale or return, mirroring the signed stock movement CompleteSale wrote (a
+// sale takes stock out → negative delta; a return puts it back → positive).
+// Best-effort/non-blocking, per publishStockAdjusted.
+func publishStockAdjustedForSale(ctx context.Context, d *common.Deps, in pos.SaleInput) {
+	reason := "sale"
+	if in.SaleType == "return" {
+		reason = "refund"
+	}
+	for _, l := range in.Lines {
+		delta := l.Qty
+		if in.SaleType == "sale" {
+			delta = -delta
+		}
+		publishStockAdjusted(ctx, d, plugins.StockAdjustedEvent{
+			ItemID:    l.ItemID,
+			VariantID: l.VariantID,
+			SKU:       l.SKU,
+			DeltaQty:  delta,
+			Reason:    reason,
+			Location:  l.LocationID,
+		})
+	}
+}
+
+// stockMovementReason maps a stock_movements type to the stock.adjusted reason.
+func stockMovementReason(movementType string) string {
+	switch movementType {
+	case "receive":
+		return "received"
+	case "adjust":
+		return "adjustment"
+	default:
+		return movementType
+	}
 }
