@@ -3,6 +3,7 @@
   <div class="logo"><img src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till Logo" /></div>
   <!-- One shared touch header on every page: the ☰ button opens the /menu
        launcher of big touch tiles — that page IS the navigation. -->
+  <a href="/" class="nav-toggle" data-testid="nav-till">🧾 {{ T "nav.till" }}</a>
   <a href="/menu" class="nav-toggle" data-testid="nav-menu">☰ {{ T "nav.menu" }}</a>
   <div class="nav-right">
     <span id="sync-chip" hx-get="/ui/sync-chip" hx-trigger="load, every 30s"></span>
