@@ -1,0 +1,316 @@
+// Package enroll implements first-boot anonymous store enrolment (ADR-0013,
+// layer 1). A fresh till generates a stable device_id, registers itself with
+// the marketplace (POST /v1/stores/register) and persists the returned store/
+// merchant identity + device token in settings, so any download can browse and
+// install free plugins with no manual configuration. Explicit configuration
+// (UT_MARKETPLACE_CLIENT_ID / _STORE_ID / _DEVICE_ID) always wins; enrolment
+// only fills the gaps. Registration never blocks startup — it is retried in
+// the background until the marketplace is reachable (offline-first).
+//
+// The marketplace's Ed25519 signing key (needed to verify plugin bundles) is
+// fetched alongside enrolment when UT_MARKETPLACE_PUBLIC_KEY is not set, and
+// persisted on first sight — a later key change never silently replaces it.
+package enroll
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/logging"
+)
+
+// Settings is the key/value persistence enrolment needs; *settings.Store
+// satisfies it.
+type Settings interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+	Set(ctx context.Context, key, value string) error
+}
+
+// Settings keys holding the enrolled identity.
+const (
+	keyDeviceID   = "marketplace.device_id"
+	keyStoreID    = "marketplace.store_id"
+	keyMerchantID = "marketplace.merchant_id"
+	keyToken      = "marketplace.token"
+	keyPublicKey  = "marketplace.public_key"
+	keyEnrolledAt = "marketplace.enrolled_at"
+)
+
+type identity struct {
+	DeviceID   string
+	StoreID    string
+	MerchantID string
+	Token      string
+	PublicKey  string
+}
+
+var (
+	mu  sync.RWMutex
+	cur identity
+	// storeIDExplicit records whether UT_MARKETPLACE_STORE_ID was set in the
+	// environment. cfg.Marketplace.StoreID falls back to the store NAME when
+	// unset, so emptiness alone can't tell "operator chose this" from default.
+	storeIDExplicit bool
+
+	// Overridable in tests.
+	httpClient  = &http.Client{Timeout: 15 * time.Second}
+	retryDelays = []time.Duration{30 * time.Second, 2 * time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute}
+)
+
+// Init loads (or creates) this till's marketplace identity, fills the empty
+// cfg.Marketplace fields from it, and — when the till is not yet enrolled and
+// not explicitly configured — starts a background registration loop. Call once
+// at startup, after LoadRuntimeConfig and before the server starts.
+func Init(ctx context.Context, cfg *config.Config, kv Settings) {
+	log := logging.L()
+	storeIDExplicit = os.Getenv("UT_MARKETPLACE_STORE_ID") != ""
+	// At this point cfg.Marketplace.ClientID can only have come from the
+	// environment; a non-empty value means the operator configured a merchant
+	// identity themselves, so auto-enrolment must not mint another one.
+	clientIDExplicit := cfg.Marketplace.ClientID != ""
+
+	get := func(key string) string {
+		v, _, err := kv.Get(ctx, key)
+		if err != nil {
+			log.Warnf("enrolment: read setting %s: %v", key, err)
+		}
+		return v
+	}
+	id := identity{
+		DeviceID:   get(keyDeviceID),
+		StoreID:    get(keyStoreID),
+		MerchantID: get(keyMerchantID),
+		Token:      get(keyToken),
+		PublicKey:  get(keyPublicKey),
+	}
+	if id.DeviceID == "" {
+		id.DeviceID = cfg.Marketplace.DeviceID
+		if id.DeviceID == "" {
+			id.DeviceID = "till-" + uuid.NewString()
+		}
+		if err := kv.Set(ctx, keyDeviceID, id.DeviceID); err != nil {
+			log.Warnf("enrolment: persist device_id: %v", err)
+		}
+	}
+	mu.Lock()
+	cur = id
+	mu.Unlock()
+
+	// Startup fill: explicit (env) values win, the persisted identity fills
+	// the gaps. Safe to mutate cfg here — the server hasn't started yet.
+	m := &cfg.Marketplace
+	if m.DeviceID == "" {
+		m.DeviceID = id.DeviceID
+	}
+	if m.ClientID == "" {
+		m.ClientID = id.MerchantID
+	}
+	if id.StoreID != "" && !storeIDExplicit {
+		m.StoreID = id.StoreID
+	}
+	if m.PublicKey == "" {
+		m.PublicKey = id.PublicKey
+	}
+	if m.MerchantToken == "" {
+		m.MerchantToken = id.Token
+	}
+
+	if m.EndpointURL == "" {
+		return
+	}
+	needRegister := !clientIDExplicit && (id.StoreID == "" || id.Token == "")
+	needKey := m.PublicKey == ""
+	if !needRegister && !needKey {
+		return
+	}
+	go run(ctx, *m, cfg.StoreName, kv, needRegister, needKey)
+}
+
+// Effective returns a copy of cfg with the live enrolled identity applied
+// (explicit configuration still wins). Handlers use it per request so a till
+// that enrols after boot installs plugins without a restart; reading through
+// a copy keeps the shared config race-free.
+func Effective(cfg *config.Config) config.Config {
+	out := *cfg
+	m := &out.Marketplace
+	mu.RLock()
+	defer mu.RUnlock()
+	if m.DeviceID == "" {
+		m.DeviceID = cur.DeviceID
+	}
+	if m.ClientID == "" {
+		m.ClientID = cur.MerchantID
+	}
+	if cur.StoreID != "" && !storeIDExplicit {
+		m.StoreID = cur.StoreID
+	}
+	if m.PublicKey == "" {
+		m.PublicKey = cur.PublicKey
+	}
+	if m.MerchantToken == "" {
+		m.MerchantToken = cur.Token
+	}
+	return out
+}
+
+// run retries registration and/or the signing-key fetch until both succeed or
+// the till shuts down. Best-effort by design: the till is fully usable offline
+// the whole time.
+func run(ctx context.Context, m config.MarketplaceConfig, storeName string, kv Settings, needRegister, needKey bool) {
+	log := logging.L()
+	for attempt := 0; ; attempt++ {
+		if needRegister {
+			if err := register(ctx, m, storeName, kv); err != nil {
+				log.Infof("enrolment: register with marketplace failed (will retry): %v", err)
+			} else {
+				needRegister = false
+			}
+		}
+		if needKey {
+			if err := fetchSigningKey(ctx, m.EndpointURL, kv); err != nil {
+				log.Infof("enrolment: fetch marketplace signing key failed (will retry): %v", err)
+			} else {
+				needKey = false
+			}
+		}
+		if !needRegister && !needKey {
+			return
+		}
+		delay := retryDelays[len(retryDelays)-1]
+		if attempt < len(retryDelays) {
+			delay = retryDelays[attempt]
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
+}
+
+// register performs the anonymous enrolment call and persists the returned
+// identity (ADR-0013 layer 1; marketplace handler: /api/v1/stores/register).
+func register(ctx context.Context, m config.MarketplaceConfig, storeName string, kv Settings) error {
+	mu.RLock()
+	deviceID := cur.DeviceID
+	mu.RUnlock()
+
+	payload, err := json.Marshal(map[string]string{
+		"store_name": storeName,
+		"device_id":  deviceID,
+		"version":    buildinfo.Version,
+	})
+	if err != nil {
+		return err
+	}
+	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/register"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var envelope struct {
+		Data struct {
+			StoreID    string `json:"store_id"`
+			MerchantID string `json:"merchant_id"`
+			Token      string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return fmt.Errorf("decode register response: %w", err)
+	}
+	d := envelope.Data
+	if d.StoreID == "" || d.Token == "" {
+		return fmt.Errorf("register response missing store_id or token")
+	}
+	if d.MerchantID == "" {
+		d.MerchantID = d.StoreID
+	}
+
+	log := logging.L()
+	for key, value := range map[string]string{
+		keyStoreID:    d.StoreID,
+		keyMerchantID: d.MerchantID,
+		keyToken:      d.Token,
+		keyEnrolledAt: time.Now().UTC().Format(time.RFC3339),
+	} {
+		if err := kv.Set(ctx, key, value); err != nil {
+			log.Warnf("enrolment: persist %s: %v", key, err)
+		}
+	}
+	mu.Lock()
+	cur.StoreID = d.StoreID
+	cur.MerchantID = d.MerchantID
+	cur.Token = d.Token
+	mu.Unlock()
+	log.Infof("enrolment: till registered with marketplace as %s (device %s)", d.StoreID, deviceID)
+	return nil
+}
+
+// fetchSigningKey retrieves the marketplace's Ed25519 release-signing public
+// key so a fresh till can verify plugin bundles without manual configuration.
+// The endpoint lives on the marketplace UI server, a sibling of the /api base
+// (same derivation the entitlements fetch uses).
+func fetchSigningKey(ctx context.Context, endpointURL string, kv Settings) error {
+	base := strings.TrimSuffix(strings.TrimRight(endpointURL, "/"), "/api")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/ui/api/signing-key", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("signing-key returned %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Data struct {
+			Algorithm    string `json:"algorithm"`
+			PublicKeyHex string `json:"public_key_hex"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return fmt.Errorf("decode signing-key response: %w", err)
+	}
+	if envelope.Data.Algorithm != "ed25519" {
+		return fmt.Errorf("unsupported signing algorithm %q", envelope.Data.Algorithm)
+	}
+	raw, err := hex.DecodeString(envelope.Data.PublicKeyHex)
+	if err != nil || len(raw) != ed25519.PublicKeySize {
+		return fmt.Errorf("signing-key response is not a valid ed25519 public key")
+	}
+
+	if err := kv.Set(ctx, keyPublicKey, envelope.Data.PublicKeyHex); err != nil {
+		logging.L().Warnf("enrolment: persist public_key: %v", err)
+	}
+	mu.Lock()
+	cur.PublicKey = envelope.Data.PublicKeyHex
+	mu.Unlock()
+	logging.L().Infof("enrolment: marketplace signing key pinned (%s…)", envelope.Data.PublicKeyHex[:12])
+	return nil
+}
