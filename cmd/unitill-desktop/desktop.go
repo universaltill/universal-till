@@ -6,7 +6,8 @@
 // opens the window; closing the window stops the server.
 //
 // Build (macOS/Windows/Linux, needs CGO + the system WebView):
-//   go build -tags desktop -o unitill-desktop ./cmd/unitill-desktop
+//
+//	go build -tags desktop -o unitill-desktop ./cmd/unitill-desktop
 package main
 
 import (
@@ -34,8 +35,20 @@ func main() {
 		posBin = posBinaryName() // dev: rely on PATH / current dir
 	}
 
+	// The server resolves web/ relative to its working directory. That is the
+	// executable's own dir in dev and in the tar/deb layout, but inside a macOS
+	// .app the binaries live in Contents/MacOS while web/ (a resource, not code)
+	// lives in Contents/Resources — so codesign accepts the bundle. Pick
+	// whichever dir actually contains web/.
+	workDir := dir
+	if _, err := os.Stat(filepath.Join(dir, "web")); err != nil {
+		if res := filepath.Join(dir, "..", "Resources"); dirHasWeb(res) {
+			workDir = res
+		}
+	}
+
 	cmd := exec.Command(posBin)
-	cmd.Dir = dir // so web/ and data/ resolve next to the binary
+	cmd.Dir = workDir // so web/ resolves; data/ defaults to the per-user dir
 	// We supply the window ourselves, so tell the server not to also pop a browser.
 	cmd.Env = append(os.Environ(), "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR=:"+port)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -60,4 +73,10 @@ func main() {
 	w.SetSize(1280, 860, webview.HintNone)
 	w.Navigate("http://" + addr)
 	w.Run() // blocks until the window closes
+}
+
+// dirHasWeb reports whether dir contains a web/ subdirectory.
+func dirHasWeb(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "web"))
+	return err == nil && info.IsDir()
 }
