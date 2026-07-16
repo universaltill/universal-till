@@ -371,6 +371,8 @@
   "plugins.settings.none": "This plugin has no settings.",
   "plugins.settings.save": "Save settings",
   "plugins.settings.saved": "Settings saved — applied immediately",
+  "plugins.settings.secret_empty": "not set",
+  "plugins.settings.secret_set": "•••••••• set — leave blank to keep",
   "plugins.settings.title": "Settings",
   "plugins.status.active": "Active",
   "plugins.status.downloading": "Downloading",
