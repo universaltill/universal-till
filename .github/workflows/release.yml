@@ -56,8 +56,9 @@ jobs:
   # A real macOS .app (embedded WebView, no Terminal) packaged as a .dmg. Needs
   # a macOS runner for CGO/WKWebView + codesign/iconutil, so it's a separate
   # job; goreleaser already published the core release, so a failure here never
-  # blocks it. Ad-hoc signed only (Apple Silicon requires a signature to run);
-  # not notarized — see docs/arch/desktop-app.md.
+  # blocks it. It Developer-ID signs + notarizes when the signing secrets are
+  # configured, otherwise ad-hoc signs (Apple Silicon requires a signature to
+  # run; ad-hoc downloads need right-click → Open). See docs/arch/desktop-app.md.
   macos-app:
     runs-on: macos-14 # Apple Silicon
     permissions:
@@ -69,7 +70,34 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # Import the Developer ID cert into a throwaway keychain when configured.
+      # MACOS_CERT_P12 = base64 of the exported .p12; MACOS_CERT_PASSWORD its
+      # export password. Skipped (→ ad-hoc build) when the secret is absent.
+      - name: Import signing certificate
+        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KP="$(openssl rand -base64 24)"
+          security create-keychain -p "$KP" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KP" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KP" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
       - name: Build .app and .dmg
+        env:
+          # Empty when the secrets aren't set → build scripts ad-hoc sign / skip notarize.
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
