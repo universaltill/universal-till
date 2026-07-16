@@ -52,24 +52,47 @@ type Event struct {
 	Payload   []byte    `json:"payload"`
 }
 
-// SaleCompletedEvent represents sale completion data
+// SaleCompletedEvent is the payload published on "sale.completed". It is the
+// stable contract external-integration plugins (ERP/accounting connectors:
+// SAP, Dynamics/LS Central, …) consume to mirror each sale into another
+// system. Money is integer minor units; quantities are decimal (weighed goods).
 type SaleCompletedEvent struct {
 	SaleID        string         `json:"sale_id"`
-	TotalCents    int64          `json:"total_cents"`
+	ReceiptNo     string         `json:"receipt_no"`
+	SaleType      string         `json:"sale_type"` // "sale" | "return"
+	Currency      string         `json:"currency"`
+	SubtotalCents int64          `json:"subtotal_cents"`
+	DiscountCents int64          `json:"discount_cents"`
 	TaxCents      int64          `json:"tax_cents"`
+	TotalCents    int64          `json:"total_cents"`
 	CustomerID    string         `json:"customer_id"`
+	RegisterID    string         `json:"register_id"`
+	CashierID     string         `json:"cashier_id"`
+	PaymentMethod string         `json:"payment_method"` // primary method (convenience)
+	Payments      []SalePayment  `json:"payments"`
 	LineItems     []SaleLineItem `json:"line_items"`
-	PaymentMethod string         `json:"payment_method"`
 	CompletedAt   time.Time      `json:"completed_at"`
 }
 
-// SaleLineItem represents an item in a sale
+// SaleLineItem represents an item in a sale (ERP contract).
 type SaleLineItem struct {
-	ItemID         string `json:"item_id"`
-	Name           string `json:"name"`
-	Quantity       int    `json:"quantity"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	TotalCents     int64  `json:"total_cents"`
+	ItemID         string  `json:"item_id"`
+	VariantID      string  `json:"variant_id"`
+	SKU            string  `json:"sku"`
+	Name           string  `json:"name"`
+	Quantity       float64 `json:"quantity"`
+	UnitPriceCents int64   `json:"unit_price_cents"`
+	DiscountCents  int64   `json:"discount_cents"`
+	TaxRateBP      int     `json:"tax_rate_bp"`
+	TaxCents       int64   `json:"tax_cents"`
+	TotalCents     int64   `json:"total_cents"`
+}
+
+// SalePayment is one tender applied to a sale (ERP contract).
+type SalePayment struct {
+	Method      string `json:"method"`
+	AmountCents int64  `json:"amount_cents"`
+	Reference   string `json:"reference"`
 }
 
 // EventHandler executes a blocking handler for an event; returning an error signals rollback.
