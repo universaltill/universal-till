@@ -45,8 +45,30 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 		label := strings.ToUpper(m.Method[:1]) + m.Method[1:]
 		doc.Payments = append(doc.Payments, print.KV{Label: label, Amount: money(m.In - m.Out)})
 	}
+	// Department breakdown (E1b) + per-register breakdown, as footer lines so
+	// they print on the Z-report without depending on new Doc fields.
+	if len(rep.Departments) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY DEPARTMENT")
+		for _, d := range rep.Departments {
+			name := d.Department
+			if name == "" {
+				name = "Uncategorized"
+			}
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(d.Revenue)))
+		}
+	}
+	if len(rep.Tills) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY TILL")
+		for _, t := range rep.Tills {
+			name := t.Name
+			if name == "" {
+				name = "This till"
+			}
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(t.Revenue)))
+		}
+	}
 	if rep.FirstReceipt != "" {
-		doc.Footer = []string{"Receipts " + rep.FirstReceipt + " - " + rep.LastReceipt}
+		doc.Footer = append(doc.Footer, "", "Receipts "+rep.FirstReceipt+" - "+rep.LastReceipt)
 	}
 	return doc
 }
