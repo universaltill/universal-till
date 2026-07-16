@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Build "Universal Till.app" — a real macOS app bundle that runs the POS server
+# and shows it in an embedded WebView window (no browser chrome, no Terminal).
+#
+# The bundle is AD-HOC codesigned (`codesign --sign -`). That is REQUIRED for
+# Apple Silicon to run it at all (unsigned arm64 binaries are killed on launch);
+# it is NOT Apple notarization, so a *downloaded* copy is still quarantined and
+# Gatekeeper asks the user to right-click → Open once (or run the bundled
+# "Remove quarantine" helper). Proper notarization needs a paid Apple Developer
+# account — see docs/arch/desktop-app.md.
+#
+# Usage:  packaging/macos/build-app.sh [version] [output-dir]
+# Needs:  macOS with Xcode CLT (clang for CGO), Go, iconutil/sips (built in).
+set -euo pipefail
+
+VERSION="${1:-dev}"
+OUTDIR="${2:-dist/macos}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$REPO_ROOT"
+
+APP="$OUTDIR/Universal Till.app"
+LDFLAGS="-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}"
+
+echo "==> building binaries (arm64)"
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+# The pure-Go server (same binary the tar/deb ship).
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+  go build -ldflags "$LDFLAGS" -o "$APP/Contents/MacOS/unitill-pos" .
+
+# The WebView shell (CGO + system WKWebView, behind the `desktop` build tag).
+CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
+  go build -tags desktop -ldflags "$LDFLAGS" -o "$APP/Contents/MacOS/unitill-desktop" ./cmd/unitill-desktop
+
+echo "==> staging web assets"
+# web/ is a resource, not code, so it goes in Contents/Resources (codesign
+# rejects non-code under MacOS/). The desktop shell points the server's working
+# dir here. Data (DB, backups, plugins) lives outside the read-only bundle in
+# ~/Library/Application Support/UniversalTill (internal/paths default).
+cp -R web "$APP/Contents/Resources/web"
+
+echo "==> Info.plist"
+sed "s/__VERSION__/${VERSION}/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+
+echo "==> app icon"
+ICONSET="$(mktemp -d)/AppIcon.iconset"
+mkdir -p "$ICONSET"
+BASE_PNG="$(mktemp -d)/icon.png"
+# Rasterize the vector logo to a 1024px master, then derive every icon size.
+if qlmanage -t -s 1024 -o "$(dirname "$BASE_PNG")" web/public/assets/logo/ut-logo.svg >/dev/null 2>&1; then
+  mv "$(dirname "$BASE_PNG")"/ut-logo.svg.png "$BASE_PNG"
+fi
+if [ -f "$BASE_PNG" ]; then
+  for s in 16 32 64 128 256 512 1024; do
+    sips -z "$s" "$s" "$BASE_PNG" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null 2>&1 || true
+  done
+  # Retina (@2x) variants Apple expects.
+  cp "$ICONSET/icon_32x32.png"   "$ICONSET/icon_16x16@2x.png"   2>/dev/null || true
+  cp "$ICONSET/icon_64x64.png"   "$ICONSET/icon_32x32@2x.png"   2>/dev/null || true
+  cp "$ICONSET/icon_256x256.png" "$ICONSET/icon_128x128@2x.png" 2>/dev/null || true
+  cp "$ICONSET/icon_512x512.png" "$ICONSET/icon_256x256@2x.png" 2>/dev/null || true
+  cp "$ICONSET/icon_1024x1024.png" "$ICONSET/icon_512x512@2x.png" 2>/dev/null || true
+  iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null \
+    && echo "    icon embedded" || echo "    (icon skipped)"
+else
+  echo "    (no icon source; skipping)"
+fi
+
+echo "==> ad-hoc codesign (required for Apple Silicon)"
+# Sign inner binaries first, then the bundle, so --verify passes.
+codesign --force --timestamp=none --sign - "$APP/Contents/MacOS/unitill-pos"
+codesign --force --timestamp=none --sign - "$APP/Contents/MacOS/unitill-desktop"
+codesign --force --deep --timestamp=none --sign - "$APP"
+codesign --verify --deep --strict "$APP" && echo "    signature valid"
+
+echo
+echo "Built: $APP"
+echo "Run locally:  open \"$APP\""
+echo "Distribute:   packaging/macos/make-dmg.sh \"$VERSION\" \"$OUTDIR\""

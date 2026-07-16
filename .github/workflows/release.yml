@@ -52,3 +52,30 @@ jobs:
       # public Releases API (/releases/latest) at page load, so it picks up
       # this release automatically. The site's staged mirror is only a
       # fallback for when the API is unreachable.
+
+  # A real macOS .app (embedded WebView, no Terminal) packaged as a .dmg. Needs
+  # a macOS runner for CGO/WKWebView + codesign/iconutil, so it's a separate
+  # job; goreleaser already published the core release, so a failure here never
+  # blocks it. Ad-hoc signed only (Apple Silicon requires a signature to run);
+  # not notarized — see docs/arch/desktop-app.md.
+  macos-app:
+    runs-on: macos-14 # Apple Silicon
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build .app and .dmg
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          packaging/macos/build-app.sh "$VERSION" dist/macos
+          packaging/macos/make-dmg.sh "$VERSION" dist/macos
+      - name: Attach the .dmg to the release
+        run: gh release upload "${GITHUB_REF_NAME}" "dist/macos/unitill-pos-${GITHUB_REF_NAME#v}-macOS-arm64.dmg" --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
