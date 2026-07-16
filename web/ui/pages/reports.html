@@ -105,6 +105,18 @@
         </tbody>
       </table>
     </div>
+    {{ if .Tills }}
+    <div class="card" style="margin-top:1rem">
+      <h2>{{ T "reports.by_till" }}</h2>
+      <table class="table">
+        <tbody>
+          {{ range .Tills }}
+          <tr><td><strong>{{ if .Name }}{{ .Name }}{{ else }}{{ T "reports.this_till" }}{{ end }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+    {{ end }}
     <div class="card" style="margin-top:1rem">
       <h2>{{ T "reports.by_method" }}</h2>
       <table class="table">
