@@ -20,6 +20,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		daily, _ := repo.SalesByDay(r.Context(), days)
 		top, _ := repo.TopItems(r.Context(), days, 10)
 		methods, _ := repo.PaymentBreakdown(r.Context(), days)
+		departments, _ := repo.SalesByDepartment(r.Context(), days)
 		archived, _ := repo.ListArchivedReports(r.Context(), 14)
 		type eodRow struct {
 			Period string
@@ -48,21 +49,22 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		httpx.Render("ui/pages/reports.html", map[string]any{
-			"title":      "Reports",
-			"theme":      d.CurrentState().Theme,
-			"menuItems":  d.Menu,
-			"CanAsk":     aiService(r.Context(), d).CanAsk() && isManagerOrAuthOff(r),
-			"IsManager":  isManagerOrAuthOff(r),
-			"EODRows":    eodRows,
-			"EODEnabled": eodEnabled == "true",
-			"EODTime":    eodTime,
-			"Days":       days,
-			"Daily":      daily,
-			"Top":        top,
-			"Methods":    methods,
-			"GrandTotal": grandTotal,
-			"GrandTax":   grandTax,
-			"GrandCount": grandCount,
+			"title":       "Reports",
+			"theme":       d.CurrentState().Theme,
+			"menuItems":   d.Menu,
+			"CanAsk":      aiService(r.Context(), d).CanAsk() && isManagerOrAuthOff(r),
+			"IsManager":   isManagerOrAuthOff(r),
+			"EODRows":     eodRows,
+			"EODEnabled":  eodEnabled == "true",
+			"EODTime":     eodTime,
+			"Days":        days,
+			"Daily":       daily,
+			"Top":         top,
+			"Departments": departments,
+			"Methods":     methods,
+			"GrandTotal":  grandTotal,
+			"GrandTax":    grandTax,
+			"GrandCount":  grandCount,
 		})(w, r)
 	})
 }
