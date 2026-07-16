@@ -21,6 +21,7 @@ type ImportItem struct {
 	Barcode     string
 	PriceMinor  int64
 	Category    string
+	Department  string // enterprise/ERP masters carry a department axis
 	Description string
 	IsWeighed   bool
 	Stock       float64 // opening quantity from the source system
@@ -30,20 +31,24 @@ type ImportItem struct {
 
 // Result is a parsed file.
 type Result struct {
-	Format string // loyverse | square | generic
+	Format string // loyverse | square | generic | generic-erp
 	Items  []ImportItem
 }
 
 // column synonym sets, matched case-insensitively against trimmed headers.
 var columnSynonyms = map[string][]string{
-	"name":        {"name", "item name", "product name", "title"},
-	"sku":         {"sku", "reference", "item code"},
-	"barcode":     {"barcode", "gtin", "upc", "ean", "barcodes"},
-	"price":       {"price", "default price", "retail price", "sale price", "price [gbp]"},
-	"category":    {"category", "category name", "department", "group"},
+	"name":     {"name", "item name", "product name", "title"},
+	"sku":      {"sku", "reference", "item code"},
+	"barcode":  {"barcode", "gtin", "upc", "ean", "barcodes"},
+	"price":    {"price", "default price", "retail price", "sale price", "price [gbp]"},
+	"category": {"category", "category name", "group", "subcategory", "sub-category", "class"},
+	// Department is a distinct axis from category (an ERP master carries both;
+	// a top-level "department" that categories nest under). Kept separate so a
+	// file with only a category leaves department empty.
+	"department":  {"department", "dept"},
 	"description": {"description", "details"},
-	"weighed":     {"sold by weight", "weighed", "sold by weight (y/n)"},
-	"stock":       {"in stock", "stock", "quantity", "current quantity", "stock quantity"},
+	"weighed":     {"sold by weight", "weighed", "sold by weight (y/n)", "weighed (y/n)"},
+	"stock":       {"in stock", "stock", "quantity", "qty", "in_stock", "on_hand", "on hand", "current quantity", "stock quantity", "opening stock"},
 	// square-specific extras used only for detection / variation naming
 	"variation": {"variation name"},
 	"token":     {"token", "handle"},
@@ -76,9 +81,27 @@ func DetectFormat(headers []string) string {
 		return "loyverse"
 	case strings.Contains(joined, "token") && strings.Contains(joined, "variation name"):
 		return "square"
+	case hasColumn(headers, "department"):
+		// A department axis marks an enterprise/ERP master export (Ansar &c.)
+		// rather than a plain corner-shop catalog. Broad synonym coverage
+		// (stock, department, qty) still flows through the shared parser.
+		return "generic-erp"
 	default:
 		return "generic"
 	}
+}
+
+// hasColumn reports whether the header row carries a column mapping to field.
+func hasColumn(headers []string, field string) bool {
+	for _, h := range headers {
+		key := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF")))
+		for _, s := range columnSynonyms[field] {
+			if key == s || strings.HasPrefix(key, s+" [") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Parse reads a CSV export into neutral items. currencyDecimals drives
@@ -121,6 +144,7 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 			SKU:         get(rec, "sku"),
 			Barcode:     normalizeBarcode(get(rec, "barcode")),
 			Category:    get(rec, "category"),
+			Department:  get(rec, "department"),
 			Description: get(rec, "description"),
 			IsWeighed:   isTruthy(get(rec, "weighed")),
 		}
