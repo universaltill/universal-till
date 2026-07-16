@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -171,6 +172,15 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						created++
 						continue
 					}
+					// Mirror imported stock to inventory connectors
+					// (best-effort, non-blocking).
+					publishStockAdjusted(r.Context(), d, plugins.StockAdjustedEvent{
+						ItemID:   itemID,
+						SKU:      it.SKU,
+						DeltaQty: it.Stock,
+						Reason:   "received",
+						Location: locID,
+					})
 				}
 				rows[i].Status = "created"
 				created++
