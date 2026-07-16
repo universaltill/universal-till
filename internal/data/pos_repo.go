@@ -554,6 +554,86 @@ type MethodTotal struct {
 	Amount int64
 }
 
+// DeptSales is one department's revenue for a reporting window. A department is
+// an item's top-level (root) category — department stores merchandise and
+// report along that axis (menswear, electronics, grocery…). See
+// docs/arch/enterprise-department-stores.md (increment E1).
+type DeptSales struct {
+	Department string  `json:"department"`
+	Qty        float64 `json:"qty"`
+	Revenue    int64   `json:"revenue"`
+}
+
+// deptRootsCTE maps every category id to its top-level (department) category by
+// walking parent_id up to the root. Shared by the day and window queries.
+const deptRootsCTE = `
+WITH RECURSIVE dept_roots(id, root_name) AS (
+    SELECT id, name FROM categories WHERE parent_id IS NULL
+    UNION ALL
+    SELECT c.id, d.root_name FROM categories c JOIN dept_roots d ON c.parent_id = d.id
+)`
+
+// SalesByDepartment aggregates completed-sale revenue by department for the
+// last N days. Items with no category (or since-deleted) roll up to
+// "Uncategorized". Variant lines resolve through their parent item.
+func (r *POSRepo) SalesByDepartment(ctx context.Context, days int) ([]DeptSales, error) {
+	rows, err := r.db.QueryContext(ctx, deptRootsCTE+`
+SELECT COALESCE(dr.root_name, '') AS department,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_after_tax), 0) AS revenue
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN item_variants iv ON iv.id = sl.variant_id
+LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
+LEFT JOIN dept_roots dr ON dr.id = it.category_id
+WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+GROUP BY department
+ORDER BY revenue DESC`, fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, fmt.Errorf("sales by department: %w", err)
+	}
+	defer rows.Close()
+	var out []DeptSales
+	for rows.Next() {
+		var d DeptSales
+		if err := rows.Scan(&d.Department, &d.Qty, &d.Revenue); err != nil {
+			return nil, fmt.Errorf("scan dept sales: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// DepartmentsForDay is SalesByDepartment for a single business day (used by the
+// EOD Z-report). day is "YYYY-MM-DD".
+func (r *POSRepo) DepartmentsForDay(ctx context.Context, day string) ([]DeptSales, error) {
+	rows, err := r.db.QueryContext(ctx, deptRootsCTE+`
+SELECT COALESCE(dr.root_name, '') AS department,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_after_tax), 0) AS revenue
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN item_variants iv ON iv.id = sl.variant_id
+LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
+LEFT JOIN dept_roots dr ON dr.id = it.category_id
+WHERE s.status = 'completed' AND date(s.created_at) = date(?)
+GROUP BY department
+ORDER BY revenue DESC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("departments for day: %w", err)
+	}
+	defer rows.Close()
+	var out []DeptSales
+	for rows.Next() {
+		var d DeptSales
+		if err := rows.Scan(&d.Department, &d.Qty, &d.Revenue); err != nil {
+			return nil, fmt.Errorf("scan dept day: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // SalesByDay aggregates completed sales per day for the last N days.
 func (r *POSRepo) SalesByDay(ctx context.Context, days int) ([]DailySales, error) {
 	rows, err := r.db.QueryContext(ctx, `
