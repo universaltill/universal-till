@@ -758,6 +758,8 @@ type EODReport struct {
 	Net          int64       `json:"net"`
 	TaxNet       int64       `json:"tax_net"`
 	Methods      []EODMethod `json:"methods"`
+	Departments  []DeptSales `json:"departments"` // per-department sales (E1b)
+	Tills        []TillSales `json:"tills"`       // per-register sales (multi-till)
 	FirstReceipt string      `json:"first_receipt"`
 	LastReceipt  string      `json:"last_receipt"`
 	GeneratedAt  string      `json:"generated_at"`
@@ -802,7 +804,42 @@ GROUP BY p.method_id ORDER BY 2 DESC`, day)
 		}
 		rep.Methods = append(rep.Methods, m)
 	}
-	return rep, rows.Err()
+	if err := rows.Err(); err != nil {
+		return rep, err
+	}
+
+	// Department breakdown for the day (E1b — enterprise/department stores).
+	if depts, err := r.DepartmentsForDay(ctx, day); err == nil {
+		rep.Departments = depts
+	}
+
+	// Per-till (register) breakdown for the day — only meaningful with >1 till,
+	// so it's left empty for single-register shops.
+	tillRows, err := r.db.QueryContext(ctx, `
+SELECT s.till_id, COALESCE(t.name, ''), COUNT(*), COALESCE(SUM(s.total), 0)
+FROM sales s
+LEFT JOIN tills t ON t.id = s.till_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at) = ?
+GROUP BY s.till_id ORDER BY 4 DESC`, day)
+	if err != nil {
+		return rep, fmt.Errorf("eod tills: %w", err)
+	}
+	defer tillRows.Close()
+	var tills []TillSales
+	for tillRows.Next() {
+		var ts TillSales
+		if err := tillRows.Scan(&ts.TillID, &ts.Name, &ts.Count, &ts.Revenue); err != nil {
+			return rep, fmt.Errorf("scan eod till: %w", err)
+		}
+		tills = append(tills, ts)
+	}
+	if err := tillRows.Err(); err != nil {
+		return rep, err
+	}
+	if len(tills) > 1 {
+		rep.Tills = tills
+	}
+	return rep, nil
 }
 
 // ArchiveReport stores a generated report; kind+period is unique so the
