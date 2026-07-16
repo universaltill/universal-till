@@ -22,6 +22,12 @@
   <string>11.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <!-- The AI plugin scans items with the camera; macOS requires a usage
+       description or it blocks (crashes) the request. -->
+  <key>NSCameraUsageDescription</key>
+  <string>Universal Till uses the camera to scan items and barcodes.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Universal Till may use the microphone for voice features.</string>
   <!-- The webview shell loads only its own localhost server. -->
   <key>NSAppTransportSecurity</key>
   <dict>
