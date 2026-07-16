@@ -49,6 +49,9 @@ archives:
       - src: packaging/linux/run-unitill.sh
         dst: run-unitill.sh
         info: { mode: 0o755 }
+      - src: packaging/linux/uninstall-unitill.sh
+        dst: uninstall-unitill.sh
+        info: { mode: 0o755 }
       - README.md
       - LICENSE*
   - id: macos
@@ -63,6 +66,9 @@ archives:
       - src: packaging/macos/run-unitill.command
         dst: run-unitill.command
         info: { mode: 0o755 }
+      - src: packaging/macos/uninstall-unitill.command
+        dst: uninstall-unitill.command
+        info: { mode: 0o755 }
       - README.md
       - LICENSE*
   - id: windows
@@ -76,6 +82,8 @@ archives:
         dst: pos.env
       - src: packaging/windows/run-unitill.bat
         dst: run-unitill.bat
+      - src: packaging/windows/uninstall-unitill.bat
+        dst: uninstall-unitill.bat
       - README.md
       - LICENSE*
 
@@ -104,6 +112,7 @@ nfpms:
     scripts:
       postinstall: packaging/scripts/postinstall.sh
       preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
 
 checksum:
   name_template: checksums.txt

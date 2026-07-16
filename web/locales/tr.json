@@ -519,6 +519,7 @@
   "settings.enrol.benefits": "Kayıt ücretsizdir ve kasanızı eklenti mağazasına bağlar: eklentileri tek dokunuşla kurun ve bulut özellikleri geldikçe kullanın. Kasa çevrimiçiyken otomatik gerçekleşir — ya da aşağıdaki düğmeyle şimdi kaydolun.",
   "settings.enrol.device": "Cihaz kimliği",
   "settings.enrol.failed": "Kayıt başarısız — internet bağlantısını kontrol edip yeniden deneyin.",
+  "settings.enrol.forbidden": "Bu satış noktasını yalnızca bir yönetici veya sorumlu kaydedebilir.",
   "settings.enrol.not_registered": "Bu kasa henüz kayıtlı değil.",
   "settings.enrol.registered": "Bu kasa Universal Till mağazasına kayıtlı.",
   "settings.enrol.retry": "Şimdi kaydol",
