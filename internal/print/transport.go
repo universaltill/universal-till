@@ -23,6 +23,29 @@ type Config struct {
 	Device  string // device: character device path, e.g. /dev/usb/lp0
 	Charset string // utf8 | ascii
 	AutoPrint bool
+	// KitchenAddress routes kitchen tickets to a SEPARATE printer — a
+	// network host[:port] or a device path. Empty means kitchen printing is
+	// off (see arch/restaurant-phone-orders.md). Charset is shared.
+	KitchenAddress string
+}
+
+// KitchenEnabled reports whether a kitchen printer is configured.
+func (c Config) KitchenEnabled() bool { return strings.TrimSpace(c.KitchenAddress) != "" }
+
+// TransportForAddress builds a transport from a bare address, auto-detecting
+// the mode: a leading "/" is a character device, anything else is a network
+// host[:port]. An empty address returns (nil, nil) — the caller treats a nil
+// transport as "printing off". Used for the kitchen printer, which is a plain
+// address rather than a full mode/address/device Config.
+func TransportForAddress(addr string) (Transport, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(addr, "/") {
+		return NewTransport(Config{Mode: "device", Device: addr})
+	}
+	return NewTransport(Config{Mode: "network", Address: addr})
 }
 
 // Enabled reports whether a printer is configured at all.
