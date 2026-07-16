@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -48,6 +49,11 @@ const (
 	keyToken      = "marketplace.token"
 	keyPublicKey  = "marketplace.public_key"
 	keyEnrolledAt = "marketplace.enrolled_at"
+	// keyDeviceRegistered holds the device_id last registered as a device under
+	// the store. When it differs from the current device_id (a replica that
+	// joined a shop and minted its own device id), the till registers itself as
+	// a new device under the shared store — the store's fleet (ADR-0013).
+	keyDeviceRegistered = "marketplace.device_registered"
 )
 
 type identity struct {
@@ -200,10 +206,15 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings) {
 	}
 	needRegister := !clientIDExplicit && (id.StoreID == "" || id.Token == "")
 	needKey := m.PublicKey == ""
-	if !needRegister && !needKey {
+	// A till that already has a store identity (a replica that joined a shop and
+	// inherited it, or any re-boot) registers its own device under that store
+	// when it hasn't yet — one store, many devices.
+	needDevice := !clientIDExplicit && m.StoreID != "" && m.MerchantToken != "" && get(keyDeviceRegistered) != id.DeviceID
+	deviceName := get("sync.till_name")
+	if !needRegister && !needKey && !needDevice {
 		return
 	}
-	go run(ctx, *m, cfg.StoreName, kv, needRegister, needKey)
+	go run(ctx, *m, cfg.StoreName, deviceName, kv, needRegister, needKey, needDevice)
 }
 
 // Effective returns a copy of cfg with the live enrolled identity applied
@@ -236,7 +247,7 @@ func Effective(cfg *config.Config) config.Config {
 // run retries registration and/or the signing-key fetch until both succeed or
 // the till shuts down. Best-effort by design: the till is fully usable offline
 // the whole time.
-func run(ctx context.Context, m config.MarketplaceConfig, storeName string, kv Settings, needRegister, needKey bool) {
+func run(ctx context.Context, m config.MarketplaceConfig, storeName, deviceName string, kv Settings, needRegister, needKey, needDevice bool) {
 	log := logging.L()
 	for attempt := 0; ; attempt++ {
 		attemptMu.Lock()
@@ -263,8 +274,19 @@ func run(ctx context.Context, m config.MarketplaceConfig, storeName string, kv S
 				needKey = false
 			}
 		}
+		// Register this device under the store once the store identity exists
+		// (register above may have just supplied it). The store token — shared
+		// by every till in the shop — authenticates the call.
+		if needDevice && !needRegister {
+			m.StoreID, m.MerchantToken = currentStoreAuth(m)
+			if err := registerDevice(ctx, m, deviceName, kv); err != nil {
+				log.Infof("enrolment: register device under store failed (will retry): %v", err)
+			} else {
+				needDevice = false
+			}
+		}
 		attemptMu.Unlock()
-		if !needRegister && !needKey {
+		if !needRegister && !needKey && !needDevice {
 			return
 		}
 		delay := retryDelays[len(retryDelays)-1]
@@ -329,10 +351,11 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 
 	log := logging.L()
 	for key, value := range map[string]string{
-		keyStoreID:    d.StoreID,
-		keyMerchantID: d.MerchantID,
-		keyToken:      d.Token,
-		keyEnrolledAt: time.Now().UTC().Format(time.RFC3339),
+		keyStoreID:          d.StoreID,
+		keyMerchantID:       d.MerchantID,
+		keyToken:            d.Token,
+		keyEnrolledAt:       time.Now().UTC().Format(time.RFC3339),
+		keyDeviceRegistered: deviceID, // /stores/register recorded this till as device #1
 	} {
 		if err := kv.Set(ctx, key, value); err != nil {
 			log.Warnf("enrolment: persist %s: %v", key, err)
@@ -345,6 +368,111 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	displayStoreID = d.StoreID
 	mu.Unlock()
 	log.Infof("enrolment: till registered with marketplace as %s (device %s)", d.StoreID, deviceID)
+	return nil
+}
+
+// Device is one till registered under this store (the fleet).
+type Device struct {
+	DeviceID  string `json:"device_id"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	FirstSeen string `json:"first_seen"`
+	LastSeen  string `json:"last_seen"`
+}
+
+// Fleet fetches every till device registered under this till's store from the
+// marketplace (one store, many devices). Needs a registered store; the shared
+// store token authenticates it. Network call — callers should treat failure as
+// "fleet unavailable", never block the kiosk on it.
+func Fleet(ctx context.Context, cfg *config.Config) ([]Device, error) {
+	eff := Effective(cfg)
+	m := eff.Marketplace
+	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+		return nil, fmt.Errorf("till is not registered")
+	}
+	endpoint := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/devices?store_id=" + url.QueryEscape(m.StoreID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.MerchantToken)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fleet returned %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Data struct {
+			Devices []Device `json:"devices"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("decode fleet: %w", err)
+	}
+	return envelope.Data.Devices, nil
+}
+
+// currentStoreAuth returns the live store id + token the device-registration
+// call should use (the store identity register() may have just persisted wins
+// over the startup copy).
+func currentStoreAuth(m config.MarketplaceConfig) (string, string) {
+	mu.RLock()
+	defer mu.RUnlock()
+	storeID := m.StoreID
+	if cur.StoreID != "" && !storeIDExplicit {
+		storeID = cur.StoreID
+	}
+	token := m.MerchantToken
+	if token == "" {
+		token = cur.Token
+	}
+	return storeID, token
+}
+
+// registerDevice adds this till as a device under its (already-registered)
+// store — the second, third, … till of a shop that shares one store identity
+// and its entitlements (marketplace: /v1/stores/devices/register). The shared
+// store token authenticates it. Best-effort, retried by the background loop.
+func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv Settings) error {
+	mu.RLock()
+	deviceID := cur.DeviceID
+	mu.RUnlock()
+	storeID, token := m.StoreID, m.MerchantToken
+	if storeID == "" || token == "" {
+		return fmt.Errorf("no store identity yet")
+	}
+	if deviceName == "" {
+		deviceName = "Till"
+	}
+	payload, err := json.Marshal(map[string]string{
+		"store_id": storeID, "device_id": deviceID, "device_name": deviceName, "version": buildinfo.Version,
+	})
+	if err != nil {
+		return err
+	}
+	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/devices/register"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("device register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
+		logging.L().Warnf("enrolment: persist device_registered: %v", err)
+	}
+	logging.L().Infof("enrolment: till registered as device %s under store %s", deviceID, storeID)
 	return nil
 }
 

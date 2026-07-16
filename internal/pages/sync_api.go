@@ -360,12 +360,15 @@ func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, er
 	if err := db.StageRestoreFromReader(d.Cfg.DBPath, sresp.Body); err != nil {
 		return "", fmt.Errorf("stage snapshot: %w", err)
 	}
+	draw := make([]byte, 16)
+	_, _ = rand.Read(draw)
 	if err := db.StageReplicaIdentity(d.Cfg.DBPath, db.ReplicaIdentity{
 		PrimaryURL:    payload.URL,
 		TillID:        out.Data.TillID,
 		Bearer:        out.Data.Bearer,
 		ReceiptPrefix: fmt.Sprintf("T%d-", out.Data.TillNo),
 		TillName:      name,
+		DeviceID:      "till-" + hex.EncodeToString(draw),
 	}); err != nil {
 		return "", fmt.Errorf("stage identity: %w", err)
 	}
