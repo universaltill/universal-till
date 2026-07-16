@@ -502,6 +502,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
+		// Mirror the completed sale to external systems: publish sale.completed
+		// on the plugin event bus so integration plugins (ERP/accounting
+		// connectors — SAP, Dynamics/LS Central) can push it upstream. Best-
+		// effort and NON-BLOCKING (offline-first): a slow or absent connector
+		// never delays or fails the tender.
+		publishSaleCompleted(r.Context(), d, saleID)
+
 		// load receipt_no and totals from DB for rendering
 		receiptNo, dbSubtotal, dbTax, dbTotal, _ := repo.SaleTotals(r.Context(), saleID)
 		if receiptNo == "" {
@@ -768,4 +775,52 @@ func looksLikeCustomerCode(code string) bool {
 		return next >= '0' && next <= '9'
 	}
 	return false
+}
+
+// publishSaleCompleted loads the authoritative sale snapshot and publishes a
+// "sale.completed" event for integration plugins (ERP/accounting connectors).
+// Best-effort: any error is swallowed so it never affects the tender path
+// (offline-first — dispatch is non-blocking on the event bus).
+func publishSaleCompleted(ctx context.Context, d *common.Deps, saleID string) {
+	detail, ok, err := data.NewPOSRepo(d.Db).GetSaleDetailByID(ctx, saleID)
+	if err != nil || !ok {
+		return
+	}
+	ev := plugins.SaleCompletedEvent{
+		SaleID:        detail.ID,
+		ReceiptNo:     detail.ReceiptNo,
+		SaleType:      detail.SaleType,
+		Currency:      detail.Currency,
+		SubtotalCents: detail.Subtotal,
+		DiscountCents: detail.DiscountTotal,
+		TaxCents:      detail.TaxTotal,
+		TotalCents:    detail.Total,
+		CashierID:     detail.CashierID,
+		CompletedAt:   time.Now().UTC(),
+	}
+	for _, l := range detail.Lines {
+		ev.LineItems = append(ev.LineItems, plugins.SaleLineItem{
+			ItemID:         l.ItemID,
+			VariantID:      l.VariantID,
+			SKU:            l.SKU,
+			Name:           l.Name,
+			Quantity:       l.Qty,
+			UnitPriceCents: l.UnitPrice,
+			DiscountCents:  l.LineDiscount,
+			TaxRateBP:      l.TaxRateBP,
+			TaxCents:       l.TaxAmount,
+			TotalCents:     l.LineTotal,
+		})
+	}
+	for i, p := range detail.Payments {
+		if i == 0 {
+			ev.PaymentMethod = p.Method
+		}
+		ev.Payments = append(ev.Payments, plugins.SalePayment{
+			Method:      p.Method,
+			AmountCents: p.Amount,
+			Reference:   p.Reference,
+		})
+	}
+	_, _ = plugins.SharedBus(d.Db).PublishSaleCompleted(ctx, ev)
 }
