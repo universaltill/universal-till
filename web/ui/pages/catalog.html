@@ -3,7 +3,8 @@
   <h1>{{ T "nav.catalog" }}</h1>
   <div style="display:flex; gap:.5rem; align-items:center">
     <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
-    <a class="btn secondary" href="/api/catalog/export" download>{{ T "import.export_btn" }}</a>
+    <button class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
+    <span id="export-msg" class="muted" aria-live="polite"></span>
     <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
   </div>
 </div>

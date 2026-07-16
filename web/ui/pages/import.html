@@ -20,6 +20,7 @@
 <div class="card" style="margin-top:1rem">
   <h3>{{ T "import.export_title" }}</h3>
   <p class="muted">{{ T "import.export_help" }}</p>
-  <a class="btn" href="/api/catalog/export" download>{{ T "import.export_btn" }}</a>
+  <button class="btn" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
+  <div id="export-msg" class="muted" aria-live="polite" style="min-height:1.2rem;margin-top:.4rem"></div>
 </div>
 {{ end }}
