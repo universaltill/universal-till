@@ -67,10 +67,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Every mutation endpoint answers with the refreshed items table.
 	renderCatalogTable := func(w http.ResponseWriter, r *http.Request) {
 		items, _ := repo.ListItems(r.Context())
+		barcodes, _ := repo.ItemBarcodes(r.Context())
+		variants, _ := repo.ItemVariants(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items})(w, r)
+		), funcs)("catalog_table", map[string]any{"Items": items, "Barcodes": barcodes, "Variants": variants})(w, r)
 	}
 
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
@@ -85,11 +87,15 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		barcodes, _ := repo.ItemBarcodes(r.Context())
+		variants, _ := repo.ItemVariants(r.Context())
 		data := map[string]any{
 			"title":       "Catalog",
 			"menuItems":   d.Menu,
 			"theme":       d.CurrentState().Theme,
 			"Items":       items,
+			"Barcodes":    barcodes,
+			"Variants":    variants,
 			"Categories":  cats,
 			"Brands":      brands,
 			"TaxCodes":    taxCodes,

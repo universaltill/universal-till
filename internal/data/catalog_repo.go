@@ -140,6 +140,60 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	return out, rows.Err()
 }
 
+// ItemBarcodes returns each active item's barcodes (primary first), keyed by
+// item id — so the catalog page can SHOW what's attached to an item.
+func (r *CatalogRepo) ItemBarcodes(ctx context.Context) (map[string][]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT item_id, barcode FROM item_barcodes ORDER BY is_primary DESC, barcode`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var id, bc string
+		if err := rows.Scan(&id, &bc); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], bc)
+	}
+	return out, rows.Err()
+}
+
+// VariantView is one variant shown on the catalog page (with its own barcode,
+// if any — variants can each carry a barcode).
+type VariantView struct {
+	ID         string
+	Name       string
+	Barcode    string
+	PriceMinor int64
+}
+
+// ItemVariants returns each active item's variants (with each variant's primary
+// barcode), keyed by item id.
+func (r *CatalogRepo) ItemVariants(ctx context.Context) (map[string][]VariantView, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT v.item_id, v.id, v.name, v.price,
+       COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
+                 ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
+FROM item_variants v
+WHERE v.is_active = 1
+ORDER BY v.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]VariantView{}
+	for rows.Next() {
+		var itemID string
+		var v VariantView
+		if err := rows.Scan(&itemID, &v.ID, &v.Name, &v.PriceMinor, &v.Barcode); err != nil {
+			return nil, err
+		}
+		out[itemID] = append(out[itemID], v)
+	}
+	return out, rows.Err()
+}
+
 // ExportRow is one catalog line for the CSV export (G22b — the
 // anti-lock-in half of import: a shop can always take its data and leave).
 // Columns are chosen so our own importer round-trips the file.
