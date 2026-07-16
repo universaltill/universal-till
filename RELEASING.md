@@ -1,23 +1,36 @@
 # Releasing a new till version
 
-Cutting a release is **pushing a `v*` git tag**. Everything else is automated
-by `.github/workflows/release.yml` (goreleaser).
+Everything is automated by `.github/workflows/release.yml` (goreleaser). Pick
+whichever way is easiest — all three produce the same release:
 
-## Steps
+## The easy ways (pick one)
 
-1. **Land your changes on `main`** and make sure CI is green. The version is
-   taken from the tag, not from a file — there is nothing to bump by hand.
+**A. One click in the browser (no CLI):**
+GitHub → **Actions** → **Release** → **Run workflow** → choose **patch / minor /
+major** (or type an explicit version) → **Run**. The workflow computes the next
+version, tags it, and builds + publishes every platform.
 
-2. **Tag and push** (semver, `v`-prefixed). From an up-to-date `main`:
+**B. One command locally:**
+```sh
+scripts/release.sh          # patch bump (0.2.0 → 0.2.1)
+scripts/release.sh minor    # 0.2.0 → 0.3.0
+scripts/release.sh 1.0.0    # explicit
+```
 
-   ```sh
-   git checkout main && git pull
-   git tag v0.1.3          # next version
-   git push origin v0.1.3
-   ```
+**C. Manual tag (the classic way still works):**
+```sh
+git checkout main && git pull
+git tag v0.2.1 && git push origin v0.2.1
+```
+
+## What happens
+
+1. **Land your changes on `main`**, CI green. The version comes from the tag —
+   nothing to bump in a file.
+2. The **Release** workflow runs (tests first; a red test aborts it), then:
 
    To redo a botched release, delete the tag locally and remotely
-   (`git push origin :v0.1.3`) and re-tag — but only before anyone has
+   (`git push origin :v0.2.1`) and re-tag — but only before anyone has
    downloaded it.
 
 3. **Watch the release run** (`gh run watch` or the Actions tab). On a `v*`
