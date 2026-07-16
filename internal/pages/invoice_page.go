@@ -177,7 +177,12 @@ func buildInvoiceDoc(ctx context.Context, d *common.Deps, inv data.InvoiceRow, s
 	var bands []vatBand
 	_ = json.Unmarshal([]byte(inv.VATBreakdownJSON), &bands)
 
+	// A VAT/TRN-registered seller issues a "Tax Invoice" (FTA/UAE, EU, Turkey
+	// all require that wording); an unregistered seller issues a plain invoice.
 	title := T("invoice.doc_title")
+	if seller.VATNo != "" {
+		title = T("invoice.doc_tax_title")
+	}
 	if inv.Kind == "credit_note" {
 		title = T("invoice.doc_credit_title")
 	}
