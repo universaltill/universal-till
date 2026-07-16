@@ -16,8 +16,16 @@ tok1,Coffee,Large,SQ-1,Fresh brew,Hot Drinks,3.50,
 tok2,Sandwich,Regular,SQ-2,,Food,"£4,250.00",00012345678905
 `
 
-const genericCSV = `Product Name,Retail Price,EAN,Department
+const genericCSV = `Product Name,Retail Price,EAN,Category
 Widget,2.00,4006381333931,Bits
+`
+
+// An ERP master export: distinct department + category axes, opening stock
+// (decimal for weighed goods), and ERP-flavoured column names.
+const erpCSV = `Item Name,SKU,Barcode,Price,Department,Category,On Hand,Weighed (Y/N)
+Ripe Bananas,PLU-100,,0.89,Produce,Fruit,12.5,Y
+LED Bulb,SKU-200,5000000000011,3.00,Electrical,Lighting,40,N
+Loose Screws,SKU-300,,0.05,Hardware,,1000,N
 `
 
 func TestParseLoyverse(t *testing.T) {
@@ -75,6 +83,45 @@ func TestParseGenericAndZeroDecimals(t *testing.T) {
 	it := res.Items[0]
 	if it.Name != "Widget" || it.PriceMinor != 2 || it.Barcode != "4006381333931" || it.Category != "Bits" {
 		t.Errorf("generic parsed wrong: %+v", it)
+	}
+	if it.Department != "" {
+		t.Errorf("plain category must not populate department: %q", it.Department)
+	}
+}
+
+func TestParseGenericERPStockAndDepartment(t *testing.T) {
+	res, err := Parse(strings.NewReader(erpCSV), 2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if res.Format != "generic-erp" {
+		t.Errorf("format = %s, want generic-erp", res.Format)
+	}
+	if len(res.Items) != 3 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	// Weighed produce: decimal opening stock, distinct dept+category axes.
+	bananas := res.Items[0]
+	if bananas.Department != "Produce" || bananas.Category != "Fruit" {
+		t.Errorf("dept/category axes wrong: %+v", bananas)
+	}
+	if !bananas.HasStock || bananas.Stock != 12.5 {
+		t.Errorf("decimal opening stock not parsed: %+v", bananas)
+	}
+	if !bananas.IsWeighed {
+		t.Error("bananas should be weighed")
+	}
+	// Whole-unit stock via the "On Hand" synonym.
+	if res.Items[1].Stock != 40 || !res.Items[1].HasStock {
+		t.Errorf("on-hand stock wrong: %+v", res.Items[1])
+	}
+	// Department present, category absent — department left standing alone.
+	screws := res.Items[2]
+	if screws.Department != "Hardware" || screws.Category != "" {
+		t.Errorf("department-only row wrong: %+v", screws)
+	}
+	if screws.Stock != 1000 {
+		t.Errorf("large stock wrong: %+v", screws)
 	}
 }
 
