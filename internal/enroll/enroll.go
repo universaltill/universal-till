@@ -65,11 +65,71 @@ var (
 	// environment. cfg.Marketplace.StoreID falls back to the store NAME when
 	// unset, so emptiness alone can't tell "operator chose this" from default.
 	storeIDExplicit bool
+	// explicitConfigured: the operator set a merchant identity via env, so the
+	// till counts as registered without auto-enrolment.
+	explicitConfigured bool
+	// displayStoreID is what UI surfaces show as this till's store identity.
+	displayStoreID string
+
+	// attemptMu serializes registration attempts (background loop + the
+	// Settings "Register now" button) so the marketplace never sees two
+	// concurrent registers from one till.
+	attemptMu sync.Mutex
 
 	// Overridable in tests.
 	httpClient  = &http.Client{Timeout: 15 * time.Second}
 	retryDelays = []time.Duration{30 * time.Second, 2 * time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute}
 )
+
+// Status describes the till's registration state for UI surfaces (status-bar
+// chip, Settings card).
+type Status struct {
+	Registered bool
+	StoreID    string
+	DeviceID   string
+}
+
+// CurrentStatus returns the live registration state. Explicitly configured
+// tills (env identity) count as registered.
+func CurrentStatus() Status {
+	mu.RLock()
+	defer mu.RUnlock()
+	return Status{
+		Registered: explicitConfigured || (cur.StoreID != "" && cur.Token != ""),
+		StoreID:    displayStoreID,
+		DeviceID:   cur.DeviceID,
+	}
+}
+
+// RegisterNow performs one immediate, synchronous registration (and signing
+// key fetch) attempt — the Settings "Register now" button. The background
+// retry loop keeps running regardless; attempts are serialized.
+func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, error) {
+	eff := Effective(cfg)
+	m := eff.Marketplace
+	if m.EndpointURL == "" {
+		return CurrentStatus(), fmt.Errorf("marketplace endpoint is not configured")
+	}
+	attemptMu.Lock()
+	defer attemptMu.Unlock()
+	var firstErr error
+	if s := CurrentStatus(); !s.Registered {
+		if err := register(ctx, m, cfg.StoreName, kv); err != nil {
+			firstErr = err
+		}
+	}
+	if m.PublicKey == "" {
+		mu.RLock()
+		haveKey := cur.PublicKey != ""
+		mu.RUnlock()
+		if !haveKey {
+			if err := fetchSigningKey(ctx, m.EndpointURL, kv); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return CurrentStatus(), firstErr
+}
 
 // Init loads (or creates) this till's marketplace identity, fills the empty
 // cfg.Marketplace fields from it, and — when the till is not yet enrolled and
@@ -108,6 +168,12 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings) {
 	}
 	mu.Lock()
 	cur = id
+	explicitConfigured = clientIDExplicit
+	if clientIDExplicit {
+		displayStoreID = cfg.Marketplace.StoreID
+	} else {
+		displayStoreID = id.StoreID
+	}
 	mu.Unlock()
 
 	// Startup fill: explicit (env) values win, the persisted identity fills
@@ -173,6 +239,16 @@ func Effective(cfg *config.Config) config.Config {
 func run(ctx context.Context, m config.MarketplaceConfig, storeName string, kv Settings, needRegister, needKey bool) {
 	log := logging.L()
 	for attempt := 0; ; attempt++ {
+		attemptMu.Lock()
+		// A RegisterNow call may have finished the job between waits.
+		mu.RLock()
+		if cur.StoreID != "" && cur.Token != "" {
+			needRegister = false
+		}
+		if cur.PublicKey != "" {
+			needKey = false
+		}
+		mu.RUnlock()
 		if needRegister {
 			if err := register(ctx, m, storeName, kv); err != nil {
 				log.Infof("enrolment: register with marketplace failed (will retry): %v", err)
@@ -187,6 +263,7 @@ func run(ctx context.Context, m config.MarketplaceConfig, storeName string, kv S
 				needKey = false
 			}
 		}
+		attemptMu.Unlock()
 		if !needRegister && !needKey {
 			return
 		}
@@ -265,6 +342,7 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	cur.StoreID = d.StoreID
 	cur.MerchantID = d.MerchantID
 	cur.Token = d.Token
+	displayStoreID = d.StoreID
 	mu.Unlock()
 	log.Infof("enrolment: till registered with marketplace as %s (device %s)", d.StoreID, deviceID)
 	return nil
