@@ -97,9 +97,9 @@ func TestSalesByTill_GroupsByRegister(t *testing.T) {
 	}
 	x(`INSERT INTO tills (id, name, bearer_hash) VALUES ('t2','Register 2','h2')`)
 	// Primary (blank till_id) makes two sales; replica t2 makes one bigger sale.
-	x(`INSERT INTO sales (id, receipt_no, status, total, till_id) VALUES ('a','RA','completed',1000,'')`)
-	x(`INSERT INTO sales (id, receipt_no, status, total, till_id) VALUES ('b','RB','completed',1500,'')`)
-	x(`INSERT INTO sales (id, receipt_no, status, total, till_id) VALUES ('c','RC','completed',9000,'t2')`)
+	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total, till_id) VALUES ('a','RA','completed',1000,1000,'')`)
+	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total, till_id) VALUES ('b','RB','completed',1500,1500,'')`)
+	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total, till_id) VALUES ('c','RC','completed',9000,9000,'t2')`)
 
 	rows, err := data.NewPOSRepo(d.DB).SalesByTill(context.Background(), 30)
 	if err != nil {
