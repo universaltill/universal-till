@@ -135,13 +135,32 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					continue
 				}
 				it := rows[i].ImportItem
+				// Departments are top-level categories; the item's category
+				// nests under its department (docs/arch/enterprise-department-
+				// stores.md). With no department the category stays top-level;
+				// with a department but no category the item sits directly in
+				// the department. Parent-scoped ensure keeps this idempotent.
 				var catID *string
-				if id, err := repo.EnsureCategory(r.Context(), it.Category); err != nil {
-					rows[i].Status = "failed: category: " + err.Error()
-					failed++
-					continue
-				} else if id != "" {
+				deptID := ""
+				if it.Department != "" {
+					id, err := repo.EnsureCategoryUnder(r.Context(), it.Department, "")
+					if err != nil {
+						rows[i].Status = "failed: department: " + err.Error()
+						failed++
+						continue
+					}
+					deptID = id
+				}
+				if it.Category != "" {
+					id, err := repo.EnsureCategoryUnder(r.Context(), it.Category, deptID)
+					if err != nil {
+						rows[i].Status = "failed: category: " + err.Error()
+						failed++
+						continue
+					}
 					catID = &id
+				} else if deptID != "" {
+					catID = &deptID
 				}
 				itemID, err := pos.CreateItem(r.Context(), d.Db, pos.ItemInput{
 					Name: it.Name, SKU: it.SKU, BasePrice: it.PriceMinor,
