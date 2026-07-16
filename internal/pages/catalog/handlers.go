@@ -316,6 +316,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		barcode := strings.TrimSpace(r.Form.Get("barcode"))
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 		variantID := strings.TrimSpace(r.Form.Get("variantId"))
+		// The form carries both (item picked from a row + optional variant). A
+		// barcode attaches to exactly one — prefer the variant when chosen.
+		if variantID != "" {
+			itemID = ""
+		}
 		isPrimary := r.Form.Get("isPrimary") == "1" || strings.ToLower(r.Form.Get("isPrimary")) == "on"
 		if barcode == "" {
 			http.Error(w, "barcode required", http.StatusBadRequest)
