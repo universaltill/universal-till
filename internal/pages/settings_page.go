@@ -2,6 +2,7 @@ package pages
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,6 +14,14 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
+
+// shortDeviceID trims a long "till-<uuid>" id to a readable prefix for display.
+func shortDeviceID(id string) string {
+	if len(id) > 16 {
+		return id[:16] + "…"
+	}
+	return id
+}
 
 // isManagerOrAuthOff gates manager-only settings; with UT_AUTH=off there is
 // no session to check, so dev/CI tooling passes.
@@ -75,6 +84,40 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
+	})
+
+	// The store's fleet: every till registered under this store. Lazy-loaded
+	// (a marketplace call) so it never blocks the settings page; failure just
+	// shows "unavailable" — offline-first.
+	mux.HandleFunc("GET /api/enrol/devices", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if !isManagerOrAuthOff(r) {
+			fmt.Fprintf(w, `<span class="muted">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+			return
+		}
+		devices, err := enroll.Fleet(r.Context(), d.Cfg)
+		if err != nil {
+			fmt.Fprintf(w, `<span class="muted">%s</span>`, httpx.T(locale, "settings.enrol.fleet_unavailable"))
+			return
+		}
+		if len(devices) == 0 {
+			fmt.Fprintf(w, `<span class="muted">%s</span>`, httpx.T(locale, "settings.enrol.fleet_empty"))
+			return
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, `<p class="muted">%s (%d)</p><ul style="margin:.2rem 0; padding-inline-start:1.1rem">`,
+			httpx.T(locale, "settings.enrol.fleet_title"), len(devices))
+		for _, dev := range devices {
+			name := dev.Name
+			if name == "" {
+				name = dev.DeviceID
+			}
+			fmt.Fprintf(&b, `<li>%s <code class="muted">%s</code></li>`,
+				html.EscapeString(name), html.EscapeString(shortDeviceID(dev.DeviceID)))
+		}
+		b.WriteString(`</ul>`)
+		_, _ = w.Write([]byte(b.String()))
 	})
 
 	// Idle auto-lock window (docs: pos-auth.md). Manager/admin only — an
