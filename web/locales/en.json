@@ -519,6 +519,7 @@
   "settings.enrol.benefits": "Registering is free and connects your till to the plugin store: install plugins with one tap and unlock cloud features as they arrive. It happens automatically when the till is online — or register now with the button below.",
   "settings.enrol.device": "Device ID",
   "settings.enrol.failed": "Registration failed — check the internet connection and try again.",
+  "settings.enrol.forbidden": "Only a manager or admin can register this till.",
   "settings.enrol.not_registered": "This till is not registered yet.",
   "settings.enrol.registered": "This till is registered with the Universal Till marketplace.",
   "settings.enrol.retry": "Register now",
