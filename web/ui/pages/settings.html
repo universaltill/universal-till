@@ -9,14 +9,6 @@
     <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" style="margin-top:.4rem">
       <span class="muted">{{ T "settings.enrol.fleet_loading" }}</span>
     </div>
-    {{ if .isManager }}
-    <details style="margin-top:.6rem">
-      <summary class="muted">{{ T "settings.enrol.reset_summary" }}</summary>
-      <p class="muted" style="margin:.3rem 0">{{ T "settings.enrol.reset_help" }}</p>
-      <button class="btn secondary" hx-post="/api/enrol/reset"
-        hx-confirm="{{ T "settings.enrol.reset_confirm" }}">{{ T "settings.enrol.reset_btn" }}</button>
-    </details>
-    {{ end }}
   {{ else }}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
