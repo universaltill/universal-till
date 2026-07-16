@@ -93,13 +93,11 @@ func generateEOD(ctx context.Context, d *common.Deps, day string) (data.EODRepor
 		map[string]any{"net": rep.Net, "sales": rep.SalesCount},
 		time.Now().UTC().Format(time.RFC3339), "")
 	if cfg := printerConfig(ctx, d); cfg.Enabled() {
-		if tr, err := print.NewTransport(cfg); err == nil && tr != nil {
-			doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset)
-			pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			defer cancel()
-			if perr := tr.Print(pctx, print.Render(doc)); perr != nil {
-				logging.L().Errorf("eod print: %v", perr)
-			}
+		doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset)
+		pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {
+			logging.L().Errorf("eod print: %v", perr)
 		}
 	}
 	return rep, true, nil
@@ -204,14 +202,13 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 				break
 			}
 			cfg := printerConfig(r.Context(), d)
-			tr, terr := print.NewTransport(cfg)
-			if terr != nil || tr == nil {
+			if !cfg.Enabled() {
 				w.WriteHeader(http.StatusBadGateway)
 				fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 				return
 			}
 			doc := buildEODDoc(rep, storeNameOrDefault(r.Context(), d), cfg.Charset)
-			if perr := tr.Print(r.Context(), print.Render(doc)); perr != nil {
+			if perr := print.PrintDoc(r.Context(), cfg, doc); perr != nil {
 				w.WriteHeader(http.StatusBadGateway)
 				fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 				return

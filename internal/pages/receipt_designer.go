@@ -179,8 +179,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		cfg := printerConfig(r.Context(), d)
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		tr, err := print.NewTransport(cfg)
-		if err != nil || tr == nil {
+		if !cfg.Enabled() {
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 			return
@@ -188,7 +187,9 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		doc := sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd)
 		doc.Charset = cfg.Charset
 		doc.Logo = receiptLogoRaster(rd)
-		if perr := tr.Print(r.Context(), print.Render(doc)); perr != nil {
+		// PrintDoc picks ESC/POS (thermal) or plain text via lp (a regular
+		// printer like an HP) based on the configured printer type.
+		if perr := print.PrintDoc(r.Context(), cfg, doc); perr != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 			return
