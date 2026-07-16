@@ -67,14 +67,30 @@ else
   echo "    (no icon source; skipping)"
 fi
 
-echo "==> ad-hoc codesign (required for Apple Silicon)"
+# Codesign. With a real Developer ID identity (MACOS_SIGN_IDENTITY set, e.g.
+# "Developer ID Application: Task Runner Technology LTD (TEAMID)") we sign with
+# the hardened runtime + a secure timestamp, which is what notarization
+# requires. Without it we ad-hoc sign (`--sign -`): free, and required for
+# Apple Silicon to run the app at all, but a downloaded copy still hits
+# Gatekeeper (right-click → Open). See docs/arch/desktop-app.md.
+if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+  echo "==> codesign with Developer ID: $MACOS_SIGN_IDENTITY"
+  SIGN_ARGS=(--force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY")
+else
+  echo "==> ad-hoc codesign (no MACOS_SIGN_IDENTITY set)"
+  SIGN_ARGS=(--force --timestamp=none --sign -)
+fi
 # Sign inner binaries first, then the bundle, so --verify passes.
-codesign --force --timestamp=none --sign - "$APP/Contents/MacOS/unitill-pos"
-codesign --force --timestamp=none --sign - "$APP/Contents/MacOS/unitill-desktop"
-codesign --force --deep --timestamp=none --sign - "$APP"
+codesign "${SIGN_ARGS[@]}" "$APP/Contents/MacOS/unitill-pos"
+codesign "${SIGN_ARGS[@]}" "$APP/Contents/MacOS/unitill-desktop"
+codesign "${SIGN_ARGS[@]}" --deep "$APP"
 codesign --verify --deep --strict "$APP" && echo "    signature valid"
 
 echo
 echo "Built: $APP"
+if [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
+  echo "NOTE: ad-hoc signed — downloaded copies need right-click → Open. Set"
+  echo "      MACOS_SIGN_IDENTITY (+ notarize in make-dmg.sh) for a clean open."
+fi
 echo "Run locally:  open \"$APP\""
 echo "Distribute:   packaging/macos/make-dmg.sh \"$VERSION\" \"$OUTDIR\""

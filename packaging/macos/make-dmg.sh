@@ -35,4 +35,28 @@ DMG="$DIST/unitill-pos-${VERSION}-macOS-arm64.dmg"
 rm -f "$DMG"
 echo "==> building $DMG"
 hdiutil create -volname "Universal Till" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+
+# Notarize + staple so the app opens with a plain double-click (no Gatekeeper
+# prompt). Runs only when notarytool credentials are provided and the app was
+# Developer ID signed — ad-hoc apps cannot be notarized. Provide EITHER a stored
+# keychain profile (MACOS_NOTARY_PROFILE) OR Apple ID creds
+# (MACOS_NOTARY_APPLE_ID + MACOS_NOTARY_TEAM_ID + MACOS_NOTARY_PASSWORD, an
+# app-specific password). See docs/arch/desktop-app.md.
+if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+  if [ -n "${MACOS_NOTARY_PROFILE:-}" ]; then
+    NOTARY=(--keychain-profile "$MACOS_NOTARY_PROFILE")
+  elif [ -n "${MACOS_NOTARY_APPLE_ID:-}" ] && [ -n "${MACOS_NOTARY_TEAM_ID:-}" ] && [ -n "${MACOS_NOTARY_PASSWORD:-}" ]; then
+    NOTARY=(--apple-id "$MACOS_NOTARY_APPLE_ID" --team-id "$MACOS_NOTARY_TEAM_ID" --password "$MACOS_NOTARY_PASSWORD")
+  fi
+  if [ -n "${NOTARY:-}" ]; then
+    echo "==> notarizing (this can take a few minutes)"
+    xcrun notarytool submit "$DMG" "${NOTARY[@]}" --wait
+    echo "==> stapling"
+    xcrun stapler staple "$APP"        # so the app validates offline once copied out
+    xcrun stapler staple "$DMG"
+    spctl --assess --type open --context context:primary-signature -v "$DMG" || true
+  else
+    echo "==> signed but not notarized (no notary credentials); Gatekeeper will still prompt"
+  fi
+fi
 echo "Built: $DMG"
