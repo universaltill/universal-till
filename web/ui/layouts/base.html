@@ -22,11 +22,16 @@
     {{ template "nav" . }}
     <main class="container">{{ template "content" . }}</main>
     <footer class="statusbar" aria-label="Status">
+      <!-- data-conn-*, not data-online: html/template strips "data-" and
+           treats on*-named attributes as JS context, JSON-quoting the value. -->
       <span class="sb-item sb-conn" id="sb-conn"
-            data-online="{{ T "status.online" }}" data-offline="{{ T "status.offline" }}">
+            data-conn-online="{{ T "status.online" }}" data-conn-offline="{{ T "status.offline" }}">
         <span class="sb-dot"></span>
         <span class="sb-conn-text">{{ T "status.online" }}</span>
       </span>
+      {{ if not enrolled }}
+        <a class="sb-item sb-enrol" href="/settings#registration">✦&nbsp;{{ T "status.register_till" }}</a>
+      {{ end }}
       {{ if updateavailable }}
         {{ if canselfupdate }}
         <button type="button" class="sb-item sb-update" id="sb-update-btn"
@@ -43,7 +48,7 @@
         var el = document.getElementById('sb-conn');
         if (!el) return;
         var txt = el.querySelector('.sb-conn-text');
-        var on = el.getAttribute('data-online'), off = el.getAttribute('data-offline');
+        var on = el.getAttribute('data-conn-online'), off = el.getAttribute('data-conn-offline');
         function update() {
           var online = navigator.onLine;
           el.classList.toggle('is-offline', !online);
