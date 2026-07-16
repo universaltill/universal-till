@@ -35,6 +35,28 @@ line-busting on a busy floor. "Download the app, start selling."
 - Payments: the per-country payment plugins (device-plugin-suite.md) + tap-to-
   pay on the phone (SoftPOS) where supported.
 
+## Android POS *devices* (dedicated terminals — like EposNow's) 🆕
+
+Separate target from BYOD phones: **all-in-one Android POS terminals** — Sunmi
+(V2/P2/T2), PAX (A920/A77), iMin, Elo, Telpo — the hardware EposNow/Square/Lightspeed
+ship. Merchants buy or already own these; they run Android with **built-in
+peripherals**: thermal printer, cash-drawer port, barcode scanner, and often an
+integrated card reader.
+
+A **native Android POS app** installable on these devices (APK, sideload or
+Play/managed store). Two layers:
+- **App shell** — the webview companion-register shell (shape 1 above) or a
+  fuller native client, tuned for the terminal's screen.
+- **Peripheral device plugins** — drive the built-in printer / drawer / scanner
+  / card reader via the **vendor SDK** (Sunmi Printer SDK, PAX Neptune, etc.).
+  Per plugin-first: one `device` plugin per hardware family, so the core app
+  stays vendor-neutral (mirrors the ÖKC / payment-terminal device plugins in
+  device-plugin-suite.md).
+
+This is the direct answer to "have the hardware EposNow has": our software on the
+same class of Android terminals, at our price. Ties to the storefront device
+tiers (LITE/COUNTERTOP/HANDHELD) and DIY-POS profiles.
+
 ## Open questions
 
 - App-store distribution (Apple Developer + Play Console accounts, signing) —
