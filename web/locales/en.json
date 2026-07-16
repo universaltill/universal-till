@@ -557,6 +557,8 @@
   "settings.printer.mode_device": "USB device",
   "settings.printer.mode_network": "Network (IP)",
   "settings.printer.mode_off": "Off",
+  "settings.printer.mode_system": "Regular printer (system / HP, plain text)",
+  "settings.printer.system_hint": "For a regular office printer (e.g. HP), pick “Regular printer” — receipts are sent as plain text to the system default printer. Put a specific printer name in Address to target it, or leave blank for the default. Thermal printers use Network or USB device (ESC/POS).",
   "settings.printer.test": "Print test receipt",
   "settings.printer.test_failed": "Print failed",
   "settings.printer.test_ok": "Test receipt sent — check the printer",
