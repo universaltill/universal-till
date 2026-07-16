@@ -1,14 +1,12 @@
 package pages
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -36,51 +34,6 @@ type storeItem struct {
 	Retryable        bool
 }
 
-// fetchEntitledListings asks the marketplace which listings this merchant is
-// approved for (the merchant-portal approve/unapprove decision). Returns
-// (ids, true) on success; (nil, false) when the endpoint is unavailable so the
-// caller can fall back to the whole catalog (older marketplace deployments).
-func fetchEntitledListings(ctx context.Context, d *common.Deps) (map[string]bool, bool) {
-	effCfg := enroll.Effective(d.Cfg)
-	base := strings.TrimSuffix(strings.TrimRight(effCfg.Marketplace.EndpointURL, "/"), "/api")
-	url := fmt.Sprintf("%s/ui/api/merchant/entitlements?merchant_id=%s", base, effCfg.Marketplace.ClientID)
-
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, false
-	}
-	// Merchant portal token: required when the marketplace enforces merchant
-	// auth; without it a 401 lands in the full-catalog fallback below.
-	if tok := effCfg.Marketplace.MerchantToken; tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, false
-	}
-	var payload struct {
-		Data struct {
-			Entitled []struct {
-				ListingID string `json:"listing_id"`
-			} `json:"entitled"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, false
-	}
-	ids := map[string]bool{}
-	for _, e := range payload.Data.Entitled {
-		ids[e.ListingID] = true
-	}
-	return ids, true
-}
-
 // storeInstaller builds a marketplace installer on the EFFECTIVE config — the
 // enrolled identity (device token, signing key) fills fields the operator
 // didn't set, so a freshly enrolled till installs without a restart. The
@@ -105,8 +58,6 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 		deviceArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 		snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, deviceArch)
 
-		entitled, entitledKnown := fetchEntitledListings(ctx, d)
-
 		var downloads map[string]plugins.StoreDownload
 		if installer, _, ierr := storeInstaller(d); ierr == nil {
 			downloads = installer.ListStoreDownloads()
@@ -120,11 +71,10 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 				if listingID == "" {
 					listingID = p.ID
 				}
-				// Only approved (entitled) listings appear in the store. When the
-				// marketplace doesn't expose entitlements yet, show everything.
-				if entitledKnown && !entitled[listingID] {
-					continue
-				}
+				// Browse shows the whole public catalog — an anonymous till sees
+				// every plugin. Access is enforced at install/download time
+				// (free plugins self-serve; registered/paid need a claimed store),
+				// not by hiding listings here.
 				item := storeItem{
 					ListingID:   listingID,
 					Name:        p.Name,
@@ -165,7 +115,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 			"menuItems":        d.Menu,
 			"Items":            items,
 			"Categories":       storeCategories(items),
-			"EntitledFiltered": entitledKnown,
+			"EntitledFiltered": false,
 			"CatalogError":     err != nil,
 		})(w, r)
 	}
