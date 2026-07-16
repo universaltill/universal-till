@@ -3,7 +3,10 @@ package pages
 import (
 	"encoding/csv"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +41,26 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	// G22b — catalog export. The CSV round-trips with our own importer
 	// (column names come from its synonym table), so "export → import on a
 	// fresh till" is a supported migration path, not an accident.
+	writeCatalogCSV := func(out io.Writer, rows []data.ExportRow, decimals int) {
+		cw := csv.NewWriter(out)
+		_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
+			"Description", "Sold by weight", "In stock", "Active"})
+		yn := func(b bool) string {
+			if b {
+				return "Y"
+			}
+			return "N"
+		}
+		for _, e := range rows {
+			_ = cw.Write([]string{
+				e.Name, e.SKU, e.Barcode, minorToDecimal(e.PriceMinor, decimals),
+				e.Category, e.Description, yn(e.IsWeighed),
+				strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
+			})
+		}
+		cw.Flush()
+	}
+
 	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
@@ -48,29 +71,48 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		decimals := httpx.ActiveCurrency().Decimals
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition",
 			`attachment; filename="catalog-`+time.Now().UTC().Format("2006-01-02")+`.csv"`)
-		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
-			"Description", "Sold by weight", "In stock", "Active"})
-		for _, e := range rows {
-			yn := func(b bool) string {
-				if b {
-					return "Y"
-				}
-				return "N"
-			}
-			_ = cw.Write([]string{
-				e.Name, e.SKU, e.Barcode, minorToDecimal(e.PriceMinor, decimals),
-				e.Category, e.Description, yn(e.IsWeighed),
-				strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
-			})
-		}
-		cw.Flush()
+		writeCatalogCSV(w, rows, httpx.ActiveCurrency().Decimals)
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "export",
 			map[string]any{"rows": len(rows)}, time.Now().UTC().Format(time.RFC3339), "")
+	})
+
+	// Save-to-Downloads: the direct download above relies on the browser
+	// handling a Content-Disposition attachment, which the desktop WebView does
+	// NOT — the link silently did nothing there. This POST writes the CSV into
+	// the user's Downloads folder (htmx, works in the app and in a browser).
+	mux.HandleFunc("POST /api/catalog/export-save", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if !isManagerOrAuthOff(r) {
+			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+			return
+		}
+		rows, err := repo.ExportRows(r.Context())
+		if err != nil {
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "import.export_save_failed"))
+			return
+		}
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "import.export_save_failed"))
+			return
+		}
+		dstDir := filepath.Join(home, "Downloads")
+		_ = os.MkdirAll(dstDir, 0o755)
+		dst := filepath.Join(dstDir, "catalog-"+time.Now().UTC().Format("2006-01-02")+".csv")
+		f, ferr := os.Create(dst)
+		if ferr != nil {
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "import.export_save_failed"))
+			return
+		}
+		writeCatalogCSV(f, rows, httpx.ActiveCurrency().Decimals)
+		_ = f.Close()
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "export",
+			map[string]any{"rows": len(rows), "dest": dst}, time.Now().UTC().Format(time.RFC3339), "")
+		fmt.Fprintf(w, `<span>✓ %s <code>%s</code></span>`, httpx.T(locale, "settings.backup.saved_to"), dst)
 	})
 
 	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
