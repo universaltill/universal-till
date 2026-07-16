@@ -186,3 +186,63 @@ func TestHostStorageDeniedWithoutPermission(t *testing.T) {
 		t.Error("storage write succeeded without the storage permission")
 	}
 }
+
+// A configurable connector declares net:* (its target host is only known from
+// install-time settings). The http host function must honour the wildcard.
+func TestHostHTTPWildcardNet(t *testing.T) {
+	guest := buildHostfnGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.wildcardnet"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("pong"))
+	}))
+	defer srv.Close()
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, "net:*") // wildcard, NOT the exact host
+
+	w := NewWasmRuntime(t.TempDir())
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	w.hasNet[pluginID] = true
+
+	res := runGuest(t, w, d, pluginID, srv.URL+"/ping")
+	if res["http_status"] != float64(200) {
+		t.Fatalf("net:* did not authorise the call; http_status = %v", res["http_status"])
+	}
+}
+
+// A plugin reads its own configured setting via settings_get — what makes
+// configurable connectors possible (ADR-0014).
+func TestHostSettingsGet(t *testing.T) {
+	guest := buildHostfnGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.settings"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, "net:127.0.0.1")
+	// Value is stored as JSON; the host unwraps the JSON string for the plugin.
+	if err := data.NewPluginRepo(d).UpsertPluginSetting(context.Background(), pluginID, "endpoint", `"https://erp.example.com/hook"`); err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+
+	w := NewWasmRuntime(t.TempDir())
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	w.hasNet[pluginID] = true
+
+	res := runGuest(t, w, d, pluginID, srv.URL+"/ping")
+	if res["setting_val"] != "https://erp.example.com/hook" {
+		t.Fatalf("settings_get returned %q (code %v), want the unwrapped URL", res["setting_val"], res["setting_code"])
+	}
+}

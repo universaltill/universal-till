@@ -491,6 +491,23 @@ FROM plugin_settings WHERE plugin_id = ? AND scope = 'global' ORDER BY key`, plu
 	return out, rows.Err()
 }
 
+// GetPluginSetting returns one global-scope setting's raw value_json for a
+// plugin. found is false when the key is not set. Backs the settings_get WASM
+// host function (configurable connector plugins, ADR-0014).
+func (r *PluginRepo) GetPluginSetting(ctx context.Context, pluginID, key string) (string, bool, error) {
+	var valueJSON string
+	err := r.executor(nil).QueryRowContext(ctx, `
+SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = 'global'`,
+		pluginID, key).Scan(&valueJSON)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, pluginObs.wrap("get_setting", err)
+	}
+	return valueJSON, true, nil
+}
+
 // UpsertPluginSetting sets one global-scope plugin setting. Update-then-
 // insert rather than ON CONFLICT: the unique index includes scope_id,
 // which is NULL for global rows, and SQLite treats NULLs as distinct.

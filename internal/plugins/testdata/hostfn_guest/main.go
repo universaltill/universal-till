@@ -25,6 +25,9 @@ func storageSet(kPtr, kLen, vPtr, vLen uint32) int32
 //go:wasmimport ut http_request
 func httpRequest(rPtr, rLen, dstPtr, dstCap uint32) int32
 
+//go:wasmimport ut settings_get
+func settingsGet(kPtr, kLen, dstPtr, dstCap uint32) int32
+
 func ptrOf(b []byte) (uint32, uint32) {
 	if len(b) == 0 {
 		return 0, 0
@@ -91,12 +94,24 @@ func main() {
 		}
 	}
 
+	// Read a plugin setting via the settings_get host function.
+	skp, skl := ptrOf([]byte("endpoint"))
+	sbuf := make([]byte, 4096)
+	sbp, sbc := ptrOf(sbuf)
+	sCode := settingsGet(skp, skl, sbp, sbc)
+	settingVal := ""
+	if sCode > 0 {
+		settingVal = string(sbuf[:sCode])
+	}
+
 	results, _ := json.Marshal(map[string]any{
-		"set_code":    setCode,
-		"roundtrip":   roundtrip,
-		"http_code":   httpCode,
-		"http_status": httpStatus,
-		"http_body":   httpBody,
+		"set_code":     setCode,
+		"roundtrip":    roundtrip,
+		"http_code":    httpCode,
+		"http_status":  httpStatus,
+		"http_body":    httpBody,
+		"setting_code": sCode,
+		"setting_val":  settingVal,
 	})
 	if code := set("results", results); code != 0 {
 		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
