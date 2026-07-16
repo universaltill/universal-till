@@ -1,6 +1,6 @@
 {{ define "content" }}
 <div class="page-head">
-  <h1>{{ if .IsCreditNote }}{{ T "invoice.credit_note" }}{{ else }}{{ T "invoice.title" }}{{ end }} {{ .Inv.DisplayNo }}</h1>
+  <h1>{{ if .IsCreditNote }}{{ T "invoice.credit_note" }}{{ else if .Seller.VATNo }}{{ T "invoice.tax_title" }}{{ else }}{{ T "invoice.title" }}{{ end }} {{ .Inv.DisplayNo }}</h1>
   <div style="display:flex; gap:.4rem; align-items:center">
     <button class="btn" onclick="window.print()">🖨 {{ T "invoice.print" }}</button>
     <a class="btn secondary" href="/journal/{{ .Sale.ReceiptNo }}">← {{ T "journal.detail.title" }}</a>
