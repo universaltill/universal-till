@@ -67,7 +67,7 @@
         <td>{{ .Date }}</td>
         <td>{{ .Size }}</td>
         <td style="display:flex; gap:.3rem">
-          <a class="btn secondary" href="/api/backup/download/{{ .Name }}">{{ T "settings.backup.download" }}</a>
+          <button class="btn secondary" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
           <form hx-post="/api/backup/restore" hx-target="#restore-msg" hx-swap="innerHTML" style="display:flex; gap:.3rem">
             <input type="hidden" name="name" value="{{ .Name }}">
             <input type="text" name="confirm" placeholder="{{ T "settings.backup.confirm_placeholder" }}" style="width:8rem" required>
@@ -78,6 +78,7 @@
       {{ end }}
     </tbody>
   </table>
+  <div id="backup-dl-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   <div id="restore-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   <p class="muted">{{ T "settings.backup.restore_note" }}</p>
   {{ else }}

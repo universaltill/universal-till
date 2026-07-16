@@ -2,6 +2,7 @@ package pages
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -36,6 +37,40 @@ func listBackupsForUI(d *common.Deps) []backupUIRow {
 		})
 	}
 	return out
+}
+
+// saveBackupToDownloads copies a backup file into the user's Downloads folder
+// and returns the destination path. Used by the desktop app, whose WebView
+// can't download an HTTP attachment.
+func saveBackupToDownloads(src, name string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return copyBackupTo(filepath.Join(home, "Downloads"), src, name)
+}
+
+// copyBackupTo copies src into dstDir/name (creating dstDir). Split out so it's
+// testable without writing to the real Downloads folder.
+func copyBackupTo(dstDir, src, name string) (string, error) {
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dstDir, name)
+	in, err := os.Open(src)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return "", err
+	}
+	return dst, nil
 }
 
 // registerBackupAPI mounts local backup & restore (docs:
@@ -99,6 +134,39 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		http.ServeFile(w, r, full)
+	})
+
+	// Save a copy of a backup into the user's Downloads folder. The direct
+	// download above relies on the browser handling a Content-Disposition
+	// attachment; the desktop app's WebView does NOT download attachments, so
+	// the link silently did nothing there. This POST works everywhere (htmx),
+	// putting the file somewhere the operator can find it on this machine.
+	mux.HandleFunc("POST /api/backup/save-copy/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if deny(w, r) {
+			return
+		}
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		name := r.PathValue("name")
+		if !db.ValidBackupName(name) {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.backup.save_failed"))
+			return
+		}
+		dir, err := db.BackupDir(dbPath)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.backup.save_failed"))
+			return
+		}
+		dst, err := saveBackupToDownloads(filepath.Join(dir, name), name)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.backup.save_failed"))
+			return
+		}
+		audit(r, "backup_saved_copy", map[string]any{"file": name, "dest": dst})
+		fmt.Fprintf(w, `<span>✓ %s <code>%s</code></span>`, httpx.T(locale, "settings.backup.saved_to"), dst)
 	})
 
 	mux.HandleFunc("POST /api/backup/restore", func(w http.ResponseWriter, r *http.Request) {
