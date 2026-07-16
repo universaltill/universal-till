@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -469,8 +470,12 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			State:     plugins.InstallStateRequested,
 		})
 
-		client := marketplace.NewClient(&d.Cfg.Marketplace, oauth.NewTokenClient(&d.Cfg.Marketplace))
-		installer, err := plugins.NewMarketplaceInstaller(d.Cfg, client, d.Db)
+		// Effective config: the till's enrolled marketplace identity fills any
+		// fields the operator didn't set (enroll package), so a freshly enrolled
+		// till installs without a restart.
+		effCfg := enroll.Effective(d.Cfg)
+		client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+		installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 		if err != nil {
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 				ListingID:  req.ListingID,
@@ -483,9 +488,9 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		}
 		result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
 			ListingID:  req.ListingID,
-			MerchantID: d.Cfg.Marketplace.ClientID,
-			StoreID:    d.Cfg.Marketplace.StoreID,
-			DeviceID:   marketplace.DeviceIDFromConfig(&d.Cfg.Marketplace),
+			MerchantID: effCfg.Marketplace.ClientID,
+			StoreID:    effCfg.Marketplace.StoreID,
+			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 			DeviceArch: systemArch,
 			OnStateChange: func(state plugins.InstallLifecycleState) {
 				_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
@@ -688,17 +693,18 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 			log.Printf("Warning: Failed to store version for rollback: %v", err)
 		}
 
-		client := marketplace.NewClient(&d.Cfg.Marketplace, oauth.NewTokenClient(&d.Cfg.Marketplace))
-		installer, err := plugins.NewMarketplaceInstaller(d.Cfg, client, d.Db)
+		effCfg := enroll.Effective(d.Cfg)
+		client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+		installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 		if err != nil {
 			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
 			return
 		}
 		result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
 			ListingID:  listingID,
-			MerchantID: d.Cfg.Marketplace.ClientID,
-			StoreID:    d.Cfg.Marketplace.StoreID,
-			DeviceID:   marketplace.DeviceIDFromConfig(&d.Cfg.Marketplace),
+			MerchantID: effCfg.Marketplace.ClientID,
+			StoreID:    effCfg.Marketplace.StoreID,
+			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 			DeviceArch: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 			OnStateChange: func(state plugins.InstallLifecycleState) {
 				_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
