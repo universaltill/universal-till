@@ -31,6 +31,39 @@ open "/Applications/Universal Till.app"
 SH
 chmod +x "$STAGE/Open Universal Till.command"
 
+# Uninstaller: quits the app, removes it from /Applications, and asks before
+# deleting shop data. Ships in the .dmg so removal is one double-click too.
+cat > "$STAGE/Uninstall Universal Till.command" <<'SH'
+#!/bin/bash
+DATA_DIR="$HOME/Library/Application Support/UniversalTill"
+echo "Universal Till - uninstall"
+echo
+osascript -e 'quit app "Universal Till"' 2>/dev/null || true
+pkill -x unitill-pos 2>/dev/null || true
+sleep 1
+if [ -d "/Applications/Universal Till.app" ]; then
+  rm -rf "/Applications/Universal Till.app"
+  echo "Removed /Applications/Universal Till.app"
+else
+  echo "App not found in /Applications (already removed?)."
+fi
+echo
+if [ -d "$DATA_DIR" ]; then
+  echo "Your shop data (database, plugins, backups) is at:"
+  echo "  $DATA_DIR"
+  printf "Delete ALL shop data too? This cannot be undone. [y/N] "
+  read -r reply
+  case "$reply" in
+    [yY]|[yY][eE][sS]) rm -rf "$DATA_DIR"; echo "Shop data deleted." ;;
+    *) echo "Kept your shop data at $DATA_DIR" ;;
+  esac
+fi
+echo
+echo "Done. You can now eject this disk image."
+read -r -p "Press Return to close." _
+SH
+chmod +x "$STAGE/Uninstall Universal Till.command"
+
 DMG="$DIST/unitill-pos-${VERSION}-macOS-arm64.dmg"
 rm -f "$DMG"
 echo "==> building $DMG"
