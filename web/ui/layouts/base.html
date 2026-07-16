@@ -61,23 +61,35 @@
       (function () {
         var btn = document.getElementById('sb-update-btn');
         if (!btn) return;
+        // Two-click confirm — the desktop WebView doesn't support window.confirm.
+        var latest = btn.getAttribute('data-latest');
+        var label = btn.textContent, armed = false, armTimer = null;
         btn.addEventListener('click', function () {
-          if (!confirm('Update to v' + btn.getAttribute('data-latest') + '? The till will restart.')) return;
-          btn.disabled = true; btn.textContent = 'Updating…';
+          if (!armed) {
+            armed = true;
+            btn.textContent = '⬆ Confirm update to v' + latest;
+            armTimer = setTimeout(function () { armed = false; btn.textContent = label; }, 4000);
+            return;
+          }
+          armed = false; clearTimeout(armTimer);
+          btn.disabled = true; btn.textContent = 'Downloading update…';
           fetch('/api/update/apply', { method: 'POST' })
             .then(function (r) { return r.json().catch(function () { return {}; }); })
-            .then(function () { /* server re-execs; reconnect below */ })
-            .catch(function () { /* expected: connection drops on restart */ })
+            .then(function (res) {
+              btn.textContent = (res && res.success === false) ? 'Update failed — see logs' : 'Restarting…';
+            })
+            .catch(function () { btn.textContent = 'Restarting…'; })
             .finally(function () {
-              btn.textContent = 'Restarting…';
-              // Poll until the new build is back, then reload.
+              // Archive installs re-exec in place (reconnect + reload). The mac
+              // .app quits and relaunches itself, so the window just closes and
+              // reopens on the new version.
               var tries = 0;
               var iv = setInterval(function () {
                 tries++;
                 fetch('/healthz', { cache: 'no-store' }).then(function (r) {
                   if (r.ok) { clearInterval(iv); location.reload(); }
                 }).catch(function () {});
-                if (tries > 60) { clearInterval(iv); }
+                if (tries > 90) { clearInterval(iv); }
               }, 2000);
             });
         });
