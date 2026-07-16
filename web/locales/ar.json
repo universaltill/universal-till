@@ -371,6 +371,8 @@
   "plugins.settings.none": "لا تحتوي هذه الإضافة على إعدادات.",
   "plugins.settings.save": "حفظ الإعدادات",
   "plugins.settings.saved": "حُفظت الإعدادات — طُبّقت فوراً",
+  "plugins.settings.secret_empty": "غير مضبوط",
+  "plugins.settings.secret_set": "•••••••• مضبوط — اتركه فارغًا للإبقاء عليه",
   "plugins.settings.title": "الإعدادات",
   "plugins.status.active": "نشط",
   "plugins.status.downloading": "جارٍ التنزيل",

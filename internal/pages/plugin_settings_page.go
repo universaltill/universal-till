@@ -12,6 +12,20 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
+// isSecretSettingKey reports whether a plugin setting holds a credential that
+// should be masked (rendered as a password field, value never sent to the
+// page). Heuristic on the key name — covers api keys, tokens, secrets,
+// passwords, and the connector auth value.
+func isSecretSettingKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, s := range []string{"secret", "token", "password", "passwd", "api_key", "apikey", "auth_value", "private_key"} {
+		if strings.Contains(k, s) {
+			return true
+		}
+	}
+	return strings.HasSuffix(k, "_key") || k == "key"
+}
+
 // Generic plugin settings editor (docs: architecture/ai-plugin.md): any
 // installed plugin whose manifest declares settings gets an edit form.
 // This is the surface the AI plugin's endpoint/model settings use, and
@@ -20,7 +34,11 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPluginRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 
-	type settingView struct{ Key, Value string }
+	type settingView struct {
+		Key, Value string
+		Secret     bool // rendered masked; its value is never sent to the page
+		IsSet      bool // a value already exists (for the "leave blank to keep" hint)
+	}
 
 	mux.HandleFunc("GET /plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
@@ -39,7 +57,12 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			if json.Unmarshal([]byte(row.ValueJSON), &v) != nil {
 				v = row.ValueJSON // non-string JSON edits raw
 			}
-			views = append(views, settingView{Key: row.Key, Value: v})
+			sv := settingView{Key: row.Key, Value: v, Secret: isSecretSettingKey(row.Key)}
+			if sv.Secret {
+				sv.IsSet = v != ""
+				sv.Value = "" // never render a secret's value into the page
+			}
+			views = append(views, sv)
 		}
 		httpx.Render("ui/pages/plugin_settings.html", map[string]any{
 			"title":     "Plugin settings",
@@ -70,7 +93,13 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			if !ok || len(form) == 0 {
 				continue
 			}
-			raw, err := json.Marshal(strings.TrimSpace(form[0]))
+			val := strings.TrimSpace(form[0])
+			// Secret fields aren't pre-filled, so a blank submission means
+			// "keep the current value" rather than "clear it".
+			if val == "" && isSecretSettingKey(row.Key) {
+				continue
+			}
+			raw, err := json.Marshal(val)
 			if err != nil {
 				continue
 			}
