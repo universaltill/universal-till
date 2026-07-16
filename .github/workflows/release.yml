@@ -123,7 +123,10 @@ jobs:
   # configured, otherwise ad-hoc signs (Apple Silicon requires a signature to
   # run; ad-hoc downloads need right-click → Open). See docs/arch/desktop-app.md.
   macos-app:
-    needs: prepare
+    # Wait for goreleaser: it creates the GitHub release this job uploads the
+    # .dmg to (otherwise `gh release upload` races it and fails "release not
+    # found"). goreleaser publishing is the gate; the .dmg is an add-on.
+    needs: [prepare, goreleaser]
     runs-on: macos-14 # Apple Silicon
     permissions:
       contents: write
