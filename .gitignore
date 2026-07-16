@@ -76,3 +76,4 @@ data/plugins/
 data/backups/
 unitill-pos-setup-*.exe
 /unitill-desktop
+.claude/worktrees/
