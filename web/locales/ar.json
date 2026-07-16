@@ -557,6 +557,8 @@
   "settings.printer.mode_device": "جهاز USB",
   "settings.printer.mode_network": "شبكة (IP)",
   "settings.printer.mode_off": "إيقاف",
+  "settings.printer.mode_system": "طابعة عادية (النظام / HP، نص عادي)",
+  "settings.printer.system_hint": "للطابعة المكتبية العادية (مثل HP) اختر «طابعة عادية» — تُرسَل الإيصالات كنص عادي إلى الطابعة الافتراضية للنظام. ضع اسم طابعة محدّد في العنوان لاستهدافها أو اتركه فارغاً للافتراضية. الطابعات الحرارية تستخدم الشبكة أو جهاز USB (ESC/POS).",
   "settings.printer.test": "طباعة إيصال تجريبي",
   "settings.printer.test_failed": "فشلت الطباعة",
   "settings.printer.test_ok": "أُرسل الإيصال التجريبي — تحقق من الطابعة",

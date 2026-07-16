@@ -557,6 +557,8 @@
   "settings.printer.mode_device": "دستگاه USB",
   "settings.printer.mode_network": "شبکه (IP)",
   "settings.printer.mode_off": "خاموش",
+  "settings.printer.mode_system": "چاپگر معمولی (سیستم / HP، متن ساده)",
+  "settings.printer.system_hint": "برای چاپگر اداری معمولی (مثل HP) گزینهٔ «چاپگر معمولی» را انتخاب کنید — رسیدها به‌صورت متن ساده به چاپگر پیش‌فرض سیستم ارسال می‌شوند. برای هدف‌گیری یک چاپگر خاص نامش را در آدرس بگذارید یا خالی بگذارید. چاپگرهای حرارتی از شبکه یا دستگاه USB (ESC/POS) استفاده می‌کنند.",
   "settings.printer.test": "چاپ رسید آزمایشی",
   "settings.printer.test_failed": "چاپ ناموفق بود",
   "settings.printer.test_ok": "رسید آزمایشی ارسال شد — چاپگر را بررسی کنید",

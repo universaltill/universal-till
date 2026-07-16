@@ -49,7 +49,9 @@ func TransportForAddress(addr string) (Transport, error) {
 }
 
 // Enabled reports whether a printer is configured at all.
-func (c Config) Enabled() bool { return c.Mode == "network" || c.Mode == "device" }
+func (c Config) Enabled() bool {
+	return c.Mode == "network" || c.Mode == "device" || c.Mode == "system"
+}
 
 // NewTransport builds the transport for a config; nil when Mode is off.
 func NewTransport(c Config) (Transport, error) {

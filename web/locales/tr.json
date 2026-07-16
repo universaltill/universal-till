@@ -557,6 +557,8 @@
   "settings.printer.mode_device": "USB cihazı",
   "settings.printer.mode_network": "Ağ (IP)",
   "settings.printer.mode_off": "Kapalı",
+  "settings.printer.mode_system": "Normal yazıcı (sistem / HP, düz metin)",
+  "settings.printer.system_hint": "Normal bir ofis yazıcısı (örn. HP) için “Normal yazıcı”yı seçin — fişler düz metin olarak sistem varsayılan yazıcısına gönderilir. Belirli bir yazıcıyı hedeflemek için Adres alanına adını yazın, varsayılan için boş bırakın. Termal yazıcılar Ağ veya USB aygıtı (ESC/POS) kullanır.",
   "settings.printer.test": "Deneme fişi yazdır",
   "settings.printer.test_failed": "Yazdırma başarısız",
   "settings.printer.test_ok": "Deneme fişi gönderildi — yazıcıyı kontrol edin",
