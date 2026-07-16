@@ -371,6 +371,8 @@
   "plugins.settings.none": "Bu eklentinin ayarı yok.",
   "plugins.settings.save": "Ayarları kaydet",
   "plugins.settings.saved": "Ayarlar kaydedildi — anında uygulandı",
+  "plugins.settings.secret_empty": "ayarlı değil",
+  "plugins.settings.secret_set": "•••••••• ayarlı — değiştirmemek için boş bırakın",
   "plugins.settings.title": "Ayarlar",
   "plugins.status.active": "Etkin",
   "plugins.status.downloading": "İndiriliyor",
