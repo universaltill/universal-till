@@ -59,6 +59,17 @@
     </select>
     <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
   </form>
+  <form hx-post="/api/settings/osk" hx-swap="none" hx-on::after-request="window.location.reload()" style="margin-top:.7rem">
+    {{ $osk := oskmode }}
+    <label style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">{{ T "settings.display.osk" }}
+      <select name="mode">
+        <option value="auto" {{ if eq $osk "auto" }}selected{{ end }}>{{ T "settings.display.osk_auto" }}</option>
+        <option value="on"   {{ if eq $osk "on" }}selected{{ end }}>{{ T "settings.display.osk_on" }}</option>
+        <option value="off"  {{ if eq $osk "off" }}selected{{ end }}>{{ T "settings.display.osk_off" }}</option>
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+    </label>
+  </form>
 </div>
 {{ if .isManager }}
 <div class="card" style="margin-top:1rem">

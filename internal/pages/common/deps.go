@@ -46,6 +46,7 @@ type RuntimeState struct {
 	AllowNegativeInventory bool
 	UIScale                float64 // interface scale for this till's screen (0 = unset)
 	IdleLockMinutes        int     // idle auto-lock window in minutes (0 = off)
+	OSKMode                string  // on-screen keyboard: auto|on|off ("" = auto)
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.
