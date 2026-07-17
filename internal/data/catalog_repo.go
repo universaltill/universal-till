@@ -417,6 +417,26 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return in.ID, nil
 }
 
+// ItemCostPrice returns the item's cost price in minor units (0 = unset).
+func (r *CatalogRepo) ItemCostPrice(ctx context.Context, itemID string) (int64, error) {
+	var cost sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `SELECT cost_price FROM items WHERE id = ?`, itemID).Scan(&cost)
+	if err != nil {
+		return 0, err
+	}
+	return cost.Int64, nil
+}
+
+// SetItemCostPrice records what the shop pays for the item (minor units) —
+// the input the margin report needs.
+func (r *CatalogRepo) SetItemCostPrice(ctx context.Context, itemID string, costMinor int64) error {
+	if itemID == "" {
+		return errors.New("id required")
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE items SET cost_price = ?, updated_at = datetime('now') WHERE id = ?`, costMinor, itemID)
+	return err
+}
+
 func (r *CatalogRepo) UpdateItem(ctx context.Context, in catalogtypes.ItemInput) error {
 	if in.ID == "" {
 		return errors.New("id required")
