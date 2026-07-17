@@ -51,6 +51,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 			"StockLevels": levels,
 			"Locations":   locations,
 			"ItemsJSON":   template.JS(pickerJSON),
+			"SyncPrimary": d.SyncPrimaryURL(r.Context()),
 		}
 		httpx.Render("ui/pages/inventory.html", data)(w, r)
 	})
