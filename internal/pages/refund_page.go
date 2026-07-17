@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -190,6 +192,23 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// Engine computes the refund total from the same inputs as the
 		// original sale; the payment must cover it exactly.
 		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), inclusive)
+
+		// Payment-provider refund (payment-provider contract): if the refund
+		// method belongs to a payment plugin that hooks `payment.<key>.refund`,
+		// it gets a BLOCKING call BEFORE the return is recorded — the provider
+		// must actually send the money back (e.g. refund the Stripe charge),
+		// and a failed provider refund must stop the return. No subscriber =
+		// no gate (cash and hook-less methods behave as before).
+		if blocked := blockingPaymentEvent(r.Context(), d, method, "refund", map[string]any{
+			"method":           method,
+			"amount":           refundTotal.Minor(),
+			"currency":         detail.Currency,
+			"original_sale_id": detail.ID,
+			"original_receipt": detail.ReceiptNo,
+		}); blocked != nil {
+			http.Error(w, "provider refund failed for "+method+": "+blocked.Error(), http.StatusPaymentRequired)
+			return
+		}
 		saleInput := pos.SaleInput{
 			SaleType:               "return",
 			CashierID:              actorID,
@@ -220,6 +239,34 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		w.Header().Set("HX-Redirect", "/journal/"+newReceipt)
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+// blockingPaymentEvent publishes `payment.<key>.<suffix>` for the method's
+// owning payment plugin and BLOCKS on the result. Returns nil when the method
+// has no payment entry, no subscriber, or the plugin approves; returns the
+// plugin's error when it declines. Shared by the tender authorize gate and
+// the refund gate — the two blocking legs of the payment-provider contract.
+func blockingPaymentEvent(ctx context.Context, d *common.Deps, method, suffix string, payload map[string]any) error {
+	entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(ctx)
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	for _, e := range entries {
+		if e.EntryKey != method || e.TriggerEvent == "" {
+			continue
+		}
+		event := strings.TrimSuffix(e.TriggerEvent, ".requested") + "." + suffix
+		bus := plugins.SharedBus(d.Db)
+		if !bus.HasSubscribers(event) {
+			return nil
+		}
+		payload["plugin_id"] = e.PluginID
+		if _, err := bus.Publish(ctx, event, payload); err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
 }
 
 // computeRefundTotal mirrors the engine's total math so the refund payment
