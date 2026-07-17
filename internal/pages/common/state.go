@@ -18,6 +18,7 @@ const (
 	KeyTaxInclusive = "store.tax_inclusive"
 	KeyTaxRate      = "store.tax_rate"
 	KeyUIScale      = "display.ui_scale"
+	KeyOSK          = "display.osk"
 	KeyIdleLock     = "auth.idle_lock_minutes"
 )
 
@@ -65,6 +66,8 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 			st.IdleLockMinutes = n
 		}
 	}
+	// On-screen keyboard: auto = only on touch screens (pointer: coarse).
+	st.OSKMode = get(KeyOSK, "auto")
 
 	return st
 }
@@ -81,6 +84,9 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) {
 	}
 	_ = store.Set(ctx, "pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory))
 	_ = store.Set(ctx, KeyIdleLock, strconv.Itoa(st.IdleLockMinutes))
+	if st.OSKMode != "" {
+		_ = store.Set(ctx, KeyOSK, st.OSKMode)
+	}
 }
 
 func BuildMenu(base []MenuItem, pm *plugins.Manager) []MenuItem {
