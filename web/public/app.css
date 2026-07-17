@@ -137,6 +137,50 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .journal-row:hover td { background: var(--surface-2); }
 .catalog-form-head { display: flex; justify-content: space-between; align-items: center;
                      margin-bottom: .5rem; }
+
+/* Catalog detail panel: full-width under the list — item info + barcode
+   chips on one side, the variants list (editable grid) as the main area. */
+.catalog-detail { margin-block-start: 1rem; }
+.catalog-detail-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr);
+                       gap: 1.25rem; align-items: start; }
+@media (max-width: 900px) { .catalog-detail-grid { grid-template-columns: 1fr; } }
+.catalog-detail-title { display: flex; align-items: center; gap: .6rem; margin-block-end: .6rem; }
+.catalog-detail-title h3 { margin: 0; }
+.catalog-detail-title .thumb { inline-size: 44px; block-size: 44px; object-fit: cover;
+                               border-radius: 8px; border: 1px solid var(--border); }
+.catalog-detail-label { font-size: .75rem; font-weight: 600; text-transform: uppercase;
+                        letter-spacing: .04em; color: var(--muted); margin-block-end: .4rem; }
+.chip-row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; min-block-size: 1.6rem; }
+.chip { display: inline-flex; align-items: center; gap: .35rem; padding: .12rem .55rem;
+        border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
+        font-family: ui-monospace, monospace; font-size: .78rem; white-space: nowrap; }
+.chip button { border: 0; background: none; cursor: pointer; padding: 0; line-height: 1;
+               color: var(--muted); font-size: .78rem; }
+.chip button:hover { color: #b91c1c; }
+.chip-add { display: inline-flex; gap: .35rem; align-items: center; margin-block-start: .45rem;
+            flex-wrap: wrap; }
+.chip-add input[type="text"] { inline-size: 10rem; min-inline-size: 0; padding: .3rem .5rem; }
+.chip-add-primary { display: inline-flex; gap: .3rem; align-items: center; font-size: .8rem;
+                    color: var(--muted); }
+
+/* Variants grid: one shared column template so header and rows always align. */
+.vg-cols { display: grid; gap: .6rem; align-items: center;
+           grid-template-columns: minmax(8rem, 1.3fr) minmax(6rem, 1fr) 6.5rem
+                                  minmax(12rem, 1.7fr) 3.5rem 5.5rem; }
+.vg-head { font-size: .75rem; font-weight: 600; text-transform: uppercase;
+           letter-spacing: .04em; color: var(--muted); padding-block: .3rem; }
+.vg-row { padding-block: .5rem; border-block-start: 1px solid var(--border); }
+.vg-row input[type="text"], .vg-row input[type="number"] { inline-size: 100%; min-inline-size: 0;
+                                                           padding: .35rem .5rem; }
+.vg-row .chip-add { margin-block-start: 0; }
+.vg-row .chip-add input[type="text"] { inline-size: 7.5rem; }
+.vg-inactive > input, .vg-inactive > .chip-row { opacity: .55; }
+.vg-new { background: var(--surface-2); border-radius: 8px; padding-inline: .5rem; }
+@media (max-width: 900px) {
+  .variant-grid { overflow-x: auto; }
+  .vg-cols { min-inline-size: 44rem; }
+}
+
 .catalog-form label { display: flex; flex-direction: column; gap: .2rem;
                       font-size: .82rem; margin-bottom: .55rem; }
 .field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
