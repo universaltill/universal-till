@@ -23,6 +23,18 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		slow, _ := repo.SlowItems(r.Context(), days, 10)
 		dead, _ := repo.DeadStock(r.Context(), days, 10)
 		margins, _ := repo.MarginByItem(r.Context(), days, 10)
+		// Low-stock heads-up (same 28-day model as the inventory page): a
+		// chip on the reports header so the owner sees it without digging.
+		runningOut := 0
+		if rates, err := repo.ItemDailySellRates(r.Context(), 28); err == nil && len(rates) > 0 {
+			if lvls, err := repo.ListStockLevels(r.Context()); err == nil {
+				for _, l := range lvls {
+					if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty/rate <= 7 {
+						runningOut++
+					}
+				}
+			}
+		}
 		byWeekday, _ := repo.SalesByWeekday(r.Context(), days)
 		byHour, _ := repo.SalesByHour(r.Context(), days)
 		// Normalize to bar widths (busiest = 100%) so the template stays dumb.
@@ -114,6 +126,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"Slow":        slow,
 			"DeadStock":   dead,
 			"Margins":     margins,
+			"RunningOut":  runningOut,
 			"WeekdayBars": weekdayBars,
 			"HourBars":    hourBars,
 			"Departments": departments,
