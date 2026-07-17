@@ -717,6 +717,70 @@ GROUP BY sl.name_snapshot ORDER BY revenue DESC LIMIT ?`, fmt.Sprintf("-%d days"
 	return out, rows.Err()
 }
 
+// SlowItems mirrors TopItems but ascending: the WORST sellers that still had
+// at least one sale in the window — candidates for delisting or promotion.
+func (r *POSRepo) SlowItems(ctx context.Context, days, limit int) ([]TopItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.name_snapshot, SUM(sl.quantity) AS qty, COALESCE(SUM(sl.total_after_tax), 0) AS revenue
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
+GROUP BY sl.name_snapshot HAVING qty > 0 ORDER BY revenue ASC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+	if err != nil {
+		return nil, fmt.Errorf("slow items: %w", err)
+	}
+	defer rows.Close()
+	var out []TopItem
+	for rows.Next() {
+		var t TopItem
+		if err := rows.Scan(&t.Name, &t.Qty, &t.Revenue); err != nil {
+			return nil, fmt.Errorf("scan slow item: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DeadStockRow is an active item holding stock that hasn't sold at all in the
+// reporting window — capital sitting on the shelf.
+type DeadStockRow struct {
+	Name       string
+	SKU        string
+	Qty        float64
+	StockValue int64 // qty × base_price, minor units
+}
+
+// DeadStock lists active items with on-hand stock and ZERO sales in the last
+// N days, most tied-up value first.
+func (r *POSRepo) DeadStock(ctx context.Context, days, limit int) ([]DeadStockRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.name, COALESCE(i.sku, ''), SUM(inv.quantity) AS qty,
+       CAST(SUM(inv.quantity) * i.base_price AS INTEGER) AS value
+FROM inventory inv
+JOIN items i ON i.id = inv.item_id
+WHERE i.is_active = 1 AND inv.quantity > 0
+  AND i.id NOT IN (
+    SELECT DISTINCT sl.item_id FROM sale_lines sl
+    JOIN sales s ON s.id = sl.sale_id
+    WHERE s.status = 'completed' AND sl.item_id IS NOT NULL
+      AND s.created_at >= datetime('now', ?)
+  )
+GROUP BY i.id ORDER BY value DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+	if err != nil {
+		return nil, fmt.Errorf("dead stock: %w", err)
+	}
+	defer rows.Close()
+	var out []DeadStockRow
+	for rows.Next() {
+		var d DeadStockRow
+		if err := rows.Scan(&d.Name, &d.SKU, &d.Qty, &d.StockValue); err != nil {
+			return nil, fmt.Errorf("scan dead stock: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // PaymentBreakdown sums applied payments per method for the last N days.
 func (r *POSRepo) PaymentBreakdown(ctx context.Context, days int) ([]MethodTotal, error) {
 	rows, err := r.db.QueryContext(ctx, `
