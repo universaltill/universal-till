@@ -845,5 +845,6 @@
   "reports.tax_summary_hint": "Oran başına net satış ve tahsil edilen vergi — iadeler düşülmüştür.",
   "reports.tax_rate": "Oran",
   "reports.tax_net": "Net satış",
-  "reports.tax_collected": "Tahsil edilen vergi"
+  "reports.tax_collected": "Tahsil edilen vergi",
+  "catalog.col.cost": "Maliyet"
 }
