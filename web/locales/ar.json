@@ -840,5 +840,10 @@
   "reports.margins": "هوامش الربح",
   "reports.margins_hint": "الإيراد ناقص التكلفة، للمنتجات التي سُجّل سعر تكلفتها في الكتالوج.",
   "reports.margins_none": "سجّل أسعار التكلفة في الكتالوج لرؤية الهوامش.",
-  "reports.yoy": "مقارنة بالعام الماضي"
+  "reports.yoy": "مقارنة بالعام الماضي",
+  "reports.tax_summary": "ملخص الضريبة",
+  "reports.tax_summary_hint": "صافي المبيعات والضريبة المحصّلة لكل نسبة — المرتجعات مخصومة.",
+  "reports.tax_rate": "النسبة",
+  "reports.tax_net": "صافي المبيعات",
+  "reports.tax_collected": "الضريبة المحصّلة"
 }

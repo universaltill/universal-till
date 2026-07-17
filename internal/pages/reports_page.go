@@ -24,6 +24,16 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		dead, _ := repo.DeadStock(r.Context(), days, 10)
 		margins, _ := repo.MarginByItem(r.Context(), days, 10)
 		curPeriod, lastYear, _ := repo.PeriodComparison(r.Context(), days)
+		taxBands, _ := repo.TaxSummary(r.Context(), days)
+		type taxRow struct {
+			Rate string
+			Net  int64
+			Tax  int64
+		}
+		taxRows := make([]taxRow, 0, len(taxBands))
+		for _, b := range taxBands {
+			taxRows = append(taxRows, taxRow{Rate: fmt.Sprintf("%.4g%%", float64(b.RateBP)/100), Net: b.Net, Tax: b.Tax})
+		}
 		yoyPct := 0
 		if lastYear.Total > 0 {
 			yoyPct = int((curPeriod.Total - lastYear.Total) * 100 / lastYear.Total)
@@ -135,6 +145,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"YoYNow":      curPeriod.Total,
 			"YoYThen":     lastYear.Total,
 			"YoYPct":      yoyPct,
+			"TaxRows":     taxRows,
 			"RunningOut":  runningOut,
 			"WeekdayBars": weekdayBars,
 			"HourBars":    hourBars,

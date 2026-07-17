@@ -840,5 +840,10 @@
   "reports.margins": "Kâr marjları",
   "reports.margins_hint": "Katalogda maliyet fiyatı girilmiş ürünler için gelir eksi maliyet.",
   "reports.margins_none": "Marjları görmek için katalogda maliyet fiyatlarını girin.",
-  "reports.yoy": "geçen yıla göre"
+  "reports.yoy": "geçen yıla göre",
+  "reports.tax_summary": "Vergi özeti",
+  "reports.tax_summary_hint": "Oran başına net satış ve tahsil edilen vergi — iadeler düşülmüştür.",
+  "reports.tax_rate": "Oran",
+  "reports.tax_net": "Net satış",
+  "reports.tax_collected": "Tahsil edilen vergi"
 }
