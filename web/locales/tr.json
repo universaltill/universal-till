@@ -650,7 +650,7 @@
   "shifts.variance": "Fark",
   "status.offline": "Çevrimdışı",
   "status.online": "Çevrimiçi",
-  "status.register_till": "Bu kasayı kaydedin",
+  "status.register_till": "Pazar yeri: bağlı değil",
   "status.update_available": "Güncelleme mevcut",
   "status.update_now": "Şimdi güncelle",
   "suggest.add": "Sepete ekle",
@@ -818,5 +818,6 @@
   "help.feat.display.what": "Kasa baştan sona English, Türkçe, فارسی ve العربية konuşur — sağdan sola düzen dâhil — ve ekran klavyesiyle, ayarlanabilir yazı boyutuyla dokunmatik ekranlara uyum sağlar.",
   "help.feat.display.s1": "Dili menüden değiştirin; her kullanıcı kendi dilini seçebilir.",
   "help.feat.display.s2": "Ayarlar → Görünüm: ekranınıza göre arayüz ölçeğini ayarlayın.",
-  "help.feat.display.s3": "Ekran klavyesi dokunmatik ekranlarda otomatik açılır (Görünüm ayarlarından zorla açıp kapatabilirsiniz)."
+  "help.feat.display.s3": "Ekran klavyesi dokunmatik ekranlarda otomatik açılır (Görünüm ayarlarından zorla açıp kapatabilirsiniz).",
+  "settings.enrol.claim_scan": "Ya da telefonunuzla tarayıp oradan sahiplenin"
 }
