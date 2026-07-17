@@ -845,5 +845,6 @@
   "reports.tax_summary_hint": "Net sales and tax collected per rate — returns already deducted.",
   "reports.tax_rate": "Rate",
   "reports.tax_net": "Net sales",
-  "reports.tax_collected": "Tax collected"
+  "reports.tax_collected": "Tax collected",
+  "catalog.col.cost": "Cost"
 }

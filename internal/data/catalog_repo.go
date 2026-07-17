@@ -202,6 +202,7 @@ type VariantEditView struct {
 	Name       string
 	SKU        string
 	PriceMinor int64
+	CostMinor  int64 // cost price, 0 = unset (margin report input)
 	IsActive   bool
 	Barcodes   []string
 }
@@ -210,7 +211,7 @@ type VariantEditView struct {
 // with their barcodes — the catalog's per-item edit panel.
 func (r *CatalogRepo) VariantsForItem(ctx context.Context, itemID string) ([]VariantEditView, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(sku, ''), price, is_active
+SELECT id, name, COALESCE(sku, ''), price, COALESCE(cost_price, 0), is_active
 FROM item_variants WHERE item_id = ? ORDER BY is_active DESC, name`, itemID)
 	if err != nil {
 		return nil, err
@@ -220,7 +221,7 @@ FROM item_variants WHERE item_id = ? ORDER BY is_active DESC, name`, itemID)
 	byID := map[string]int{}
 	for rows.Next() {
 		var v VariantEditView
-		if err := rows.Scan(&v.ID, &v.Name, &v.SKU, &v.PriceMinor, &v.IsActive); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.SKU, &v.PriceMinor, &v.CostMinor, &v.IsActive); err != nil {
 			return nil, err
 		}
 		byID[v.ID] = len(out)

@@ -845,5 +845,6 @@
   "reports.tax_summary_hint": "فروش خالص و مالیات دریافتی به تفکیک نرخ — مرجوعی‌ها کسر شده‌اند.",
   "reports.tax_rate": "نرخ",
   "reports.tax_net": "فروش خالص",
-  "reports.tax_collected": "مالیات دریافتی"
+  "reports.tax_collected": "مالیات دریافتی",
+  "catalog.col.cost": "قیمت تمام‌شده"
 }

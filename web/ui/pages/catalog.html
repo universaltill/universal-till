@@ -216,6 +216,9 @@
     var major = f.querySelector('.variant-price-major') ||
       (f.id && document.querySelector('.variant-price-major[form="' + f.id + '"]'));
     if (major) ev.detail.parameters.price = window.utCurrency.toMinor(major.value || '0');
+    var cost = f.querySelector('.variant-cost-major') ||
+      (f.id && document.querySelector('.variant-cost-major[form="' + f.id + '"]'));
+    if (cost && cost.value !== '') ev.detail.parameters.costPrice = window.utCurrency.toMinor(cost.value);
   });
 
   var imageForm = document.getElementById('image-form');
