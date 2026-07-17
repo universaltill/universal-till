@@ -14,6 +14,7 @@ echo Universal Till - uninstall
 echo.
 
 REM 1) Stop a running till so nothing is holding the database open.
+taskkill /IM unitill-desktop.exe /F >nul 2>&1
 taskkill /IM unitill-pos.exe /F >nul 2>&1
 
 REM 2) Shop data is precious (sales history, receipts) - never delete silently.

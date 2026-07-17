@@ -25,6 +25,19 @@ builds:
     ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
     goos: [windows]
     goarch: [amd64]
+  # Windows desktop shell (Edge WebView2 window, like the mac app): needs CGO
+  # + mingw-w64 (release.yml installs it); -H windowsgui = no console window.
+  - id: desktop-windows
+    binary: unitill-desktop
+    main: ./cmd/unitill-desktop
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
+      - CXX=x86_64-w64-mingw32-g++
+    flags: [-trimpath, -tags=desktop]
+    ldflags: ["-s -w -H windowsgui"]
+    goos: [windows]
+    goarch: [amd64]
   - id: darwin
     binary: unitill-pos
     main: .
@@ -72,7 +85,7 @@ archives:
       - README.md
       - LICENSE*
   - id: windows
-    ids: [windows]
+    ids: [windows, desktop-windows]
     formats: [zip]
     files:
       - web/**
@@ -124,8 +137,10 @@ release:
     then open http://localhost:8080 — the first-boot wizard does the rest.
 
     **Windows (recommended):** run **`unitill-pos-setup-*.exe`** — a guided
-    installer that adds Start-menu and desktop shortcuts. Or, for a portable
-    copy, unzip the `.zip` and double-click `run-unitill.bat`.
+    installer; Universal Till then opens in **its own app window** (no
+    terminal, no browser) from the Start-menu/desktop shortcut. Portable
+    copy: unzip and double-click `unitill-desktop.exe` (or `run-unitill.bat`
+    for the browser flavour).
 
     **macOS:** unzip, then double-click `run-unitill.command`. The first time,
     macOS may say the developer is unidentified — right-click the file, choose
