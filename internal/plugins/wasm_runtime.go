@@ -28,9 +28,14 @@ var (
 	sharedBusOnce sync.Once
 )
 
-// SharedBus returns the singleton event bus for this process.
+// SharedBus returns the singleton event bus for this process, rebound to the
+// caller's live db handle (one db per process in production; tests open and
+// close several, and hook/permission checks must not hit a closed one).
 func SharedBus(db *sql.DB) *EventBus {
 	sharedBusOnce.Do(func() { sharedBus = NewEventBus(db) })
+	if db != nil {
+		sharedBus.SetDB(db)
+	}
 	return sharedBus
 }
 

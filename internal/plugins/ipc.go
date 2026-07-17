@@ -36,6 +36,20 @@ type EventBus struct {
 	eventModes  map[string]EventDispatchMode // event_type -> dispatch mode
 }
 
+// SetDB rebinds the bus to a live database handle (see SharedBus).
+func (eb *EventBus) SetDB(db *sql.DB) {
+	eb.mu.Lock()
+	eb.db = db
+	eb.mu.Unlock()
+}
+
+// dbHandle returns the current database handle under the read lock.
+func (eb *EventBus) dbHandle() *sql.DB {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return eb.db
+}
+
 // EventSubscriber represents a plugin subscribed to events
 type EventSubscriber struct {
 	PluginID   string
@@ -189,7 +203,7 @@ func (eb *EventBus) GetEventMode(eventType string) EventDispatchMode {
 
 func (eb *EventBus) subscribe(ctx context.Context, pluginID string, eventTypes []string, handler EventHandler) (<-chan Event, error) {
 	// Verify plugin has hooks for these events
-	repo := data.NewPluginRepo(eb.db)
+	repo := data.NewPluginRepo(eb.dbHandle())
 	for _, eventType := range eventTypes {
 		hasHook, err := repo.HasActiveHook(ctx, pluginID, eventType)
 		if err != nil {
@@ -262,7 +276,7 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 	dispatched := 0
 
 	for _, sub := range subscribers {
-		if err := CheckPermission(ctx, eb.db, sub.PluginID, "events:receive"); err != nil {
+		if err := CheckPermission(ctx, eb.dbHandle(), sub.PluginID, "events:receive"); err != nil {
 			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
 			if mode == Blocking {
 				return "", fmt.Errorf("event %s denied for plugin %s: %w", eventType, sub.PluginID, err)
@@ -314,13 +328,13 @@ func (eb *EventBus) Acknowledge(ctx context.Context, eventID, pluginID string, s
 		details += fmt.Sprintf(", error=%s", errorMsg)
 	}
 
-	return data.NewPluginRepo(eb.db).InsertAuditRaw(ctx, nil, "event_acknowledged", "plugin", pluginID, details, time.Now())
+	return data.NewPluginRepo(eb.dbHandle()).InsertAuditRaw(ctx, nil, "event_acknowledged", "plugin", pluginID, details, time.Now())
 }
 
 // auditEvent logs event publication to audit_log
 func (eb *EventBus) auditEvent(ctx context.Context, eventID, eventType string, subscriberCount int) error {
 	details := fmt.Sprintf("event_type=%s, subscribers=%d", eventType, subscriberCount)
-	return data.NewPluginRepo(eb.db).InsertAuditRaw(ctx, nil, "event_published", "event", eventID, details, time.Now())
+	return data.NewPluginRepo(eb.dbHandle()).InsertAuditRaw(ctx, nil, "event_published", "event", eventID, details, time.Now())
 }
 
 // auditDispatch logs per-plugin dispatch results. Errors are swallowed to avoid blocking core flows.
@@ -330,7 +344,7 @@ func (eb *EventBus) auditDispatch(ctx context.Context, eventID, eventType, plugi
 		details += fmt.Sprintf(", error=%s", errMsg)
 	}
 
-	if err := data.NewPluginRepo(eb.db).InsertAuditRaw(ctx, nil, "event_dispatch", "plugin", pluginID, details, time.Now()); err != nil {
+	if err := data.NewPluginRepo(eb.dbHandle()).InsertAuditRaw(ctx, nil, "event_dispatch", "plugin", pluginID, details, time.Now()); err != nil {
 		fmt.Printf("warning: failed to audit dispatch: %v\n", err)
 	}
 }
