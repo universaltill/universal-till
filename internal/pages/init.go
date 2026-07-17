@@ -76,6 +76,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		}
 	}
 	httpx.InitUIScale(state.UIScale)
+	httpx.InitOSKMode(state.OSKMode)
 
 	btnStore := ui.NewButtonStore(db)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}

@@ -143,6 +143,23 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .catalog-form-head { display: flex; justify-content: space-between; align-items: center;
                      margin-bottom: .5rem; }
 
+/* On-screen keyboard (touch tills / kiosk — osk.js). Fixed to the bottom,
+   big touch targets; body gets padding so the focused field stays visible. */
+#osk { position: fixed; inset-inline: 0; inset-block-end: 0; z-index: 1000;
+       display: none; padding: .45rem .5rem calc(.45rem + env(safe-area-inset-bottom, 0px));
+       background: var(--surface-2); border-block-start: 1px solid var(--border);
+       box-shadow: 0 -4px 16px rgba(0,0,0,.12); user-select: none; touch-action: manipulation; }
+#osk.osk-open { display: block; }
+body.osk-padded { padding-block-end: 15.5rem; }
+.osk-row { display: flex; justify-content: center; gap: .3rem; margin-block-end: .3rem; }
+.osk-key { flex: 1 1 0; max-inline-size: 4.2rem; min-block-size: 2.9rem;
+           font-size: 1.15rem; border: 1px solid var(--border); border-radius: .5rem;
+           background: var(--surface); color: inherit; cursor: pointer; }
+.osk-key:active { background: var(--accent); color: var(--accent-contrast); }
+.osk-fn { max-inline-size: 6rem; font-size: .95rem; background: var(--surface-2); }
+.osk-space { flex: 5 1 0; max-inline-size: 22rem; }
+.osk-on { background: var(--accent); color: var(--accent-contrast); }
+
 /* Catalog detail panel: full-width under the list — item info + barcode
    chips on one side, the variants list (editable grid) as the main area. */
 .catalog-detail { margin-block-start: 1rem; }

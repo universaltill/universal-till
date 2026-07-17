@@ -156,6 +156,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// On-screen keyboard mode for this till's screen (auto|on|off).
+	mux.HandleFunc("POST /api/settings/osk", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mode := strings.TrimSpace(r.Form.Get("mode"))
+		if mode != "auto" && mode != "on" && mode != "off" {
+			http.Error(w, "mode must be auto, on or off", http.StatusBadRequest)
+			return
+		}
+		st := d.UpdateState(func(s *common.RuntimeState) { s.OSKMode = mode })
+		common.SaveState(r.Context(), d.Settings, st)
+		httpx.InitOSKMode(mode)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	mux.HandleFunc("/api/settings/theme", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if v := strings.TrimSpace(r.Form.Get("theme")); v != "" {
