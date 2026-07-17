@@ -825,5 +825,14 @@
   "inventory.running_out": "item(s) predicted to run out within a week",
   "reports.slow_items": "Slow sellers",
   "reports.dead_stock": "Dead stock",
-  "reports.dead_stock_hint": "In stock but not a single sale in this period — money sitting on the shelf."
+  "reports.dead_stock_hint": "In stock but not a single sale in this period — money sitting on the shelf.",
+  "reports.busy_days": "Busiest days",
+  "reports.busy_hours": "Busiest hours",
+  "reports.wd_sun": "Sunday",
+  "reports.wd_mon": "Monday",
+  "reports.wd_tue": "Tuesday",
+  "reports.wd_wed": "Wednesday",
+  "reports.wd_thu": "Thursday",
+  "reports.wd_fri": "Friday",
+  "reports.wd_sat": "Saturday"
 }
