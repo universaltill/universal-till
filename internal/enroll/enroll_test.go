@@ -111,9 +111,12 @@ func freshConfig(endpoint string) *config.Config {
 	}
 }
 
-func TestInitFreshTillEnrolsAndPersists(t *testing.T) {
+// Registration is LAZY (multi-store / paid cloud are the paid tier): a fresh
+// till boot mints a device id and fetches the signing key but must NOT create
+// a store; the first plugin download/install (EnsureRegistered) does.
+func TestInitFreshTillDoesNotRegisterStore(t *testing.T) {
 	resetState()
-	srv, _ := testMarketplace(t, 0)
+	srv, calls := testMarketplace(t, 0)
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL)
 
@@ -127,21 +130,39 @@ func TestInitFreshTillEnrolsAndPersists(t *testing.T) {
 		t.Fatalf("cfg.DeviceID = %q, want %q", cfg.Marketplace.DeviceID, deviceID)
 	}
 
-	waitFor(t, "enrolment", func() bool { return kv.get(keyToken) != "" && kv.get(keyPublicKey) != "" })
+	// The signing key still arrives (plugins must verify), the store doesn't.
+	waitFor(t, "signing key", func() bool { return kv.get(keyPublicKey) != "" })
+	time.Sleep(50 * time.Millisecond)
+	if *calls != 0 {
+		t.Fatalf("register called %d times at boot; registration must be lazy", *calls)
+	}
+	if kv.get(keyStoreID) != "" || kv.get(keyToken) != "" {
+		t.Fatalf("store identity persisted at boot: %q/%q", kv.get(keyStoreID), kv.get(keyToken))
+	}
+	if CurrentStatus().Registered {
+		t.Fatal("fresh till reports registered")
+	}
+
+	// First marketplace interaction: EnsureRegistered enrols and the live
+	// identity reaches request handlers without a restart.
+	eff := EnsureRegistered(context.Background(), cfg, kv)
+	if *calls != 1 {
+		t.Fatalf("register calls = %d, want 1", *calls)
+	}
 	if got := kv.get(keyStoreID); got != "store-abc" {
 		t.Fatalf("persisted store_id = %q", got)
 	}
-
-	// The live identity reaches request handlers without a restart.
-	eff := Effective(cfg)
 	if eff.Marketplace.ClientID != "store-abc" || eff.Marketplace.StoreID != "store-abc" {
 		t.Fatalf("effective identity = %q/%q, want store-abc", eff.Marketplace.ClientID, eff.Marketplace.StoreID)
 	}
-	if eff.Marketplace.PublicKey != strings.Repeat("ab", 32) {
-		t.Fatalf("effective public key = %q", eff.Marketplace.PublicKey)
-	}
 	if eff.Marketplace.MerchantToken != "tok-123" {
 		t.Fatalf("effective merchant token = %q", eff.Marketplace.MerchantToken)
+	}
+
+	// Once registered, EnsureRegistered is a read-only pass-through.
+	_ = EnsureRegistered(context.Background(), cfg, kv)
+	if *calls != 1 {
+		t.Fatalf("register calls after re-ensure = %d, want 1", *calls)
 	}
 	// The shared config was not mutated after startup (race-free handlers).
 	if cfg.Marketplace.ClientID != "" {
@@ -206,21 +227,26 @@ func TestInitExplicitConfigWinsAndSkipsEnrolment(t *testing.T) {
 	}
 }
 
-func TestRunRetriesUntilMarketplaceReachable(t *testing.T) {
+// Lazy registration retries per interaction: a failed attempt leaves the till
+// unregistered and the next EnsureRegistered tries again.
+func TestEnsureRegisteredRetriesAcrossAttempts(t *testing.T) {
 	resetState()
 	srv, calls := testMarketplace(t, 2) // first two register calls fail
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL)
-
-	old := retryDelays
-	retryDelays = []time.Duration{10 * time.Millisecond}
-	defer func() { retryDelays = old }()
-
 	Init(context.Background(), cfg, kv)
 
-	waitFor(t, "retry to succeed", func() bool { return kv.get(keyToken) == "tok-123" })
-	if *calls < 3 {
-		t.Fatalf("register calls = %d, want >= 3", *calls)
+	for i := 1; i <= 3; i++ {
+		eff := EnsureRegistered(context.Background(), cfg, kv)
+		if i < 3 && eff.Marketplace.MerchantToken != "" {
+			t.Fatalf("attempt %d: unexpectedly registered", i)
+		}
+		if i == 3 && eff.Marketplace.MerchantToken != "tok-123" {
+			t.Fatalf("attempt 3: not registered, token = %q", eff.Marketplace.MerchantToken)
+		}
+	}
+	if *calls != 3 {
+		t.Fatalf("register calls = %d, want 3", *calls)
 	}
 }
 
