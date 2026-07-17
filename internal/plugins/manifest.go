@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // Manifest represents the plugin.json schema
@@ -278,6 +279,17 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	// A LAN-sync replica pulls the primary's admin bundle only when its
+	// fingerprint moves, and shop-wide (global) plugin settings for a plugin
+	// this till lacks are skipped on apply. Clearing the pull cursor makes
+	// the next tick re-apply the bundle, so a freshly installed plugin picks
+	// up its shared settings within one pull instead of waiting for the
+	// primary to change something. No-op on a primary/standalone till, and
+	// best-effort — an install must not fail over sync bookkeeping.
+	if err := data.NewSettingsRepo(db).Set(ctx, "sync.pull_version", ""); err != nil {
+		logging.L().Warnf("plugin install: could not reset sync pull cursor: %v", err)
 	}
 
 	return nil

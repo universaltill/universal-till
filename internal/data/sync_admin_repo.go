@@ -35,7 +35,10 @@ type adminTable struct {
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
 // here: inventory/stock (additive movements, D3), sales, sessions,
 // stock_locations (per-till), item_images (files don't travel — D2 limit),
-// plugin tables (replicas install from the marketplace themselves).
+// plugin install tables (replicas install from the marketplace themselves).
+// plugin_settings IS here, but only its GLOBAL-scope rows travel (shop-wide
+// config like a payment gateway's secret key); register/user-scoped rows
+// stay per-till. See applyPluginSettings for its special apply semantics.
 var adminTables = []adminTable{
 	{name: "tax_codes", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
 	{name: "brands", pk: []string{"id"}, unique: []string{"name"}},
@@ -52,6 +55,10 @@ var adminTables = []adminTable{
 	{name: "shortcut_buttons", pk: []string{"barcode"}},
 	{name: "translation_overrides", pk: []string{"locale", "key"}},
 	{name: "settings", pk: []string{"key"}},
+	// pk is the surrogate uuid, not (plugin_id,key,scope,scope_id): the
+	// UNIQUE index includes scope_id, which is NULL on global rows, and
+	// SQLite treats NULLs as distinct — ON CONFLICT on it would never fire.
+	{name: "plugin_settings", pk: []string{"id"}},
 }
 
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
@@ -104,6 +111,15 @@ func (r *SyncAdminRepo) DumpAdmin(ctx context.Context) (AdminBundle, error) {
 			}
 			recs = kept
 		}
+		if t.name == "plugin_settings" {
+			kept := recs[:0]
+			for _, rec := range recs {
+				if fmt.Sprint(rec["scope"]) == "global" {
+					kept = append(kept, rec)
+				}
+			}
+			recs = kept
+		}
 		bundle.Tables[t.name] = recs
 	}
 	return bundle, nil
@@ -131,8 +147,10 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		}
 		// settings are never pruned: the app only ever upserts them, and a
 		// key a newer replica writes that the primary doesn't know must not
-		// be wiped on every pull (version skew).
-		if t.name == "settings" {
+		// be wiped on every pull (version skew). plugin_settings does its own
+		// scoped replace in applyPluginSettings — the generic prune would
+		// wipe this till's register/user-scoped rows (absent from the bundle).
+		if t.name == "settings" || t.name == "plugin_settings" {
 			continue
 		}
 		if err := deleteMissing(ctx, tx, t, recs); err != nil {
@@ -144,6 +162,12 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 	for _, t := range adminTables {
 		recs, ok := bundle.Tables[t.name]
 		if !ok {
+			continue
+		}
+		if t.name == "plugin_settings" {
+			if err := applyPluginSettings(ctx, tx, t, recs); err != nil {
+				return err
+			}
 			continue
 		}
 		cols, err := tableColumns(ctx, tx, t.name)
@@ -160,6 +184,61 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		}
 	}
 	return tx.Commit()
+}
+
+// applyPluginSettings replaces this till's GLOBAL plugin settings with the
+// primary's, for exactly the plugins the bundle mentions. Register/user-scoped
+// rows never travel and are never touched, and a replica-only plugin (one the
+// primary doesn't have) keeps its local global settings. Rows for plugins not
+// installed on this till are skipped — plugin_settings FKs plugins, and
+// replicas install plugins from the marketplace themselves; the rows land on
+// the pull after the install. Delete-then-insert per plugin (not a prune):
+// it propagates key deletion within a plugin without seeing per-till rows,
+// which are absent from the bundle by design.
+func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any) error {
+	installed := map[string]bool{}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM plugins`)
+	if err != nil {
+		return fmt.Errorf("apply plugin_settings: %w", err)
+	}
+	ids, err := scanGenericCols(rows, []string{"id"})
+	rows.Close()
+	if err != nil {
+		return fmt.Errorf("apply plugin_settings: %w", err)
+	}
+	for _, rec := range ids {
+		installed[fmt.Sprint(rec["id"])] = true
+	}
+
+	cleared := map[string]bool{}
+	for _, rec := range recs {
+		pid := fmt.Sprint(rec["plugin_id"])
+		if cleared[pid] {
+			continue
+		}
+		cleared[pid] = true
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM plugin_settings WHERE scope = 'global' AND plugin_id = ?`, pid); err != nil {
+			return fmt.Errorf("apply plugin_settings: %w", err)
+		}
+	}
+
+	cols, err := tableColumns(ctx, tx, t.name)
+	if err != nil {
+		return err
+	}
+	for _, rec := range recs {
+		if !installed[fmt.Sprint(rec["plugin_id"])] {
+			continue
+		}
+		if fmt.Sprint(rec["scope"]) != "global" {
+			continue // defense in depth: a primary must never write per-till scopes
+		}
+		if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
+			return fmt.Errorf("apply plugin_settings: %w", err)
+		}
+	}
+	return nil
 }
 
 // pkOf renders a composite key for set membership.
