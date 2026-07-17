@@ -26,6 +26,13 @@ type adminBundleResponse struct {
 	Bundle    data.AdminBundle `json:"bundle"`
 }
 
+// stockBundleResponse is the wire shape of GET /api/sync/stock (D3b).
+type stockBundleResponse struct {
+	Version   string           `json:"version"`
+	Unchanged bool             `json:"unchanged"`
+	Bundle    data.StockBundle `json:"bundle"`
+}
+
 func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 	tills := data.NewTillsRepo(d.Db)
 	adminRepo := data.NewSyncAdminRepo(d.Db)
@@ -45,6 +52,31 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		resp := adminBundleResponse{Version: bundle.Fingerprint()}
+		if r.URL.Query().Get("have") == resp.Version {
+			resp.Unchanged = true
+		} else {
+			resp.Bundle = bundle
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": resp, "error": nil})
+	})
+
+	// Primary side: shop-wide stock levels (D3b). Every till's sale journal
+	// lands here, so this aggregate is the authoritative on-hand; replicas
+	// poll it and correct their local levels to match.
+	stockRepo := data.NewSyncStockRepo(posRepo)
+	mux.HandleFunc("GET /api/sync/stock", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := syncTill(r, tills); !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
+			return
+		}
+		bundle, err := stockRepo.DumpStock(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp := stockBundleResponse{Version: bundle.Fingerprint()}
 		if r.URL.Query().Get("have") == resp.Version {
 			resp.Unchanged = true
 		} else {
@@ -170,18 +202,67 @@ func StartSyncPull(ctx context.Context, d *common.Deps, refresh func(context.Con
 		// without moving the admin fingerprint, so this runs every tick
 		// (the manifest is cheap; only missing/changed files download).
 		syncItemAssets(ctx, client, primary, bearer)
-		if out.Data.Unchanged {
+		if !out.Data.Unchanged {
+			if err := adminRepo.ApplyAdmin(ctx, out.Data.Bundle); err != nil {
+				logging.L().Errorf("sync pull: apply failed: %v", err)
+				return
+			}
+			_ = d.Settings.Set(ctx, "sync.pull_version", out.Data.Version)
+			_ = d.Settings.Set(ctx, "sync.last_pull_at", now)
+			_ = posRepo.InsertAudit(ctx, nil, "system", "till", get("sync.till_id"), "admin_pulled",
+				map[string]any{"version": out.Data.Version}, now, "")
+			refresh(ctx)
+			logging.L().Infof("sync pull: admin state %s applied from the primary", out.Data.Version)
+		}
+
+		// D3b — stock levels follow the primary (it has every till's sale
+		// journal, so its aggregate is the shop truth). Runs AFTER the admin
+		// apply (corrections may reference freshly synced items/variants) and
+		// only when this till's own journal is fully pushed — otherwise the
+		// primary hasn't counted our latest sales yet and a correction would
+		// briefly re-add sold stock.
+		if queued, err := posRepo.CountLocalSalesSince(ctx, get("sync.push_cursor")); err != nil || queued > 0 {
 			return
 		}
-		if err := adminRepo.ApplyAdmin(ctx, out.Data.Bundle); err != nil {
-			logging.L().Errorf("sync pull: apply failed: %v", err)
+		stockRepo := data.NewSyncStockRepo(posRepo)
+		surl := strings.TrimSuffix(primary, "/") + "/api/sync/stock?have=" + get("sync.stock_version")
+		sreq, err := http.NewRequestWithContext(ctx, http.MethodGet, surl, nil)
+		if err != nil {
 			return
 		}
-		_ = d.Settings.Set(ctx, "sync.pull_version", out.Data.Version)
-		_ = d.Settings.Set(ctx, "sync.last_pull_at", now)
-		_ = posRepo.InsertAudit(ctx, nil, "system", "till", get("sync.till_id"), "admin_pulled",
-			map[string]any{"version": out.Data.Version}, now, "")
-		refresh(ctx)
-		logging.L().Infof("sync pull: admin state %s applied from the primary", out.Data.Version)
+		sreq.Header.Set("Authorization", "Bearer "+bearer)
+		sresp, err := client.Do(sreq)
+		if err != nil {
+			return // primary just answered the admin poll; transient — next tick retries
+		}
+		defer sresp.Body.Close()
+		if sresp.StatusCode != http.StatusOK {
+			logging.L().Errorf("stock sync pull rejected: %s", sresp.Status)
+			return
+		}
+		var sout struct {
+			Data stockBundleResponse `json:"data"`
+		}
+		if err := json.NewDecoder(sresp.Body).Decode(&sout); err != nil {
+			logging.L().Errorf("stock sync pull: bad response: %v", err)
+			return
+		}
+		if sout.Data.Unchanged {
+			return
+		}
+		locID, err := posRepo.EnsureStockLocation(ctx)
+		if err != nil {
+			logging.L().Errorf("stock sync pull: no stock location: %v", err)
+			return
+		}
+		corrections, err := stockRepo.ApplyStockLevels(ctx, sout.Data.Bundle, locID)
+		if err != nil {
+			logging.L().Errorf("stock sync pull: apply failed after %d corrections: %v", corrections, err)
+			return
+		}
+		_ = d.Settings.Set(ctx, "sync.stock_version", sout.Data.Version)
+		if corrections > 0 {
+			logging.L().Infof("stock sync: %d level corrections applied from the primary (%s)", corrections, sout.Data.Version)
+		}
 	})
 }
