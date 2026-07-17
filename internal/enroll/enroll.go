@@ -1,11 +1,14 @@
-// Package enroll implements first-boot anonymous store enrolment (ADR-0013,
-// layer 1). A fresh till generates a stable device_id, registers itself with
-// the marketplace (POST /v1/stores/register) and persists the returned store/
-// merchant identity + device token in settings, so any download can browse and
-// install free plugins with no manual configuration. Explicit configuration
-// (UT_MARKETPLACE_CLIENT_ID / _STORE_ID / _DEVICE_ID) always wins; enrolment
-// only fills the gaps. Registration never blocks startup — it is retried in
-// the background until the marketplace is reachable (offline-first).
+// Package enroll implements anonymous store enrolment (ADR-0013, layer 1).
+// Registration is LAZY: multi-store and paid cloud services are the paid
+// tier, so a till that never uses the marketplace never registers a store.
+// A fresh till only mints a stable device_id at boot; the store identity is
+// created on the first real marketplace interaction — a plugin download/
+// install (EnsureRegistered) or the operator's Settings → "Register now"
+// (RegisterNow) — via POST /v1/stores/register, and the returned store/
+// merchant identity + device token persist in settings. Explicit
+// configuration (UT_MARKETPLACE_CLIENT_ID / _STORE_ID / _DEVICE_ID) always
+// wins; enrolment only fills the gaps. Nothing here ever blocks startup or
+// checkout (offline-first).
 //
 // The marketplace's Ed25519 signing key (needed to verify plugin bundles) is
 // fetched alongside enrolment when UT_MARKETPLACE_PUBLIC_KEY is not set, and
@@ -204,17 +207,35 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings) {
 	if m.EndpointURL == "" {
 		return
 	}
-	needRegister := !clientIDExplicit && (id.StoreID == "" || id.Token == "")
+	// Store registration is deliberately NOT started here: it is lazy
+	// (EnsureRegistered / RegisterNow) — a till that never uses the
+	// marketplace never creates a store. The background loop only fetches
+	// the signing key (required to verify any plugin bundle) and — for a
+	// replica that joined a shop and inherited its store identity —
+	// registers this device under the shared store (one store, many
+	// devices).
 	needKey := m.PublicKey == ""
-	// A till that already has a store identity (a replica that joined a shop and
-	// inherited it, or any re-boot) registers its own device under that store
-	// when it hasn't yet — one store, many devices.
 	needDevice := !clientIDExplicit && m.StoreID != "" && m.MerchantToken != "" && get(keyDeviceRegistered) != id.DeviceID
 	deviceName := get("sync.till_name")
-	if !needRegister && !needKey && !needDevice {
+	if !needKey && !needDevice {
 		return
 	}
-	go run(ctx, *m, cfg.StoreName, deviceName, kv, needRegister, needKey, needDevice)
+	go run(ctx, *m, deviceName, kv, needKey, needDevice)
+}
+
+// EnsureRegistered returns the effective config, first enrolling the till
+// when it isn't registered yet: store registration is lazy, and a plugin
+// download/install is the first interaction that actually needs a store
+// identity (entitlements hang off it). Failure is non-fatal — the effective
+// config is returned regardless and the caller's marketplace call surfaces
+// its own error; the next attempt retries.
+func EnsureRegistered(ctx context.Context, cfg *config.Config, kv Settings) config.Config {
+	if s := CurrentStatus(); !s.Registered {
+		if _, err := RegisterNow(ctx, cfg, kv); err != nil {
+			logging.L().Infof("enrolment: lazy registration failed (marketplace call will surface it): %v", err)
+		}
+	}
+	return Effective(cfg)
 }
 
 // Effective returns a copy of cfg with the live enrolled identity applied
@@ -244,29 +265,19 @@ func Effective(cfg *config.Config) config.Config {
 	return out
 }
 
-// run retries registration and/or the signing-key fetch until both succeed or
-// the till shuts down. Best-effort by design: the till is fully usable offline
-// the whole time.
-func run(ctx context.Context, m config.MarketplaceConfig, storeName, deviceName string, kv Settings, needRegister, needKey, needDevice bool) {
+// run retries the signing-key fetch and/or the device-under-store
+// registration until both succeed or the till shuts down. Best-effort by
+// design: the till is fully usable offline the whole time.
+func run(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv Settings, needKey, needDevice bool) {
 	log := logging.L()
 	for attempt := 0; ; attempt++ {
 		attemptMu.Lock()
-		// A RegisterNow call may have finished the job between waits.
+		// A RegisterNow call may have fetched the key between waits.
 		mu.RLock()
-		if cur.StoreID != "" && cur.Token != "" {
-			needRegister = false
-		}
 		if cur.PublicKey != "" {
 			needKey = false
 		}
 		mu.RUnlock()
-		if needRegister {
-			if err := register(ctx, m, storeName, kv); err != nil {
-				log.Infof("enrolment: register with marketplace failed (will retry): %v", err)
-			} else {
-				needRegister = false
-			}
-		}
 		if needKey {
 			if err := fetchSigningKey(ctx, m.EndpointURL, kv); err != nil {
 				log.Infof("enrolment: fetch marketplace signing key failed (will retry): %v", err)
@@ -274,10 +285,9 @@ func run(ctx context.Context, m config.MarketplaceConfig, storeName, deviceName 
 				needKey = false
 			}
 		}
-		// Register this device under the store once the store identity exists
-		// (register above may have just supplied it). The store token — shared
-		// by every till in the shop — authenticates the call.
-		if needDevice && !needRegister {
+		// Register this device under the shop's store. The store token —
+		// shared by every till in the shop — authenticates the call.
+		if needDevice {
 			m.StoreID, m.MerchantToken = currentStoreAuth(m)
 			if err := registerDevice(ctx, m, deviceName, kv); err != nil {
 				log.Infof("enrolment: register device under store failed (will retry): %v", err)
@@ -286,7 +296,7 @@ func run(ctx context.Context, m config.MarketplaceConfig, storeName, deviceName 
 			}
 		}
 		attemptMu.Unlock()
-		if !needRegister && !needKey && !needDevice {
+		if !needKey && !needDevice {
 			return
 		}
 		delay := retryDelays[len(retryDelays)-1]
