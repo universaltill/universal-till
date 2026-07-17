@@ -62,6 +62,15 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 			})
 			return
 		}
+		// HTMX fragment loads (nav chips, basket polls…) must NOT get a 302:
+		// htmx follows it transparently and swaps the ENTIRE login page into
+		// the fragment's slot — the PIN pad rendered inside the header bar.
+		// HX-Redirect makes htmx do a real browser navigation to /login.
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", "/login")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	})
 }
