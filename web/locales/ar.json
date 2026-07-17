@@ -372,6 +372,7 @@
   "plugins.none_found_hint": "جرّب تعديل عوامل التصفية أو حدّث الكتالوج.",
   "plugins.retry": "إعادة محاولة التثبيت",
   "plugins.settings.none": "لا تحتوي هذه الإضافة على إعدادات.",
+  "plugins.settings.per_till": "هذا الصندوق فقط",
   "plugins.settings.save": "حفظ الإعدادات",
   "plugins.settings.saved": "حُفظت الإعدادات — طُبّقت فوراً",
   "plugins.settings.secret_empty": "غير مضبوط",
