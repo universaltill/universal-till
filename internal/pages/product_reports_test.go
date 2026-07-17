@@ -133,6 +133,21 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 		t.Fatalf("bucket sums = %d/%d, want 2/2", sumWd, sumHr)
 	}
 
+	// Tax summary: both sales carry 0bp tax; net = 100+600, tax = 0, one band.
+	bands, err := repo.TaxSummary(ctx, 30)
+	if err != nil {
+		t.Fatalf("tax: %v", err)
+	}
+	var zero *data.TaxBand
+	for i := range bands {
+		if bands[i].RateBP == 0 {
+			zero = &bands[i]
+		}
+	}
+	if zero == nil || zero.Net != 700 || zero.Tax != 0 {
+		t.Fatalf("tax bands = %+v, want 0bp net 700 tax 0", bands)
+	}
+
 	// Margins: give the sold item a cost price → margin = revenue − qty×cost.
 	if err := data.NewCatalogRepo(d).SetItemCostPrice(ctx, "it-a", 40); err != nil {
 		t.Fatalf("set cost: %v", err)

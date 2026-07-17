@@ -112,6 +112,20 @@
       </table>
     </div>
     <div class="card">
+      <h2>{{ T "reports.tax_summary" }}</h2>
+      <p class="muted" style="margin-block-start:0">{{ T "reports.tax_summary_hint" }}</p>
+      <table class="table">
+        <thead><tr><th>{{ T "reports.tax_rate" }}</th><th style="text-align:end">{{ T "reports.tax_net" }}</th><th style="text-align:end">{{ T "reports.tax_collected" }}</th></tr></thead>
+        <tbody>
+          {{ range .TaxRows }}
+          <tr><td>{{ .Rate }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end; font-weight:600">{{ money .Tax }}</td></tr>
+          {{ else }}
+          <tr><td colspan="3" class="empty">{{ T "reports.none" }}</td></tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
       <h2>{{ T "reports.margins" }}</h2>
       <p class="muted" style="margin-block-start:0">{{ T "reports.margins_hint" }}</p>
       <table class="table">
