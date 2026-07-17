@@ -1,6 +1,7 @@
 {{ define "content" }}
 <div class="page-head">
-  <h1>{{ T "reports.title" }}</h1>
+  <h1>{{ T "reports.title" }}
+    {{ if .RunningOut }}<a class="chip chip-warn" href="/inventory" style="text-decoration:none">⚠ {{ .RunningOut }} {{ T "inventory.running_out" }}</a>{{ end }}</h1>
   <form method="get" action="/reports" style="display:flex; gap:.4rem; align-items:center">
     <select name="days" onchange="this.form.submit()">
       <option value="1"  {{ if eq .Days 1 }}selected{{ end }}>{{ T "reports.today" }}</option>
