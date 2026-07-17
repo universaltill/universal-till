@@ -20,6 +20,9 @@ Unicode true
 !define APPNAME "Universal Till"
 !define PUBLISHER "Task Runner Technology LTD"
 !define EXENAME "unitill-pos.exe"
+; The desktop shell (Edge WebView2 window, like the mac app): the shortcuts
+; launch this; it starts unitill-pos.exe itself with no console window.
+!define SHELLEXE "unitill-desktop.exe"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\UniversalTill"
 
 Name "${APPNAME}"
@@ -38,8 +41,8 @@ VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "© ${PUBLISHER}"
 
 !define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${EXENAME}"
-!define MUI_FINISHPAGE_RUN_TEXT "Start ${APPNAME} now (opens the setup page in your browser)"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${SHELLEXE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Start ${APPNAME} now"
 !define MUI_FINISHPAGE_LINK "universaltill.com"
 !define MUI_FINISHPAGE_LINK_LOCATION "https://www.universaltill.com"
 
@@ -62,11 +65,12 @@ Section "Universal Till" SecMain
   File /r "${SRCDIR}\*.*"
 
   ; Shortcuts. The shortcut's working directory is $INSTDIR (last SetOutPath),
-  ; so the till finds web/ and creates its data/ folder here. It opens the
-  ; browser itself, so the shortcut just launches the exe.
+  ; so the shell finds web/ and the till creates its data/ folder here. The
+  ; shortcuts launch the DESKTOP SHELL (its own window, no terminal, no
+  ; browser); unitill-pos.exe stays available for headless/server use.
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
-  CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${EXENAME}" "" "$INSTDIR\${EXENAME}" 0
-  CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${EXENAME}" "" "$INSTDIR\${EXENAME}" 0
+  CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${SHELLEXE}" "" "$INSTDIR\${SHELLEXE}" 0
+  CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${SHELLEXE}" "" "$INSTDIR\${SHELLEXE}" 0
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Uninstall ${APPNAME}.lnk" "$INSTDIR\uninstall.exe"
 
   ; Add/Remove Programs entry (per-user hive).
@@ -74,7 +78,7 @@ Section "Universal Till" SecMain
   WriteRegStr HKCU "${UNINSTKEY}" "DisplayName" "${APPNAME}"
   WriteRegStr HKCU "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINSTKEY}" "Publisher" "${PUBLISHER}"
-  WriteRegStr HKCU "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\${EXENAME}"
+  WriteRegStr HKCU "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\${SHELLEXE}"
   WriteRegStr HKCU "${UNINSTKEY}" "UninstallString" "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "${UNINSTKEY}" "URLInfoAbout" "https://www.universaltill.com"
   WriteRegDWORD HKCU "${UNINSTKEY}" "NoModify" 1
@@ -87,6 +91,7 @@ Section "Uninstall"
   ; Preserve the shop's database: remove app files but keep the data/ folder
   ; (the operator can delete it by hand if they really mean to).
   Delete "$INSTDIR\${EXENAME}"
+  Delete "$INSTDIR\${SHELLEXE}"
   Delete "$INSTDIR\uninstall.exe"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\LICENSE"

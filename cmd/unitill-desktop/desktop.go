@@ -69,6 +69,7 @@ func main() {
 	// We supply the window ourselves, so tell the server not to also pop a browser.
 	cmd.Env = append(os.Environ(), "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR="+addr)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	configureChild(cmd) // Windows: keep the server's console window hidden
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to start the till:", err)
 		os.Exit(1)
