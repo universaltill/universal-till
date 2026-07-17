@@ -857,5 +857,6 @@
   "plugins.trust.unverified_hint": "الناشر غير موثّق من السوق",
   "plugins.trust.confirm": "هذه الإضافة من ناشر غير موثّق: %s. هل تثق بهذا الناشر وتريد المتابعة؟",
   "inventory.order_hint": "اطلب ~",
-  "inventory.order_hint_title": "الطلب المقترح لتغطية أسبوعين من المخزون بمعدل البيع الحالي"
+  "inventory.order_hint_title": "الطلب المقترح لتغطية أسبوعين من المخزون بمعدل البيع الحالي",
+  "catalog.variant_image": "صورة الصنف الفرعي"
 }
