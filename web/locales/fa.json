@@ -840,5 +840,10 @@
   "reports.margins": "حاشیه سود",
   "reports.margins_hint": "درآمد منهای هزینه، برای کالاهایی که قیمت تمام‌شده‌شان در کاتالوگ ثبت شده.",
   "reports.margins_none": "برای دیدن حاشیه سود، قیمت تمام‌شده را در کاتالوگ ثبت کنید.",
-  "reports.yoy": "نسبت به سال گذشته"
+  "reports.yoy": "نسبت به سال گذشته",
+  "reports.tax_summary": "خلاصه مالیات",
+  "reports.tax_summary_hint": "فروش خالص و مالیات دریافتی به تفکیک نرخ — مرجوعی‌ها کسر شده‌اند.",
+  "reports.tax_rate": "نرخ",
+  "reports.tax_net": "فروش خالص",
+  "reports.tax_collected": "مالیات دریافتی"
 }
