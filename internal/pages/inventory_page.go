@@ -3,6 +3,7 @@ package pages
 import (
 	"encoding/json"
 	"html/template"
+	"math"
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -28,8 +29,13 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 			Low      bool
 			DaysLeft int  // predicted days of stock left; -1 = no sell rate
 			RunsOut  bool // predicted stockout within the warning window
+			OrderQty int  // suggested order to reach coverDays of stock; 0 = none
 		}
 		const warnDays = 7
+		// coverDays is the stock target the suggestion refills to: two weeks
+		// of sales at the current rate (a sensible default until per-item
+		// lead times exist).
+		const coverDays = 14
 		runningOut := 0
 		levels := make([]stockRow, 0, len(rawLevels))
 		for _, l := range rawLevels {
@@ -44,6 +50,11 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 			} else if rate > 0 && l.CurrentQty <= 0 {
 				row.DaysLeft = 0
 				row.RunsOut = true
+			}
+			if rate := rates[l.ItemID]; row.RunsOut && rate > 0 {
+				if need := rate*coverDays - l.CurrentQty; need > 0 {
+					row.OrderQty = int(math.Ceil(need))
+				}
 			}
 			if row.RunsOut {
 				runningOut++

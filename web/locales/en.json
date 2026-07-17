@@ -855,5 +855,7 @@
   "plugins.trust.verified_hint": "Verified, registered developer",
   "plugins.trust.unverified": "Unverified",
   "plugins.trust.unverified_hint": "Publisher not verified by the marketplace",
-  "plugins.trust.confirm": "This plugin is from an unverified publisher: %s. Do you trust this publisher and want to continue?"
+  "plugins.trust.confirm": "This plugin is from an unverified publisher: %s. Do you trust this publisher and want to continue?",
+  "inventory.order_hint": "order ~",
+  "inventory.order_hint_title": "Suggested order to hold two weeks of stock at the current selling rate"
 }
