@@ -855,5 +855,7 @@
   "plugins.trust.verified_hint": "توسعه‌دهنده ثبت‌شده و تأییدشده",
   "plugins.trust.unverified": "تأییدنشده",
   "plugins.trust.unverified_hint": "ناشر توسط مارکت تأیید نشده است",
-  "plugins.trust.confirm": "این افزونه از ناشری تأییدنشده است: %s. آیا به این ناشر اعتماد دارید و می‌خواهید ادامه دهید؟"
+  "plugins.trust.confirm": "این افزونه از ناشری تأییدنشده است: %s. آیا به این ناشر اعتماد دارید و می‌خواهید ادامه دهید؟",
+  "inventory.order_hint": "سفارش ~",
+  "inventory.order_hint_title": "سفارش پیشنهادی برای دو هفته موجودی با نرخ فروش فعلی"
 }
