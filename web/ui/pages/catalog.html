@@ -73,6 +73,9 @@
       <form hx-post="/api/print/labels" hx-target="#labels-msg" hx-swap="innerHTML">
         <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="labels-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
         <input type="hidden" name="item_id" id="labels-item-id">
+        <label>{{ T "catalog.labels.variant" }}
+          <select name="variant_id" id="labels-variant"><option value="">{{ T "catalog.labels.whole_item" }}</option></select>
+        </label>
         <label>{{ T "catalog.labels.copies" }} <input type="number" name="copies" value="1" min="1" max="50"></label>
         <button class="btn" type="submit">{{ T "catalog.labels.print" }}</button>
         <div id="labels-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
@@ -191,6 +194,19 @@
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
     var lblLabel = document.getElementById('labels-item-label');
     if (lblLabel) { lblLabel.value = row.dataset.name; document.getElementById('labels-item-id').value = row.dataset.id; }
+    // Labels: variant picker — a label for a variant carries ITS barcode+price.
+    var vSel = document.getElementById('labels-variant');
+    if (vSel) {
+      while (vSel.options.length > 1) vSel.remove(1);
+      fetch('/api/catalog/variant-options?item_id=' + encodeURIComponent(row.dataset.id))
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          (j.data || []).forEach(function (v) {
+            var o = document.createElement('option');
+            o.value = v.id; o.textContent = v.name; vSel.appendChild(o);
+          });
+        }).catch(function () {});
+    }
   });
 
   form.addEventListener('submit', function (ev) {
