@@ -19,17 +19,36 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		rawLevels, _ := posRepo.ListStockLevels(ctx)
 		locations, _ := posRepo.ListStockLocations(ctx)
 		items, _ := catRepo.ListItems(ctx)
+		// Sell-rate prediction (28-day average): "this item runs out in ~N
+		// days at the current rate". Best-effort — no history, no column.
+		rates, _ := posRepo.ItemDailySellRates(ctx, 28)
 
 		type stockRow struct {
 			data.LowStockItem
-			Low bool
+			Low      bool
+			DaysLeft int  // predicted days of stock left; -1 = no sell rate
+			RunsOut  bool // predicted stockout within the warning window
 		}
+		const warnDays = 7
+		runningOut := 0
 		levels := make([]stockRow, 0, len(rawLevels))
 		for _, l := range rawLevels {
-			levels = append(levels, stockRow{
+			row := stockRow{
 				LowStockItem: l,
 				Low:          l.ReorderLevel > 0 && l.CurrentQty < float64(l.ReorderLevel),
-			})
+				DaysLeft:     -1,
+			}
+			if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty > 0 {
+				row.DaysLeft = int(l.CurrentQty / rate)
+				row.RunsOut = row.DaysLeft <= warnDays
+			} else if rate > 0 && l.CurrentQty <= 0 {
+				row.DaysLeft = 0
+				row.RunsOut = true
+			}
+			if row.RunsOut {
+				runningOut++
+			}
+			levels = append(levels, row)
 		}
 
 		// Compact id/name/sku list for the item picker.
@@ -49,6 +68,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.Menu,
 			"StockLevels": levels,
+			"RunningOut":  runningOut,
 			"Locations":   locations,
 			"ItemsJSON":   template.JS(pickerJSON),
 			"SyncPrimary": d.SyncPrimaryURL(r.Context()),

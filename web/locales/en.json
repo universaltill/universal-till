@@ -819,5 +819,8 @@
   "help.feat.display.s1": "Change the language from the menu; each user can pick their own.",
   "help.feat.display.s2": "Settings → Display: adjust the UI scale for your screen.",
   "help.feat.display.s3": "The on-screen keyboard pops up automatically on touch screens (or force it on/off in Display settings).",
-  "settings.enrol.claim_scan": "Or scan with your phone to claim there"
+  "settings.enrol.claim_scan": "Or scan with your phone to claim there",
+  "inventory.days_left": "Days left",
+  "inventory.days_left_hint": "Predicted days until this item runs out, from the last 28 days of sales",
+  "inventory.running_out": "item(s) predicted to run out within a week"
 }

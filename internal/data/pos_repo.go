@@ -1233,6 +1233,40 @@ ORDER BY i.name, sl.name`)
 	return items, nil
 }
 
+// ItemDailySellRates returns each item's average units sold per day over the
+// last `days` days (completed sales minus returns). Items with no movement are
+// absent. Drives the inventory page's "days of stock left" prediction.
+func (r *POSRepo) ItemDailySellRates(ctx context.Context, days int) (map[string]float64, error) {
+	if days <= 0 {
+		days = 28
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.item_id,
+       SUM(CASE WHEN s.sale_type = 'return' THEN -sl.quantity ELSE sl.quantity END)
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed'
+  AND sl.item_id IS NOT NULL AND sl.item_id != ''
+  AND s.created_at >= datetime('now', ?)
+GROUP BY sl.item_id`, fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, fmt.Errorf("query sell rates: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var itemID string
+		var qty float64
+		if err := rows.Scan(&itemID, &qty); err != nil {
+			return nil, fmt.Errorf("scan sell rate: %w", err)
+		}
+		if qty > 0 {
+			out[itemID] = qty / float64(days)
+		}
+	}
+	return out, rows.Err()
+}
+
 // NextReceiptNo returns the next available receipt number. On a synced
 // replica (ADR-0011) the till's prefix (settings sync.receipt_prefix,
 // e.g. "T2-") namespaces the sequence so tills never collide; the counter
