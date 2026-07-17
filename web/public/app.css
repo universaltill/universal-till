@@ -192,7 +192,7 @@ body.osk-padded { padding-block-end: 15.5rem; }
 
 /* Variants grid: one shared column template so header and rows always align. */
 .vg-cols { display: grid; gap: .6rem; align-items: center;
-           grid-template-columns: minmax(8rem, 1.3fr) minmax(6rem, 1fr) 6.5rem 6.5rem
+           grid-template-columns: 3.4rem minmax(8rem, 1.3fr) minmax(6rem, 1fr) 6.5rem 6.5rem
                                   minmax(12rem, 1.7fr) 3.5rem 5.5rem; }
 .vg-head { font-size: .75rem; font-weight: 600; text-transform: uppercase;
            letter-spacing: .04em; color: var(--muted); padding-block: .3rem; }
@@ -205,7 +205,7 @@ body.osk-padded { padding-block-end: 15.5rem; }
 .vg-new { background: var(--surface-2); border-radius: 8px; padding-inline: .5rem; }
 @media (max-width: 900px) {
   .variant-grid { overflow-x: auto; }
-  .vg-cols { min-inline-size: 50rem; }
+  .vg-cols { min-inline-size: 54rem; }
 }
 
 .catalog-form label { display: flex; flex-direction: column; gap: .2rem;
@@ -750,3 +750,11 @@ body.login-screen {
 /* Reorder suggestion beside the days-left warning */
 .order-hint { display:inline-block; margin-inline-start:.45rem; font-size:.78rem;
   background:#eff6ff; color:#1d4ed8; border-radius:999px; padding:.1rem .5rem; font-weight:600; }
+
+
+/* Variant image cell: thumb + hidden-file camera upload */
+.vg-img { display: flex; align-items: center; gap: .25rem; }
+.vg-img img { inline-size: 2.2rem; block-size: 2.2rem; object-fit: cover; border-radius: .4rem; background: #fff; }
+.vg-img-upload label { cursor: pointer; opacity: .6; }
+.vg-img-upload label:hover { opacity: 1; }
+.vg-img-upload input[type="file"] { display: none; }

@@ -425,6 +425,59 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		renderCatalogTable(w, r)
 	})
 
+	// Variant image upload → assets/items/<itemID>/variants/<variantID>/thumb.png
+	// (docs: architecture/variant-images.md). Fallback chain: variant → item →
+	// placeholder, resolved by the template's imgv versioned URLs.
+	mux.HandleFunc("POST /api/catalog/variant/image", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			http.Error(w, "invalid upload", http.StatusBadRequest)
+			return
+		}
+		variantID := strings.TrimSpace(r.Form.Get("variant_id"))
+		if variantID == "" || strings.ContainsAny(variantID, "/\\.") {
+			http.Error(w, "valid variant_id required", http.StatusBadRequest)
+			return
+		}
+		vl, ok, err := repo.GetVariantLabel(r.Context(), variantID)
+		if err != nil || !ok {
+			http.Error(w, "variant not found", http.StatusNotFound)
+			return
+		}
+		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
+		if itemID == "" || strings.ContainsAny(itemID, "/\\.") {
+			http.Error(w, "valid panelItem required", http.StatusBadRequest)
+			return
+		}
+		_ = vl
+		file, _, err := r.FormFile("image")
+		if err != nil {
+			http.Error(w, "image file required", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+		img, _, err := image.Decode(io.LimitReader(file, 10<<20))
+		if err != nil {
+			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			return
+		}
+		dir := filepath.Join("web", "public", "assets", "items", itemID, "variants", variantID)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out, err := os.Create(filepath.Join(dir, "thumb.png"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer out.Close()
+		if err := png.Encode(out, img); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
+
 	mux.HandleFunc("/api/catalog/barcode", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
