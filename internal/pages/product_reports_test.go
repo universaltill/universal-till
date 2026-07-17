@@ -108,4 +108,28 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	if sumWd != 1 || sumHr != 1 {
 		t.Fatalf("bucket sums = %d/%d, want 1/1", sumWd, sumHr)
 	}
+
+	// Margins: give the sold item a cost price → margin = revenue − qty×cost.
+	if err := data.NewCatalogRepo(d).SetItemCostPrice(ctx, "it-a", 40); err != nil {
+		t.Fatalf("set cost: %v", err)
+	}
+	if got, err := data.NewCatalogRepo(d).ItemCostPrice(ctx, "it-a"); err != nil || got != 40 {
+		t.Fatalf("cost roundtrip = %d %v", got, err)
+	}
+	margins, err := repo.MarginByItem(ctx, 30, 100)
+	if err != nil {
+		t.Fatalf("margins: %v", err)
+	}
+	var sellerMargin *data.MarginRow
+	for i := range margins {
+		if margins[i].Name == "Seller" {
+			sellerMargin = &margins[i]
+		}
+	}
+	if sellerMargin == nil {
+		t.Fatalf("Seller missing from margins: %+v", margins)
+	}
+	if sellerMargin.Revenue != 100 || sellerMargin.Cost != 40 || sellerMargin.Margin != 60 {
+		t.Fatalf("margin = %+v, want 100/40/60", *sellerMargin)
+	}
 }

@@ -834,5 +834,10 @@
   "reports.wd_wed": "Çarşamba",
   "reports.wd_thu": "Perşembe",
   "reports.wd_fri": "Cuma",
-  "reports.wd_sat": "Cumartesi"
+  "reports.wd_sat": "Cumartesi",
+  "catalog.cost_price": "Maliyet fiyatı (ödediğiniz)",
+  "catalog.cost_price_hint": "Kâr marjı raporunda kullanılır",
+  "reports.margins": "Kâr marjları",
+  "reports.margins_hint": "Katalogda maliyet fiyatı girilmiş ürünler için gelir eksi maliyet.",
+  "reports.margins_none": "Marjları görmek için katalogda maliyet fiyatlarını girin."
 }
