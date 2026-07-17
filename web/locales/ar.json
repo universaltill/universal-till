@@ -845,5 +845,6 @@
   "reports.tax_summary_hint": "صافي المبيعات والضريبة المحصّلة لكل نسبة — المرتجعات مخصومة.",
   "reports.tax_rate": "النسبة",
   "reports.tax_net": "صافي المبيعات",
-  "reports.tax_collected": "الضريبة المحصّلة"
+  "reports.tax_collected": "الضريبة المحصّلة",
+  "catalog.col.cost": "التكلفة"
 }

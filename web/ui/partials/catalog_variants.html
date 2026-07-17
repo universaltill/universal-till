@@ -64,6 +64,7 @@
           <div>{{ T "catalog.col.name" }}</div>
           <div>{{ T "catalog.col.sku" }}</div>
           <div>{{ T "catalog.col.price" }} ({{ currency.Display }})</div>
+          <div>{{ T "catalog.col.cost" }}</div>
           <div>{{ T "catalog.barcodes" }}</div>
           <div>{{ T "catalog.active" }}</div>
           <div></div>
@@ -74,6 +75,7 @@
           <input form="vf-{{ .ID }}" type="text" name="name" value="{{ .Name }}" required>
           <input form="vf-{{ .ID }}" type="text" name="sku" value="{{ .SKU }}">
           <input form="vf-{{ .ID }}" type="number" class="variant-price-major" data-minor="{{ .PriceMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" required>
+          <input form="vf-{{ .ID }}" type="number" class="variant-cost-major" data-minor="{{ .CostMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="—">
           <div class="chip-row">
             {{ range .Barcodes }}
             <span class="chip">{{ . }}
@@ -100,6 +102,7 @@
           <input form="vf-new" type="text" name="name" required placeholder="{{ T "catalog.variants.add" }} — 330ml / XL">
           <input form="vf-new" type="text" name="sku" placeholder="{{ T "catalog.auto_if_blank" }}">
           <input form="vf-new" type="number" class="variant-price-major" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" required>
+          <input form="vf-new" type="number" class="variant-cost-major" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="—">
           <div class="muted"></div>
           <div></div>
           <button form="vf-new" class="btn" type="submit">{{ T "catalog.save_variant" }}</button>
@@ -113,6 +116,12 @@
       document.querySelectorAll('#catalog-variants .variant-price-major').forEach(function (el) {
         if (el.dataset.minor !== undefined && window.utCurrency) {
           el.value = window.utCurrency.toMajor(parseInt(el.dataset.minor || '0', 10));
+        }
+      });
+      document.querySelectorAll('#catalog-variants .variant-cost-major').forEach(function (el) {
+        var minor = parseInt(el.dataset.minor || '0', 10);
+        if (minor > 0 && window.utCurrency) {
+          el.value = window.utCurrency.toMajor(minor);
         }
       });
     })();
