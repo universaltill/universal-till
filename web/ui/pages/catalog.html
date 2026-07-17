@@ -79,9 +79,10 @@
       </form>
     </details>
 
-    {{ template "catalog_variants" . }}
   </div>
 </div>
+
+{{ template "catalog_variants" . }}
 
 <script>
 (function () {
@@ -179,9 +180,13 @@
     document.getElementById('item-price').value = window.utCurrency.toMajor(parseInt(row.dataset.price || '0', 10));
     setMode(true, row.dataset.name);
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
-    // Load the item's variants/barcodes editor panel.
+    // Load the item's variants/barcodes editor panel (full-width, below the
+    // list) and bring it into view.
     htmx.ajax('GET', '/api/catalog/item-variants?item_id=' + encodeURIComponent(row.dataset.id),
-      { target: '#catalog-variants', swap: 'outerHTML' });
+      { target: '#catalog-variants', swap: 'outerHTML' }).then(function () {
+        var p = document.getElementById('catalog-variants');
+        if (p) p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
     var imgLabel = document.getElementById('image-item-label');
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
     var lblLabel = document.getElementById('labels-item-label');
@@ -203,10 +208,13 @@
 
   // Variant editor prices are entered in MAJOR units; convert to minor on
   // submit (the visible input has no name, so only `price` goes on the wire).
+  // Grid rows associate their inputs to a hidden form via the form=""
+  // attribute, so the input may live outside the form element itself.
   document.body.addEventListener('htmx:configRequest', function (ev) {
     var f = ev.detail.elt;
     if (!f || !f.querySelector) return;
-    var major = f.querySelector('.variant-price-major');
+    var major = f.querySelector('.variant-price-major') ||
+      (f.id && document.querySelector('.variant-price-major[form="' + f.id + '"]'));
     if (major) ev.detail.parameters.price = window.utCurrency.toMinor(major.value || '0');
   });
 

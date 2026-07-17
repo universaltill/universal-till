@@ -177,7 +177,10 @@ func TestCatalogVariantsPanel(t *testing.T) {
 		t.Fatalf("panel: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Cola", "330ml", "1 Litre", "COLA-330", "5000001", "5000330", "/api/catalog/variant", "/api/catalog/barcode/delete"} {
+	for _, want := range []string{"Cola", "330ml", "1 Litre", "COLA-330", "5000001", "5000330", "/api/catalog/variant", "/api/catalog/barcode/delete",
+		// The redesigned layout: info + variants grid, rows wired to hidden
+		// forms via the form="" attribute (htmx serializes form.elements).
+		"catalog-detail-grid", "vg-cols", `form="vf-v1"`, `id="vf-v1"`, `id="vf-new"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("panel missing %q in:\n%s", want, body)
 		}
