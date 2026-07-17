@@ -207,6 +207,38 @@ type VariantEditView struct {
 	Barcodes   []string
 }
 
+// VariantLabel is what a shelf/product label needs for ONE variant: the
+// composed display name, the variant's own price and its scannable code
+// (primary variant barcode, else the variant SKU).
+type VariantLabel struct {
+	Name       string
+	PriceMinor int64
+	Code       string
+}
+
+// GetVariantLabel loads a variant's label data (item name + variant name).
+func (r *CatalogRepo) GetVariantLabel(ctx context.Context, variantID string) (VariantLabel, bool, error) {
+	var l VariantLabel
+	var itemName, vName, sku string
+	err := r.db.QueryRowContext(ctx, `
+SELECT i.name, v.name, COALESCE(v.sku, ''), v.price,
+       COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
+                 ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
+FROM item_variants v JOIN items i ON i.id = v.item_id
+WHERE v.id = ?`, variantID).Scan(&itemName, &vName, &sku, &l.PriceMinor, &l.Code)
+	if err == sql.ErrNoRows {
+		return l, false, nil
+	}
+	if err != nil {
+		return l, false, err
+	}
+	l.Name = strings.TrimSpace(itemName + " " + vName)
+	if l.Code == "" {
+		l.Code = sku
+	}
+	return l, true, nil
+}
+
 // VariantsForItem returns ALL of one item's variants (active and retired)
 // with their barcodes — the catalog's per-item edit panel.
 func (r *CatalogRepo) VariantsForItem(ctx context.Context, itemID string) ([]VariantEditView, error) {

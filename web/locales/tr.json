@@ -846,5 +846,7 @@
   "reports.tax_rate": "Oran",
   "reports.tax_net": "Net satış",
   "reports.tax_collected": "Tahsil edilen vergi",
-  "catalog.col.cost": "Maliyet"
+  "catalog.col.cost": "Maliyet",
+  "catalog.labels.variant": "Varyant",
+  "catalog.labels.whole_item": "Ürünün tamamı"
 }

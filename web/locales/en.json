@@ -846,5 +846,7 @@
   "reports.tax_rate": "Rate",
   "reports.tax_net": "Net sales",
   "reports.tax_collected": "Tax collected",
-  "catalog.col.cost": "Cost"
+  "catalog.col.cost": "Cost",
+  "catalog.labels.variant": "Variant",
+  "catalog.labels.whole_item": "Whole item"
 }
