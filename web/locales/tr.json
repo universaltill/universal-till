@@ -819,5 +819,8 @@
   "help.feat.display.s1": "Dili menüden değiştirin; her kullanıcı kendi dilini seçebilir.",
   "help.feat.display.s2": "Ayarlar → Görünüm: ekranınıza göre arayüz ölçeğini ayarlayın.",
   "help.feat.display.s3": "Ekran klavyesi dokunmatik ekranlarda otomatik açılır (Görünüm ayarlarından zorla açıp kapatabilirsiniz).",
-  "settings.enrol.claim_scan": "Ya da telefonunuzla tarayıp oradan sahiplenin"
+  "settings.enrol.claim_scan": "Ya da telefonunuzla tarayıp oradan sahiplenin",
+  "inventory.days_left": "Kalan gün",
+  "inventory.days_left_hint": "Son 28 günün satışına göre bu ürünün tükenmesine kalan tahmini gün",
+  "inventory.running_out": "ürünün bir hafta içinde tükenmesi bekleniyor"
 }
