@@ -22,6 +22,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		top, _ := repo.TopItems(r.Context(), days, 10)
 		slow, _ := repo.SlowItems(r.Context(), days, 10)
 		dead, _ := repo.DeadStock(r.Context(), days, 10)
+		margins, _ := repo.MarginByItem(r.Context(), days, 10)
 		byWeekday, _ := repo.SalesByWeekday(r.Context(), days)
 		byHour, _ := repo.SalesByHour(r.Context(), days)
 		// Normalize to bar widths (busiest = 100%) so the template stays dumb.
@@ -112,6 +113,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"Top":         top,
 			"Slow":        slow,
 			"DeadStock":   dead,
+			"Margins":     margins,
 			"WeekdayBars": weekdayBars,
 			"HourBars":    hourBars,
 			"Departments": departments,

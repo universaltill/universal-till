@@ -834,5 +834,10 @@
   "reports.wd_wed": "الأربعاء",
   "reports.wd_thu": "الخميس",
   "reports.wd_fri": "الجمعة",
-  "reports.wd_sat": "السبت"
+  "reports.wd_sat": "السبت",
+  "catalog.cost_price": "سعر التكلفة (ما تدفعه)",
+  "catalog.cost_price_hint": "يُستخدم في تقرير هامش الربح",
+  "reports.margins": "هوامش الربح",
+  "reports.margins_hint": "الإيراد ناقص التكلفة، للمنتجات التي سُجّل سعر تكلفتها في الكتالوج.",
+  "reports.margins_none": "سجّل أسعار التكلفة في الكتالوج لرؤية الهوامش."
 }

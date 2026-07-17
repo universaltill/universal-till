@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -86,11 +88,17 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			if label, ok, err := repo.GetItemLabel(r.Context(), itemID); err == nil && ok {
 				variants, _ := repo.VariantsForItem(r.Context(), itemID)
 				itemBCs, _ := repo.BarcodesForItem(r.Context(), itemID)
+				cost, _ := repo.ItemCostPrice(r.Context(), itemID)
+				costMajor := ""
+				if cost > 0 {
+					costMajor = fmt.Sprintf("%.2f", float64(cost)/100)
+				}
 				pdata = map[string]any{
 					"ItemID":       itemID,
 					"ItemName":     label.Name,
 					"Variants":     variants,
 					"ItemBarcodes": itemBCs,
+					"CostMajor":    costMajor,
 				}
 			}
 		}
@@ -111,6 +119,32 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			_, _ = io.WriteString(w, html)
 		}
 	}
+
+	// Cost price (what the shop pays) — feeds the margin report. Accepts a
+	// decimal in major units; stored as minor units (money boundary rule).
+	mux.HandleFunc("POST /api/catalog/item-cost", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
+		raw := strings.TrimSpace(r.Form.Get("cost"))
+		if itemID == "" {
+			http.Error(w, "item required", http.StatusBadRequest)
+			return
+		}
+		var minor int64
+		if raw != "" {
+			f, err := strconv.ParseFloat(raw, 64)
+			if err != nil || f < 0 {
+				http.Error(w, "invalid cost", http.StatusBadRequest)
+				return
+			}
+			minor = int64(math.Round(f * 100))
+		}
+		if err := repo.SetItemCostPrice(r.Context(), itemID, minor); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
 
 	// The per-item editor: all of one item's variants and barcodes, editable.
 	mux.HandleFunc("GET /api/catalog/item-variants", func(w http.ResponseWriter, r *http.Request) {

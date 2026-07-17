@@ -834,5 +834,10 @@
   "reports.wd_wed": "چهارشنبه",
   "reports.wd_thu": "پنجشنبه",
   "reports.wd_fri": "جمعه",
-  "reports.wd_sat": "شنبه"
+  "reports.wd_sat": "شنبه",
+  "catalog.cost_price": "قیمت تمام‌شده (آنچه می‌پردازید)",
+  "catalog.cost_price_hint": "در گزارش حاشیه سود استفاده می‌شود",
+  "reports.margins": "حاشیه سود",
+  "reports.margins_hint": "درآمد منهای هزینه، برای کالاهایی که قیمت تمام‌شده‌شان در کاتالوگ ثبت شده.",
+  "reports.margins_none": "برای دیدن حاشیه سود، قیمت تمام‌شده را در کاتالوگ ثبت کنید."
 }

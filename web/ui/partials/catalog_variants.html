@@ -29,6 +29,14 @@
         <label class="chip-add-primary"><input type="checkbox" name="isPrimary" value="1"> {{ T "catalog.primary" }}</label>
         <button class="btn secondary" type="submit">{{ T "catalog.attach_barcode" }}</button>
       </form>
+      <div class="muted catalog-detail-label">{{ T "catalog.cost_price" }}</div>
+      <form class="chip-add" hx-post="/api/catalog/item-cost" hx-target="#catalog-variants" hx-swap="outerHTML">
+        <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+        <input type="number" name="cost" step="0.01" min="0" style="max-inline-size:7rem"
+               value="{{ .CostMajor }}"
+               placeholder="0.00" title="{{ T "catalog.cost_price_hint" }}">
+        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+      </form>
     </aside>
 
     <div class="catalog-detail-variants">
