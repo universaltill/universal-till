@@ -61,6 +61,7 @@
 
       <div class="variant-grid" role="table">
         <div class="vg-cols vg-head" role="row">
+          <div></div>
           <div>{{ T "catalog.col.name" }}</div>
           <div>{{ T "catalog.col.sku" }}</div>
           <div>{{ T "catalog.col.price" }} ({{ currency.Display }})</div>
@@ -72,6 +73,17 @@
 
         {{ range .Variants }}
         <div class="vg-cols vg-row{{ if not .IsActive }} vg-inactive{{ end }}" role="row">
+          <div class="vg-img">
+            <img src="{{ imgv (printf "/public/assets/items/%s/variants/%s/thumb.png" $.ItemID .ID) }}" alt=""
+                 onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='{{ imgv (printf "/public/assets/items/%s/thumb.png" $.ItemID) }}';}else{this.style.visibility='hidden';}">
+            <form hx-post="/api/catalog/variant/image" hx-encoding="multipart/form-data"
+                  hx-target="#catalog-variants" hx-swap="outerHTML" class="vg-img-upload">
+              <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+              <input type="hidden" name="variant_id" value="{{ .ID }}">
+              <label title="{{ T "catalog.variant_image" }}">📷<input type="file" name="image" accept="image/png,image/jpeg"
+                     onchange="this.form.requestSubmit()"></label>
+            </form>
+          </div>
           <input form="vf-{{ .ID }}" type="text" name="name" value="{{ .Name }}" required>
           <input form="vf-{{ .ID }}" type="text" name="sku" value="{{ .SKU }}">
           <input form="vf-{{ .ID }}" type="number" class="variant-price-major" data-minor="{{ .PriceMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" required>
@@ -99,6 +111,7 @@
         {{ end }}
 
         <div class="vg-cols vg-row vg-new" role="row">
+          <div></div>
           <input form="vf-new" type="text" name="name" required placeholder="{{ T "catalog.variants.add" }} — 330ml / XL">
           <input form="vf-new" type="text" name="sku" placeholder="{{ T "catalog.auto_if_blank" }}">
           <input form="vf-new" type="number" class="variant-price-major" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" required>
