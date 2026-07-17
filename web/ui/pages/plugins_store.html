@@ -50,7 +50,10 @@
   {{ range .Items }}
   <div class="card store-card" data-listing-id="{{ .ListingID }}" data-type="{{ .Type }}" data-name="{{ .Name }}" data-desc="{{ .Description }}">
     <div style="display:flex; justify-content:space-between; align-items:baseline">
-      <h3 style="margin:.2rem 0">{{ .Name }}</h3>
+      <div style="display:flex; align-items:center; gap:.5rem">
+        {{ if .Icon }}<img src="{{ .Icon }}" alt="" width="28" height="28" style="border-radius:7px" loading="lazy">{{ end }}
+        <h3 style="margin:.2rem 0">{{ .Name }}</h3>
+      </div>
       <span class="tag">v{{ .Version }}</span>
     </div>
     <p class="muted" style="min-height:2.4rem">{{ .Description }}</p>
