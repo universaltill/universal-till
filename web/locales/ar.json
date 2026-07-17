@@ -822,5 +822,8 @@
   "settings.enrol.claim_scan": "أو امسح بهاتفك وأتمّ المطالبة من هناك",
   "inventory.days_left": "الأيام المتبقية",
   "inventory.days_left_hint": "الأيام المتوقعة حتى نفاد هذا المنتج بناءً على مبيعات آخر 28 يوماً",
-  "inventory.running_out": "منتج(ات) يُتوقع نفادها خلال أسبوع"
+  "inventory.running_out": "منتج(ات) يُتوقع نفادها خلال أسبوع",
+  "reports.slow_items": "الأبطأ مبيعاً",
+  "reports.dead_stock": "مخزون راكد",
+  "reports.dead_stock_hint": "موجود في المخزون لكنه لم يُبع مرة واحدة في هذه الفترة — مال متوقف على الرف."
 }
