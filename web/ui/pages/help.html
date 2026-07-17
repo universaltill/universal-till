@@ -2,6 +2,25 @@
 <h1>{{ T "help.guide.title" }}</h1>
 <p class="help-intro">{{ T "help.guide.intro" }}</p>
 
+<h2 class="help-section-title">{{ T "help.features.title" }}</h2>
+<p class="help-intro">{{ T "help.features.intro" }}</p>
+<div class="feature-list">
+  {{ range $id := .featureIDs }}
+  <details class="feature">
+    <summary>{{ T (printf "help.feat.%s.title" $id) }}</summary>
+    <div class="feature-body">
+      <p>{{ T (printf "help.feat.%s.what" $id) }}</p>
+      <ol class="help-steps">
+        {{ range $step := index $.featureSteps $id }}
+        <li>{{ T $step }}</li>
+        {{ end }}
+      </ol>
+    </div>
+  </details>
+  {{ end }}
+</div>
+
+<h2 class="help-section-title">{{ T "help.guide.quicksteps" }}</h2>
 <div class="help-guide">
   <div class="card">
     <h2>{{ T "help.guide.login.title" }}</h2>
