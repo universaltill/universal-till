@@ -27,6 +27,7 @@
                 <td class="muted">{{ if .ReorderLevel }}{{ .ReorderLevel }}{{ else }}—{{ end }}</td>
                 <td>{{ if lt .DaysLeft 0 }}<span class="muted">—</span>
                     {{ else if .RunsOut }}<span class="days-left days-warn" title="{{ T "inventory.days_left_hint" }}">⚠ {{ .DaysLeft }}</span>
+                    {{ if .OrderQty }}<span class="order-hint" title="{{ T "inventory.order_hint_title" }}">{{ T "inventory.order_hint" }} {{ .OrderQty }}</span>{{ end }}
                     {{ else }}<span class="days-left" title="{{ T "inventory.days_left_hint" }}">{{ .DaysLeft }}</span>{{ end }}</td>
               </tr>
             {{ end }}

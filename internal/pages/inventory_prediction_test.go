@@ -89,6 +89,10 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 	if !strings.Contains(body, "predicted to run out") {
 		t.Fatal("running-out chip missing from the header")
 	}
+	// Reorder suggestion: 2/day × 14-day cover − 6 on hand ≈ 22.
+	if !strings.Contains(body, "order ~") || !strings.Contains(body, "order ~ 22") {
+		t.Fatal("reorder suggestion missing or wrong quantity")
+	}
 	// The no-history item renders an em-dash, not a bogus prediction.
 	if strings.Count(body, "days-warn") > 1 {
 		t.Fatal("only the fast seller should warn")
