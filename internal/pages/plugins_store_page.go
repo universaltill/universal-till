@@ -26,6 +26,7 @@ type storeItem struct {
 	Name             string
 	Version          string
 	Description      string
+	Icon             string // absolute icon URL (marketplace-hosted), "" = no icon
 	Type             string
 	Downloaded       bool
 	Installed        bool
@@ -56,6 +57,8 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 		}
 
 		deviceArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+		// Marketplace web base for relative icon paths (endpoint minus /api).
+		webBase := strings.TrimSuffix(strings.TrimRight(enroll.Effective(d.Cfg).Marketplace.EndpointURL, "/"), "/api")
 		snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, deviceArch)
 
 		var downloads map[string]plugins.StoreDownload
@@ -81,6 +84,12 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 					Version:     p.Version,
 					Description: p.Description,
 					Type:        p.CanonicalType,
+				}
+				if icon := p.IconURL; icon != "" {
+					if strings.HasPrefix(icon, "/") {
+						icon = webBase + icon
+					}
+					item.Icon = icon
 				}
 				if _, ok := downloads[listingID]; ok {
 					item.Downloaded = true
