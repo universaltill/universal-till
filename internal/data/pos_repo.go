@@ -760,9 +760,11 @@ FROM inventory inv
 JOIN items i ON i.id = inv.item_id
 WHERE i.is_active = 1 AND inv.quantity > 0
   AND i.id NOT IN (
-    SELECT DISTINCT sl.item_id FROM sale_lines sl
+    SELECT DISTINCT COALESCE(NULLIF(sl.item_id, ''), v.item_id) FROM sale_lines sl
     JOIN sales s ON s.id = sl.sale_id
-    WHERE s.status = 'completed' AND sl.item_id IS NOT NULL
+    LEFT JOIN item_variants v ON v.id = sl.variant_id
+    WHERE s.status = 'completed'
+      AND COALESCE(NULLIF(sl.item_id, ''), v.item_id) IS NOT NULL
       AND s.created_at >= datetime('now', ?)
   )
 GROUP BY i.id ORDER BY value DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
@@ -1412,14 +1414,15 @@ func (r *POSRepo) ItemDailySellRates(ctx context.Context, days int) (map[string]
 		days = 28
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT sl.item_id,
+SELECT COALESCE(NULLIF(sl.item_id, ''), v.item_id) AS iid,
        SUM(CASE WHEN s.sale_type = 'return' THEN -sl.quantity ELSE sl.quantity END)
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN item_variants v ON v.id = sl.variant_id
 WHERE s.status = 'completed'
-  AND sl.item_id IS NOT NULL AND sl.item_id != ''
+  AND COALESCE(NULLIF(sl.item_id, ''), v.item_id) IS NOT NULL
   AND s.created_at >= datetime('now', ?)
-GROUP BY sl.item_id`, fmt.Sprintf("-%d days", days))
+GROUP BY iid`, fmt.Sprintf("-%d days", days))
 	if err != nil {
 		return nil, fmt.Errorf("query sell rates: %w", err)
 	}
