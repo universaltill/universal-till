@@ -114,6 +114,26 @@ func InitUIScale(scale float64) {
 	uiScale.Store(scale)
 }
 
+var oskMode atomic.Value // string: auto|on|off
+
+// InitOSKMode publishes the on-screen keyboard mode to templates (data-osk
+// on <body>). auto = keyboard only on touch screens (pointer: coarse).
+func InitOSKMode(mode string) {
+	switch mode {
+	case "on", "off", "auto":
+	default:
+		mode = "auto"
+	}
+	oskMode.Store(mode)
+}
+
+func oskModeVal() string {
+	if v, ok := oskMode.Load().(string); ok && v != "" {
+		return v
+	}
+	return "auto"
+}
+
 // idleLockSecs drives the cosmetic client-side idle timer (data-idle-lock on
 // <body>); 0/unset renders no attribute. The server-side check in auth.Service
 // is authoritative — pages.Init keeps both in sync.
@@ -253,6 +273,7 @@ func FuncsFor(locale string) template.FuncMap {
 		return false
 	}
 	funcs["uiscalepx"] = uiScalePx
+	funcs["oskmode"] = oskModeVal
 	funcs["idlelocksecs"] = func() int64 { return idleLockSecs.Load() }
 	funcs["barcodesvg"] = BarcodeSVG // scannable CODE39 for receipt numbers
 	funcs["locale"] = func() string { return locale }
