@@ -20,8 +20,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 )
+
+// The native window toolkits (Cocoa on macOS, GTK via webview_go elsewhere)
+// require all UI calls on the process's FIRST thread. Locking during package
+// init — before main() and before any other goroutine exists — pins the main
+// goroutine to that initial thread. Without this, main() blocking on the
+// wait-for-server dial loop lets the scheduler migrate it to another thread,
+// and Cocoa aborts in showWindow with "API misuse: setting the main menu on
+// a non-main thread" — the v0.2.11 field crash (app flashed and never opened;
+// the spawned unitill-pos servers were left orphaned).
+func init() {
+	runtime.LockOSThread()
+}
 
 func main() {
 	// Prefer :8080 (so the operator can also open the till in a normal browser
