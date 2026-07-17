@@ -209,6 +209,23 @@ func TestMiddleware(t *testing.T) {
 		t.Errorf("page without session = %d loc=%q", rec.Code, rec.Header().Get("Location"))
 	}
 
+	// HTMX fragment loads must NOT get a 302 (htmx would swap the whole
+	// login page into the fragment slot — the PIN pad appeared inside the
+	// nav header). They get 401 + HX-Redirect for a real navigation.
+	{
+		req := httptest.NewRequest(http.MethodGet, "/ui/sync-chip", nil)
+		req.Header.Set("HX-Request", "true")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || rec.Header().Get("HX-Redirect") != "/login" {
+			t.Errorf("htmx without session = %d hx-redirect=%q, want 401 + /login",
+				rec.Code, rec.Header().Get("HX-Redirect"))
+		}
+		if rec.Code == http.StatusSeeOther {
+			t.Error("htmx fragment got a 302 — login page would render inside the fragment")
+		}
+	}
+
 	// APIs get 401 JSON on the response contract.
 	rec := do("/api/pos/scan", "")
 	if rec.Code != http.StatusUnauthorized {
