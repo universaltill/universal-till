@@ -1,12 +1,15 @@
 package pages
 
 import (
+	"encoding/base64"
 	"fmt"
 	"html"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+
+	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -74,14 +77,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}
+		// QR of the claim URL: the owner scans it and claims FROM THEIR
+		// PHONE — the only escape hatch on shells that can't open an
+		// external browser (Pi kiosk, windows/linux webview).
+		qrHTML := ""
+		if png, err := qrcode.Encode(info.ClaimURL, qrcode.Medium, 180); err == nil {
+			qrHTML = fmt.Sprintf(
+				`<div class="claim-qr"><img src="data:image/png;base64,%s" alt="" width="180" height="180">`+
+					`<div class="muted">%s</div></div>`,
+				base64.StdEncoding.EncodeToString(png),
+				html.EscapeString(httpx.T(locale, "settings.enrol.claim_scan")))
+		}
 		fmt.Fprintf(w,
 			`<div class="claim-code-box"><div class="claim-code">%s</div>`+
 				`<div class="muted">%s</div>`+
-				`<a href="%s" target="_blank" rel="noopener">%s</a></div>`,
+				`<a href="%s" target="_blank" rel="noopener">%s</a>%s</div>`,
 			html.EscapeString(info.Code),
 			html.EscapeString(httpx.T(locale, "settings.enrol.claim_expires")),
 			html.EscapeString(info.ClaimURL),
-			html.EscapeString(httpx.T(locale, "settings.enrol.claim_open")))
+			html.EscapeString(httpx.T(locale, "settings.enrol.claim_open")),
+			qrHTML)
 	})
 
 	mux.HandleFunc("POST /api/enrol/now", func(w http.ResponseWriter, r *http.Request) {

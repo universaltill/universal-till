@@ -716,10 +716,16 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar .sb-update:hover { background: #22c55e; }
-/* Encouragement chip shown until the till is registered with the marketplace. */
+/* Quiet hint shown until the till is connected to the marketplace —
+   registration is OPTIONAL (ADR-0015), so no alarm colors, no urgency. */
 .statusbar .sb-enrol {
-  color: #451a03; background: #fbbf24; text-decoration: none;
-  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  color: var(--muted, #6b7280); background: transparent;
+  border: 1px solid var(--border, #d1d5db); text-decoration: none;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 500;
   margin-inline-start: .5rem;
 }
-.statusbar .sb-enrol:hover { background: #f59e0b; }
+.statusbar .sb-enrol:hover { color: var(--ink, #111827); border-color: var(--muted, #6b7280); }
+
+/* Claim-by-phone QR under the claim code (kiosk/desktop shells can't open a browser) */
+.claim-qr { margin-top: .6rem; }
+.claim-qr img { border-radius: .5rem; background: #fff; padding: .4rem; border: 1px solid var(--border); }
