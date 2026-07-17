@@ -178,6 +178,94 @@ func TestAdminApplyRetiresFKPinnedSKUSquatter(t *testing.T) {
 	}
 }
 
+// Shared plugin settings (Farshid's "change the secret key once, every till
+// gets it"): GLOBAL-scope plugin settings follow the primary; register/user
+// scoped rows and replica-only plugins stay local; settings of a plugin the
+// replica hasn't installed are skipped, not an FK bomb.
+func TestAdminSyncSharedPluginSettings(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	seedPlugin := func(d *db.DB, id string) {
+		mustExec(t, d, `INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at) VALUES (?, '1.0.0', ?, 'wasm', 'plugin.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`, id, id)
+		mustExec(t, d, `INSERT INTO plugins (id, name, version, entrypoint, runtime) VALUES (?, ?, '1.0.0', 'plugin.wasm', 'wasm')`, id, id)
+	}
+	// Stripe on both tills; "other" only on the primary; "local" only here.
+	seedPlugin(primary, "com.ut.stripe")
+	seedPlugin(primary, "com.ut.other")
+	seedPlugin(replica, "com.ut.stripe")
+	seedPlugin(replica, "com.ut.local")
+
+	mustExec(t, primary, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('p1', 'com.ut.stripe', 'stripe_secret_key', '"sk_live_new"', 'global')`)
+	mustExec(t, primary, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('p2', 'com.ut.stripe', 'currency', '"gbp"', 'global')`)
+	mustExec(t, primary, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id) VALUES ('p3', 'com.ut.stripe', 'stripe_reader_id', '"tmr_primary"', 'register', 'till-primary')`)
+	mustExec(t, primary, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('p4', 'com.ut.other', 'endpoint', '"https://x"', 'global')`)
+
+	mustExec(t, replica, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('r1', 'com.ut.stripe', 'stripe_secret_key', '"sk_stale"', 'global')`)
+	mustExec(t, replica, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id) VALUES ('r2', 'com.ut.stripe', 'stripe_reader_id', '"tmr_replica"', 'register', 'till-replica')`)
+	mustExec(t, replica, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('r3', 'com.ut.local', 'theme', '"dark"', 'global')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["plugin_settings"] {
+		if rec["scope"] != "global" {
+			t.Fatalf("non-global plugin setting leaked into the dump: %v", rec)
+		}
+	}
+
+	// Apply twice: the second pass proves delete-then-insert is idempotent.
+	for i := range 2 {
+		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+			t.Fatalf("apply #%d: %v", i+1, err)
+		}
+	}
+
+	var v string
+	var n int
+	if err := replica.QueryRow(`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.ut.stripe' AND key = 'stripe_secret_key' AND scope = 'global'`).Scan(&v); err != nil || v != `"sk_live_new"` {
+		t.Fatalf("shared secret key not synced: %q %v", v, err)
+	}
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.stripe' AND key = 'stripe_secret_key'`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("stale global row not replaced, %d rows", n)
+	}
+	if err := replica.QueryRow(`SELECT value_json FROM plugin_settings WHERE id = 'r2'`).Scan(&v); err != nil || v != `"tmr_replica"` {
+		t.Fatalf("replica register-scoped reader id clobbered: %q %v", v, err)
+	}
+	if err := replica.QueryRow(`SELECT value_json FROM plugin_settings WHERE id = 'r3'`).Scan(&v); err != nil || v != `"dark"` {
+		t.Fatalf("replica-only plugin setting clobbered: %q %v", v, err)
+	}
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.other'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("settings landed for a plugin the replica has not installed")
+	}
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.stripe' AND scope = 'register' AND scope_id = 'till-primary'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("primary's register-scoped row leaked to the replica")
+	}
+
+	// The primary drops one global key: the deletion propagates, and the
+	// fingerprint moves so the pull loop notices.
+	mustExec(t, primary, `DELETE FROM plugin_settings WHERE id = 'p2'`)
+	drift, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("drift dump: %v", err)
+	}
+	if drift.Fingerprint() == bundle.Fingerprint() {
+		t.Fatal("fingerprint did not change with plugin setting content")
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, drift)); err != nil {
+		t.Fatalf("drift apply: %v", err)
+	}
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.stripe' AND key = 'currency'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("deleted global plugin setting survived on the replica")
+	}
+}
+
 func TestAdminApplyDeactivatesUndeletable(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")

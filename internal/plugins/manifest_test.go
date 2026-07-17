@@ -177,6 +177,12 @@ func TestPersistManifest(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
+	// A replica's pull cursor: the install must clear it so the next LAN-sync
+	// pull re-applies the primary's bundle (shared plugin settings).
+	if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('sync.pull_version', 'abc123')`); err != nil {
+		t.Fatalf("seed pull cursor: %v", err)
+	}
+
 	manifest := &Manifest{
 		ID:          "com.test.plugin",
 		Name:        "Test Plugin",
@@ -292,6 +298,15 @@ func TestPersistManifest(t *testing.T) {
 	}
 	if hookCount != 1 {
 		t.Errorf("expected 1 hook, got %d", hookCount)
+	}
+
+	// Verify the LAN-sync pull cursor was cleared by the install
+	var cursor string
+	if err := db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'sync.pull_version'`).Scan(&cursor); err != nil {
+		t.Fatalf("query pull cursor: %v", err)
+	}
+	if cursor != "" {
+		t.Errorf("expected sync.pull_version cleared after install, got %q", cursor)
 	}
 
 	// Verify permissions (not granted by default)
@@ -429,6 +444,12 @@ func setupTestDB(t *testing.T) *sql.DB {
 		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 		FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE,
 		UNIQUE (plugin_id, key)
+	);
+
+	CREATE TABLE settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 
 	CREATE TABLE plugin_settings (
