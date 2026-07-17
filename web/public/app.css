@@ -746,3 +746,7 @@ body.login-screen {
 .trust-official { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #451a03; }
 .trust-verified { background: #dcfce7; color: #166534; }
 .trust-unverified { background: #fef3c7; color: #92400e; }
+
+/* Reorder suggestion beside the days-left warning */
+.order-hint { display:inline-block; margin-inline-start:.45rem; font-size:.78rem;
+  background:#eff6ff; color:#1d4ed8; border-radius:999px; padding:.1rem .5rem; font-weight:600; }
