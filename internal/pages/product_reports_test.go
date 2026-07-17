@@ -82,6 +82,30 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 		t.Fatalf("dead value = %d, want 1000", warmer.StockValue)
 	}
 
+	// Variant sales count toward the PARENT item: sell it-b via a variant →
+	// it-b stops being dead stock and gains a sell rate.
+	mustExec(`INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-b','it-b','B-V','Var','300',1)`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+	          VALUES ('s2','R2','completed','sale',300,0,300, datetime('now','-1 days'))`)
+	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, variant_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+	          VALUES ('l2','s2',1,'v-b','Shelf Warmer Var',2,300,0,0,0,600,600)`)
+	dead2, err := repo.DeadStock(ctx, 30, 1000)
+	if err != nil {
+		t.Fatalf("dead2: %v", err)
+	}
+	for _, r := range dead2 {
+		if r.Name == "Shelf Warmer" {
+			t.Fatal("item sold via a variant must not be dead stock")
+		}
+	}
+	rates, err := repo.ItemDailySellRates(ctx, 30)
+	if err != nil {
+		t.Fatalf("rates: %v", err)
+	}
+	if rates["it-b"] <= 0 {
+		t.Fatalf("variant sale must give the parent item a sell rate, got %v", rates["it-b"])
+	}
+
 	// Busy-times buckets: our one sale lands in exactly one weekday bucket
 	// and one hour bucket, and totals carry through.
 	wd, err := repo.SalesByWeekday(ctx, 30)
@@ -105,8 +129,8 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 		}
 		sumHr += b.Count
 	}
-	if sumWd != 1 || sumHr != 1 {
-		t.Fatalf("bucket sums = %d/%d, want 1/1", sumWd, sumHr)
+	if sumWd != 2 || sumHr != 2 {
+		t.Fatalf("bucket sums = %d/%d, want 2/2", sumWd, sumHr)
 	}
 
 	// Margins: give the sold item a cost price → margin = revenue − qty×cost.
