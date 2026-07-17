@@ -30,8 +30,8 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 		case "/v1/catalog/plugins":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"plugins":[
-				{"id":"11111111-1111-1111-1111-111111111111","name":"AI Assistant","version":"1.0.1","type":"integration","trustLevel":"unverified"},
-				{"id":"22222222-2222-2222-2222-222222222222","name":"Buttons Left Theme","version":"1.0.2","type":"theme","trustLevel":"unverified"}
+				{"id":"com.universaltill.integration-ai","name":"AI Assistant","version":"1.0.1","type":"integration","trustLevel":"unverified"},
+				{"id":"com.acme.thirdparty","name":"Buttons Left Theme","version":"1.0.2","type":"theme","vendor":"Acme","trustLevel":"unverified"}
 			]}`))
 		case "/ui/api/merchant/entitlements":
 			w.Header().Set("Content-Type", "application/json")
@@ -73,6 +73,20 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 		t.Fatalf("store page HTTP %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
+	// Trust surfaces: first-party id → official badge; third-party unverified
+	// → unverified badge + consent attributes for the install confirm.
+	if !strings.Contains(body, "trust-official") {
+		t.Error("first-party plugin missing the official badge")
+	}
+	if !strings.Contains(body, "trust-unverified") {
+		t.Error("third-party plugin missing the unverified badge")
+	}
+	if !strings.Contains(body, `data-tier="unverified"`) || !strings.Contains(body, `data-vendor="Acme"`) {
+		t.Error("unverified card missing the consent data attributes")
+	}
+	if !strings.Contains(body, "utTrustPrompt") {
+		t.Error("localized trust prompt missing")
+	}
 	for _, name := range []string{"AI Assistant", "Buttons Left Theme"} {
 		if !strings.Contains(body, name) {
 			t.Fatalf("store page hid catalog plugin %q (empty-store regression); body:\n%s", name, body)

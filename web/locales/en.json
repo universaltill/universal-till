@@ -848,5 +848,12 @@
   "reports.tax_collected": "Tax collected",
   "catalog.col.cost": "Cost",
   "catalog.labels.variant": "Variant",
-  "catalog.labels.whole_item": "Whole item"
+  "catalog.labels.whole_item": "Whole item",
+  "plugins.trust.official": "Universal Till",
+  "plugins.trust.official_hint": "Built and maintained by Universal Till",
+  "plugins.trust.verified": "Verified",
+  "plugins.trust.verified_hint": "Verified, registered developer",
+  "plugins.trust.unverified": "Unverified",
+  "plugins.trust.unverified_hint": "Publisher not verified by the marketplace",
+  "plugins.trust.confirm": "This plugin is from an unverified publisher: %s. Do you trust this publisher and want to continue?"
 }

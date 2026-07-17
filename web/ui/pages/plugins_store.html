@@ -48,11 +48,14 @@
 {{ end }}
 <div id="store-grid" class="grid" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:1rem">
   {{ range .Items }}
-  <div class="card store-card" data-listing-id="{{ .ListingID }}" data-type="{{ .Type }}" data-name="{{ .Name }}" data-desc="{{ .Description }}">
+  <div class="card store-card" data-listing-id="{{ .ListingID }}" data-type="{{ .Type }}" data-name="{{ .Name }}" data-desc="{{ .Description }}" data-tier="{{ .Tier }}" data-vendor="{{ .Vendor }}">
     <div style="display:flex; justify-content:space-between; align-items:baseline">
       <div style="display:flex; align-items:center; gap:.5rem">
         {{ if .Icon }}<img src="{{ .Icon }}" alt="" width="28" height="28" style="border-radius:7px" loading="lazy">{{ end }}
         <h3 style="margin:.2rem 0">{{ .Name }}</h3>
+        {{ if eq .Tier "official" }}<span class="trust-badge trust-official" title="{{ T "plugins.trust.official_hint" }}">🏠 {{ T "plugins.trust.official" }}</span>
+        {{ else if eq .Tier "verified" }}<span class="trust-badge trust-verified" title="{{ T "plugins.trust.verified_hint" }}">✔ {{ T "plugins.trust.verified" }}</span>
+        {{ else }}<span class="trust-badge trust-unverified" title="{{ T "plugins.trust.unverified_hint" }}">⚠ {{ T "plugins.trust.unverified" }}</span>{{ end }}
       </div>
       <span class="tag">v{{ .Version }}</span>
     </div>
@@ -103,6 +106,9 @@
 {{ end }}
 
 <script>
+window.utTrustPrompt = {{ printf "%q" (T "plugins.trust.confirm") }};
+</script>
+<script>
 (function () {
   // Category browsing + search: filter the grid client-side (instant, works
   // offline — the whole catalog is already rendered). Category and search
@@ -146,6 +152,14 @@
     var action = btn.getAttribute('data-store-action');
     var listing = btn.getAttribute('data-listing-id');
     var card = btn.closest('.store-card');
+    // Unverified publisher: the operator must explicitly consent before the
+    // plugin lands on the till (trust chain surface, ADR-0006).
+    if ((action === 'download' || action === 'install') && card &&
+        card.getAttribute('data-tier') === 'unverified') {
+      var vendor = card.getAttribute('data-vendor') || '?';
+      var q = (window.utTrustPrompt || 'Do you trust this publisher: %s?').replace('%s', vendor);
+      if (!window.confirm(q)) return;
+    }
     card.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
     msg.textContent = '⏳ ' + action + '…';
 

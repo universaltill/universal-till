@@ -848,5 +848,12 @@
   "reports.tax_collected": "Tahsil edilen vergi",
   "catalog.col.cost": "Maliyet",
   "catalog.labels.variant": "Varyant",
-  "catalog.labels.whole_item": "Ürünün tamamı"
+  "catalog.labels.whole_item": "Ürünün tamamı",
+  "plugins.trust.official": "Universal Till",
+  "plugins.trust.official_hint": "Universal Till tarafından geliştirilir ve bakımı yapılır",
+  "plugins.trust.verified": "Doğrulanmış",
+  "plugins.trust.verified_hint": "Doğrulanmış, kayıtlı geliştirici",
+  "plugins.trust.unverified": "Doğrulanmamış",
+  "plugins.trust.unverified_hint": "Yayıncı pazar yeri tarafından doğrulanmadı",
+  "plugins.trust.confirm": "Bu eklenti doğrulanmamış bir yayıncıdan: %s. Bu yayıncıya güveniyor ve devam etmek istiyor musunuz?"
 }
