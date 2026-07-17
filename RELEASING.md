@@ -44,7 +44,11 @@ git tag v0.2.1 && git push origin v0.2.1
      - `.deb` packages for Raspberry Pi / Debian (arm64 + amd64),
      - `checksums.txt`,
    - builds the **Windows NSIS installer** (`unitill-pos-setup-<ver>.exe`) and
-     attaches it.
+     the **macOS .app/.dmg** in separate jobs and attaches them. These jobs
+     only require the GitHub release to *exist* (they wait for it), not the
+     goreleaser job to have succeeded — a GitHub API blip that fails
+     goreleaser after publishing (the v0.2.9/v0.2.10 outage: 503 → retry →
+     double-upload → 422) no longer costs the `.exe`/`.dmg`.
    - The tag stamps `internal/buildinfo.Version`, so the running till shows the
      right version in its status bar.
 
