@@ -470,10 +470,10 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			State:     plugins.InstallStateRequested,
 		})
 
-		// Effective config: the till's enrolled marketplace identity fills any
-		// fields the operator didn't set (enroll package), so a freshly enrolled
-		// till installs without a restart.
-		effCfg := enroll.Effective(d.Cfg)
+		// Store registration is lazy: an install is the first interaction
+		// that needs a store identity, so enrol here if the till hasn't yet.
+		// The effective config fills any fields the operator didn't set.
+		effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
 		client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 		installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 		if err != nil {
@@ -693,7 +693,7 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 			log.Printf("Warning: Failed to store version for rollback: %v", err)
 		}
 
-		effCfg := enroll.Effective(d.Cfg)
+		effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
 		client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 		installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 		if err != nil {

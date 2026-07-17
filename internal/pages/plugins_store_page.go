@@ -168,6 +168,9 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, "listing_id required")
 			return
 		}
+		// Store registration is lazy — a download is the first interaction
+		// that needs a store identity, so enrol before building the request.
+		enroll.EnsureRegistered(r.Context(), d.Cfg, d.Settings)
 		installer, effCfg, err := storeInstaller(d)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, "marketplace not configured")
