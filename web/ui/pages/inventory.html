@@ -4,6 +4,11 @@
   <input type="search" id="stock-search" placeholder="{{ T "inventory.search_placeholder" }}" autocomplete="off">
 </div>
 
+{{ if .SyncPrimary }}
+<div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
+  <a href="{{ .SyncPrimary }}/inventory" target="_blank" rel="noopener">{{ T "sync.banner_open_primary" }}</a></div>
+{{ end }}
+
 <div class="catalog-layout">
   <div class="catalog-list">
     <div class="card">
