@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,16 @@ func init() {
 }
 
 func main() {
+	// Attach mode: on a .deb install the till already runs as a systemd
+	// service on :8080 — spawning a second server would fight over the same
+	// database. If something that answers our /healthz is already there,
+	// just open the window on it (also makes a second app launch join the
+	// running till instead of starting another).
+	if tillAlreadyRunning("127.0.0.1:8080") {
+		showWindow("http://127.0.0.1:8080", "Universal Till", -1)
+		return
+	}
+
 	// Prefer :8080 (so the operator can also open the till in a normal browser
 	// at a known address), falling back to any free port if it's taken.
 	port := freePort("8080")
@@ -58,9 +69,14 @@ func main() {
 	// lives in Contents/Resources — so codesign accepts the bundle. Pick
 	// whichever dir actually contains web/.
 	workDir := dir
-	if _, err := os.Stat(filepath.Join(dir, "web")); err != nil {
-		if res := filepath.Join(dir, "..", "Resources"); dirHasWeb(res) {
-			workDir = res
+	if !dirHasWeb(workDir) {
+		// mac .app: binaries in Contents/MacOS, web/ in Contents/Resources.
+		// deb: binaries in /opt/unitill/bin, web/ in /opt/unitill.
+		for _, cand := range []string{filepath.Join(dir, "..", "Resources"), filepath.Join(dir, "..")} {
+			if dirHasWeb(cand) {
+				workDir = cand
+				break
+			}
 		}
 	}
 
@@ -89,6 +105,18 @@ func main() {
 	// process (skipping the deferred Kill), so showWindow is told the server PID
 	// to stop it first.
 	showWindow("http://"+addr, "Universal Till", cmd.Process.Pid)
+}
+
+// tillAlreadyRunning reports whether a Universal Till server answers on addr
+// (its /healthz — not just any process squatting on the port).
+func tillAlreadyRunning(addr string) bool {
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Get("http://" + addr + "/healthz")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // freePort returns `preferred` when that port is free (so the till lives at a

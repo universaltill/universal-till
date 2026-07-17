@@ -65,6 +65,18 @@ archives:
       - src: packaging/linux/uninstall-unitill.sh
         dst: uninstall-unitill.sh
         info: { mode: 0o755 }
+      # Desktop shell (GTK/WebKit app window) — prebuilt per-arch by the
+      # linux-shells job in release.yml (CGO needs native GTK dev headers).
+      - src: "dist-shells/linux-{{ .Arch }}/unitill-desktop"
+        dst: unitill-desktop
+        info: { mode: 0o755 }
+      # Kiosk mode for Pi OS Lite / headless Debian (no desktop needed).
+      - src: packaging/linux/unitill-kiosk-setup.sh
+        dst: unitill-kiosk-setup.sh
+        info: { mode: 0o755 }
+      - src: packaging/linux/unitill-kiosk-launch.sh
+        dst: unitill-kiosk-launch.sh
+        info: { mode: 0o755 }
       - README.md
       - LICENSE*
   - id: macos
@@ -114,6 +126,11 @@ nfpms:
     homepage: https://universaltill.com
     license: MIT
     bindir: /opt/unitill/bin
+    # The desktop shell links GTK3/WebKitGTK — present on any Linux desktop,
+    # deliberately NOT a hard dependency so headless/kiosk installs stay lean.
+    suggests:
+      - libwebkit2gtk-4.0-37
+      - libgtk-3-0
     contents:
       - src: web
         dst: /opt/unitill/web
@@ -122,6 +139,22 @@ nfpms:
       - src: packaging/pos.env.example
         dst: /opt/unitill/pos.env
         type: config|noreplace
+      # Desktop app shell (per-arch, prebuilt by the linux-shells CI job) +
+      # its applications-menu entry and icon.
+      - src: "dist-shells/linux-{{ .Arch }}/unitill-desktop"
+        dst: /opt/unitill/bin/unitill-desktop
+        file_info: { mode: 0o755 }
+      - src: packaging/linux/universal-till.desktop
+        dst: /usr/share/applications/universal-till.desktop
+      - src: packaging/linux/universal-till.png
+        dst: /usr/share/icons/hicolor/512x512/apps/universal-till.png
+      # Kiosk mode (Pi OS Lite): run unitill-kiosk-setup once, reboot.
+      - src: packaging/linux/unitill-kiosk-setup.sh
+        dst: /opt/unitill/bin/unitill-kiosk-setup
+        file_info: { mode: 0o755 }
+      - src: packaging/linux/unitill-kiosk-launch.sh
+        dst: /opt/unitill/bin/unitill-kiosk-launch.sh
+        file_info: { mode: 0o755 }
     scripts:
       postinstall: packaging/scripts/postinstall.sh
       preremove: packaging/scripts/preremove.sh
@@ -146,6 +179,12 @@ release:
     macOS may say the developer is unidentified — right-click the file, choose
     **Open**, then **Open** again (a one-time step until we ship a signed build).
 
-    **Linux (other):** extract, then `./run-unitill.sh`.
+    **Linux desktop app:** after installing the `.deb`, "Universal Till" is in
+    the applications menu (its own window, like the mac/windows app). From the
+    `tar.gz`: `./unitill-desktop`. Server-style still works: `./run-unitill.sh`.
+
+    **Raspberry Pi kiosk (Pi OS Lite, no desktop):** install the `.deb`, then
+    `sudo /opt/unitill/bin/unitill-kiosk-setup` and reboot — the Pi boots
+    straight into the till, fullscreen.
 
     Every download opens the setup wizard at http://localhost:8080.
