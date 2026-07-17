@@ -143,6 +143,11 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .catalog-form-head { display: flex; justify-content: space-between; align-items: center;
                      margin-bottom: .5rem; }
 
+/* Store claim code (Settings): big, readable off the till screen. */
+.claim-code-box { display: flex; flex-direction: column; gap: .3rem; }
+.claim-code { font-family: ui-monospace, monospace; font-size: 1.9rem; font-weight: 700;
+              letter-spacing: .15em; }
+
 /* On-screen keyboard (touch tills / kiosk — osk.js). Fixed to the bottom,
    big touch targets; body gets padding so the focused field stays visible. */
 #osk { position: fixed; inset-inline: 0; inset-block-end: 0; z-index: 1000;
