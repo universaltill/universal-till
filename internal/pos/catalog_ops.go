@@ -37,3 +37,8 @@ func UpdateVariant(ctx context.Context, db *sql.DB, in VariantInput) error {
 func AddBarcode(ctx context.Context, db *sql.DB, in BarcodeInput) error {
 	return data.NewCatalogRepo(db).AddBarcode(ctx, catalogtypes.BarcodeInput(in))
 }
+
+// RemoveBarcode detaches a barcode from whatever it is attached to.
+func RemoveBarcode(ctx context.Context, db *sql.DB, barcode string) error {
+	return data.NewCatalogRepo(db).DeleteBarcode(ctx, barcode)
+}

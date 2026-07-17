@@ -114,6 +114,18 @@ func SeedBarcode(t *testing.T, db *sql.DB, barcode, itemID string, primary bool)
 	}
 }
 
+// SeedVariantBarcode attaches a barcode to a variant.
+func SeedVariantBarcode(t *testing.T, db *sql.DB, barcode, variantID string, primary bool) {
+	t.Helper()
+	p := 0
+	if primary {
+		p = 1
+	}
+	if _, err := db.Exec(`INSERT INTO variant_barcodes(barcode,variant_id,is_primary) VALUES(?,?,?)`, barcode, variantID, p); err != nil {
+		t.Fatalf("seed variant barcode: %v", err)
+	}
+}
+
 // SeedImage inserts a thumbnail image path.
 func SeedImage(t *testing.T, db *sql.DB, id, itemID, path string) {
 	t.Helper()
