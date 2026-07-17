@@ -59,6 +59,31 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// Immediate marketplace registration attempt (the Settings card's
 	// "Register now" button). Registration also runs automatically in the
 	// background; this just gives the operator a button and instant feedback.
+	// "Claim this store" (ADR-0013 layer 2): mint a short-lived claim code
+	// on the marketplace and show it with the redemption link. The owner
+	// signs in with their Universal Till ID and enters the code.
+	mux.HandleFunc("POST /api/enrol/claim-code", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if !isManagerOrAuthOff(r) {
+			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+			return
+		}
+		info, err := enroll.ClaimCode(r.Context(), d.Cfg)
+		if err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		fmt.Fprintf(w,
+			`<div class="claim-code-box"><div class="claim-code">%s</div>`+
+				`<div class="muted">%s</div>`+
+				`<a href="%s" target="_blank" rel="noopener">%s</a></div>`,
+			html.EscapeString(info.Code),
+			html.EscapeString(httpx.T(locale, "settings.enrol.claim_expires")),
+			html.EscapeString(info.ClaimURL),
+			html.EscapeString(httpx.T(locale, "settings.enrol.claim_open")))
+	})
+
 	mux.HandleFunc("POST /api/enrol/now", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
