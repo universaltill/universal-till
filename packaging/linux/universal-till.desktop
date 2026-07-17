@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Universal Till
+Comment=Offline-first point of sale
+Exec=/opt/unitill/bin/unitill-desktop
+Icon=universal-till
+Terminal=false
+Categories=Office;Finance;
+StartupNotify=false
