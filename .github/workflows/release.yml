@@ -89,10 +89,40 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # No website notification needed: universaltill.com/download reads the
+      # public Releases API (/releases/latest) at page load, so it picks up
+      # this release automatically. The site's staged mirror is only a
+      # fallback for when the API is unreachable.
 
-      # Windows installer (NSIS): a guided Setup.exe wizard is friendlier than
-      # unzip-and-run for shop owners. goreleaser already built + published the
-      # archives above, so a hiccup here never blocks the core release.
+  # Windows installer (NSIS): a guided Setup.exe wizard is friendlier than
+  # unzip-and-run for shop owners. Its own job so a goreleaser JOB failure
+  # doesn't skip it (v0.2.9/v0.2.10: a GitHub API outage made goreleaser 503 →
+  # retry → double-upload → 422 → job failed AFTER the release + archives were
+  # already published, and every downstream job was skipped). It only needs
+  # the release and the windows zip to exist, so it downloads the archive from
+  # the release rather than sharing goreleaser's workspace.
+  windows-installer:
+    needs: [prepare, goreleaser]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Wait for the GitHub release to exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            gh release view "$TAG" --json tagName >/dev/null 2>&1 && exit 0
+            echo "release $TAG not visible yet (attempt $i/30)"; sleep 20
+          done
+          echo "::error::release $TAG does not exist — goreleaser failed before creating it; re-run goreleaser first"
+          exit 1
       - name: Build & attach Windows installer (NSIS)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -102,6 +132,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y nsis
+          gh release download "${TAG}" --pattern "unitill-pos_${VERSION}_windows_amd64.zip" --dir dist
           STAGE="$(mktemp -d)"
           unzip -q "dist/unitill-pos_${VERSION}_windows_amd64.zip" -d "$STAGE"
           makensis -DVERSION="${VERSION}" -DSRCDIR="$STAGE" packaging/windows/installer.nsi
@@ -111,10 +142,6 @@ jobs:
           echo "built installer: $EXE"
           test -n "$EXE" && test -f "$EXE"
           gh release upload "${TAG}" "$EXE" --clobber
-      # No website notification needed: universaltill.com/download reads the
-      # public Releases API (/releases/latest) at page load, so it picks up
-      # this release automatically. The site's staged mirror is only a
-      # fallback for when the API is unreachable.
 
   # A real macOS .app (embedded WebView, no Terminal) packaged as a .dmg. Needs
   # a macOS runner for CGO/WKWebView + codesign/iconutil, so it's a separate
@@ -123,10 +150,12 @@ jobs:
   # configured, otherwise ad-hoc signs (Apple Silicon requires a signature to
   # run; ad-hoc downloads need right-click → Open). See docs/arch/desktop-app.md.
   macos-app:
-    # Wait for goreleaser: it creates the GitHub release this job uploads the
-    # .dmg to (otherwise `gh release upload` races it and fails "release not
-    # found"). goreleaser publishing is the gate; the .dmg is an add-on.
+    # Runs after goreleaser but does NOT require it to have SUCCEEDED — only
+    # the release must exist (the wait step checks). A goreleaser job failure
+    # after publishing (e.g. 422 double-uploads during a GitHub API outage)
+    # must not cost the .dmg, as it did for v0.2.9/v0.2.10.
     needs: [prepare, goreleaser]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: macos-14 # Apple Silicon
     permissions:
       contents: write
@@ -138,6 +167,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # Gate before the (slow) build: the .dmg needs a release to attach to.
+      - name: Wait for the GitHub release to exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            gh release view "$TAG" --json tagName >/dev/null 2>&1 && exit 0
+            echo "release $TAG not visible yet (attempt $i/30)"; sleep 20
+          done
+          echo "::error::release $TAG does not exist — goreleaser failed before creating it; re-run goreleaser first"
+          exit 1
       # Import the Developer ID cert into a throwaway keychain when configured.
       # MACOS_CERT_P12 = base64 of the exported .p12; MACOS_CERT_PASSWORD its
       # export password. No-ops (→ ad-hoc build) when the secret is absent.
