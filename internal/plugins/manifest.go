@@ -240,7 +240,7 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 			UpdatedAt: now,
 		})
 	}
-	if err := repo.InsertPluginSettings(ctx, tx, settingRows); err != nil {
+	if err := repo.ReconcilePluginSettings(ctx, tx, m.ID, settingRows); err != nil {
 		return fmt.Errorf("insert plugin setting: %w", err)
 	}
 

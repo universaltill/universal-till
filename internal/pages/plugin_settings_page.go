@@ -38,6 +38,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		Key, Value string
 		Secret     bool // rendered masked; its value is never sent to the page
 		IsSet      bool // a value already exists (for the "leave blank to keep" hint)
+		PerTill    bool // register-scoped: this till's own value, never synced
 	}
 
 	mux.HandleFunc("GET /plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +58,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			if json.Unmarshal([]byte(row.ValueJSON), &v) != nil {
 				v = row.ValueJSON // non-string JSON edits raw
 			}
-			sv := settingView{Key: row.Key, Value: v, Secret: isSecretSettingKey(row.Key)}
+			sv := settingView{Key: row.Key, Value: v, Secret: isSecretSettingKey(row.Key), PerTill: row.Scope == "register"}
 			if sv.Secret {
 				sv.IsSet = v != ""
 				sv.Value = "" // never render a secret's value into the page
@@ -106,7 +107,9 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			if string(raw) == row.ValueJSON {
 				continue
 			}
-			if err := repo.UpsertPluginSetting(r.Context(), pluginID, row.Key, string(raw)); err != nil {
+			// Write back into the row's own scope: a register-scoped setting
+			// (per-till, e.g. a card reader id) must not become shop-wide.
+			if err := repo.UpsertPluginSettingScoped(r.Context(), pluginID, row.Key, string(raw), row.Scope); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

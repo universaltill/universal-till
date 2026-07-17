@@ -372,6 +372,7 @@
   "plugins.none_found_hint": "Try adjusting your filters or refresh the catalog.",
   "plugins.retry": "Retry install",
   "plugins.settings.none": "This plugin has no settings.",
+  "plugins.settings.per_till": "this till only",
   "plugins.settings.save": "Save settings",
   "plugins.settings.saved": "Settings saved — applied immediately",
   "plugins.settings.secret_empty": "not set",
