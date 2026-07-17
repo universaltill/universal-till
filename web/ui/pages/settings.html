@@ -21,6 +21,17 @@
   {{ end }}
 </div>
 <div class="card" style="margin-top:1rem">
+  <h2>{{ T "settings.update.title" }}</h2>
+  <p class="muted">Universal Till v{{ appversion }}</p>
+  {{ if .isManager }}
+  <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
+    <button class="btn btn-touch" hx-post="/api/update/check" hx-target="#update-check-msg" hx-swap="innerHTML"
+            hx-indicator="#update-check-msg">{{ T "settings.update.check_btn" }}</button>
+    <span id="update-check-msg" aria-live="polite"></span>
+  </div>
+  {{ end }}
+</div>
+<div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.theme.title" }}</h2>
   <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="window.location.reload()">
     <select name="theme">
