@@ -9,6 +9,13 @@
     <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" style="margin-top:.4rem">
       <span class="muted">{{ T "settings.enrol.fleet_loading" }}</span>
     </div>
+    {{ if .isManager }}
+    <div style="margin-top:.8rem; border-top:1px solid var(--border); padding-top:.6rem">
+      <p class="muted">{{ T "settings.enrol.claim_help" }}</p>
+      <button class="btn btn-touch" hx-post="/api/enrol/claim-code" hx-target="#claim-code-msg" hx-swap="innerHTML">{{ T "settings.enrol.claim_btn" }}</button>
+      <div id="claim-code-msg" aria-live="polite" style="margin-top:.5rem"></div>
+    </div>
+    {{ end }}
   {{ else }}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>

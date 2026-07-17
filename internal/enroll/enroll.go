@@ -381,6 +381,65 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	return nil
 }
 
+// ClaimInfo is a freshly minted store claim code plus where to redeem it.
+type ClaimInfo struct {
+	Code      string `json:"code"`
+	ExpiresAt string `json:"expires_at"`
+	ClaimURL  string `json:"claim_url"`
+}
+
+// ClaimCode asks the marketplace for a short-lived claim code (ADR-0013
+// layer 2): the operator shows it to the owner, who redeems it at the
+// marketplace's /ui/claim after signing in with their Universal Till ID.
+// Needs a registered store; the store token authenticates the call.
+func ClaimCode(ctx context.Context, cfg *config.Config) (ClaimInfo, error) {
+	eff := Effective(cfg)
+	m := eff.Marketplace
+	storeID, token := currentStoreAuth(m)
+	if m.EndpointURL == "" || storeID == "" || token == "" {
+		return ClaimInfo{}, fmt.Errorf("till is not registered with the marketplace yet")
+	}
+	payload, err := json.Marshal(map[string]string{"store_id": storeID})
+	if err != nil {
+		return ClaimInfo{}, err
+	}
+	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/claim-code"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return ClaimInfo{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return ClaimInfo{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return ClaimInfo{}, fmt.Errorf("claim-code returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var envelope struct {
+		Data struct {
+			Code      string `json:"code"`
+			ExpiresAt string `json:"expires_at"`
+			ClaimPath string `json:"claim_path"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return ClaimInfo{}, fmt.Errorf("decode claim-code response: %w", err)
+	}
+	if envelope.Data.Code == "" {
+		return ClaimInfo{}, fmt.Errorf("claim-code response missing code")
+	}
+	webBase := strings.TrimSuffix(strings.TrimRight(m.EndpointURL, "/"), "/api")
+	return ClaimInfo{
+		Code:      envelope.Data.Code,
+		ExpiresAt: envelope.Data.ExpiresAt,
+		ClaimURL:  webBase + envelope.Data.ClaimPath,
+	}, nil
+}
+
 // Device is one till registered under this store (the fleet).
 type Device struct {
 	DeviceID  string `json:"device_id"`
