@@ -189,29 +189,103 @@ INSERT INTO plugin_entries (
 }
 
 // InsertPluginSettings upserts plugin settings.
-func (r *PluginRepo) InsertPluginSettings(ctx context.Context, tx *sql.Tx, settings []PluginSettingRow) error {
-	if len(settings) == 0 {
-		return nil
-	}
+// ReconcilePluginSettings aligns a plugin's settings rows with its manifest
+// on install/upgrade WITHOUT losing operator-configured values:
+//   - a declared key with no row gets its default inserted;
+//   - a declared key whose row sits in a different scope keeps its value but
+//     moves to the manifest's scope (e.g. a per-till reader id that used to
+//     be declared global);
+//   - duplicate rows for one key collapse to the best candidate — a value
+//     differing from the default beats the default, then newer beats older.
+//     (Dupes came from the previous upsert: its conflict target included
+//     scope_id, which is NULL here, and SQLite treats NULLs as distinct, so
+//     every upgrade inserted another default row.)
+//   - keys the manifest no longer declares are removed.
+func (r *PluginRepo) ReconcilePluginSettings(ctx context.Context, tx *sql.Tx, pluginID string, declared []PluginSettingRow) error {
 	exec := r.executor(tx)
-	stmt, err := exec.PrepareContext(ctx, `
-INSERT INTO plugin_settings (
-	id, plugin_id, key, value_json, scope, scope_id, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(plugin_id, key, scope, scope_id) DO UPDATE SET
-	value_json = excluded.value_json,
-	updated_at = excluded.updated_at
-`)
+	rows, err := exec.QueryContext(ctx, `
+SELECT id, key, value_json, scope, updated_at FROM plugin_settings WHERE plugin_id = ?`, pluginID)
 	if err != nil {
-		return pluginObs.wrap("prepare_settings", err)
+		return pluginObs.wrap("reconcile_settings", err)
 	}
-	defer stmt.Close()
-	for _, s := range settings {
-		if s.ID == "" {
-			s.ID = uuid.NewString()
+	type existing struct{ id, key, valueJSON, scope, updatedAt string }
+	var have []existing
+	for rows.Next() {
+		var e existing
+		if err := rows.Scan(&e.id, &e.key, &e.valueJSON, &e.scope, &e.updatedAt); err != nil {
+			rows.Close()
+			return pluginObs.wrap("reconcile_settings", err)
 		}
-		if _, err := stmt.ExecContext(ctx, s.ID, s.PluginID, s.Key, s.ValueJSON, s.Scope, s.ScopeID, s.UpdatedAt.UTC().Format(time.RFC3339)); err != nil {
-			return pluginObs.wrap("insert_setting", err)
+		have = append(have, e)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return pluginObs.wrap("reconcile_settings", err)
+	}
+
+	declaredByKey := make(map[string]PluginSettingRow, len(declared))
+	for _, d := range declared {
+		declaredByKey[d.Key] = d
+	}
+	byKey := map[string][]existing{}
+	for _, e := range have {
+		byKey[e.key] = append(byKey[e.key], e)
+	}
+
+	del := func(id string) error {
+		_, err := exec.ExecContext(ctx, `DELETE FROM plugin_settings WHERE id = ?`, id)
+		return err
+	}
+	for key, es := range byKey {
+		d, ok := declaredByKey[key]
+		if !ok {
+			for _, e := range es {
+				if err := del(e.id); err != nil {
+					return pluginObs.wrap("reconcile_settings", err)
+				}
+			}
+			continue
+		}
+		// Best candidate: a configured (non-default) value wins over the
+		// default; ties break to the latest write. Both stored timestamp
+		// formats (RFC3339 and SQLite datetime) compare correctly as strings
+		// on the date part.
+		best := es[0]
+		for _, e := range es[1:] {
+			bc, ec := best.valueJSON != d.ValueJSON, e.valueJSON != d.ValueJSON
+			if (ec && !bc) || (ec == bc && e.updatedAt > best.updatedAt) {
+				best = e
+			}
+		}
+		for _, e := range es {
+			if e.id != best.id {
+				if err := del(e.id); err != nil {
+					return pluginObs.wrap("reconcile_settings", err)
+				}
+			}
+		}
+		if best.scope != d.Scope {
+			if _, err := exec.ExecContext(ctx, `
+UPDATE plugin_settings SET scope = ?, scope_id = NULL, updated_at = ? WHERE id = ?`,
+				d.Scope, time.Now().UTC().Format(time.RFC3339), best.id); err != nil {
+				return pluginObs.wrap("reconcile_settings", err)
+			}
+		}
+	}
+
+	for _, d := range declared {
+		if _, ok := byKey[d.Key]; ok {
+			continue
+		}
+		if d.ID == "" {
+			d.ID = uuid.NewString()
+		}
+		if _, err := exec.ExecContext(ctx, `
+INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			d.ID, pluginID, d.Key, d.ValueJSON, d.Scope, d.ScopeID,
+			d.UpdatedAt.UTC().Format(time.RFC3339)); err != nil {
+			return pluginObs.wrap("reconcile_settings", err)
 		}
 	}
 	return nil
@@ -473,7 +547,7 @@ ORDER BY permission
 func (r *PluginRepo) ListPluginSettings(ctx context.Context, pluginID string) ([]PluginSettingRow, error) {
 	rows, err := r.executor(nil).QueryContext(ctx, `
 SELECT id, plugin_id, key, value_json, scope, scope_id, updated_at
-FROM plugin_settings WHERE plugin_id = ? AND scope = 'global' ORDER BY key`, pluginID)
+FROM plugin_settings WHERE plugin_id = ? AND scope IN ('global', 'register') ORDER BY key`, pluginID)
 	if err != nil {
 		return nil, pluginObs.wrap("list_settings", err)
 	}
@@ -491,13 +565,16 @@ FROM plugin_settings WHERE plugin_id = ? AND scope = 'global' ORDER BY key`, plu
 	return out, rows.Err()
 }
 
-// GetPluginSetting returns one global-scope setting's raw value_json for a
-// plugin. found is false when the key is not set. Backs the settings_get WASM
-// host function (configurable connector plugins, ADR-0014).
+// GetPluginSetting returns one setting's raw value_json for a plugin,
+// preferring the most specific scope (register beats global) so a per-till
+// value shadows a shop-wide one. found is false when the key is not set.
+// Backs the settings_get WASM host function (configurable connector
+// plugins, ADR-0014).
 func (r *PluginRepo) GetPluginSetting(ctx context.Context, pluginID, key string) (string, bool, error) {
 	var valueJSON string
 	err := r.executor(nil).QueryRowContext(ctx, `
-SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = 'global'`,
+SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ?
+ORDER BY CASE scope WHEN 'register' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1`,
 		pluginID, key).Scan(&valueJSON)
 	if err == sql.ErrNoRows {
 		return "", false, nil
@@ -508,14 +585,21 @@ SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope
 	return valueJSON, true, nil
 }
 
-// UpsertPluginSetting sets one global-scope plugin setting. Update-then-
-// insert rather than ON CONFLICT: the unique index includes scope_id,
-// which is NULL for global rows, and SQLite treats NULLs as distinct.
+// UpsertPluginSetting sets one global-scope plugin setting.
 func (r *PluginRepo) UpsertPluginSetting(ctx context.Context, pluginID, key, valueJSON string) error {
+	return r.UpsertPluginSettingScoped(ctx, pluginID, key, valueJSON, "global")
+}
+
+// UpsertPluginSettingScoped sets one plugin setting in the given scope
+// (global|register|user). Register-scoped rows never travel in LAN sync —
+// they are this till's own (scope_id stays NULL: one till, one register).
+// Update-then-insert rather than ON CONFLICT: the unique index includes
+// scope_id, which is NULL here, and SQLite treats NULLs as distinct.
+func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, key, valueJSON, scope string) error {
 	res, err := r.executor(nil).ExecContext(ctx, `
 UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
-WHERE plugin_id = ? AND key = ? AND scope = 'global'`,
-		valueJSON, pluginID, key)
+WHERE plugin_id = ? AND key = ? AND scope = ?`,
+		valueJSON, pluginID, key, scope)
 	if err != nil {
 		return pluginObs.wrap("upsert_setting", err)
 	}
@@ -524,8 +608,8 @@ WHERE plugin_id = ? AND key = ? AND scope = 'global'`,
 	}
 	_, err = r.executor(nil).ExecContext(ctx, `
 INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
-VALUES (?, ?, ?, ?, 'global')`,
-		uuid.NewString(), pluginID, key, valueJSON)
+VALUES (?, ?, ?, ?, ?)`,
+		uuid.NewString(), pluginID, key, valueJSON, scope)
 	if err != nil {
 		return pluginObs.wrap("upsert_setting", err)
 	}

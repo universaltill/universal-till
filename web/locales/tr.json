@@ -372,6 +372,7 @@
   "plugins.none_found_hint": "Filtrelerinizi ayarlamayı veya kataloğu yenilemeyi deneyin.",
   "plugins.retry": "Kurulumu yeniden dene",
   "plugins.settings.none": "Bu eklentinin ayarı yok.",
+  "plugins.settings.per_till": "yalnızca bu kasa",
   "plugins.settings.save": "Ayarları kaydet",
   "plugins.settings.saved": "Ayarlar kaydedildi — anında uygulandı",
   "plugins.settings.secret_empty": "ayarlı değil",

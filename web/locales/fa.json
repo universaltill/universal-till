@@ -372,6 +372,7 @@
   "plugins.none_found_hint": "فیلترها را تغییر دهید یا کاتالوگ را تازه‌سازی کنید.",
   "plugins.retry": "تلاش مجدد نصب",
   "plugins.settings.none": "این افزونه تنظیماتی ندارد.",
+  "plugins.settings.per_till": "فقط همین صندوق",
   "plugins.settings.save": "ذخیرهٔ تنظیمات",
   "plugins.settings.saved": "تنظیمات ذخیره شد — بلافاصله اعمال می‌شود",
   "plugins.settings.secret_empty": "تنظیم‌نشده",
