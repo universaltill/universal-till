@@ -23,6 +23,11 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		slow, _ := repo.SlowItems(r.Context(), days, 10)
 		dead, _ := repo.DeadStock(r.Context(), days, 10)
 		margins, _ := repo.MarginByItem(r.Context(), days, 10)
+		curPeriod, lastYear, _ := repo.PeriodComparison(r.Context(), days)
+		yoyPct := 0
+		if lastYear.Total > 0 {
+			yoyPct = int((curPeriod.Total - lastYear.Total) * 100 / lastYear.Total)
+		}
 		// Low-stock heads-up (same 28-day model as the inventory page): a
 		// chip on the reports header so the owner sees it without digging.
 		runningOut := 0
@@ -126,6 +131,10 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"Slow":        slow,
 			"DeadStock":   dead,
 			"Margins":     margins,
+			"YoYHas":      lastYear.Count > 0,
+			"YoYNow":      curPeriod.Total,
+			"YoYThen":     lastYear.Total,
+			"YoYPct":      yoyPct,
 			"RunningOut":  runningOut,
 			"WeekdayBars": weekdayBars,
 			"HourBars":    hourBars,

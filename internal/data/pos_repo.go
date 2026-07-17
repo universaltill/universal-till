@@ -781,6 +781,31 @@ GROUP BY i.id ORDER BY value DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit
 	return out, rows.Err()
 }
 
+// PeriodTotals is one period's headline numbers for comparisons.
+type PeriodTotals struct {
+	Total int64
+	Count int
+}
+
+// PeriodComparison returns totals for the last N days vs the SAME N days one
+// year earlier — the honest year-over-year comparison (empty year-ago data
+// simply reports zeros; the page hides the card until there is history).
+func (r *POSRepo) PeriodComparison(ctx context.Context, days int) (current, yearAgo PeriodTotals, err error) {
+	q := `SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales
+WHERE status = 'completed' AND sale_type = 'sale'
+  AND created_at >= datetime('now', ?) AND created_at < datetime('now', ?)`
+	if err = r.db.QueryRowContext(ctx, q, fmt.Sprintf("-%d days", days), "+0 days").
+		Scan(&current.Count, &current.Total); err != nil {
+		return current, yearAgo, fmt.Errorf("current period: %w", err)
+	}
+	if err = r.db.QueryRowContext(ctx, q,
+		fmt.Sprintf("-%d days", days+365), fmt.Sprintf("-%d days", 365)).
+		Scan(&yearAgo.Count, &yearAgo.Total); err != nil {
+		return current, yearAgo, fmt.Errorf("year-ago period: %w", err)
+	}
+	return current, yearAgo, nil
+}
+
 // MarginRow is one item's revenue vs cost over the reporting window (only
 // items with a recorded cost price appear).
 type MarginRow struct {

@@ -14,6 +14,11 @@
 </div>
 
 <div class="report-cards">
+  {{ if .YoYHas }}
+  <div class="card kpi"><div class="kpi-label">{{ T "reports.yoy" }}</div>
+    <div class="kpi-value {{ if lt .YoYPct 0 }}stock-low{{ end }}">{{ if ge .YoYPct 0 }}+{{ end }}{{ .YoYPct }}%</div>
+    <div class="muted" style="font-size:.8rem">{{ money .YoYThen }} → {{ money .YoYNow }}</div></div>
+  {{ end }}
   <div class="card kpi"><div class="kpi-label">{{ T "reports.revenue" }}</div><div class="kpi-value">{{ money .GrandTotal }}</div></div>
   <div class="card kpi"><div class="kpi-label">{{ T "reports.sales" }}</div><div class="kpi-value">{{ .GrandCount }}</div></div>
   <div class="card kpi"><div class="kpi-label">{{ T "reports.tax" }}</div><div class="kpi-value">{{ money .GrandTax }}</div></div>
