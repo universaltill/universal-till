@@ -287,7 +287,18 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(status)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, key))
 		}
-		label, found, err := data.NewCatalogRepo(d.Db).GetItemLabel(r.Context(), itemID)
+		// A variant label carries the VARIANT's price + barcode — a shelf
+		// label for "Apples Large" must scan as the large apples.
+		var label data.ItemLabel
+		var found bool
+		var err error
+		if variantID := strings.TrimSpace(r.Form.Get("variant_id")); variantID != "" {
+			var vl data.VariantLabel
+			vl, found, err = data.NewCatalogRepo(d.Db).GetVariantLabel(r.Context(), variantID)
+			label = data.ItemLabel{Name: vl.Name, PriceMinor: vl.PriceMinor, Code: vl.Code}
+		} else {
+			label, found, err = data.NewCatalogRepo(d.Db).GetItemLabel(r.Context(), itemID)
+		}
 		if err != nil || !found {
 			fail(http.StatusNotFound, "catalog.labels.no_item")
 			return

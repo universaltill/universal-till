@@ -120,6 +120,28 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 	}
 
+	// Variant options as JSON — the labels form's variant picker.
+	mux.HandleFunc("GET /api/catalog/variant-options", func(w http.ResponseWriter, r *http.Request) {
+		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
+		variants, err := repo.VariantsForItem(r.Context(), itemID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		type opt struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		opts := []opt{}
+		for _, v := range variants {
+			if v.IsActive {
+				opts = append(opts, opt{ID: v.ID, Name: v.Name})
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": opts, "error": nil})
+	})
+
 	// Cost price (what the shop pays) — feeds the margin report. Accepts a
 	// decimal in major units; stored as minor units (money boundary rule).
 	mux.HandleFunc("POST /api/catalog/item-cost", func(w http.ResponseWriter, r *http.Request) {

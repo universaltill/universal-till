@@ -846,5 +846,7 @@
   "reports.tax_rate": "نرخ",
   "reports.tax_net": "فروش خالص",
   "reports.tax_collected": "مالیات دریافتی",
-  "catalog.col.cost": "قیمت تمام‌شده"
+  "catalog.col.cost": "قیمت تمام‌شده",
+  "catalog.labels.variant": "تنوع",
+  "catalog.labels.whole_item": "کل کالا"
 }

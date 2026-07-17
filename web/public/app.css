@@ -213,6 +213,10 @@ body.osk-padded { padding-block-end: 15.5rem; }
 .field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 .field-checks { display: flex; gap: 1rem; margin: .3rem 0 .7rem; }
 .field-checks label { flex-direction: row; align-items: center; gap: .4rem; margin: 0; }
+/* The catalog's right panel must never tower over the page: it sticks and
+   scrolls inside itself (Farshid: "right panel is too long"). */
+.catalog-form { position: sticky; inset-block-start: .8rem;
+                max-block-size: calc(100vh - 9rem); overflow-y: auto; }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }
