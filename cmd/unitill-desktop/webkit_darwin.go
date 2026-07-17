@@ -14,7 +14,7 @@ static pid_t gChildPid = 0;
 // UTDelegate wires the WebView capabilities a real browser has but the bare
 // webview lacks: file pickers, camera permission, popups and JS dialogs; plus
 // stopping the POS server when the window closes.
-@interface UTDelegate : NSObject <WKUIDelegate, NSWindowDelegate>
+@interface UTDelegate : NSObject <WKUIDelegate, WKNavigationDelegate, NSWindowDelegate>
 @end
 
 @implementation UTDelegate
@@ -48,15 +48,50 @@ static pid_t gChildPid = 0;
     decisionHandler(WKPermissionDecisionGrant);
 }
 
-// window.open / target=_blank — load in the same view instead of doing nothing.
+// isExternalURL: anything not served by the local till. The POS webview must
+// never navigate off the till — external pages (marketplace claim/login,
+// docs, vendor sites) open in the user's default browser instead, so the
+// register is never stranded on a page with no way back.
+static BOOL isExternalURL(NSURL *url) {
+    NSString *scheme = url.scheme.lowercaseString;
+    if (![scheme isEqualToString:@"http"] && ![scheme isEqualToString:@"https"]) {
+        return NO; // about:blank etc. — not ours to reroute
+    }
+    NSString *host = url.host.lowercaseString;
+    return !([host isEqualToString:@"localhost"] || [host isEqualToString:@"127.0.0.1"] ||
+             [host isEqualToString:@"::1"] || [host isEqualToString:@"[::1]"]);
+}
+
+// window.open / target=_blank — external targets go to the default browser;
+// till-local ones load in the same view instead of doing nothing.
 - (WKWebView *)webView:(WKWebView *)webView
         createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
         forNavigationAction:(WKNavigationAction *)navigationAction
         windowFeatures:(WKWindowFeatures *)windowFeatures {
     if (navigationAction.targetFrame == nil) {
-        [webView loadRequest:navigationAction.request];
+        NSURL *url = navigationAction.request.URL;
+        if (isExternalURL(url)) {
+            [[NSWorkspace sharedWorkspace] openURL:url];
+        } else {
+            [webView loadRequest:navigationAction.request];
+        }
     }
     return nil;
+}
+
+// Plain-link navigations: same rule. Any main-frame navigation that would
+// leave the till opens in the default browser and the webview stays put.
+- (void)webView:(WKWebView *)webView
+        decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction
+        decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    NSURL *url = navigationAction.request.URL;
+    if (navigationAction.targetFrame != nil && navigationAction.targetFrame.isMainFrame &&
+        isExternalURL(url)) {
+        [[NSWorkspace sharedWorkspace] openURL:url];
+        decisionHandler(WKNavigationActionPolicyCancel);
+        return;
+    }
+    decisionHandler(WKNavigationActionPolicyAllow);
 }
 
 // JS alert()/confirm() — native panels (so e.g. the update confirm works).
@@ -128,6 +163,7 @@ void RunWebView(const char *curl, const char *ctitle, int childPid) {
 
         UTDelegate *del = [[UTDelegate alloc] init]; // never released: lives for the app
         webview.UIDelegate = del;
+        webview.navigationDelegate = del; // pins the view to the till; external links → browser
         window.delegate = del;
 
         [window setTitle:[NSString stringWithUTF8String:ctitle]];

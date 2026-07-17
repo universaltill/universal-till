@@ -170,6 +170,63 @@ func TestInitFreshTillDoesNotRegisterStore(t *testing.T) {
 	}
 }
 
+// Every marketplace mint REPLACES the store's claim code, so a second button
+// click used to silently invalidate the code the operator was reading off the
+// screen. Repeat calls inside the reuse window must return the SAME code
+// without another mint; after the window a fresh code is minted.
+func TestClaimCodeReusedWithinWindow(t *testing.T) {
+	resetState()
+	claimCodeCache.Lock()
+	claimCodeCache.storeID, claimCodeCache.info, claimCodeCache.until = "", ClaimInfo{}, time.Time{}
+	claimCodeCache.Unlock()
+
+	mints := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stores/claim-code", func(w http.ResponseWriter, r *http.Request) {
+		mints++
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{
+			"code":       map[int]string{1: "AAAA-1111", 2: "BBBB-2222"}[mints],
+			"expires_at": time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339),
+			"claim_path": "/ui/claim?store=store-abc",
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{
+		EndpointURL:   srv.URL + "/api",
+		StoreID:       "store-abc",
+		MerchantToken: "tok-123",
+	}}
+
+	first, err := ClaimCode(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	second, err := ClaimCode(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if mints != 1 || first.Code != "AAAA-1111" || second.Code != "AAAA-1111" {
+		t.Fatalf("repeat click should reuse the code: mints=%d first=%q second=%q", mints, first.Code, second.Code)
+	}
+	if !strings.Contains(first.ClaimURL, "/ui/claim?store=store-abc") {
+		t.Fatalf("claim url = %q", first.ClaimURL)
+	}
+
+	// Window elapsed → a fresh code is minted.
+	claimCodeCache.Lock()
+	claimCodeCache.until = time.Now().Add(-time.Second)
+	claimCodeCache.Unlock()
+	third, err := ClaimCode(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("third: %v", err)
+	}
+	if mints != 2 || third.Code != "BBBB-2222" {
+		t.Fatalf("expired window should re-mint: mints=%d third=%q", mints, third.Code)
+	}
+}
+
 func TestInitAlreadyEnrolledSkipsRegistration(t *testing.T) {
 	resetState()
 	srv, calls := testMarketplace(t, 0)

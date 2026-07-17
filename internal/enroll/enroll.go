@@ -388,10 +388,28 @@ type ClaimInfo struct {
 	ClaimURL  string `json:"claim_url"`
 }
 
+// claimCodeCache remembers the last code minted for a store. Every mint
+// REPLACES the code server-side, so a second button click would silently
+// invalidate the code the operator is reading off the screen — re-showing
+// the fresh one instead is what saves them. Duration-based on the till's own
+// clock (not the server's expires_at) so marketplace clock skew can't extend
+// it past the server-side 15-minute TTL.
+var claimCodeCache struct {
+	sync.Mutex
+	storeID string
+	info    ClaimInfo
+	until   time.Time
+}
+
+// claimCodeReuseWindow is how long a fetched code is re-shown instead of
+// re-minted: the server TTL minus a safety margin for typing time.
+const claimCodeReuseWindow = 13 * time.Minute
+
 // ClaimCode asks the marketplace for a short-lived claim code (ADR-0013
 // layer 2): the operator shows it to the owner, who redeems it at the
 // marketplace's /ui/claim after signing in with their Universal Till ID.
 // Needs a registered store; the store token authenticates the call.
+// Repeated calls within the reuse window return the SAME code.
 func ClaimCode(ctx context.Context, cfg *config.Config) (ClaimInfo, error) {
 	eff := Effective(cfg)
 	m := eff.Marketplace
@@ -399,6 +417,13 @@ func ClaimCode(ctx context.Context, cfg *config.Config) (ClaimInfo, error) {
 	if m.EndpointURL == "" || storeID == "" || token == "" {
 		return ClaimInfo{}, fmt.Errorf("till is not registered with the marketplace yet")
 	}
+	claimCodeCache.Lock()
+	if claimCodeCache.storeID == storeID && time.Now().Before(claimCodeCache.until) {
+		info := claimCodeCache.info
+		claimCodeCache.Unlock()
+		return info, nil
+	}
+	claimCodeCache.Unlock()
 	payload, err := json.Marshal(map[string]string{"store_id": storeID})
 	if err != nil {
 		return ClaimInfo{}, err
@@ -433,11 +458,17 @@ func ClaimCode(ctx context.Context, cfg *config.Config) (ClaimInfo, error) {
 		return ClaimInfo{}, fmt.Errorf("claim-code response missing code")
 	}
 	webBase := strings.TrimSuffix(strings.TrimRight(m.EndpointURL, "/"), "/api")
-	return ClaimInfo{
+	info := ClaimInfo{
 		Code:      envelope.Data.Code,
 		ExpiresAt: envelope.Data.ExpiresAt,
 		ClaimURL:  webBase + envelope.Data.ClaimPath,
-	}, nil
+	}
+	claimCodeCache.Lock()
+	claimCodeCache.storeID = storeID
+	claimCodeCache.info = info
+	claimCodeCache.until = time.Now().Add(claimCodeReuseWindow)
+	claimCodeCache.Unlock()
+	return info, nil
 }
 
 // Device is one till registered under this store (the fleet).
