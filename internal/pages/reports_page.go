@@ -19,6 +19,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		repo := data.NewPOSRepo(d.Db)
 		daily, _ := repo.SalesByDay(r.Context(), days)
 		top, _ := repo.TopItems(r.Context(), days, 10)
+		slow, _ := repo.SlowItems(r.Context(), days, 10)
+		dead, _ := repo.DeadStock(r.Context(), days, 10)
 		methods, _ := repo.PaymentBreakdown(r.Context(), days)
 		departments, _ := repo.SalesByDepartment(r.Context(), days)
 		// Per-till breakdown is only meaningful once a shop runs more than one
@@ -66,6 +68,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"Days":        days,
 			"Daily":       daily,
 			"Top":         top,
+			"Slow":        slow,
+			"DeadStock":   dead,
 			"Departments": departments,
 			"Tills":       tills,
 			"Methods":     methods,

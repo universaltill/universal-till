@@ -822,5 +822,8 @@
   "settings.enrol.claim_scan": "Or scan with your phone to claim there",
   "inventory.days_left": "Days left",
   "inventory.days_left_hint": "Predicted days until this item runs out, from the last 28 days of sales",
-  "inventory.running_out": "item(s) predicted to run out within a week"
+  "inventory.running_out": "item(s) predicted to run out within a week",
+  "reports.slow_items": "Slow sellers",
+  "reports.dead_stock": "Dead stock",
+  "reports.dead_stock_hint": "In stock but not a single sale in this period — money sitting on the shelf."
 }
