@@ -825,5 +825,14 @@
   "inventory.running_out": "کالا طبق پیش‌بینی تا یک هفته دیگر تمام می‌شود",
   "reports.slow_items": "کم‌فروش‌ها",
   "reports.dead_stock": "موجودی راکد",
-  "reports.dead_stock_hint": "در انبار هست اما در این بازه حتی یک بار هم فروخته نشده — پولِ خوابیده در قفسه."
+  "reports.dead_stock_hint": "در انبار هست اما در این بازه حتی یک بار هم فروخته نشده — پولِ خوابیده در قفسه.",
+  "reports.busy_days": "شلوغ‌ترین روزها",
+  "reports.busy_hours": "شلوغ‌ترین ساعت‌ها",
+  "reports.wd_sun": "یکشنبه",
+  "reports.wd_mon": "دوشنبه",
+  "reports.wd_tue": "سه‌شنبه",
+  "reports.wd_wed": "چهارشنبه",
+  "reports.wd_thu": "پنجشنبه",
+  "reports.wd_fri": "جمعه",
+  "reports.wd_sat": "شنبه"
 }

@@ -2,6 +2,7 @@ package pages
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -21,6 +22,47 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		top, _ := repo.TopItems(r.Context(), days, 10)
 		slow, _ := repo.SlowItems(r.Context(), days, 10)
 		dead, _ := repo.DeadStock(r.Context(), days, 10)
+		byWeekday, _ := repo.SalesByWeekday(r.Context(), days)
+		byHour, _ := repo.SalesByHour(r.Context(), days)
+		// Normalize to bar widths (busiest = 100%) so the template stays dumb.
+		type busyBar struct {
+			Label string
+			Count int
+			Total int64
+			Pct   int
+		}
+		weekdayKeys := []string{"reports.wd_sun", "reports.wd_mon", "reports.wd_tue", "reports.wd_wed", "reports.wd_thu", "reports.wd_fri", "reports.wd_sat"}
+		maxCount := 0
+		for _, b := range byWeekday {
+			if b.Count > maxCount {
+				maxCount = b.Count
+			}
+		}
+		weekdayBars := make([]busyBar, 0, len(byWeekday))
+		for _, b := range byWeekday {
+			if b.Slot < 0 || b.Slot > 6 {
+				continue
+			}
+			bar := busyBar{Label: weekdayKeys[b.Slot], Count: b.Count, Total: b.Total}
+			if maxCount > 0 {
+				bar.Pct = b.Count * 100 / maxCount
+			}
+			weekdayBars = append(weekdayBars, bar)
+		}
+		maxCount = 0
+		for _, b := range byHour {
+			if b.Count > maxCount {
+				maxCount = b.Count
+			}
+		}
+		hourBars := make([]busyBar, 0, len(byHour))
+		for _, b := range byHour {
+			bar := busyBar{Label: fmt.Sprintf("%02d:00", b.Slot), Count: b.Count, Total: b.Total}
+			if maxCount > 0 {
+				bar.Pct = b.Count * 100 / maxCount
+			}
+			hourBars = append(hourBars, bar)
+		}
 		methods, _ := repo.PaymentBreakdown(r.Context(), days)
 		departments, _ := repo.SalesByDepartment(r.Context(), days)
 		// Per-till breakdown is only meaningful once a shop runs more than one
@@ -70,6 +112,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"Top":         top,
 			"Slow":        slow,
 			"DeadStock":   dead,
+			"WeekdayBars": weekdayBars,
+			"HourBars":    hourBars,
 			"Departments": departments,
 			"Tills":       tills,
 			"Methods":     methods,
