@@ -822,5 +822,8 @@
   "settings.enrol.claim_scan": "Ya da telefonunuzla tarayıp oradan sahiplenin",
   "inventory.days_left": "Kalan gün",
   "inventory.days_left_hint": "Son 28 günün satışına göre bu ürünün tükenmesine kalan tahmini gün",
-  "inventory.running_out": "ürünün bir hafta içinde tükenmesi bekleniyor"
+  "inventory.running_out": "ürünün bir hafta içinde tükenmesi bekleniyor",
+  "reports.slow_items": "Yavaş satanlar",
+  "reports.dead_stock": "Ölü stok",
+  "reports.dead_stock_hint": "Stokta ama bu dönemde hiç satılmadı — rafta bekleyen para."
 }
