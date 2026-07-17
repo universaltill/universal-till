@@ -52,11 +52,17 @@ git tag v0.2.1 && git push origin v0.2.1
    - The tag stamps `internal/buildinfo.Version`, so the running till shows the
      right version in its status bar.
 
-4. **Nothing else to deploy.** `universaltill.com/download` fetches the GitHub
+4. **Launch-test the mac .dmg** (v0.2.11 lesson — the app aborted at launch
+   while the server, pages and signature all checked out): download the
+   released `.dmg`, mount it, `open` the app and confirm the
+   `unitill-desktop` process **stays alive** with a window. Orphaned
+   `unitill-pos` processes with no `unitill-desktop` = the shell is crashing.
+
+5. **Nothing else to deploy.** `universaltill.com/download` fetches the GitHub
    `releases/latest` API at page load and rewrites its buttons to the new
    assets, so the site serves the new build immediately.
 
-5. **Existing tills auto-notice.** `internal/updates` polls the releases API and
+6. **Existing tills auto-notice.** `internal/updates` polls the releases API and
    compares against `buildinfo.Version`; an older till shows an "Update
    available" chip, and where self-update is supported a manager can click
    "Update now" (verifies the SHA256 against `checksums.txt`, swaps the binary,
