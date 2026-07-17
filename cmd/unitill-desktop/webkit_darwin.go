@@ -14,7 +14,7 @@ static pid_t gChildPid = 0;
 // UTDelegate wires the WebView capabilities a real browser has but the bare
 // webview lacks: file pickers, camera permission, popups and JS dialogs; plus
 // stopping the POS server when the window closes.
-@interface UTDelegate : NSObject <WKUIDelegate, WKNavigationDelegate, NSWindowDelegate>
+@interface UTDelegate : NSObject <WKUIDelegate, WKNavigationDelegate, NSWindowDelegate, WKDownloadDelegate>
 @end
 
 @implementation UTDelegate
@@ -91,7 +91,76 @@ static BOOL isExternalURL(NSURL *url) {
         decisionHandler(WKNavigationActionPolicyCancel);
         return;
     }
+    if (@available(macOS 11.3, *)) {
+        if (navigationAction.shouldPerformDownload) {
+            decisionHandler(WKNavigationActionPolicyDownload);
+            return;
+        }
+    }
     decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+// Responses the view can't display (attachments, unknown MIME types) become
+// DOWNLOADS saved to ~/Downloads — CSV exports, backups, any <a download>.
+- (void)webView:(WKWebView *)webView
+        decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse
+        decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
+    if (@available(macOS 11.3, *)) {
+        BOOL attachment = NO;
+        if ([navigationResponse.response isKindOfClass:[NSHTTPURLResponse class]]) {
+            NSString *cd = [((NSHTTPURLResponse *)navigationResponse.response).allHeaderFields[@"Content-Disposition"] lowercaseString];
+            attachment = cd != nil && [cd containsString:@"attachment"];
+        }
+        if (attachment || !navigationResponse.canShowMIMEType) {
+            decisionHandler(WKNavigationResponsePolicyDownload);
+            return;
+        }
+    }
+    decisionHandler(WKNavigationResponsePolicyAllow);
+}
+
+- (void)webView:(WKWebView *)webView
+        navigationAction:(WKNavigationAction *)navigationAction
+        didBecomeDownload:(WKDownload *)download API_AVAILABLE(macos(11.3)) {
+    download.delegate = self;
+}
+
+- (void)webView:(WKWebView *)webView
+        navigationResponse:(WKNavigationResponse *)navigationResponse
+        didBecomeDownload:(WKDownload *)download API_AVAILABLE(macos(11.3)) {
+    download.delegate = self;
+}
+
+// Save into ~/Downloads, deduping "name (2).ext" style like a browser.
+- (void)download:(WKDownload *)download
+        decideDestinationUsingResponse:(NSURLResponse *)response
+        suggestedFilename:(NSString *)suggestedFilename
+        completionHandler:(void (^)(NSURL *destination))completionHandler API_AVAILABLE(macos(11.3)) {
+    NSURL *dir = [[[NSFileManager defaultManager] URLsForDirectory:NSDownloadsDirectory
+                                                         inDomains:NSUserDomainMask] firstObject];
+    NSString *name = suggestedFilename.length ? suggestedFilename : @"download";
+    NSURL *dest = [dir URLByAppendingPathComponent:name];
+    NSString *base = [name stringByDeletingPathExtension];
+    NSString *ext = [name pathExtension];
+    int i = 2;
+    while ([[NSFileManager defaultManager] fileExistsAtPath:dest.path] && i < 1000) {
+        NSString *candidate = ext.length
+            ? [NSString stringWithFormat:@"%@ (%d).%@", base, i, ext]
+            : [NSString stringWithFormat:@"%@ (%d)", base, i];
+        dest = [dir URLByAppendingPathComponent:candidate];
+        i++;
+    }
+    completionHandler(dest);
+}
+
+- (void)downloadDidFinish:(WKDownload *)download API_AVAILABLE(macos(11.3)) {
+    NSLog(@"unitill: download finished");
+}
+
+- (void)download:(WKDownload *)download
+        didFailWithError:(NSError *)error
+        resumeData:(NSData *)resumeData API_AVAILABLE(macos(11.3)) {
+    NSLog(@"unitill: download failed: %@", error.localizedDescription);
 }
 
 // JS alert()/confirm() — native panels (so e.g. the update confirm works).
