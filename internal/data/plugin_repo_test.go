@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -128,5 +129,77 @@ func TestPluginRepo_ListThemeEntries(t *testing.T) {
 	if r.PluginID != "t1" || r.PluginVersion != "1.0.0" || r.EntryKey != "midnight" ||
 		r.Label != "Midnight (dark)" || r.ConfigJSON != `{"css":"assets/theme.css"}` {
 		t.Fatalf("unexpected row: %+v", r)
+	}
+}
+
+// Upgrade path for plugin settings: values the operator configured must
+// survive a manifest re-apply, dupes from the old NULL-scope_id upsert must
+// collapse, a scope change in the manifest must move the row (keeping its
+// value), and undeclared keys must go. Uses the real migrated schema.
+func TestReconcilePluginSettingsUpgrade(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "till.db")
+	mustExec(t, d, `INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at) VALUES ('com.t.p', '1.0.0', 'P', 'wasm', 'p.wasm', 'u', 's', '0.1.0', '1', '2026-07-17')`)
+	mustExec(t, d, `INSERT INTO plugins (id, name, version, entrypoint, runtime) VALUES ('com.t.p', 'P', '1.0.0', 'p.wasm', 'wasm')`)
+	repo := NewPluginRepo(d.DB)
+
+	decl := func(key, def, scope string) PluginSettingRow {
+		return PluginSettingRow{PluginID: "com.t.p", Key: key, ValueJSON: def, Scope: scope, UpdatedAt: time.Now()}
+	}
+
+	// v1 installs: reader + secret + soon-to-be-dropped key, all global.
+	v1 := []PluginSettingRow{decl("reader_id", `""`, "global"), decl("secret_key", `""`, "global"), decl("old_flag", `"off"`, "global")}
+	if err := repo.ReconcilePluginSettings(ctx, nil, "com.t.p", v1); err != nil {
+		t.Fatalf("reconcile v1: %v", err)
+	}
+
+	// Operator configures both, then the old upsert bug leaves a duplicate
+	// default row for secret_key (scope_id NULL never conflicted).
+	if err := repo.UpsertPluginSetting(ctx, "com.t.p", "reader_id", `"tmr_1"`); err != nil {
+		t.Fatalf("set reader: %v", err)
+	}
+	if err := repo.UpsertPluginSetting(ctx, "com.t.p", "secret_key", `"sk_live"`); err != nil {
+		t.Fatalf("set secret: %v", err)
+	}
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('dupe', 'com.t.p', 'secret_key', '""', 'global')`)
+
+	// v2 upgrade: reader becomes per-till (register), old_flag dropped, a new
+	// key appears.
+	v2 := []PluginSettingRow{decl("reader_id", `""`, "register"), decl("secret_key", `""`, "global"), decl("new_mode", `"auto"`, "global")}
+	if err := repo.ReconcilePluginSettings(ctx, nil, "com.t.p", v2); err != nil {
+		t.Fatalf("reconcile v2: %v", err)
+	}
+
+	var n int
+	var v, scope string
+	if err := d.QueryRow(`SELECT COUNT(*), value_json, scope FROM plugin_settings WHERE plugin_id = 'com.t.p' AND key = 'reader_id'`).Scan(&n, &v, &scope); err != nil {
+		t.Fatalf("reader row: %v", err)
+	}
+	if n != 1 || v != `"tmr_1"` || scope != "register" {
+		t.Fatalf("reader after upgrade: n=%d v=%s scope=%s, want 1 row, value kept, scope moved", n, v, scope)
+	}
+	if err := d.QueryRow(`SELECT COUNT(*), value_json FROM plugin_settings WHERE plugin_id = 'com.t.p' AND key = 'secret_key'`).Scan(&n, &v); err != nil {
+		t.Fatalf("secret row: %v", err)
+	}
+	if n != 1 || v != `"sk_live"` {
+		t.Fatalf("secret after upgrade: n=%d v=%s, want the configured value, dupes collapsed", n, v)
+	}
+	_ = d.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.t.p' AND key = 'old_flag'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("undeclared key survived the upgrade")
+	}
+	if err := d.QueryRow(`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.t.p' AND key = 'new_mode'`).Scan(&v); err != nil || v != `"auto"` {
+		t.Fatalf("new key default missing: %q %v", v, err)
+	}
+
+	// Scope-aware reads/writes: the register row shadows a global one, and a
+	// scoped write targets its own row.
+	if err := repo.UpsertPluginSettingScoped(ctx, "com.t.p", "reader_id", `"tmr_2"`, "register"); err != nil {
+		t.Fatalf("scoped upsert: %v", err)
+	}
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('glob', 'com.t.p', 'reader_id', '"tmr_shop"', 'global')`)
+	got, found, err := repo.GetPluginSetting(ctx, "com.t.p", "reader_id")
+	if err != nil || !found || got != `"tmr_2"` {
+		t.Fatalf("GetPluginSetting = %q found=%v err=%v, want the register-scoped value", got, found, err)
 	}
 }
