@@ -128,6 +128,11 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .catalog-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px;
                   gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .catalog-layout { grid-template-columns: 1fr; } }
+/* The items list scrolls INSIDE its card (sticky header) instead of making
+   the page kilometres tall — the detail panel below stays one glance away. */
+.catalog-list #catalog-table { max-block-size: min(34rem, 62vh); overflow-y: auto; }
+.catalog-list #catalog-table thead th { position: sticky; inset-block-start: 0;
+                                        background: var(--surface); z-index: 1; }
 .catalog-row { cursor: pointer; }
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
