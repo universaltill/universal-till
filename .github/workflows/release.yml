@@ -89,6 +89,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+          # mingw ships the Windows headers lowercase; WebView2.h includes
+          # <EventToken.h>, which never resolves on Linux's case-sensitive
+          # filesystem (works on macOS only because HFS+/APFS ignore case).
+          INC=/usr/x86_64-w64-mingw32/include
+          test -f "$INC/eventtoken.h" || { echo "::error::mingw eventtoken.h missing"; exit 1; }
+          sudo ln -sf "$INC/eventtoken.h" "$INC/EventToken.h"
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
