@@ -81,4 +81,31 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	if warmer.StockValue != 1000 { // 4 × 250
 		t.Fatalf("dead value = %d, want 1000", warmer.StockValue)
 	}
+
+	// Busy-times buckets: our one sale lands in exactly one weekday bucket
+	// and one hour bucket, and totals carry through.
+	wd, err := repo.SalesByWeekday(ctx, 30)
+	if err != nil {
+		t.Fatalf("weekday: %v", err)
+	}
+	hr, err := repo.SalesByHour(ctx, 30)
+	if err != nil {
+		t.Fatalf("hour: %v", err)
+	}
+	sumWd, sumHr := 0, 0
+	for _, b := range wd {
+		if b.Slot < 0 || b.Slot > 6 {
+			t.Fatalf("weekday slot out of range: %d", b.Slot)
+		}
+		sumWd += b.Count
+	}
+	for _, b := range hr {
+		if b.Slot < 0 || b.Slot > 23 {
+			t.Fatalf("hour slot out of range: %d", b.Slot)
+		}
+		sumHr += b.Count
+	}
+	if sumWd != 1 || sumHr != 1 {
+		t.Fatalf("bucket sums = %d/%d, want 1/1", sumWd, sumHr)
+	}
 }

@@ -729,3 +729,8 @@ body.login-screen {
 /* Claim-by-phone QR under the claim code (kiosk/desktop shells can't open a browser) */
 .claim-qr { margin-top: .6rem; }
 .claim-qr img { border-radius: .5rem; background: #fff; padding: .4rem; border: 1px solid var(--border); }
+
+/* Busiest days/hours bars on the reports page */
+.busy-table td { padding-block: .25rem; }
+.busy-bar { block-size: .9rem; min-inline-size: 2px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent, #2563eb), #60a5fa); }
