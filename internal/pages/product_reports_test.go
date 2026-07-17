@@ -171,4 +171,20 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	if sellerMargin.Revenue != 100 || sellerMargin.Cost != 40 || sellerMargin.Margin != 60 {
 		t.Fatalf("margin = %+v, want 100/40/60", *sellerMargin)
 	}
+
+	// Variant label: composed name, the VARIANT's price, its barcode
+	// (falls back to SKU when no barcode is attached).
+	crepo := data.NewCatalogRepo(d)
+	vl, ok, err := crepo.GetVariantLabel(ctx, "v-b")
+	if err != nil || !ok {
+		t.Fatalf("variant label: %v %v", ok, err)
+	}
+	if vl.Name != "Shelf Warmer Var" || vl.PriceMinor != 300 || vl.Code != "B-V" {
+		t.Fatalf("variant label = %+v", vl)
+	}
+	mustExec(`INSERT INTO variant_barcodes (barcode, variant_id, is_primary) VALUES ('5099999999999','v-b',1)`)
+	vl, _, _ = crepo.GetVariantLabel(ctx, "v-b")
+	if vl.Code != "5099999999999" {
+		t.Fatalf("variant label barcode = %q, want the primary barcode", vl.Code)
+	}
 }
