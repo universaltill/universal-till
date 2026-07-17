@@ -781,6 +781,48 @@ GROUP BY i.id ORDER BY value DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit
 	return out, rows.Err()
 }
 
+// MarginRow is one item's revenue vs cost over the reporting window (only
+// items with a recorded cost price appear).
+type MarginRow struct {
+	Name    string
+	Revenue int64
+	Cost    int64
+	Margin  int64
+}
+
+// MarginByItem computes per-item margin (revenue − qty×cost) for the last N
+// days, using the variant's cost when present, else the item's. Lines with no
+// known cost are excluded — honest numbers only.
+func (r *POSRepo) MarginByItem(ctx context.Context, days, limit int) ([]MarginRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.name_snapshot,
+       COALESCE(SUM(sl.total_after_tax), 0) AS revenue,
+       CAST(SUM(sl.quantity * COALESCE(v.cost_price, i.cost_price)) AS INTEGER) AS cost
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN items i ON i.id = sl.item_id
+LEFT JOIN item_variants v ON v.id = sl.variant_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND s.created_at >= datetime('now', ?)
+  AND COALESCE(v.cost_price, i.cost_price) IS NOT NULL
+GROUP BY sl.name_snapshot
+ORDER BY (revenue - cost) DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+	if err != nil {
+		return nil, fmt.Errorf("margins: %w", err)
+	}
+	defer rows.Close()
+	var out []MarginRow
+	for rows.Next() {
+		var m MarginRow
+		if err := rows.Scan(&m.Name, &m.Revenue, &m.Cost); err != nil {
+			return nil, fmt.Errorf("scan margin: %w", err)
+		}
+		m.Margin = m.Revenue - m.Cost
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // BusySlot is one weekday or hour bucket of sales activity.
 type BusySlot struct {
 	Slot  int   // weekday 0=Sunday..6, or hour 0..23 (local time)
