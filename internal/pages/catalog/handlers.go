@@ -75,6 +75,48 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		), funcs)("catalog_table", map[string]any{"Items": items, "Barcodes": barcodes, "Variants": variants})(w, r)
 	}
 
+	// renderVariantsPanel answers with the per-item variants/barcodes editor.
+	// Panel mutations also change what the items table shows (its variant and
+	// barcode summaries), so the refreshed table rides along as an HTMX
+	// out-of-band swap when withTable is set.
+	renderVariantsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool) {
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		pdata := map[string]any{"ItemID": "", "ItemName": ""}
+		if itemID != "" {
+			if label, ok, err := repo.GetItemLabel(r.Context(), itemID); err == nil && ok {
+				variants, _ := repo.VariantsForItem(r.Context(), itemID)
+				itemBCs, _ := repo.BarcodesForItem(r.Context(), itemID)
+				pdata = map[string]any{
+					"ItemID":       itemID,
+					"ItemName":     label.Name,
+					"Variants":     variants,
+					"ItemBarcodes": itemBCs,
+				}
+			}
+		}
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
+		), funcs)("catalog_variants", pdata)(w, r)
+		if withTable {
+			var buf bytes.Buffer
+			items, _ := repo.ListItems(r.Context())
+			barcodes, _ := repo.ItemBarcodes(r.Context())
+			variants, _ := repo.ItemVariants(r.Context())
+			bw := newBufResponseWriter(&buf)
+			httpx.RenderWith(files(
+				filepath.Join("web", "ui", "partials", "catalog_table.html"),
+			), funcs)("catalog_table", map[string]any{"Items": items, "Barcodes": barcodes, "Variants": variants})(bw, r)
+			// Inject the oob marker so htmx replaces #catalog-table in place.
+			html := strings.Replace(buf.String(), `id="catalog-table"`, `id="catalog-table" hx-swap-oob="true"`, 1)
+			_, _ = io.WriteString(w, html)
+		}
+	}
+
+	// The per-item editor: all of one item's variants and barcodes, editable.
+	mux.HandleFunc("GET /api/catalog/item-variants", func(w http.ResponseWriter, r *http.Request) {
+		renderVariantsPanel(w, r, strings.TrimSpace(r.URL.Query().Get("item_id")), false)
+	})
+
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		items, err := repo.ListItems(r.Context())
@@ -107,6 +149,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "nav.html"),
 			filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
+			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 		), funcs)("base", data)(w, r)
 	})
 
@@ -213,13 +256,24 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "invalid price", http.StatusBadRequest)
 			return
 		}
+		// Checkbox semantics: an unchecked box submits nothing, so the panel
+		// pairs it with a hidden isActive=0 — active only when a "1" arrived.
+		active := r.Form.Get("isActive") != "0"
+		if vals := r.Form["isActive"]; len(vals) > 1 {
+			active = false
+			for _, v := range vals {
+				if v == "1" {
+					active = true
+				}
+			}
+		}
 		vInput := pos.VariantInput{
 			ID:       strings.TrimSpace(r.Form.Get("id")),
 			ItemID:   itemID,
 			SKU:      strings.TrimSpace(r.Form.Get("sku")),
 			Name:     strings.TrimSpace(r.Form.Get("name")),
 			Price:    price,
-			IsActive: r.Form.Get("isActive") != "0",
+			IsActive: active,
 		}
 		if costStr := strings.TrimSpace(r.Form.Get("costPrice")); costStr != "" {
 			if c, err := strconv.ParseInt(costStr, 10, 64); err == nil {
@@ -240,6 +294,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+			renderVariantsPanel(w, r, panelItem, true)
+			return
+		}
 		renderCatalogTable(w, r)
 	})
 
@@ -257,6 +315,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		if err := pos.DeactivateVariant(r.Context(), d.Db, variantID); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+			renderVariantsPanel(w, r, panelItem, true)
 			return
 		}
 		renderCatalogTable(w, r)
@@ -335,6 +397,29 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+			renderVariantsPanel(w, r, panelItem, true)
+			return
+		}
+		renderCatalogTable(w, r)
+	})
+
+	// Detach a barcode (mis-scans and reassignments are routine corrections).
+	mux.HandleFunc("POST /api/catalog/barcode/delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		barcode := strings.TrimSpace(r.Form.Get("barcode"))
+		if barcode == "" {
+			http.Error(w, "barcode required", http.StatusBadRequest)
+			return
+		}
+		if err := pos.RemoveBarcode(r.Context(), d.Db, barcode); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+			renderVariantsPanel(w, r, panelItem, true)
+			return
+		}
 		renderCatalogTable(w, r)
 	})
 }
@@ -362,6 +447,21 @@ func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgUR
 	defer out.Close()
 	return png.Encode(out, img)
 }
+
+// bufResponseWriter captures a partial render into a buffer so it can be
+// post-processed (the out-of-band table fragment).
+type bufResponseWriter struct {
+	buf    *bytes.Buffer
+	header http.Header
+}
+
+func newBufResponseWriter(buf *bytes.Buffer) *bufResponseWriter {
+	return &bufResponseWriter{buf: buf, header: http.Header{}}
+}
+
+func (b *bufResponseWriter) Header() http.Header         { return b.header }
+func (b *bufResponseWriter) Write(p []byte) (int, error) { return b.buf.Write(p) }
+func (b *bufResponseWriter) WriteHeader(int)             {}
 
 func strPtr(s string) *string {
 	if strings.TrimSpace(s) == "" {

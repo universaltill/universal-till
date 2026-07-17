@@ -79,41 +79,10 @@
       </form>
     </details>
 
-    <details class="catalog-extra">
-      <summary>{{ T "catalog.variants" }}</summary>
-      <form hx-post="/api/catalog/variant" hx-target="#catalog-table" hx-swap="outerHTML">
-        <input type="hidden" name="id">
-        <label>{{ T "basket.col.item" }} <input type="text" name="itemId" class="pick-item" required placeholder="{{ T "catalog.pick_row" }}"></label>
-        <label>{{ T "catalog.col.name" }} <input type="text" name="name" required></label>
-        <div class="field-pair">
-          <label>{{ T "catalog.col.sku" }} <input type="text" name="sku"></label>
-          <label>{{ T "catalog.price_minor" }} <input type="number" name="price" required min="0" step="1"></label>
-        </div>
-        <input type="hidden" name="isActive" value="1">
-        <button class="btn" type="submit">{{ T "catalog.save_variant" }}</button>
-      </form>
-    </details>
-
-    <details class="catalog-extra">
-      <summary>{{ T "catalog.barcodes" }}</summary>
-      <form hx-post="/api/catalog/barcode" hx-target="#catalog-table" hx-swap="outerHTML">
-        <label>{{ T "catalog.barcode" }} <input type="text" name="barcode" required></label>
-        <label>{{ T "basket.col.item" }} <input type="text" name="itemId" class="pick-item" placeholder="{{ T "catalog.pick_row" }}"></label>
-        <label>{{ T "catalog.variants" }} <select name="variantId" id="barcode-variant"><option value="">{{ T "catalog.whole_item" }}</option></select></label>
-        <label><input type="checkbox" name="isPrimary" value="1"> {{ T "catalog.primary" }}</label>
-        <button class="btn" type="submit">{{ T "catalog.attach_barcode" }}</button>
-      </form>
-    </details>
+    {{ template "catalog_variants" . }}
   </div>
 </div>
 
-<script>
-  // Variants per item id — used to fill the "attach barcode to variant" picker.
-  window.utVariants = {
-    {{ range $id, $vs := .Variants }}{{ $id | printf "%q" }}: [{{ range $i, $v := $vs }}{{ if $i }},{{ end }}{"id":{{ $v.ID | printf "%q" }},"name":{{ $v.Name | printf "%q" }}}{{ end }}]{{ if $vs }},{{ end }}
-    {{ end }}
-  };
-</script>
 <script>
 (function () {
   var form = document.getElementById('item-form');
@@ -210,16 +179,9 @@
     document.getElementById('item-price').value = window.utCurrency.toMajor(parseInt(row.dataset.price || '0', 10));
     setMode(true, row.dataset.name);
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
-    var bcVariant = document.getElementById('barcode-variant');
-    if (bcVariant) {
-      var vs = window.utVariants[row.dataset.id] || [];
-      bcVariant.innerHTML = '<option value="">{{ T "catalog.whole_item" }}</option>';
-      vs.forEach(function (v) {
-        var o = document.createElement('option');
-        o.value = v.id; o.textContent = v.name;
-        bcVariant.appendChild(o);
-      });
-    }
+    // Load the item's variants/barcodes editor panel.
+    htmx.ajax('GET', '/api/catalog/item-variants?item_id=' + encodeURIComponent(row.dataset.id),
+      { target: '#catalog-variants', swap: 'outerHTML' });
     var imgLabel = document.getElementById('image-item-label');
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
     var lblLabel = document.getElementById('labels-item-label');
@@ -237,6 +199,15 @@
   });
   document.body.addEventListener('htmx:responseError', function (ev) {
     msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+  });
+
+  // Variant editor prices are entered in MAJOR units; convert to minor on
+  // submit (the visible input has no name, so only `price` goes on the wire).
+  document.body.addEventListener('htmx:configRequest', function (ev) {
+    var f = ev.detail.elt;
+    if (!f || !f.querySelector) return;
+    var major = f.querySelector('.variant-price-major');
+    if (major) ev.detail.parameters.price = window.utCurrency.toMinor(major.value || '0');
   });
 
   var imageForm = document.getElementById('image-form');
