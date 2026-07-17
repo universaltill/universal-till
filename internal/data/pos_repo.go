@@ -808,6 +808,40 @@ WHERE status = 'completed' AND sale_type = 'sale'
 	return current, yearAgo, nil
 }
 
+// TaxBand is one tax rate's totals over the reporting window — the VAT
+// summary an owner (or their accountant) needs per return period.
+type TaxBand struct {
+	RateBP int   // basis points (2000 = 20%)
+	Net    int64 // taxable amount before tax, minor units
+	Tax    int64 // tax collected, minor units
+}
+
+// TaxSummary groups completed sales' lines by tax rate for the last N days.
+// Returns reduce the figures (sale_type='return' lines subtract).
+func (r *POSRepo) TaxSummary(ctx context.Context, days int) ([]TaxBand, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.tax_rate_bp,
+       COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.total_before_tax ELSE sl.total_before_tax END), 0),
+       COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.tax_amount ELSE sl.tax_amount END), 0)
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+GROUP BY sl.tax_rate_bp ORDER BY sl.tax_rate_bp DESC`, fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, fmt.Errorf("tax summary: %w", err)
+	}
+	defer rows.Close()
+	var out []TaxBand
+	for rows.Next() {
+		var b TaxBand
+		if err := rows.Scan(&b.RateBP, &b.Net, &b.Tax); err != nil {
+			return nil, fmt.Errorf("scan tax band: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // MarginRow is one item's revenue vs cost over the reporting window (only
 // items with a recorded cost price appear).
 type MarginRow struct {

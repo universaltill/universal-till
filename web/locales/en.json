@@ -840,5 +840,10 @@
   "reports.margins": "Margins",
   "reports.margins_hint": "Revenue minus cost, for items with a cost price set in the catalog.",
   "reports.margins_none": "Set cost prices in the catalog to see margins.",
-  "reports.yoy": "vs last year"
+  "reports.yoy": "vs last year",
+  "reports.tax_summary": "Tax summary",
+  "reports.tax_summary_hint": "Net sales and tax collected per rate — returns already deducted.",
+  "reports.tax_rate": "Rate",
+  "reports.tax_net": "Net sales",
+  "reports.tax_collected": "Tax collected"
 }
