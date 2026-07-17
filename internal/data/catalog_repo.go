@@ -194,6 +194,97 @@ ORDER BY v.name`)
 	return out, rows.Err()
 }
 
+// VariantEditView is one variant in the item's edit panel: everything the
+// operator can change, including inactive variants (so they can be
+// reactivated) and every barcode attached to the variant.
+type VariantEditView struct {
+	ID         string
+	Name       string
+	SKU        string
+	PriceMinor int64
+	IsActive   bool
+	Barcodes   []string
+}
+
+// VariantsForItem returns ALL of one item's variants (active and retired)
+// with their barcodes — the catalog's per-item edit panel.
+func (r *CatalogRepo) VariantsForItem(ctx context.Context, itemID string) ([]VariantEditView, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(sku, ''), price, is_active
+FROM item_variants WHERE item_id = ? ORDER BY is_active DESC, name`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []VariantEditView
+	byID := map[string]int{}
+	for rows.Next() {
+		var v VariantEditView
+		if err := rows.Scan(&v.ID, &v.Name, &v.SKU, &v.PriceMinor, &v.IsActive); err != nil {
+			return nil, err
+		}
+		byID[v.ID] = len(out)
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	brows, err := r.db.QueryContext(ctx, `
+SELECT b.variant_id, b.barcode FROM variant_barcodes b
+JOIN item_variants v ON v.id = b.variant_id
+WHERE v.item_id = ? ORDER BY b.is_primary DESC, b.barcode`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer brows.Close()
+	for brows.Next() {
+		var vid, bc string
+		if err := brows.Scan(&vid, &bc); err != nil {
+			return nil, err
+		}
+		if i, ok := byID[vid]; ok {
+			out[i].Barcodes = append(out[i].Barcodes, bc)
+		}
+	}
+	return out, brows.Err()
+}
+
+// ItemBarcode is one whole-item barcode row for the edit panel.
+type ItemBarcode struct {
+	Barcode   string
+	IsPrimary bool
+}
+
+// BarcodesForItem returns one item's own (whole-item) barcodes.
+func (r *CatalogRepo) BarcodesForItem(ctx context.Context, itemID string) ([]ItemBarcode, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT barcode, is_primary FROM item_barcodes WHERE item_id = ?
+ORDER BY is_primary DESC, barcode`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ItemBarcode
+	for rows.Next() {
+		var b ItemBarcode
+		if err := rows.Scan(&b.Barcode, &b.IsPrimary); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// DeleteBarcode detaches a barcode wherever it is attached (item or variant).
+// Fixing a mis-scanned or reassigned code is a normal back-office task.
+func (r *CatalogRepo) DeleteBarcode(ctx context.Context, barcode string) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM item_barcodes WHERE barcode = ?`, barcode); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM variant_barcodes WHERE barcode = ?`, barcode)
+	return err
+}
+
 // ExportRow is one catalog line for the CSV export (G22b — the
 // anti-lock-in half of import: a shop can always take its data and leave).
 // Columns are chosen so our own importer round-trips the file.

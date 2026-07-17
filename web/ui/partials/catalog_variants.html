@@ -1,0 +1,98 @@
+{{ define "catalog_variants" }}
+<div class="card" id="catalog-variants">
+  {{ if not .ItemID }}
+  <h3>{{ T "catalog.variants" }}</h3>
+  <p class="muted">{{ T "catalog.variants.pick_hint" }}</p>
+  {{ else }}
+  <h3>{{ .ItemName }}</h3>
+
+  <div style="margin-bottom:.8rem">
+    <div class="muted" style="font-size:.85em; margin-bottom:.2rem">{{ T "catalog.barcodes" }} — {{ T "catalog.whole_item" }}</div>
+    {{ range .ItemBarcodes }}
+    <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.15rem">
+      <span style="font-family:monospace">{{ .Barcode }}</span>{{ if .IsPrimary }}<span title="{{ T "catalog.primary" }}">★</span>{{ end }}
+      <button class="btn danger" style="padding:0 .45rem" type="button"
+              hx-post="/api/catalog/barcode/delete"
+              hx-vals='{"barcode":"{{ .Barcode }}","panelItem":"{{ $.ItemID }}"}'
+              hx-confirm="{{ T "catalog.barcode.remove_confirm" }}"
+              hx-target="#catalog-variants" hx-swap="outerHTML">✕</button>
+    </div>
+    {{ end }}
+    <form hx-post="/api/catalog/barcode" hx-target="#catalog-variants" hx-swap="outerHTML"
+          style="display:flex; gap:.4rem; align-items:center; margin-top:.3rem; flex-wrap:wrap">
+      <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+      <input type="hidden" name="itemId" value="{{ .ItemID }}">
+      <input type="text" name="barcode" required inputmode="numeric" placeholder="{{ T "catalog.barcode" }}" style="max-width:11rem">
+      <label><input type="checkbox" name="isPrimary" value="1"> {{ T "catalog.primary" }}</label>
+      <button class="btn secondary" type="submit">{{ T "catalog.attach_barcode" }}</button>
+    </form>
+  </div>
+
+  <div class="muted" style="font-size:.85em; margin-bottom:.2rem">{{ T "catalog.variants" }}</div>
+  {{ if not .Variants }}<p class="muted">{{ T "catalog.variants.none" }}</p>{{ end }}
+  {{ range .Variants }}
+  <div class="card variant-edit" style="padding:.6rem; margin-bottom:.5rem;{{ if not .IsActive }} opacity:.55{{ end }}">
+    <form hx-post="/api/catalog/variant" hx-target="#catalog-variants" hx-swap="outerHTML">
+      <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+      <input type="hidden" name="id" value="{{ .ID }}">
+      <input type="hidden" name="itemId" value="{{ $.ItemID }}">
+      <input type="hidden" name="isActive" value="0">
+      <input type="hidden" name="price" value="{{ .PriceMinor }}">
+      <div class="field-pair">
+        <label>{{ T "catalog.col.name" }} <input type="text" name="name" value="{{ .Name }}" required></label>
+        <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" value="{{ .SKU }}"></label>
+      </div>
+      <div class="field-pair">
+        <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="number" class="variant-price-major" data-minor="{{ .PriceMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" required></label>
+        <label style="align-self:end"><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
+      </div>
+      <button class="btn" type="submit">{{ T "common.save" }}</button>
+    </form>
+    <div style="margin-top:.35rem; display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+      {{ range .Barcodes }}
+      <span style="font-family:monospace">{{ . }}</span>
+      <button class="btn danger" style="padding:0 .45rem" type="button"
+              hx-post="/api/catalog/barcode/delete"
+              hx-vals='{"barcode":"{{ . }}","panelItem":"{{ $.ItemID }}"}'
+              hx-confirm="{{ T "catalog.barcode.remove_confirm" }}"
+              hx-target="#catalog-variants" hx-swap="outerHTML">✕</button>
+      {{ end }}
+      <form hx-post="/api/catalog/barcode" hx-target="#catalog-variants" hx-swap="outerHTML"
+            style="display:inline-flex; gap:.3rem; align-items:center">
+        <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+        <input type="hidden" name="variantId" value="{{ .ID }}">
+        <input type="text" name="barcode" required inputmode="numeric" placeholder="{{ T "catalog.barcode" }}" style="max-width:9rem">
+        <button class="btn secondary" type="submit" title="{{ T "catalog.attach_barcode" }}">＋</button>
+      </form>
+    </div>
+  </div>
+  {{ end }}
+
+  <details class="catalog-extra" {{ if not .Variants }}open{{ end }}>
+    <summary>{{ T "catalog.variants.add" }}</summary>
+    <form hx-post="/api/catalog/variant" hx-target="#catalog-variants" hx-swap="outerHTML">
+      <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+      <input type="hidden" name="itemId" value="{{ .ItemID }}">
+      <input type="hidden" name="isActive" value="1">
+      <input type="hidden" name="price" value="">
+      <label>{{ T "catalog.col.name" }} <input type="text" name="name" required placeholder="330ml / XL"></label>
+      <div class="field-pair">
+        <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" placeholder="{{ T "catalog.auto_if_blank" }}"></label>
+        <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="number" class="variant-price-major" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" required></label>
+      </div>
+      <button class="btn" type="submit">{{ T "catalog.save_variant" }}</button>
+    </form>
+  </details>
+
+  <script>
+    (function () {
+      document.querySelectorAll('#catalog-variants .variant-price-major').forEach(function (el) {
+        if (el.dataset.minor !== undefined && window.utCurrency) {
+          el.value = window.utCurrency.toMajor(parseInt(el.dataset.minor || '0', 10));
+        }
+      });
+    })();
+  </script>
+  {{ end }}
+</div>
+{{ end }}
