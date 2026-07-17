@@ -36,6 +36,15 @@ func Current() Status {
 	return Status{}
 }
 
+// CheckNow performs one synchronous check (the Settings "Check for updates"
+// button) and returns the freshest status. A failed check leaves the
+// previously known status in place — the caller can tell it failed by
+// Latest staying empty on a first-ever check.
+func CheckNow(ctx context.Context) Status {
+	checkOnce(ctx)
+	return Current()
+}
+
 // Start launches the background checker: once ~30s after boot, then daily.
 // Set UT_UPDATE_CHECK=0 to disable (e.g. air-gapped tills).
 func Start(ctx context.Context) {
