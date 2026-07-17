@@ -738,3 +738,11 @@ body.login-screen {
 .busy-table td { padding-block: .25rem; }
 .busy-bar { block-size: .9rem; min-inline-size: 2px; border-radius: 4px;
   background: linear-gradient(90deg, var(--accent, #2563eb), #60a5fa); }
+
+/* Plugin trust badges (ADR-0006 surface): official = gold, verified = green,
+   unverified = amber warning. */
+.trust-badge { font-size: .72rem; font-weight: 700; border-radius: 999px;
+  padding: .12rem .55rem; white-space: nowrap; }
+.trust-official { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #451a03; }
+.trust-verified { background: #dcfce7; color: #166534; }
+.trust-unverified { background: #fef3c7; color: #92400e; }

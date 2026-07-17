@@ -848,5 +848,12 @@
   "reports.tax_collected": "مالیات دریافتی",
   "catalog.col.cost": "قیمت تمام‌شده",
   "catalog.labels.variant": "تنوع",
-  "catalog.labels.whole_item": "کل کالا"
+  "catalog.labels.whole_item": "کل کالا",
+  "plugins.trust.official": "Universal Till",
+  "plugins.trust.official_hint": "ساخته و پشتیبانی‌شده توسط Universal Till",
+  "plugins.trust.verified": "تأییدشده",
+  "plugins.trust.verified_hint": "توسعه‌دهنده ثبت‌شده و تأییدشده",
+  "plugins.trust.unverified": "تأییدنشده",
+  "plugins.trust.unverified_hint": "ناشر توسط مارکت تأیید نشده است",
+  "plugins.trust.confirm": "این افزونه از ناشری تأییدنشده است: %s. آیا به این ناشر اعتماد دارید و می‌خواهید ادامه دهید؟"
 }

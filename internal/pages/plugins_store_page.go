@@ -27,12 +27,29 @@ type storeItem struct {
 	Version          string
 	Description      string
 	Icon             string // absolute icon URL (marketplace-hosted), "" = no icon
+	Vendor           string
+	Tier             string // official | verified | unverified (ADR-0006 surface)
 	Type             string
 	Downloaded       bool
 	Installed        bool
 	StatusState      string // requested|downloading|installing|failed ("" otherwise)
 	StatusMessageKey string // operator-visible failure reason (locale key)
 	Retryable        bool
+}
+
+// trustTierOf maps a plugin to its visible trust badge: first-party
+// Universal Till plugins are OFFICIAL (the golden badge), marketplace-marked
+// verified/trusted publishers are VERIFIED, everything else is UNVERIFIED —
+// and unverified installs ask the operator for consent first.
+func trustTierOf(pluginID, trustTier string) string {
+	if strings.HasPrefix(pluginID, "com.universaltill.") {
+		return "official"
+	}
+	switch strings.ToLower(strings.TrimSpace(trustTier)) {
+	case "verified", "trusted":
+		return "verified"
+	}
+	return "unverified"
 }
 
 // storeInstaller builds a marketplace installer on the EFFECTIVE config — the
@@ -83,6 +100,8 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 					Name:        p.Name,
 					Version:     p.Version,
 					Description: p.Description,
+					Vendor:      p.Vendor,
+					Tier:        trustTierOf(p.ID, p.TrustTier),
 					Type:        p.CanonicalType,
 				}
 				if icon := p.IconURL; icon != "" {
