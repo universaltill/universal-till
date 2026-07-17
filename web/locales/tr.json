@@ -825,5 +825,14 @@
   "inventory.running_out": "ürünün bir hafta içinde tükenmesi bekleniyor",
   "reports.slow_items": "Yavaş satanlar",
   "reports.dead_stock": "Ölü stok",
-  "reports.dead_stock_hint": "Stokta ama bu dönemde hiç satılmadı — rafta bekleyen para."
+  "reports.dead_stock_hint": "Stokta ama bu dönemde hiç satılmadı — rafta bekleyen para.",
+  "reports.busy_days": "En yoğun günler",
+  "reports.busy_hours": "En yoğun saatler",
+  "reports.wd_sun": "Pazar",
+  "reports.wd_mon": "Pazartesi",
+  "reports.wd_tue": "Salı",
+  "reports.wd_wed": "Çarşamba",
+  "reports.wd_thu": "Perşembe",
+  "reports.wd_fri": "Cuma",
+  "reports.wd_sat": "Cumartesi"
 }

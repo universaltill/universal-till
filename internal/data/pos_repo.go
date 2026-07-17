@@ -781,6 +781,46 @@ GROUP BY i.id ORDER BY value DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit
 	return out, rows.Err()
 }
 
+// BusySlot is one weekday or hour bucket of sales activity.
+type BusySlot struct {
+	Slot  int   // weekday 0=Sunday..6, or hour 0..23 (local time)
+	Count int   // completed sales
+	Total int64 // revenue, minor units
+}
+
+// SalesByWeekday buckets completed sales by local weekday over the last N
+// days — "which days are busiest" for staffing decisions.
+func (r *POSRepo) SalesByWeekday(ctx context.Context, days int) ([]BusySlot, error) {
+	return r.busyBuckets(ctx, days, `CAST(strftime('%w', s.created_at, 'localtime') AS INTEGER)`)
+}
+
+// SalesByHour buckets completed sales by local hour of day over the last N days.
+func (r *POSRepo) SalesByHour(ctx context.Context, days int) ([]BusySlot, error) {
+	return r.busyBuckets(ctx, days, `CAST(strftime('%H', s.created_at, 'localtime') AS INTEGER)`)
+}
+
+func (r *POSRepo) busyBuckets(ctx context.Context, days int, bucketExpr string) ([]BusySlot, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT `+bucketExpr+` AS slot, COUNT(*), COALESCE(SUM(s.total), 0)
+FROM sales s
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND s.created_at >= datetime('now', ?)
+GROUP BY slot ORDER BY slot`, fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, fmt.Errorf("busy buckets: %w", err)
+	}
+	defer rows.Close()
+	var out []BusySlot
+	for rows.Next() {
+		var b BusySlot
+		if err := rows.Scan(&b.Slot, &b.Count, &b.Total); err != nil {
+			return nil, fmt.Errorf("scan busy bucket: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // PaymentBreakdown sums applied payments per method for the last N days.
 func (r *POSRepo) PaymentBreakdown(ctx context.Context, days int) ([]MethodTotal, error) {
 	rows, err := r.db.QueryContext(ctx, `

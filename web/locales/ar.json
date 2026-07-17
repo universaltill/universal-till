@@ -825,5 +825,14 @@
   "inventory.running_out": "منتج(ات) يُتوقع نفادها خلال أسبوع",
   "reports.slow_items": "الأبطأ مبيعاً",
   "reports.dead_stock": "مخزون راكد",
-  "reports.dead_stock_hint": "موجود في المخزون لكنه لم يُبع مرة واحدة في هذه الفترة — مال متوقف على الرف."
+  "reports.dead_stock_hint": "موجود في المخزون لكنه لم يُبع مرة واحدة في هذه الفترة — مال متوقف على الرف.",
+  "reports.busy_days": "أكثر الأيام ازدحاماً",
+  "reports.busy_hours": "أكثر الساعات ازدحاماً",
+  "reports.wd_sun": "الأحد",
+  "reports.wd_mon": "الاثنين",
+  "reports.wd_tue": "الثلاثاء",
+  "reports.wd_wed": "الأربعاء",
+  "reports.wd_thu": "الخميس",
+  "reports.wd_fri": "الجمعة",
+  "reports.wd_sat": "السبت"
 }
