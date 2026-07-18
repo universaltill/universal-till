@@ -111,6 +111,22 @@
         </tbody>
       </table>
     </div>
+    {{ if .Seasonal }}
+    <div class="card">
+      <h2>{{ T "reports.seasonal" }}</h2>
+      <p class="muted" style="margin-block-start:0">{{ T "reports.seasonal_hint" }}</p>
+      <table class="table">
+        <thead><tr><th>{{ T "basket.col.item" }}</th><th style="text-align:end">{{ T "reports.seasonal_lastyear" }}</th><th style="text-align:end">{{ T "basket.col.qty" }}</th><th style="text-align:end">{{ T "reports.seasonal_suggest" }}</th></tr></thead>
+        <tbody>
+          {{ range .Seasonal }}
+          <tr><td>{{ .Name }}</td><td style="text-align:end" class="muted">{{ .LastYear }}</td>
+              <td style="text-align:end" class="muted">{{ .OnHand }}</td>
+              <td style="text-align:end; font-weight:600">{{ if .SuggestQty }}{{ .SuggestQty }}{{ else }}✓{{ end }}</td></tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+    {{ end }}
     <div class="card">
       <h2>{{ T "reports.tax_summary" }}</h2>
       <p class="muted" style="margin-block-start:0">{{ T "reports.tax_summary_hint" }}</p>

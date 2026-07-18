@@ -1,6 +1,7 @@
 package data
 
 import (
+	"math"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -898,6 +899,55 @@ WHERE status = 'completed' AND sale_type = 'sale'
 		return 0, 0, fmt.Errorf("day total: %w", err)
 	}
 	return total, count, nil
+}
+
+// SeasonalItem is one item's expected upcoming demand based on the SAME
+// window last year — the order-ahead signal (Farshid: "look at previous
+// years' sales and understand what the shop needs to order in advance").
+type SeasonalItem struct {
+	Name       string
+	LastYear   float64 // units sold in the same upcoming window last year
+	OnHand     float64
+	SuggestQty int // ceil(lastYear − onHand), 0 when covered
+}
+
+// SeasonalUpcoming looks at the NEXT `days` days one year ago and returns
+// the items that sold then, with current stock and a suggested top-up.
+// Empty when the shop has no year-old history — the UI hides the card.
+func (r *POSRepo) SeasonalUpcoming(ctx context.Context, days, limit int) ([]SeasonalItem, error) {
+	if days <= 0 {
+		days = 28
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.name,
+       SUM(sl.quantity) AS units,
+       COALESCE((SELECT SUM(inv.quantity) FROM inventory inv WHERE inv.item_id = i.id), 0) AS on_hand
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+JOIN items i ON i.id = COALESCE(NULLIF(sl.item_id, ''),
+                                (SELECT v.item_id FROM item_variants v WHERE v.id = sl.variant_id))
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND s.created_at >= datetime('now', '-365 days')
+  AND s.created_at <  datetime('now', ?)
+  AND i.is_active = 1
+GROUP BY i.id HAVING units > 0
+ORDER BY units DESC LIMIT ?`, fmt.Sprintf("-%d days", 365-days), limit)
+	if err != nil {
+		return nil, fmt.Errorf("seasonal upcoming: %w", err)
+	}
+	defer rows.Close()
+	var out []SeasonalItem
+	for rows.Next() {
+		var it SeasonalItem
+		if err := rows.Scan(&it.Name, &it.LastYear, &it.OnHand); err != nil {
+			return nil, fmt.Errorf("scan seasonal: %w", err)
+		}
+		if need := it.LastYear - it.OnHand; need > 0 {
+			it.SuggestQty = int(math.Ceil(need))
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }
 
 // BusySlot is one weekday or hour bucket of sales activity.
