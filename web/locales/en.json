@@ -862,5 +862,9 @@
   "settings.payments.title": "Payments",
   "settings.payments.default": "Preferred method",
   "settings.payments.default_help": "The preferred method appears first at checkout — put your cheapest or house provider here.",
-  "settings.payments.fees_help": "Provider fees (what each provider charges you): percent + fixed per transaction. Checkout shows an estimated fee next to each button so the cashier can pick the cheaper one."
+  "settings.payments.fees_help": "Provider fees (what each provider charges you): percent + fixed per transaction. Checkout shows an estimated fee next to each button so the cashier can pick the cheaper one.",
+  "reports.seasonal": "Coming up (based on last year)",
+  "reports.seasonal_hint": "What sold in the NEXT four weeks last year, your stock now, and how much to order to match it.",
+  "reports.seasonal_lastyear": "Sold last year",
+  "reports.seasonal_suggest": "Order"
 }

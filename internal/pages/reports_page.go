@@ -25,6 +25,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		margins, _ := repo.MarginByItem(r.Context(), days, 10)
 		curPeriod, lastYear, _ := repo.PeriodComparison(r.Context(), days)
 		taxBands, _ := repo.TaxSummary(r.Context(), days)
+		seasonal, _ := repo.SeasonalUpcoming(r.Context(), 28, 10)
 		type taxRow struct {
 			Rate string
 			Net  int64
@@ -146,6 +147,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"YoYThen":     lastYear.Total,
 			"YoYPct":      yoyPct,
 			"TaxRows":     taxRows,
+			"Seasonal":    seasonal,
 			"RunningOut":  runningOut,
 			"WeekdayBars": weekdayBars,
 			"HourBars":    hourBars,
