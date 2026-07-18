@@ -64,9 +64,13 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 		return err
 	}
 	// Catalog/inventory up-sync rides the same tick, but only when the shop's
-	// data actually changed (hash gate) — most ticks send nothing.
-	if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
-		logging.L().Warnf("cloudsync: snapshot push failed (will retry): %v", err)
+	// data actually changed (hash gate) — most ticks send nothing. Replicas
+	// skip it entirely: their catalog mirrors the primary (ADR-0011), so the
+	// primary's snapshot is the shop's snapshot.
+	if v, _, _ := data.NewSettingsRepo(db).Get(ctx, "sync.primary_url"); strings.TrimSpace(v) == "" {
+		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+			logging.L().Warnf("cloudsync: snapshot push failed (will retry): %v", err)
+		}
 	}
 	for _, d := range dirs {
 		status, msg := apply(ctx, d, hooks)

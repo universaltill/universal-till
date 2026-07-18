@@ -871,5 +871,8 @@
   "help.feat.alerts.what": "The till watches your business and warns you early: items about to run out, days of stock left, order suggestions, and unusually high or low sales days.",
   "help.feat.alerts.s1": "Inventory shows days-left and order suggestions; Reports carries a low-stock chip.",
   "help.feat.alerts.s2": "A registered till also sends a daily digest to your online My shop inbox on the marketplace.",
-  "help.feat.alerts.s3": "Unusual sales days (much higher or lower than that weekday normally) are flagged automatically."
+  "help.feat.alerts.s3": "Unusual sales days (much higher or lower than that weekday normally) are flagged automatically.",
+  "settings.display.mode": "Device profile",
+  "settings.display.mode_register": "Register (sell screen)",
+  "settings.display.mode_backoffice": "Back office (manager station)"
 }
