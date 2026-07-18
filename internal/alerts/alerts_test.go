@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"fmt"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,48 @@ import (
 
 // The digest pushes the running-out count to the marketplace with the store
 // token; nothing is sent when healthy or unregistered.
+// Unusual-sales detection: yesterday vs the same weekday's 4-week average.
+func TestUnusualSales(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "unusual.db")
+	database, err := db.Open(f)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	d := database.DB
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	sale := func(id string, daysAgo, total int) {
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, datetime('now','localtime',?))`,
+			id, "R-"+id, total, total, fmt.Sprintf("-%d days", daysAgo))
+	}
+	// Baseline: same weekday 1-4 weeks back ≈ 1000/day.
+	sale("b1", 8, 1000)
+	sale("b2", 15, 900)
+	sale("b3", 22, 1100)
+	sale("b4", 29, 1000)
+
+	// No yesterday sales → ratio 0 → unusual (a normally-selling day at zero).
+	if ratio, _, unusual := unusualSales(context.Background(), d); !unusual || ratio != 0 {
+		t.Fatalf("zero day on a selling weekday should be unusual (ratio=%v unusual=%v)", ratio, unusual)
+	}
+	// Normal yesterday (≈ baseline) → not unusual.
+	sale("y1", 1, 950)
+	if ratio, _, unusual := unusualSales(context.Background(), d); unusual {
+		t.Fatalf("normal day flagged unusual (ratio=%v)", ratio)
+	}
+	// Blowout yesterday → unusual high.
+	sale("y2", 1, 1500)
+	if ratio, _, unusual := unusualSales(context.Background(), d); !unusual || ratio < 1.8 {
+		t.Fatalf("blowout not flagged (ratio=%v unusual=%v)", ratio, unusual)
+	}
+}
+
 func TestPushDigest(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "alerts.db")
 	database, err := db.Open(f)
