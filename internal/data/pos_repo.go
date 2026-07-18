@@ -884,6 +884,22 @@ ORDER BY (revenue - cost) DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
 	return out, rows.Err()
 }
 
+// DayTotal returns one calendar day's completed-sale revenue (local time),
+// offset days back from today (1 = yesterday).
+func (r *POSRepo) DayTotal(ctx context.Context, daysAgo int) (int64, int, error) {
+	var total int64
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(total), 0), COUNT(*) FROM sales
+WHERE status = 'completed' AND sale_type = 'sale'
+  AND date(created_at, 'localtime') = date('now', 'localtime', ?)`,
+		fmt.Sprintf("-%d days", daysAgo)).Scan(&total, &count)
+	if err != nil {
+		return 0, 0, fmt.Errorf("day total: %w", err)
+	}
+	return total, count, nil
+}
+
 // BusySlot is one weekday or hour bucket of sales activity.
 type BusySlot struct {
 	Slot  int   // weekday 0=Sunday..6, or hour 0..23 (local time)
