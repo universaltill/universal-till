@@ -858,5 +858,8 @@
   "plugins.trust.confirm": "Bu eklenti doğrulanmamış bir yayıncıdan: %s. Bu yayıncıya güveniyor ve devam etmek istiyor musunuz?",
   "inventory.order_hint": "öneri: ~",
   "inventory.order_hint_title": "Mevcut satış hızında iki haftalık stok için önerilen sipariş",
-  "catalog.variant_image": "Varyant görseli"
+  "catalog.variant_image": "Varyant görseli",
+  "settings.payments.title": "Ödemeler",
+  "settings.payments.default": "Tercih edilen yöntem",
+  "settings.payments.default_help": "Tercih edilen yöntem ödemede ilk sırada görünür — en ucuz veya asıl sağlayıcınızı buraya koyun."
 }
