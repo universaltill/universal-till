@@ -31,6 +31,16 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// One query drives both tender UIs: full rows for the Pay tab,
 		// their ids for the split-tender select.
 		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
+		// The shop's preferred method (ADR-0016 manual mode: the cheaper/
+		// house provider) leads the list, so it's the one-tap default.
+		if pref, ok, _ := d.Settings.Get(r.Context(), "payments.default_method"); ok && pref != "" {
+			for i, m := range payMethods {
+				if m.ID == pref && i > 0 {
+					payMethods = append([]data.PaymentMethod{m}, append(payMethods[:i], payMethods[i+1:]...)...)
+					break
+				}
+			}
+		}
 		methods := make([]string, 0, len(payMethods))
 		for _, m := range payMethods {
 			methods = append(methods, m.ID)

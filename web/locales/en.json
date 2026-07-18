@@ -858,5 +858,8 @@
   "plugins.trust.confirm": "This plugin is from an unverified publisher: %s. Do you trust this publisher and want to continue?",
   "inventory.order_hint": "order ~",
   "inventory.order_hint_title": "Suggested order to hold two weeks of stock at the current selling rate",
-  "catalog.variant_image": "Variant image"
+  "catalog.variant_image": "Variant image",
+  "settings.payments.title": "Payments",
+  "settings.payments.default": "Preferred method",
+  "settings.payments.default_help": "The preferred method appears first at checkout — put your cheapest or house provider here."
 }
