@@ -9,10 +9,14 @@ test('forcing the OSK on shows a real keyboard', async ({ page }) => {
   await page.goto('/settings');
   const osk = page.locator('form[hx-post="/api/settings/osk"] select');
   await osk.selectOption('on');
+  // The form's after-request hook does window.location.reload(); wait for
+  // the POST *and then* the reload's load event, or the next goto races the
+  // reload and aborts (flaked on CI).
   await Promise.all([
-    page.waitForLoadState('load'),
+    page.waitForResponse((r) => r.url().includes('/api/settings/osk')),
     osk.locator('..').locator('button[type=submit]').click(),
   ]);
+  await page.waitForEvent('load');
 
   await page.goto('/');
   await expect(page.locator('body')).toHaveAttribute('data-osk', 'on');
@@ -30,8 +34,9 @@ test('forcing the OSK on shows a real keyboard', async ({ page }) => {
   const osk2 = page.locator('form[hx-post="/api/settings/osk"] select');
   await osk2.selectOption('auto');
   await Promise.all([
-    page.waitForLoadState('load'),
+    page.waitForResponse((r) => r.url().includes('/api/settings/osk')),
     osk2.locator('..').locator('button[type=submit]').click(),
   ]);
+  await page.waitForEvent('load');
   assertClean();
 });
