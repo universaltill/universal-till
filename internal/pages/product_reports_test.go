@@ -187,4 +187,23 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	if vl.Code != "5099999999999" {
 		t.Fatalf("variant label barcode = %q, want the primary barcode", vl.Code)
 	}
+
+	// Seasonal order-ahead: nothing without year-old data…
+	if season, err := repo.SeasonalUpcoming(ctx, 28, 10); err != nil || len(season) != 0 {
+		t.Fatalf("seasonal on fresh shop = %d rows (%v), want 0", len(season), err)
+	}
+	// …then a sale 358 days ago (inside next-28-days-last-year) drives a
+	// suggestion: 20 sold then, 5 on hand → order 15.
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+	          VALUES ('sy','RY','completed','sale',2000,0,2000, datetime('now','-358 days'))`)
+	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+	          VALUES ('ly','sy',1,'it-a','Seller',20,100,0,0,0,2000,2000)`)
+	mustExec(`UPDATE inventory SET quantity = 5 WHERE id = 'inv-a'`)
+	season, err := repo.SeasonalUpcoming(ctx, 28, 10)
+	if err != nil || len(season) != 1 {
+		t.Fatalf("seasonal = %d rows (%v), want 1", len(season), err)
+	}
+	if season[0].Name != "Seller" || season[0].LastYear != 20 || season[0].SuggestQty != 15 {
+		t.Fatalf("seasonal row = %+v, want Seller 20 → order 15", season[0])
+	}
 }

@@ -862,5 +862,9 @@
   "settings.payments.title": "Ödemeler",
   "settings.payments.default": "Tercih edilen yöntem",
   "settings.payments.default_help": "Tercih edilen yöntem ödemede ilk sırada görünür — en ucuz veya asıl sağlayıcınızı buraya koyun.",
-  "settings.payments.fees_help": "Sağlayıcı ücretleri (her sağlayıcının sizden aldığı): işlem başına yüzde + sabit. Ödeme ekranı her düğmenin yanında tahmini ücreti gösterir, kasiyer ucuz olanı seçebilir."
+  "settings.payments.fees_help": "Sağlayıcı ücretleri (her sağlayıcının sizden aldığı): işlem başına yüzde + sabit. Ödeme ekranı her düğmenin yanında tahmini ücreti gösterir, kasiyer ucuz olanı seçebilir.",
+  "reports.seasonal": "Yaklaşan dönem (geçen yıla göre)",
+  "reports.seasonal_hint": "Geçen yıl ÖNÜMÜZDEKİ dört haftada satılanlar, şu anki stoğunuz ve yetişmek için sipariş önerisi.",
+  "reports.seasonal_lastyear": "Geçen yıl satılan",
+  "reports.seasonal_suggest": "Sipariş"
 }
