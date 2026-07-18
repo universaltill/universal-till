@@ -2,6 +2,8 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
+	"html/template"
 	"database/sql"
 	"net/http"
 
@@ -45,6 +47,23 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		for _, m := range payMethods {
 			methods = append(methods, m.ID)
 		}
+		// Per-provider fee rules (B4 cost-rules): manager-entered percent
+		// (basis points) + fixed (minor units); the tender UI shows a live
+		// "≈ fee" hint so the cashier picks the cheaper provider (ADR-0016
+		// manual mode).
+		fees := map[string]map[string]int64{}
+		for _, m := range payMethods {
+			if raw, ok, _ := d.Settings.Get(r.Context(), "payments.fee."+m.ID); ok && raw != "" {
+				var f struct {
+					BP    int64 `json:"bp"`
+					Fixed int64 `json:"fixed"`
+				}
+				if json.Unmarshal([]byte(raw), &f) == nil && (f.BP > 0 || f.Fixed > 0) {
+					fees[m.ID] = map[string]int64{"bp": f.BP, "fixed": f.Fixed}
+				}
+			}
+		}
+		feesJSON, _ := json.Marshal(fees)
 		if len(methods) == 0 {
 			methods = []string{"cash", "card"}
 		}
@@ -56,6 +75,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":            d.Menu,
 			"currency":             d.CurrentState().Currency,
 			"paymentMethods":       methods,
+			"paymentFeesJSON":      template.JS(feesJSON),
 			"paymentMethodDefault": defaultMethod,
 			"payMethods":           payMethods,
 			"aiIdentify":           aiService(r.Context(), d).Enabled(),

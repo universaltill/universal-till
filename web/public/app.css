@@ -758,3 +758,6 @@ body.login-screen {
 .vg-img-upload label { cursor: pointer; opacity: .6; }
 .vg-img-upload label:hover { opacity: 1; }
 .vg-img-upload input[type="file"] { display: none; }
+
+/* Checkout fee hints (manual least-cost routing) */
+.pay-btn .fee-hint { display:block; font-size:.72rem; font-weight:500; opacity:.75; }
