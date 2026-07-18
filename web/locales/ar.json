@@ -858,5 +858,8 @@
   "plugins.trust.confirm": "هذه الإضافة من ناشر غير موثّق: %s. هل تثق بهذا الناشر وتريد المتابعة؟",
   "inventory.order_hint": "اطلب ~",
   "inventory.order_hint_title": "الطلب المقترح لتغطية أسبوعين من المخزون بمعدل البيع الحالي",
-  "catalog.variant_image": "صورة الصنف الفرعي"
+  "catalog.variant_image": "صورة الصنف الفرعي",
+  "settings.payments.title": "المدفوعات",
+  "settings.payments.default": "الطريقة المفضّلة",
+  "settings.payments.default_help": "تظهر الطريقة المفضّلة أولاً عند الدفع — ضع الأرخص أو مزوّدك الأساسي هنا."
 }

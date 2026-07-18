@@ -12,6 +12,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -44,6 +45,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if scale <= 0 {
 			scale = 1
 		}
+		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
+		payDefault, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
 		data := map[string]any{
 			"title":       "Settings",
 			"theme":       st.Theme,
@@ -55,8 +58,28 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"isManager":   isManagerOrAuthOff(r),
 			"printer":     printerConfig(r.Context(), d),
 			"backups":     listBackupsForUI(d),
+			"payMethods":  payMethods,
+			"payDefault":  payDefault,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
+	})
+
+	// Preferred payment method: leads the tender UI (ADR-0016 manual mode —
+	// the shop's cheaper/house provider is the one-tap default).
+	mux.HandleFunc("POST /api/settings/payments-default", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if !isManagerOrAuthOff(r) {
+			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+			return
+		}
+		_ = r.ParseForm()
+		method := strings.TrimSpace(r.Form.Get("method"))
+		if err := d.Settings.Set(r.Context(), "payments.default_method", method); err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 
 	// Immediate marketplace registration attempt (the Settings card's
