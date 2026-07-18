@@ -11,7 +11,20 @@
 
   var mode = (document.body.dataset.osk || 'auto');
   if (mode === 'off') return;
-  if (mode === 'auto' && !window.matchMedia('(pointer: coarse)').matches) return;
+  // auto: show on anything that looks like a touch device. `pointer: coarse`
+  // alone is unreliable on kiosk setups (a plugged-in mouse makes the PRIMARY
+  // pointer fine even with a touchscreen), so also accept touch capability —
+  // and if a real touch ever happens, enable from that moment on.
+  var touchy = window.matchMedia('(pointer: coarse)').matches ||
+    window.matchMedia('(any-pointer: coarse)').matches ||
+    (navigator.maxTouchPoints || 0) > 0 || ('ontouchstart' in window);
+  var enabled = (mode === 'on') || touchy;
+  if (!enabled) {
+    window.addEventListener('touchstart', function once() {
+      enabled = true;
+      window.removeEventListener('touchstart', once);
+    }, { passive: true });
+  }
 
   var LAYOUTS = {
     en: [
@@ -178,6 +191,7 @@
   }
 
   document.addEventListener('focusin', function (ev) {
+    if (!enabled) return;
     if (wantsOSK(ev.target)) show(ev.target);
     else if (!osk || !osk.contains(ev.target)) hide();
   });
