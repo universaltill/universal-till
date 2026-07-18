@@ -17,10 +17,10 @@ import (
 
 // Printer settings keys (docs: architecture/receipt-printing.md).
 const (
-	keyPrinterMode    = "printer.mode"     // off | network | device
-	keyPrinterAddress = "printer.address"  // host[:port]
-	keyPrinterDevice  = "printer.device"   // /dev/usb/lp0
-	keyPrinterCharset = "printer.charset"  // utf8 | ascii
+	keyPrinterMode    = "printer.mode"    // off | network | device
+	keyPrinterAddress = "printer.address" // host[:port]
+	keyPrinterDevice  = "printer.device"  // /dev/usb/lp0
+	keyPrinterCharset = "printer.charset" // utf8 | ascii
 	keyPrinterAuto    = "printer.auto_print"
 	keyPrinterKitchen = "printer.kitchen_addr" // kitchen printer host[:port] or device path
 )

@@ -89,9 +89,9 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			"menuItems": d.Menu,
 			"D":         rd,
 			"H1":        header[0], "H2": header[1], "H3": header[2],
-			"HasLogo":   logoErr == nil,
-			"LogoV":     logoV,
-			"Preview":   print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd)),
+			"HasLogo": logoErr == nil,
+			"LogoV":   logoV,
+			"Preview": print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd)),
 		})(w, r)
 	})
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -39,6 +40,15 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 		},
 		RemovePlugin: func(ctx context.Context, pluginID string) (string, error) {
 			return cloudRemovePlugin(ctx, d, pluginID)
+		},
+		// Remote price edit (cloud Catalog table): the same single-column
+		// update a local price change makes; the next snapshot push (hash
+		// gate) reflects it back to the cloud automatically.
+		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
+			if err := data.NewCatalogRepo(d.Db).SetItemPrice(ctx, itemID, priceMinor); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
 		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes
