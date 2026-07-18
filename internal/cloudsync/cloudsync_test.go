@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -34,6 +35,7 @@ type fakeCloud struct {
 	syncBodies []map[string]any
 	results    []map[string]string
 	directives []map[string]any
+	snapshots  []map[string]any
 }
 
 func (f *fakeCloud) handler() http.Handler {
@@ -53,6 +55,14 @@ func (f *fakeCloud) handler() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{"directives": dirs},
 		})
+	})
+	mux.HandleFunc("/v1/stores/catalog-snapshot", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.snapshots = append(f.snapshots, body)
+		f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"ok": true}})
 	})
 	mux.HandleFunc("/v1/stores/directives/result", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
@@ -150,6 +160,51 @@ func TestTickRolesFollowSettings(t *testing.T) {
 	}
 	if role(0) != "replica" || role(1) != "backoffice" {
 		t.Fatalf("roles = %s, %s", role(0), role(1))
+	}
+}
+
+func TestSnapshotPushGatedByHash(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	db := testsupport.NewCatalogTestDB(t)
+	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "it-1", SKU: "SKU1", Name: "Coca-Cola", BasePrice: 120, IsActive: true})
+	testsupport.SeedBarcode(t, db, "5000000000011", "it-1", true)
+	ctx := context.Background()
+	cfg := testCfg(srv.URL)
+
+	if err := Tick(ctx, cfg, db, Hooks{}); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(cloud.snapshots) != 1 {
+		t.Fatalf("snapshots after first tick = %d, want 1", len(cloud.snapshots))
+	}
+	items := cloud.snapshots[0]["items"].([]any)
+	row := items[0].(map[string]any)
+	if row["name"] != "Coca-Cola" || row["barcode"] != "5000000000011" {
+		t.Fatalf("snapshot row = %+v", row)
+	}
+
+	// Unchanged data → no second push.
+	if err := Tick(ctx, cfg, db, Hooks{}); err != nil {
+		t.Fatalf("tick2: %v", err)
+	}
+	if len(cloud.snapshots) != 1 {
+		t.Fatalf("snapshot re-pushed without changes (%d)", len(cloud.snapshots))
+	}
+
+	// A price change → pushed again.
+	if _, err := db.Exec(`UPDATE items SET base_price = 130 WHERE id = 'it-1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Tick(ctx, cfg, db, Hooks{}); err != nil {
+		t.Fatalf("tick3: %v", err)
+	}
+	if len(cloud.snapshots) != 2 {
+		t.Fatalf("snapshot not re-pushed after change (%d)", len(cloud.snapshots))
 	}
 }
 

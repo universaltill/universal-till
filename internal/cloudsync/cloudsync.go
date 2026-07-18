@@ -9,6 +9,8 @@ package cloudsync
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -60,6 +62,11 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 	dirs, err := pushSync(ctx, cfg, db)
 	if err != nil {
 		return err
+	}
+	// Catalog/inventory up-sync rides the same tick, but only when the shop's
+	// data actually changed (hash gate) — most ticks send nothing.
+	if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+		logging.L().Warnf("cloudsync: snapshot push failed (will retry): %v", err)
 	}
 	for _, d := range dirs {
 		status, msg := apply(ctx, d, hooks)
@@ -172,6 +179,55 @@ func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB) ([]directive,
 		return nil, fmt.Errorf("cloudsync: decode sync response: %w", err)
 	}
 	return resp.Data.Directives, nil
+}
+
+// pushSnapshotIfChanged uploads the catalog + on-hand stock when it differs
+// from what the cloud already has (tracked via a content hash in settings).
+func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) error {
+	eff := enroll.Effective(cfg)
+	m := eff.Marketplace
+
+	items, err := data.NewCatalogRepo(db).ListItems(ctx)
+	if err != nil {
+		return err
+	}
+	barcodes, err := data.NewCatalogRepo(db).ItemBarcodes(ctx)
+	if err != nil {
+		return err
+	}
+	qty := map[string]float64{}
+	if levels, err := data.NewPOSRepo(db).ListStockLevels(ctx); err == nil {
+		for _, l := range levels {
+			qty[l.ItemID] += l.CurrentQty
+		}
+	}
+	rows := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		if !it.IsActive {
+			continue
+		}
+		barcode := ""
+		if bs := barcodes[it.ID]; len(bs) > 0 {
+			barcode = bs[0]
+		}
+		rows = append(rows, map[string]any{
+			"id": it.ID, "name": it.Name, "price_minor": it.BasePrice,
+			"barcode": barcode, "qty": qty[it.ID],
+		})
+	}
+	payload, _ := json.Marshal(map[string]any{"store_id": m.StoreID, "items": rows})
+
+	sum := sha256.Sum256(payload)
+	hash := hex.EncodeToString(sum[:])
+	settings := data.NewSettingsRepo(db)
+	if prev, _, _ := settings.Get(ctx, "cloudsync.snapshot_hash"); prev == hash {
+		return nil // unchanged since the last successful push
+	}
+	if _, err := post(ctx, cfg, "/v1/stores/catalog-snapshot", payload); err != nil {
+		return err
+	}
+	logging.L().Infof("cloudsync: catalog snapshot pushed (%d items)", len(rows))
+	return settings.Set(ctx, "cloudsync.snapshot_hash", hash)
 }
 
 // postResult reports one directive outcome.
