@@ -30,9 +30,13 @@ import (
 var (
 	httpClient = &http.Client{Timeout: 30 * time.Second}
 	started    = time.Now()
-	// Overridable in tests.
-	tickInterval = 5 * time.Minute
-	firstDelay   = 90 * time.Second
+	// Overridable in tests. A till that was off picks up queued directives
+	// (e.g. a portal-side "install to tills") right after boot, and a running
+	// till within a couple of minutes — each tick is one tiny POST, so the
+	// short interval is cheap (Farshid, 2026-07-19). A push channel could
+	// replace the poll later; the poll stays as the NAT-safe fallback.
+	tickInterval = 2 * time.Minute
+	firstDelay   = 15 * time.Second
 )
 
 // Hooks are the till-local actions a directive may trigger. Each returns a
