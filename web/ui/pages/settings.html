@@ -78,6 +78,25 @@
     </label>
   </form>
 </div>
+{{ if and .isManager .payMethods }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "settings.payments.title" }}</h2>
+  <p class="muted">{{ T "settings.payments.default_help" }}</p>
+  <form hx-post="/api/settings/payments-default" hx-target="#pay-default-msg" hx-swap="innerHTML">
+    <label style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">{{ T "settings.payments.default" }}
+      <select name="method">
+        <option value="">—</option>
+        {{ $def := .payDefault }}
+        {{ range .payMethods }}
+        <option value="{{ .ID }}" {{ if eq .ID $def }}selected{{ end }}>{{ .Name }}</option>
+        {{ end }}
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+      <span id="pay-default-msg" aria-live="polite"></span>
+    </label>
+  </form>
+</div>
+{{ end }}
 {{ if .isManager }}
 <div class="card" style="margin-top:1rem">
   <h2>{{ T "settings.backup.title" }}</h2>
