@@ -42,9 +42,9 @@
       <input type="hidden" id="offline-flag" name="offline" value="0">
       <div class="pay-grid">
         {{ range .payMethods }}
-        <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" hx-post="/api/pos/tender"
+        <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" data-method="{{ .ID }}" hx-post="/api/pos/tender"
                 hx-vals='{"amount":0,"method":"{{ .ID }}"}' hx-include="#offline-flag"
-                hx-target="#basket" hx-swap="outerHTML">{{ .Name }}</button>
+                hx-target="#basket" hx-swap="outerHTML">{{ .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
         {{ else }}
         <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
         <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
@@ -55,6 +55,28 @@
       </label>
     </div>
 
+    <script>
+      // Provider fee hints (ADR-0016 manual mode): fee ≈ total×bp/10000 + fixed.
+      // Recomputed whenever htmx swaps the basket (total lives on .basket .total).
+      window.utPayFees = {{ .paymentFeesJSON }};
+      (function () {
+        function currentTotal() {
+          var el = document.querySelector('.basket .total');
+          return el ? parseInt(el.getAttribute('data-minor') || '0', 10) : 0;
+        }
+        function refresh() {
+          var total = currentTotal();
+          document.querySelectorAll('.fee-hint').forEach(function (s) {
+            var f = (window.utPayFees || {})[s.getAttribute('data-fee-for')];
+            if (!f || !total) { s.textContent = ''; return; }
+            var fee = Math.round(total * (f.bp || 0) / 10000) + (f.fixed || 0);
+            s.textContent = ' ≈ −' + (window.utCurrency ? window.utCurrency.format(fee) : fee);
+          });
+        }
+        document.body.addEventListener('htmx:afterSwap', refresh);
+        document.addEventListener('DOMContentLoaded', refresh);
+      })();
+    </script>
     <div class="tab-panel" x-show="tab === 'split'" x-cloak id="split-tender-card">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}

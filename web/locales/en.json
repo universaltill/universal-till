@@ -861,5 +861,6 @@
   "catalog.variant_image": "Variant image",
   "settings.payments.title": "Payments",
   "settings.payments.default": "Preferred method",
-  "settings.payments.default_help": "The preferred method appears first at checkout — put your cheapest or house provider here."
+  "settings.payments.default_help": "The preferred method appears first at checkout — put your cheapest or house provider here.",
+  "settings.payments.fees_help": "Provider fees (what each provider charges you): percent + fixed per transaction. Checkout shows an estimated fee next to each button so the cashier can pick the cheaper one."
 }

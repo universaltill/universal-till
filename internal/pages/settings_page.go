@@ -1,6 +1,8 @@
 package pages
 
 import (
+	"math"
+	"encoding/json"
 	"encoding/base64"
 	"fmt"
 	"html"
@@ -47,6 +49,30 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
 		payDefault, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
+		type feeRow struct {
+			ID, Name   string
+			PercentMaj string
+			FixedMaj   string
+		}
+		feeRows := make([]feeRow, 0, len(payMethods))
+		for _, m := range payMethods {
+			fr := feeRow{ID: m.ID, Name: m.Name}
+			if raw, ok, _ := d.Settings.Get(r.Context(), "payments.fee."+m.ID); ok && raw != "" {
+				var f struct {
+					BP    int64 `json:"bp"`
+					Fixed int64 `json:"fixed"`
+				}
+				if json.Unmarshal([]byte(raw), &f) == nil {
+					if f.BP > 0 {
+						fr.PercentMaj = fmt.Sprintf("%.2f", float64(f.BP)/100)
+					}
+					if f.Fixed > 0 {
+						fr.FixedMaj = fmt.Sprintf("%.2f", float64(f.Fixed)/100)
+					}
+				}
+			}
+			feeRows = append(feeRows, fr)
+		}
 		data := map[string]any{
 			"title":       "Settings",
 			"theme":       st.Theme,
@@ -60,6 +86,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"backups":     listBackupsForUI(d),
 			"payMethods":  payMethods,
 			"payDefault":  payDefault,
+			"payFees":     feeRows,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -76,6 +103,38 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		method := strings.TrimSpace(r.Form.Get("method"))
 		if err := d.Settings.Set(r.Context(), "payments.default_method", method); err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
+	})
+
+	// Per-provider fee rules (B4): percent + fixed per transaction, feeding
+	// the checkout cost hints. Stored as JSON per method.
+	mux.HandleFunc("POST /api/settings/payments-fee", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if !isManagerOrAuthOff(r) {
+			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+			return
+		}
+		_ = r.ParseForm()
+		method := strings.TrimSpace(r.Form.Get("method"))
+		if method == "" {
+			fmt.Fprintf(w, `<span class="error">✗ method</span>`)
+			return
+		}
+		pct, _ := strconv.ParseFloat(strings.TrimSpace(r.Form.Get("percent")), 64)
+		fixedMaj, _ := strconv.ParseFloat(strings.TrimSpace(r.Form.Get("fixed")), 64)
+		if pct < 0 || fixedMaj < 0 || pct > 100 {
+			fmt.Fprintf(w, `<span class="error">✗ range</span>`)
+			return
+		}
+		raw, _ := json.Marshal(map[string]int64{
+			"bp":    int64(math.Round(pct * 100)),
+			"fixed": int64(math.Round(fixedMaj * 100)),
+		})
+		if err := d.Settings.Set(r.Context(), "payments.fee."+method, string(raw)); err != nil {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}

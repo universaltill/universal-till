@@ -861,5 +861,6 @@
   "catalog.variant_image": "Varyant görseli",
   "settings.payments.title": "Ödemeler",
   "settings.payments.default": "Tercih edilen yöntem",
-  "settings.payments.default_help": "Tercih edilen yöntem ödemede ilk sırada görünür — en ucuz veya asıl sağlayıcınızı buraya koyun."
+  "settings.payments.default_help": "Tercih edilen yöntem ödemede ilk sırada görünür — en ucuz veya asıl sağlayıcınızı buraya koyun.",
+  "settings.payments.fees_help": "Sağlayıcı ücretleri (her sağlayıcının sizden aldığı): işlem başına yüzde + sabit. Ödeme ekranı her düğmenin yanında tahmini ücreti gösterir, kasiyer ucuz olanı seçebilir."
 }
