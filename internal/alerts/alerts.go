@@ -59,10 +59,25 @@ func pushDigest(ctx context.Context, cfg *config.Config, db *sql.DB) error {
 	if n == 0 {
 		return nil
 	}
+	if err := pushNotify(ctx, cfg, "low_stock_digest", map[string]any{"running_out": n}); err != nil {
+		return err
+	}
+	logging.L().Infof("alerts: low-stock digest pushed (%d items)", n)
+	return nil
+}
+
+// pushNotify posts one owner notification to the marketplace with the store
+// token; no-op when the till isn't registered.
+func pushNotify(ctx context.Context, cfg *config.Config, typ string, body map[string]any) error {
+	eff := enroll.Effective(cfg)
+	m := eff.Marketplace
+	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+		return nil
+	}
 	payload, _ := json.Marshal(map[string]any{
-		"store_id": storeID,
-		"type":     "low_stock_digest",
-		"payload":  map[string]any{"running_out": n},
+		"store_id": m.StoreID,
+		"type":     typ,
+		"payload":  body,
 	})
 	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/notify"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
@@ -70,7 +85,7 @@ func pushDigest(ctx context.Context, cfg *config.Config, db *sql.DB) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+m.MerchantToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
@@ -79,8 +94,39 @@ func pushDigest(ctx context.Context, cfg *config.Config, db *sql.DB) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("notify returned %d", resp.StatusCode)
 	}
-	logging.L().Infof("alerts: low-stock digest pushed (%d items)", n)
 	return nil
+}
+
+// unusualSales compares YESTERDAY's revenue with the average of the same
+// weekday over the previous 4 weeks. Returns (ratio, yesterdayTotal, true)
+// only when the baseline is meaningful (≥3 of 4 weeks had sales) and the
+// deviation is big (>1.8× or <0.4×).
+func unusualSales(ctx context.Context, db *sql.DB) (float64, int64, bool) {
+	repo := data.NewPOSRepo(db)
+	yTotal, yCount, err := repo.DayTotal(ctx, 1)
+	if err != nil || yCount == 0 && yTotal == 0 {
+		// A zero day is only unusual if the baseline says the day normally
+		// sells — fall through with zero and let the ratio check decide.
+		_ = err
+	}
+	var sum int64
+	weeks := 0
+	for _, back := range []int{8, 15, 22, 29} { // same weekday, 1-4 weeks earlier
+		t, c, err := repo.DayTotal(ctx, back)
+		if err == nil && (c > 0 || t > 0) {
+			sum += t
+			weeks++
+		}
+	}
+	if weeks < 3 || sum == 0 {
+		return 0, yTotal, false
+	}
+	avg := float64(sum) / float64(weeks)
+	ratio := float64(yTotal) / avg
+	if ratio > 1.8 || ratio < 0.4 {
+		return ratio, yTotal, true
+	}
+	return ratio, yTotal, false
 }
 
 // Start runs the daily digest loop: first push shortly after boot (give
@@ -97,6 +143,14 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB) {
 		for {
 			if err := pushDigest(ctx, cfg, db); err != nil {
 				logging.L().Warnf("alerts: digest push failed (will retry tomorrow): %v", err)
+			}
+			if ratio, total, unusual := unusualSales(ctx, db); unusual {
+				if err := pushNotify(ctx, cfg, "unusual_sales", map[string]any{
+					"ratio_pct": int(ratio * 100),
+					"total":     total,
+				}); err != nil {
+					logging.L().Warnf("alerts: unusual-sales push failed: %v", err)
+				}
 			}
 			select {
 			case <-ctx.Done():
