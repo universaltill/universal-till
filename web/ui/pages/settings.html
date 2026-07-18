@@ -99,16 +99,14 @@
   <p class="muted" class="set-gap">{{ T "settings.payments.fees_help" }}</p>
   {{ range .payFees }}
   <form hx-post="/api/settings/payments-fee" hx-target="#fee-msg-{{ .ID }}" hx-swap="innerHTML"
-        class="set-row set-tight">
+        class="fee-row">
     <input type="hidden" name="method" value="{{ .ID }}">
-    <span style="min-inline-size:8rem">{{ .Name }}</span>
-    <input type="number" name="percent" step="0.01" min="0" max="100" style="max-inline-size:6rem"
-           value="{{ .PercentMaj }}" placeholder="%">
+    <span class="fee-name">{{ .Name }}</span>
+    <input type="number" name="percent" step="0.01" min="0" max="100" value="{{ .PercentMaj }}" placeholder="%">
     <span class="muted">% +</span>
-    <input type="number" name="fixed" step="0.01" min="0" style="max-inline-size:6rem"
-           value="{{ .FixedMaj }}" placeholder="0.00">
+    <input type="number" name="fixed" step="0.01" min="0" value="{{ .FixedMaj }}" placeholder="0.00">
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
-    <span id="fee-msg-{{ .ID }}" aria-live="polite"></span>
+    <span id="fee-msg-{{ .ID }}" aria-live="polite" class="fee-msg"></span>
   </form>
   {{ end }}
 </div>

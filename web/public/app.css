@@ -766,7 +766,9 @@ body.login-screen {
    "pages like settings are so unaligned and messy"). */
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
                  gap: 1rem; align-items: start; }
-.settings-grid .card { margin: 0; }
+.settings-grid .card { margin: 0; min-inline-size: 0; overflow: hidden; }
+/* Wide tables (backups list) scroll INSIDE their card, never past its edge. */
+.settings-grid .card .table { display: block; overflow-x: auto; }
 .settings-grid h2 { margin-block: 0 .6rem; font-size: 1.05rem; }
 .settings-grid form select, .settings-grid form input[type="text"],
 .settings-grid form input[type="number"], .settings-grid form input[type="password"] {
