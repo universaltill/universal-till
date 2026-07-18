@@ -40,6 +40,19 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 		RemovePlugin: func(ctx context.Context, pluginID string) (string, error) {
 			return cloudRemovePlugin(ctx, d, pluginID)
 		},
+		// The cloud's Design picker offers exactly what this till could pick
+		// locally (built-in + plugin-contributed themes); applying one comes
+		// back as a plain `set_setting theme` directive.
+		DeviceExtra: func(ctx context.Context) map[string]any {
+			themes := []map[string]string{}
+			for _, opt := range availableThemes(ctx, d) {
+				themes = append(themes, map[string]string{"key": opt.Key, "label": opt.Label})
+			}
+			return map[string]any{
+				"theme":  d.CurrentState().Theme,
+				"themes": themes,
+			}
+		},
 	}
 	cloudsync.Start(ctx, d.Cfg, d.Db, hooks)
 }
