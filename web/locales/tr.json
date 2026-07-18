@@ -866,5 +866,10 @@
   "reports.seasonal": "Yaklaşan dönem (geçen yıla göre)",
   "reports.seasonal_hint": "Geçen yıl ÖNÜMÜZDEKİ dört haftada satılanlar, şu anki stoğunuz ve yetişmek için sipariş önerisi.",
   "reports.seasonal_lastyear": "Geçen yıl satılan",
-  "reports.seasonal_suggest": "Sipariş"
+  "reports.seasonal_suggest": "Sipariş",
+  "help.feat.alerts.title": "Uyarılar ve bildirimler",
+  "help.feat.alerts.what": "Kasa işinizi izler ve erken uyarır: tükenmek üzere olan ürünler, kalan stok günü, sipariş önerileri ve olağan dışı yüksek/düşük satış günleri.",
+  "help.feat.alerts.s1": "Envanter kalan günü ve sipariş önerisini gösterir; Raporlar düşük stok uyarısı taşır.",
+  "help.feat.alerts.s2": "Kayıtlı kasa ayrıca pazar yerindeki Mağazam gelen kutunuza günlük özet gönderir.",
+  "help.feat.alerts.s3": "Olağan dışı satış günleri (o günün normalinden çok yüksek/düşük) otomatik işaretlenir."
 }
