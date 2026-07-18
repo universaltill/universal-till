@@ -78,6 +78,18 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
+  {{ if .isManager }}
+  <form hx-post="/api/settings/display-mode" hx-swap="none" hx-on::after-request="window.location.href='/'" class="set-gap">
+    {{ $dmode := index .settingsMap "display.mode" }}
+    <label class="set-row">{{ T "settings.display.mode" }}
+      <select name="mode">
+        <option value="register"   {{ if ne $dmode "backoffice" }}selected{{ end }}>{{ T "settings.display.mode_register" }}</option>
+        <option value="backoffice" {{ if eq $dmode "backoffice" }}selected{{ end }}>{{ T "settings.display.mode_backoffice" }}</option>
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+    </label>
+  </form>
+  {{ end }}
 </div>
 {{ if and .isManager .payMethods }}
 <div class="card">

@@ -292,6 +292,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Device profile (ADR-0018): register (default) or back-office manager
+	// station — "/" becomes the reports page. Per-till (display.* never
+	// LAN-syncs), so one shop can mix registers and a back-office device.
+	mux.HandleFunc("POST /api/settings/display-mode", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mode := strings.TrimSpace(r.Form.Get("mode"))
+		if mode != "register" && mode != "backoffice" {
+			http.Error(w, "mode must be register or backoffice", http.StatusBadRequest)
+			return
+		}
+		if mode == "register" {
+			mode = "" // empty = default register profile
+		}
+		if err := d.Settings.Set(r.Context(), "display.mode", mode); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	mux.HandleFunc("/api/settings/theme", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if v := strings.TrimSpace(r.Form.Get("theme")); v != "" {

@@ -30,6 +30,13 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
+		// Back-office mode (ADR-0018): this device is a manager station, not
+		// a register — the home surface is the reports page and the sale
+		// screen is unreachable. Per-till setting (display.* never LAN-syncs).
+		if mode, _, _ := d.Settings.Get(r.Context(), "display.mode"); mode == "backoffice" {
+			http.Redirect(w, r, "/reports", http.StatusSeeOther)
+			return
+		}
 		// One query drives both tender UIs: full rows for the Pay tab,
 		// their ids for the split-tender select.
 		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
