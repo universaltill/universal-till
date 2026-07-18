@@ -104,6 +104,13 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 			installed = listingID
 			return "installed x", nil
 		},
+		DeviceExtra: func(ctx context.Context) map[string]any {
+			return map[string]any{
+				"theme": "monarch",
+				// A colliding key must never clobber a fixed report field.
+				"role": "evil",
+			}
+		},
 	}
 	if err := Tick(context.Background(), testCfg(srv.URL), db, hooks); err != nil {
 		t.Fatalf("tick: %v", err)
@@ -121,6 +128,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	dev := devs[0].(map[string]any)
 	if dev["role"] != "primary" || dev["platform"] == "" || dev["health"] == nil {
 		t.Fatalf("device report incomplete: %+v", dev)
+	}
+	// DeviceExtra fields ride along; fixed fields win on collision.
+	if dev["theme"] != "monarch" {
+		t.Fatalf("device extra missing: %+v", dev)
 	}
 
 	// Results: d1 applied, d2 failed (unknown type), d3 applied.

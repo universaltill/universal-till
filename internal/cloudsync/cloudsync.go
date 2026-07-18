@@ -46,6 +46,11 @@ type Hooks struct {
 	SetSetting    func(ctx context.Context, key, value string) (string, error)
 	InstallPlugin func(ctx context.Context, listingID string) (string, error)
 	RemovePlugin  func(ctx context.Context, pluginID string) (string, error)
+	// DeviceExtra contributes extra fields to the device report (e.g. the
+	// current theme + the themes this till can switch to, so the cloud can
+	// render a real design picker instead of a raw key/value form). Keys must
+	// not collide with the fixed report fields.
+	DeviceExtra func(ctx context.Context) map[string]any
 }
 
 type directive struct {
@@ -63,7 +68,7 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 		return nil // not registered — nothing to sync
 	}
 
-	dirs, err := pushSync(ctx, cfg, db)
+	dirs, err := pushSync(ctx, cfg, db, hooks)
 	if err != nil {
 		return err
 	}
@@ -136,7 +141,7 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 
 // pushSync reports this device's state and returns the store's pending
 // directives.
-func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB) ([]directive, error) {
+func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) ([]directive, error) {
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
 
@@ -163,16 +168,24 @@ func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB) ([]directive,
 		health["db_mb"] = fi.Size() / (1 << 20)
 	}
 
+	device := map[string]any{
+		"device_id": enroll.CurrentStatus().DeviceID,
+		"name":      name,
+		"version":   buildinfo.Version,
+		"platform":  runtime.GOOS + "/" + runtime.GOARCH,
+		"role":      role,
+		"health":    health,
+	}
+	if hooks.DeviceExtra != nil {
+		for k, v := range hooks.DeviceExtra(ctx) {
+			if _, taken := device[k]; !taken {
+				device[k] = v
+			}
+		}
+	}
 	payload, _ := json.Marshal(map[string]any{
 		"store_id": m.StoreID,
-		"devices": []map[string]any{{
-			"device_id": enroll.CurrentStatus().DeviceID,
-			"name":      name,
-			"version":   buildinfo.Version,
-			"platform":  runtime.GOOS + "/" + runtime.GOARCH,
-			"role":      role,
-			"health":    health,
-		}},
+		"devices":  []map[string]any{device},
 	})
 	body, err := post(ctx, cfg, "/v1/stores/sync", payload)
 	if err != nil {
