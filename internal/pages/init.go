@@ -198,7 +198,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	StartSyncPull(ctx, dp, rederiveSettings)
 	StartCloudSync(ctx, dp, rederiveSettings) // ADR-0018 cloud heartbeat + directives
 	StartEODScheduler(ctx, dp)                // background Z-report (docs: G30)
-	registerInvoices(mux, dp)  // VAT invoices + credit notes (G31)
+	registerInvoices(mux, dp)                 // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
 	registerInventoryAPI(mux, dp)

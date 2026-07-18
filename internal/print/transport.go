@@ -18,10 +18,10 @@ type Transport interface {
 
 // Config mirrors the printer.* settings.
 type Config struct {
-	Mode    string // off | network | device
-	Address string // network: host[:port], default port 9100
-	Device  string // device: character device path, e.g. /dev/usb/lp0
-	Charset string // utf8 | ascii
+	Mode      string // off | network | device
+	Address   string // network: host[:port], default port 9100
+	Device    string // device: character device path, e.g. /dev/usb/lp0
+	Charset   string // utf8 | ascii
 	AutoPrint bool
 	// KitchenAddress routes kitchen tickets to a SEPARATE printer — a
 	// network host[:port] or a device path. Empty means kitchen printing is

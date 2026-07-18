@@ -2,9 +2,9 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"html/template"
-	"database/sql"
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/data"

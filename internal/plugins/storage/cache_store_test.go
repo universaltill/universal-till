@@ -1,9 +1,9 @@
 package storage
 
 import (
-"crypto/sha256"
-"os"
-"testing"
+	"crypto/sha256"
+	"os"
+	"testing"
 )
 
 func TestCacheStore_DownloadLifecycle(t *testing.T) {

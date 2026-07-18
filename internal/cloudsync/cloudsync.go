@@ -10,13 +10,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ type Hooks struct {
 	SetSetting    func(ctx context.Context, key, value string) (string, error)
 	InstallPlugin func(ctx context.Context, listingID string) (string, error)
 	RemovePlugin  func(ctx context.Context, pluginID string) (string, error)
+	SetPrice      func(ctx context.Context, itemID string, priceMinor int64) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -98,6 +100,17 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 // cleanly so the cloud shows WHY nothing happened.
 func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 	str := func(k string) string { v, _ := d.Payload[k].(string); return strings.TrimSpace(v) }
+	// JSON numbers decode as float64; tolerate string form too.
+	num := func(k string) (int64, bool) {
+		switch v := d.Payload[k].(type) {
+		case float64:
+			return int64(v), true
+		case string:
+			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			return n, err == nil
+		}
+		return 0, false
+	}
 	var err error
 	switch d.Type {
 	case "set_setting":
@@ -127,6 +140,19 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing plugin_id"
 		}
 		msg, err = hooks.RemovePlugin(ctx, id)
+	case "set_price":
+		if hooks.SetPrice == nil {
+			return "failed", "set_price is not supported on this till"
+		}
+		id := str("item_id")
+		if id == "" {
+			return "failed", "missing item_id"
+		}
+		price, ok := num("price_minor")
+		if !ok || price < 0 {
+			return "failed", "missing or invalid price_minor"
+		}
+		msg, err = hooks.SetPrice(ctx, id, price)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}
