@@ -65,10 +65,10 @@ var (
 	cmdFeedCut    = []byte{0x1d, 0x56, 0x42, 0x03} // feed 3 + partial cut
 	cmdKickDrawer = []byte{0x1b, 0x70, 0x00, 0x19, 0xfa}
 
-	cmdBarcodeHeight = []byte{0x1d, 0x68, 0x50}       // GS h 80 dots
-	cmdBarcodeWidth  = []byte{0x1d, 0x77, 0x02}       // GS w module 2
-	cmdBarcodeHRI    = []byte{0x1d, 0x48, 0x02}       // GS H print number below
-	cmdBarcodeCode128 = []byte{0x1d, 0x6b, 0x49}      // GS k 73 <len> <data>
+	cmdBarcodeHeight  = []byte{0x1d, 0x68, 0x50} // GS h 80 dots
+	cmdBarcodeWidth   = []byte{0x1d, 0x77, 0x02} // GS w module 2
+	cmdBarcodeHRI     = []byte{0x1d, 0x48, 0x02} // GS H print number below
+	cmdBarcodeCode128 = []byte{0x1d, 0x6b, 0x49} // GS k 73 <len> <data>
 )
 
 // barcode emits a CODE128 symbol (code set B) for a printable-ASCII code.

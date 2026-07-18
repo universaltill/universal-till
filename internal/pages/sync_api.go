@@ -208,7 +208,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]string{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d)},
+			"data":  map[string]string{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d)},
 			"error": nil,
 		})
 	})

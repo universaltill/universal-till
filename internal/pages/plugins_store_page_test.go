@@ -50,12 +50,12 @@ func TestPluginStoreRendersCategoryChips(t *testing.T) {
 
 	body := rec.Body.String()
 	for _, want := range []string{
-		`class="store-cats"`,       // the chip row
-		`data-cat="payment"`,       // a category chip
-		`data-cat="theme"`,         // a category chip
-		`data-type="payment"`,      // card carries its type for filtering
-		"Payment",                  // translated label, not "payment" slug alone
-		"Theme",                    // translated label
+		`class="store-cats"`,  // the chip row
+		`data-cat="payment"`,  // a category chip
+		`data-cat="theme"`,    // a category chip
+		`data-type="payment"`, // card carries its type for filtering
+		"Payment",             // translated label, not "payment" slug alone
+		"Theme",               // translated label
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("store page missing %q", want)

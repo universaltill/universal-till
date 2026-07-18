@@ -89,13 +89,21 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		{"id": "d1", "type": "set_setting", "payload": map[string]any{"key": "display.osk", "value": "on"}},
 		{"id": "d2", "type": "reboot", "payload": map[string]any{}},
 		{"id": "d3", "type": "install_plugin", "payload": map[string]any{"listing_id": "lst-1"}},
+		{"id": "d4", "type": "set_price", "payload": map[string]any{"item_id": "itm-1", "price_minor": 250}},
+		{"id": "d5", "type": "set_price", "payload": map[string]any{"item_id": "itm-1", "price_minor": -1}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
 	db := testDB(t)
 
 	var setKey, setVal, installed string
+	var pricedItem string
+	var pricedMinor int64
 	hooks := Hooks{
+		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
+			pricedItem, pricedMinor = itemID, priceMinor
+			return "price set", nil
+		},
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			setKey, setVal = key, value
 			return key + " = " + value, nil
@@ -119,6 +127,9 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	if setKey != "display.osk" || setVal != "on" || installed != "lst-1" {
 		t.Fatalf("hooks not driven: set=%s/%s installed=%s", setKey, setVal, installed)
 	}
+	if pricedItem != "itm-1" || pricedMinor != 250 {
+		t.Fatalf("set_price hook not driven: %s/%d", pricedItem, pricedMinor)
+	}
 
 	// Heartbeat carried this device with role + platform + health.
 	if len(cloud.syncBodies) != 1 {
@@ -141,6 +152,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	}
 	if got["d1"] != "applied" || got["d2"] != "failed" || got["d3"] != "applied" {
 		t.Fatalf("results = %+v", cloud.results)
+	}
+	// d4 valid price applied; d5 negative price rejected without the hook.
+	if got["d4"] != "applied" || got["d5"] != "failed" {
+		t.Fatalf("price results = %+v", cloud.results)
 	}
 }
 
