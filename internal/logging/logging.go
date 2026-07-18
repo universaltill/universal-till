@@ -97,6 +97,44 @@ func L() *Logger {
 	return defaultLogger
 }
 
+// Problem is one recent warn/error line, kept in memory so the cloud sync
+// heartbeat can report the shop's problems (ADR-0018 problems feed). The
+// buffer is process-local and small — it is a digest, not a log store.
+type Problem struct {
+	At    time.Time
+	Level string
+	Msg   string
+}
+
+const recentCap = 50
+
+var recentMu sync.Mutex
+var recentBuf []Problem
+
+// Recent returns the newest-first warn/error lines seen by this process.
+func Recent() []Problem {
+	recentMu.Lock()
+	defer recentMu.Unlock()
+	out := make([]Problem, len(recentBuf))
+	// Stored oldest-first; reverse on the way out.
+	for i, p := range recentBuf {
+		out[len(recentBuf)-1-i] = p
+	}
+	return out
+}
+
+func remember(level Level, msg string) {
+	if level < Warn {
+		return
+	}
+	recentMu.Lock()
+	defer recentMu.Unlock()
+	recentBuf = append(recentBuf, Problem{At: time.Now().UTC(), Level: level.String(), Msg: msg})
+	if len(recentBuf) > recentCap {
+		recentBuf = recentBuf[len(recentBuf)-recentCap:]
+	}
+}
+
 // logf is the internal helper.
 func (l *Logger) logf(level Level, format string, args ...any) {
 	if l == nil {
@@ -109,6 +147,7 @@ func (l *Logger) logf(level Level, format string, args ...any) {
 	ts := time.Now().Format(time.RFC3339)
 	// Format: 2025-01-01T12:00:00Z [INFO] message
 	msg := fmt.Sprintf(format, args...)
+	remember(level, msg)
 	l.log.Printf("%s [%s] %s", ts, level.String(), msg)
 }
 

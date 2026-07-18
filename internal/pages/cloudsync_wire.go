@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -59,8 +61,9 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 				themes = append(themes, map[string]string{"key": opt.Key, "label": opt.Label})
 			}
 			return map[string]any{
-				"theme":  d.CurrentState().Theme,
-				"themes": themes,
+				"theme":    d.CurrentState().Theme,
+				"themes":   themes,
+				"problems": collectProblems(ctx, d),
 			}
 		},
 	}
@@ -135,4 +138,40 @@ func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (st
 		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 	}
 	return "uninstalled " + pluginID, nil
+}
+
+// collectProblems builds the heartbeat's problems digest: recent warn/error
+// log lines from this process plus any failed plugin installs. Newest first,
+// capped — it is a digest for the cloud's Problems feed, not a log shipper.
+func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
+	const maxProblems = 20
+	out := []map[string]any{}
+	for _, p := range logging.Recent() {
+		if len(out) >= maxProblems {
+			break
+		}
+		msg := p.Msg
+		if len(msg) > 200 {
+			msg = msg[:200] + "…"
+		}
+		out = append(out, map[string]any{
+			"at": p.At.Format(time.RFC3339), "level": p.Level, "msg": msg,
+		})
+	}
+	if records, err := plugins.NewInstallStatusStore(d.Db).List(ctx); err == nil {
+		for _, rec := range records {
+			if rec.State != plugins.InstallStateFailed || len(out) >= maxProblems {
+				continue
+			}
+			name := rec.PluginName
+			if name == "" {
+				name = rec.ListingID
+			}
+			out = append(out, map[string]any{
+				"at": rec.UpdatedAt, "level": "ERROR",
+				"msg": "plugin install failed: " + name + " (" + rec.MessageKey + ")",
+			})
+		}
+	}
+	return out
 }
