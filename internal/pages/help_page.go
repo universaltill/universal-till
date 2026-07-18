@@ -18,7 +18,7 @@ func registerHelp(mux *http.ServeMux, d *common.Deps) {
 // helpFeatureSteps — add all of them to every file under web/locales/ when
 // adding a feature here.
 var helpFeatureIDs = []string{
-	"sell", "catalog", "inventory", "reports", "invoices", "printing",
+	"sell", "catalog", "inventory", "alerts", "reports", "invoices", "printing",
 	"designer", "payments", "multitill", "plugins", "claim", "users",
 	"backups", "updates", "display",
 }
@@ -28,6 +28,7 @@ var helpFeatureSteps = map[string][]string{
 	"sell":      {"help.feat.sell.s1", "help.feat.sell.s2", "help.feat.sell.s3"},
 	"catalog":   {"help.feat.catalog.s1", "help.feat.catalog.s2", "help.feat.catalog.s3"},
 	"inventory": {"help.feat.inventory.s1", "help.feat.inventory.s2", "help.feat.inventory.s3"},
+	"alerts":    {"help.feat.alerts.s1", "help.feat.alerts.s2", "help.feat.alerts.s3"},
 	"reports":   {"help.feat.reports.s1", "help.feat.reports.s2"},
 	"invoices":  {"help.feat.invoices.s1", "help.feat.invoices.s2"},
 	"printing":  {"help.feat.printing.s1", "help.feat.printing.s2", "help.feat.printing.s3"},
