@@ -53,7 +53,7 @@
       <div style="display:flex; align-items:center; gap:.5rem">
         {{ if .Icon }}<img src="{{ .Icon }}" alt="" width="28" height="28" style="border-radius:7px" loading="lazy">{{ end }}
         <h3 style="margin:.2rem 0">{{ .Name }}</h3>
-        {{ if eq .Tier "official" }}<span class="trust-badge trust-official" title="{{ T "plugins.trust.official_hint" }}">🏠 {{ T "plugins.trust.official" }}</span>
+        {{ if eq .Tier "official" }}<span class="trust-badge trust-official" title="{{ T "plugins.trust.official_hint" }}">🏅 {{ T "plugins.trust.official" }}</span>
         {{ else if eq .Tier "verified" }}<span class="trust-badge trust-verified" title="{{ T "plugins.trust.verified_hint" }}">✔ {{ T "plugins.trust.verified" }}</span>
         {{ else }}<span class="trust-badge trust-unverified" title="{{ T "plugins.trust.unverified_hint" }}">⚠ {{ T "plugins.trust.unverified" }}</span>{{ end }}
       </div>
