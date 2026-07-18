@@ -17,19 +17,19 @@ type menuTile struct {
 
 // iconFor maps a nav route to a touch-friendly emoji glyph.
 var iconFor = map[string]string{
-	"/":            "🧾",
-	"/designer":    "🎨",
-	"/inventory":   "📦",
-	"/shifts":      "🕒",
-	"/journal":     "📒",
-	"/reports":     "📊",
-	"/settings":    "⚙️",
-	"/plugins":     "🧩",
-	"/catalog":     "🏷️",
-	"/help":        "❓",
-	"/users":       "👤",
+	"/":             "🧾",
+	"/designer":     "🎨",
+	"/inventory":    "📦",
+	"/shifts":       "🕒",
+	"/journal":      "📒",
+	"/reports":      "📊",
+	"/settings":     "⚙️",
+	"/plugins":      "🧩",
+	"/catalog":      "🏷️",
+	"/help":         "❓",
+	"/users":        "👤",
 	"/translations": "🌐",
-	"/tills":       "🖥️",
+	"/tills":        "🖥️",
 }
 
 func registerMenu(mux *http.ServeMux, d *common.Deps) {

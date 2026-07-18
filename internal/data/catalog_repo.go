@@ -460,6 +460,23 @@ func (r *CatalogRepo) ItemCostPrice(ctx context.Context, itemID string) (int64, 
 	return cost.Int64, nil
 }
 
+// SetItemPrice updates just the selling price (minor units) — the cloud's
+// remote price directive (ADR-0018); everything else on the item is
+// untouched. Reports a missing item so the directive result says WHY.
+func (r *CatalogRepo) SetItemPrice(ctx context.Context, itemID string, priceMinor int64) error {
+	if itemID == "" {
+		return errors.New("id required")
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET base_price = ?, updated_at = datetime('now') WHERE id = ?`, priceMinor, itemID)
+	if err != nil {
+		return fmt.Errorf("set item price: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("item not found")
+	}
+	return nil
+}
+
 // SetItemCostPrice records what the shop pays for the item (minor units) —
 // the input the margin report needs.
 func (r *CatalogRepo) SetItemCostPrice(ctx context.Context, itemID string, costMinor int64) error {
