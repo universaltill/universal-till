@@ -871,5 +871,8 @@
   "help.feat.alerts.what": "Kasa işinizi izler ve erken uyarır: tükenmek üzere olan ürünler, kalan stok günü, sipariş önerileri ve olağan dışı yüksek/düşük satış günleri.",
   "help.feat.alerts.s1": "Envanter kalan günü ve sipariş önerisini gösterir; Raporlar düşük stok uyarısı taşır.",
   "help.feat.alerts.s2": "Kayıtlı kasa ayrıca pazar yerindeki Mağazam gelen kutunuza günlük özet gönderir.",
-  "help.feat.alerts.s3": "Olağan dışı satış günleri (o günün normalinden çok yüksek/düşük) otomatik işaretlenir."
+  "help.feat.alerts.s3": "Olağan dışı satış günleri (o günün normalinden çok yüksek/düşük) otomatik işaretlenir.",
+  "settings.display.mode": "Cihaz profili",
+  "settings.display.mode_register": "Kasa (satış ekranı)",
+  "settings.display.mode_backoffice": "Arka ofis (yönetici istasyonu)"
 }
