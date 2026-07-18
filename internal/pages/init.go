@@ -165,10 +165,10 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
 	StartSyncPush(ctx, dp) // replica journal loop (ADR-0011 D3)
-	// Replica drift loop (ADR-0011 D2b): after a pull applies, re-derive
-	// everything Init computed from settings — same moves as the settings
-	// handlers make on a manual edit.
-	StartSyncPull(ctx, dp, func(c context.Context) {
+	// Re-derive everything Init computed from settings — same moves as the
+	// settings handlers make on a manual edit. Shared by the replica drift
+	// loop (ADR-0011 D2b) and cloud set_setting directives (ADR-0018).
+	rederiveSettings := func(c context.Context) {
 		st := common.LoadState(c, setStore, cfg)
 		applied := dp.UpdateState(func(s *common.RuntimeState) {
 			// display.ui_scale is per-till; when unset keep the env-derived
@@ -194,8 +194,10 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		if overrides, err := data.NewTranslationRepo(dp.Db).ListOverrides(c); err == nil {
 			i18n.SetShopOverrides(overrides)
 		}
-	})
-	StartEODScheduler(ctx, dp) // background Z-report (docs: G30)
+	}
+	StartSyncPull(ctx, dp, rederiveSettings)
+	StartCloudSync(ctx, dp, rederiveSettings) // ADR-0018 cloud heartbeat + directives
+	StartEODScheduler(ctx, dp)                // background Z-report (docs: G30)
 	registerInvoices(mux, dp)  // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
