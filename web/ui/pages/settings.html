@@ -1,44 +1,45 @@
 {{ define "content" }}
 <h1>{{ T "settings.title" }}</h1>
+<div class="settings-grid">
 <div class="card" id="registration">
   <h2>{{ T "settings.enrol.title" }}</h2>
   {{ if enrolled }}
     <p>✅ {{ T "settings.enrol.registered" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
-    <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" style="margin-top:.4rem">
+    <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" class="set-gap-s">
       <span class="muted">{{ T "settings.enrol.fleet_loading" }}</span>
     </div>
     {{ if .isManager }}
-    <div style="margin-top:.8rem; border-top:1px solid var(--border); padding-top:.6rem">
+    <div class="set-divider">
       <p class="muted">{{ T "settings.enrol.claim_help" }}</p>
       <button class="btn btn-touch" hx-post="/api/enrol/claim-code" hx-target="#claim-code-msg" hx-swap="innerHTML">{{ T "settings.enrol.claim_btn" }}</button>
-      <div id="claim-code-msg" aria-live="polite" style="margin-top:.5rem"></div>
+      <div id="claim-code-msg" aria-live="polite" class="set-gap-s"></div>
     </div>
     {{ end }}
   {{ else }}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
     {{ if .isManager }}
-    <div style="display:flex; gap:.4rem; align-items:center">
+    <div class="set-row">
       <button class="btn btn-touch" hx-post="/api/enrol/now" hx-target="#enrol-msg" hx-swap="innerHTML">{{ T "settings.enrol.retry" }}</button>
       <span id="enrol-msg" aria-live="polite"></span>
     </div>
     {{ end }}
   {{ end }}
 </div>
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.update.title" }}</h2>
   <p class="muted">Universal Till v{{ appversion }}</p>
   {{ if .isManager }}
-  <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
+  <div class="set-row">
     <button class="btn btn-touch" hx-post="/api/update/check" hx-target="#update-check-msg" hx-swap="innerHTML"
             hx-indicator="#update-check-msg">{{ T "settings.update.check_btn" }}</button>
     <span id="update-check-msg" aria-live="polite"></span>
   </div>
   {{ end }}
 </div>
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.theme.title" }}</h2>
   <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="window.location.reload()">
     <select name="theme">
@@ -50,7 +51,7 @@
     <button class="btn" type="submit">{{ T "settings.theme.apply" }}</button>
   </form>
 </div>
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.display.title" }}</h2>
   <p class="muted">{{ T "settings.display.help" }}</p>
   <form hx-post="/api/settings/ui-scale" hx-swap="none" hx-on::after-request="window.location.reload()">
@@ -66,9 +67,9 @@
     </select>
     <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
   </form>
-  <form hx-post="/api/settings/osk" hx-swap="none" hx-on::after-request="window.location.reload()" style="margin-top:.7rem">
+  <form hx-post="/api/settings/osk" hx-swap="none" hx-on::after-request="window.location.reload()" class="set-gap">
     {{ $osk := oskmode }}
-    <label style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">{{ T "settings.display.osk" }}
+    <label class="set-row">{{ T "settings.display.osk" }}
       <select name="mode">
         <option value="auto" {{ if eq $osk "auto" }}selected{{ end }}>{{ T "settings.display.osk_auto" }}</option>
         <option value="on"   {{ if eq $osk "on" }}selected{{ end }}>{{ T "settings.display.osk_on" }}</option>
@@ -79,11 +80,11 @@
   </form>
 </div>
 {{ if and .isManager .payMethods }}
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.payments.title" }}</h2>
   <p class="muted">{{ T "settings.payments.default_help" }}</p>
   <form hx-post="/api/settings/payments-default" hx-target="#pay-default-msg" hx-swap="innerHTML">
-    <label style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">{{ T "settings.payments.default" }}
+    <label class="set-row">{{ T "settings.payments.default" }}
       <select name="method">
         <option value="">—</option>
         {{ $def := .payDefault }}
@@ -95,10 +96,10 @@
       <span id="pay-default-msg" aria-live="polite"></span>
     </label>
   </form>
-  <p class="muted" style="margin-top:.8rem">{{ T "settings.payments.fees_help" }}</p>
+  <p class="muted" class="set-gap">{{ T "settings.payments.fees_help" }}</p>
   {{ range .payFees }}
   <form hx-post="/api/settings/payments-fee" hx-target="#fee-msg-{{ .ID }}" hx-swap="innerHTML"
-        style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-top:.35rem">
+        class="set-row set-tight">
     <input type="hidden" name="method" value="{{ .ID }}">
     <span style="min-inline-size:8rem">{{ .Name }}</span>
     <input type="number" name="percent" step="0.01" min="0" max="100" style="max-inline-size:6rem"
@@ -113,10 +114,10 @@
 </div>
 {{ end }}
 {{ if .isManager }}
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.backup.title" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>
-  <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem">
+  <div class="set-row set-below">
     <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML">{{ T "settings.backup.now" }}</button>
     <span id="backup-msg" aria-live="polite"></span>
   </div>
@@ -149,7 +150,7 @@
   {{ end }}
 </div>
 
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>🧹 {{ T "settings.data.title" }}</h2>
   <p class="muted">{{ T "settings.data.help" }}</p>
   <p class="muted" style="color:#b45309">{{ T "settings.data.warn" }}</p>
@@ -167,7 +168,7 @@
     <button class="btn secondary" id="cust-search-btn">{{ T "settings.data.search_btn" }}</button>
     <span id="cust-msg" class="muted" aria-live="polite"></span>
   </div>
-  <div id="cust-results" style="margin-top:.5rem"></div>
+  <div id="cust-results" class="set-gap-s"></div>
 
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.catalog_title" }}</h3>
@@ -178,7 +179,7 @@
     <button class="btn secondary" id="cat-cleanup-btn" data-testid="data-cleanup" disabled>{{ T "settings.data.catalog_cleanup_btn" }}</button>
     <span id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
   </div>
-  <div id="cat-results" style="margin-top:.5rem"></div>
+  <div id="cat-results" class="set-gap-s"></div>
 </div>
 
 <script>
@@ -278,7 +279,7 @@
   });
 })();
 </script>
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.printer.title" }}</h2>
   <p class="muted">{{ T "settings.printer.help" }}</p>
   <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="window.location.reload()">
@@ -318,7 +319,7 @@
     </div>
   </form>
 </div>
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>🧾 {{ T "settings.invoice.title" }}</h2>
   <p class="muted">{{ T "settings.invoice.help" }}</p>
   <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="window.location.reload()">
@@ -330,12 +331,12 @@
     </div>
     <label>{{ T "settings.invoice.seller_address" }}
       <input type="text" name="seller_address" value="{{ index .settingsMap "invoice.seller_address" }}"></label>
-    <div style="margin-top:.5rem">
+    <div class="set-gap-s">
       <button class="btn" type="submit">{{ T "settings.invoice.apply" }}</button>
     </div>
   </form>
 </div>
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.idle_lock.title" }}</h2>
   <p class="muted">{{ T "settings.idle_lock.help" }}</p>
   <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="window.location.reload()">
@@ -353,7 +354,7 @@
   </form>
 </div>
 {{ end }}
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.currency.title" }}</h2>
   <p class="muted">{{ T "settings.currency.help" }}</p>
   <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="window.location.reload()">
@@ -367,7 +368,7 @@
   </form>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
 </div>
-<div class="card" style="margin-top:1rem">
+<div class="card">
   <h2>{{ T "settings.all" }}</h2>
   <table class="table">
     <thead>
@@ -392,5 +393,6 @@
     </tbody>
   </table>
   <form id="new-setting" hx-post="/api/settings/upsert" hx-swap="none"></form>
+</div>
 </div>
 {{ end }}
