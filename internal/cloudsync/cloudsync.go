@@ -248,6 +248,11 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			qty[l.ItemID] += l.CurrentQty
 		}
 	}
+	// Variant rows ride along under their parent: own id/price/barcode, name
+	// composed for the cloud table. No qty on variants — stock is tracked at
+	// item level (ADR-0011), and repeating the parent qty would double-count
+	// the shop's stock units.
+	variants, _ := data.NewCatalogRepo(db).ItemVariants(ctx)
 	rows := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		if !it.IsActive {
@@ -261,6 +266,12 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			"id": it.ID, "name": it.Name, "price_minor": it.BasePrice,
 			"barcode": barcode, "qty": qty[it.ID],
 		})
+		for _, v := range variants[it.ID] {
+			rows = append(rows, map[string]any{
+				"id": v.ID, "name": it.Name + " — " + v.Name,
+				"price_minor": v.PriceMinor, "barcode": v.Barcode,
+			})
+		}
 	}
 	payload, _ := json.Marshal(map[string]any{"store_id": m.StoreID, "items": rows})
 
