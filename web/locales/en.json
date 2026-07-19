@@ -874,5 +874,20 @@
   "help.feat.alerts.s3": "Unusual sales days (much higher or lower than that weekday normally) are flagged automatically.",
   "settings.display.mode": "Device profile",
   "settings.display.mode_register": "Register (sell screen)",
-  "settings.display.mode_backoffice": "Back office (manager station)"
+  "settings.display.mode_backoffice": "Back office (manager station)",
+  "backoffice.title": "Back office",
+  "backoffice.today": "Today",
+  "backoffice.yesterday": "Yesterday",
+  "backoffice.week": "Last 7 days",
+  "backoffice.sales": "sales",
+  "backoffice.low_stock": "Low stock",
+  "backoffice.item": "Item",
+  "backoffice.on_hand": "On hand",
+  "backoffice.reorder_at": "Reorder at",
+  "backoffice.stock_ok": "Nothing below its reorder level.",
+  "backoffice.problems": "Recent problems",
+  "backoffice.no_problems": "No recent warnings or errors.",
+  "backoffice.go_deeper": "Go deeper",
+  "backoffice.inventory": "Inventory",
+  "backoffice.settings": "Settings"
 }

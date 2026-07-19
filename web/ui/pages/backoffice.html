@@ -1,0 +1,53 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "backoffice.title" }}</h1>
+</div>
+
+<div class="report-cards">
+  <div class="card kpi"><div class="kpi-label">{{ T "backoffice.today" }}</div>
+    <div class="kpi-value">{{ money .TodayTotal }}</div>
+    <div class="muted" style="font-size:.8rem">{{ .TodayCount }} {{ T "backoffice.sales" }}</div></div>
+  <div class="card kpi"><div class="kpi-label">{{ T "backoffice.yesterday" }}</div>
+    <div class="kpi-value">{{ money .YdayTotal }}</div>
+    <div class="muted" style="font-size:.8rem">{{ .YdayCount }} {{ T "backoffice.sales" }}</div></div>
+  <div class="card kpi"><div class="kpi-label">{{ T "backoffice.week" }}</div>
+    <div class="kpi-value">{{ money .WeekTotal }}</div>
+    <div class="muted" style="font-size:.8rem">{{ .WeekCount }} {{ T "backoffice.sales" }}</div></div>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "backoffice.low_stock" }}</h2>
+  {{ if .LowStock }}
+  <table class="table">
+    <thead><tr><th>{{ T "backoffice.item" }}</th><th style="text-align:end">{{ T "backoffice.on_hand" }}</th><th style="text-align:end">{{ T "backoffice.reorder_at" }}</th></tr></thead>
+    <tbody>
+      {{ range .LowStock }}
+      <tr><td>{{ .Name }}</td><td style="text-align:end" class="stock-low">{{ .CurrentQty }}</td><td style="text-align:end">{{ .ReorderLevel }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else }}<p class="muted">{{ T "backoffice.stock_ok" }}</p>{{ end }}
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "backoffice.problems" }}</h2>
+  {{ if .Problems }}
+  <table class="table">
+    <tbody>
+      {{ range .Problems }}
+      <tr><td class="muted" style="white-space:nowrap">{{ .At.Format "15:04" }}</td><td>{{ .Level }}</td><td>{{ .Msg }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else }}<p class="muted">{{ T "backoffice.no_problems" }}</p>{{ end }}
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "backoffice.go_deeper" }}</h2>
+  <div style="display:flex; gap:.5rem; flex-wrap:wrap">
+    <a class="btn" href="/reports">{{ T "nav.reports" }}</a>
+    <a class="btn" href="/inventory">{{ T "backoffice.inventory" }}</a>
+    <a class="btn" href="/settings">{{ T "backoffice.settings" }}</a>
+  </div>
+</div>
+{{ end }}

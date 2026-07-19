@@ -874,5 +874,20 @@
   "help.feat.alerts.s3": "Olağan dışı satış günleri (o günün normalinden çok yüksek/düşük) otomatik işaretlenir.",
   "settings.display.mode": "Cihaz profili",
   "settings.display.mode_register": "Kasa (satış ekranı)",
-  "settings.display.mode_backoffice": "Arka ofis (yönetici istasyonu)"
+  "settings.display.mode_backoffice": "Arka ofis (yönetici istasyonu)",
+  "backoffice.title": "Arka ofis",
+  "backoffice.today": "Bugün",
+  "backoffice.yesterday": "Dün",
+  "backoffice.week": "Son 7 gün",
+  "backoffice.sales": "satış",
+  "backoffice.low_stock": "Azalan stok",
+  "backoffice.item": "Ürün",
+  "backoffice.on_hand": "Mevcut",
+  "backoffice.reorder_at": "Sipariş seviyesi",
+  "backoffice.stock_ok": "Sipariş seviyesinin altında ürün yok.",
+  "backoffice.problems": "Son sorunlar",
+  "backoffice.no_problems": "Yakın zamanda uyarı veya hata yok.",
+  "backoffice.go_deeper": "Detaya in",
+  "backoffice.inventory": "Envanter",
+  "backoffice.settings": "Ayarlar"
 }
