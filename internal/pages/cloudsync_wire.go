@@ -65,6 +65,21 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 		CreateItem: func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error) {
 			return cloudCreateItem(ctx, d, name, priceMinor, barcode)
 		},
+		// Attach a (primary) barcode to an item or variant. AddBarcode owns
+		// all the safety: availability, existence, active-only.
+		AddBarcode: func(ctx context.Context, id, barcode string) (string, error) {
+			repo := data.NewCatalogRepo(d.Db)
+			in := catalogtypes.BarcodeInput{Barcode: barcode, IsPrimary: true}
+			if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
+				in.ItemID = id
+			} else {
+				in.VariantID = id
+			}
+			if err := repo.AddBarcode(ctx, in); err != nil {
+				return "", err
+			}
+			return "barcode " + barcode + " attached", nil
+		},
 		// Retire from the cloud: same soft-deactivate a manager does locally
 		// (variants of the item retire with it; a variant id retires just the
 		// variant). It drops from the sale screen and the next snapshot.
