@@ -10,12 +10,19 @@ import (
 )
 
 // registerBackofficePage serves the manager dashboard a back-office device
-// lands on (ADR-0018: "/" redirects here when display.mode=backoffice, and
-// any till can visit it directly). It is a glance surface — today vs
+// lands on (ADR-0018: "/" redirects here when display.mode=backoffice). Any
+// till can visit it directly — single source of truth stays the shop's
+// primary/replica database (ADR-0011); backoffice is a manager/admin ROLE
+// gate, not a device lock, so whoever has the role can open it from
+// whichever till they're standing at. It is a glance surface — today vs
 // yesterday, the week, what's running low, what went wrong — with links into
 // the full pages; the heavy analysis stays on /reports.
 func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/backoffice", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin role required", http.StatusForbidden)
+			return
+		}
 		repo := data.NewPOSRepo(d.Db)
 		todayTotal, todayCount, _ := repo.DayTotal(r.Context(), 0)
 		ydayTotal, ydayCount, _ := repo.DayTotal(r.Context(), 1)

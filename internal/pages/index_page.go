@@ -30,10 +30,13 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
-		// Back-office mode (ADR-0018): this device is a manager station, not
-		// a register — the home surface is the manager dashboard and the sale
-		// screen is unreachable. Per-till setting (display.* never LAN-syncs).
-		if mode, _, _ := d.Settings.Get(r.Context(), "display.mode"); mode == "backoffice" {
+		// Back-office mode (ADR-0018): this device defaults to the manager
+		// dashboard instead of the sale screen. Per-till setting (display.*
+		// never LAN-syncs). /backoffice is manager/admin role-gated — a
+		// cashier session on a backoffice-mode till falls through to the
+		// normal sale screen instead of a dead-end 403 (the mode is a
+		// default landing preference, not a role bypass).
+		if mode, _, _ := d.Settings.Get(r.Context(), "display.mode"); mode == "backoffice" && isManagerOrAuthOff(r) {
 			http.Redirect(w, r, "/backoffice", http.StatusSeeOther)
 			return
 		}
