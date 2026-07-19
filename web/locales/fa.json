@@ -874,5 +874,20 @@
   "help.feat.alerts.s3": "روزهای فروش غیرعادی (خیلی بیشتر یا کمتر از معمولِ آن روز) خودکار علامت می‌خورند.",
   "settings.display.mode": "پروفایل دستگاه",
   "settings.display.mode_register": "صندوق (صفحه فروش)",
-  "settings.display.mode_backoffice": "دفتر پشتیبان (ایستگاه مدیر)"
+  "settings.display.mode_backoffice": "دفتر پشتیبان (ایستگاه مدیر)",
+  "backoffice.title": "دفتر پشتیبان",
+  "backoffice.today": "امروز",
+  "backoffice.yesterday": "دیروز",
+  "backoffice.week": "۷ روز اخیر",
+  "backoffice.sales": "فروش",
+  "backoffice.low_stock": "موجودی کم",
+  "backoffice.item": "کالا",
+  "backoffice.on_hand": "موجودی",
+  "backoffice.reorder_at": "حد سفارش",
+  "backoffice.stock_ok": "هیچ کالایی زیر حد سفارش نیست.",
+  "backoffice.problems": "مشکلات اخیر",
+  "backoffice.no_problems": "هشدار یا خطای اخیری وجود ندارد.",
+  "backoffice.go_deeper": "جزئیات بیشتر",
+  "backoffice.inventory": "انبار",
+  "backoffice.settings": "تنظیمات"
 }
