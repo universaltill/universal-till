@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -199,6 +200,8 @@ func TestSnapshotPushGatedByHash(t *testing.T) {
 	}
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "it-1", SKU: "SKU1", Name: "Coca-Cola", BasePrice: 120, IsActive: true})
 	testsupport.SeedBarcode(t, db, "5000000000011", "it-1", true)
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "var-1", ItemID: "it-1", SKU: "SKU1-L", Name: "1.5L", Price: 210, IsActive: true})
+	testsupport.SeedVariantBarcode(t, db, "5000000000028", "var-1", true)
 	ctx := context.Background()
 	cfg := testCfg(srv.URL)
 
@@ -209,9 +212,21 @@ func TestSnapshotPushGatedByHash(t *testing.T) {
 		t.Fatalf("snapshots after first tick = %d, want 1", len(cloud.snapshots))
 	}
 	items := cloud.snapshots[0]["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("snapshot rows = %d, want item + variant", len(items))
+	}
 	row := items[0].(map[string]any)
 	if row["name"] != "Coca-Cola" || row["barcode"] != "5000000000011" {
 		t.Fatalf("snapshot row = %+v", row)
+	}
+	// The variant rides under its parent: composed name, own price/barcode,
+	// and NO qty (stock is item-level; repeating it would double-count).
+	vrow := items[1].(map[string]any)
+	if vrow["name"] != "Coca-Cola — 1.5L" || vrow["barcode"] != "5000000000028" || vrow["price_minor"] != float64(210) {
+		t.Fatalf("variant row = %+v", vrow)
+	}
+	if _, has := vrow["qty"]; has {
+		t.Fatalf("variant row must not carry qty: %+v", vrow)
 	}
 
 	// Unchanged data → no second push.
@@ -238,5 +253,32 @@ func TestTickSkipsWhenUnregistered(t *testing.T) {
 	cfg := &config.Config{} // no endpoint/store/token
 	if err := Tick(context.Background(), cfg, testDB(t), Hooks{}); err != nil {
 		t.Fatalf("unregistered tick should no-op, got %v", err)
+	}
+}
+
+// SetItemPrice via the hook path must reach variants too: the snapshot lists
+// variant rows, so a remote price edit may target a variant id.
+func TestSetItemPriceReachesVariants(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "it-9", SKU: "S9", Name: "Tea", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "var-9", ItemID: "it-9", SKU: "S9-L", Name: "Large", Price: 150, IsActive: true})
+
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+	if err := repo.SetItemPrice(ctx, "it-9", 110); err != nil {
+		t.Fatalf("item price: %v", err)
+	}
+	if err := repo.SetItemPrice(ctx, "var-9", 160); err != nil {
+		t.Fatalf("variant price: %v", err)
+	}
+	if err := repo.SetItemPrice(ctx, "nope", 1); err == nil {
+		t.Fatal("want error for unknown id")
+	}
+	var base, vprice int64
+	if err := db.QueryRow(`SELECT base_price FROM items WHERE id='it-9'`).Scan(&base); err != nil || base != 110 {
+		t.Fatalf("base = %d, %v", base, err)
+	}
+	if err := db.QueryRow(`SELECT price FROM item_variants WHERE id='var-9'`).Scan(&vprice); err != nil || vprice != 160 {
+		t.Fatalf("variant = %d, %v", vprice, err)
 	}
 }
