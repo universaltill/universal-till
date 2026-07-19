@@ -92,6 +92,8 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		{"id": "d3", "type": "install_plugin", "payload": map[string]any{"listing_id": "lst-1"}},
 		{"id": "d4", "type": "set_price", "payload": map[string]any{"item_id": "itm-1", "price_minor": 250}},
 		{"id": "d5", "type": "set_price", "payload": map[string]any{"item_id": "itm-1", "price_minor": -1}},
+		{"id": "d6", "type": "adjust_stock", "payload": map[string]any{"item_id": "itm-1", "qty_delta": -2.5, "reason": "damaged"}},
+		{"id": "d7", "type": "adjust_stock", "payload": map[string]any{"item_id": "itm-1", "qty_delta": 0}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -100,10 +102,16 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	var setKey, setVal, installed string
 	var pricedItem string
 	var pricedMinor int64
+	var adjustedItem, adjustedReason string
+	var adjustedDelta float64
 	hooks := Hooks{
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
 			pricedItem, pricedMinor = itemID, priceMinor
 			return "price set", nil
+		},
+		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
+			adjustedItem, adjustedDelta, adjustedReason = itemID, delta, reason
+			return "adjusted", nil
 		},
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			setKey, setVal = key, value
@@ -157,6 +165,13 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	// d4 valid price applied; d5 negative price rejected without the hook.
 	if got["d4"] != "applied" || got["d5"] != "failed" {
 		t.Fatalf("price results = %+v", cloud.results)
+	}
+	// d6 stock adjustment applied with reason; d7 zero delta rejected.
+	if got["d6"] != "applied" || got["d7"] != "failed" {
+		t.Fatalf("adjust results = %+v", cloud.results)
+	}
+	if adjustedItem != "itm-1" || adjustedDelta != -2.5 || adjustedReason != "damaged" {
+		t.Fatalf("adjust hook: %s/%g/%s", adjustedItem, adjustedDelta, adjustedReason)
 	}
 }
 
