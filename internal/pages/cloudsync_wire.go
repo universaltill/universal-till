@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -58,6 +59,11 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 				return "", err
 			}
 			return "renamed to " + name, nil
+		},
+		// Create from the cloud. Idempotent on retry (same-name active item →
+		// success without a duplicate); a taken barcode fails cleanly.
+		CreateItem: func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error) {
+			return cloudCreateItem(ctx, d, name, priceMinor, barcode)
 		},
 		// Retire from the cloud: same soft-deactivate a manager does locally
 		// (variants of the item retire with it; a variant id retires just the
@@ -243,4 +249,34 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 		Reason: stockMovementReason("adjust"), Location: locationID,
 	})
 	return fmt.Sprintf("stock adjusted by %+g", delta), nil
+}
+
+// cloudCreateItem creates a catalog item from a directive. Directives are
+// at-least-once, so a retry must not duplicate: an existing active item with
+// the same name counts as success. A barcode already attached elsewhere
+// fails the directive (visible in the result column) rather than stealing it.
+func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMinor int64, barcode string) (string, error) {
+	repo := data.NewCatalogRepo(d.Db)
+	if _, exists, err := repo.FindActiveItemByName(ctx, name); err == nil && exists {
+		return "item already exists", nil
+	}
+	if barcode != "" {
+		if taken, err := repo.BarcodeExists(ctx, barcode); err == nil && taken {
+			return "", fmt.Errorf("barcode %s is already in use", barcode)
+		}
+	}
+	id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{
+		Name: name, BasePrice: priceMinor, IsActive: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if barcode != "" {
+		if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+			ItemID: id, Barcode: barcode, IsPrimary: true,
+		}); err != nil {
+			return "created " + name + " (barcode not attached: " + err.Error() + ")", nil
+		}
+	}
+	return "created " + name, nil
 }

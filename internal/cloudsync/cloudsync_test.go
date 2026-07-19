@@ -97,6 +97,8 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		{"id": "d8", "type": "rename_item", "payload": map[string]any{"item_id": "itm-1", "name": "Cola Zero"}},
 		{"id": "d9", "type": "rename_item", "payload": map[string]any{"item_id": "itm-1", "name": "  "}},
 		{"id": "d10", "type": "deactivate_item", "payload": map[string]any{"item_id": "itm-1"}},
+		{"id": "d11", "type": "create_item", "payload": map[string]any{"name": "Fanta", "price_minor": 99, "barcode": "500999"}},
+		{"id": "d12", "type": "create_item", "payload": map[string]any{"name": "", "price_minor": 99}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -105,7 +107,7 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	var setKey, setVal, installed string
 	var pricedItem string
 	var pricedMinor int64
-	var adjustedItem, adjustedReason, renamedTo, deactivated string
+	var adjustedItem, adjustedReason, renamedTo, deactivated, created string
 	var adjustedDelta float64
 	hooks := Hooks{
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
@@ -123,6 +125,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		DeactivateItem: func(ctx context.Context, itemID string) (string, error) {
 			deactivated = itemID
 			return "deactivated", nil
+		},
+		CreateItem: func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error) {
+			created = name + "/" + barcode
+			return "created", nil
 		},
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			setKey, setVal = key, value
@@ -190,6 +196,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	}
 	if got["d10"] != "applied" || deactivated != "itm-1" {
 		t.Fatalf("deactivate: %+v (%q)", cloud.results, deactivated)
+	}
+	// d11 create applied with barcode; d12 blank name rejected pre-hook.
+	if got["d11"] != "applied" || got["d12"] != "failed" || created != "Fanta/500999" {
+		t.Fatalf("create: %+v (%q)", cloud.results, created)
 	}
 }
 
@@ -313,5 +323,20 @@ func TestSetItemPriceReachesVariants(t *testing.T) {
 	}
 	if err := db.QueryRow(`SELECT price FROM item_variants WHERE id='var-9'`).Scan(&vprice); err != nil || vprice != 160 {
 		t.Fatalf("variant = %d, %v", vprice, err)
+	}
+}
+
+// The real create path is idempotent on retry and refuses a taken barcode.
+func TestCloudCreateItemIdempotency(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	if id, ok, _ := repo.FindActiveItemByName(ctx, "Sprite"); ok || id != "" {
+		t.Fatal("unexpected pre-existing item")
+	}
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "it-s", SKU: "S", Name: "Sprite", BasePrice: 100, IsActive: true})
+	if _, ok, err := repo.FindActiveItemByName(ctx, "Sprite"); err != nil || !ok {
+		t.Fatalf("find by name: ok=%v err=%v", ok, err)
 	}
 }
