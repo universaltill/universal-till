@@ -296,6 +296,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// station — "/" becomes the reports page. Per-till (display.* never
 	// LAN-syncs), so one shop can mix registers and a back-office device.
 	mux.HandleFunc("POST /api/settings/display-mode", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin role required", http.StatusForbidden)
+			return
+		}
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
 		if mode != "register" && mode != "backoffice" {
