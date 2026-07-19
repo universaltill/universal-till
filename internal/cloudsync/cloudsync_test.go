@@ -99,6 +99,8 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		{"id": "d10", "type": "deactivate_item", "payload": map[string]any{"item_id": "itm-1"}},
 		{"id": "d11", "type": "create_item", "payload": map[string]any{"name": "Fanta", "price_minor": 99, "barcode": "500999"}},
 		{"id": "d12", "type": "create_item", "payload": map[string]any{"name": "", "price_minor": 99}},
+		{"id": "d13", "type": "add_barcode", "payload": map[string]any{"item_id": "itm-1", "barcode": "500777"}},
+		{"id": "d14", "type": "add_barcode", "payload": map[string]any{"item_id": "itm-1", "barcode": ""}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -107,7 +109,7 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	var setKey, setVal, installed string
 	var pricedItem string
 	var pricedMinor int64
-	var adjustedItem, adjustedReason, renamedTo, deactivated, created string
+	var adjustedItem, adjustedReason, renamedTo, deactivated, created, barcoded string
 	var adjustedDelta float64
 	hooks := Hooks{
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
@@ -129,6 +131,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		CreateItem: func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error) {
 			created = name + "/" + barcode
 			return "created", nil
+		},
+		AddBarcode: func(ctx context.Context, itemID, barcode string) (string, error) {
+			barcoded = itemID + "/" + barcode
+			return "attached", nil
 		},
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			setKey, setVal = key, value
@@ -200,6 +206,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	// d11 create applied with barcode; d12 blank name rejected pre-hook.
 	if got["d11"] != "applied" || got["d12"] != "failed" || created != "Fanta/500999" {
 		t.Fatalf("create: %+v (%q)", cloud.results, created)
+	}
+	// d13 barcode attached; d14 blank barcode rejected pre-hook.
+	if got["d13"] != "applied" || got["d14"] != "failed" || barcoded != "itm-1/500777" {
+		t.Fatalf("barcode: %+v (%q)", cloud.results, barcoded)
 	}
 }
 
