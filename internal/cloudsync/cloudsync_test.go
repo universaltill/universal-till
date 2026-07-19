@@ -94,6 +94,8 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		{"id": "d5", "type": "set_price", "payload": map[string]any{"item_id": "itm-1", "price_minor": -1}},
 		{"id": "d6", "type": "adjust_stock", "payload": map[string]any{"item_id": "itm-1", "qty_delta": -2.5, "reason": "damaged"}},
 		{"id": "d7", "type": "adjust_stock", "payload": map[string]any{"item_id": "itm-1", "qty_delta": 0}},
+		{"id": "d8", "type": "rename_item", "payload": map[string]any{"item_id": "itm-1", "name": "Cola Zero"}},
+		{"id": "d9", "type": "rename_item", "payload": map[string]any{"item_id": "itm-1", "name": "  "}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -102,7 +104,7 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	var setKey, setVal, installed string
 	var pricedItem string
 	var pricedMinor int64
-	var adjustedItem, adjustedReason string
+	var adjustedItem, adjustedReason, renamedTo string
 	var adjustedDelta float64
 	hooks := Hooks{
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
@@ -112,6 +114,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
 			adjustedItem, adjustedDelta, adjustedReason = itemID, delta, reason
 			return "adjusted", nil
+		},
+		RenameItem: func(ctx context.Context, itemID, name string) (string, error) {
+			renamedTo = name
+			return "renamed", nil
 		},
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			setKey, setVal = key, value
@@ -172,6 +178,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	}
 	if adjustedItem != "itm-1" || adjustedDelta != -2.5 || adjustedReason != "damaged" {
 		t.Fatalf("adjust hook: %s/%g/%s", adjustedItem, adjustedDelta, adjustedReason)
+	}
+	// d8 rename applied; d9 blank name rejected pre-hook (str() trims).
+	if got["d8"] != "applied" || got["d9"] != "failed" || renamedTo != "Cola Zero" {
+		t.Fatalf("rename results = %+v (renamed %q)", cloud.results, renamedTo)
 	}
 }
 
