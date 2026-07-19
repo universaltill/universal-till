@@ -31,10 +31,10 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		// Back-office mode (ADR-0018): this device is a manager station, not
-		// a register — the home surface is the reports page and the sale
+		// a register — the home surface is the manager dashboard and the sale
 		// screen is unreachable. Per-till setting (display.* never LAN-syncs).
 		if mode, _, _ := d.Settings.Get(r.Context(), "display.mode"); mode == "backoffice" {
-			http.Redirect(w, r, "/reports", http.StatusSeeOther)
+			http.Redirect(w, r, "/backoffice", http.StatusSeeOther)
 			return
 		}
 		// One query drives both tender UIs: full rows for the Pay tab,

@@ -874,5 +874,20 @@
   "help.feat.alerts.s3": "تُعلَّم أيام المبيعات غير المعتادة (أعلى أو أدنى بكثير من معتاد ذلك اليوم) تلقائياً.",
   "settings.display.mode": "ملف الجهاز",
   "settings.display.mode_register": "كاشير (شاشة البيع)",
-  "settings.display.mode_backoffice": "المكتب الخلفي (محطة المدير)"
+  "settings.display.mode_backoffice": "المكتب الخلفي (محطة المدير)",
+  "backoffice.title": "المكتب الخلفي",
+  "backoffice.today": "اليوم",
+  "backoffice.yesterday": "أمس",
+  "backoffice.week": "آخر ٧ أيام",
+  "backoffice.sales": "مبيعات",
+  "backoffice.low_stock": "مخزون منخفض",
+  "backoffice.item": "الصنف",
+  "backoffice.on_hand": "المتوفر",
+  "backoffice.reorder_at": "حد إعادة الطلب",
+  "backoffice.stock_ok": "لا توجد أصناف تحت حد إعادة الطلب.",
+  "backoffice.problems": "المشاكل الأخيرة",
+  "backoffice.no_problems": "لا توجد تحذيرات أو أخطاء حديثة.",
+  "backoffice.go_deeper": "تعمّق أكثر",
+  "backoffice.inventory": "المخزون",
+  "backoffice.settings": "الإعدادات"
 }
