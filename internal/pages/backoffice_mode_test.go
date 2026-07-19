@@ -34,6 +34,7 @@ func TestBackofficeModeRedirectsHome(t *testing.T) {
 	mux := http.NewServeMux()
 	registerIndex(mux, dp)
 	registerSettings(mux, dp)
+	registerBackofficePage(mux, dp)
 
 	home := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -53,8 +54,21 @@ func TestBackofficeModeRedirectsHome(t *testing.T) {
 		t.Fatalf("set backoffice: %d %s", rec.Code, rec.Body.String())
 	}
 
-	if rec := home(); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/reports" {
-		t.Fatalf("backoffice home = %d → %q, want 303 → /reports", rec.Code, rec.Header().Get("Location"))
+	if rec := home(); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/backoffice" {
+		t.Fatalf("backoffice home = %d → %q, want 303 → /backoffice", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// The dashboard itself renders: KPI cards + low-stock + problems sections.
+	dashRec := httptest.NewRecorder()
+	mux.ServeHTTP(dashRec, httptest.NewRequest(http.MethodGet, "/backoffice", nil))
+	if dashRec.Code != http.StatusOK {
+		t.Fatalf("dashboard = %d: %s", dashRec.Code, dashRec.Body.String())
+	}
+	body := dashRec.Body.String()
+	for _, want := range []string{"Back office", "Today", "Low stock", "Recent problems"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard missing %q", want)
+		}
 	}
 
 	// Back to register: the sale screen returns.
