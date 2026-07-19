@@ -485,6 +485,22 @@ func (r *CatalogRepo) SetItemPrice(ctx context.Context, itemID string, priceMino
 	return nil
 }
 
+// FindActiveItemByName returns the id of an active item with this exact
+// name, if any — the idempotency check for the cloud's create directive
+// (a retried create must not duplicate the item).
+func (r *CatalogRepo) FindActiveItemByName(ctx context.Context, name string) (string, bool, error) {
+	var id string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id FROM items WHERE name = ? AND is_active = 1 LIMIT 1`, name).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("find item by name: %w", err)
+	}
+	return id, true, nil
+}
+
 // SetItemName renames an item (or, on fall-through, a variant) — the cloud's
 // remote rename directive (ADR-0018). Same shape as SetItemPrice.
 func (r *CatalogRepo) SetItemName(ctx context.Context, id, name string) error {
