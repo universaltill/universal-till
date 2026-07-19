@@ -52,6 +52,7 @@ type Hooks struct {
 	RenameItem     func(ctx context.Context, itemID, name string) (string, error)
 	DeactivateItem func(ctx context.Context, itemID string) (string, error)
 	CreateItem     func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
+	AddBarcode     func(ctx context.Context, itemID, barcode string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -212,6 +213,16 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing or invalid price_minor"
 		}
 		msg, err = hooks.CreateItem(ctx, name, price, str("barcode"))
+	case "add_barcode":
+		if hooks.AddBarcode == nil {
+			return "failed", "add_barcode is not supported on this till"
+		}
+		id := str("item_id")
+		barcode := str("barcode")
+		if id == "" || barcode == "" {
+			return "failed", "missing item_id or barcode"
+		}
+		msg, err = hooks.AddBarcode(ctx, id, barcode)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}
