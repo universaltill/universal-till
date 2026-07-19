@@ -207,7 +207,11 @@ func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 			msg = msg[:200] + "…"
 		}
 		out = append(out, map[string]any{
-			"at": p.At.Format(time.RFC3339), "level": p.Level, "msg": msg,
+			// Nanosecond precision, not RFC3339's whole-second: the cloud
+			// dedupes persisted problem history on (device, at, msg), and a
+			// fast repeat of the same message within one second would
+			// otherwise collide and get dropped as a false duplicate.
+			"at": p.At.Format(time.RFC3339Nano), "level": p.Level, "msg": msg,
 		})
 	}
 	if records, err := plugins.NewInstallStatusStore(d.Db).List(ctx); err == nil {
