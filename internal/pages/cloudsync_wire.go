@@ -59,6 +59,25 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 			}
 			return "renamed to " + name, nil
 		},
+		// Retire from the cloud: same soft-deactivate a manager does locally
+		// (variants of the item retire with it; a variant id retires just the
+		// variant). It drops from the sale screen and the next snapshot.
+		DeactivateItem: func(ctx context.Context, id string) (string, error) {
+			repo := data.NewCatalogRepo(d.Db)
+			if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
+				if err := repo.DeactivateItem(ctx, id); err != nil {
+					return "", err
+				}
+				return "item deactivated", nil
+			}
+			if _, ok, _ := repo.GetVariantLabel(ctx, id); !ok {
+				return "", fmt.Errorf("item not found")
+			}
+			if err := repo.DeactivateVariant(ctx, id); err != nil {
+				return "", err
+			}
+			return "variant deactivated", nil
+		},
 		// Remote stock adjustment: the same movement record + connector event
 		// a manual adjustment on the inventory page makes.
 		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {

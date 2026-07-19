@@ -44,12 +44,13 @@ var (
 // short human message for the cloud's result column. A nil hook marks the
 // directive type unsupported on this till.
 type Hooks struct {
-	SetSetting    func(ctx context.Context, key, value string) (string, error)
-	InstallPlugin func(ctx context.Context, listingID string) (string, error)
-	RemovePlugin  func(ctx context.Context, pluginID string) (string, error)
-	SetPrice      func(ctx context.Context, itemID string, priceMinor int64) (string, error)
-	AdjustStock   func(ctx context.Context, itemID string, delta float64, reason string) (string, error)
-	RenameItem    func(ctx context.Context, itemID, name string) (string, error)
+	SetSetting     func(ctx context.Context, key, value string) (string, error)
+	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
+	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
+	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
+	AdjustStock    func(ctx context.Context, itemID string, delta float64, reason string) (string, error)
+	RenameItem     func(ctx context.Context, itemID, name string) (string, error)
+	DeactivateItem func(ctx context.Context, itemID string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -188,6 +189,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing item_id or name"
 		}
 		msg, err = hooks.RenameItem(ctx, id, name)
+	case "deactivate_item":
+		if hooks.DeactivateItem == nil {
+			return "failed", "deactivate_item is not supported on this till"
+		}
+		id := str("item_id")
+		if id == "" {
+			return "failed", "missing item_id"
+		}
+		msg, err = hooks.DeactivateItem(ctx, id)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}

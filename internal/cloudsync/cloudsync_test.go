@@ -96,6 +96,7 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		{"id": "d7", "type": "adjust_stock", "payload": map[string]any{"item_id": "itm-1", "qty_delta": 0}},
 		{"id": "d8", "type": "rename_item", "payload": map[string]any{"item_id": "itm-1", "name": "Cola Zero"}},
 		{"id": "d9", "type": "rename_item", "payload": map[string]any{"item_id": "itm-1", "name": "  "}},
+		{"id": "d10", "type": "deactivate_item", "payload": map[string]any{"item_id": "itm-1"}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -104,7 +105,7 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	var setKey, setVal, installed string
 	var pricedItem string
 	var pricedMinor int64
-	var adjustedItem, adjustedReason, renamedTo string
+	var adjustedItem, adjustedReason, renamedTo, deactivated string
 	var adjustedDelta float64
 	hooks := Hooks{
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
@@ -118,6 +119,10 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 		RenameItem: func(ctx context.Context, itemID, name string) (string, error) {
 			renamedTo = name
 			return "renamed", nil
+		},
+		DeactivateItem: func(ctx context.Context, itemID string) (string, error) {
+			deactivated = itemID
+			return "deactivated", nil
 		},
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			setKey, setVal = key, value
@@ -182,6 +187,9 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 	// d8 rename applied; d9 blank name rejected pre-hook (str() trims).
 	if got["d8"] != "applied" || got["d9"] != "failed" || renamedTo != "Cola Zero" {
 		t.Fatalf("rename results = %+v (renamed %q)", cloud.results, renamedTo)
+	}
+	if got["d10"] != "applied" || deactivated != "itm-1" {
+		t.Fatalf("deactivate: %+v (%q)", cloud.results, deactivated)
 	}
 }
 
