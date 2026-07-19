@@ -53,6 +53,12 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 			}
 			return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
 		},
+		RenameItem: func(ctx context.Context, itemID, name string) (string, error) {
+			if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
+				return "", err
+			}
+			return "renamed to " + name, nil
+		},
 		// Remote stock adjustment: the same movement record + connector event
 		// a manual adjustment on the inventory page makes.
 		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {

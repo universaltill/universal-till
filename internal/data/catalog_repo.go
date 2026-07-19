@@ -485,6 +485,29 @@ func (r *CatalogRepo) SetItemPrice(ctx context.Context, itemID string, priceMino
 	return nil
 }
 
+// SetItemName renames an item (or, on fall-through, a variant) — the cloud's
+// remote rename directive (ADR-0018). Same shape as SetItemPrice.
+func (r *CatalogRepo) SetItemName(ctx context.Context, id, name string) error {
+	if id == "" || strings.TrimSpace(name) == "" {
+		return errors.New("id and name required")
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET name = ?, updated_at = datetime('now') WHERE id = ?`, name, id)
+	if err != nil {
+		return fmt.Errorf("set item name: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	res, err = r.db.ExecContext(ctx, `UPDATE item_variants SET name = ? WHERE id = ? AND is_active = 1`, name, id)
+	if err != nil {
+		return fmt.Errorf("set variant name: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("item not found")
+	}
+	return nil
+}
+
 // SetItemCostPrice records what the shop pays for the item (minor units) —
 // the input the margin report needs.
 func (r *CatalogRepo) SetItemCostPrice(ctx context.Context, itemID string, costMinor int64) error {
