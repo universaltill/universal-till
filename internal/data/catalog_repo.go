@@ -462,7 +462,8 @@ func (r *CatalogRepo) ItemCostPrice(ctx context.Context, itemID string) (int64, 
 
 // SetItemPrice updates just the selling price (minor units) — the cloud's
 // remote price directive (ADR-0018); everything else on the item is
-// untouched. Reports a missing item so the directive result says WHY.
+// untouched. The id may be an item OR a variant (the snapshot lists both);
+// a miss on both reports "item not found" so the directive result says WHY.
 func (r *CatalogRepo) SetItemPrice(ctx context.Context, itemID string, priceMinor int64) error {
 	if itemID == "" {
 		return errors.New("id required")
@@ -470,6 +471,13 @@ func (r *CatalogRepo) SetItemPrice(ctx context.Context, itemID string, priceMino
 	res, err := r.db.ExecContext(ctx, `UPDATE items SET base_price = ?, updated_at = datetime('now') WHERE id = ?`, priceMinor, itemID)
 	if err != nil {
 		return fmt.Errorf("set item price: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	res, err = r.db.ExecContext(ctx, `UPDATE item_variants SET price = ? WHERE id = ? AND is_active = 1`, priceMinor, itemID)
+	if err != nil {
+		return fmt.Errorf("set variant price: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errors.New("item not found")
