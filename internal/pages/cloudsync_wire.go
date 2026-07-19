@@ -19,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // StartCloudSync wires the ADR-0018 directive hooks to the till's real
@@ -51,6 +52,11 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 				return "", err
 			}
 			return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
+		},
+		// Remote stock adjustment: the same movement record + connector event
+		// a manual adjustment on the inventory page makes.
+		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
+			return cloudAdjustStock(ctx, d, itemID, delta, reason)
 		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes
@@ -174,4 +180,42 @@ func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 		}
 	}
 	return out
+}
+
+// cloudAdjustStock mirrors the inventory page's manual adjustment for a
+// directive: same stock-movement record, same connector event. The cloud has
+// no location picker, so the movement lands where the item already tracks
+// stock (else the shop's first stock location).
+func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta float64, reason string) (string, error) {
+	locationID := ""
+	if levels, err := data.NewPOSRepo(d.Db).ListStockLevels(ctx); err == nil {
+		for _, l := range levels {
+			if l.ItemID == itemID {
+				locationID = l.LocationID
+				break
+			}
+		}
+	}
+	if locationID == "" {
+		if locs, err := data.NewCatalogRepo(d.Db).ReadLookup(ctx, "stock_locations"); err == nil && len(locs) > 0 {
+			locationID = locs[0].ID
+		}
+	}
+	if locationID == "" {
+		return "", fmt.Errorf("no stock location configured")
+	}
+	if reason == "" {
+		reason = "cloud adjustment"
+	}
+	if _, err := pos.RecordStockMovement(ctx, d.Db, pos.StockMovementInput{
+		ItemID: itemID, LocationID: locationID, Type: "adjust",
+		Quantity: delta, Reason: reason, ActorID: "cloud",
+	}); err != nil {
+		return "", err
+	}
+	publishStockAdjusted(ctx, d, plugins.StockAdjustedEvent{
+		ItemID: itemID, DeltaQty: delta,
+		Reason: stockMovementReason("adjust"), Location: locationID,
+	})
+	return fmt.Sprintf("stock adjusted by %+g", delta), nil
 }
