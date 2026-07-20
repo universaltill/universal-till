@@ -6,11 +6,13 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 	pos "github.com/universaltill/universal-till/internal/pos"
+	uiassets "github.com/universaltill/universal-till/web"
 )
 
 // Button represents a shortcut button backed by the shortcut_buttons table.
@@ -148,13 +150,20 @@ type Renderer struct {
 	t *template.Template
 }
 
+// stripWebPrefix converts a caller-supplied disk-style path
+// (filepath.Join("web", "ui", ...)) into the path used inside the embedded
+// web.FS ("ui/...", no "web/" prefix — the FS root already is web/).
+func stripWebPrefix(path string) string {
+	return strings.TrimPrefix(filepath.ToSlash(path), "web/")
+}
+
 func NewRenderer(layout, page, partial string, funcs template.FuncMap) (*Renderer, error) {
 	// Parse templates with provided funcs (includes T for i18n)
-	t, err := template.New("base.html").Funcs(funcs).ParseFiles(
-		layout,
-		page,
-		"web/ui/partials/nav.html",
-		partial,
+	t, err := template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS,
+		stripWebPrefix(layout),
+		stripWebPrefix(page),
+		"ui/partials/nav.html",
+		stripWebPrefix(partial),
 	)
 	if err != nil {
 		return nil, err

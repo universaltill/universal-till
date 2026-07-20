@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
+	uiassets "github.com/universaltill/universal-till/web"
 )
 
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
@@ -707,8 +708,8 @@ func normalizeLegalLines(text string, lines []string) []string {
 }
 
 func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, storeName string, design receiptDesign) (string, error) {
-	t, err := template.New("receipt.html").Funcs(funcs).ParseFiles(
-		"web/ui/partials/receipt.html",
+	t, err := template.New("receipt.html").Funcs(funcs).ParseFS(uiassets.FS,
+		"ui/partials/receipt.html",
 	)
 	if err != nil {
 		return "", err

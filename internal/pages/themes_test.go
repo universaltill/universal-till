@@ -99,6 +99,44 @@ func TestThemesHandler_ServesBuiltinAndPluginCSS(t *testing.T) {
 	}
 }
 
+// TestThemesHandler_FallsBackToEmbeddedDefaultWhenDiskDirMissing guards the
+// fix itself: built-in theme resolution used to be a plain os.ReadDir/
+// os.Stat against builtinThemesDir, so a packaged install where
+// web/public/themes is empty or absent on disk (the common case — it's
+// only ever populated by an upload/customization handler) served zero
+// built-in themes and 404'd every /themes/{name}.css request. builtin here
+// is a real, empty tempdir (nothing written to it, unlike themeTestDeps'
+// other tests, and equivalent to a non-existent directory for fallbackFS's
+// ReadDir/Open — both branches are handled identically) — the binary's
+// embedded default (monarch.css) must still resolve.
+func TestThemesHandler_FallsBackToEmbeddedDefaultWhenDiskDirMissing(t *testing.T) {
+	d, _, _ := themeTestDeps(t)
+
+	mux := http.NewServeMux()
+	registerThemes(mux, d)
+
+	req := httptest.NewRequest(http.MethodGet, "/themes/monarch.css", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected the embedded default theme to be served, got %d", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatalf("expected non-empty CSS body")
+	}
+
+	opts := availableThemes(t.Context(), d)
+	found := false
+	for _, o := range opts {
+		if o.Key == "monarch" && o.Source == "built-in" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the embedded default theme to be listed, got %+v", opts)
+	}
+}
+
 func TestResolvePluginThemeCSS_RejectsEscapingConfig(t *testing.T) {
 	d, _, _ := themeTestDeps(t)
 	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('com.x.evil','Evil','1.0.0',1)`); err != nil {

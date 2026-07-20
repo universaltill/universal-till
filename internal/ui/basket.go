@@ -3,7 +3,8 @@ package ui
 import (
 	"html/template"
 	"io"
-	"path/filepath"
+
+	uiassets "github.com/universaltill/universal-till/web"
 )
 
 type BasketView struct {
@@ -11,10 +12,10 @@ type BasketView struct {
 }
 
 func NewBasketView(funcs template.FuncMap) (*BasketView, error) {
-	t := template.Must(template.New("base.html").Funcs(funcs).ParseFiles(
-		filepath.Join("web", "ui", "layouts", "base.html"),
-		filepath.Join("web", "ui", "partials", "basket.html"),
-		filepath.Join("web", "ui", "partials", "nav.html"),
+	t := template.Must(template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS,
+		"ui/layouts/base.html",
+		"ui/partials/basket.html",
+		"ui/partials/nav.html",
 	))
 	return &BasketView{Tpl: t}, nil
 }

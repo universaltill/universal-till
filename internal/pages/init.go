@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
+	"github.com/universaltill/universal-till/web/locales"
 )
 
 func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository) http.Handler {
@@ -51,7 +51,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	})
 
 	// i18n / currency
-	i18n, err := config.NewI18n(filepath.Join("web", "locales"), cfg.Locales.Locale)
+	i18n, err := config.NewI18nFS(locales.FS, cfg.Locales.Locale)
 	if err != nil {
 		log.Fatalf("failed to load locales: %v", err)
 	}
