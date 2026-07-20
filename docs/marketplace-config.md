@@ -7,8 +7,12 @@ Universal Till can connect to different marketplace endpoints for plugin install
 | Environment | Port | Endpoint | Use Case |
 |-------------|------|----------|----------|
 | **Mock** | 8082 | http://localhost:8082 | Local development & testing |
-| **Production** | 8081 | http://localhost:8081 or https://marketplace.universaltill.com | Production use |
+| **Production** | 8081 | http://localhost:8081 or https://cloud.universaltill.com | Production use |
 | **Custom** | Any | Custom URL | Self-hosted marketplace |
+
+`marketplace.universaltill.com` still answers too — it's the legacy default
+baked into tills packaged before 2026-07-20 and is kept alive indefinitely for
+that fleet. New installs default to `cloud.universaltill.com` (ADR-0018).
 
 # Marketplace Configuration Guide
 
@@ -42,7 +46,7 @@ nano pos.env  # Edit with your settings
 
 ```bash
 # Production marketplace
-UT_MARKETPLACE_ENDPOINT_URL=https://marketplace.universaltill.com
+UT_MARKETPLACE_ENDPOINT_URL=https://cloud.universaltill.com
 
 # Local/self-hosted marketplace
 UT_MARKETPLACE_ENDPOINT_URL=http://localhost:8081
@@ -74,7 +78,7 @@ UT_MARKETPLACE_CLIENT_ID=pos-client
 UT_MARKETPLACE_CLIENT_SECRET=dev-secret
 
 # For production marketplace
-UT_MARKETPLACE_ENDPOINT_URL=https://marketplace.universaltill.com
+UT_MARKETPLACE_ENDPOINT_URL=https://cloud.universaltill.com
 UT_MARKETPLACE_CLIENT_ID=your-client-id
 UT_MARKETPLACE_CLIENT_SECRET=your-client-secret
 ```
