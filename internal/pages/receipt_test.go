@@ -2,12 +2,50 @@ package pages
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pos"
 )
+
+// TestRenderReceipt_WorksFromAnyWorkingDirectory guards the sale-completion
+// path specifically: renderReceipt used to ParseFiles("web/ui/partials/
+// receipt.html") straight off disk, so a real install launched from
+// anywhere other than the repo/install root would panic the instant a
+// checkout completed — the single most critical moment in a POS. Every
+// other test in this file uses chdirRoot(t) (its own comment: "chdir to
+// repo root so templates resolve during tests") which was true — required
+// — before this fix, and is now a vestigial no-op left in place rather
+// than proof of anything. This test deliberately does the opposite.
+func TestRenderReceipt_WorksFromAnyWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(orig); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	funcs := map[string]any{
+		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"barcodesvg": httpx.BarcodeSVG,
+		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":          func(key string) string { return key },
+	}
+	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
+	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, Reference: "REF"}}
+	if _, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}); err != nil {
+		t.Fatalf("renderReceipt from an unrelated CWD: %v", err)
+	}
+}
 
 // Ensure receipt rendering includes discount and totals.
 func TestRenderReceipt_DiscountShown(t *testing.T) {

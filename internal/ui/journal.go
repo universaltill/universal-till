@@ -3,9 +3,9 @@ package ui
 import (
 	"html/template"
 	"io"
-	"path/filepath"
 
 	"github.com/universaltill/universal-till/internal/data"
+	uiassets "github.com/universaltill/universal-till/web"
 )
 
 type JournalView struct {
@@ -18,8 +18,8 @@ type JournalViewData struct {
 }
 
 func NewJournalView(funcs template.FuncMap) (*JournalView, error) {
-	t := template.Must(template.New("base.html").Funcs(funcs).ParseFiles(
-		filepath.Join("web", "ui", "partials", "journal.html"),
+	t := template.Must(template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS,
+		"ui/partials/journal.html",
 	))
 	return &JournalView{Tpl: t}, nil
 }

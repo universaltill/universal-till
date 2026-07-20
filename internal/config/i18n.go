@@ -3,8 +3,8 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -19,9 +19,23 @@ type I18n struct {
 	fallback string
 }
 
+// NewI18n loads base locale files from a plain OS directory. Kept for
+// tests that already point at a real web/locales checkout; production
+// startup uses NewI18nFS with the embedded FS instead (see
+// internal/pages/init.go) so a packaged install never depends on web/locales
+// being present relative to whatever directory the OS launches the binary
+// from — a missing/misplaced directory here used to be a hard
+// log.Fatalf-on-startup crash, which is unacceptable for someone else's
+// shop with no one around to debug it.
 func NewI18n(localesDir string, fallback string) (*I18n, error) {
+	return NewI18nFS(os.DirFS(localesDir), fallback)
+}
+
+// NewI18nFS loads base locale files from any fs.FS (an embed.FS in
+// production, os.DirFS(dir) for tests/back-compat).
+func NewI18nFS(fsys fs.FS, fallback string) (*I18n, error) {
 	i := &I18n{messages: make(map[string]map[string]string), overlays: make(map[string]map[string]string), shop: make(map[string]map[string]string), fallback: fallback}
-	entries, err := os.ReadDir(localesDir)
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +45,7 @@ func NewI18n(localesDir string, fallback string) (*I18n, error) {
 			continue
 		}
 		locale := strings.TrimSuffix(name, ".json")
-		b, err := os.ReadFile(filepath.Join(localesDir, name))
+		b, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return nil, err
 		}

@@ -18,6 +18,7 @@ import (
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
+	uiassets "github.com/universaltill/universal-till/web"
 )
 
 var baseFuncs = template.FuncMap{
@@ -37,10 +38,28 @@ type Renderer struct {
 	t *template.Template
 }
 
+// stripWebPrefix converts a caller-supplied disk-style path
+// (filepath.Join("web", "ui", "pages", "x.html")) into the path used inside
+// the embedded web.FS ("ui/pages/x.html", no "web/" prefix — the FS root
+// already is web/). Callers throughout internal/pages still build paths the
+// old way; this keeps that call-site code unchanged.
+func stripWebPrefix(path string) string {
+	path = filepath.ToSlash(path)
+	return strings.TrimPrefix(path, "web/")
+}
+
+func stripWebPrefixes(paths []string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = stripWebPrefix(p)
+	}
+	return out
+}
+
 func NewRenderer(layout string, page string, funcs template.FuncMap, partials ...string) (*Renderer, error) {
 	files := []string{layout, page, filepath.Join("web", "ui", "partials", "nav.html")}
 	files = append(files, partials...)
-	t, err := template.New("base.html").Funcs(funcs).ParseFiles(files...)
+	t, err := template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS, stripWebPrefixes(files)...)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +74,7 @@ func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
 func RenderWith(files []string, funcs template.FuncMap) func(name string, data any) http.HandlerFunc {
 	return func(name string, data any) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			t, err := template.New("base.html").Funcs(funcs).ParseFiles(files...)
+			t, err := template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS, stripWebPrefixes(files)...)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -304,20 +323,20 @@ func NewMux() *http.ServeMux { return http.NewServeMux() }
 // Render full page with layout + page + common partials
 func Render(tplPath string, data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		layout := filepath.Join("web", "ui", "layouts", "base.html")
-		page := filepath.Join("web", tplPath)
+		layout := "ui/layouts/base.html"
+		page := stripWebPrefix(tplPath)
 
 		locale := ResolveLocale(w, r)
-		t := template.Must(template.New("base.html").Funcs(FuncsFor(locale)).ParseFiles(
+		t := template.Must(template.New("base.html").Funcs(FuncsFor(locale)).ParseFS(uiassets.FS,
 			layout,
 			page,
-			filepath.Join("web", "ui", "partials", "nav.html"),
-			filepath.Join("web", "ui", "partials", "buttons.html"),
-			filepath.Join("web", "ui", "partials", "buttons_admin.html"),
-			filepath.Join("web", "ui", "partials", "basket.html"),
-			filepath.Join("web", "ui", "partials", "toast.html"),
-			filepath.Join("web", "ui", "partials", "plugin_install_modal.html"),
-			filepath.Join("web", "ui", "partials", "plugin_manual_import.html"),
+			"ui/partials/nav.html",
+			"ui/partials/buttons.html",
+			"ui/partials/buttons_admin.html",
+			"ui/partials/basket.html",
+			"ui/partials/toast.html",
+			"ui/partials/plugin_install_modal.html",
+			"ui/partials/plugin_manual_import.html",
 		))
 		if err := t.ExecuteTemplate(w, "base", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -328,10 +347,10 @@ func Render(tplPath string, data any) http.HandlerFunc {
 // RenderPartial renders just a template fragment (for HTMX responses)
 func RenderPartial(tplPath string, data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		page := filepath.Join("web", tplPath)
+		page := stripWebPrefix(tplPath)
 
 		locale := ResolveLocale(w, r)
-		t := template.Must(template.New(filepath.Base(page)).Funcs(FuncsFor(locale)).ParseFiles(page))
+		t := template.Must(template.New(filepath.Base(page)).Funcs(FuncsFor(locale)).ParseFS(uiassets.FS, page))
 		if err := t.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

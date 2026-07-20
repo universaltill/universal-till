@@ -3,6 +3,8 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,11 +41,12 @@ type themeConfig struct {
 	CSS string `json:"css"` // path of the stylesheet inside the plugin dir
 }
 
-// availableThemes lists built-in themes (from disk) followed by plugin themes.
+// availableThemes lists built-in themes (disk override if present, else the
+// binary's embedded defaults) followed by plugin themes.
 func availableThemes(ctx context.Context, d *common.Deps) []ThemeOption {
 	options := []ThemeOption{}
 
-	if entries, err := os.ReadDir(builtinThemesDir); err == nil {
+	if entries, err := fs.ReadDir(newPublicFallbackFS(builtinThemesDir, "public/themes"), "."); err == nil {
 		for _, e := range entries {
 			name := e.Name()
 			if e.IsDir() || !strings.HasSuffix(name, ".css") {
@@ -114,10 +117,10 @@ func registerThemes(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		builtin := filepath.Join(builtinThemesDir, key+".css")
-		if _, err := os.Stat(builtin); err == nil {
+		if f, err := newPublicFallbackFS(builtinThemesDir, "public/themes").Open(key + ".css"); err == nil {
+			defer f.Close()
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-			http.ServeFile(w, r, builtin)
+			_, _ = io.Copy(w, f)
 			return
 		}
 
