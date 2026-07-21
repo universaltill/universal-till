@@ -891,5 +891,6 @@
   "backoffice.inventory": "Envanter",
   "backoffice.settings": "Ayarlar",
   "plugin.content.fallback_notice": "Bu içerik henüz dilinize çevrilmedi — mevcut içerik gösteriliyor.",
-  "plugin.content.meta": "İçerik sürüm %s · güncellenme %s"
+  "plugin.content.meta": "İçerik sürüm %s · güncellenme %s",
+  "plugin.content.search_placeholder": "Ara…"
 }

@@ -891,5 +891,6 @@
   "backoffice.inventory": "Inventory",
   "backoffice.settings": "Settings",
   "plugin.content.fallback_notice": "This content isn't available in your language yet — showing what's there so far.",
-  "plugin.content.meta": "Content v%s · updated %s"
+  "plugin.content.meta": "Content v%s · updated %s",
+  "plugin.content.search_placeholder": "Search…"
 }
