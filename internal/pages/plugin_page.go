@@ -37,12 +37,13 @@ type contentBundle struct {
 		SortOrder int    `json:"sort_order"`
 	} `json:"categories"`
 	Entries []struct {
-		ID          string `json:"id"`
-		Category    string `json:"category"`
-		Question    string `json:"question"`
-		Answer      string `json:"answer"`
-		SortOrder   int    `json:"sort_order"`
-		LastUpdated string `json:"last_updated"`
+		ID          string   `json:"id"`
+		Category    string   `json:"category"`
+		Question    string   `json:"question"`
+		Answer      string   `json:"answer"`
+		SortOrder   int      `json:"sort_order"`
+		LastUpdated string   `json:"last_updated"`
+		Keywords    []string `json:"keywords"`
 	} `json:"faq_entries"`
 }
 
@@ -297,6 +298,10 @@ func bundleView(b *contentBundle) map[string]any {
 	type entryView struct {
 		Question, Answer string
 		Sort             int
+		// Search is a lowercased "question answer keyword1 keyword2..."
+		// haystack for the client-side keyword filter (FR-005/SC-003) —
+		// rendered as a data-search attribute, never displayed.
+		Search string
 	}
 	type categoryView struct {
 		Name    string
@@ -314,7 +319,8 @@ func bundleView(b *contentBundle) map[string]any {
 	grouped := map[string][]entryView{}
 	lastUpdated := ""
 	for _, e := range b.Entries {
-		grouped[e.Category] = append(grouped[e.Category], entryView{Question: e.Question, Answer: e.Answer, Sort: e.SortOrder})
+		haystack := strings.ToLower(strings.Join(append([]string{e.Question, e.Answer}, e.Keywords...), " "))
+		grouped[e.Category] = append(grouped[e.Category], entryView{Question: e.Question, Answer: e.Answer, Sort: e.SortOrder, Search: haystack})
 		// ISO 8601 (YYYY-MM-DD) dates compare lexicographically in
 		// chronological order, so a plain string max is correct here.
 		if e.LastUpdated > lastUpdated {

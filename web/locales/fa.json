@@ -891,5 +891,6 @@
   "backoffice.inventory": "انبار",
   "backoffice.settings": "تنظیمات",
   "plugin.content.fallback_notice": "این محتوا هنوز به زبان شما ترجمه نشده — محتوای موجود نمایش داده می‌شود.",
-  "plugin.content.meta": "نسخهٔ محتوا %s · به‌روزرسانی %s"
+  "plugin.content.meta": "نسخهٔ محتوا %s · به‌روزرسانی %s",
+  "plugin.content.search_placeholder": "جستجو…"
 }
