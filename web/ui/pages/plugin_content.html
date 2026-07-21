@@ -1,5 +1,8 @@
 {{ define "content" }}
 <h1>{{ .title }}</h1>
+{{ if .bundle.FallbackNotice }}
+<p class="plugin-content-notice">{{ T "plugin.content.fallback_notice" }}</p>
+{{ end }}
 <div class="card plugin-content" {{ if .bundle.RTL }}dir="rtl"{{ end }}>
   {{ range .bundle.Categories }}
   <section class="plugin-content-category">
@@ -13,4 +16,7 @@
   </section>
   {{ end }}
 </div>
+{{ if and .bundle.Version .bundle.LastUpdated }}
+<p class="plugin-content-meta muted">{{ printf (T "plugin.content.meta") .bundle.Version .bundle.LastUpdated }}</p>
+{{ end }}
 {{ end }}

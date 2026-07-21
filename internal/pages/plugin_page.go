@@ -28,6 +28,7 @@ var pluginPagesDir = "./data/plugins"
 // FAQ reference plugin publishes).
 type contentBundle struct {
 	Locale         string `json:"locale"`
+	Version        string `json:"version"`
 	RTL            bool   `json:"rtl"`
 	FallbackLocale string `json:"fallback_locale"`
 	Categories     []struct {
@@ -36,11 +37,12 @@ type contentBundle struct {
 		SortOrder int    `json:"sort_order"`
 	} `json:"categories"`
 	Entries []struct {
-		ID        string `json:"id"`
-		Category  string `json:"category"`
-		Question  string `json:"question"`
-		Answer    string `json:"answer"`
-		SortOrder int    `json:"sort_order"`
+		ID          string `json:"id"`
+		Category    string `json:"category"`
+		Question    string `json:"question"`
+		Answer      string `json:"answer"`
+		SortOrder   int    `json:"sort_order"`
+		LastUpdated string `json:"last_updated"`
 	} `json:"faq_entries"`
 }
 
@@ -133,8 +135,10 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 		"menuItems": d.Menu,
 	}
 
-	if bundle, ok := loadContentBundle(filepath.Join(pluginDir, "content"), locale); ok {
-		base["bundle"] = bundleView(bundle)
+	if bundle, usedFallback, ok := loadContentBundle(filepath.Join(pluginDir, "content"), locale); ok {
+		view := bundleView(bundle)
+		view["FallbackNotice"] = usedFallback
+		base["bundle"] = view
 		httpx.Render("ui/pages/plugin_content.html", base)(w, r)
 		return
 	}
@@ -153,13 +157,33 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 	httpx.Render("ui/pages/plugin_embed.html", base)(w, r)
 }
 
+// baseLang returns the language subtag before the first '-' (lowercased),
+// e.g. "en-GB" -> "en"; a tag with no '-' is returned lowercased as-is.
+func baseLang(locale string) string {
+	lower := strings.ToLower(locale)
+	if i := strings.Index(lower, "-"); i >= 0 {
+		return lower[:i]
+	}
+	return lower
+}
+
 // loadContentBundle picks the best content/<locale>.json for the POS locale:
-// exact match, prefix match (en -> en-US/en-GB), declared fallback, en-US,
-// then any bundle.
-func loadContentBundle(contentDir, locale string) (*contentBundle, bool) {
+// exact match, prefix match (en -> en-US/en-GB), same base language but a
+// different region (en-GB requested, only en-US shipped), then en-US, then
+// any bundle. (The bundle's own "fallback_locale" field is parsed but NOT
+// consulted here — pre-existing, not addressed by this function.) The
+// second return value reports whether
+// the pick required a true language fallback (e.g. requested ja-JP but
+// served en-US) as opposed to matching the requested language in some form
+// (exact, regional prefix, or same base language) — the caller surfaces
+// this to the page so staff know they're seeing a different language, not
+// their own (spec FR-004 / US2 acceptance scenario 2). A same-base-language
+// pick (en-GB -> en-US) is deliberately NOT a fallback for this purpose:
+// it's still the requester's language, just a different region's bundle.
+func loadContentBundle(contentDir, locale string) (bundle *contentBundle, usedFallback bool, ok bool) {
 	files, err := os.ReadDir(contentDir)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	var names []string
 	for _, f := range files {
@@ -168,7 +192,7 @@ func loadContentBundle(contentDir, locale string) (*contentBundle, bool) {
 		}
 	}
 	if len(names) == 0 {
-		return nil, false
+		return nil, false, false
 	}
 	sort.Strings(names)
 
@@ -188,6 +212,16 @@ func loadContentBundle(contentDir, locale string) (*contentBundle, bool) {
 		}
 	}
 	if pick == "" {
+		reqBase := baseLang(locale)
+		for _, n := range names {
+			if baseLang(n) == reqBase {
+				pick = n
+				break
+			}
+		}
+	}
+	matchedRequestedLanguage := pick != ""
+	if pick == "" {
 		for _, fallback := range []string{"en-US", names[0]} {
 			for _, n := range names {
 				if n == fallback {
@@ -203,21 +237,21 @@ func loadContentBundle(contentDir, locale string) (*contentBundle, bool) {
 
 	raw, err := os.ReadFile(filepath.Join(contentDir, pick+".json"))
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	if !checksumValid(raw) {
 		logging.L().Warnf("plugin content: %s failed checksum_sha256 verification (on-disk corruption?), refusing to render", filepath.Join(contentDir, pick+".json"))
-		return nil, false
+		return nil, false, false
 	}
 	var b contentBundle
 	if err := json.Unmarshal(raw, &b); err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	// A bundle without entries isn't a content page.
 	if len(b.Entries) == 0 {
-		return nil, false
+		return nil, false, false
 	}
-	return &b, true
+	return &b, !matchedRequestedLanguage, true
 }
 
 // checksumFieldPattern matches a populated checksum_sha256 field the same
@@ -278,8 +312,14 @@ func bundleView(b *contentBundle) map[string]any {
 	}
 
 	grouped := map[string][]entryView{}
+	lastUpdated := ""
 	for _, e := range b.Entries {
 		grouped[e.Category] = append(grouped[e.Category], entryView{Question: e.Question, Answer: e.Answer, Sort: e.SortOrder})
+		// ISO 8601 (YYYY-MM-DD) dates compare lexicographically in
+		// chronological order, so a plain string max is correct here.
+		if e.LastUpdated > lastUpdated {
+			lastUpdated = e.LastUpdated
+		}
 	}
 
 	cats := make([]categoryView, 0, len(grouped))
@@ -293,5 +333,10 @@ func bundleView(b *contentBundle) map[string]any {
 	}
 	sort.Slice(cats, func(i, j int) bool { return cats[i].Sort < cats[j].Sort })
 
-	return map[string]any{"RTL": b.RTL, "Categories": cats}
+	return map[string]any{
+		"RTL":         b.RTL,
+		"Categories":  cats,
+		"Version":     b.Version,
+		"LastUpdated": lastUpdated,
+	}
 }

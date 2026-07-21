@@ -889,5 +889,7 @@
   "backoffice.no_problems": "هشدار یا خطای اخیری وجود ندارد.",
   "backoffice.go_deeper": "جزئیات بیشتر",
   "backoffice.inventory": "انبار",
-  "backoffice.settings": "تنظیمات"
+  "backoffice.settings": "تنظیمات",
+  "plugin.content.fallback_notice": "این محتوا هنوز به زبان شما ترجمه نشده — محتوای موجود نمایش داده می‌شود.",
+  "plugin.content.meta": "نسخهٔ محتوا %s · به‌روزرسانی %s"
 }

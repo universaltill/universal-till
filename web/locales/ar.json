@@ -889,5 +889,7 @@
   "backoffice.no_problems": "لا توجد تحذيرات أو أخطاء حديثة.",
   "backoffice.go_deeper": "تعمّق أكثر",
   "backoffice.inventory": "المخزون",
-  "backoffice.settings": "الإعدادات"
+  "backoffice.settings": "الإعدادات",
+  "plugin.content.fallback_notice": "هذا المحتوى غير متوفر بلغتك بعد — يتم عرض المتوفر حاليًا.",
+  "plugin.content.meta": "إصدار المحتوى %s · آخر تحديث %s"
 }

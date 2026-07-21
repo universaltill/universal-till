@@ -889,5 +889,7 @@
   "backoffice.no_problems": "Yakın zamanda uyarı veya hata yok.",
   "backoffice.go_deeper": "Detaya in",
   "backoffice.inventory": "Envanter",
-  "backoffice.settings": "Ayarlar"
+  "backoffice.settings": "Ayarlar",
+  "plugin.content.fallback_notice": "Bu içerik henüz dilinize çevrilmedi — mevcut içerik gösteriliyor.",
+  "plugin.content.meta": "İçerik sürüm %s · güncellenme %s"
 }

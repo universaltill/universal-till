@@ -889,5 +889,7 @@
   "backoffice.no_problems": "No recent warnings or errors.",
   "backoffice.go_deeper": "Go deeper",
   "backoffice.inventory": "Inventory",
-  "backoffice.settings": "Settings"
+  "backoffice.settings": "Settings",
+  "plugin.content.fallback_notice": "This content isn't available in your language yet — showing what's there so far.",
+  "plugin.content.meta": "Content v%s · updated %s"
 }
