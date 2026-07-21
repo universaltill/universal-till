@@ -94,6 +94,47 @@ func TestPluginPage_RendersContentBundle(t *testing.T) {
 	}
 }
 
+func TestPluginPage_KeywordsAreSearchable(t *testing.T) {
+	d, base := pluginPageTestDeps(t)
+
+	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
+		t.Fatal(err)
+	}
+	contentDir := filepath.Join(base, "com.x.faq", "1.2.0", "content")
+	if err := os.MkdirAll(contentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Neither the question nor the answer mentions "barcode" — only the
+	// keywords array does. The rendered data-search haystack must still
+	// carry it, or a search for "barcode" would find nothing.
+	bundle := `{"locale":"en-US","rtl":false,
+		"categories":[{"id":"general","name":"General","sort_order":1}],
+		"faq_entries":[{"id":"q1","category":"general","question":"How do I add an item?","answer":"Tap the tile.","sort_order":1,"keywords":["barcode","scan"]}]}`
+	if err := os.WriteFile(filepath.Join(contentDir, "en-US.json"), []byte(bundle), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerPluginPages(mux, d)
+	req := httptest.NewRequest(http.MethodGet, "/plugin/faq", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugin/faq = %d (%s)", rec.Code, body[:min(300, len(body))])
+	}
+	if !strings.Contains(body, `id="plugin-content-search"`) {
+		t.Error("expected a search input on the content page")
+	}
+	if !strings.Contains(body, `data-search="how do i add an item? tap the tile. barcode scan"`) {
+		t.Errorf("expected data-search to include the keywords, body=%s", body[:min(1200, len(body))])
+	}
+}
+
 func TestPluginPage_ChecksumValidBundleRenders(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 

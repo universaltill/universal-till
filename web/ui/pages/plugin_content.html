@@ -3,12 +3,16 @@
 {{ if .bundle.FallbackNotice }}
 <p class="plugin-content-notice">{{ T "plugin.content.fallback_notice" }}</p>
 {{ end }}
+{{ if .bundle.Categories }}
+<input type="search" id="plugin-content-search" class="plugin-content-search"
+       placeholder="{{ T "plugin.content.search_placeholder" }}" autocomplete="off">
+{{ end }}
 <div class="card plugin-content" {{ if .bundle.RTL }}dir="rtl"{{ end }}>
   {{ range .bundle.Categories }}
   <section class="plugin-content-category">
     <h2>{{ .Name }}</h2>
     {{ range .Entries }}
-    <details class="plugin-content-entry">
+    <details class="plugin-content-entry" data-search="{{ .Search }}">
       <summary><strong>{{ .Question }}</strong></summary>
       <p>{{ .Answer }}</p>
     </details>
@@ -19,4 +23,23 @@
 {{ if and .bundle.Version .bundle.LastUpdated }}
 <p class="plugin-content-meta muted">{{ printf (T "plugin.content.meta") .bundle.Version .bundle.LastUpdated }}</p>
 {{ end }}
+<script>
+(function () {
+  var search = document.getElementById('plugin-content-search');
+  if (!search) return;
+  function filterEntries() {
+    var q = (search.value || '').toLowerCase();
+    document.querySelectorAll('.plugin-content-category').forEach(function (section) {
+      var visible = 0;
+      section.querySelectorAll('.plugin-content-entry').forEach(function (entry) {
+        var match = q === '' || (entry.dataset.search || '').indexOf(q) !== -1;
+        entry.hidden = !match;
+        if (match) visible++;
+      });
+      section.hidden = visible === 0;
+    });
+  }
+  search.addEventListener('input', filterEntries);
+})();
+</script>
 {{ end }}

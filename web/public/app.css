@@ -125,6 +125,10 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .page-head { display: flex; align-items: center; justify-content: space-between;
              gap: 1rem; margin: .25rem 0 1rem; }
 .page-head input[type="search"] { min-width: 260px; }
+
+/* ---------- Plugin content pages (FAQ etc.) ---------- */
+.plugin-content-search { display: block; min-width: 260px; max-width: 100%;
+                          margin: 0 0 1rem; }
 .catalog-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px;
                   gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .catalog-layout { grid-template-columns: 1fr; } }

@@ -891,5 +891,6 @@
   "backoffice.inventory": "المخزون",
   "backoffice.settings": "الإعدادات",
   "plugin.content.fallback_notice": "هذا المحتوى غير متوفر بلغتك بعد — يتم عرض المتوفر حاليًا.",
-  "plugin.content.meta": "إصدار المحتوى %s · آخر تحديث %s"
+  "plugin.content.meta": "إصدار المحتوى %s · آخر تحديث %s",
+  "plugin.content.search_placeholder": "بحث…"
 }
