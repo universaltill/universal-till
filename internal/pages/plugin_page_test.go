@@ -1,6 +1,8 @@
 package pages
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,20 @@ import (
 
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// bundleWithChecksum mirrors ut-plugin-faq's scripts/checksum.py: the
+// checksum covers the JSON with its own checksum_sha256 value zeroed to a
+// same-length placeholder.
+func bundleWithChecksum(t *testing.T, jsonWithEmptyChecksum string) string {
+	t.Helper()
+	zeroed := strings.Replace(jsonWithEmptyChecksum, `"checksum_sha256":""`, `"checksum_sha256":"`+strings.Repeat("0", 64)+`"`, 1)
+	if zeroed == jsonWithEmptyChecksum {
+		t.Fatal(`bundleWithChecksum: fixture must contain "checksum_sha256":""`)
+	}
+	sum := sha256.Sum256([]byte(zeroed))
+	digest := hex.EncodeToString(sum[:])
+	return strings.Replace(zeroed, strings.Repeat("0", 64), digest, 1)
+}
 
 func pluginPageTestDeps(t *testing.T) (*common.Deps, string) {
 	t.Helper()
@@ -73,6 +89,75 @@ func TestPluginPage_RendersContentBundle(t *testing.T) {
 	// It must NOT be the home page.
 	if strings.Contains(body, "kiosk-checkout-start") {
 		t.Error("plugin route rendered the home page")
+	}
+}
+
+func TestPluginPage_ChecksumValidBundleRenders(t *testing.T) {
+	d, base := pluginPageTestDeps(t)
+
+	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
+		t.Fatal(err)
+	}
+	contentDir := filepath.Join(base, "com.x.faq", "1.2.0", "content")
+	if err := os.MkdirAll(contentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := `{"locale":"en-US","checksum_sha256":"","rtl":false,
+		"categories":[{"id":"general","name":"General","sort_order":1}],
+		"faq_entries":[{"id":"q1","category":"general","question":"How do I scan?","answer":"Point and shoot.","sort_order":1}]}`
+	if err := os.WriteFile(filepath.Join(contentDir, "en-US.json"), []byte(bundleWithChecksum(t, fixture)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerPluginPages(mux, d)
+	req := httptest.NewRequest(http.MethodGet, "/plugin/faq", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "How do I scan?") {
+		t.Fatalf("valid-checksum bundle: code=%d body=%s", rec.Code, rec.Body.String()[:min(300, rec.Body.Len())])
+	}
+}
+
+func TestPluginPage_ChecksumMismatchRefusesToRender(t *testing.T) {
+	d, base := pluginPageTestDeps(t)
+
+	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
+		t.Fatal(err)
+	}
+	contentDir := filepath.Join(base, "com.x.faq", "1.2.0", "content")
+	if err := os.MkdirAll(contentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := `{"locale":"en-US","checksum_sha256":"","rtl":false,
+		"categories":[{"id":"general","name":"General","sort_order":1}],
+		"faq_entries":[{"id":"q1","category":"general","question":"How do I scan?","answer":"Point and shoot.","sort_order":1}]}`
+	signed := bundleWithChecksum(t, fixture)
+	// Corrupt the content AFTER signing — same shape as on-disk bit-rot or a
+	// hand-edit, the checksum no longer matches.
+	tampered := strings.Replace(signed, "Point and shoot.", "Point and shoot!!", 1)
+	if err := os.WriteFile(filepath.Join(contentDir, "en-US.json"), []byte(tampered), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerPluginPages(mux, d)
+	req := httptest.NewRequest(http.MethodGet, "/plugin/faq", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	// loadContentBundle refuses the corrupted bundle; renderPluginPage falls
+	// through to the "ships no page content" empty state rather than the
+	// (possibly tampered) FAQ text.
+	if strings.Contains(rec.Body.String(), "Point and shoot") {
+		t.Fatalf("rendered content from a checksum-mismatched bundle: %s", rec.Body.String())
 	}
 }
 

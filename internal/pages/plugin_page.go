@@ -1,17 +1,21 @@
 package pages
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 )
@@ -201,6 +205,10 @@ func loadContentBundle(contentDir, locale string) (*contentBundle, bool) {
 	if err != nil {
 		return nil, false
 	}
+	if !checksumValid(raw) {
+		logging.L().Warnf("plugin content: %s failed checksum_sha256 verification (on-disk corruption?), refusing to render", filepath.Join(contentDir, pick+".json"))
+		return nil, false
+	}
 	var b contentBundle
 	if err := json.Unmarshal(raw, &b); err != nil {
 		return nil, false
@@ -210,6 +218,43 @@ func loadContentBundle(contentDir, locale string) (*contentBundle, bool) {
 		return nil, false
 	}
 	return &b, true
+}
+
+// checksumFieldPattern matches a populated checksum_sha256 field the same
+// way ut-plugin-faq's scripts/checksum.py writes it.
+var checksumFieldPattern = regexp.MustCompile(`(?i)("checksum_sha256":\s*")([0-9a-f]{64})(")`)
+
+// checksumValid verifies a content bundle's self-referential checksum_sha256
+// field, if present. The field can't hash the file's raw bytes as-is (that
+// would be circular — it would need to already know its own value), so the
+// checksum instead covers the file with its own checksum_sha256 VALUE
+// zeroed out to a same-length placeholder (sha256 hex digests are always
+// exactly 64 chars, so zeroing never changes the file's byte length or
+// reflows anything). This is pure byte-level substitution, not JSON
+// re-serialization, so it matches ut-plugin-faq's Python packaging tool
+// exactly with no cross-language canonicalization risk.
+//
+// A bundle with no populated checksum field (older content, or a
+// page-plugin author who hasn't adopted this convention) has nothing to
+// verify and passes through unchanged — this is a defense-in-depth check
+// against post-install on-disk corruption, not a replacement for the
+// Ed25519 signature already verified at install time.
+func checksumValid(raw []byte) bool {
+	matches := checksumFieldPattern.FindAllSubmatch(raw, 2)
+	switch len(matches) {
+	case 0:
+		return true
+	case 1:
+		want := strings.ToLower(string(matches[0][2]))
+		zeroed := checksumFieldPattern.ReplaceAll(raw, []byte(`${1}`+strings.Repeat("0", 64)+`${3}`))
+		sum := sha256.Sum256(zeroed)
+		return hex.EncodeToString(sum[:]) == want
+	default:
+		// More than one checksum_sha256 field is itself a sign something is
+		// wrong with the file (duplicate/injected key) — refuse rather than
+		// guess which occurrence is authoritative.
+		return false
+	}
 }
 
 // bundleView groups bundle entries under their (sorted) categories for the
