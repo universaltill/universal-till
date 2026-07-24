@@ -181,6 +181,22 @@ body.osk-padded { padding-block-end: 15.5rem; }
                                border-radius: 8px; border: 1px solid var(--border); }
 .catalog-detail-label { font-size: .75rem; font-weight: 600; text-transform: uppercase;
                         letter-spacing: .04em; color: var(--muted); margin-block-end: .4rem; }
+
+/* ---------- Item customization admin (ADR-0020) ---------- */
+.catalog-detail-modifiers { margin-block-start: 1rem; }
+.modifier-admin-group { border: 1px solid var(--border); border-radius: var(--radius);
+                         padding: .6rem .75rem; margin-block-end: .6rem; }
+.modifier-admin-group.vg-inactive { opacity: .55; }
+.modifier-admin-group-row, .modifier-admin-option-row {
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-block-end: .35rem;
+}
+.modifier-admin-group-row input[type="text"] { flex: 1 1 10rem; min-inline-size: 8rem; }
+.modifier-admin-option-row { padding-inline-start: 1rem; }
+.modifier-admin-option-row input[type="text"] { flex: 1 1 8rem; min-inline-size: 6rem; }
+.modifier-admin-option-row.vg-inactive { opacity: .55; }
+.modifier-admin-options { margin-block-start: .35rem; }
+.modifier-admin-group-new { border: 1px dashed var(--border); border-radius: var(--radius);
+                             padding: .6rem .75rem; }
 .chip-row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; min-block-size: 1.6rem; }
 .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .12rem .55rem;
         border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -93,12 +94,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				if cost > 0 {
 					costMajor = fmt.Sprintf("%.2f", float64(cost)/100)
 				}
+				// ADR-0020: shows deactivated groups/options too (unlike the
+				// sale-time ListGroupsForItem) so a manager can reactivate one.
+				modGroups, _ := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
 				pdata = map[string]any{
-					"ItemID":       itemID,
-					"ItemName":     label.Name,
-					"Variants":     variants,
-					"ItemBarcodes": itemBCs,
-					"CostMajor":    costMajor,
+					"ItemID":         itemID,
+					"ItemName":       label.Name,
+					"Variants":       variants,
+					"ItemBarcodes":   itemBCs,
+					"CostMajor":      costMajor,
+					"ModifierGroups": modGroups,
 				}
 			}
 		}
@@ -357,6 +362,101 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		renderCatalogTable(w, r)
 	})
 
+	// Create or update a modifier group (ADR-0020) — id present = update,
+	// absent = create. Same soft-deactivate convention as items/variants
+	// (isActive toggle, no hard delete) so historical sale_line_modifiers
+	// snapshots are never orphaned by a group disappearing from under them.
+	mux.HandleFunc("/api/catalog/modifier-group", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("itemId"))
+		name := strings.TrimSpace(r.Form.Get("name"))
+		if itemID == "" || name == "" {
+			http.Error(w, "itemId and name required", http.StatusBadRequest)
+			return
+		}
+		minSelect, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("minSelect")))
+		maxSelect, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("maxSelect")))
+		if err != nil || maxSelect < 1 {
+			maxSelect = 1
+		}
+		sortOrder, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("sortOrder")))
+		required := r.Form.Get("required") == "1"
+		if required && minSelect < 1 {
+			minSelect = 1 // a required group must ask for at least one pick
+		}
+		active := formCheckboxActive(r)
+
+		modRepo := data.NewModifierRepo(d.Db)
+		groupID := strings.TrimSpace(r.Form.Get("id"))
+		if groupID == "" {
+			if _, err := modRepo.CreateGroup(r.Context(), uuid.NewString(), itemID, name, required, minSelect, maxSelect, sortOrder); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			if err := modRepo.UpdateGroup(r.Context(), groupID, name, required, minSelect, maxSelect, sortOrder, active); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
+
+	// Create or update a modifier option (ADR-0020). majorPrice is entered
+	// in the shop's display currency and converted to minor units here —
+	// same convention as variant price entry.
+	mux.HandleFunc("/api/catalog/modifier-option", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = r.ParseForm()
+		groupID := strings.TrimSpace(r.Form.Get("groupId"))
+		itemID := strings.TrimSpace(r.Form.Get("itemId"))
+		name := strings.TrimSpace(r.Form.Get("name"))
+		if groupID == "" || itemID == "" || name == "" {
+			http.Error(w, "groupId, itemId and name required", http.StatusBadRequest)
+			return
+		}
+		priceDeltaMinor := int64(0)
+		if majorStr := strings.TrimSpace(r.Form.Get("priceDeltaMajor")); majorStr != "" {
+			major, err := strconv.ParseFloat(majorStr, 64)
+			if err != nil || major < 0 {
+				http.Error(w, "invalid priceDeltaMajor", http.StatusBadRequest)
+				return
+			}
+			// Decimal-aware: a 0-decimal currency (IRR/IRT/IQD/AFN/JPY, all
+			// supported — see httpx.currencies) has no minor-unit
+			// subdivision at all, so a hardcoded *100 would inflate every
+			// price 100x for those shops. Matches the same
+			// currency.Decimals the template already uses for this
+			// field's step="" attribute.
+			decimals := httpx.CurrencyByCode(d.CurrentState().Currency).Decimals
+			priceDeltaMinor = int64(math.Round(major * math.Pow(10, float64(decimals))))
+		}
+		sortOrder, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("sortOrder")))
+		active := formCheckboxActive(r)
+
+		modRepo := data.NewModifierRepo(d.Db)
+		optionID := strings.TrimSpace(r.Form.Get("id"))
+		if optionID == "" {
+			if _, err := modRepo.CreateOption(r.Context(), uuid.NewString(), groupID, name, priceDeltaMinor, sortOrder); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			if err := modRepo.UpdateOption(r.Context(), optionID, name, priceDeltaMinor, sortOrder, active); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
+
 	// Deactivate variant
 	mux.HandleFunc("/api/catalog/variant/deactivate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -577,6 +677,25 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// formCheckboxActive reads a checkbox paired with a hidden isActive=0
+// fallback (an unchecked box submits nothing on its own). Checked ⇒ the
+// browser sends BOTH the hidden "0" and the checkbox's "1", in DOM order —
+// hidden-then-checkbox means Form.Get alone would always see "0" first and
+// read as inactive even when checked, so this scans every submitted value
+// for a "1" rather than trusting the first one.
+func formCheckboxActive(r *http.Request) bool {
+	vals := r.Form["isActive"]
+	if len(vals) == 0 {
+		return true // no isActive field at all: caller didn't use the hidden-fallback pattern, default active
+	}
+	for _, v := range vals {
+		if v == "1" {
+			return true
+		}
+	}
+	return false
 }
 
 func parseItemInput(r *http.Request) (pos.ItemInput, error) {
