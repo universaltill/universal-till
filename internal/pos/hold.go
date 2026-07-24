@@ -1,21 +1,25 @@
 package pos
 
-import "github.com/universaltill/universal-till/internal/money"
+import (
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
+)
 
 // SnapshotLine is a BasketLine with every field serialized — BasketLine hides
 // ItemID/VariantID/TaxRateBP/IsWeighed from the wire (json:"-"), but a held
 // sale must restore them so pricing and completion behave identically.
 type SnapshotLine struct {
-	SKU          string      `json:"sku"`
-	Name         string      `json:"name"`
-	Qty          float64     `json:"qty"`
-	PriceCents   money.Money `json:"price_cents"`
-	LineDiscount money.Money `json:"line_discount,omitempty"`
-	ImageURL     string      `json:"image_url,omitempty"`
-	ItemID       string      `json:"item_id,omitempty"`
-	VariantID    string      `json:"variant_id,omitempty"`
-	TaxRateBP    int         `json:"tax_rate_bp,omitempty"`
-	IsWeighed    bool        `json:"is_weighed,omitempty"`
+	SKU          string                  `json:"sku"`
+	Name         string                  `json:"name"`
+	Qty          float64                 `json:"qty"`
+	PriceCents   money.Money             `json:"price_cents"`
+	LineDiscount money.Money             `json:"line_discount,omitempty"`
+	ImageURL     string                  `json:"image_url,omitempty"`
+	ItemID       string                  `json:"item_id,omitempty"`
+	VariantID    string                  `json:"variant_id,omitempty"`
+	TaxRateBP    int                     `json:"tax_rate_bp,omitempty"`
+	IsWeighed    bool                    `json:"is_weighed,omitempty"`
+	Modifiers    []data.SelectedModifier `json:"modifiers,omitempty"` // ADR-0020: a held sale must not silently drop customizations on recall
 }
 
 // BasketSnapshot captures the full in-progress sale state for hold/resume.
@@ -51,6 +55,7 @@ func (s *Service) Snapshot() BasketSnapshot {
 			PriceCents: l.PriceCents, LineDiscount: l.LineDiscount,
 			ImageURL: l.ImageURL, ItemID: l.ItemID, VariantID: l.VariantID,
 			TaxRateBP: l.TaxRateBP, IsWeighed: l.IsWeighed,
+			Modifiers: l.Modifiers,
 		})
 	}
 	return snap
@@ -65,6 +70,7 @@ func (s *Service) Restore(snap BasketSnapshot) {
 			PriceCents: l.PriceCents, LineDiscount: l.LineDiscount,
 			ImageURL: l.ImageURL, ItemID: l.ItemID, VariantID: l.VariantID,
 			TaxRateBP: l.TaxRateBP, IsWeighed: l.IsWeighed,
+			Modifiers: l.Modifiers,
 		})
 	}
 	s.discountType = snap.DiscountType

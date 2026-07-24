@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 )
 
@@ -88,5 +89,40 @@ func TestHasItems(t *testing.T) {
 	s.Reset()
 	if s.HasItems() {
 		t.Fatal("expected empty after reset")
+	}
+}
+
+// ADR-0020: a held sale must not silently drop a customer's chosen
+// modifiers on recall — the whole point of hold/resume is serving another
+// customer without losing what's already in progress.
+func TestSnapshotRestoreRoundTrip_PreservesModifiers(t *testing.T) {
+	s := newHoldService()
+	base := BasketLine{SKU: "A", Name: "Apples", PriceCents: money.FromMinor(150), ItemID: "itm-a", TaxRateBP: 2000}
+	mods := []data.SelectedModifier{{GroupID: "g1", OptionID: "opt1", GroupName: "Size", OptionName: "Large", PriceDeltaMinor: 30}}
+	s.AddLineWithModifiers(base, 1, mods)
+	want := s.Basket()
+
+	snap := s.Snapshot()
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back BasketSnapshot
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Reset()
+	s.Restore(back)
+	got := s.Basket()
+
+	if got.Total != want.Total {
+		t.Fatalf("restored total %v, want %v (modifier price delta lost?)", got.Total, want.Total)
+	}
+	if len(got.Lines) != 1 || len(got.Lines[0].Modifiers) != 1 {
+		t.Fatalf("expected 1 line with 1 modifier restored, got %+v", got.Lines)
+	}
+	if got.Lines[0].Modifiers[0].OptionName != "Large" || got.Lines[0].Modifiers[0].PriceDeltaMinor != 30 {
+		t.Fatalf("modifier snapshot corrupted on restore: %+v", got.Lines[0].Modifiers[0])
 	}
 }

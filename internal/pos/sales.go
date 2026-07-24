@@ -41,10 +41,11 @@ type SaleLineInput struct {
 	Barcode            string
 	Name               string
 	Qty                float64     // REAL; supports weighed items
-	UnitPrice          money.Money // minor units, before discount
+	UnitPrice          money.Money // minor units, before discount; already includes any modifier price deltas (ADR-0020)
 	TaxRateBasisPoints int
 	LineDiscount       money.Money // fixed minor units
 	LocationID         string      // stock movement location
+	Modifiers          []data.SelectedModifier
 }
 
 type PaymentInput struct {
@@ -244,6 +245,10 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				}
 
 				if err := repo.InsertSaleLine(ctx, tx, lineID, saleID, i+1, l.ItemID, l.VariantID, l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice.Minor(), l.LineDiscount.Minor(), l.TaxRateBasisPoints, lineTax.Minor(), totalBeforeTax.Minor(), totalAfterTax.Minor()); err != nil {
+					return err
+				}
+
+				if err := repo.InsertSaleLineModifiers(ctx, tx, lineID, l.Modifiers); err != nil {
 					return err
 				}
 

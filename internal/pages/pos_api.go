@@ -287,6 +287,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				TaxRateBasisPoints: taxBP,
 				LineDiscount:       l.LineDiscount,
 				LocationID:         locID,
+				Modifiers:          l.Modifiers,
 			})
 		}
 
