@@ -2579,6 +2579,28 @@ FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, id`)
 	return out, rows.Err()
 }
 
+// ListActiveNonCashPaymentMethods returns active tender methods excluding
+// type='cash', for surfaces with no cash drawer (self-order kiosk, ADR-0020
+// v1: card/contactless only).
+func (r *POSRepo) ListActiveNonCashPaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(plugin_id, '')
+FROM payment_methods WHERE is_active = 1 AND type != 'cash' ORDER BY sort_order, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list non-cash payment methods: %w", err)
+	}
+	defer rows.Close()
+	var out []PaymentMethod
+	for rows.Next() {
+		var m PaymentMethod
+		if err := rows.Scan(&m.ID, &m.Name, &m.PluginID); err != nil {
+			return nil, fmt.Errorf("scan payment method: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // ListPaymentMethodIDs returns active payment method ids ordered by id.
 func (r *POSRepo) ListPaymentMethodIDs(ctx context.Context) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id FROM payment_methods WHERE is_active = 1 ORDER BY id`)

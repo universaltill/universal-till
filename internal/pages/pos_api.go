@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,6 +25,100 @@ import (
 	"github.com/universaltill/universal-till/internal/ui"
 	uiassets "github.com/universaltill/universal-till/web"
 )
+
+// paymentDeclinedError signals that a plugin's blocking payment.<method>.authorize
+// hook rejected the tender — distinct from other CompleteSale errors so callers
+// can map it to its own HTTP status instead of a generic 400.
+type paymentDeclinedError struct {
+	Method string
+}
+
+func (e *paymentDeclinedError) Error() string {
+	return "payment declined: " + e.Method
+}
+
+// completeTender runs the money-critical authorize -> complete -> publish
+// pipeline shared by every till-mode's tender path (cashier and self-order
+// kiosk alike): payment authorization gate, CompleteSale, basket reset,
+// plugin trigger_event fan-out, ERP/inventory mirroring, and silent
+// receipt/kitchen printing. It must behave identically regardless of the
+// caller, so it lives in exactly one place rather than being duplicated
+// per surface. actorID is attributed on printed receipts/tickets.
+func completeTender(ctx context.Context, d *common.Deps, repo *data.POSRepo, saleInput pos.SaleInput, payments []pos.PaymentInput, actorID string) (string, error) {
+	// Payment authorization (docs: wasm-runtime.md): a plugin method
+	// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
+	// BEFORE the sale completes — a declined card must stop the sale.
+	// blockingPaymentEvent (refund_page.go) is the same gate the refund
+	// flow uses for payment.<key>.refund; no subscriber = no gate
+	// (back-compat with post-settle-only plugins like qrpay).
+	for _, p := range payments {
+		if err := blockingPaymentEvent(ctx, d, p.MethodID, "authorize", map[string]any{
+			"method":    p.MethodID,
+			"amount":    p.Amount.Minor(),
+			"reference": p.Reference,
+		}); err != nil {
+			return "", &paymentDeclinedError{Method: p.MethodID}
+		}
+	}
+
+	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
+	if err != nil {
+		return "", err
+	}
+
+	d.Engine.Reset()
+
+	// Plugin-provided tender methods: publish each entry's trigger_event so
+	// the owning plugin can react (charge a terminal, show a QR, …).
+	if entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(ctx); err == nil && len(entries) > 0 {
+		byMethod := map[string]data.PaymentEntryRow{}
+		for _, e := range entries {
+			byMethod[e.EntryKey] = e
+		}
+		bus := plugins.SharedBus(d.Db)
+		for _, p := range payments {
+			if e, ok := byMethod[p.MethodID]; ok && e.TriggerEvent != "" {
+				_, _ = bus.Publish(ctx, e.TriggerEvent, map[string]any{
+					"sale_id":   saleID,
+					"method":    p.MethodID,
+					"amount":    p.Amount.Minor(),
+					"reference": p.Reference,
+					"plugin_id": e.PluginID,
+				})
+			}
+		}
+	}
+
+	// Mirror the completed sale to external systems: publish sale.completed
+	// on the plugin event bus so integration plugins (ERP/accounting
+	// connectors — SAP, Dynamics/LS Central) can push it upstream. Best-
+	// effort and NON-BLOCKING (offline-first): a slow or absent connector
+	// never delays or fails the tender.
+	publishSaleCompleted(ctx, d, saleID)
+
+	// Mirror the resulting stock movements to external systems: one
+	// stock.adjusted per line so inventory connectors can sync levels.
+	// Best-effort and NON-BLOCKING, same as sale.completed.
+	publishStockAdjustedForSale(ctx, d, saleInput)
+
+	// load receipt_no from DB for printing (subtotal/tax/total re-read
+	// separately by HTML-rendering callers, which need locale-aware funcs
+	// this function doesn't have)
+	receiptNo, _, _, _, _ := repo.SaleTotals(ctx, saleID)
+	if receiptNo == "" {
+		receiptNo = saleID
+	}
+
+	// Silent receipt print (docs: receipt-printing.md) — fired async,
+	// never blocks or fails the tender.
+	printReceiptAsync(d, receiptNo, actorID)
+	// Kitchen ticket to the separate kitchen printer, if one is
+	// configured (docs: arch/restaurant-phone-orders.md) — also async
+	// and best-effort; a no-op when no kitchen printer is set.
+	printKitchenAsync(d, receiptNo, actorID)
+
+	return saleID, nil
+}
 
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
@@ -425,38 +520,6 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		// Payment authorization (docs: wasm-runtime.md): a plugin method
-		// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
-		// BEFORE the sale completes — a declined card must stop the sale.
-		// Bounded by the module's event deadline; no subscriber = no gate
-		// (back-compat with post-settle-only plugins like qrpay).
-		if entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(r.Context()); err == nil && len(entries) > 0 {
-			byMethod := map[string]data.PaymentEntryRow{}
-			for _, e := range entries {
-				byMethod[e.EntryKey] = e
-			}
-			bus := plugins.SharedBus(d.Db)
-			for _, p := range payments {
-				e, ok := byMethod[p.MethodID]
-				if !ok || e.TriggerEvent == "" {
-					continue
-				}
-				authEvent := strings.TrimSuffix(e.TriggerEvent, ".requested") + ".authorize"
-				if !bus.HasSubscribers(authEvent) {
-					continue
-				}
-				if _, err := bus.Publish(r.Context(), authEvent, map[string]any{
-					"method":    p.MethodID,
-					"amount":    p.Amount.Minor(),
-					"reference": p.Reference,
-					"plugin_id": e.PluginID,
-				}); err != nil {
-					http.Error(w, "payment declined: "+p.MethodID, http.StatusPaymentRequired)
-					return
-				}
-			}
-		}
-
 		saleInput := pos.SaleInput{
 			SaleType:               "sale",
 			Currency:               d.CurrentState().Currency,
@@ -472,8 +535,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			ActorID:                cashierID,
 			Offline:                offline,
 		}
-		saleID, err := pos.CompleteSale(r.Context(), d.Db, saleInput)
+		saleID, err := completeTender(r.Context(), d, repo, saleInput, payments, getSessionUserID(r))
 		if err != nil {
+			var declined *paymentDeclinedError
+			if errors.As(err, &declined) {
+				http.Error(w, err.Error(), http.StatusPaymentRequired)
+				return
+			}
 			if strings.Contains(err.Error(), "insufficient stock") {
 				locale := httpx.ResolveLocale(w, r)
 				funcs := httpx.FuncsFor(locale)
@@ -496,54 +564,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		d.Engine.Reset()
-
-		// Plugin-provided tender methods: publish each entry's trigger_event so
-		// the owning plugin can react (charge a terminal, show a QR, …).
-		if entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(r.Context()); err == nil && len(entries) > 0 {
-			byMethod := map[string]data.PaymentEntryRow{}
-			for _, e := range entries {
-				byMethod[e.EntryKey] = e
-			}
-			bus := plugins.SharedBus(d.Db)
-			for _, p := range payments {
-				if e, ok := byMethod[p.MethodID]; ok && e.TriggerEvent != "" {
-					_, _ = bus.Publish(r.Context(), e.TriggerEvent, map[string]any{
-						"sale_id":   saleID,
-						"method":    p.MethodID,
-						"amount":    p.Amount.Minor(),
-						"reference": p.Reference,
-						"plugin_id": e.PluginID,
-					})
-				}
-			}
-		}
-
-		// Mirror the completed sale to external systems: publish sale.completed
-		// on the plugin event bus so integration plugins (ERP/accounting
-		// connectors — SAP, Dynamics/LS Central) can push it upstream. Best-
-		// effort and NON-BLOCKING (offline-first): a slow or absent connector
-		// never delays or fails the tender.
-		publishSaleCompleted(r.Context(), d, saleID)
-
-		// Mirror the resulting stock movements to external systems: one
-		// stock.adjusted per line so inventory connectors can sync levels.
-		// Best-effort and NON-BLOCKING, same as sale.completed.
-		publishStockAdjustedForSale(r.Context(), d, saleInput)
-
 		// load receipt_no and totals from DB for rendering
 		receiptNo, dbSubtotal, dbTax, dbTotal, _ := repo.SaleTotals(r.Context(), saleID)
 		if receiptNo == "" {
 			receiptNo = saleID
 		}
-
-		// Silent receipt print (docs: receipt-printing.md) — fired async,
-		// never blocks or fails the tender.
-		printReceiptAsync(d, receiptNo, getSessionUserID(r))
-		// Kitchen ticket to the separate kitchen printer, if one is
-		// configured (docs: arch/restaurant-phone-orders.md) — also async
-		// and best-effort; a no-op when no kitchen printer is set.
-		printKitchenAsync(d, receiptNo, getSessionUserID(r))
 
 		// Render receipt JSON if requested
 		if r.Header.Get("Accept") == "application/json" {
