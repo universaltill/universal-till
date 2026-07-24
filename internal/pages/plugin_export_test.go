@@ -12,6 +12,7 @@ import (
 // behaviour is covered by internal/plugins exporter tests. Assert the validation
 // branch (which returns before touching the filesystem).
 func TestHandleExportPlugin_RequiresVersion(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // bypass the manager gate to reach the handler's own validation
 	h := handleExportPlugin(&common.Deps{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/plugins/com.x/export", nil)
@@ -27,6 +28,7 @@ func TestHandleExportPlugin_RequiresVersion(t *testing.T) {
 // The uninstall handler removes files under ./data/plugins keyed by the id, so a
 // traversal id must be rejected before any filesystem work.
 func TestHandleUninstallPlugin_RejectsTraversalID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // bypass the manager gate to reach the handler's own validation
 	h := handleUninstallPlugin(&common.Deps{})
 	for _, badID := range []string{"../etc", "a/b", `..\win`} {
 		req := httptest.NewRequest(http.MethodPost, "/api/plugins/x/uninstall", nil)

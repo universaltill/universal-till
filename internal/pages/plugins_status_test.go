@@ -109,6 +109,7 @@ func TestStorePageShowsLifecycleStatusAndInstalledSplit(t *testing.T) {
 }
 
 func TestInstallFromMarketplaceFailurePersistsOperatorVisibleStatus(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // bypass the manager gate to reach the handler's own logic
 	chdirRoot(t)
 
 	db := openPagesTestDB(t)

@@ -337,6 +337,7 @@
   "plugins.import.warning": "Yalnızca güvenilir kaynaklardan eklenti kurun. Elle içe aktarmalar market doğrulamasını atlar.",
   "plugins.install": "Kur",
   "plugins.install.error.configuration": "Market kurulumu yapılandırılmamış.",
+  "plugins.install.error.forbidden": "Eklentileri yalnızca yönetici kurabilir.",
   "plugins.install.error.incompatible": "Bu eklenti bu kasayla uyumlu değil.",
   "plugins.install.error.invalid_package": "Eklenti paketi doğrulanamadı.",
   "plugins.install.error.invalid_request": "Kurulum isteği geçersizdi.",

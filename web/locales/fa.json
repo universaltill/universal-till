@@ -337,6 +337,7 @@
   "plugins.import.warning": "فقط افزونه‌های منابع مطمئن را نصب کنید. نصب دستی از تأیید فروشگاه عبور می‌کند.",
   "plugins.install": "نصب",
   "plugins.install.error.configuration": "نصب از بازارچه پیکربندی نشده است.",
+  "plugins.install.error.forbidden": "فقط مدیر می‌تواند افزونه نصب کند.",
   "plugins.install.error.incompatible": "این افزونه با این صندوق سازگار نیست.",
   "plugins.install.error.invalid_package": "بسته افزونه در اعتبارسنجی رد شد.",
   "plugins.install.error.invalid_request": "درخواست نصب معتبر نیست.",
