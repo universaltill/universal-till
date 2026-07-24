@@ -1,8 +1,10 @@
 package pos
 
 import (
+	"sort"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 )
 
@@ -56,17 +58,35 @@ func (s *Service) SetConfig(cfg Config) {
 func (s *Service) Config() Config { return s.cfg }
 
 type BasketLine struct {
-	SKU          string      `json:"sku"`
-	Name         string      `json:"name"`
-	Qty          float64     `json:"qty"`
-	PriceCents   money.Money `json:"priceCents"`
-	LineDiscount money.Money `json:"lineDiscount,omitempty"`
-	LineTotal    money.Money `json:"lineTotal,omitempty"`
-	ImageURL     string      `json:"imageUrl,omitempty"`
-	ItemID       string      `json:"-"`
-	VariantID    string      `json:"-"`
-	TaxRateBP    int         `json:"-"`
-	IsWeighed    bool        `json:"-"`
+	SKU          string                  `json:"sku"`
+	Name         string                  `json:"name"`
+	Qty          float64                 `json:"qty"`
+	PriceCents   money.Money             `json:"priceCents"` // effective unit price: base + sum(Modifiers deltas)
+	LineDiscount money.Money             `json:"lineDiscount,omitempty"`
+	LineTotal    money.Money             `json:"lineTotal,omitempty"`
+	ImageURL     string                  `json:"imageUrl,omitempty"`
+	ItemID       string                  `json:"-"`
+	VariantID    string                  `json:"-"`
+	TaxRateBP    int                     `json:"-"`
+	IsWeighed    bool                    `json:"-"`
+	Modifiers    []data.SelectedModifier `json:"modifiers,omitempty"` // ADR-0020: chosen customizations, already folded into PriceCents
+}
+
+// ModifierSignature is a stable key for two lines' modifier selections —
+// used to decide whether adding the same item again merges quantity into
+// an existing line or starts a new one. Two identical selections (same
+// options, any order) merge; anything else is a distinct line, since they
+// price and print differently.
+func (l BasketLine) ModifierSignature() string {
+	if len(l.Modifiers) == 0 {
+		return ""
+	}
+	ids := make([]string, len(l.Modifiers))
+	for i, m := range l.Modifiers {
+		ids[i] = m.OptionID
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
 }
 
 type Basket struct {
@@ -133,6 +153,27 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 	return &s.basket, false
 }
 
+// AddLineWithModifiers adds a resolved base line to the basket with chosen
+// customizations applied (ADR-0020) — used by the modifier-selection step,
+// not the plain barcode-scan path. Price deltas are folded into PriceCents
+// here so the rest of the money pipeline (totals, tax, receipts, held-sale
+// snapshots) needs no changes; Modifiers is kept purely as a display/
+// persistence snapshot. base must already be resolved (via PriceResolver or
+// equivalent catalog lookup) with its plain, pre-modifier PriceCents.
+func (s *Service) AddLineWithModifiers(base BasketLine, qty float64, mods []data.SelectedModifier) *Basket {
+	if qty <= 0 {
+		qty = 1
+	}
+	line := base
+	line.Qty = qty
+	line.Modifiers = append([]data.SelectedModifier{}, mods...)
+	for _, m := range mods {
+		line.PriceCents = line.PriceCents.Add(money.FromMinor(m.PriceDeltaMinor))
+	}
+	s.mergeResolved(line)
+	return &s.basket
+}
+
 func (s *Service) HasLine(code string) bool {
 	code = strings.TrimSpace(code)
 	return code != "" && s.findLineIndex(code) >= 0
@@ -165,7 +206,14 @@ func (s *Service) cacheScan(code string, line BasketLine) {
 }
 
 func (s *Service) mergeResolved(line BasketLine) {
+	sig := line.ModifierSignature()
 	for i := range s.lines {
+		if s.lines[i].ModifierSignature() != sig {
+			// Same item/SKU but a different customization (e.g. "extra
+			// shot" vs. plain) prices and prints differently — must stay a
+			// distinct line, not merge quantity into the wrong one.
+			continue
+		}
 		if s.lines[i].SKU == line.SKU || (s.lines[i].ItemID == line.ItemID && s.lines[i].VariantID == line.VariantID) {
 			s.lines[i].Qty += line.Qty
 			s.lines[i].Name = line.Name
@@ -174,6 +222,7 @@ func (s *Service) mergeResolved(line BasketLine) {
 			s.lines[i].ItemID = line.ItemID
 			s.lines[i].VariantID = line.VariantID
 			s.lines[i].IsWeighed = line.IsWeighed
+			s.lines[i].Modifiers = line.Modifiers
 			if line.ImageURL != "" {
 				s.lines[i].ImageURL = line.ImageURL
 			}
@@ -261,6 +310,18 @@ func (s *Service) Basket() Basket {
 }
 
 // Remove removes a line by SKU (or item/variant ID fallback) and recomputes totals.
+//
+// KNOWN GAP (ADR-0020): this matches every line sharing sku, which was
+// always safe before modifiers existed (mergeResolved guaranteed at most
+// one line per SKU). Since AddLineWithModifiers can legitimately leave two
+// lines with the same SKU in the basket (e.g. plain "Flat White" and "Flat
+// White + extra shot" are different lines, see ModifierSignature), calling
+// Remove/UpdateLine with only a SKU/code now risks acting on the wrong one
+// of several same-SKU lines. Nothing calls AddLineWithModifiers yet, so
+// this has no live exposure — but the UI work that adds that call (spec
+// 011 Phase 1 UI, task #2) MUST NOT wire "remove"/"edit qty" buttons to
+// these SKU-keyed methods once an item can have multiple modifier-distinct
+// lines; it needs a line-index or line-ID-based variant instead.
 func (s *Service) Remove(sku string) {
 	filtered := s.lines[:0]
 	for _, l := range s.lines {
@@ -299,7 +360,11 @@ func (s *Service) clearCacheForCode(code string) {
 	}
 }
 
-// UpdateLine sets qty/discount for a given SKU (or item/variant match) and recomputes totals.
+// UpdateLine sets qty/discount for a given SKU (or item/variant match) and
+// recomputes totals. Matches only the FIRST line for code — same known gap
+// as Remove (see its doc comment): unsafe once multiple modifier-distinct
+// lines can share a SKU. Do not wire new UI to this for modifier-bearing
+// items without a line-index/line-ID variant first.
 func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 	if qty < 0 {
 		qty = 0
