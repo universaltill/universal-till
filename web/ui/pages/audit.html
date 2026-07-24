@@ -1,0 +1,61 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "audit.title" }}</h1>
+</div>
+
+<div class="card">
+  <form method="get" action="/audit" style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
+    <select name="entity_type">
+      <option value="">{{ T "audit.filter.all_types" }}</option>
+      {{ $selectedType := .EntityType }}
+      {{ range .EntityTypes }}
+      <option value="{{ . }}" {{ if eq . $selectedType }}selected{{ end }}>{{ . }}</option>
+      {{ end }}
+    </select>
+    <select name="actor_id">
+      <option value="">{{ T "audit.filter.all_actors" }}</option>
+      {{ $selectedActor := .ActorID }}
+      {{ range .Actors }}
+      <option value="{{ .ID }}" {{ if eq .ID $selectedActor }}selected{{ end }}>{{ .DisplayName }}</option>
+      {{ end }}
+    </select>
+    <input type="text" name="action" placeholder="{{ T "audit.filter.action" }}" value="{{ .Action }}">
+    <input type="date" name="since" value="{{ .Since }}">
+    <input type="date" name="until" value="{{ .Until }}">
+    <button class="btn" type="submit">{{ T "audit.filter.apply" }}</button>
+    {{ if or .EntityType .ActorID .Action .Since .Until }}<a class="btn secondary" href="/audit">{{ T "audit.filter.clear" }}</a>{{ end }}
+  </form>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  {{ if .Entries }}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "audit.col.when" }}</th>
+        <th>{{ T "audit.col.actor" }}</th>
+        <th>{{ T "audit.col.entity" }}</th>
+        <th>{{ T "audit.col.action" }}</th>
+        <th>{{ T "audit.col.details" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Entries }}
+      <tr>
+        <td class="muted" style="white-space:nowrap">{{ .CreatedAt }}</td>
+        <td>{{ if .ActorName }}{{ .ActorName }}{{ else }}<span class="muted">{{ T "audit.system_actor" }}</span>{{ end }}</td>
+        <td>{{ .EntityType }} <span class="muted">{{ .EntityID }}</span></td>
+        <td>{{ .Action }}</td>
+        <td><code style="font-size:.75rem; word-break:break-all">{{ .DataJSON }}</code></td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else }}<p class="muted">{{ T "audit.empty" }}</p>{{ end }}
+
+  <div style="display:flex; gap:.5rem; margin-top:.6rem">
+    {{ if .HasPrev }}<a class="btn secondary" href="?entity_type={{ .EntityType }}&actor_id={{ .ActorID }}&action={{ .Action }}&since={{ .Since }}&until={{ .Until }}&page={{ .PrevPage }}">{{ T "audit.prev" }}</a>{{ end }}
+    {{ if .HasNext }}<a class="btn secondary" href="?entity_type={{ .EntityType }}&actor_id={{ .ActorID }}&action={{ .Action }}&since={{ .Since }}&until={{ .Until }}&page={{ .NextPage }}">{{ T "audit.next" }}</a>{{ end }}
+  </div>
+</div>
+{{ end }}

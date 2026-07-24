@@ -207,6 +207,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerShiftsPage(mux, dp)
 	registerReportsPage(mux, dp)
 	registerBackofficePage(mux, dp) // manager dashboard (ADR-0018 back-office home)
+	registerAuditPage(mux, dp)      // manager-only audit-trail browse/filter page
 	registerHelp(mux, dp)
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)
