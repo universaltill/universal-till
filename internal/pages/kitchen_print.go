@@ -39,8 +39,9 @@ func buildKitchenTicket(ctx context.Context, d *common.Deps, receiptNo string) (
 	}
 	for _, l := range detail.Lines {
 		t.Items = append(t.Items, print.KitchenItem{
-			Qty:  strconv.FormatFloat(l.Qty, 'f', -1, 64),
-			Name: l.Name,
+			Qty:       strconv.FormatFloat(l.Qty, 'f', -1, 64),
+			Name:      l.Name,
+			Modifiers: l.Modifiers,
 		})
 	}
 	return t, nil
