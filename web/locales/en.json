@@ -337,6 +337,7 @@
   "plugins.import.warning": "Only install plugins from trusted sources. Manual imports bypass marketplace verification.",
   "plugins.install": "Install",
   "plugins.install.error.configuration": "Marketplace installation is not configured.",
+  "plugins.install.error.forbidden": "Only a manager can install plugins.",
   "plugins.install.error.incompatible": "This plugin is not compatible with this till.",
   "plugins.install.error.invalid_package": "The plugin package failed verification.",
   "plugins.install.error.invalid_request": "The install request was invalid.",
