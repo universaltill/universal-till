@@ -41,7 +41,12 @@ type MarketplaceConfig struct {
 	// Telemetry opt-in flag (FR-013)
 	TelemetryOptIn bool
 
-	// Dev-mode local override (FR-015, only honored when UT_DEV_MODE=true)
+	// DevMode mirrors Config.DevMode, co-located here because the
+	// marketplace Client only holds *MarketplaceConfig, not the full
+	// Config — this is what actually gates DevOverrideURL (FR-015).
+	DevMode bool
+
+	// Dev-mode local override (FR-015, only honored when DevMode is true)
 	DevOverrideURL string
 
 	// Health check timeout for endpoint validation (FR-015)
@@ -102,6 +107,7 @@ func Init() (*Config, error) {
 			ClientSecret:          getenv("UT_MARKETPLACE_CLIENT_SECRET", ""),
 			APIVersion:            getenv("UT_MARKETPLACE_API_VERSION", "1.0.0"),
 			TelemetryOptIn:        telemetryOptIn,
+			DevMode:               devMode,
 			DevOverrideURL:        getenv("UT_MARKETPLACE_DEV_OVERRIDE_URL", ""),
 			HealthCheckTimeoutSec: healthCheckTimeout,
 			FallbackTimeoutSec:    fallbackTimeout,
