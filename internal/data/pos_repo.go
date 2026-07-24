@@ -1687,6 +1687,125 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
+// AuditEntry is one row for the audit-trail browse/filter page. ActorName
+// is resolved via a LEFT JOIN on users — plugin-originated entries
+// (internal/data/plugin_repo.go's InsertAudit/InsertAuditRaw) always write
+// actor_id NULL, so ActorName is empty for those, not a display bug.
+type AuditEntry struct {
+	ID         string
+	ActorID    string
+	ActorName  string
+	EntityType string
+	EntityID   string
+	Action     string
+	DataJSON   string
+	CreatedAt  string
+}
+
+// AuditFilters narrows ListAudit; zero values mean "no filter" on that field.
+type AuditFilters struct {
+	EntityType string
+	ActorID    string
+	Action     string // substring match
+	Since      string // inclusive, ISO-8601/RFC3339 or a bare YYYY-MM-DD date
+	Until      string // inclusive — a bare date means end of that day, see endOfDayIfBareDate
+	Limit      int
+	Offset     int
+}
+
+// endOfDayIfBareDate turns a bare "YYYY-MM-DD" into that day's last instant
+// so an inclusive Until filter actually includes the chosen day. created_at
+// is always a full RFC3339 timestamp ("2026-01-01T10:00:00Z"), and
+// lexicographic comparison means the bare date alone sorts BEFORE every
+// timestamp on that same day — "2026-01-01" <= "2026-01-01T10:00:00Z" is
+// false — so an unmodified date-only Until would silently exclude the
+// entire end day. Anything that isn't exactly 10 chars (already a full
+// timestamp, or some other format) passes through unchanged.
+func endOfDayIfBareDate(v string) string {
+	if len(v) == 10 {
+		return v + "T23:59:59Z"
+	}
+	return v
+}
+
+// ListAudit returns audit_log rows newest-first, matching all supplied
+// filters (AND). Manager-gated at the handler — this reads system-wide
+// history, not scoped to the caller.
+func (r *POSRepo) ListAudit(ctx context.Context, f AuditFilters) ([]AuditEntry, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	var where []string
+	var args []any
+	if f.EntityType != "" {
+		where = append(where, "a.entity_type = ?")
+		args = append(args, f.EntityType)
+	}
+	if f.ActorID != "" {
+		where = append(where, "a.actor_id = ?")
+		args = append(args, f.ActorID)
+	}
+	if f.Action != "" {
+		where = append(where, "a.action LIKE ?")
+		args = append(args, "%"+f.Action+"%")
+	}
+	if f.Since != "" {
+		where = append(where, "a.created_at >= ?")
+		args = append(args, f.Since)
+	}
+	if f.Until != "" {
+		where = append(where, "a.created_at <= ?")
+		args = append(args, endOfDayIfBareDate(f.Until))
+	}
+	query := `
+SELECT a.id, COALESCE(a.actor_id, ''), COALESCE(u.display_name, ''),
+       a.entity_type, a.entity_id, a.action, COALESCE(a.data_json, ''), a.created_at
+FROM audit_log a
+LEFT JOIN users u ON u.id = a.actor_id`
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, f.Offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list audit_log: %w", err)
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.EntityType, &e.EntityID, &e.Action, &e.DataJSON, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan audit_log: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list audit_log: %w", err)
+	}
+	return out, nil
+}
+
+// DistinctAuditEntityTypes powers the entity-type filter dropdown.
+func (r *POSRepo) DistinctAuditEntityTypes(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT entity_type FROM audit_log ORDER BY entity_type`)
+	if err != nil {
+		return nil, fmt.Errorf("distinct audit entity types: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan audit entity type: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ResetTransactionHistory permanently clears ALL transactional data — sales,
 // payments, invoices, shifts, held sales, stock movements and report archives —
 // for a clean start after testing (go-live). It KEEPS the catalog, users,
