@@ -68,6 +68,24 @@
     <dialog id="selforder-modal" class="modifier-modal"></dialog>
 
     <script>
+      // Every /api/self-order/* handler that answers 4xx (a rejected
+      // modifier submission, a declined kiosk payment, an invalid method)
+      // still sends back a full, valid re-render with an inline i18n'd
+      // error message — htmx's default is to silently DROP the response
+      // body on a non-2xx status instead of swapping it in. At a cashier
+      // till a 4xx toast that fails to render is a minor annoyance someone
+      // notices and retries; at an unattended kiosk with no cashier
+      // present it would strand the customer looking at a dead button
+      // with zero feedback. Force the swap for our own 4xx responses.
+      document.body.addEventListener('htmx:beforeSwap', function (ev) {
+        var path = ev.detail.requestConfig && ev.detail.requestConfig.path;
+        if (path && path.indexOf('/api/self-order/') === 0 &&
+            ev.detail.xhr.status >= 400 && ev.detail.xhr.status < 500) {
+          ev.detail.shouldSwap = true;
+          ev.detail.isError = false;
+        }
+      });
+
       // Category chip filter: client-side show/hide over the loaded grid
       // (search already re-fetches server-side; category filtering doesn't
       // need a round trip since the full catalog is already on the page).

@@ -1,0 +1,14 @@
+<div class="order-confirmation">
+  <h3>{{ T "selforder.confirm.title" }}</h3>
+  <p class="order-confirmation-receipt">{{ T "selforder.confirm.receipt" }}: {{ .ReceiptNo }}</p>
+  <p class="muted">{{ T "selforder.confirm.hint" }}</p>
+  <button type="button" class="btn primary" onclick="window.location.href='/self-order'">
+    {{ T "selforder.confirm.done" }}
+  </button>
+  <script>
+    // Auto-return to the start screen for the next customer — this modal
+    // has no dialog-close affordance of its own since there's nothing left
+    // to edit once the sale is complete (ADR-0020 idle-reset pattern).
+    setTimeout(function () { window.location.href = '/self-order'; }, 6000);
+  </script>
+</div>
