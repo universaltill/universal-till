@@ -1,8 +1,18 @@
 # Universal Till Plugin Development Guidelines
 
-**Version 1.0 - December 2025**
+**Updated 2026-07-24** — reflects the current plugin runtime (ADR-0001,
+ADR-0002 in the `docs` repo: `reference/adr/`).
 
 Welcome to Universal Till plugin development! This guide will help you build, test, and publish plugins for the Universal Till ecosystem.
+
+Some sections below (Getting Started, Plugin Types interfaces, Publishing)
+describe a CLI-tool/SDK workflow that hasn't been built yet — they're kept
+as a design sketch of where plugin tooling is headed, not something you can
+run today. **For the actual, working way to build a plugin right now,
+skip to [Plugin Architecture](#plugin-architecture) below and copy a real
+example**: `ut-plugin-payment-stripe` (wasm, payment), `ut-plugin-faq`
+(none, asset-only), or `ut-plugin-integration-webhook` (wasm, integration)
+— all real, shipping plugins in the marketplace today.
 
 ---
 
@@ -36,27 +46,26 @@ Plugins extend Universal Till's functionality without modifying the core system.
 - Integrate with hardware (custom receipt printers, scales)
 - Export data to external systems
 
-### Plugin Execution Models
+### Plugin Runtime (ADR-0001)
 
-Plugins can run in two modes:
+Every plugin declares a `runtime` in its manifest:
 
-**1. Local Mode (Runs on Device)**
-```
-POS Device → Plugin (local process) → External API
-```
-- Best for: Simple integrations, privacy-focused merchants
-- Pros: Works offline, no cloud dependency
-- Cons: Merchant manages API keys
+- **`"wasm"`** (the default for logic plugins) — a single
+  architecture-independent `.wasm` module, executed **in-process** by the
+  till via [wazero](https://wazero.io) (pure Go, no cgo, no separate
+  process). Write it in Go (`GOOS=wasip1 GOARCH=wasm`), Rust, TinyGo, or
+  anything else that targets WASM. The module gets no capabilities by
+  default — the manifest's `permissions` array (e.g. `net:api.stripe.com`,
+  `pos.tender`, `storage`) is what the host grants. This is what payment,
+  integration, and most other logic plugins use.
+- **`"none"`** — asset-only: content bundles, themes, language packs. No
+  code runs at all; the till renders/serves the files directly.
+- **`"go"`** — a separately supervised OS process. Reserved for hardware/
+  device plugins that need raw USB/serial access; the minority case.
 
-**2. Cloud-Enhanced Mode (Optional)**
-```
-POS Device → Universal Till Cloud → Plugin (cloud) → External API
-```
-- Best for: Advanced features, multiple devices
-- Pros: Centralized config, advanced features, analytics
-- Cons: Requires internet, cloud subscription
-
-**Your plugin can support both!**
+All three talk to the rest of the system the same way once loaded: through
+event hooks declared in the manifest (see below), not a direct function-call
+API.
 
 ---
 
@@ -81,49 +90,53 @@ my-plugin/
 
 ### Manifest File (manifest.json)
 
+This is the real, current schema — trimmed from the shipping
+`ut-plugin-payment-stripe` manifest:
+
 ```json
 {
   "id": "com.example.stripe",
-  "name": "Stripe Payments",
-  "version": "1.0.0",
-  "description": "Accept credit card payments via Stripe Terminal",
-  "author": {
-    "name": "Your Name",
-    "email": "you@example.com",
-    "url": "https://example.com"
-  },
-  "license": "MIT",
-  "category": "payment",
-  "tags": ["payment", "credit-card", "stripe"],
-  "repository": "https://github.com/yourusername/ut-stripe",
-  
-  "modes": {
-    "local": {
-      "supported": true,
-      "requires": ["stripe_api_key", "stripe_secret_key"],
-      "permissions": ["network", "storage"],
-      "features": ["process_payment", "refund", "void"]
-    },
-    "cloud": {
-      "supported": true,
-      "requires": ["ut_cloud_token"],
-      "permissions": ["network", "storage", "analytics"],
-      "features": ["process_payment", "refund", "void", "fraud_detection", "reconciliation"]
+  "name": "Stripe Card Payments",
+  "version": "1.2.0",
+  "description": "Take card payments through Stripe...",
+  "author": "Your Name",
+  "website": "https://example.com",
+  "canonical_type": "payment",
+  "runtime": "wasm",
+  "device_arch": "any",
+  "min_pos_version": "1.0.0",
+  "permissions": [
+    "pos.tender",
+    "events:receive",
+    "net:api.stripe.com",
+    "storage"
+  ],
+  "locales": ["en-US"],
+  "entries": [
+    {
+      "type": "payment",
+      "key": "stripe",
+      "label": "Card (Stripe)",
+      "sort_order": 4,
+      "trigger_event": "payment.stripe.requested"
     }
-  },
-  
-  "compatibility": {
-    "min_version": "1.0.0",
-    "platforms": ["linux", "windows", "darwin", "android"]
-  },
-  
-  "pricing": {
-    "model": "free",  // or "one_time", "subscription"
-    "price": 0,
-    "currency": "USD"
-  }
+  ],
+  "settings": [
+    { "key": "stripe_secret_key", "default_value": "", "scope": "global" }
+  ],
+  "entrypoint": "./bin/plugin.wasm",
+  "hooks": [
+    { "event": "payment.stripe.requested", "action": "stripe.settled" }
+  ]
 }
 ```
+
+`canonical_type` is one of the 20 fixed types in the plugin taxonomy
+(ADR-0002) — payment, page, theme, integration, etc. `entries` control
+where the plugin shows up in the UI; `hooks` wire manifest-declared events
+to the plugin's exported functions (for `runtime: "wasm"`) — there is no
+`modes.local`/`modes.cloud` split and no separate `pricing` block in the
+manifest itself.
 
 ---
 
