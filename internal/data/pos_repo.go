@@ -2370,6 +2370,7 @@ type SaleDetailLine struct {
 	LineDiscount int64
 	TaxAmount    int64
 	LineTotal    int64
+	Modifiers    []string // chosen customization option names (ADR-0020), e.g. "Extra shot"
 }
 
 type SaleDetailPayment struct {
@@ -2414,23 +2415,57 @@ FROM sales WHERE receipt_no = ?`, receiptNo).Scan(
 	}
 
 	lineRows, err := r.db.QueryContext(ctx, `
-SELECT name_snapshot, COALESCE(sku_snapshot, ''), COALESCE(item_id, ''),
+SELECT id, name_snapshot, COALESCE(sku_snapshot, ''), COALESCE(item_id, ''),
        COALESCE(variant_id, ''), COALESCE(tax_rate_bp, 0), quantity, unit_price,
        line_discount, tax_amount, total_after_tax
 FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale lines: %w", err)
 	}
-	defer lineRows.Close()
+	var lineIDs []string
 	for lineRows.Next() {
+		var id string
 		var l SaleDetailLine
-		if err := lineRows.Scan(&l.Name, &l.SKU, &l.ItemID, &l.VariantID, &l.TaxRateBP, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal); err != nil {
+		if err := lineRows.Scan(&id, &l.Name, &l.SKU, &l.ItemID, &l.VariantID, &l.TaxRateBP, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal); err != nil {
+			lineRows.Close()
 			return SaleDetail{}, false, fmt.Errorf("scan sale line: %w", err)
 		}
+		lineIDs = append(lineIDs, id)
 		d.Lines = append(d.Lines, l)
 	}
 	if err := lineRows.Err(); err != nil {
+		lineRows.Close()
 		return SaleDetail{}, false, fmt.Errorf("iterate sale lines: %w", err)
+	}
+	lineRows.Close()
+
+	if len(lineIDs) > 0 {
+		modRows, err := r.db.QueryContext(ctx, `
+SELECT slm.sale_line_id, slm.option_name_snapshot
+FROM sale_line_modifiers slm
+JOIN sale_lines sl ON sl.id = slm.sale_line_id
+WHERE sl.sale_id = ?
+ORDER BY sl.line_no, slm.rowid`, d.ID)
+		if err != nil {
+			return SaleDetail{}, false, fmt.Errorf("get sale line modifiers: %w", err)
+		}
+		byLine := map[string][]string{}
+		for modRows.Next() {
+			var lineID, optName string
+			if err := modRows.Scan(&lineID, &optName); err != nil {
+				modRows.Close()
+				return SaleDetail{}, false, fmt.Errorf("scan sale line modifier: %w", err)
+			}
+			byLine[lineID] = append(byLine[lineID], optName)
+		}
+		if err := modRows.Err(); err != nil {
+			modRows.Close()
+			return SaleDetail{}, false, fmt.Errorf("iterate sale line modifiers: %w", err)
+		}
+		modRows.Close()
+		for i, id := range lineIDs {
+			d.Lines[i].Modifiers = byLine[id]
+		}
 	}
 
 	payRows, err := r.db.QueryContext(ctx, `
