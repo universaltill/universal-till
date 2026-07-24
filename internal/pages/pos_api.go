@@ -126,27 +126,37 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		render(&b)
 	})
 
-	// Remove a line by SKU/code.
+	// Remove a line. Prefers the line-specific key (ADR-0020 — safe once an
+	// item can have multiple modifier-distinct lines sharing one SKU);
+	// falls back to the legacy SKU/code param for any caller that predates
+	// LineKey.
 	mux.HandleFunc("/api/pos/remove", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		key := strings.TrimSpace(r.Form.Get("key"))
 		code := strings.TrimSpace(r.Form.Get("code"))
-		if code == "" {
-			http.Error(w, "code required", http.StatusBadRequest)
+		if key == "" && code == "" {
+			http.Error(w, "key or code required", http.StatusBadRequest)
 			return
 		}
-		d.Engine.Remove(code)
+		if key != "" {
+			d.Engine.RemoveLine(key)
+		} else {
+			d.Engine.Remove(code)
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
 		_ = basketView.Render(w, b)
 	})
 
-	// Update line qty/discount (htmx-friendly)
+	// Update line qty/discount (htmx-friendly). Same key/code preference as
+	// /api/pos/remove above.
 	mux.HandleFunc("/api/pos/line", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		key := strings.TrimSpace(r.Form.Get("key"))
 		code := strings.TrimSpace(r.Form.Get("code"))
-		if code == "" {
-			http.Error(w, "code required", http.StatusBadRequest)
+		if key == "" && code == "" {
+			http.Error(w, "key or code required", http.StatusBadRequest)
 			return
 		}
 		qty := 0.0
@@ -161,7 +171,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				discount = dVal
 			}
 		}
-		d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
+		if key != "" {
+			d.Engine.UpdateLineByKey(key, qty, money.FromMinor(discount))
+		} else {
+			d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()

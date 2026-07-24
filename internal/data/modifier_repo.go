@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -105,6 +106,41 @@ ORDER BY o.sort_order, o.name
 		return nil, fmt.Errorf("list modifier options: %w", err)
 	}
 	return groups, nil
+}
+
+// ItemIDsWithModifiers reports which of the given item IDs have at least
+// one active modifier group — one batch query, not N+1, for rendering a
+// button grid where each tile needs to know whether tapping it should open
+// the customization step first. Items with no active groups are simply
+// absent from the returned set (not present == false).
+func (r *ModifierRepo) ItemIDsWithModifiers(ctx context.Context, itemIDs []string) (map[string]bool, error) {
+	result := map[string]bool{}
+	if len(itemIDs) == 0 {
+		return result, nil
+	}
+	placeholders := make([]string, len(itemIDs))
+	args := make([]any, len(itemIDs))
+	for i, id := range itemIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+SELECT DISTINCT item_id FROM item_modifier_groups
+WHERE is_active = 1 AND item_id IN (%s)
+`, strings.Join(placeholders, ","))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("item ids with modifiers: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan item id with modifiers: %w", err)
+		}
+		result[id] = true
+	}
+	return result, rows.Err()
 }
 
 // CreateGroup adds a modifier group to an item. Returns the new group id.

@@ -11,6 +11,10 @@
   </div>
 </div>
 
+  <!-- Item customization step (ADR-0020): populated by tapping a product
+       with modifier groups; closed by its own Cancel/submit handlers. -->
+  <dialog id="modifier-modal" class="modifier-modal"></dialog>
+
   <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
     <!-- Basket loads on page load -->
     <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>

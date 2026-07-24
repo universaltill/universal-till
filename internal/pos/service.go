@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 )
@@ -58,6 +59,7 @@ func (s *Service) SetConfig(cfg Config) {
 func (s *Service) Config() Config { return s.cfg }
 
 type BasketLine struct {
+	LineKey      string                  `json:"lineKey,omitempty"` // stable per-line id, assigned when a line is first appended (ADR-0020) — the only safe way to address ONE line once modifiers let several share a SKU
 	SKU          string                  `json:"sku"`
 	Name         string                  `json:"name"`
 	Qty          float64                 `json:"qty"`
@@ -104,6 +106,19 @@ type Basket struct {
 
 func (s *Service) Scan(code string) (*Basket, error) {
 	return s.ScanQty(code, 1)
+}
+
+// ResolveBase resolves code to its plain, pre-modifier BasketLine via the
+// configured PriceResolver WITHOUT adding it to the basket (ADR-0020) — the
+// modifier-selection step needs the item's base price/name before the
+// operator has chosen any customization, to build the picker and then call
+// AddLineWithModifiers once they have.
+func (s *Service) ResolveBase(code string) (BasketLine, bool) {
+	code = strings.TrimSpace(code)
+	if s.resolver == nil || code == "" {
+		return BasketLine{}, false
+	}
+	return s.resolver.Resolve(code)
 }
 
 func (s *Service) ScanQty(code string, qty float64) (*Basket, error) {
@@ -230,6 +245,9 @@ func (s *Service) mergeResolved(line BasketLine) {
 			return
 		}
 	}
+	if line.LineKey == "" {
+		line.LineKey = uuid.NewString()
+	}
 	s.lines = append(s.lines, line)
 	s.recomputeTotals()
 }
@@ -311,17 +329,13 @@ func (s *Service) Basket() Basket {
 
 // Remove removes a line by SKU (or item/variant ID fallback) and recomputes totals.
 //
-// KNOWN GAP (ADR-0020): this matches every line sharing sku, which was
-// always safe before modifiers existed (mergeResolved guaranteed at most
-// one line per SKU). Since AddLineWithModifiers can legitimately leave two
-// lines with the same SKU in the basket (e.g. plain "Flat White" and "Flat
-// White + extra shot" are different lines, see ModifierSignature), calling
-// Remove/UpdateLine with only a SKU/code now risks acting on the wrong one
-// of several same-SKU lines. Nothing calls AddLineWithModifiers yet, so
-// this has no live exposure — but the UI work that adds that call (spec
-// 011 Phase 1 UI, task #2) MUST NOT wire "remove"/"edit qty" buttons to
-// these SKU-keyed methods once an item can have multiple modifier-distinct
-// lines; it needs a line-index or line-ID-based variant instead.
+// Matches every line sharing sku — was always safe before modifiers
+// existed (mergeResolved guaranteed at most one line per SKU), but once
+// AddLineWithModifiers can leave two lines with the same SKU in the basket
+// (e.g. plain "Flat White" and "Flat White + extra shot"), this removes
+// BOTH. The cashier UI uses RemoveLine (by LineKey) instead, which targets
+// exactly one line; this SKU-based version is kept for callers that only
+// ever have one line per SKU (nothing modifier-bearing).
 func (s *Service) Remove(sku string) {
 	filtered := s.lines[:0]
 	for _, l := range s.lines {
@@ -332,6 +346,22 @@ func (s *Service) Remove(sku string) {
 	}
 	s.lines = filtered
 	s.clearCacheForCode(sku)
+	s.recomputeTotals()
+}
+
+// RemoveLine removes the single line matching key exactly (ADR-0020) —
+// safe even when multiple lines share a SKU because they carry different
+// modifiers, unlike Remove(sku) which would delete all of them.
+func (s *Service) RemoveLine(key string) {
+	filtered := s.lines[:0]
+	for _, l := range s.lines {
+		if l.LineKey == key {
+			s.clearCacheForCode(l.SKU)
+			continue
+		}
+		filtered = append(filtered, l)
+	}
+	s.lines = filtered
 	s.recomputeTotals()
 }
 
@@ -361,10 +391,9 @@ func (s *Service) clearCacheForCode(code string) {
 }
 
 // UpdateLine sets qty/discount for a given SKU (or item/variant match) and
-// recomputes totals. Matches only the FIRST line for code — same known gap
-// as Remove (see its doc comment): unsafe once multiple modifier-distinct
-// lines can share a SKU. Do not wire new UI to this for modifier-bearing
-// items without a line-index/line-ID variant first.
+// recomputes totals. Matches only the FIRST line for code — same caveat as
+// Remove (see its doc comment): unsafe once multiple modifier-distinct
+// lines can share a SKU. The cashier UI uses UpdateLineByKey instead.
 func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 	if qty < 0 {
 		qty = 0
@@ -375,6 +404,26 @@ func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 			s.lines[i].LineDiscount = discount
 			if s.lines[i].Qty == 0 {
 				s.Remove(s.lines[i].SKU)
+				return
+			}
+			s.recomputeTotals()
+			return
+		}
+	}
+}
+
+// UpdateLineByKey sets qty/discount for the single line matching key
+// exactly (ADR-0020) — safe even when multiple lines share a SKU.
+func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money) {
+	if qty < 0 {
+		qty = 0
+	}
+	for i := range s.lines {
+		if s.lines[i].LineKey == key {
+			s.lines[i].Qty = qty
+			s.lines[i].LineDiscount = discount
+			if s.lines[i].Qty == 0 {
+				s.RemoveLine(key)
 				return
 			}
 			s.recomputeTotals()
