@@ -1,0 +1,33 @@
+<div class="modifier-picker">
+  <h3>{{ .ItemName }}</h3>
+  <form hx-post="/api/self-order/scan-with-modifiers" hx-target="#selforder-cart" hx-swap="outerHTML"
+        hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML=''; }">
+    <input type="hidden" name="code" value="{{ .Code }}">
+    <input type="hidden" name="itemId" value="{{ .ItemID }}">
+    {{ if .Groups }}
+      {{ range .Groups }}
+      {{ $group := . }}
+      <fieldset class="modifier-group">
+        <legend>{{ .Name }}{{ if .Required }} <span class="modifier-required">*</span>{{ end }}</legend>
+        {{ range .Options }}
+        <label class="modifier-option">
+          <input type="{{ if eq $group.MaxSelect 1 }}radio{{ else }}checkbox{{ end }}" name="mod_{{ $group.ID }}" value="{{ .ID }}"
+                 {{ if and (eq $group.MaxSelect 1) $group.Required }}required{{ end }}>
+          <span>{{ .Name }}</span>
+          {{ if .PriceDeltaMinor }}<span class="modifier-price">+{{ money .PriceDeltaMinor }}</span>{{ end }}
+        </label>
+        {{ end }}
+      </fieldset>
+      {{ end }}
+    {{ else }}
+      <p class="muted">{{ T "modifiers.none_available" }}</p>
+    {{ end }}
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML='';">
+        {{ T "modifiers.cancel" }}
+      </button>
+      <button type="submit" class="btn primary">{{ T "modifiers.add_to_cart" }}</button>
+    </div>
+  </form>
+</div>

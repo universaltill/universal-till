@@ -212,6 +212,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerReportsPage(mux, dp)
 	registerBackofficePage(mux, dp) // manager dashboard (ADR-0018 back-office home)
 	registerSelfOrder(mux, dp)      // self-order kiosk shell, auth-exempt (ADR-0020)
+	registerSelfOrderShop(mux, dp)  // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
 	registerAuditPage(mux, dp)      // manager-only audit-trail browse/filter page
 	registerHelp(mux, dp)
 	registerUpdateAPI(mux, dp)
