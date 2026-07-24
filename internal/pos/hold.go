@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 )
@@ -9,6 +10,7 @@ import (
 // ItemID/VariantID/TaxRateBP/IsWeighed from the wire (json:"-"), but a held
 // sale must restore them so pricing and completion behave identically.
 type SnapshotLine struct {
+	LineKey      string                  `json:"line_key,omitempty"`
 	SKU          string                  `json:"sku"`
 	Name         string                  `json:"name"`
 	Qty          float64                 `json:"qty"`
@@ -51,7 +53,8 @@ func (s *Service) Snapshot() BasketSnapshot {
 	}
 	for _, l := range s.lines {
 		snap.Lines = append(snap.Lines, SnapshotLine{
-			SKU: l.SKU, Name: l.Name, Qty: l.Qty,
+			LineKey: l.LineKey,
+			SKU:     l.SKU, Name: l.Name, Qty: l.Qty,
 			PriceCents: l.PriceCents, LineDiscount: l.LineDiscount,
 			ImageURL: l.ImageURL, ItemID: l.ItemID, VariantID: l.VariantID,
 			TaxRateBP: l.TaxRateBP, IsWeighed: l.IsWeighed,
@@ -65,8 +68,16 @@ func (s *Service) Snapshot() BasketSnapshot {
 func (s *Service) Restore(snap BasketSnapshot) {
 	s.Reset()
 	for _, l := range snap.Lines {
+		key := l.LineKey
+		if key == "" {
+			// Self-heal a held sale saved before LineKey existed — an empty
+			// key would otherwise collide across every such line restored
+			// together (RemoveLine("") would match all of them).
+			key = uuid.NewString()
+		}
 		s.lines = append(s.lines, BasketLine{
-			SKU: l.SKU, Name: l.Name, Qty: l.Qty,
+			LineKey: key,
+			SKU:     l.SKU, Name: l.Name, Qty: l.Qty,
 			PriceCents: l.PriceCents, LineDiscount: l.LineDiscount,
 			ImageURL: l.ImageURL, ItemID: l.ItemID, VariantID: l.VariantID,
 			TaxRateBP: l.TaxRateBP, IsWeighed: l.IsWeighed,

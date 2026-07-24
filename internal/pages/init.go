@@ -153,6 +153,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerPluginPages(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
+	registerPOSModifiersAPI(mux, dp) // item customization step, ADR-0020
 	registerAIAPI(mux, dp)
 	registerAskAPI(mux, dp)
 	registerPrintAPI(mux, dp)

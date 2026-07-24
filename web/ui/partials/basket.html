@@ -18,26 +18,33 @@
                 <span class="line-text">
                   <span class="line-name">{{ .Name }}</span>
                   <small class="muted">{{ .SKU }}</small>
+                  {{ if .Modifiers }}
+                  <ul class="line-modifiers">
+                    {{ range .Modifiers }}
+                    <li class="muted">+ {{ .OptionName }}{{ if .PriceDeltaMinor }} ({{ money .PriceDeltaMinor }}){{ end }}</li>
+                    {{ end }}
+                  </ul>
+                  {{ end }}
                 </span>
               </td>
               <td>
                 <input class="qty-input" type="number" name="qty" value="{{ printf "%.2f" .Qty }}" min="0" step="{{ if .IsWeighed }}0.01{{ else }}1{{ end }}"
                        hx-post="/api/pos/line"
-                       hx-vals='{"code":"{{ .SKU }}"}'
+                       hx-vals='{"key":"{{ .LineKey }}"}'
                        hx-include="closest tr"
                        hx-target="#basket"
                        hx-swap="outerHTML" />
                 <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount }}" min="0" step="1"
                        title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
                        hx-post="/api/pos/line"
-                       hx-vals='{"code":"{{ .SKU }}"}'
+                       hx-vals='{"key":"{{ .LineKey }}"}'
                        hx-include="closest tr"
                        hx-target="#basket"
                        hx-swap="outerHTML" />
               </td>
               <td>{{ money .PriceCents }}</td>
               <td>{{ money .LineTotal }}</td>
-              <td><button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{"code":"{{ .SKU }}"}' hx-target="#basket" hx-swap="outerHTML">✕</button></td>
+              <td><button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{"key":"{{ .LineKey }}"}' hx-target="#basket" hx-swap="outerHTML">✕</button></td>
             </tr>
           {{ end }}
         {{ else }}
