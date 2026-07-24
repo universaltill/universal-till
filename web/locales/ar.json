@@ -337,6 +337,7 @@
   "plugins.import.warning": "ثبّت الإضافات من مصادر موثوقة فقط. الاستيراد اليدوي يتجاوز اعتماد المتجر.",
   "plugins.install": "تثبيت",
   "plugins.install.error.configuration": "تثبيت المتجر غير مهيّأ.",
+  "plugins.install.error.forbidden": "يمكن للمدير فقط تثبيت الإضافات.",
   "plugins.install.error.incompatible": "هذه الإضافة غير متوافقة مع هذا الصندوق.",
   "plugins.install.error.invalid_package": "فشل التحقق من حزمة الإضافة.",
   "plugins.install.error.invalid_request": "طلب التثبيت غير صالح.",

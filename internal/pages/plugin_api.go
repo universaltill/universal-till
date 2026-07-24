@@ -27,6 +27,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -236,6 +240,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -346,6 +354,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -372,6 +384,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/plugins/permissions/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
 
@@ -401,6 +417,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/plugins/trust", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
 
@@ -441,6 +461,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 // handleInstallFromMarketplace handles marketplace plugin installation (T017)
 func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			writeInstallResponse(w, http.StatusForbidden, false, "manager or admin required", "plugins.install.error.forbidden")
+			return
+		}
 		ctx := r.Context()
 		statusStore := plugins.NewInstallStatusStore(d.Db)
 
@@ -555,6 +579,10 @@ func handleEnablePlugin(d *common.Deps) http.HandlerFunc {
 // manager + nav so the change takes effect immediately.
 func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 		ctx := r.Context()
 		pluginID := r.PathValue("id")
 		if pluginID == "" {
@@ -595,6 +623,10 @@ func handleDisablePlugin(d *common.Deps) http.HandlerFunc {
 // installed files, and reloads the plugin manager so the nav/menu drops it.
 func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 		ctx := r.Context()
 		pluginID := r.PathValue("id")
 		if pluginID == "" {
@@ -654,6 +686,10 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 // Ed25519 verification path — never an unverified extract.
 func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 		ctx := r.Context()
 		pluginID := r.PathValue("id")
 
@@ -752,6 +788,10 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 // handleRollbackPlugin handles rolling back a plugin to a previous version (T025)
 func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 		ctx := r.Context()
 		pluginID := r.PathValue("id")
 
@@ -822,6 +862,10 @@ func handleCheckUpdates(d *common.Deps) http.HandlerFunc {
 // handleImportFromFile handles manual plugin import from uploaded file (T028)
 func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 		ctx := r.Context()
 
 		// Parse multipart form (max 200 MB)
@@ -930,6 +974,10 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 // Version is taken from ?version= since a plugin may have multiple installed.
 func handleExportPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 		ctx := r.Context()
 		pluginID := strings.TrimSpace(r.PathValue("id"))
 		version := strings.TrimSpace(r.URL.Query().Get("version"))
