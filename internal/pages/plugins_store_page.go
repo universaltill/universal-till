@@ -30,6 +30,7 @@ type storeItem struct {
 	Vendor           string
 	Tier             string // official | verified | unverified (ADR-0006 surface)
 	Type             string
+	Permissions      []string // manifest capability scopes (FR-006 permission badges); empty when the catalog has none for this release
 	Downloaded       bool
 	Installed        bool
 	StatusState      string // requested|downloading|installing|failed ("" otherwise)
@@ -103,6 +104,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 					Vendor:      p.Vendor,
 					Tier:        trustTierOf(p.ID, p.TrustTier),
 					Type:        p.CanonicalType,
+					Permissions: p.Permissions,
 				}
 				if icon := p.IconURL; icon != "" {
 					if strings.HasPrefix(icon, "/") {

@@ -293,6 +293,7 @@ type PluginSummary struct {
 	Version       string   `json:"version"`
 	TrustTier     string   `json:"trust_tier"`
 	Capabilities  []string `json:"capabilities,omitempty"`
+	Permissions   []string `json:"permissions,omitempty"` // manifest capability scopes (FR-006 permission badges)
 	CanonicalType string   `json:"canonical_type"` // For backward compatibility
 	PriceFlag     string   `json:"price_flag,omitempty"`
 	Architectures []string `json:"architectures,omitempty"`
@@ -329,6 +330,7 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 		TrustTier            string   `json:"trust_tier"`
 		RequiredCapabilities []string `json:"requiredCapabilities"`
 		Capabilities         []string `json:"capabilities"`
+		Permissions          []string `json:"permissions"`
 		MinHostVersion       string   `json:"minHostVersion"`
 		PriceFlag            string   `json:"price_flag"`
 		PaidListing          bool     `json:"paidListing"`
@@ -380,6 +382,7 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 	if len(p.Capabilities) == 0 {
 		p.Capabilities = w.RequiredCapabilities
 	}
+	p.Permissions = w.Permissions
 	return nil
 }
 
