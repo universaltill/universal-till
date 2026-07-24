@@ -32,7 +32,7 @@ func exempt(path string) bool {
 		"/api/sync/assets", "/api/sync/assets/file", "/api/setup/join":
 		return true
 	}
-	for _, p := range []string{"/api/auth/", "/public/", "/themes/"} {
+	for _, p := range []string{"/api/auth/", "/public/", "/themes/", "/plugin-icons/"} {
 		if strings.HasPrefix(path, p) {
 			return true
 		}
