@@ -23,29 +23,165 @@ import (
 type Client struct {
 	cfg         *config.MarketplaceConfig
 	tokenClient oauth.TokenProvider
-	httpClient  *http.Client
+	// cloudClient always talks to cfg.EndpointURL, on its own transport —
+	// its TLS verification is never affected by dev-override configuration
+	// or activity. devClient is nil unless a syntactically valid dev
+	// override URL is configured; it has its own transport (TLS bypass only
+	// when the override itself is https) and is never used for cloud
+	// traffic. Two separate *http.Client/transport pairs, not a shared one
+	// with conditional settings — a previous version shared one transport
+	// and set InsecureSkipVerify on it whenever DevMode+DevOverrideURL were
+	// merely *configured*, which silently disabled TLS verification for
+	// cloud requests too whenever the override existed, even if it failed
+	// its health check and was never actually used.
+	cloudClient *http.Client
+	devClient   *http.Client
+	// devOverrideActive is decided once at construction: DevMode must be on,
+	// DevOverrideURL must parse as a real http(s) URL, and it must pass a
+	// bounded startup health check (GET /healthz). A dev-only escape hatch
+	// must never silently redirect production traffic (FR-015) — any of
+	// those failing means every request uses the real cloud endpoint for
+	// this Client's lifetime.
+	devOverrideActive bool
 }
 
 // NewClient creates a marketplace client with OAuth2 authentication.
 func NewClient(cfg *config.MarketplaceConfig, tokenClient oauth.TokenProvider) *Client {
-	// Create HTTP client with custom transport for local development
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-
-	// Skip TLS verification for localhost/127.0.0.1 (development only)
-	if strings.HasPrefix(cfg.EndpointURL, "https://localhost") ||
-		strings.HasPrefix(cfg.EndpointURL, "https://127.0.0.1") {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	cloudTransport := http.DefaultTransport.(*http.Transport).Clone()
+	// Skip TLS verification for localhost/127.0.0.1 (development only) —
+	// this is about EndpointURL itself pointing at a local dev marketplace,
+	// unrelated to DevOverrideURL.
+	if isLocalHTTPS(cfg.EndpointURL) {
+		cloudTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		log.Printf("[WARN] Skipping TLS verification for development endpoint: %s", cfg.EndpointURL)
+	}
+	cloudClient := &http.Client{
+		Timeout:   time.Duration(cfg.RequestTimeoutSec) * time.Second,
+		Transport: cloudTransport,
+	}
+
+	var devClient *http.Client
+	devOverrideActive := false
+	if cfg.DevMode && cfg.DevOverrideURL != "" {
+		switch {
+		case !isValidHTTPURL(cfg.DevOverrideURL):
+			log.Printf("[WARN] marketplace dev override URL is invalid, ignoring: %q", cfg.DevOverrideURL)
+		default:
+			devTransport := http.DefaultTransport.(*http.Transport).Clone()
+			if strings.HasPrefix(cfg.DevOverrideURL, "https://") {
+				// A dev override is very likely a LAN box with a self-signed
+				// cert; this transport is dedicated to the override, never
+				// shared with cloudClient, so bypassing verification here
+				// can never affect a real cloud request.
+				devTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+				log.Printf("[WARN] Skipping TLS verification for dev override endpoint: %s", cfg.DevOverrideURL)
+			}
+			devClient = &http.Client{
+				Timeout:   time.Duration(cfg.RequestTimeoutSec) * time.Second,
+				Transport: devTransport,
+			}
+
+			devOverrideActive = devOverrideHealthy(devClient, cfg.DevOverrideURL, healthCheckTimeout(cfg))
+			if devOverrideActive {
+				log.Printf("[INFO] marketplace dev override active: %s", cfg.DevOverrideURL)
+			} else {
+				log.Printf("[WARN] marketplace dev override %s failed its health check, using %s instead", cfg.DevOverrideURL, cfg.EndpointURL)
+			}
+		}
 	}
 
 	return &Client{
-		cfg:         cfg,
-		tokenClient: tokenClient,
-		httpClient: &http.Client{
-			Timeout:   time.Duration(cfg.RequestTimeoutSec) * time.Second,
-			Transport: transport,
-		},
+		cfg:               cfg,
+		tokenClient:       tokenClient,
+		cloudClient:       cloudClient,
+		devClient:         devClient,
+		devOverrideActive: devOverrideActive,
 	}
+}
+
+func isLocalHTTPS(rawURL string) bool {
+	return strings.HasPrefix(rawURL, "https://localhost") || strings.HasPrefix(rawURL, "https://127.0.0.1")
+}
+
+func isValidHTTPURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
+func healthCheckTimeout(cfg *config.MarketplaceConfig) time.Duration {
+	if cfg.HealthCheckTimeoutSec <= 0 {
+		return 5 * time.Second
+	}
+	return time.Duration(cfg.HealthCheckTimeoutSec) * time.Second
+}
+
+// devOverrideHealthy does one bounded GET /healthz against the override —
+// the same health endpoint the real marketplace exposes. Uses the
+// caller-supplied client so a self-signed-cert override is checked with
+// the same TLS bypass its real requests will use; a bare default-transport
+// client here would make an https override with a self-signed cert fail
+// the health check even when it's genuinely reachable.
+func devOverrideHealthy(client *http.Client, baseURL string, timeout time.Duration) bool {
+	healthURL, err := url.JoinPath(baseURL, "/healthz")
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// endpoint returns the marketplace base URL to prefer for the next request.
+func (c *Client) endpoint() string {
+	if c.devOverrideActive {
+		return c.cfg.DevOverrideURL
+	}
+	return c.cfg.EndpointURL
+}
+
+// fallbackTimeout bounds how long a dev-override attempt gets before
+// doWithFallback retries against the real cloud endpoint.
+func (c *Client) fallbackTimeout() time.Duration {
+	if c.cfg.FallbackTimeoutSec <= 0 {
+		return 10 * time.Second
+	}
+	return time.Duration(c.cfg.FallbackTimeoutSec) * time.Second
+}
+
+// doWithFallback tries send against the dev override first (bounded by
+// fallbackTimeout, so a hung/dead dev server can't stall a real request,
+// and on devClient — never cloudClient) when it's active, then always
+// falls back to the real cloud endpoint (on cloudClient) on any transport
+// error. A non-2xx HTTP response from the override is NOT treated as a
+// fallback trigger here — send only returns a Go error for transport-level
+// failures (connection refused, timeout); an override that responds with a
+// real error status propagates that response to the caller as-is. When the
+// override isn't active, it just calls the cloud endpoint once.
+func (c *Client) doWithFallback(ctx context.Context, send func(ctx context.Context, endpoint string, client *http.Client) (*http.Response, error)) (*http.Response, error) {
+	if !c.devOverrideActive {
+		return send(ctx, c.cfg.EndpointURL, c.cloudClient)
+	}
+
+	devCtx, cancel := context.WithTimeout(ctx, c.fallbackTimeout())
+	defer cancel()
+	resp, err := send(devCtx, c.cfg.DevOverrideURL, c.devClient)
+	if err == nil {
+		return resp, nil
+	}
+	log.Printf("[WARN] marketplace dev override request failed (%v), falling back to %s", err, c.cfg.EndpointURL)
+	return send(ctx, c.cfg.EndpointURL, c.cloudClient)
 }
 
 // doRequest performs an authenticated HTTP request with API version metadata.
@@ -58,51 +194,58 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		token = ""
 	}
 
-	endpoint := c.cfg.EndpointURL
-	if c.cfg.DevOverrideURL != "" {
-		endpoint = c.cfg.DevOverrideURL
+	// Buffered once so a dev-override retry against the cloud endpoint can
+	// send the same body again — an io.Reader can only be consumed once.
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read request body: %w", err)
+		}
 	}
 
-	reqURL, err := url.JoinPath(endpoint, path)
-	if err != nil {
-		return nil, fmt.Errorf("invalid request URL: %w", err)
-	}
+	return c.doWithFallback(ctx, func(ctx context.Context, endpoint string, client *http.Client) (*http.Response, error) {
+		reqURL, err := url.JoinPath(endpoint, path)
+		if err != nil {
+			return nil, fmt.Errorf("invalid request URL: %w", err)
+		}
 
-	// DEBUG: Log the request URL
-	log.Printf("[DEBUG] Marketplace request: %s %s", method, reqURL)
+		var reqBody io.Reader
+		if bodyBytes != nil {
+			reqBody = bytes.NewReader(bodyBytes)
+		}
 
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+		log.Printf("[DEBUG] Marketplace request: %s %s", method, reqURL)
 
-	// Add OAuth2 bearer token when present
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	// Add API version metadata per FR-016
-	req.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
-	req.Header.Set("Content-Type", "application/json")
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
+		// Add OAuth2 bearer token when present
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		// Add API version metadata per FR-016
+		req.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
+		req.Header.Set("Content-Type", "application/json")
 
-	// DEBUG: Log the response status
-	log.Printf("[DEBUG] Marketplace response: %d for %s %s", resp.StatusCode, method, reqURL)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
 
-	return resp, nil
+		log.Printf("[DEBUG] Marketplace response: %d for %s %s", resp.StatusCode, method, reqURL)
+		return resp, nil
+	})
 }
 
 // ResolveURL turns a possibly-relative marketplace URL (e.g. the bundle_url
 // "/api/v1/downloads/artifact/...") into an absolute URL against the configured
 // endpoint origin. Absolute inputs are returned unchanged.
 func (c *Client) ResolveURL(ref string) (string, error) {
-	endpoint := c.cfg.EndpointURL
-	if c.cfg.DevOverrideURL != "" {
-		endpoint = c.cfg.DevOverrideURL
-	}
+	endpoint := c.endpoint()
 	base, err := url.Parse(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("invalid marketplace endpoint %q: %w", endpoint, err)
@@ -288,25 +431,6 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 		params.Set("page_token", req.PageToken)
 	}
 
-	// Build URL properly with query parameters
-	endpoint := c.cfg.EndpointURL
-	if c.cfg.DevOverrideURL != "" {
-		endpoint = c.cfg.DevOverrideURL
-	}
-
-	reqURL, err := url.JoinPath(endpoint, "/v1/catalog/plugins")
-	if err != nil {
-		return nil, fmt.Errorf("invalid request URL: %w", err)
-	}
-
-	// Parse URL and add query params
-	parsedURL, err := url.Parse(reqURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL: %w", err)
-	}
-	parsedURL.RawQuery = params.Encode()
-
-	// Get token
 	// Auth is optional: when marketplace OAuth2 credentials are not configured
 	// (or the marketplace has auth disabled), proceed unauthenticated.
 	token, tokenErr := c.tokenClient.GetToken(ctx)
@@ -315,25 +439,38 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 		token = ""
 	}
 
-	// Create request
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	resp, err := c.doWithFallback(ctx, func(ctx context.Context, endpoint string, client *http.Client) (*http.Response, error) {
+		reqURL, err := url.JoinPath(endpoint, "/v1/catalog/plugins")
+		if err != nil {
+			return nil, fmt.Errorf("invalid request URL: %w", err)
+		}
+		parsedURL, err := url.Parse(reqURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse URL: %w", err)
+		}
+		parsedURL.RawQuery = params.Encode()
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		if token != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+token)
+		}
+		httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
+
+		log.Printf("[DEBUG] Marketplace request: GET %s", parsedURL.String())
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+		log.Printf("[DEBUG] Marketplace response: %d", resp.StatusCode)
+		return resp, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
-
-	// DEBUG
-	log.Printf("[DEBUG] Marketplace request: GET %s", parsedURL.String())
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	log.Printf("[DEBUG] Marketplace response: %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("catalog request failed: status %d", resp.StatusCode)
@@ -460,12 +597,7 @@ type GetRevocationsResponse struct {
 
 // GetRevocations fetches plugin revocations since a given version.
 func (c *Client) GetRevocations(ctx context.Context, req *GetRevocationsRequest) (*GetRevocationsResponse, error) {
-	endpoint := c.cfg.EndpointURL
-	if c.cfg.DevOverrideURL != "" {
-		endpoint = c.cfg.DevOverrideURL
-	}
-
-	reqURL, err := url.JoinPath(endpoint, "/v1/revocations")
+	reqURL, err := url.JoinPath(c.endpoint(), "/v1/revocations")
 	if err != nil {
 		return nil, fmt.Errorf("invalid request URL: %w", err)
 	}
@@ -492,10 +624,15 @@ func (c *Client) GetRevocations(ctx context.Context, req *GetRevocationsRequest)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	httpReq.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	}
 	httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
 
-	resp, err := c.httpClient.Do(httpReq)
+	// Dead code today (zero callers — revocation checking uses a separate
+	// implementation), so this intentionally isn't wired through
+	// doWithFallback; cloudClient is the safe default if that ever changes.
+	resp, err := c.cloudClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
