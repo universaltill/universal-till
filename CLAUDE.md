@@ -5,8 +5,12 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 (CI will fail):
 
 ## Data access — repository pattern (enforced by scripts/ci/guard-data-access.sh)
-- **Raw SQL lives only in `internal/data` (repositories) and `internal/db`
-  (migrations).** No SQL query text anywhere else — CI fails on it.
+- **Within `internal/`, raw SQL lives only in `internal/data` (repositories)
+  and `internal/db` (migrations).** No SQL query text anywhere else under
+  `internal/` — CI fails on it. (Scope matches the guard script: one-off
+  `main.go` seed/smoke tooling under `scripts/` and `e2e/` — e.g.
+  `scripts/e2e_seed`, `e2e/seed_faq` — is test-support, not domain code, and
+  isn't a repository method candidate.)
 - Threading `*sql.DB` / `*sql.Tx` through the domain layer is fine; writing the
   query outside the data layer is not. Add a `PluginRepo`/`POSRepo`/etc. method
   instead.
@@ -59,3 +63,7 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   HTMX UI, no SPA (ADR-0008).
 - Behaviour changes update the affected doc (`docs/reference/`, guides,
   `architecture/plugin-architecture.md`) in the same session.
+- **`README.md` is kept up to date every time it goes stale** — any change
+  that affects what the README claims (features, setup steps, badges,
+  version floors, structure) gets a README edit in the same session, not a
+  separate follow-up.
