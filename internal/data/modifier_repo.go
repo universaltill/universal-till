@@ -47,12 +47,28 @@ func NewModifierRepo(db *sql.DB) *ModifierRepo {
 // active options nested), ordered for stable UI rendering. Used by both the
 // cashier POS customization step and the (future) kiosk flow.
 func (r *ModifierRepo) ListGroupsForItem(ctx context.Context, itemID string) ([]ModifierGroup, error) {
-	groupRows, err := r.db.QueryContext(ctx, `
+	return r.listGroupsForItem(ctx, itemID, false)
+}
+
+// ListAllGroupsForItem returns EVERY modifier group and option for an item,
+// active or not — the admin catalog editor needs to show (and let a
+// manager reactivate) a deactivated group/option, unlike the sale-time
+// ListGroupsForItem which must only ever offer what's currently sellable.
+func (r *ModifierRepo) ListAllGroupsForItem(ctx context.Context, itemID string) ([]ModifierGroup, error) {
+	return r.listGroupsForItem(ctx, itemID, true)
+}
+
+func (r *ModifierRepo) listGroupsForItem(ctx context.Context, itemID string, includeInactive bool) ([]ModifierGroup, error) {
+	groupQuery := `
 SELECT id, item_id, name, required, min_select, max_select, sort_order, is_active
 FROM item_modifier_groups
-WHERE item_id = ? AND is_active = 1
-ORDER BY sort_order, name
-`, itemID)
+WHERE item_id = ?`
+	if !includeInactive {
+		groupQuery += ` AND is_active = 1`
+	}
+	groupQuery += ` ORDER BY sort_order, name`
+
+	groupRows, err := r.db.QueryContext(ctx, groupQuery, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("list modifier groups: %w", err)
 	}
@@ -80,13 +96,17 @@ ORDER BY sort_order, name
 		return nil, nil
 	}
 
-	optRows, err := r.db.QueryContext(ctx, `
+	optQuery := `
 SELECT o.id, o.group_id, o.name, o.price_delta_minor, o.sort_order, o.is_active
 FROM item_modifier_options o
 JOIN item_modifier_groups g ON g.id = o.group_id
-WHERE g.item_id = ? AND g.is_active = 1 AND o.is_active = 1
-ORDER BY o.sort_order, o.name
-`, itemID)
+WHERE g.item_id = ?`
+	if !includeInactive {
+		optQuery += ` AND g.is_active = 1 AND o.is_active = 1`
+	}
+	optQuery += ` ORDER BY o.sort_order, o.name`
+
+	optRows, err := r.db.QueryContext(ctx, optQuery, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("list modifier options: %w", err)
 	}
