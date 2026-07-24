@@ -1132,6 +1132,7 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 // when the button is pressed.
 type ButtonEntryRow struct {
 	PluginID      string
+	PluginVersion string
 	PluginName    string
 	EntryKey      string
 	Label         string
@@ -1148,6 +1149,7 @@ func (r *PluginRepo) ListButtonEntries(ctx context.Context) ([]ButtonEntryRow, e
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
     p.id,
+    p.version,
     p.name,
     pe.key,
     pe.label,
@@ -1169,7 +1171,7 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 	var res []ButtonEntryRow
 	for rows.Next() {
 		var row ButtonEntryRow
-		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.EntryKey, &row.Label, &row.IconPath, &row.ParentPageKey, &row.TargetAction, &row.TriggerEvent, &row.SortOrder, &row.ConfigJSON); err != nil {
+		if err := rows.Scan(&row.PluginID, &row.PluginVersion, &row.PluginName, &row.EntryKey, &row.Label, &row.IconPath, &row.ParentPageKey, &row.TargetAction, &row.TriggerEvent, &row.SortOrder, &row.ConfigJSON); err != nil {
 			return nil, pluginObs.wrap("list_button_entries", err)
 		}
 		res = append(res, row)

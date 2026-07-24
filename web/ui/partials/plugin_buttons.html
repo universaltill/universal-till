@@ -10,6 +10,7 @@
         hx-trigger="click"
         hx-swap="none"
         title="{{ .PluginName }}">
+        {{ if .IconPath }}<img src="/plugin-icons/{{ .PluginID }}/{{ .PluginVersion }}/{{ .IconPath }}" alt="" width="20" height="20" style="vertical-align:middle; margin-inline-end:.4rem" loading="lazy">{{ end }}
         {{ .Label }}
       </button>
     </div>

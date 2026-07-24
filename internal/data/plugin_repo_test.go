@@ -18,7 +18,7 @@ func newPluginRepoTestDB(t *testing.T) *sql.DB {
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
-		`CREATE TABLE plugin_entries (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, type TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, config_json TEXT, sort_order INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE plugin_entries (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, type TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, icon_path TEXT, parent_page_key TEXT, target_action TEXT, trigger_event TEXT, config_json TEXT, sort_order INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE plugin_permissions (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, permission TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 0);`,
 	}
 	for _, s := range stmts {
@@ -128,6 +128,43 @@ func TestPluginRepo_ListThemeEntries(t *testing.T) {
 	r := rows[0]
 	if r.PluginID != "t1" || r.PluginVersion != "1.0.0" || r.EntryKey != "midnight" ||
 		r.Label != "Midnight (dark)" || r.ConfigJSON != `{"css":"assets/theme.css"}` {
+		t.Fatalf("unexpected row: %+v", r)
+	}
+}
+
+func TestPluginRepo_ListButtonEntries(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('b1','Stripe','1.2.0',1)`); err != nil {
+		t.Fatalf("seed plugin: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,icon_path,sort_order,is_active) VALUES('be1','b1','button','tender','Card','icons/card.svg',1,1)`); err != nil {
+		t.Fatalf("seed button entry: %v", err)
+	}
+	// Inactive plugin: its button must be filtered out.
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('b2','Old','0.1',0)`); err != nil {
+		t.Fatalf("seed plugin2: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('be2','b2','button','old','Old',1)`); err != nil {
+		t.Fatalf("seed button entry2: %v", err)
+	}
+	// Non-button entry: excluded.
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('be3','b1','page','p','P',1)`); err != nil {
+		t.Fatalf("seed page entry: %v", err)
+	}
+
+	rows, err := repo.ListButtonEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListButtonEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 button, got %d: %+v", len(rows), rows)
+	}
+	r := rows[0]
+	if r.PluginID != "b1" || r.PluginVersion != "1.2.0" || r.EntryKey != "tender" ||
+		r.Label != "Card" || r.IconPath != "icons/card.svg" {
 		t.Fatalf("unexpected row: %+v", r)
 	}
 }
