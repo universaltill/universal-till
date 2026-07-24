@@ -30,14 +30,27 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
+		mode, _, _ := d.Settings.Get(r.Context(), "display.mode")
 		// Back-office mode (ADR-0018): this device defaults to the manager
 		// dashboard instead of the sale screen. Per-till setting (display.*
 		// never LAN-syncs). /backoffice is manager/admin role-gated — a
 		// cashier session on a backoffice-mode till falls through to the
 		// normal sale screen instead of a dead-end 403 (the mode is a
 		// default landing preference, not a role bypass).
-		if mode, _, _ := d.Settings.Get(r.Context(), "display.mode"); mode == "backoffice" && isManagerOrAuthOff(r) {
+		if mode == "backoffice" && isManagerOrAuthOff(r) {
 			http.Redirect(w, r, "/backoffice", http.StatusSeeOther)
+			return
+		}
+		// Self-order kiosk mode (ADR-0020): "/" itself requires a session
+		// (it's not auth-exempt), so this branch only ever helps a
+		// logged-in visitor (e.g. a manager checking what the kiosk shows)
+		// — a real anonymous customer never sees "/" at all, since the
+		// kiosk's browser is configured to open /self-order directly
+		// (which IS auth-exempt). Applies to every session, not just
+		// managers: a self-order-mode till isn't meant to show the cashier
+		// screen to anyone by default.
+		if mode == "self_order" {
+			http.Redirect(w, r, "/self-order", http.StatusSeeOther)
 			return
 		}
 		// One query drives both tender UIs: full rows for the Pay tab,

@@ -83,8 +83,9 @@
     {{ $dmode := index .settingsMap "display.mode" }}
     <label class="set-row">{{ T "settings.display.mode" }}
       <select name="mode">
-        <option value="register"   {{ if ne $dmode "backoffice" }}selected{{ end }}>{{ T "settings.display.mode_register" }}</option>
+        <option value="register"   {{ if and (ne $dmode "backoffice") (ne $dmode "self_order") }}selected{{ end }}>{{ T "settings.display.mode_register" }}</option>
         <option value="backoffice" {{ if eq $dmode "backoffice" }}selected{{ end }}>{{ T "settings.display.mode_backoffice" }}</option>
+        <option value="self_order" {{ if eq $dmode "self_order" }}selected{{ end }}>{{ T "settings.display.mode_self_order" }}</option>
       </select>
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
@@ -361,6 +362,21 @@
       <option value="60" {{ if eq $idle 60 }}selected{{ end }}>60 {{ T "settings.idle_lock.minutes" }}</option>
     </select>
     <button class="btn" type="submit">{{ T "settings.idle_lock.apply" }}</button>
+  </form>
+</div>
+<div class="card">
+  <h2>{{ T "settings.kiosk_idle_reset.title" }}</h2>
+  <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
+  <form hx-post="/api/settings/kiosk-idle-reset" hx-swap="none">
+    {{ $kioskIdle := .settings.KioskIdleResetSeconds }}
+    <select name="seconds">
+      <option value="0"   {{ if eq $kioskIdle 0 }}selected{{ end }}>{{ T "settings.kiosk_idle_reset.off" }}</option>
+      <option value="30"  {{ if eq $kioskIdle 30 }}selected{{ end }}>30 {{ T "settings.kiosk_idle_reset.seconds" }}</option>
+      <option value="60"  {{ if eq $kioskIdle 60 }}selected{{ end }}>60 {{ T "settings.kiosk_idle_reset.seconds" }}</option>
+      <option value="120" {{ if eq $kioskIdle 120 }}selected{{ end }}>120 {{ T "settings.kiosk_idle_reset.seconds" }}</option>
+      <option value="180" {{ if eq $kioskIdle 180 }}selected{{ end }}>180 {{ T "settings.kiosk_idle_reset.seconds" }}</option>
+    </select>
+    <button class="btn" type="submit">{{ T "settings.kiosk_idle_reset.apply" }}</button>
   </form>
 </div>
 <div class="card">
