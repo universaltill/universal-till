@@ -264,6 +264,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Plugin telemetry opt-in (FR-013): off by default, manager-only —
+	// gates internal/plugins.TelemetryClient.ReportNow's scheduler tick.
+	mux.HandleFunc("POST /api/settings/telemetry", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		optIn := "false"
+		if r.Form.Get("optIn") == "on" || r.Form.Get("optIn") == "1" {
+			optIn = "true"
+		}
+		if err := d.Settings.Set(r.Context(), "marketplace.telemetry_opt_in", optIn); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// Interface scale for this till's screen; saved and applied immediately.
 	mux.HandleFunc("POST /api/settings/ui-scale", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
