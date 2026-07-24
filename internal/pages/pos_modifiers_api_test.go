@@ -101,6 +101,33 @@ func TestGetModifiers_UnknownItemIs404(t *testing.T) {
 	}
 }
 
+// code and itemId are two independent client-supplied fields (the picker's
+// hidden inputs) — a manipulated or stale submission sending a mismatched
+// pair must be rejected, not silently priced against the wrong item's
+// modifier catalog.
+func TestScanWithModifiers_RejectsMismatchedCodeAndItemID(t *testing.T) {
+	dp, d := setupModifiersTestDeps(t)
+	if _, err := d.DB.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-other', 'OTHER', 'Something Else', 100, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	registerPOSModifiersAPI(mux, dp)
+
+	// code resolves to itm-coffee, but itemId claims a different item.
+	form := url.Values{"code": {"COFFEE"}, "itemId": {"itm-other"}, "mod_g-size": {"o-reg"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/scan-with-modifiers", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 for a code/itemId mismatch, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) != 0 {
+		t.Fatal("a rejected mismatched submission must not add a line")
+	}
+}
+
 func TestScanWithModifiers_AddsLineWithFoldedPrice(t *testing.T) {
 	dp, _ := setupModifiersTestDeps(t)
 	mux := http.NewServeMux()

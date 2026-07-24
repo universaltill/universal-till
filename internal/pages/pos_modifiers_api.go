@@ -61,7 +61,15 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 			toast("Item not found")
 			return
 		}
-		if itemID == "" {
+		if itemID == "" || base.ItemID != itemID {
+			// code and itemId are two independent client-supplied fields
+			// (the picker's hidden inputs) — a manipulated or stale
+			// submission could send a mismatched pair to pull one item's
+			// modifier catalog onto another's base price. Additive-only
+			// price deltas mean that can only overcharge today, but this
+			// check keeps it that way even if a future version ever
+			// allows a negative delta (a discount modifier), where a
+			// mismatch would otherwise underprice.
 			toast("Item not found")
 			return
 		}
