@@ -177,6 +177,56 @@ func TestSupervisor_Shutdown(t *testing.T) {
 	}
 }
 
+// AutoStartPlugins starts active, installed process-based plugins left over
+// from a previous run (T023). WASM plugins (everything shipped today) sync
+// through a separate path (WasmRuntime.Sync) and must be skipped here, not
+// double-started.
+func TestSupervisor_AutoStartPlugins(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "test.sh")
+	script := "#!/bin/sh\nsleep 10\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	ctx := context.Background()
+	seed := func(id, runtime string, active int) {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active)
+			VALUES (?, ?, '1.0.0', 'installed', ?, ?, ?)
+		`, id, id, scriptPath, runtime, active)
+		if err != nil {
+			t.Fatalf("seed plugin %s: %v", id, err)
+		}
+	}
+	seed("com.test.native", "native", 1)
+	seed("com.test.wasm", "wasm", 1)   // must be skipped, not started as a process
+	seed("com.test.inactive", "go", 0) // must be excluded by ListAutoStartPlugins itself
+
+	supervisor := NewSupervisor(db)
+	if err := supervisor.AutoStartPlugins(ctx); err != nil {
+		t.Fatalf("AutoStartPlugins failed: %v", err)
+	}
+	defer supervisor.Shutdown(ctx)
+
+	if !supervisor.IsRunning("com.test.native") {
+		t.Error("expected native-runtime plugin to be auto-started")
+	}
+	if supervisor.IsRunning("com.test.wasm") {
+		t.Error("wasm-runtime plugin must not be started as a process")
+	}
+	if supervisor.IsRunning("com.test.inactive") {
+		t.Error("inactive plugin must not be auto-started")
+	}
+	if running := supervisor.ListRunning(); len(running) != 1 {
+		t.Errorf("expected exactly 1 running plugin, got %d: %v", len(running), running)
+	}
+}
+
 func TestSupervisor_GetProcessInfo_NotRunning(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
