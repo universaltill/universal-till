@@ -62,3 +62,45 @@ func TestPluginStoreRendersCategoryChips(t *testing.T) {
 		}
 	}
 }
+
+// FR-006: a card with manifest-declared permissions must show them as
+// badges; a card with none must not render an empty badge row. Every
+// not-yet-installed card (installed or not) shows the manager-approval
+// notice, since PR #46 blanket-gates every install/uninstall mutation.
+func TestPluginStoreRendersPermissionAndManagerApprovalBadges(t *testing.T) {
+	chdirRoot(t)
+	initPagesI18n(t)
+
+	items := []storeItem{
+		{ListingID: "l1", Name: "Stripe Terminal", Version: "1.0", Type: "payment", Permissions: []string{"net:api.stripe.com", "pos.tender"}},
+		{ListingID: "l2", Name: "Dark theme", Version: "1.0", Type: "theme"},
+		{ListingID: "l3", Name: "Already installed", Version: "1.0", Type: "theme", Installed: true},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/plugins/store", nil)
+	httpx.Render("ui/pages/plugins_store.html", map[string]any{
+		"title":      "Plugin Store",
+		"menuItems":  nil,
+		"Items":      items,
+		"Categories": storeCategories(items),
+	})(rec, req)
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		"net:api.stripe.com", // permission badge text
+		"pos.tender",         // permission badge text
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("store page missing permission badge %q", want)
+		}
+	}
+	if strings.Count(body, "perm-badge") != 2 {
+		t.Errorf("want exactly 2 permission badges (only the plugin declaring permissions), got %d", strings.Count(body, "perm-badge"))
+	}
+	// Not-yet-installed cards (2 of the 3) get the manager-approval notice;
+	// the already-installed card does not (nothing left to approve).
+	if got := strings.Count(body, "Installing requires manager approval"); got != 2 {
+		t.Errorf("want manager-approval notice on the 2 not-yet-installed cards, got %d occurrences", got)
+	}
+}

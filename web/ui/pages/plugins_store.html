@@ -60,6 +60,14 @@
       <span class="tag">v{{ .Version }}</span>
     </div>
     <p class="muted" style="min-height:2.4rem">{{ .Description }}</p>
+    {{ if .Permissions }}
+    <div style="display:flex; gap:.3rem; flex-wrap:wrap; align-items:center; margin-bottom:.4rem">
+      <span class="muted" style="font-size:.78rem">{{ T "plugins.store.permissions_label" }}</span>
+      {{ range .Permissions }}
+      <span class="tag perm-badge" title="{{ T "plugins.store.permission_hint" }}">{{ . }}</span>
+      {{ end }}
+    </div>
+    {{ end }}
     <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem">
       <span class="tag">{{ T (printf "plugins.type.%s" .Type) }}</span>
       {{ if .Installed }}
@@ -86,6 +94,9 @@
       <button class="btn" data-store-action="download" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.download" }}</button>
       {{ end }}
     </div>
+    {{ if not .Installed }}
+    <p class="muted" style="font-size:.78rem; margin:.5rem 0 0">🔒 {{ T "plugins.store.manager_approval_notice" }}</p>
+    {{ end }}
   </div>
   {{ end }}
 </div>
