@@ -20,10 +20,9 @@
       <img class="selforder-logo" src="/public/assets/logo/ut-logo.svg" alt="" />
       {{ if .shopName }}<p class="selforder-shop">{{ .shopName }}</p>{{ end }}
       <h1>{{ T "selforder.welcome" }}</h1>
-      <p class="selforder-hint">{{ T "selforder.coming_soon" }}</p>
-      <button type="button" class="btn primary selforder-start" onclick="window.location.reload()">
+      <a class="btn primary selforder-start" href="/self-order/shop">
         {{ T "selforder.tap_to_start" }}
-      </button>
+      </a>
     </main>
     <script>
       // Reset to the start screen after N idle seconds (ADR-0020) — this

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}" dir="{{ dir }}" style="font-size: {{ uiscalepx }}px">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ T "selforder.title" }}</title>
+    <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
+    <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
+    <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
+    <style>
+      body.selforder-shop { padding: 1rem; }
+      .selforder-shop-header { display:flex; align-items:center; gap:1rem; margin-block-end:.75rem; }
+      .selforder-search { flex:1; min-height:52px; padding:.6rem 1rem; font-size:1.1rem;
+        border:1px solid var(--border, #d1d5db); border-radius:999px; }
+      .selforder-cats { display:flex; flex-wrap:wrap; gap:.5rem; margin-block-end:1rem; }
+      .selforder-shop-main { display:grid; grid-template-columns:1fr 22rem; gap:1.25rem; align-items:start; }
+      .selforder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
+        gap:1rem; }
+      .selforder-tile { display:flex; flex-direction:column; align-items:stretch; gap:.4rem;
+        padding:.75rem; min-height:120px; border:1px solid var(--border, #d1d5db);
+        border-radius:12px; background:var(--surface, #fff); font:inherit; cursor:pointer;
+        text-align:start; }
+      .selforder-tile-img { width:100%; height:72px; object-fit:contain; border-radius:8px; }
+      .selforder-tile-name { font-weight:700; font-size:1rem; }
+      .selforder-tile-price { color:var(--accent, #4f46e5); font-weight:700; }
+      .selforder-cart { border:1px solid var(--border, #d1d5db); border-radius:12px;
+        padding:1rem; position:sticky; top:1rem; }
+      .selforder-cart-lines { list-style:none; margin:0 0 .75rem; padding:0; }
+      .selforder-cart-line { display:grid; grid-template-columns:1fr auto auto auto;
+        align-items:center; gap:.5rem; padding:.5rem 0; border-block-end:1px solid var(--border, #e5e7eb); }
+      .selforder-cart-line-qty { display:flex; align-items:center; gap:.4rem; }
+      .selforder-qty-btn { min-width:36px; min-height:36px; padding:0; }
+      .selforder-qty-value { min-inline-size:1.5rem; text-align:center; font-variant-numeric:tabular-nums; }
+      .selforder-cart-totals { margin-block-start:.5rem; }
+      .selforder-cart-total { font-weight:800; font-size:1.1rem; }
+      .selforder-checkout { width:100%; min-height:52px; margin-block-start:.75rem; }
+      .selforder-cart-empty { text-align:center; }
+      @media (max-width: 720px) {
+        .selforder-shop-main { grid-template-columns:1fr; }
+        .selforder-cart { position:static; }
+      }
+    </style>
+  </head>
+  <body class="selforder-shop{{ if kiosk }} kiosk{{ end }}">
+    <header class="selforder-shop-header">
+      <a class="btn secondary" href="/self-order">← {{ T "selforder.back" }}</a>
+      <input type="search" id="selforder-search" class="selforder-search"
+             placeholder="{{ T "selforder.search_ph" }}" aria-label="{{ T "selforder.search_ph" }}"
+             autocomplete="off"
+             hx-get="/api/self-order/search" hx-trigger="input changed delay:300ms, search"
+             hx-target="#selforder-grid" hx-swap="outerHTML" hx-include="this">
+    </header>
+
+    {{ if .Categories }}
+    <div class="selforder-cats" role="group" aria-label="{{ T "products.title" }}">
+      <button type="button" class="cat-chip active" data-cat="">{{ T "plugins.store.all" }}</button>
+      {{ range .Categories }}
+      <button type="button" class="cat-chip" data-cat="{{ .ID }}">{{ .Name }}</button>
+      {{ end }}
+    </div>
+    {{ end }}
+
+    <main class="selforder-shop-main">
+      <div id="selforder-grid" class="selforder-grid" hx-get="/api/self-order/search" hx-trigger="load" hx-swap="outerHTML"></div>
+      <div id="selforder-cart" class="selforder-cart" hx-get="/api/self-order/cart" hx-trigger="load" hx-swap="outerHTML"></div>
+    </main>
+
+    <dialog id="selforder-modal" class="modifier-modal"></dialog>
+
+    <script>
+      // Category chip filter: client-side show/hide over the loaded grid
+      // (search already re-fetches server-side; category filtering doesn't
+      // need a round trip since the full catalog is already on the page).
+      (function () {
+        document.addEventListener('click', function (e) {
+          var chip = e.target.closest('.cat-chip');
+          if (!chip) return;
+          document.querySelectorAll('.cat-chip').forEach(function (c) { c.classList.remove('active'); });
+          chip.classList.add('active');
+          var cat = chip.getAttribute('data-cat');
+          document.querySelectorAll('#selforder-grid .selforder-tile').forEach(function (tile) {
+            var show = !cat || tile.getAttribute('data-cat') === cat;
+            tile.hidden = !show;
+          });
+        });
+      })();
+
+      // Idle reset (ADR-0020, same mechanism as the /self-order landing
+      // screen) — this route is also auth-exempt/no-session, so a plain
+      // client-side reload after inactivity clears the screen (and the
+      // shared till-level basket) for the next customer.
+      (function () {
+        var secs = {{ .idleResetSecs }};
+        if (!secs || secs <= 0) return;
+        var timer;
+        function reset() {
+          clearTimeout(timer);
+          timer = setTimeout(function () { window.location.href = '/self-order'; }, secs * 1000);
+        }
+        ['pointerdown', 'keydown', 'touchstart'].forEach(function (evt) {
+          document.addEventListener(evt, reset, { passive: true });
+        });
+        reset();
+      })();
+    </script>
+  </body>
+</html>

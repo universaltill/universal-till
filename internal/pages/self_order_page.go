@@ -17,6 +17,20 @@ import (
 // already-authenticated visitor.
 func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /self-order", func(w http.ResponseWriter, r *http.Request) {
+		// Landing here always means "start fresh" — whether an operator
+		// navigated here directly, or the shop-page idle timer (Phase 3)
+		// redirected back after inactivity. Without this, an abandoned
+		// cart would silently greet the NEXT customer instead of an empty
+		// one, since the basket is till-process-level state, not
+		// per-visit (see spec 011 Phase 2's "revisit once there's real
+		// cart state to discard on reset" note — this is that revisit).
+		// d.Engine is nil in some page-level test harnesses that never
+		// exercise the basket (e.g. TestSelfOrderModeRedirectsHome) — this
+		// route is reachable from those too since it's part of the "/"
+		// mode-redirect flow, so guard rather than assume it's always set.
+		if d.Engine != nil {
+			d.Engine.Reset()
+		}
 		st := d.CurrentState()
 		httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
 			"title":         "Self-order",
