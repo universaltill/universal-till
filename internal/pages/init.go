@@ -30,11 +30,13 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	log := logging.L()
 	mux := http.NewServeMux()
 
-	// Point the plugin page/theme asset dirs at the resolved data directory
-	// (paths.Init ran in config.Init). These stay package vars so tests can
-	// override them, but production reads them from the stable data dir.
+	// Point the plugin page/theme/icon asset dirs at the resolved data
+	// directory (paths.Init ran in config.Init). These stay package vars so
+	// tests can override them, but production reads them from the stable
+	// data dir.
 	pluginPagesDir = paths.Plugins()
 	pluginThemesDir = paths.Plugins()
+	pluginIconsDir = paths.Plugins()
 
 	// settings + state
 	setStore := settings.NewStore(db)

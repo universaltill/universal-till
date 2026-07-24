@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// Overridable in tests, same convention (and same "./data/plugins" literal,
-// not paths.Plugins()) as pluginThemesDir/pluginPagesDir — a package var
-// initializer runs before main() calls paths.Init, so paths.Plugins() would
-// just freeze in the pre-Init fallback anyway.
+// Overridable in tests, same convention as pluginThemesDir/pluginPagesDir.
+// The "./data/plugins" literal is only the pre-Init fallback; pages.Init
+// repoints this at paths.Plugins() (the resolved, per-platform data dir)
+// once paths.Init has run.
 var pluginIconsDir = "./data/plugins"
 
 // registerPluginIcons serves icon files an installed plugin ships alongside
