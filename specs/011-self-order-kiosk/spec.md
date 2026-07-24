@@ -41,8 +41,38 @@ extra shot" correctly) before the kiosk exists.
   review already established (audit every existing `mode == "backoffice"`
   branch for a kiosk-mode gap while touching this).
 - No admin/settings surface reachable from the kiosk UI itself.
-- Idle timeout → reset to the start screen: extend the existing
-  `auth.idle_lock_minutes`/idle-lock mechanism rather than a second timer.
+
+**Auth model decision (found while building this phase, not anticipated
+when the spec was first written):** every route in this app requires a
+cashier PIN session today (`docs/architecture/pos-auth.md` — the auth
+middleware gates everything except `/login`, `/api/auth/*`, `/public/*`,
+`/themes/*`, `/plugin-icons/*`, `/healthz`). A self-order kiosk is used by
+anonymous walk-up customers who cannot be expected to enter a cashier PIN.
+Two options considered:
+1. Auto-create/resolve a session for a dedicated seeded "kiosk" operator
+   whenever a self-order-mode till's landing route is hit with no valid
+   session — mimics real cashier attribution but adds new session-
+   auto-creation machinery and session-expiry edge cases for a kiosk that
+   sits open all day with no one "logging in."
+2. **Chosen**: exempt the self-order routes from the auth middleware
+   (`internal/auth/middleware.go`'s `exempt()`, same precedent as the
+   `/themes/`/`/plugin-icons/` static-asset exemptions), and attribute
+   kiosk sales to a fixed, well-known seeded "kiosk" user id at sale-
+   completion time — not derived from a session at all, since there isn't
+   one. Simpler, no new session lifecycle to reason about. A manager
+   needing admin access from a kiosk-mode till still goes through the
+   normal, fully-gated `/login` flow — only the self-order surface itself
+   is exempt, nothing else.
+- Idle timeout → reset to the start screen. **Correction found while
+  building**: `auth.idle_lock_minutes` is fundamentally session-based
+  (revokes a cashier's session server-side) — since the self-order route is
+  auth-exempt (no session at all), that mechanism doesn't apply. Uses a
+  separate, simpler setting instead: `kiosk.idle_reset_seconds`
+  (manager-gated, default 60s) driving a lightweight client-side-only
+  timer that reloads the self-order landing page after inactivity — no
+  server-side session to revoke, nothing to lose yet at the Phase 2 shell
+  stage (no cart exists until Phase 3). Phase 3/4 will need to revisit this
+  once there's real in-progress cart state to discard on reset.
 
 ### Phase 3 — Browse, search, customize, cart
 - Catalog browse (category chips + item grid, reusing existing catalog

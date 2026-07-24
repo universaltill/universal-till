@@ -32,6 +32,16 @@ func exempt(path string) bool {
 		"/api/sync/assets", "/api/sync/assets/file", "/api/setup/join":
 		return true
 	}
+	// /self-order (ADR-0020): the self-order kiosk flow is used by
+	// anonymous walk-up customers who can't PIN-login — the whole surface
+	// (landing page + its own future browse/cart/checkout API routes) is
+	// exempt. Prefixed, not an exact match, since Phase 3/4 add API routes
+	// under this same path. Kiosk sales attribute to the seeded "kiosk"
+	// user (migration 018), not a session. Nothing else about the till is
+	// exempt — a manager needing admin access still goes through /login.
+	if path == "/self-order" || strings.HasPrefix(path, "/self-order/") || strings.HasPrefix(path, "/api/self-order/") {
+		return true
+	}
 	for _, p := range []string{"/api/auth/", "/public/", "/themes/", "/plugin-icons/"} {
 		if strings.HasPrefix(path, p) {
 			return true

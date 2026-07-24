@@ -47,6 +47,7 @@ type RuntimeState struct {
 	UIScale                float64 // interface scale for this till's screen (0 = unset)
 	IdleLockMinutes        int     // idle auto-lock window in minutes (0 = off)
 	OSKMode                string  // on-screen keyboard: auto|on|off ("" = auto)
+	KioskIdleResetSeconds  int     // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.
