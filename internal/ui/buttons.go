@@ -17,31 +17,34 @@ import (
 
 // Button represents a shortcut button backed by the shortcut_buttons table.
 type Button struct {
-	Label    string `json:"label"`
-	Code     string `json:"code"` // barcode/PLU associated with the shortcut
-	ItemID   string `json:"itemId"`
-	ImageURL string `json:"imageUrl,omitempty"`
-	Price    int64  `json:"price,omitempty"` // minor units, display only
+	Label        string `json:"label"`
+	Code         string `json:"code"` // barcode/PLU associated with the shortcut
+	ItemID       string `json:"itemId"`
+	ImageURL     string `json:"imageUrl,omitempty"`
+	Price        int64  `json:"price,omitempty"` // minor units, display only
+	HasModifiers bool   `json:"hasModifiers,omitempty"`
 }
 
 // ButtonVM is the view-model passed to templates.
 type ButtonVM struct {
-	Label    string `json:"label"`
-	Code     string `json:"code"`
-	ItemID   string `json:"itemId"`
-	ImageURL string `json:"imageUrl,omitempty"`
-	Price    int64  `json:"price,omitempty"` // minor units, display only
+	Label        string `json:"label"`
+	Code         string `json:"code"`
+	ItemID       string `json:"itemId"`
+	ImageURL     string `json:"imageUrl,omitempty"`
+	Price        int64  `json:"price,omitempty"` // minor units, display only
+	HasModifiers bool   `json:"hasModifiers,omitempty"`
 }
 
 func ToVM(b []Button) []ButtonVM {
 	out := make([]ButtonVM, 0, len(b))
 	for _, x := range b {
 		out = append(out, ButtonVM{
-			Label:    x.Label,
-			Code:     x.Code,
-			ItemID:   x.ItemID,
-			ImageURL: x.ImageURL,
-			Price:    x.Price,
+			Label:        x.Label,
+			Code:         x.Code,
+			ItemID:       x.ItemID,
+			ImageURL:     x.ImageURL,
+			Price:        x.Price,
+			HasModifiers: x.HasModifiers,
 		})
 	}
 	return out
@@ -51,12 +54,14 @@ func ToVM(b []Button) []ButtonVM {
 type ButtonStore struct {
 	repo    *data.ShortcutsRepo
 	posRepo *data.POSRepo
+	modRepo *data.ModifierRepo
 }
 
 func NewButtonStore(db *sql.DB) *ButtonStore {
 	return &ButtonStore{
 		repo:    data.NewShortcutsRepo(db),
 		posRepo: data.NewPOSRepo(db),
+		modRepo: data.NewModifierRepo(db),
 	}
 }
 
@@ -86,18 +91,30 @@ func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit i
 }
 
 func (s *ButtonStore) Load() ([]Button, error) {
-	rows, err := s.repo.LoadButtons(context.Background())
+	ctx := context.Background()
+	rows, err := s.repo.LoadButtons(ctx)
 	if err != nil {
 		return nil, err
+	}
+	itemIDs := make([]string, 0, len(rows))
+	for _, b := range rows {
+		if b.ItemID != "" {
+			itemIDs = append(itemIDs, b.ItemID)
+		}
+	}
+	var hasMods map[string]bool
+	if s.modRepo != nil {
+		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
 	}
 	var out []Button
 	for _, b := range rows {
 		out = append(out, Button{
-			Label:    b.Label,
-			Code:     b.Barcode,
-			ItemID:   b.ItemID,
-			ImageURL: b.ImageURL,
-			Price:    b.Price,
+			Label:        b.Label,
+			Code:         b.Barcode,
+			ItemID:       b.ItemID,
+			ImageURL:     b.ImageURL,
+			Price:        b.Price,
+			HasModifiers: hasMods[b.ItemID],
 		})
 	}
 	return out, nil

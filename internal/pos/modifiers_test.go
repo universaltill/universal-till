@@ -84,16 +84,11 @@ func TestModifierSignature_EmptyForNoModifiers(t *testing.T) {
 	}
 }
 
-// DOCUMENTS A KNOWN GAP (see Remove's doc comment in service.go), it does
-// not assert desired behavior: Remove(sku) deletes EVERY line sharing that
-// SKU, which is unsafe once two modifier-distinct lines can share one SKU.
-// This test exists so task #2's UI work cannot wire "remove this line" to
-// Remove(sku) for a modifier-bearing item without this test forcing an
-// explicit, deliberate decision (fail loudly here, not silently in
-// production). If this test starts failing because Remove became
-// line-specific, that's progress — update/delete this test as part of that
-// fix, don't just patch it to pass again.
-func TestRemove_KnownGap_DeletesAllLinesSharingSKU(t *testing.T) {
+// Remove(sku) is the LEGACY, SKU-keyed method — kept for callers that only
+// ever have one line per SKU. It still deletes every line sharing that SKU
+// (documented on its doc comment), which is exactly why the cashier UI uses
+// RemoveLine (by LineKey) instead — see the next two tests.
+func TestRemove_LegacySKUMethod_DeletesAllLinesSharingSKU(t *testing.T) {
 	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, mapResolver{})
 	base := BasketLine{SKU: "COFFEE", ItemID: "item-coffee", Name: "Flat White", PriceCents: 320}
 
@@ -106,6 +101,73 @@ func TestRemove_KnownGap_DeletesAllLinesSharingSKU(t *testing.T) {
 	s.Remove("COFFEE")
 
 	if len(s.Basket().Lines) != 0 {
-		t.Fatalf("known-gap assumption changed: expected Remove(sku) to still delete ALL same-SKU lines (got %d remaining) — if this is now line-specific, update this test and task #2's blocker note", len(s.Basket().Lines))
+		t.Fatalf("expected legacy Remove(sku) to delete ALL same-SKU lines, got %d remaining", len(s.Basket().Lines))
+	}
+}
+
+// RemoveLine (by LineKey, ADR-0020) is what the cashier UI actually uses —
+// it must remove exactly the targeted line and leave a same-SKU sibling
+// (different customization) untouched.
+func TestRemoveLine_TargetsExactlyOneLineEvenWhenSKUsCollide(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, mapResolver{})
+	base := BasketLine{SKU: "COFFEE", ItemID: "item-coffee", Name: "Flat White", PriceCents: 320}
+
+	s.AddLineWithModifiers(base, 1, nil)
+	s.AddLineWithModifiers(base, 1, []data.SelectedModifier{{OptionID: "extra-shot", OptionName: "Extra shot", PriceDeltaMinor: 50}})
+	lines := s.Basket().Lines
+	if len(lines) != 2 {
+		t.Fatalf("setup: expected 2 distinct lines, got %d", len(lines))
+	}
+	var plainKey string
+	for _, l := range lines {
+		if len(l.Modifiers) == 0 {
+			plainKey = l.LineKey
+		}
+	}
+	if plainKey == "" {
+		t.Fatalf("setup: could not find the plain line's key: %+v", lines)
+	}
+
+	s.RemoveLine(plainKey)
+
+	got := s.Basket().Lines
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 line left, got %d: %+v", len(got), got)
+	}
+	if len(got[0].Modifiers) == 0 {
+		t.Fatalf("removed the wrong line — the customized one should have survived: %+v", got[0])
+	}
+}
+
+// UpdateLineByKey (ADR-0020) must adjust only the targeted line's qty, not
+// a same-SKU sibling with different modifiers.
+func TestUpdateLineByKey_TargetsExactlyOneLineEvenWhenSKUsCollide(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, mapResolver{})
+	base := BasketLine{SKU: "COFFEE", ItemID: "item-coffee", Name: "Flat White", PriceCents: 320}
+
+	s.AddLineWithModifiers(base, 1, nil)
+	s.AddLineWithModifiers(base, 1, []data.SelectedModifier{{OptionID: "extra-shot", OptionName: "Extra shot", PriceDeltaMinor: 50}})
+	var plainKey, customKey string
+	for _, l := range s.Basket().Lines {
+		if len(l.Modifiers) == 0 {
+			plainKey = l.LineKey
+		} else {
+			customKey = l.LineKey
+		}
+	}
+
+	s.UpdateLineByKey(plainKey, 5, 0)
+
+	for _, l := range s.Basket().Lines {
+		switch l.LineKey {
+		case plainKey:
+			if l.Qty != 5 {
+				t.Fatalf("targeted line qty = %v, want 5", l.Qty)
+			}
+		case customKey:
+			if l.Qty != 1 {
+				t.Fatalf("untargeted sibling line qty changed to %v, want unchanged 1", l.Qty)
+			}
+		}
 	}
 }
