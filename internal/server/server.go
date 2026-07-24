@@ -24,6 +24,7 @@ import (
 type BackgroundJobs struct {
 	catalogRepo         *marketplace.CatalogRepository
 	revocationChecker   *plugins.RevocationChecker
+	telemetryClient     *plugins.TelemetryClient
 	catalogSyncInterval time.Duration
 	telemetryInterval   time.Duration
 	revocationInterval  time.Duration
@@ -38,9 +39,13 @@ func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, s
 		revocationChecker = plugins.NewRevocationChecker(db, cfg.Marketplace.EndpointURL, supervisor)
 	}
 
+	telemetryClient := plugins.NewTelemetryClient(db, cfg.Marketplace.EndpointURL,
+		marketplace.DeviceIDFromConfig(&cfg.Marketplace), cfg.Marketplace.ClientID, cfg.Marketplace.StoreID)
+
 	return &BackgroundJobs{
 		catalogRepo:         catalogRepo,
 		revocationChecker:   revocationChecker,
+		telemetryClient:     telemetryClient,
 		catalogSyncInterval: 15 * time.Minute,
 		telemetryInterval:   5 * time.Minute,
 		revocationInterval:  30 * time.Minute,
@@ -82,8 +87,9 @@ func (bj *BackgroundJobs) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				bj.logger.Println("[Scheduler] telemetry job triggered (stub)")
-				// TODO: Implement telemetry reporting in T024
+				if err := bj.telemetryClient.ReportNow(ctx); err != nil {
+					bj.logger.Printf("[Scheduler] telemetry report failed: %v", err)
+				}
 			}
 		}
 	}()
