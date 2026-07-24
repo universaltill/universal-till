@@ -26,6 +26,9 @@
 
 {{ if .IsManager }}
 <div class="card" style="margin-top:1rem">
+  <a class="btn secondary" href="/audit">{{ T "audit.link" }}</a>
+</div>
+<div class="card" style="margin-top:1rem">
   <h2>{{ T "reports.eod.title" }}</h2>
   <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
     <button class="btn primary" hx-post="/api/reports/eod/run" hx-target="#eod-msg" hx-swap="innerHTML">{{ T "reports.eod.run" }}</button>
