@@ -363,6 +363,16 @@
     <button class="btn" type="submit">{{ T "settings.idle_lock.apply" }}</button>
   </form>
 </div>
+<div class="card">
+  <h2>{{ T "settings.telemetry.title" }}</h2>
+  <p class="muted">{{ T "settings.telemetry.help" }}</p>
+  <form hx-post="/api/settings/telemetry" hx-swap="none" hx-on::after-request="window.location.reload()">
+    <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.telemetry_opt_in") "true" }}checked{{ end }}> {{ T "settings.telemetry.enable" }}</label>
+    <div class="set-gap-s">
+      <button class="btn" type="submit">{{ T "settings.telemetry.save" }}</button>
+    </div>
+  </form>
+</div>
 {{ end }}
 <div class="card">
   <h2>{{ T "settings.currency.title" }}</h2>

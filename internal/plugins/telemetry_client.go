@@ -7,186 +7,102 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
-// TelemetryEvent represents a single telemetry event
-type TelemetryEvent struct {
-	EventType string                 `json:"event_type"` // status_update|install|update|browse
-	PluginID  string                 `json:"plugin_id,omitempty"`
-	Version   string                 `json:"version,omitempty"`
-	Data      map[string]interface{} `json:"data,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
-	DeviceID  string                 `json:"device_id"`
+// pluginStatusWire mirrors cloud.proto's PluginStatus message field-for-field
+// (cloud.v1.TelemetryService.ReportPluginStatus) — no per-plugin metrics
+// (crash/memory/CPU) travel over the wire; the marketplace doesn't collect
+// them today.
+type pluginStatusWire struct {
+	PluginID         string `json:"plugin_id"`
+	InstalledVersion string `json:"installed_version"`
+	Status           string `json:"status"` // enabled | disabled | revoked | failed
+	Source           string `json:"source"` // cloud | manual
+	DeviceID         string `json:"device_id"`
 }
 
-// TelemetryBatch contains a batch of events to send
-type TelemetryBatch struct {
-	Events    []TelemetryEvent `json:"events"`
-	BatchID   string           `json:"batch_id"`
-	Timestamp time.Time        `json:"timestamp"`
+type reportPluginStatusRequest struct {
+	Statuses   []pluginStatusWire `json:"statuses"`
+	MerchantID string             `json:"merchant_id"`
+	StoreID    string             `json:"store_id"`
 }
 
-// TelemetryClient sends plugin telemetry to marketplace
+// TelemetryClient reports the device's current installed-plugin statuses to
+// the marketplace (FR-013). One report per tick is a full snapshot of what's
+// installed right now — the marketplace upserts current state per
+// (device, plugin), so there's no event queue/batching to manage.
 type TelemetryClient struct {
 	db             *sql.DB
 	marketplaceURL string
 	deviceID       string
+	merchantID     string
+	storeID        string
 	httpClient     *http.Client
 	optInEnabled   bool
-	batchSize      int
-	batchInterval  time.Duration
-	mu             sync.Mutex
-	pendingEvents  []TelemetryEvent
-	ticker         *time.Ticker
-	stopChan       chan struct{}
 }
 
-// NewTelemetryClient creates a new telemetry client
-func NewTelemetryClient(db *sql.DB, marketplaceURL, deviceID string) *TelemetryClient {
+// NewTelemetryClient creates a new telemetry client.
+func NewTelemetryClient(db *sql.DB, marketplaceURL, deviceID, merchantID, storeID string) *TelemetryClient {
 	return &TelemetryClient{
 		db:             db,
 		marketplaceURL: marketplaceURL,
 		deviceID:       deviceID,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		batchSize:     50,
-		batchInterval: 5 * time.Minute,
-		pendingEvents: []TelemetryEvent{},
-		stopChan:      make(chan struct{}),
+		merchantID:     merchantID,
+		storeID:        storeID,
+		httpClient:     &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
-// Start begins the telemetry batching and sending loop
-func (tc *TelemetryClient) Start(ctx context.Context) {
-	// Check opt-in status from settings
+// ReportNow queries every active installed plugin and sends one status
+// report covering all of them. Called on the scheduler's telemetry tick.
+func (tc *TelemetryClient) ReportNow(ctx context.Context) error {
 	if err := tc.loadOptInStatus(ctx); err != nil {
-		logging.L().Warnf("[Telemetry] Failed to load opt-in status: %v", err)
-		tc.optInEnabled = false
+		return fmt.Errorf("load opt-in status: %w", err)
 	}
-
 	if !tc.optInEnabled {
-		logging.L().Infof("[Telemetry] Telemetry disabled (opt-in required)")
-		return
+		return nil
 	}
-
-	tc.ticker = time.NewTicker(tc.batchInterval)
-
-	go func() {
-		for {
-			select {
-			case <-tc.ticker.C:
-				if err := tc.flush(ctx); err != nil {
-					logging.L().Warnf("[Telemetry] Failed to flush events: %v", err)
-				}
-			case <-tc.stopChan:
-				tc.ticker.Stop()
-				// Final flush
-				tc.flush(ctx)
-				return
-			}
-		}
-	}()
-
-	logging.L().Infof("[Telemetry] Client started")
-}
-
-// Stop stops the telemetry client
-func (tc *TelemetryClient) Stop() {
-	close(tc.stopChan)
-}
-
-// TrackStatusUpdate records a plugin status change (T024a)
-func (tc *TelemetryClient) TrackStatusUpdate(ctx context.Context, pluginID, version string, enabled bool) error {
-	if !tc.shouldTrack(ctx) {
+	if tc.marketplaceURL == "" {
+		return nil
+	}
+	if tc.merchantID == "" {
+		// Not enrolled yet (ADR-0013: store registration is lazy/background)
+		// — the server requires merchant_id and will reject an empty one.
+		// Skip quietly; the next tick retries once enrolment fills it in.
 		return nil
 	}
 
-	event := TelemetryEvent{
-		EventType: "status_update",
-		PluginID:  pluginID,
-		Version:   version,
-		Data: map[string]interface{}{
-			"enabled": enabled,
-		},
-		Timestamp: time.Now().UTC(),
-		DeviceID:  tc.deviceID,
+	installed, err := data.NewPluginRepo(tc.db).ListInstalledPlugins(ctx)
+	if err != nil {
+		return fmt.Errorf("list installed plugins: %w", err)
 	}
-
-	return tc.enqueue(event)
-}
-
-// TrackInstall records a plugin installation (T024b)
-func (tc *TelemetryClient) TrackInstall(ctx context.Context, pluginID, version string) error {
-	if !tc.shouldTrack(ctx) {
+	if len(installed) == 0 {
 		return nil
 	}
 
-	event := TelemetryEvent{
-		EventType: "install",
-		PluginID:  pluginID,
-		Version:   version,
-		Timestamp: time.Now().UTC(),
-		DeviceID:  tc.deviceID,
+	statuses := make([]pluginStatusWire, 0, len(installed))
+	for _, p := range installed {
+		statuses = append(statuses, pluginStatusWire{
+			PluginID:         p.ID,
+			InstalledVersion: p.Version,
+			Status:           "enabled", // ListInstalledPlugins already filters is_active=1
+			Source:           "cloud",
+			DeviceID:         tc.deviceID,
+		})
 	}
 
-	return tc.enqueue(event)
+	return tc.send(ctx, reportPluginStatusRequest{
+		Statuses:   statuses,
+		MerchantID: tc.merchantID,
+		StoreID:    tc.storeID,
+	})
 }
 
-// TrackUpdate records a plugin update (T024b)
-func (tc *TelemetryClient) TrackUpdate(ctx context.Context, pluginID, fromVersion, toVersion string) error {
-	if !tc.shouldTrack(ctx) {
-		return nil
-	}
-
-	event := TelemetryEvent{
-		EventType: "update",
-		PluginID:  pluginID,
-		Version:   toVersion,
-		Data: map[string]interface{}{
-			"from_version": fromVersion,
-			"to_version":   toVersion,
-		},
-		Timestamp: time.Now().UTC(),
-		DeviceID:  tc.deviceID,
-	}
-
-	return tc.enqueue(event)
-}
-
-// TrackBrowse records a catalog browse event (T024b)
-func (tc *TelemetryClient) TrackBrowse(ctx context.Context, catalogSize int) error {
-	if !tc.shouldTrack(ctx) {
-		return nil
-	}
-
-	event := TelemetryEvent{
-		EventType: "browse",
-		Data: map[string]interface{}{
-			"catalog_size": catalogSize,
-		},
-		Timestamp: time.Now().UTC(),
-		DeviceID:  tc.deviceID,
-	}
-
-	return tc.enqueue(event)
-}
-
-// shouldTrack checks if telemetry should be tracked based on opt-in status
-func (tc *TelemetryClient) shouldTrack(ctx context.Context) bool {
-	// Reload opt-in status periodically
-	if err := tc.loadOptInStatus(ctx); err != nil {
-		return false
-	}
-	return tc.optInEnabled
-}
-
-// loadOptInStatus reads telemetry opt-in from settings
+// loadOptInStatus reads telemetry opt-in from settings.
 func (tc *TelemetryClient) loadOptInStatus(ctx context.Context) error {
 	value, ok, err := data.NewSettingsRepo(tc.db).Get(ctx, "marketplace.telemetry_opt_in")
 	if err != nil {
@@ -196,102 +112,38 @@ func (tc *TelemetryClient) loadOptInStatus(ctx context.Context) error {
 		tc.optInEnabled = false
 		return nil
 	}
-
 	tc.optInEnabled = (value == "true" || value == "1")
 	return nil
 }
 
-// enqueue adds an event to the pending queue
-func (tc *TelemetryClient) enqueue(event TelemetryEvent) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
-
-	tc.pendingEvents = append(tc.pendingEvents, event)
-
-	// Auto-flush if batch size reached
-	if len(tc.pendingEvents) >= tc.batchSize {
-		// Flush in background to avoid blocking
-		go func() {
-			ctx := context.Background()
-			if err := tc.flush(ctx); err != nil {
-				logging.L().Warnf("[Telemetry] Failed to flush full batch: %v", err)
-			}
-		}()
-	}
-
-	return nil
-}
-
-// flush sends pending events to marketplace
-func (tc *TelemetryClient) flush(ctx context.Context) error {
-	tc.mu.Lock()
-	if len(tc.pendingEvents) == 0 {
-		tc.mu.Unlock()
-		return nil
-	}
-
-	// Take all pending events
-	events := make([]TelemetryEvent, len(tc.pendingEvents))
-	copy(events, tc.pendingEvents)
-	tc.pendingEvents = []TelemetryEvent{}
-	tc.mu.Unlock()
-
-	// Create batch
-	batch := TelemetryBatch{
-		Events:    events,
-		BatchID:   fmt.Sprintf("%s-%d", tc.deviceID, time.Now().Unix()),
-		Timestamp: time.Now().UTC(),
-	}
-
-	// Send to marketplace with retry
-	return tc.sendBatch(ctx, batch)
-}
-
-// sendBatch sends a batch with exponential backoff retry
-func (tc *TelemetryClient) sendBatch(ctx context.Context, batch TelemetryBatch) error {
-	log := logging.L()
-
-	data, err := json.Marshal(batch)
+// send POSTs one report to the marketplace's grpc-gateway REST bridge
+// (no raw gRPC — the till has no gRPC client and the cluster only exposes
+// the HTTP port). Best-effort: a failed send is logged and dropped, not
+// retried/queued — the next scheduler tick sends a fresh full snapshot
+// anyway, so queueing would only re-send stale data.
+func (tc *TelemetryClient) send(ctx context.Context, req reportPluginStatusRequest) error {
+	body, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("failed to marshal batch: %w", err)
+		return fmt.Errorf("marshal telemetry report: %w", err)
 	}
 
-	endpoint := fmt.Sprintf("%s/v1/telemetry", tc.marketplaceURL)
+	endpoint := fmt.Sprintf("%s/v1/telemetry/report", tc.marketplaceURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create telemetry request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
 
-	maxRetries := 3
-	backoff := 2 * time.Second
+	resp, err := tc.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("send telemetry report: %w", err)
+	}
+	defer resp.Body.Close()
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
-		if err != nil {
-			return fmt.Errorf("failed to create request: %w", err)
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := tc.httpClient.Do(req)
-		if err != nil {
-			log.Warnf("[Telemetry] Attempt %d failed: %v", attempt+1, err)
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			log.Infof("[Telemetry] Sent batch with %d events", len(batch.Events))
-			return nil
-		}
-
-		log.Warnf("[Telemetry] Server returned %d", resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("telemetry report rejected: status %d", resp.StatusCode)
 	}
 
-	return fmt.Errorf("failed to send batch after %d retries", maxRetries+1)
+	logging.L().Infof("[Telemetry] reported status for %d plugin(s)", len(req.Statuses))
+	return nil
 }
