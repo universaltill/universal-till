@@ -1,0 +1,44 @@
+<div class="selforder-cart" id="selforder-cart">
+  {{ if .Basket.ToastMessage }}<div class="toast info">{{ .Basket.ToastMessage }}</div>{{ end }}
+  {{ if .Basket.Lines }}
+  <ul class="selforder-cart-lines">
+    {{ range .Basket.Lines }}
+    <li class="selforder-cart-line">
+      <div class="selforder-cart-line-info">
+        <span class="selforder-cart-line-name">{{ .Name }}</span>
+        {{ if .Modifiers }}
+        <ul class="line-modifiers">
+          {{ range .Modifiers }}
+          <li class="muted">+ {{ .OptionName }}{{ if .PriceDeltaMinor }} ({{ money .PriceDeltaMinor }}){{ end }}</li>
+          {{ end }}
+        </ul>
+        {{ end }}
+      </div>
+      <div class="selforder-cart-line-qty">
+        <button type="button" class="btn secondary selforder-qty-btn"
+                hx-post="/api/self-order/line" hx-vals='{"key":"{{ .LineKey }}","delta":"-1"}'
+                hx-target="#selforder-cart" hx-swap="outerHTML" aria-label="{{ T "selforder.decrease" }}">−</button>
+        <span class="selforder-qty-value">{{ printf "%.0f" .Qty }}</span>
+        <button type="button" class="btn secondary selforder-qty-btn"
+                hx-post="/api/self-order/line" hx-vals='{"key":"{{ .LineKey }}","delta":"1"}'
+                hx-target="#selforder-cart" hx-swap="outerHTML" aria-label="{{ T "selforder.increase" }}">+</button>
+      </div>
+      <span class="selforder-cart-line-total">{{ money .LineTotal }}</span>
+      <button type="button" class="btn danger btn-x" title="{{ T "selforder.remove" }}"
+              hx-post="/api/self-order/remove" hx-vals='{"key":"{{ .LineKey }}"}'
+              hx-target="#selforder-cart" hx-swap="outerHTML">✕</button>
+    </li>
+    {{ end }}
+  </ul>
+  <div class="selforder-cart-totals">
+    <div>{{ T "basket.subtotal" }}: {{ money .Basket.Subtotal }}</div>
+    <div>{{ T "basket.tax" }}: {{ money .Basket.Tax }}</div>
+    <div class="selforder-cart-total">{{ T "basket.total" }}: {{ money .Basket.Total }}</div>
+  </div>
+  <button type="button" class="btn primary selforder-checkout" disabled title="{{ T "selforder.checkout_soon" }}">
+    {{ T "selforder.checkout" }}
+  </button>
+  {{ else }}
+  <p class="empty selforder-cart-empty">{{ T "selforder.cart_empty" }}</p>
+  {{ end }}
+</div>
