@@ -135,6 +135,45 @@ func TestPluginPage_KeywordsAreSearchable(t *testing.T) {
 	}
 }
 
+// Every other fixture in this file sets "rtl":false — none of them would
+// catch the RTL wiring breaking. A bundle with "rtl":true must set dir="rtl"
+// on the content card (web/ui/pages/plugin_content.html); a bundle without
+// it must not.
+func TestPluginPage_RTLBundleSetsDirAttribute(t *testing.T) {
+	d, base := pluginPageTestDeps(t)
+
+	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
+		t.Fatal(err)
+	}
+	contentDir := filepath.Join(base, "com.x.faq", "1.2.0", "content")
+	if err := os.MkdirAll(contentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bundle := `{"locale":"fa-IR","rtl":true,
+		"categories":[{"id":"general","name":"عمومی","sort_order":1}],
+		"faq_entries":[{"id":"q1","category":"general","question":"چطور اسکن کنم؟","answer":"نشانه‌گیری و شلیک کنید.","sort_order":1}]}`
+	if err := os.WriteFile(filepath.Join(contentDir, "fa-IR.json"), []byte(bundle), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerPluginPages(mux, d)
+	req := httptest.NewRequest(http.MethodGet, "/plugin/faq?lang=fa", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugin/faq?lang=fa = %d (%s)", rec.Code, body[:min(300, len(body))])
+	}
+	if !strings.Contains(body, `class="card plugin-content" dir="rtl"`) {
+		t.Errorf("expected dir=\"rtl\" on an RTL bundle, body=%s", body[:min(1200, len(body))])
+	}
+}
+
 func TestPluginPage_ChecksumValidBundleRenders(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 

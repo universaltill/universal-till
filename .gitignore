@@ -10,6 +10,7 @@
 bin/
 build/
 dist/
+/seed_faq
 data/*.db
 .codex
 .github/agents
