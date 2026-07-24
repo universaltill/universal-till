@@ -198,10 +198,17 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	// Exempt paths pass without a session.
-	for _, p := range []string{"/login", "/healthz", "/public/app.css", "/api/auth/login", "/themes/midnight.css"} {
+	for _, p := range []string{"/login", "/healthz", "/public/app.css", "/api/auth/login", "/themes/midnight.css",
+		"/self-order", "/self-order/", "/api/self-order/checkout"} {
 		if rec := do(p, ""); rec.Code != http.StatusOK {
 			t.Errorf("exempt %s = %d, want 200", p, rec.Code)
 		}
+	}
+	// "/self-order-anything-else" must NOT be exempt — the prefix match is
+	// deliberately anchored to a path boundary ("/self-order" exact or
+	// "/self-order/..."), not a bare string prefix.
+	if rec := do("/self-order-not-really", ""); rec.Code != http.StatusSeeOther {
+		t.Errorf("non-boundary self-order-like path = %d, want 303 redirect to /login (not exempt)", rec.Code)
 	}
 
 	// Pages redirect to /login.

@@ -264,6 +264,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Self-order kiosk idle-reset window (ADR-0020): distinct from the
+	// idle-lock above — the kiosk route is auth-exempt (no session to
+	// revoke), so this is purely a client-side "reload to the start
+	// screen" timer, read at render time. Manager/admin only.
+	mux.HandleFunc("POST /api/settings/kiosk-idle-reset", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		n, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("seconds")))
+		if err != nil || n < 0 || n > 600 {
+			http.Error(w, "seconds must be between 0 and 600", http.StatusBadRequest)
+			return
+		}
+		st := d.UpdateState(func(s *common.RuntimeState) { s.KioskIdleResetSeconds = n })
+		common.SaveState(r.Context(), d.Settings, st)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// Plugin telemetry opt-in (FR-013): off by default, manager-only —
 	// gates internal/plugins.TelemetryClient.ReportNow's scheduler tick.
 	mux.HandleFunc("POST /api/settings/telemetry", func(w http.ResponseWriter, r *http.Request) {
@@ -311,9 +331,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	// Device profile (ADR-0018): register (default) or back-office manager
-	// station — "/" becomes the reports page. Per-till (display.* never
-	// LAN-syncs), so one shop can mix registers and a back-office device.
+	// Device profile (ADR-0018/ADR-0020): register (default), back-office
+	// manager station, or self-order kiosk — "/" becomes the reports page
+	// (backoffice) or the locked customer-facing self-order flow
+	// (self_order). Per-till (display.* never LAN-syncs), so one shop can
+	// mix registers, a back-office device, and one or more kiosks.
 	mux.HandleFunc("POST /api/settings/display-mode", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin role required", http.StatusForbidden)
@@ -321,8 +343,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
-		if mode != "register" && mode != "backoffice" {
-			http.Error(w, "mode must be register or backoffice", http.StatusBadRequest)
+		if mode != "register" && mode != "backoffice" && mode != "self_order" {
+			http.Error(w, "mode must be register, backoffice, or self_order", http.StatusBadRequest)
 			return
 		}
 		if mode == "register" {

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}" dir="{{ dir }}" style="font-size: {{ uiscalepx }}px">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ T "selforder.title" }}</title>
+    <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
+    <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
+    <style>
+      .selforder-screen { display:flex; flex-direction:column; align-items:center; justify-content:center;
+        min-height:100vh; text-align:center; padding:2rem; gap:1.5rem; }
+      .selforder-logo { width:96px; height:96px; }
+      .selforder-shop { font-size:1.4rem; font-weight:700; margin:0; }
+      .selforder-hint { color:var(--muted, #6b7280); max-width:32rem; }
+      .selforder-start { min-height:64px; padding-inline:2.5rem; font-size:1.15rem; }
+    </style>
+  </head>
+  <body class="selforder-screen{{ if kiosk }} kiosk{{ end }}" data-kiosk-idle-reset="{{ .idleResetSecs }}">
+    <main>
+      <img class="selforder-logo" src="/public/assets/logo/ut-logo.svg" alt="" />
+      {{ if .shopName }}<p class="selforder-shop">{{ .shopName }}</p>{{ end }}
+      <h1>{{ T "selforder.welcome" }}</h1>
+      <p class="selforder-hint">{{ T "selforder.coming_soon" }}</p>
+      <button type="button" class="btn primary selforder-start" onclick="window.location.reload()">
+        {{ T "selforder.tap_to_start" }}
+      </button>
+    </main>
+    <script>
+      // Reset to the start screen after N idle seconds (ADR-0020) — this
+      // route is auth-exempt (anonymous customers), so there is no server
+      // session to revoke like the cashier idle-lock; this is a plain
+      // client-side reload. 0 (or missing) disables it.
+      (function () {
+        var secs = parseInt(document.body.getAttribute('data-kiosk-idle-reset'), 10);
+        if (!secs || secs <= 0) return;
+        var timer;
+        function reset() {
+          clearTimeout(timer);
+          timer = setTimeout(function () { window.location.reload(); }, secs * 1000);
+        }
+        ['pointerdown', 'keydown', 'touchstart'].forEach(function (evt) {
+          document.addEventListener(evt, reset, { passive: true });
+        });
+        reset();
+      })();
+    </script>
+  </body>
+</html>
