@@ -1,6 +1,8 @@
 package pages
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,10 +12,13 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
@@ -47,7 +52,7 @@ func setupSelfOrderShopDeps(t *testing.T) (*common.Deps, *db.DB) {
 		Db:       d.DB,
 		State:    common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
 		Menu:     []common.MenuItem{},
-		Settings: nil,
+		Settings: settings.NewStore(d.DB),
 		Engine:   engine,
 	}
 	return dp, d
@@ -289,6 +294,234 @@ func TestSelfOrder_LandingResetsBasket(t *testing.T) {
 
 	if len(dp.Engine.Basket().Lines) != 0 {
 		t.Fatal("expected the abandoned cart to be cleared on landing-page revisit")
+	}
+}
+
+// seedStock gives an item enough on-hand quantity at the default stock
+// location to pass CompleteSale's insufficient-stock check (real migrations
+// enforce it, unlike the hand-rolled test schema some other packages use).
+func seedStock(t *testing.T, d *db.DB, itemID string, qty float64) {
+	t.Helper()
+	locID, err := data.NewPOSRepo(d.DB).EnsureStockLocation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES (?,?,?,?)`,
+		"inv-"+itemID, itemID, locID, qty); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The built-in seed (001_init.sql) gives every fresh shop 'card' and 'gift'
+// (voucher) as active non-cash methods, plus 'cash' which must never appear
+// at a kiosk (ADR-0020: no cash drawer). This is the happy path: pick a
+// listed method, complete, and see the basket reset + a confirmation.
+func TestSelfOrderShop_CheckoutHappyPath(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	post("/api/self-order/scan", "code=5000001")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/checkout", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET checkout: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `value="card"`) {
+		t.Fatalf("payment picker should offer the built-in 'card' method: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `value="cash"`) {
+		t.Fatalf("payment picker must never offer 'cash' at a kiosk: %s", rec.Body.String())
+	}
+
+	rec2 := post("/api/self-order/checkout", "method=card")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("POST checkout: want 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if !strings.Contains(rec2.Body.String(), "Order placed") {
+		t.Fatalf("expected an order-confirmation screen, got: %s", rec2.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) != 0 {
+		t.Fatal("basket should be reset after a completed checkout")
+	}
+
+	var total int64
+	if err := d.DB.QueryRow(`SELECT total FROM sales WHERE status = 'completed'`).Scan(&total); err != nil {
+		t.Fatalf("expected a completed sale row: %v", err)
+	}
+	// 320 + 20% tax (setupSelfOrderShopDeps: TaxRatePct 20, TaxInclusive false).
+	if total != 384 {
+		t.Fatalf("want sale total 384 (320 + 20%% tax), got %d", total)
+	}
+	var cashierID string
+	if err := d.DB.QueryRow(`SELECT cashier_id FROM sales WHERE status = 'completed'`).Scan(&cashierID); err != nil {
+		t.Fatal(err)
+	}
+	if cashierID != "kiosk" {
+		t.Fatalf("kiosk sale must be attributed to the seeded 'kiosk' operator, got %q", cashierID)
+	}
+}
+
+// The kiosk must never let a client tender 'cash' — even though it's a
+// perfectly valid, active payment_methods row — since ADR-0020 v1 has no
+// cash drawer at a kiosk. Only ListActiveNonCashPaymentMethods' own list is
+// trusted, never a client-submitted method string, however plausible.
+func TestSelfOrderShop_CheckoutRejectsCashMethod(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/self-order/checkout", strings.NewReader("method=cash"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req2)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 rejecting cash, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) != 1 {
+		t.Fatal("a rejected checkout must not touch the basket")
+	}
+	var n int
+	_ = d.DB.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&n)
+	if n != 0 {
+		t.Fatal("a rejected checkout must not create a sale")
+	}
+}
+
+// An arbitrary/unknown method string must be rejected outright — critically,
+// it must NOT fall back to EnsurePaymentMethod (as the cashier tender
+// handler's quick-tender-button fallback does), which would silently insert
+// a new type='cash' payment_methods row for whatever a client sends on this
+// anonymous surface.
+func TestSelfOrderShop_CheckoutRejectsUnknownMethod(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	var before int
+	_ = d.DB.QueryRow(`SELECT COUNT(*) FROM payment_methods`).Scan(&before)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/self-order/checkout", strings.NewReader("method=bitcoin"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req2)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 rejecting an unknown method, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var after int
+	_ = d.DB.QueryRow(`SELECT COUNT(*) FROM payment_methods`).Scan(&after)
+	if after != before {
+		t.Fatalf("an unknown method must not create a payment_methods row: before=%d after=%d", before, after)
+	}
+}
+
+// An empty basket cannot be checked out, whether the customer never added
+// anything or emptied their cart after opening the payment picker.
+func TestSelfOrderShop_CheckoutRejectsEmptyBasket(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/checkout", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("GET checkout on empty basket: want 400, got %d", rec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/checkout", strings.NewReader("method=card"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("POST checkout on empty basket: want 400, got %d", rec2.Code)
+	}
+}
+
+// A plugin-provided payment method whose owning plugin declines the
+// blocking payment.<key>.authorize event must stop the kiosk sale exactly
+// like it stops a cashier's — proving the kiosk checkout goes through the
+// same completeTender gate, not a bypassed copy.
+func TestSelfOrderShop_CheckoutDeclinedByPluginGateNeverCompletesSale(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	if _, err := d.DB.Exec(`INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', '0.1.0', '1', '2026-07-17')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.NewPluginRepo(d.DB).SyncPluginPaymentMethods(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(d.DB)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) error {
+			return errors.New("demopay: card declined")
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/self-order/checkout", strings.NewReader("method=demopay"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req2)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("want 402 on a declined plugin gate, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) != 1 {
+		t.Fatal("a declined checkout must not reset/lose the basket")
+	}
+	var n int
+	_ = d.DB.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&n)
+	if n != 0 {
+		t.Fatal("a declined checkout must not create a sale")
 	}
 }
 

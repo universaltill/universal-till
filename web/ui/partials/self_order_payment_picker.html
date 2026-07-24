@@ -1,0 +1,22 @@
+<div class="payment-picker">
+  <h3>{{ T "selforder.checkout.title" }}</h3>
+  <p class="payment-picker-total">{{ T "basket.total" }}: {{ money .Total }}</p>
+  {{ if .ErrKey }}<div class="toast toast-error">{{ T .ErrKey }}</div>{{ end }}
+  {{ if .Methods }}
+  <form hx-post="/api/self-order/checkout" hx-target="#selforder-modal" hx-swap="innerHTML">
+    <div class="payment-picker-methods">
+      {{ range .Methods }}
+      <button type="submit" name="method" value="{{ .ID }}" class="btn primary payment-picker-method">
+        {{ .Name }}
+      </button>
+      {{ end }}
+    </div>
+  </form>
+  {{ else }}
+  <p class="muted">{{ T "selforder.checkout.no_methods" }}</p>
+  {{ end }}
+  <button type="button" class="btn secondary"
+          onclick="var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML='';">
+    {{ T "modifiers.cancel" }}
+  </button>
+</div>
