@@ -252,6 +252,9 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
+		if supervisor != nil {
+			_ = supervisor.Shutdown(shutdownCtx)
+		}
 	}()
 
 	log.Printf("listening on %s", cfg.ListenAddr)

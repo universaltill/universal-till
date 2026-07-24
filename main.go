@@ -130,9 +130,22 @@ func main() {
 	// 4) Pages: pass db and catalog repo so handlers can use them
 	mux := pages.Init(ctx, cfg, pluginManager, database.DB, catalogRepo)
 
+	// Process-based (hardware) plugins: start any active ones left over from
+	// a previous run. WASM plugins (everything shipped today) sync via
+	// pluginManager above and are unaffected — AutoStartPlugins skips any
+	// runtime other than "go"/"native". Best-effort: a plugin failing to
+	// restart shouldn't block the till from booting. Deliberately placed
+	// last, right before server.Start's shutdown wiring takes over — every
+	// other log.Fatalf-capable init step has already run, so a process
+	// started here is never orphaned by a later Fatalf exiting without
+	// running the supervisor's shutdown path.
+	supervisor := plugins.NewSupervisor(database.DB)
+	if err := supervisor.AutoStartPlugins(ctx); err != nil {
+		log.Warnf("plugin auto-start failed: %v", err)
+	}
+
 	// 5) Server with background jobs (T011 - 009-cloud-marketplace)
-	// TODO: Initialize supervisor and pass it to server.Start for revocation handling
-	if err := server.Start(ctx, cfg, mux, catalogRepo, database.DB, nil); err != nil {
+	if err := server.Start(ctx, cfg, mux, catalogRepo, database.DB, supervisor); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
 }
