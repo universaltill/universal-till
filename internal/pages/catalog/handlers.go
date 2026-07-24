@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -93,12 +94,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				if cost > 0 {
 					costMajor = fmt.Sprintf("%.2f", float64(cost)/100)
 				}
+				// ADR-0020: shows deactivated groups/options too (unlike the
+				// sale-time ListGroupsForItem) so a manager can reactivate one.
+				modGroups, _ := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
 				pdata = map[string]any{
-					"ItemID":       itemID,
-					"ItemName":     label.Name,
-					"Variants":     variants,
-					"ItemBarcodes": itemBCs,
-					"CostMajor":    costMajor,
+					"ItemID":         itemID,
+					"ItemName":       label.Name,
+					"Variants":       variants,
+					"ItemBarcodes":   itemBCs,
+					"CostMajor":      costMajor,
+					"ModifierGroups": modGroups,
 				}
 			}
 		}
@@ -355,6 +360,94 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		renderCatalogTable(w, r)
+	})
+
+	// Create or update a modifier group (ADR-0020) — id present = update,
+	// absent = create. Same soft-deactivate convention as items/variants
+	// (isActive toggle, no hard delete) so historical sale_line_modifiers
+	// snapshots are never orphaned by a group disappearing from under them.
+	mux.HandleFunc("/api/catalog/modifier-group", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("itemId"))
+		name := strings.TrimSpace(r.Form.Get("name"))
+		if itemID == "" || name == "" {
+			http.Error(w, "itemId and name required", http.StatusBadRequest)
+			return
+		}
+		minSelect, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("minSelect")))
+		maxSelect, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("maxSelect")))
+		if err != nil || maxSelect < 1 {
+			maxSelect = 1
+		}
+		sortOrder, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("sortOrder")))
+		required := r.Form.Get("required") == "1"
+		if required && minSelect < 1 {
+			minSelect = 1 // a required group must ask for at least one pick
+		}
+		active := r.Form.Get("isActive") != "0"
+
+		modRepo := data.NewModifierRepo(d.Db)
+		groupID := strings.TrimSpace(r.Form.Get("id"))
+		if groupID == "" {
+			if _, err := modRepo.CreateGroup(r.Context(), uuid.NewString(), itemID, name, required, minSelect, maxSelect, sortOrder); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			if err := modRepo.UpdateGroup(r.Context(), groupID, name, required, minSelect, maxSelect, sortOrder, active); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
+
+	// Create or update a modifier option (ADR-0020). majorPrice is entered
+	// in the shop's display currency and converted to minor units here —
+	// same convention as variant price entry.
+	mux.HandleFunc("/api/catalog/modifier-option", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = r.ParseForm()
+		groupID := strings.TrimSpace(r.Form.Get("groupId"))
+		itemID := strings.TrimSpace(r.Form.Get("itemId"))
+		name := strings.TrimSpace(r.Form.Get("name"))
+		if groupID == "" || itemID == "" || name == "" {
+			http.Error(w, "groupId, itemId and name required", http.StatusBadRequest)
+			return
+		}
+		priceDeltaMinor := int64(0)
+		if majorStr := strings.TrimSpace(r.Form.Get("priceDeltaMajor")); majorStr != "" {
+			major, err := strconv.ParseFloat(majorStr, 64)
+			if err != nil || major < 0 {
+				http.Error(w, "invalid priceDeltaMajor", http.StatusBadRequest)
+				return
+			}
+			priceDeltaMinor = int64(math.Round(major * 100))
+		}
+		sortOrder, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("sortOrder")))
+		active := r.Form.Get("isActive") != "0"
+
+		modRepo := data.NewModifierRepo(d.Db)
+		optionID := strings.TrimSpace(r.Form.Get("id"))
+		if optionID == "" {
+			if _, err := modRepo.CreateOption(r.Context(), uuid.NewString(), groupID, name, priceDeltaMinor, sortOrder); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			if err := modRepo.UpdateOption(r.Context(), optionID, name, priceDeltaMinor, sortOrder, active); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		renderVariantsPanel(w, r, itemID, false)
 	})
 
 	// Deactivate variant

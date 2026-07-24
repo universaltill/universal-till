@@ -124,6 +124,68 @@
     </div>
   </div>
 
+  <!-- Item customization (ADR-0020): modifier groups (e.g. "Extras") and
+       their options (e.g. "Extra shot", +price), shown by the cashier and
+       kiosk picker. Soft-deactivate only, same convention as items/
+       variants above — a group/option is never hard-deleted so historical
+       sale_line_modifiers snapshots stay intact regardless of later edits. -->
+  <div class="catalog-detail-modifiers">
+    <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
+    {{ if not .ModifierGroups }}<p class="muted">{{ T "catalog.modifiers.none" }}</p>{{ end }}
+
+    {{ range .ModifierGroups }}
+    {{ $group := . }}
+    <div class="modifier-admin-group{{ if not .IsActive }} vg-inactive{{ end }}">
+      <form hx-post="/api/catalog/modifier-group" hx-target="#catalog-variants" hx-swap="outerHTML" class="modifier-admin-group-row">
+        <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+        <input type="hidden" name="itemId" value="{{ $.ItemID }}">
+        <input type="hidden" name="id" value="{{ .ID }}">
+        <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.group_name" }}">
+        <label><input type="checkbox" name="required" value="1" {{ if .Required }}checked{{ end }}> {{ T "catalog.modifiers.required" }}</label>
+        <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="{{ .MinSelect }}" min="0" style="max-inline-size:4rem"></label>
+        <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="{{ .MaxSelect }}" min="1" style="max-inline-size:4rem"></label>
+        <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
+        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+      </form>
+
+      <div class="modifier-admin-options">
+        {{ range .Options }}
+        <form hx-post="/api/catalog/modifier-option" hx-target="#catalog-variants" hx-swap="outerHTML" class="modifier-admin-option-row{{ if not .IsActive }} vg-inactive{{ end }}">
+          <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+          <input type="hidden" name="itemId" value="{{ $.ItemID }}">
+          <input type="hidden" name="groupId" value="{{ $group.ID }}">
+          <input type="hidden" name="id" value="{{ .ID }}">
+          <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.option_name" }}">
+          <input type="number" name="priceDeltaMajor" class="modifier-price-major" data-minor="{{ .PriceDeltaMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" title="{{ T "catalog.modifiers.price_delta" }}">
+          <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
+          <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+        </form>
+        {{ end }}
+        <form hx-post="/api/catalog/modifier-option" hx-target="#catalog-variants" hx-swap="outerHTML" class="modifier-admin-option-row">
+          <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+          <input type="hidden" name="itemId" value="{{ $.ItemID }}">
+          <input type="hidden" name="groupId" value="{{ $group.ID }}">
+          <input type="hidden" name="isActive" value="1">
+          <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.option_name" }} — {{ T "catalog.modifiers.option_example" }}">
+          <input type="number" name="priceDeltaMajor" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="0.00">
+          <button class="btn" type="submit">{{ T "catalog.modifiers.add_option" }}</button>
+        </form>
+      </div>
+    </div>
+    {{ end }}
+
+    <form hx-post="/api/catalog/modifier-group" hx-target="#catalog-variants" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-new">
+      <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+      <input type="hidden" name="itemId" value="{{ .ItemID }}">
+      <input type="hidden" name="isActive" value="1">
+      <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.add_group" }} — {{ T "catalog.modifiers.group_example" }}">
+      <label><input type="checkbox" name="required" value="1"> {{ T "catalog.modifiers.required" }}</label>
+      <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="0" min="0" style="max-inline-size:4rem"></label>
+      <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="1" min="1" style="max-inline-size:4rem"></label>
+      <button class="btn" type="submit">{{ T "catalog.modifiers.add_group" }}</button>
+    </form>
+  </div>
+
   <script>
     (function () {
       document.querySelectorAll('#catalog-variants .variant-price-major').forEach(function (el) {
@@ -132,6 +194,12 @@
         }
       });
       document.querySelectorAll('#catalog-variants .variant-cost-major').forEach(function (el) {
+        var minor = parseInt(el.dataset.minor || '0', 10);
+        if (minor > 0 && window.utCurrency) {
+          el.value = window.utCurrency.toMajor(minor);
+        }
+      });
+      document.querySelectorAll('#catalog-variants .modifier-price-major').forEach(function (el) {
         var minor = parseInt(el.dataset.minor || '0', 10);
         if (minor > 0 && window.utCurrency) {
           el.value = window.utCurrency.toMajor(minor);
