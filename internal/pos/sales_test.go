@@ -38,6 +38,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
+		`CREATE TABLE sale_line_modifiers (id TEXT PRIMARY KEY, sale_line_id TEXT NOT NULL, group_id TEXT, option_id TEXT, group_name_snapshot TEXT NOT NULL, option_name_snapshot TEXT NOT NULL, price_delta_minor INTEGER NOT NULL, FOREIGN KEY (sale_line_id) REFERENCES sale_lines(id));`,
 		`CREATE TABLE sale_discounts (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_id TEXT, type TEXT NOT NULL, value INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT);`,
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, method_id TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT NOT NULL, reference TEXT, change_given INTEGER NOT NULL DEFAULT 0, paid_at TEXT NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_links (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, original_sale_id TEXT NOT NULL, reason TEXT);`,
@@ -118,6 +119,77 @@ func TestCompleteSale_SucceedsAndWritesRows(t *testing.T) {
 	_ = db.QueryRow(`SELECT quantity FROM inventory WHERE item_id='itm1' AND location_id='loc1'`).Scan(&qty)
 	if qty != 3 {
 		t.Fatalf("expected inventory 3, got %v", qty)
+	}
+}
+
+// ADR-0020: a sale line's chosen modifiers persist as their own rows,
+// snapshotted (name + delta) rather than FK'd to the live option, and the
+// line's unit_price already reflects the folded-in delta — no separate
+// modifier-total column, no double-counting.
+func TestCompleteSale_PersistsModifiers(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','COFFEE','Flat White', 320, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	in := SaleInput{
+		SaleType:     "sale",
+		RegisterID:   "reg1",
+		CashierID:    "user1",
+		Currency:     "GBP",
+		TaxInclusive: false,
+		Lines: []SaleLineInput{
+			{
+				ItemID:             "itm1",
+				SKU:                "COFFEE",
+				Name:               "Flat White",
+				Qty:                1,
+				UnitPrice:          370, // 320 base + 50 extra-shot delta, already folded in by the engine
+				TaxRateBasisPoints: 2000,
+				LocationID:         "loc1",
+				Modifiers: []data.SelectedModifier{
+					{GroupID: "g1", OptionID: "opt1", GroupName: "Extras", OptionName: "Extra shot", PriceDeltaMinor: 50},
+				},
+			},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 500, Currency: "GBP"},
+		},
+	}
+
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("CompleteSale error: %v", err)
+	}
+
+	var lineID string
+	if err := db.QueryRow(`SELECT id FROM sale_lines WHERE sale_id = ?`, saleID).Scan(&lineID); err != nil {
+		t.Fatalf("query sale_line id: %v", err)
+	}
+
+	var groupName, optionName string
+	var delta int64
+	if err := db.QueryRow(`SELECT group_name_snapshot, option_name_snapshot, price_delta_minor FROM sale_line_modifiers WHERE sale_line_id = ?`, lineID).
+		Scan(&groupName, &optionName, &delta); err != nil {
+		t.Fatalf("expected 1 sale_line_modifiers row: %v", err)
+	}
+	if groupName != "Extras" || optionName != "Extra shot" || delta != 50 {
+		t.Fatalf("unexpected modifier row: group=%q option=%q delta=%d", groupName, optionName, delta)
+	}
+
+	// No double-counting: the persisted unit_price (and before-tax total,
+	// exclusive-tax mode) reflect the already-folded 370, not 320 with the
+	// +50 delta counted again anywhere else.
+	var unitPrice, totalBeforeTax int64
+	if err := db.QueryRow(`SELECT unit_price, total_before_tax FROM sale_lines WHERE id = ?`, lineID).Scan(&unitPrice, &totalBeforeTax); err != nil {
+		t.Fatal(err)
+	}
+	if unitPrice != 370 || totalBeforeTax != 370 {
+		t.Fatalf("expected unit_price/total_before_tax 370, got unit_price=%d total_before_tax=%d", unitPrice, totalBeforeTax)
 	}
 }
 
