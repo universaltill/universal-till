@@ -71,12 +71,17 @@
 - Enhanced security features
 
 ### Plugin Marketplace
-- Payment processors (Stripe, Square, PayPal, regional providers)
-- Marketplaces (eBay, Amazon, Shopify integration)
-- Delivery services (Uber Eats, DoorDash, Deliveroo)
-- Accounting systems (QuickBooks, Xero, Wave)
-- ERP integration (Odoo, ERPNext)
-- Industry-specific features
+Available now: Stripe / QR Pay / demo card payments, German & Spanish
+language packs, themes, a "No Sale" register-drawer plugin, a self-hosted
+AI assistant, a webhook/ERP connector, and a help/FAQ plugin. One-click
+install from the in-app store
+(`ut-cloud`), Ed25519-signature verified before anything runs.
+
+Categories the taxonomy supports and welcomes contributions for: more
+payment processors (Square, PayPal, regional providers), marketplaces
+(eBay, Amazon, Shopify), delivery services (Uber Eats, DoorDash,
+Deliveroo), accounting systems (QuickBooks, Xero, Wave), ERP integration
+(Odoo, ERPNext), and industry-specific features.
 
 ---
 
@@ -240,39 +245,23 @@ Access `/settings` in the web interface to configure:
 
 ## 🔌 Plugin Development
 
-Want to extend Universal Till? Plugins are easy to build!
-
-```go
-package main
-
-import "github.com/universaltill/plugin-sdk"
-
-type MyPlugin struct{}
-
-func (p *MyPlugin) Initialize(config plugin.Config) error {
-    // Setup your plugin
-    return nil
-}
-
-func (p *MyPlugin) ProcessTransaction(tx plugin.Transaction) error {
-    // Handle transaction
-    return nil
-}
-
-func main() {
-    plugin.Serve(&MyPlugin{})
-}
-```
+Want to extend Universal Till? Plugins run **in-process as WASM modules**
+(via [wazero](https://wazero.io), no cgo) — write the logic in Go
+(`GOOS=wasip1 GOARCH=wasm`), Rust, TinyGo, or anything else that compiles to
+WASM. One architecture-independent `.wasm` artifact per plugin, Ed25519-signed
+and capability-gated (a module gets nothing until the manifest grants it).
+Asset-only plugins (themes, language packs) use `runtime: "none"` instead —
+no code, just files. Hardware/device plugins needing raw OS access (USB,
+serial) run as a supervised process (`runtime: "go"`), the minority case.
 
 **See [PLUGIN_GUIDELINES.md](docs/plugin_guidelines.md) for complete documentation.**
 
 ### Plugin Store
 
-Submit your plugins to our **free** plugin store:
+Submit your plugins to the marketplace:
 - Free hosting and distribution
-- Automatic security scanning
-- User ratings and reviews
-- Build free or paid plugins (20% commission on paid)
+- Ed25519 signature verification before install
+- Build free or paid plugins
 
 ---
 
@@ -345,9 +334,15 @@ We'll even link to notable forks in this README! 🎉
 
 ## 🌍 Internationalization
 
-Currently supported languages:
+Built into core (`web/locales/`), including full RTL layout:
 - English (en)
-- More coming soon!
+- Arabic (ar) — RTL
+- Persian / Farsi (fa) — RTL
+- Turkish (tr)
+
+Available as install-time language plugins:
+- German (de) — `ut-plugin-language-de`
+- Spanish (es) — `ut-plugin-language-es`
 
 Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translation guidelines.
 
@@ -355,30 +350,31 @@ Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translatio
 
 ## 📊 Roadmap
 
-### Current Focus (Q1 2025)
-- [x] Core POS functionality
+### Shipped
+- [x] Core POS functionality, offline-first checkout
 - [x] SQLite database support
-- [ ] Plugin system architecture
-- [ ] Payment processor plugins (Stripe, Square)
-- [ ] Cloud sync service (optional)
-- [ ] Mobile app
+- [x] Plugin system architecture — in-process WASM runtime (wazero),
+      Ed25519-signed manifests, 20-type plugin taxonomy
+- [x] Plugin marketplace with one-click install (`ut-cloud`)
+- [x] Payment plugins: Stripe, QR Pay, demo card terminal
+- [x] Language plugins: German, Spanish (core ships en/ar/fa/tr)
+- [x] Theme plugins, FAQ / help plugin
+- [x] Self-hosted AI assistant plugin (camera item ID, "Ask your till")
+- [x] Webhook / ERP connector plugin
+- [x] Cloud sync service (optional, self-hostable)
 
-### Upcoming (Q2-Q3 2025)
+### In progress
 - [ ] Advanced inventory management
-- [ ] Employee scheduling
-- [ ] Customer loyalty programs
-- [ ] Marketplace integrations (eBay, Amazon)
-- [ ] Accounting integrations (QuickBooks, Xero)
 - [ ] Multi-location support
-- [ ] Kitchen display system
-- [ ] Table management (restaurants)
+- [ ] More payment/marketplace/accounting integrations (Square, PayPal,
+      eBay, Amazon, QuickBooks, Xero)
 
 ### Long-term
-- [ ] Hardware manufacturer partnerships
-- [ ] White-label licensing
+- [ ] Employee scheduling, customer loyalty programs
+- [ ] Kitchen display system, table management (restaurants)
+- [ ] Mobile app
 - [ ] Advanced analytics and BI
-- [ ] AI-powered insights
-- [ ] Multi-channel commerce platform
+- [ ] Hardware manufacturer partnerships, white-label licensing
 
 **See [our project board](https://github.com/universaltill/universal-till/projects) for detailed progress.**
 
