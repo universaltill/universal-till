@@ -388,7 +388,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if required && minSelect < 1 {
 			minSelect = 1 // a required group must ask for at least one pick
 		}
-		active := r.Form.Get("isActive") != "0"
+		active := formCheckboxActive(r)
 
 		modRepo := data.NewModifierRepo(d.Db)
 		groupID := strings.TrimSpace(r.Form.Get("id"))
@@ -429,10 +429,17 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "invalid priceDeltaMajor", http.StatusBadRequest)
 				return
 			}
-			priceDeltaMinor = int64(math.Round(major * 100))
+			// Decimal-aware: a 0-decimal currency (IRR/IRT/IQD/AFN/JPY, all
+			// supported — see httpx.currencies) has no minor-unit
+			// subdivision at all, so a hardcoded *100 would inflate every
+			// price 100x for those shops. Matches the same
+			// currency.Decimals the template already uses for this
+			// field's step="" attribute.
+			decimals := httpx.CurrencyByCode(d.CurrentState().Currency).Decimals
+			priceDeltaMinor = int64(math.Round(major * math.Pow(10, float64(decimals))))
 		}
 		sortOrder, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("sortOrder")))
-		active := r.Form.Get("isActive") != "0"
+		active := formCheckboxActive(r)
 
 		modRepo := data.NewModifierRepo(d.Db)
 		optionID := strings.TrimSpace(r.Form.Get("id"))
@@ -670,6 +677,25 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// formCheckboxActive reads a checkbox paired with a hidden isActive=0
+// fallback (an unchecked box submits nothing on its own). Checked ⇒ the
+// browser sends BOTH the hidden "0" and the checkbox's "1", in DOM order —
+// hidden-then-checkbox means Form.Get alone would always see "0" first and
+// read as inactive even when checked, so this scans every submitted value
+// for a "1" rather than trusting the first one.
+func formCheckboxActive(r *http.Request) bool {
+	vals := r.Form["isActive"]
+	if len(vals) == 0 {
+		return true // no isActive field at all: caller didn't use the hidden-fallback pattern, default active
+	}
+	for _, v := range vals {
+		if v == "1" {
+			return true
+		}
+	}
+	return false
 }
 
 func parseItemInput(r *http.Request) (pos.ItemInput, error) {

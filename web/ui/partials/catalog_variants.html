@@ -144,6 +144,11 @@
         <label><input type="checkbox" name="required" value="1" {{ if .Required }}checked{{ end }}> {{ T "catalog.modifiers.required" }}</label>
         <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="{{ .MinSelect }}" min="0" style="max-inline-size:4rem"></label>
         <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="{{ .MaxSelect }}" min="1" style="max-inline-size:4rem"></label>
+        <!-- Checkbox semantics: an unchecked box submits nothing, so this
+             pairs it with a hidden isActive=0 (same convention as the
+             variant form above) — without it, unchecking "Active" and
+             saving would silently do nothing. -->
+        <input type="hidden" name="isActive" value="0">
         <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
         <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
       </form>
@@ -157,6 +162,7 @@
           <input type="hidden" name="id" value="{{ .ID }}">
           <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.option_name" }}">
           <input type="number" name="priceDeltaMajor" class="modifier-price-major" data-minor="{{ .PriceDeltaMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" title="{{ T "catalog.modifiers.price_delta" }}">
+          <input type="hidden" name="isActive" value="0">
           <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
           <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
         </form>
