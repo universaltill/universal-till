@@ -100,17 +100,25 @@ via `javap` against the extracted `classes.jar`: `mobile.Mobile
 `IsRunning`), Go's `error` return correctly mapped to a thrown Java
 `Exception`.
 
-**Still not started**: the actual Kotlin/Gradle Android app project that
-links this `.aar` and hosts the `Activity` + `WebView` (packaging shape
-per ADR-0023 §1 — foreground service + WebView `Activity`). Only
-command-line SDK tools are installed, not Android Studio — a real
-Gradle project's build files, an emulator/device to actually run and
-verify it, and Android Studio's project scaffolding would all make this
-phase much safer to get right than hand-writing Gradle/Kotlin blind
-without a way to build-and-see-it-run. Needs an explicit decision on
-whether to install Android Studio too, or whether Farshid wants to
-drive the native-shell half himself with the `.aar` as the handoff
-artifact.
+**DONE 2026-07-26** (Farshid, going to sleep: "go to the end and finish
+it"), `universal-till` PR #62 — the actual native Android app, not just
+scaffolding. Installed the emulator + a system image + Gradle myself
+(no Android Studio needed for a CLI-driven build/verify loop) rather
+than waiting on a GUI IDE I can't drive anyway. See `android/README.md`
+for the full architecture and verified-working details; short version:
+`TillService` (foreground `Service`, survives Activity
+recreation/rotation entirely) + `MainActivity` (binds to it, shows a
+`WebView`), `android:configChanges` so rotation doesn't even recreate
+the Activity. Independent review caught and fixed 4 real Android-
+lifecycle bugs (a Gradle staleness gap that could ship an old `.aar`, a
+WebView leak, a discarded graceful-shutdown window, an inert check
+whose root cause needed the `configChanges` fix). Live-verified twice
+(before/after fixes) on a real emulator: real APK, real server boot,
+real UI, real taps, real rotation survival (both "server doesn't
+restart" AND, post-fix, "Activity doesn't even recreate"), clean exit,
+`TillService`'s `exported=false` confirmed via a real OS-level
+permission denial when probed externally. Review:
+`docs/code-reviews/2026-07-26-android-native-shell-phase2.md`.
 
 ### Phase 3 — iOS native shell (blocked on tooling + accounts)
 
