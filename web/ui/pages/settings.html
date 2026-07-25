@@ -28,6 +28,13 @@
     {{ end }}
   {{ end }}
 </div>
+{{ if .isManager }}
+<div class="card">
+  <h2>{{ T "issuereport.title" }}</h2>
+  <p class="muted">{{ T "issuereport.intro" }}</p>
+  <a class="btn" href="/report-issue">{{ T "issuereport.title" }}</a>
+</div>
+{{ end }}
 <div class="card">
   <h2>{{ T "settings.update.title" }}</h2>
   <p class="muted">Universal Till v{{ appversion }}</p>
