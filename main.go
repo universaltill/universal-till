@@ -6,20 +6,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/joho/godotenv"
-	"github.com/universaltill/universal-till/internal/config"
-	"github.com/universaltill/universal-till/internal/db"
-	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/pages"
-	"github.com/universaltill/universal-till/internal/paths"
-	"github.com/universaltill/universal-till/internal/plugins"
-	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
-	"github.com/universaltill/universal-till/internal/server"
-	"github.com/universaltill/universal-till/internal/settings"
-	"github.com/universaltill/universal-till/internal/alerts"
-	"github.com/universaltill/universal-till/internal/updates"
 )
 
 func main() {
@@ -30,139 +18,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
-	// Load pos.env if it exists (created during installation/setup)
-	// For development, you can manually create pos.env or use UT_ENV=dev for pos.env.dev
-	envFile := os.Getenv("UT_ENV_FILE")
-	if envFile == "" {
-		envFile = "pos.env" // Default production config file
+	// The full boot sequence (config, DB/migrations, plugin host, pages/mux,
+	// background jobs, HTTP server) lives in internal/app so the mobile
+	// gomobile-bind entry point (mobile/mobile.go, ADR-0023) can drive the
+	// exact same server in-process instead of duplicating this.
+	if err := app.Run(ctx); err != nil {
+		logging.L().Fatalf("server stopped: %v", err)
 	}
-	_ = godotenv.Load(envFile)
-
-	logging.Init()
-	log := logging.L()
-
-	log.Infof("Universal Till POS starting...")
-
-	// 1) Config
-	cfg, err := config.Init()
-	if err != nil {
-		log.Fatalf("config init failed: %v", err)
-	}
-
-	// One-time: bring an old cwd-relative ./data database AND installed plugin
-	// bundles into the stable data directory so an in-place upgrade keeps its
-	// data (no-op for fresh installs).
-	paths.MigrateLegacyData(cfg.DBPath)
-
-	// 2) DB + migrations. A staged restore (Settings → Backups → Restore)
-	// applies first, before the DB is opened; the replaced file is kept
-	// in data/backups/.
-	if applied, err := db.ApplyPendingRestore(cfg.DBPath); err != nil {
-		log.Fatalf("apply staged restore failed: %v", err)
-	} else if applied {
-		log.Infof("staged backup restore applied to %s", cfg.DBPath)
-	}
-	database, err := db.Open(cfg.DBPath)
-	if err != nil {
-		log.Fatalf("db open/migrate failed: %v", err)
-	}
-	defer database.Close()
-
-	// Joined-shop replica: the snapshot restore above brought the
-	// primary's DB; re-apply THIS till's identity (ADR-0011 D2).
-	if applied, err := db.ApplyReplicaIdentity(database.DB, cfg.DBPath); err != nil {
-		log.Fatalf("apply replica identity failed: %v", err)
-	} else if applied {
-		log.Infof("replica identity applied — this till is now part of the shop")
-	}
-
-	settingsStore := settings.NewStore(database.DB)
-
-	// Bootstrap: create plugin cache directories (T002 - 009-cloud-marketplace)
-	if err := bootstrapPluginDirectories(); err != nil {
-		log.Fatalf("failed to create plugin cache directories: %v", err)
-	}
-
-	// load runtime config from DB
-	settingsStore.LoadRuntimeConfig(ctx, cfg)
-	err = settingsStore.SaveRuntimeConfig(ctx, cfg)
-	if err != nil { /* handle */
-	}
-
-	// First-boot store enrolment (ADR-0013): give this till a stable device_id
-	// and register it with the marketplace in the background, filling the empty
-	// marketplace identity fields. Explicit env config always wins; a till that
-	// never reaches the marketplace still works fully offline.
-	enroll.Init(ctx, cfg, settingsStore)
-
-	// 3) Plugins (and pass db if needed)
-	pluginManager, err := plugins.Init(ctx, cfg, database.DB)
-	if err != nil {
-		log.Fatalf("plugin init failed: %v", err)
-	}
-
-	// 3b) Marketplace: OAuth client and catalog repository (T004, T010 - 009-cloud-marketplace)
-	var catalogRepo *marketplace.CatalogRepository
-	if cfg.Marketplace.EndpointURL != "" {
-		// Create OAuth token client
-		tokenClient := oauth.NewTokenClient(&cfg.Marketplace)
-
-		// Create marketplace HTTP client
-		marketplaceClient := marketplace.NewClient(&cfg.Marketplace, tokenClient)
-
-		// Create catalog repository
-		var err error
-		catalogRepo, err = marketplace.NewCatalogRepository(marketplaceClient, paths.Plugins("cache"))
-		if err != nil {
-			log.Fatalf("failed to create catalog repository: %v", err)
-		}
-		log.Infof("Marketplace catalog repository initialized (endpoint: %s)", cfg.Marketplace.EndpointURL)
-	} else {
-		log.Warnf("Marketplace not configured (UT_MARKETPLACE_ENDPOINT_URL not set)")
-	}
-
-	// Best-effort background "update available" check (status-bar hint).
-	updates.Start(ctx)
-
-	// Daily low-stock digest → marketplace owner inbox (best-effort).
-	alerts.Start(ctx, cfg, database.DB)
-
-	// 4) Pages: pass db and catalog repo so handlers can use them
-	mux := pages.Init(ctx, cfg, pluginManager, database.DB, catalogRepo)
-
-	// Process-based (hardware) plugins: start any active ones left over from
-	// a previous run. WASM plugins (everything shipped today) sync via
-	// pluginManager above and are unaffected — AutoStartPlugins skips any
-	// runtime other than "go"/"native". Best-effort: a plugin failing to
-	// restart shouldn't block the till from booting. Deliberately placed
-	// last, right before server.Start's shutdown wiring takes over — every
-	// other log.Fatalf-capable init step has already run, so a process
-	// started here is never orphaned by a later Fatalf exiting without
-	// running the supervisor's shutdown path.
-	supervisor := plugins.NewSupervisor(database.DB)
-	if err := supervisor.AutoStartPlugins(ctx); err != nil {
-		log.Warnf("plugin auto-start failed: %v", err)
-	}
-
-	// 5) Server with background jobs (T011 - 009-cloud-marketplace)
-	if err := server.Start(ctx, cfg, mux, catalogRepo, database.DB, supervisor); err != nil {
-		log.Fatalf("server stopped: %v", err)
-	}
-}
-
-// bootstrapPluginDirectories creates required plugin cache directories
-// as specified in 009-cloud-marketplace feature (T002)
-func bootstrapPluginDirectories() error {
-	dirs := []string{
-		paths.Plugins("cache"),
-		paths.Plugins("tmp"),
-	}
-
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
