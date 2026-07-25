@@ -48,11 +48,15 @@ customer PII to a public tracker unreviewed.
 
 ### Phase 2 — Cloud receiving endpoint + storage
 
-- New `POST /api/devices/{deviceId}/issue-reports` on `ut-cloud`
-  (multipart, size-capped — start conservative, e.g. 32MB combined,
-  given a 60s screen recording is the largest single item), authenticated
-  the same way the existing heartbeat/directive endpoints authenticate a
-  device (store token) — no new auth mechanism.
+- New `POST /v1/stores/issue-reports` on `ut-cloud` (matching this
+  codebase's existing `/v1/stores/*` convention rather than a
+  device-scoped path — the till-side upload code, shipped in Phase 1,
+  already targets this exact path and sends `store_id`/`device_id` as
+  multipart fields), multipart, size-capped — start conservative, e.g.
+  32MB combined, given a 60s screen recording is the largest single item
+  (matches the till-side `issueReportMaxBytes` cap from Phase 1),
+  authenticated the same way the existing heartbeat/directive endpoints
+  authenticate a device (store token) — no new auth mechanism.
 - Store audio/video blobs via the existing
   `internal/platform/blob.Provider` (same streaming-SHA-256 path the
   vendor plugin-upload endpoint already uses — reused, not duplicated).
