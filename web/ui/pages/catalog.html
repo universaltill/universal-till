@@ -82,6 +82,18 @@
       </form>
     </details>
 
+    <details class="catalog-extra" id="keypad-mapper">
+      <summary>{{ T "catalog.keypad.title" }}</summary>
+      <p class="muted">{{ T "catalog.keypad.hint" }}</p>
+      <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="keypad-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
+      <input type="hidden" id="keypad-item-id">
+      <label>{{ T "catalog.keypad.capture_label" }}
+        <input type="text" id="keypad-capture" autocomplete="off" placeholder="{{ T "catalog.keypad.capture_placeholder" }}">
+      </label>
+      <label class="field-checks"><input type="checkbox" id="keypad-primary"> {{ T "catalog.keypad.set_primary" }}</label>
+      <div id="keypad-log" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+    </details>
+
   </div>
 </div>
 
@@ -194,6 +206,19 @@
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
     var lblLabel = document.getElementById('labels-item-label');
     if (lblLabel) { lblLabel.value = row.dataset.name; document.getElementById('labels-item-id').value = row.dataset.id; }
+    var kpLabel = document.getElementById('keypad-item-label');
+    if (kpLabel) {
+      kpLabel.value = row.dataset.name;
+      document.getElementById('keypad-item-id').value = row.dataset.id;
+      // Selecting a row is the natural "now press the physical key for
+      // this item" moment — focus the capture field only if the panel
+      // is already open, so opening <details> elsewhere on the page
+      // doesn't unexpectedly steal focus from whatever the operator was
+      // doing.
+      var kpDetails = document.getElementById('keypad-mapper');
+      var kpCapture = document.getElementById('keypad-capture');
+      if (kpDetails && kpDetails.open && kpCapture) kpCapture.focus();
+    }
     // Labels: variant picker — a label for a variant carries ITS barcode+price.
     var vSel = document.getElementById('labels-variant');
     if (vSel) {
@@ -260,6 +285,46 @@
       });
     }).catch(function (e) { imsg.textContent = '✗ ' + e; });
   });
+
+  // Keypad mapping (ADR-0021): a physical HID-keyboard-emulating keypad
+  // "types" its programmed code into whatever has focus, terminated by
+  // Enter — the identical pattern the barcode field above already uses.
+  // Click a row to pick the target item, press the physical key (or type
+  // a code by hand), Enter assigns it via the same endpoint the item
+  // form's barcode field ultimately writes through, then refocuses for
+  // the next key press so mapping many keys in a row stays fast.
+  (function () {
+    var capture = document.getElementById('keypad-capture');
+    var log = document.getElementById('keypad-log');
+    var primary = document.getElementById('keypad-primary');
+    if (!capture) return;
+    capture.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      var code = capture.value.trim();
+      capture.value = '';
+      if (!code) return;
+      var itemId = document.getElementById('keypad-item-id').value;
+      var itemLabel = document.getElementById('keypad-item-label').value;
+      if (!itemId) {
+        log.textContent = '✗ ' + "{{ T "catalog.keypad.no_target" }}";
+        return;
+      }
+      var body = new URLSearchParams({ barcode: code, itemId: itemId, isPrimary: primary.checked ? '1' : '0' });
+      fetch('/api/catalog/barcode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      }).then(function (res) {
+        if (!res.ok) { return res.text().then(function (t) { throw new Error(t); }); }
+        log.textContent = '✓ ' + code + ' → ' + itemLabel;
+        capture.focus();
+      }).catch(function (err) {
+        log.textContent = '✗ ' + code + ': ' + (err.message || 'failed');
+        capture.focus();
+      });
+    });
+  })();
 
   // Client-side search over the (server-rendered) table; reapplied after swaps.
   var search = document.getElementById('catalog-search');
