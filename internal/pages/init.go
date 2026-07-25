@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -37,6 +38,7 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	pluginPagesDir = paths.Plugins()
 	pluginThemesDir = paths.Plugins()
 	pluginIconsDir = paths.Plugins()
+	issuereport.PendingDir = paths.Data("issue-reports", "pending")
 
 	// settings + state
 	setStore := settings.NewStore(db)
@@ -210,10 +212,11 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	registerShiftsAPI(mux, dp)
 	registerShiftsPage(mux, dp)
 	registerReportsPage(mux, dp)
-	registerBackofficePage(mux, dp) // manager dashboard (ADR-0018 back-office home)
-	registerSelfOrder(mux, dp)      // self-order kiosk shell, auth-exempt (ADR-0020)
-	registerSelfOrderShop(mux, dp)  // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
-	registerAuditPage(mux, dp)      // manager-only audit-trail browse/filter page
+	registerBackofficePage(mux, dp)  // manager dashboard (ADR-0018 back-office home)
+	registerSelfOrder(mux, dp)       // self-order kiosk shell, auth-exempt (ADR-0020)
+	registerSelfOrderShop(mux, dp)   // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
+	registerAuditPage(mux, dp)       // manager-only audit-trail browse/filter page
+	registerIssueReportPage(mux, dp) // manager-only "report an issue" capture (ADR-0022)
 	registerHelp(mux, dp)
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)

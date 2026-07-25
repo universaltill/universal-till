@@ -1,0 +1,212 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "issuereport.title" }}</h1>
+</div>
+
+<div class="card">
+  <p class="muted">{{ T "issuereport.intro" }}</p>
+  <p class="muted">{{ T "issuereport.logs_note" }}</p>
+
+  <div class="set-gap">
+    <label class="set-row" for="ir-note">{{ T "issuereport.note_label" }}</label>
+    <textarea id="ir-note" rows="3" style="width:100%"
+      placeholder="{{ T "issuereport.note_placeholder" }}"></textarea>
+  </div>
+
+  <div class="set-gap">
+    <p><strong>{{ T "issuereport.voice_label" }}</strong></p>
+    <button type="button" class="btn" id="ir-voice-btn">{{ T "issuereport.voice_record" }}</button>
+    <audio id="ir-voice-preview" controls style="display:none; margin-top:.5rem; width:100%"></audio>
+  </div>
+
+  <div class="set-gap">
+    <p><strong>{{ T "issuereport.screen_label" }}</strong></p>
+    <button type="button" class="btn secondary" id="ir-screen-btn">{{ T "issuereport.screen_record" }}</button>
+    <video id="ir-screen-preview" controls style="display:none; margin-top:.5rem; width:100%; max-height:240px"></video>
+  </div>
+
+  <div class="set-gap">
+    <button type="button" class="btn" id="ir-save-btn">{{ T "issuereport.save" }}</button>
+    <span id="ir-status" aria-live="polite" class="muted"></span>
+  </div>
+</div>
+
+<script>
+(function () {
+  var T = {
+    voiceRecord: "{{ T "issuereport.voice_record" }}",
+    voiceStop: "{{ T "issuereport.voice_stop" }}",
+    voiceRequired: "{{ T "issuereport.voice_required" }}",
+    voiceUnsupported: "{{ T "issuereport.voice_unsupported" }}",
+    micError: "{{ T "issuereport.mic_error" }}",
+    screenRecord: "{{ T "issuereport.screen_record" }}",
+    screenStop: "{{ T "issuereport.screen_stop" }}",
+    screenUnsupported: "{{ T "issuereport.screen_unsupported" }}",
+    screenError: "{{ T "issuereport.screen_error" }}",
+    saving: "{{ T "issuereport.saving" }}",
+    saved: "{{ T "issuereport.saved" }}",
+    saveLabel: "{{ T "issuereport.save" }}",
+    saveError: "{{ T "issuereport.save_error" }}"
+  };
+
+  var noteEl = document.getElementById('ir-note');
+  var statusEl = document.getElementById('ir-status');
+
+  var VOICE_MAX_MS = 120000; // 2 min, matches spec 012's client-side cap
+  var SCREEN_MAX_MS = 60000; // 60s
+
+  var voiceBtn = document.getElementById('ir-voice-btn');
+  var voicePreview = document.getElementById('ir-voice-preview');
+  var voiceRecorder = null, voiceChunks = [], voiceBlob = null, voiceRecording = false, voiceStarting = false, voiceTimer = null;
+
+  var screenBtn = document.getElementById('ir-screen-btn');
+  var screenPreview = document.getElementById('ir-screen-preview');
+  var screenRecorder = null, screenChunks = [], screenBlob = null, screenRecording = false, screenStarting = false, screenStream = null, screenTimer = null;
+
+  var saveBtn = document.getElementById('ir-save-btn');
+
+  function pickMimeType(candidates) {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return candidates[0];
+    for (var i = 0; i < candidates.length; i++) {
+      if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+    }
+    return candidates[0];
+  }
+
+  if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    voiceBtn.disabled = true;
+    voiceBtn.textContent = T.voiceUnsupported;
+  } else {
+    voiceBtn.addEventListener('click', function () {
+      if (voiceRecording) {
+        voiceRecorder.stop();
+        return;
+      }
+      if (voiceStarting) return; // guard the async gap below against a double-click
+      voiceStarting = true;
+      voiceBtn.disabled = true;
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        voiceStarting = false;
+        var mime = pickMimeType(['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']);
+        try {
+          voiceRecorder = new MediaRecorder(stream, { mimeType: mime });
+        } catch (e) {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          voiceBtn.disabled = false;
+          statusEl.textContent = T.micError;
+          return;
+        }
+        voiceChunks = [];
+        voiceRecorder.addEventListener('dataavailable', function (e) {
+          if (e.data && e.data.size > 0) voiceChunks.push(e.data);
+        });
+        voiceRecorder.addEventListener('stop', function () {
+          clearTimeout(voiceTimer);
+          voiceBlob = new Blob(voiceChunks, { type: mime });
+          voicePreview.src = URL.createObjectURL(voiceBlob);
+          voicePreview.style.display = '';
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          voiceRecording = false;
+          voiceBtn.disabled = false;
+          voiceBtn.textContent = T.voiceRecord;
+        });
+        voiceRecorder.start();
+        voiceRecording = true;
+        voiceBtn.disabled = false;
+        voiceBtn.textContent = T.voiceStop;
+        voiceTimer = setTimeout(function () {
+          if (voiceRecording) voiceRecorder.stop();
+        }, VOICE_MAX_MS);
+      }).catch(function () {
+        voiceStarting = false;
+        voiceBtn.disabled = false;
+        statusEl.textContent = T.micError;
+      });
+    });
+  }
+
+  if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    screenBtn.disabled = true;
+    screenBtn.textContent = T.screenUnsupported;
+  } else {
+    screenBtn.addEventListener('click', function () {
+      if (screenRecording) {
+        screenRecorder.stop();
+        return;
+      }
+      if (screenStarting) return; // guard the async gap below against a double-click
+      screenStarting = true;
+      screenBtn.disabled = true;
+      navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (stream) {
+        screenStarting = false;
+        screenStream = stream;
+        var mime = pickMimeType(['video/webm;codecs=vp9', 'video/webm']);
+        try {
+          screenRecorder = new MediaRecorder(stream, { mimeType: mime });
+        } catch (e) {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          screenBtn.disabled = false;
+          statusEl.textContent = T.screenError;
+          return;
+        }
+        screenChunks = [];
+        screenRecorder.addEventListener('dataavailable', function (e) {
+          if (e.data && e.data.size > 0) screenChunks.push(e.data);
+        });
+        screenRecorder.addEventListener('stop', function () {
+          clearTimeout(screenTimer);
+          screenBlob = new Blob(screenChunks, { type: mime });
+          screenPreview.src = URL.createObjectURL(screenBlob);
+          screenPreview.style.display = '';
+          screenStream.getTracks().forEach(function (t) { t.stop(); });
+          screenRecording = false;
+          screenBtn.disabled = false;
+          screenBtn.textContent = T.screenRecord;
+        });
+        // The user can also stop by using the browser's own "Stop sharing"
+        // control, not just this button — that tears the stream down without
+        // calling recorder.stop() itself, so drive it from here too, and
+        // guard with the recording flag so our own stop() doesn't recurse.
+        stream.getVideoTracks()[0].addEventListener('ended', function () {
+          if (screenRecording) screenRecorder.stop();
+        });
+        screenRecorder.start();
+        screenRecording = true;
+        screenBtn.disabled = false;
+        screenBtn.textContent = T.screenStop;
+        screenTimer = setTimeout(function () {
+          if (screenRecording) screenRecorder.stop();
+        }, SCREEN_MAX_MS);
+      }).catch(function () {
+        screenStarting = false;
+        screenBtn.disabled = false;
+        statusEl.textContent = T.screenError;
+      });
+    });
+  }
+
+  saveBtn.addEventListener('click', function () {
+    if (!voiceBlob) {
+      statusEl.textContent = T.voiceRequired;
+      return;
+    }
+    saveBtn.disabled = true;
+    statusEl.textContent = T.saving;
+    var fd = new FormData();
+    fd.append('note', noteEl.value || '');
+    fd.append('audio', voiceBlob, 'audio.webm');
+    if (screenBlob) fd.append('video', screenBlob, 'video.webm');
+    fetch('/api/issue-reports', { method: 'POST', body: fd })
+      .then(function (r) { if (!r.ok) throw new Error('save failed'); return r.json(); })
+      .then(function () {
+        statusEl.textContent = T.saved;
+        saveBtn.disabled = false;
+      })
+      .catch(function () {
+        statusEl.textContent = T.saveError;
+        saveBtn.disabled = false;
+      });
+  });
+})();
+</script>
+{{ end }}
