@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification status-bar icon. Android requires these to be a flat
+     white silhouette on a transparent background (the OS tints it itself,
+     ignoring color) — the full-color launcher icon (ut-logo.svg) would
+     render as a solid white blob, so this is a small, purpose-built glyph
+     instead, not a shrunk copy of the real logo. A simple till/register
+     shape: body + a coin slot, echoing the real logo's register icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4,7 L20,7 C20.5523,7 21,7.4477 21,8 L21,17 C21,17.5523 20.5523,18 20,18 L4,18 C3.4477,18 3,17.5523 3,17 L3,8 C3,7.4477 3.4477,7 4,7 Z M4,9 L4,16 L20,16 L20,9 Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M6.5,11.5 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M10,11 L14,11 L14,12.5 L10,12.5 Z" />
+</vector>

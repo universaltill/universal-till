@@ -1,0 +1,60 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The WebView talks to the till server over loopback HTTP (see
+         network_security_config.xml — cleartext is allowed ONLY for
+         127.0.0.1, not globally). INTERNET is still required: Android's
+         WebView routes all HTTP traffic through the normal network stack
+         even for loopback destinations. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- TillService (ADR-0023 §1's foreground-service packaging shape)
+         keeps the embedded server running independent of MainActivity's
+         own lifecycle. FOREGROUND_SERVICE + the SPECIAL_USE subtype are
+         required to start any foreground service at all on modern
+         Android; POST_NOTIFICATIONS (API 33+) is requested at runtime in
+         MainActivity, best-effort — the service still runs even if it's
+         denied, same "never block the core function on a secondary
+         permission" posture as the rest of this till. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden">
+            <!-- The server surviving rotation (TillService) is only half the
+                 fix — without this, the DEFAULT Android behavior still
+                 destroys and recreates the Activity (and its WebView) on
+                 every rotation, discarding in-page/scroll state and forcing
+                 a visible reload even though the server never restarted.
+                 Declaring these configChanges makes the Activity handle
+                 rotation itself instead (no recreation at all), so the
+                 WebView instance — and MainActivity's listener's
+                 reload-avoidance check — actually do what their comments
+                 claim. Independent review, 2026-07-25, traced through why
+                 the reload-avoidance check was previously inert without
+                 this. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name=".TillService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs the till's own embedded POS server so it survives screen rotation and backgrounding" />
+        </service>
+    </application>
+</manifest>

@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Universal Till</string>
+    <string name="status_starting">Starting the till…</string>
+    <string name="status_running">Running at %1$s</string>
+    <string name="status_failed">Failed to start: %1$s</string>
+    <string name="notification_channel_name">Universal Till service</string>
+</resources>

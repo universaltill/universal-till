@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Allows cleartext (plain HTTP) ONLY to loopback — the embedded till
+     server (mobile.Mobile) always binds 127.0.0.1, never a real network
+     interface. Android 9+ blocks cleartext by default app-wide; scoping
+     the exception to this one destination instead of the blanket
+     android:usesCleartextTraffic="true" keeps the app from silently
+     accepting cleartext to anything else it might ever talk to. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
