@@ -98,6 +98,10 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 			logging.L().Infof("cloudsync: directive %s (%s) %s: %s", d.ID, d.Type, status, msg)
 		}
 	}
+	// Issue-reporter bundles (ADR-0022, spec 012): best-effort, same "leave
+	// it and retry next tick" spirit as everything above — a manager's bug
+	// report can lag behind an offline stretch with no harm done.
+	uploadPendingIssueReports(ctx, cfg)
 	return nil
 }
 

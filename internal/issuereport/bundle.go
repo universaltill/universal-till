@@ -1,0 +1,136 @@
+// Package issuereport is the till-side half of ADR-0022 / spec 012: a
+// manager captures a voice note (+ optional screen recording) and the
+// till's recent logs into a bundle saved on local disk, queued for upload
+// to Universal Till Cloud on the cloudsync retry cadence (internal/cloudsync).
+//
+// Saving a bundle never talks to the network and always succeeds regardless
+// of connectivity (same offline-first bar as the rest of this till) — upload
+// is a separate, best-effort step.
+package issuereport
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/universaltill/universal-till/internal/logging"
+)
+
+// PendingDir is where unuploaded bundles live. Overridable in tests (same
+// convention as internal/pages' pluginPagesDir); production sets it from
+// paths.Data("issue-reports", "pending") during Init.
+var PendingDir = "./data/issue-reports/pending"
+
+// newBundleID is overridable in tests that need a predictable directory
+// name (e.g. to pre-arrange a write failure and assert the cleanup path).
+var newBundleID = uuid.NewString
+
+// Meta is the non-blob part of a captured bundle, persisted as meta.json
+// alongside the recording files.
+type Meta struct {
+	ID        string            `json:"id"`
+	Note      string            `json:"note"`
+	CreatedAt time.Time         `json:"created_at"`
+	Logs      []logging.Problem `json:"logs"`
+}
+
+// Bundle is one saved, not-yet-uploaded capture on disk.
+type Bundle struct {
+	Meta      Meta
+	Dir       string
+	AudioPath string // always present
+	VideoPath string // "" when no screen recording was captured
+}
+
+// Save writes a new bundle to the pending queue. Audio is required (the
+// voice note is the whole point of the tool); video is optional.
+func Save(note string, audio, video []byte) (string, error) {
+	if len(audio) == 0 {
+		return "", fmt.Errorf("issuereport: audio capture is required")
+	}
+	id := newBundleID()
+	dir := filepath.Join(PendingDir, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("issuereport: create bundle dir: %w", err)
+	}
+	// Any failure past this point leaves a directory with no meta.json —
+	// invisible to Pending() and so never reachable by Discard() either.
+	// Clean it up here instead of leaking it permanently.
+	if err := saveBundleFiles(dir, id, note, audio, video); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return id, nil
+}
+
+func saveBundleFiles(dir, id, note string, audio, video []byte) error {
+	if err := os.WriteFile(filepath.Join(dir, "audio.webm"), audio, 0o644); err != nil {
+		return fmt.Errorf("issuereport: write audio: %w", err)
+	}
+	if len(video) > 0 {
+		if err := os.WriteFile(filepath.Join(dir, "video.webm"), video, 0o644); err != nil {
+			return fmt.Errorf("issuereport: write video: %w", err)
+		}
+	}
+	meta := Meta{ID: id, Note: note, CreatedAt: time.Now().UTC(), Logs: logging.Recent()}
+	mb, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("issuereport: encode meta: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), mb, 0o644); err != nil {
+		return fmt.Errorf("issuereport: write meta: %w", err)
+	}
+	return nil
+}
+
+// Pending lists bundles waiting for upload, oldest-captured first (so a
+// backlog uploads in the order it happened once connectivity returns). A
+// bundle whose meta.json is missing or unreadable is skipped, not fatal —
+// one corrupt directory must not block every other pending report.
+func Pending() ([]Bundle, error) {
+	entries, err := os.ReadDir(PendingDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("issuereport: list pending: %w", err)
+	}
+	var bundles []Bundle
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(PendingDir, e.Name())
+		mb, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+		if err != nil {
+			continue
+		}
+		var meta Meta
+		if err := json.Unmarshal(mb, &meta); err != nil {
+			continue
+		}
+		b := Bundle{Meta: meta, Dir: dir, AudioPath: filepath.Join(dir, "audio.webm")}
+		if _, err := os.Stat(b.AudioPath); err != nil {
+			continue // no audio, not a usable bundle
+		}
+		if _, err := os.Stat(filepath.Join(dir, "video.webm")); err == nil {
+			b.VideoPath = filepath.Join(dir, "video.webm")
+		}
+		bundles = append(bundles, b)
+	}
+	sort.Slice(bundles, func(i, j int) bool {
+		return bundles[i].Meta.CreatedAt.Before(bundles[j].Meta.CreatedAt)
+	})
+	return bundles, nil
+}
+
+// Discard removes a bundle from the pending queue — called once the cloud
+// has confirmed receipt, so the till never re-uploads it.
+func Discard(id string) error {
+	return os.RemoveAll(filepath.Join(PendingDir, id))
+}
