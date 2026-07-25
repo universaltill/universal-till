@@ -72,9 +72,15 @@ customer PII to a public tracker unreviewed.
 
 - Async step (triggered on `received`): POST the audio blob to Whisper
   (`https://whisper.home.taskrunnertech.co.uk/asr?output=text`,
-  multipart `audio_file` — see `homelab-k8s/kubernetes/apps/whisper`),
-  store the transcript, move status to `ready`. No-op (empty transcript,
-  not an error) if the endpoint is unconfigured, same convention as
+  multipart `audio_file` — see `homelab-k8s/kubernetes/apps/whisper`).
+  This instance is **shared with the ERP product's own issue logger**
+  (`erp/universal-core/internal/kernel/speechassist`) — no need to stand
+  up a second Whisper deployment; mirror `speechassist`'s client shape
+  (nil-receiver "not configured" ergonomics, multipart upload, generous
+  timeout) rather than writing one from scratch, adapted for an async/
+  batched caller instead of ERP's synchronous per-request one. Store the
+  transcript, move status to `ready`. No-op (empty transcript, not an
+  error) if the endpoint is unconfigured, same convention as
   `internal/ai`/`internal/platform/translate`'s "disabled means no-op,
   never a hard failure" rule.
 - New staff-only "Bug reports" page in `ut-cloud` (same shape as the
@@ -111,9 +117,13 @@ customer PII to a public tracker unreviewed.
 
 ## Open questions to revisit once Phase 1-2 are live
 
-- Real transcription latency/quality on the actual Pi-class cluster
-  hardware (Whisper's own README flags this as unverified) — may push
-  toward a smaller/larger model size once real reports are seen.
+- Real transcription latency/quality under THIS till's traffic pattern
+  (queued/batched uploads, not ERP's synchronous per-request call) — ERP
+  already confirmed Whisper transcribes correctly on this cluster in
+  general, but not under this feature's own load shape yet. May push
+  toward a smaller/larger model size once real reports are seen; if both
+  products' usage grows, a capacity conversation about the shared
+  instance may be needed (not urgent today).
 - Whether the free-text note field should be required (forcing at least
   a short typed summary even when voice capture fails or isn't used) —
   decide once real staff usage shows whether voice-only reports are
