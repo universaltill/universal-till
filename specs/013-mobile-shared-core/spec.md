@@ -80,15 +80,37 @@ everything here is `go build`/`go test`-verifiable today.
     stops answering after `Stop`, confirm idempotency, confirm `Stop`
     is safe when never started.
 
-### Phase 2 — Android native shell (blocked on tooling)
+### Phase 2 — Android native shell
 
-Not started. Needs the Android SDK + NDK (confirmed absent in the AI
-dev environment: `gomobile bind -target=android` fails immediately with
-"could not locate Android SDK" — a real, verified blocker, not assumed)
-and a decision on packaging shape (foreground service + WebView
-`Activity`, per ADR-0023 §1). Once the SDK exists: `gomobile bind
--target=android ./mobile` produces the `.aar` a minimal Kotlin/Java
-shell links against.
+**Tooling unblocked 2026-07-25** (Farshid: "install it on my machine"):
+Android SDK command-line tools (`brew install --cask
+android-commandlinetools`), platform 36, build-tools 36.1.0, and NDK
+28.2.13676358 installed, `ANDROID_HOME`/`PATH` persisted in
+`~/.zprofile`. `golang.org/x/mobile` added as a Go tool dependency
+(`go get -tool golang.org/x/mobile/cmd/gobind`, `universal-till` PR
+#61) so `gomobile bind` runs at all in this module.
+
+**`gomobile bind -target=android ./mobile` verified working, not just
+"should work"**: produces a genuine 92MB `.aar` — the Go server
+cross-compiled for all 4 Android ABIs (`armeabi-v7a`/`arm64-v8a`/`x86`/
+`x86_64`) as `libgojni.so`, plus auto-generated Java bindings. Confirmed
+via `javap` against the extracted `classes.jar`: `mobile.Mobile
+.start(String) throws Exception : String`, `.stop() : void`,
+`.isRunning() : boolean` — exactly the Go API (`Start`/`Stop`/
+`IsRunning`), Go's `error` return correctly mapped to a thrown Java
+`Exception`.
+
+**Still not started**: the actual Kotlin/Gradle Android app project that
+links this `.aar` and hosts the `Activity` + `WebView` (packaging shape
+per ADR-0023 §1 — foreground service + WebView `Activity`). Only
+command-line SDK tools are installed, not Android Studio — a real
+Gradle project's build files, an emulator/device to actually run and
+verify it, and Android Studio's project scaffolding would all make this
+phase much safer to get right than hand-writing Gradle/Kotlin blind
+without a way to build-and-see-it-run. Needs an explicit decision on
+whether to install Android Studio too, or whether Farshid wants to
+drive the native-shell half himself with the `.aar` as the handoff
+artifact.
 
 ### Phase 3 — iOS native shell (blocked on tooling + accounts)
 
