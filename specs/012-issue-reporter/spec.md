@@ -68,7 +68,7 @@ customer PII to a public tracker unreviewed.
   client-generated report id so a retried upload doesn't create a
   duplicate `IssueReport` row.
 
-### Phase 3 — Transcription + staff review page + GitHub filing
+### Phase 3 — Transcription + staff review page + GitHub filing (SHIPPED 2026-07-26, `ut-cloud`)
 
 - Async step (triggered on `received`): POST the audio blob to Whisper
   (`https://whisper.home.taskrunnertech.co.uk/asr?output=text`,
