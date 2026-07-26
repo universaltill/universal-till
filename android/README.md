@@ -105,10 +105,45 @@ independent review's 4 findings were fixed, not just before:
   proper Android notification-permission flow (best-effort — the
   service runs regardless of whether it's granted).
 
+## Signing & release (done 2026-07-26)
+
+Self-signed APK, direct sideload distribution — no Google Play involvement
+(Farshid's choice, matching this app's "no Google contact" posture
+everywhere else). `.github/workflows/release.yml`'s `android-app` job
+builds, signs, and attaches `unitill-pos_<version>_android.apk` to every
+GitHub release automatically, alongside the desktop builds; the site's
+`/download` page picks it up with zero code changes needed (same live
+GitHub Releases API mechanism the other platforms already use).
+
+- Signing key: a 4096-bit RSA key, self-signed, `keytool`-generated,
+  valid until 2053. **Two durable copies exist** — Azure Key Vault
+  (`kv-unitill-dev`, secrets `android-release-keystore-base64` /
+  `android-release-keystore-password` / `android-release-keystore-alias`)
+  and this repo's GitHub Actions secrets (`ANDROID_KEYSTORE_BASE64` /
+  `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`, the ones CI actually
+  reads). **Losing this key is effectively unrecoverable**: Android
+  refuses to install an update signed with a different key over an
+  existing install, so every future release must be signed with this
+  exact key or every user who installed a prior release would need to
+  uninstall and reinstall from scratch. Deliberately NOT Terraform-managed
+  (a keystore isn't something `random_password` can generate, and
+  `unitill-infra`'s apply flow is manual/gated) — the Key Vault copy is a
+  plain secret, set directly, for disaster recovery only.
+- `android/app/build.gradle.kts`: a release build stays **unsigned**
+  (not silently debug-signed) unless `ANDROID_KEYSTORE_PATH`/
+  `ANDROID_KEYSTORE_PASSWORD`/`ANDROID_KEY_ALIAS` are all set — loud
+  failure (can't install) over a quiet trust gap. `versionCode`/
+  `versionName` are overridable via `-P` Gradle properties; CI derives
+  `versionCode` deterministically from the release's semver tag
+  (`MAJOR*10000 + MINOR*100 + PATCH`) so it always strictly increases,
+  which Android's package manager requires to treat a new APK as an
+  upgrade (true for sideloading too, not just Play).
+- Live-verified: a real signed release APK installed and launched on the
+  emulator, and upgrading an existing install with a newer signed build
+  (same key) succeeded with no uninstall needed.
+
 ## Not yet done
 
-- Release signing/distribution (Play Store or sideload APK signing —
-  needs Farshid's own signing keys/Play Console decisions, ADR-0023).
 - Physical hardware integrations (printer/scanner/card reader) — the
   `runtime:"go"` process-spawning plugin type doesn't port to mobile at
   all (ADR-0023 §2); needs native adapters, not attempted here.
@@ -116,6 +151,5 @@ independent review's 4 findings were fixed, not just before:
   keeps running once started, matching a real POS terminal's actual
   requirement — but there's no in-app way to deliberately stop it yet
   short of force-stopping the app from Android's own app settings).
-- CI build for this app (not wired into `.github/workflows` — the
-  Android SDK/NDK footprint is large and this hasn't been scoped for
-  CI yet).
+- A Play Store listing (deliberately not pursued — see "Signing &
+  release" above).
