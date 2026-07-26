@@ -61,6 +61,17 @@ jobs:
             if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
               echo "::error::tag ${TAG} already exists"; exit 1
             fi
+            # An explicit "version" input bypasses the bump logic above and
+            # goes straight to a human-typed string — validate it's plain
+            # MAJOR.MINOR.PATCH before it reaches anything downstream that
+            # assumes that shape (goreleaser's ldflags injection, the
+            # android-app job's versionCode arithmetic — a non-numeric
+            # component there silently computes a wrong, not failing,
+            # version code via bash's "unset var = 0" arithmetic).
+            if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::version '${VERSION}' must be plain MAJOR.MINOR.PATCH (no 'v' prefix, no suffix like -beta1)"
+              exit 1
+            fi
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git tag -a "${TAG}" -m "Release ${TAG}"
@@ -280,3 +291,115 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: gh release upload "${TAG}" "dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg" --clobber
+
+  # Android app (ADR-0023; android/README.md): the same embedded Go server
+  # (internal/app.Run via ./mobile, gomobile-bound) as every other platform,
+  # wrapped in a real Kotlin app (android/) with a foreground TillService +
+  # WebView, verified working on an emulator 2026-07-25/26. Self-signed APK,
+  # sideload distribution — no Google Play involvement, matching this app's
+  # "no Google contact" posture everywhere else. Own job like macos-app: only
+  # needs the release to exist, never blocks or is blocked by goreleaser.
+  android-app:
+    needs: [prepare, goreleaser]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      # Installs cmdline-tools and sets ANDROID_HOME/ANDROID_SDK_ROOT.
+      - uses: android-actions/setup-android@v3
+      - name: Install NDK + platform + build-tools
+        # Versions match what this app was built/verified against locally
+        # (ut-docs/adr/0023-android-ios-till-strategy.md) — gomobile bind
+        # needs a concrete NDK, not "whatever's newest."
+        run: |
+          set -euo pipefail
+          sdkmanager --install "ndk;28.2.13676358" "platforms;android-36" "build-tools;36.1.0"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Install gomobile/gobind
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Wait for the GitHub release to exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            gh release view "$TAG" --json tagName >/dev/null 2>&1 && exit 0
+            echo "release $TAG not visible yet (attempt $i/30)"; sleep 20
+          done
+          echo "::error::release $TAG does not exist — goreleaser failed before creating it; re-run goreleaser first"
+          exit 1
+      # Decode the signing keystore into the runner's temp dir (never the
+      # workspace — nothing here should end up in a build artifact or
+      # cache). No-op build-wise if these secrets are ever unset: the
+      # Gradle signing config (android/app/build.gradle.kts) leaves the
+      # release build type unsigned rather than silently falling back to
+      # anything, so an unsigned APK failing to upload/verify below would
+      # be the loud, correct failure mode, not a silent bad release.
+      - name: Decode signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set — cannot produce a signed release APK"
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/unitill-release.keystore"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/unitill-release.keystore" >> "$GITHUB_ENV"
+      - name: Build signed release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          # versionCode must strictly increase across releases for Android's
+          # package manager to treat a new APK as an upgrade over an older
+          # one (sideloading included, not just Play) — derived
+          # deterministically from the semver tag rather than an
+          # incrementing counter, so it never depends on build history.
+          # Wide per-component headroom (patch/minor up to 999) rather than
+          # 100/10: this project's own tag history was already 20+ patch
+          # releases deep on a single minor line by the time this was
+          # written (v0.2.20…v0.2.39) — a narrower formula would have
+          # collided with the next minor bump the first time patch hit 100
+          # (independent review caught this in the first draft: 0.2.100 and
+          # 0.3.0 both hashed to the same code under MA*10000+MI*100+PA).
+          IFS=. read -r MA MI PA <<< "$VERSION"
+          VERSION_CODE=$((MA * 1000000 + MI * 1000 + PA))
+          cd android
+          ./gradlew assembleRelease -PversionName="$VERSION" -PversionCode="$VERSION_CODE"
+      - name: Verify the APK is actually signed with our key
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="${ANDROID_HOME}/build-tools/36.1.0"
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          "${BUILD_TOOLS}/apksigner" verify "$APK"
+          FINGERPRINT="$("${BUILD_TOOLS}/apksigner" verify --print-certs "$APK" | grep 'SHA-256 digest' | awk '{print $NF}')"
+          echo "signed with SHA-256: ${FINGERPRINT}"
+          mv "$APK" "unitill-pos_${VERSION}_android.apk"
+      - name: Attach the APK to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release upload "${TAG}" "unitill-pos_${VERSION}_android.apk" --clobber

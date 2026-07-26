@@ -3,6 +3,20 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.0.21"
 }
 
+// Release signing (ADR-0023's "still open" item, closed 2026-07-26): a
+// self-signed key, not a Play Store cert — sideloaded APK distribution,
+// same "no Google contact" posture as the rest of this app. Read from env
+// vars (CI decodes ANDROID_KEYSTORE_BASE64 to a file and exports the path)
+// rather than gradle.properties/local.properties, so the real passwords
+// never touch disk in a form that could get committed by accident. PKCS12
+// keystores require identical store/key passwords (keytool enforces this),
+// so one password covers both.
+val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+val releaseSigningConfigured =
+    !releaseKeystorePath.isNullOrBlank() && !releaseKeystorePassword.isNullOrBlank() && !releaseKeyAlias.isNullOrBlank()
+
 android {
     namespace = "com.universaltill.pos"
     compileSdk = 36
@@ -12,13 +26,39 @@ android {
         // Matches `gomobile bind -androidapi 24` below — keep these in sync.
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-dev"
+        // CI overrides both via -PversionName=/-PversionCode= from the real
+        // release tag (see release.yml); local/unconfigured builds keep
+        // these dev defaults. versionCode must strictly increase for
+        // Android's own package manager to treat a new APK as an upgrade
+        // (matters even for sideloading, not just Play) — release.yml
+        // derives it deterministically from the semver tag.
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "0.1.0-dev"
+    }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeystorePassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Unconfigured (no ANDROID_KEYSTORE_* env vars — the local/dev
+            // default): leave unsigned rather than silently falling back to
+            // the debug key, so an accidental `assembleRelease` on a dev
+            // machine can't produce something that LOOKS like a real signed
+            // release build but isn't (an unsigned APK simply refuses to
+            // install, a clear/loud failure instead of a quiet trust gap).
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
