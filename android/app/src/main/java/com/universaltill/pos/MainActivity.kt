@@ -1,12 +1,17 @@
 package com.universaltill.pos
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
@@ -75,6 +80,33 @@ class MainActivity : AppCompatActivity() {
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
+    // Backs <input type="file"> in the WebView (e.g. the Plugins page's
+    // "Import from file" side-load form, spec 001-plugin-marketplace). A
+    // plain WebView has NO file-chooser UI without this: without a
+    // WebChromeClient overriding onShowFileChooser, tapping a file input is
+    // a silent no-op — no dialog, no error, nothing (a well-documented
+    // WebView gotcha, confirmed live 2026-07-27: the button did nothing at
+    // all on a real device/emulator until this was wired up).
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private val fileChooserLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val callback = fileChooserCallback ?: return@registerForActivityResult
+            fileChooserCallback = null
+            val data = result.data
+            val uris =
+                if (result.resultCode == Activity.RESULT_OK && data != null) {
+                    val clipData = data.clipData
+                    if (clipData != null) {
+                        Array(clipData.itemCount) { i -> clipData.getItemAt(i).uri }
+                    } else {
+                        data.data?.let { arrayOf(it) } ?: emptyArray()
+                    }
+                } else {
+                    emptyArray()
+                }
+            callback.onReceiveValue(uris)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -84,6 +116,31 @@ class MainActivity : AppCompatActivity() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.webViewClient = WebViewClient()
+        webView.webChromeClient =
+            object : WebChromeClient() {
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>?,
+                    fileChooserParams: FileChooserParams?,
+                ): Boolean {
+                    // A second chooser opening while one is already pending
+                    // (shouldn't happen from a single WebView, but the
+                    // contract requires resolving any outstanding callback)
+                    // must not be leaked.
+                    fileChooserCallback?.onReceiveValue(null)
+                    fileChooserCallback = filePathCallback
+                    val intent =
+                        fileChooserParams?.createIntent()
+                            ?: Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }
+                    return try {
+                        fileChooserLauncher.launch(intent)
+                        true
+                    } catch (e: ActivityNotFoundException) {
+                        fileChooserCallback = null
+                        false
+                    }
+                }
+            }
 
         statusView.text = getString(R.string.status_starting)
 
