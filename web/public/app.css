@@ -414,6 +414,9 @@ a.btn, a.btn:hover { text-decoration: none; }
 .disc-input { width: 3.6rem; padding: .3rem .35rem; font-size: .8rem; margin-top: .2rem; }
 .btn-x { padding: .3rem .55rem; font-size: .8rem; min-height: 0; }
 
+.order-type-toggle { display: flex; gap: .4rem; margin-bottom: .6rem; }
+.order-type-toggle .btn { flex: 1; }
+
 .basket table { width: 100%; border-collapse: collapse; background: var(--surface);
                 border-radius: var(--radius); overflow: hidden; }
 .basket th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
