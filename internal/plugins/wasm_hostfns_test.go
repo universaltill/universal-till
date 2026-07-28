@@ -79,7 +79,7 @@ func runGuest(t *testing.T, w *WasmRuntime, d *sql.DB, pluginID, url string) map
 	w.mu.Lock()
 	w.db = d
 	w.mu.Unlock()
-	if err := w.HandleEvent(context.Background(), pluginID, ev); err != nil {
+	if _, err := w.HandleEvent(context.Background(), pluginID, ev); err != nil {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 	raw, err := data.NewPluginRepo(d).StorageGet(context.Background(), pluginID, "results")
@@ -176,7 +176,7 @@ func TestHostStorageDeniedWithoutPermission(t *testing.T) {
 	w.db = d
 	w.mu.Unlock()
 	payload, _ := json.Marshal(map[string]string{"url": "http://127.0.0.1:1/x"})
-	err := w.HandleEvent(context.Background(), pluginID,
+	_, err := w.HandleEvent(context.Background(), pluginID,
 		Event{ID: "e", Type: "t", Timestamp: time.Now(), Payload: payload})
 	if err == nil || !strings.Contains(err.Error(), "exit") {
 		// guest exits 1 when it cannot record results

@@ -127,8 +127,13 @@ type StockAdjustedEvent struct {
 	AdjustedAt time.Time `json:"adjusted_at"`
 }
 
-// EventHandler executes a blocking handler for an event; returning an error signals rollback.
-type EventHandler func(ctx context.Context, event Event) error
+// EventHandler executes a blocking handler for an event; returning a non-nil
+// error signals rollback/failure. The returned json.RawMessage is the
+// handler's answer for "ask" style hooks (EventBus.Ask) where a plugin
+// computes and returns a VALUE, e.g. a country-specific tax-rate override —
+// nil when the hook is accept/reject only (e.g. payment authorization,
+// which Publish's Blocking mode only ever inspects the error from).
+type EventHandler func(ctx context.Context, event Event) (json.RawMessage, error)
 
 // NewEventBus creates a new event bus
 func NewEventBus(db *sql.DB) *EventBus {
@@ -291,7 +296,10 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", msg)
 				return "", fmt.Errorf("blocking event %s failed for plugin %s: %s", eventType, sub.PluginID, msg)
 			}
-			if err := sub.Handler(ctx, event); err != nil {
+			// Publish's callers only ever care about accept/reject (payment
+			// authorization); a response value from an "ask" style handler
+			// is discarded here — use Ask instead when the answer matters.
+			if _, err := sub.Handler(ctx, event); err != nil {
 				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
 				return "", fmt.Errorf("blocking event %s failed for plugin %s: %w", eventType, sub.PluginID, err)
 			}
@@ -314,6 +322,55 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 	}
 
 	return event.ID, nil
+}
+
+// Ask sends a blocking event to subscribed plugins and returns the first
+// answering plugin's response — for hooks where a plugin computes and
+// returns a VALUE rather than just accepting/rejecting (e.g. a country-
+// specific tax-rate override; core has no built-in notion of any country's
+// rules, see internal/pos.TaxRateAsker). (ok=false, nil error) means no
+// installed plugin answered — the caller falls back to its own default.
+// Unlike Publish, at most one plugin is expected to answer a given event
+// type (mirrors how e.g. payment methods are matched 1:1 by entry key); the
+// first subscriber that returns a non-empty response wins, others are not
+// consulted. A handler error still aborts the whole Ask (same failure
+// semantics as Publish's Blocking mode).
+func (eb *EventBus) Ask(ctx context.Context, eventType string, payload interface{}) (json.RawMessage, bool, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal payload: %w", err)
+	}
+	event := Event{
+		ID:        uuid.NewString(),
+		Type:      eventType,
+		Timestamp: time.Now().UTC(),
+		Payload:   payloadBytes,
+	}
+
+	eb.mu.RLock()
+	subscribers := eb.subscribers[eventType]
+	eb.mu.RUnlock()
+
+	for _, sub := range subscribers {
+		if sub.Handler == nil {
+			continue
+		}
+		if err := CheckPermission(ctx, eb.dbHandle(), sub.PluginID, "events:receive"); err != nil {
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
+			continue
+		}
+		resp, err := sub.Handler(ctx, event)
+		if err != nil {
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
+			return nil, false, fmt.Errorf("ask %s failed for plugin %s: %w", eventType, sub.PluginID, err)
+		}
+		eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "success", "")
+		if len(resp) == 0 {
+			continue // handler ran but declined to answer — try the next subscriber
+		}
+		return resp, true, nil
+	}
+	return nil, false, nil
 }
 
 // Acknowledge records event acknowledgment from a plugin
