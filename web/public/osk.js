@@ -175,15 +175,41 @@
     current = el;
     if (!osk) build();
     shift = false;
+    // isNumeric reads the REAL inputmode (numeric/decimal/tel) for layout
+    // selection — must happen before the inputmode="none" override below
+    // overwrites it.
     layer = isNumeric(el) ? 'num' : baseLayout();
     render();
     osk.classList.add('osk-open');
     document.body.classList.add('osk-padded');
+    // Suppress the native/OS on-screen keyboard while ours is up. Without
+    // this, a real Android WebView shows BOTH: the page has no way to tell
+    // Android "don't open your own IME," so it opens anyway on focus —
+    // which resizes the WebView's viewport and breaks position:sticky/
+    // fixed layout (confirmed live, real device, 2026-07-28: the status
+    // bar ended up floating mid-screen, overlapping content) — while this
+    // custom keyboard also tries to render in whatever space is left.
+    // inputmode="none" is the standard, widely-supported way to do this;
+    // insert()/backspace() below already write via setRangeText + a
+    // synthetic `input` event, never needed a real IME to begin with.
+    // Kiosk/desktop are unaffected (no OS virtual keyboard to suppress
+    // there in the first place). Save+restore, not just remove: the
+    // isNumeric() call above already needed the ORIGINAL inputmode.
+    if (el.dataset.oskPrevInputmode === undefined) {
+      el.dataset.oskPrevInputmode = el.getAttribute('inputmode') || '';
+    }
+    el.setAttribute('inputmode', 'none');
     // Keep the focused field visible above the keyboard.
     setTimeout(function () { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 60);
   }
 
   function hide() {
+    if (current) {
+      var prev = current.dataset.oskPrevInputmode;
+      if (prev) current.setAttribute('inputmode', prev);
+      else current.removeAttribute('inputmode');
+      delete current.dataset.oskPrevInputmode;
+    }
     current = null;
     if (!osk) return;
     osk.classList.remove('osk-open');
