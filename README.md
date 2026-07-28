@@ -480,7 +480,7 @@ This means you can:
 
 No restrictions, no fees, forever.
 
-**Cloud services are proprietary; third-party vendor plugins may choose their own license too (that's their call — see LICENSE's "Plugin Licensing").** Every plugin *we* (Universal Till) publish is always free, open source, and directly downloadable — forever, no exceptions ([ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)). See [LICENSE](LICENSE) for complete details.
+**Cloud services are proprietary; both Universal Till and third-party vendors may offer paid/closed-source plugins too (see LICENSE's "Plugin Licensing").** What's guaranteed instead ([ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)): core POS stays free forever, and any plugin — ours or a vendor's — that *is* published free and open source never quietly goes proprietary later. See the [Available Plugins](#available-plugins) table above for everything that's free today, and [LICENSE](LICENSE) for complete details.
 
 ---
 
