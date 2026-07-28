@@ -35,7 +35,7 @@ builds:
       - CC=x86_64-w64-mingw32-gcc
       - CXX=x86_64-w64-mingw32-g++
     flags: [-trimpath, -tags=desktop]
-    ldflags: ["-s -w -H windowsgui"]
+    ldflags: ["-s -w -H windowsgui -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
     goos: [windows]
     goarch: [amd64]
   - id: darwin
