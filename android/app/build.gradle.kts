@@ -71,9 +71,13 @@ android {
 }
 
 // Regenerates libs/unitill-mobile.aar from the Go source (../mobile) on every
-// build, via `gomobile bind` — the .aar itself is NOT committed to git (it's
-// a ~90MB build artifact; see .gitignore), this is the actual source of
-// truth. Needs the Android SDK/NDK (ANDROID_HOME) and `gomobile`/`gobind` on
+// build, via `gomobile bind` — the .aar itself is NOT committed to git (it
+// was a ~90MB build artifact when this task built all 4 gomobile-default
+// ABIs; expect meaningfully smaller now that -target below is restricted
+// to just arm64/arm — not yet re-measured on a real build, no Android
+// SDK/NDK available to build+verify from the session that made that
+// change, 2026-07-28); see .gitignore. This generated .aar is the actual
+// source of truth. Needs the Android SDK/NDK (ANDROID_HOME) and `gomobile`/`gobind` on
 // PATH — see ut-docs/adr/0023-android-ios-till-strategy.md for setup.
 // -androidapi MUST match defaultConfig.minSdk above.
 //
@@ -93,7 +97,18 @@ val generateAar =
         workingDir = file("../..")
         commandLine(
             "gomobile", "bind",
-            "-target=android",
+            // Bare "-target=android" builds shared libraries for ALL
+            // instruction sets gomobile supports (arm, arm64, 386, amd64) —
+            // confirmed via `gomobile bind -h`, not assumed — even though
+            // any single phone only ever uses one. 386/amd64 are
+            // effectively emulator-only; no real phone ships with them.
+            // Restricting to the two real-phone ABIs (arm64-v8a for
+            // anything reasonably recent, armeabi-v7a for older 32-bit
+            // devices still within minSdk 24's "Android 7.0+" range) is
+            // the single biggest lever on the ~90MB unstripped .aar this
+            // task produces (flagged after the app was reported as a
+            // 180MB install on a real device, 2026-07-28).
+            "-target=android/arm64,android/arm",
             "-androidapi", "24",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
