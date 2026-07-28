@@ -51,6 +51,26 @@ func supportedFor(exe, goos string) bool {
 	if goos == "windows" {
 		return false // updates via the installer
 	}
+	if goos == "android" || goos == "ios" {
+		// Neither had a real self-update mechanism to begin with — this was
+		// falling through to the desktop default (true) with nothing to
+		// back it up. Apply() only ever fetches a
+		// unitill-pos_<version>_<goos>_<arch>.tar.gz release archive (or,
+		// on darwin, a .dmg via applyMacApp); no such archive is ever
+		// published for android/ios (mobile/mobile.go's release job
+		// attaches an .apk, nothing a self-swap could use), so tapping
+		// "Update now" here was guaranteed to fail with a confusing "no
+		// release archive" error — same user-visible symptom as the
+		// stale-cache Mac bug fixed alongside this, different root cause
+		// (a feature that was never actually built for this platform, not
+		// a timing bug). False here makes the status bar correctly fall
+		// back to the plain "Update available" download-page link instead
+		// (same fallback Windows already uses). A real mobile in-app
+		// updater (download the .apk, launch Android's package-install
+		// intent) is a genuine feature to build later, not implemented by
+		// this change.
+		return false
+	}
 	// Packaged installs update via their package manager, not a self-swap.
 	for _, p := range []string{"/usr/", "/opt/unitill/"} {
 		if strings.HasPrefix(exe, p) {

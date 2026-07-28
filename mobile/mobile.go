@@ -123,6 +123,24 @@ func Start(dataDir string) (string, error) {
 	if err := os.Setenv("UT_OPEN_BROWSER", "0"); err != nil {
 		return "", fmt.Errorf("mobile: set UT_OPEN_BROWSER: %w", err)
 	}
+	// Bug report, 2026-07-28 (real device): the plugin store showed
+	// "Marketplace: not connected" and registration failed with "dial tcp
+	// 127.0.0.1:8081: connection refused". Root cause: config.Init's
+	// UT_MARKETPLACE_ENDPOINT_URL default (internal/config/config.go) is a
+	// dev-only loopback pointing at scripts/mock-marketplace, meant to be
+	// overridden by a bundled pos.env in real distributions — the desktop
+	// installers get this from packaging/pos.env.example
+	// (UT_MARKETPLACE_ENDPOINT_URL=https://cloud.universaltill.com/api),
+	// but nothing sets it for Android: there's no pos.env on a fresh phone
+	// install, and this file never set it either. Only set it if the host
+	// process doesn't already have one configured (e.g. a future
+	// dev/staging override from the native Kotlin layer), same
+	// don't-override-explicit-config posture as enroll.go.
+	if os.Getenv("UT_MARKETPLACE_ENDPOINT_URL") == "" {
+		if err := os.Setenv("UT_MARKETPLACE_ENDPOINT_URL", "https://cloud.universaltill.com/api"); err != nil {
+			return "", fmt.Errorf("mobile: set UT_MARKETPLACE_ENDPOINT_URL: %w", err)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	newInst := &instance{dataDir: dataDir, addr: addr, cancel: cancel, done: make(chan struct{})}
