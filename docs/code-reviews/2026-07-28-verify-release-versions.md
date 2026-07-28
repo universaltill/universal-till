@@ -91,3 +91,19 @@ end-to-end run before trusting it — it had a bug that would have made the
 regression gate itself silently useless (timing out and failing the whole
 release without ever checking a single binary) if the timeout hadn't been
 loud enough to notice.
+
+## Follow-up #2: the check itself had a pipe bug (v0.2.46)
+With the checkout fix in, the job ran the real check — and every single
+binary failed with "does not contain the expected version string," even
+though (verified separately, by hand, against the actual downloaded
+artifacts) the version really was there and correct. Cause: `strings -a
+"$file" | grep -qx "..."` — macOS's `strings` (Xcode's, not GNU's) errors
+("failed to flush output") when `grep -q` closes its read end early after
+finding the first match, and `set -o pipefail` then reports that broken-pipe
+error as the whole pipeline failing, even though `grep` itself found what it
+was looking for and would have reported success. Fixed by capturing
+`strings`' output into a variable first (`out="$(strings -a "$file" ||
+true)"`) and grepping the captured text instead of a live pipe — no process
+left running to receive a SIGPIPE, so no interaction with `pipefail` at all.
+Verified locally against the real v0.2.46 artifacts (downloaded by hand)
+before pushing again, rather than spending a third CI cycle to find out.
