@@ -4,6 +4,14 @@
     <div class="toast info" id="toast-message">{{ .ToastMessage }}</div>
   {{ end }}
   <h2>{{ T "basket.title" }}</h2>
+  <div class="order-type-toggle" role="group" aria-label="{{ T "basket.order_type.label" }}">
+    <button type="button" class="btn{{ if ne .OrderType "takeaway" }} primary{{ end }}"
+            hx-post="/api/pos/order-type" hx-vals='{"order_type":""}' hx-target="#basket" hx-swap="outerHTML">
+      {{ T "basket.order_type.dine_in" }}</button>
+    <button type="button" class="btn{{ if eq .OrderType "takeaway" }} primary{{ end }}"
+            hx-post="/api/pos/order-type" hx-vals='{"order_type":"takeaway"}' hx-target="#basket" hx-swap="outerHTML">
+      {{ T "basket.order_type.takeaway" }}</button>
+  </div>
   <div class="basket-scroll">
     <table>
       <thead>

@@ -27,7 +27,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			t.Fatalf("setup stmt failed: %v", err)
 		}
 	}
-	if _, err := db.Exec(`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, rate_basis_points INTEGER NOT NULL);`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, rate_basis_points INTEGER NOT NULL, takeaway_rate_basis_points INTEGER);`); err != nil {
 		t.Fatalf("setup tax_codes failed: %v", err)
 	}
 	return db
@@ -85,5 +85,31 @@ func TestButtonStoreAdd_ValidatesActiveItem(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Orange Soda', 250, 1)`)
 	if err := store.Add(Button{Label: "Btn", Code: "B1", ItemID: "itm1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestPriceResolverAdapter_TakeawayRateBP verifies the resolver reads the
+// new tax_codes.takeaway_rate_basis_points column through to BasketLine —
+// the §12 UStG dine-in/takeaway VAT switch depends on it reaching the
+// basket at scan time (internal/pos.effectiveTaxRateBP consumes it later).
+func TestPriceResolverAdapter_TakeawayRateBP(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO tax_codes(id, rate_basis_points, takeaway_rate_basis_points) VALUES('tax-drink', 1900, 700)`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, tax_code_id, is_active) VALUES('itm1','DRINK1','Coffee', 1000, 'tax-drink', 1)`)
+	_, _ = db.Exec(`INSERT INTO item_barcodes(barcode, item_id, is_primary) VALUES('DRINK1','itm1',1)`)
+	store := NewButtonStore(db)
+	resolver := PriceResolverAdapter{Store: store}
+
+	line, ok := resolver.Resolve("DRINK1")
+	if !ok {
+		t.Fatalf("expected resolve to succeed")
+	}
+	if line.TaxRateBP != 1900 {
+		t.Fatalf("expected TaxRateBP 1900, got %d", line.TaxRateBP)
+	}
+	if line.TakeawayRateBP != 700 {
+		t.Fatalf("expected TakeawayRateBP 700, got %d", line.TakeawayRateBP)
 	}
 }

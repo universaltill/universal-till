@@ -85,8 +85,9 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 	btnStore := ui.NewButtonStore(db)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}
 	engine := pos.NewServiceWithResolver(pos.Config{
-		TaxInclusive:       state.TaxInclusive,
-		TaxRateBasisPoints: state.TaxRatePct * 100,
+		TaxInclusive:              state.TaxInclusive,
+		TaxRateBasisPoints:        state.TaxRatePct * 100,
+		ReducedTaxRateBasisPoints: state.ReducedTaxRatePct * 100,
 	}, resolver)
 
 	// Labels are locale keys; the nav renders them through T (unknown keys —
@@ -188,8 +189,9 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		// In-place tax swap: replacing the engine (as the settings
 		// handlers do) would empty the basket of a sale in progress.
 		if newCfg := (pos.Config{
-			TaxInclusive:       applied.TaxInclusive,
-			TaxRateBasisPoints: applied.TaxRatePct * 100,
+			TaxInclusive:              applied.TaxInclusive,
+			TaxRateBasisPoints:        applied.TaxRatePct * 100,
+			ReducedTaxRateBasisPoints: applied.ReducedTaxRatePct * 100,
 		}); dp.Engine.Config() != newCfg {
 			dp.Engine.SetConfig(newCfg)
 		}

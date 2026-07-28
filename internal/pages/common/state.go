@@ -17,6 +17,7 @@ const (
 	KeyRegion         = "store.region"
 	KeyTaxInclusive   = "store.tax_inclusive"
 	KeyTaxRate        = "store.tax_rate"
+	KeyReducedTaxRate = "store.reduced_tax_rate"
 	KeyUIScale        = "display.ui_scale"
 	KeyOSK            = "display.osk"
 	KeyIdleLock       = "auth.idle_lock_minutes"
@@ -64,6 +65,11 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 			st.TaxRatePct = n
 		}
 	}
+	if v := get(KeyReducedTaxRate, "0"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			st.ReducedTaxRatePct = n
+		}
+	}
 	if v := get("pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
 		st.AllowNegativeInventory, _ = strconv.ParseBool(v)
 	}
@@ -93,6 +99,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) {
 	_ = store.Set(ctx, KeyRegion, st.Region)
 	_ = store.Set(ctx, KeyTaxInclusive, strconv.FormatBool(st.TaxInclusive))
 	_ = store.Set(ctx, KeyTaxRate, strconv.Itoa(st.TaxRatePct))
+	_ = store.Set(ctx, KeyReducedTaxRate, strconv.Itoa(st.ReducedTaxRatePct))
 	if st.UIScale > 0 {
 		_ = store.Set(ctx, KeyUIScale, strconv.FormatFloat(st.UIScale, 'f', -1, 64))
 	}
