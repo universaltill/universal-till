@@ -374,6 +374,7 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			currency TEXT NOT NULL, 
 			reference TEXT, 
 			change_given INTEGER NOT NULL DEFAULT 0, 
+			tip_amount INTEGER NOT NULL DEFAULT 0, 
 			paid_at TEXT NOT NULL,
 			FOREIGN KEY (sale_id) REFERENCES sales(id)
 		)`,

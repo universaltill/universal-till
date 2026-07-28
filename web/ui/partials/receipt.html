@@ -68,6 +68,7 @@
             <div>
               {{ money .Applied }}
               {{ if gt .Change 0 }}<small>{{ T "receipt.change" }} {{ money .Change }}</small>{{ end }}
+              {{ if gt .Tip 0 }}<small>{{ T "receipt.tip" }} {{ money .Tip }}</small>{{ end }}
             </div>
           </li>
         {{ end }}
