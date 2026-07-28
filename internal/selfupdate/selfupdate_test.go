@@ -18,6 +18,8 @@ func TestSupportedFor(t *testing.T) {
 		{"deb /usr", "/usr/bin/unitill-pos", "linux", false},
 		{"deb /opt", "/opt/unitill/unitill-pos", "linux", false},
 		{"windows", `C:\\Program Files\\UniversalTill\\unitill-pos.exe`, "windows", false},
+		{"android", "/data/app/com.universaltill.pos/lib/arm64/libmobile.so", "android", false},
+		{"ios", "/var/containers/Bundle/Application/x/Universal Till.app/unitill-pos", "ios", false},
 	}
 	for _, c := range cases {
 		if got := supportedFor(c.exe, c.goos); got != c.want {
