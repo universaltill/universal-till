@@ -87,11 +87,12 @@
                 btn.disabled = false;
                 return;
               }
-              btn.textContent = (res && res.success === false) ? 'Update failed — see logs' : 'Restarting…';
-            })
-            .catch(function () { btn.textContent = 'Restarting…'; })
-            .finally(function () {
-              if (btn.textContent === 'Already up to date') return;
+              var failed = res && res.success === false;
+              btn.textContent = failed ? 'Update failed — see logs' : 'Restarting…';
+              // A failed apply never left the server mid-restart — nothing to
+              // poll for, and polling anyway just leaves the failure message
+              // sitting there for 3 minutes before silently going stale.
+              if (failed) { btn.disabled = false; return; }
               // Archive installs re-exec in place (reconnect + reload). The mac
               // .app quits and relaunches itself, so the window just closes and
               // reopens on the new version.
@@ -101,7 +102,21 @@
                 fetch('/healthz', { cache: 'no-store' }).then(function (r) {
                   if (r.ok) { clearInterval(iv); location.reload(); }
                 }).catch(function () {});
-                if (tries > 90) { clearInterval(iv); }
+                if (tries > 90) {
+                  clearInterval(iv);
+                  // The swap itself already happened server-side before this
+                  // loop started (Apply() returns after staging it, not after
+                  // it's live) — a timeout here means the reconnect/reload
+                  // never observed it come back (a slow restart, a background
+                  // tab throttled by the browser, or a one-off blip), not that
+                  // the update failed. Leaving the button stuck on
+                  // "Restarting…" forever with no way out is what previously
+                  // read as "the update doesn't work" — offer a manual retry
+                  // instead of a silent, permanent dead end.
+                  btn.disabled = false;
+                  btn.textContent = 'Update installed — click to reload';
+                  btn.onclick = function () { location.reload(); };
+                }
               }, 2000);
             });
         });
