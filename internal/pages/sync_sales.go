@@ -88,6 +88,7 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		in.Payments = append(in.Payments, pos.PaymentInput{
 			MethodID: p.Method, Amount: money.FromMinor(p.Amount),
 			ChangeGiven: money.FromMinor(p.ChangeGiven),
+			TipAmount:   money.FromMinor(p.TipAmount),
 			Currency:    j.Sale.Currency, Reference: p.Reference,
 		})
 	}

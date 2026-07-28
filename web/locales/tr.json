@@ -484,6 +484,7 @@
   "receipt.printer.retry": "Yazdırmayı yeniden dene",
   "receipt.printer.unavailable": "Yazıcı kullanılamıyor.",
   "receipt.return_for": "İade nedeni",
+  "receipt.tip": "Bahşiş",
   "receipt.title": "Fiş",
   "refund.col.refund_qty": "İade adedi",
   "refund.col.remaining": "İade edilebilir",

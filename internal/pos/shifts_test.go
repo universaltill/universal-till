@@ -412,6 +412,7 @@ CREATE TABLE payments (
   currency TEXT NOT NULL DEFAULT 'GBP',
   reference TEXT,
   change_given INTEGER NOT NULL DEFAULT 0,
+  tip_amount INTEGER NOT NULL DEFAULT 0,
   paid_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (sale_id) REFERENCES sales (id),
   FOREIGN KEY (method_id) REFERENCES payment_methods (id)

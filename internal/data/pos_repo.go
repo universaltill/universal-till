@@ -1623,12 +1623,15 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
-// InsertPayment writes a payment row.
-func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, paidAt string) error {
+// InsertPayment writes a payment row. tipAmount is gratuity metadata
+// (docs/germany-pos-parity-backlog.md tip-flow gap) -- it rides alongside
+// amount but is never subtracted/added when deriving what the payment
+// applies toward the sale total; see pos.PaymentInput.TipAmount.
+func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, paidAt string) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, paid_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-`, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, paidAt)
+INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, paid_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount, paidAt)
 	if err != nil {
 		return fmt.Errorf("insert payment: %w", err)
 	}
@@ -2377,6 +2380,7 @@ type SaleDetailPayment struct {
 	Method      string
 	Amount      int64
 	ChangeGiven int64
+	TipAmount   int64
 	Reference   string
 	PaidAt      string
 }
@@ -2469,7 +2473,7 @@ ORDER BY sl.line_no, slm.rowid`, d.ID)
 	}
 
 	payRows, err := r.db.QueryContext(ctx, `
-SELECT method_id, amount, change_given, COALESCE(reference, ''), paid_at
+SELECT method_id, amount, change_given, tip_amount, COALESCE(reference, ''), paid_at
 FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale payments: %w", err)
@@ -2477,7 +2481,7 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	defer payRows.Close()
 	for payRows.Next() {
 		var p SaleDetailPayment
-		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.Reference, &p.PaidAt); err != nil {
+		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.Reference, &p.PaidAt); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale payment: %w", err)
 		}
 		d.Payments = append(d.Payments, p)
