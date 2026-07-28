@@ -379,29 +379,51 @@ Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translatio
 
 ## 📊 Roadmap
 
+_Checked against real code and the [ut-docs ADRs](https://github.com/universaltill/ut-docs/tree/main/adr) as of 2026-07-28, not just aspirational — see `docs/germany-pos-parity-backlog.md` and `docs/vertical-features-backlog.md` for the full detail behind the "not built" items below._
+
 ### Shipped
-- [x] Core POS functionality, offline-first checkout
+- [x] Core POS functionality, offline-first checkout (ADR-0003)
 - [x] SQLite database support
 - [x] Plugin system architecture — in-process WASM runtime (wazero),
-      Ed25519-signed manifests, 20-type plugin taxonomy
-- [x] Plugin marketplace with one-click install (`ut-cloud`)
-- [x] Payment plugins: Stripe, QR Pay, demo card terminal
+      Ed25519-signed manifests, 20-type plugin taxonomy (ADR-0001, ADR-0002)
+- [x] Plugin marketplace with one-click install (`ut-cloud`, ADR-0018) — live at [cloud.universaltill.com](https://cloud.universaltill.com)
+- [x] Payment plugins: Stripe, QR Pay, demo card terminal, SumUp (reader-driven)
 - [x] Language plugins: German, Spanish (core ships en/ar/fa/tr)
 - [x] Theme plugins, FAQ / help plugin
 - [x] Self-hosted AI assistant plugin (camera item ID, "Ask your till")
-- [x] Webhook / ERP connector plugin
+- [x] Webhook connector plugin (`ut-plugin-integration-webhook`) — reference/template for real ERP connectors, not itself a finished SAP/Dynamics integration (ADR-0014)
 - [x] Cloud sync service (optional, self-hostable)
+- [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011)
+- [x] Universal Till ID — self-hosted Zitadel (ADR-0012)
+- [x] Self-order kiosk + item modifiers (ADR-0020) — **in-store, network-attached device; not the same as remote online ordering or per-table ordering below**
+- [x] Android app, live-verified (ADR-0023)
+- [x] Self-serve vendor registration for the marketplace (ADR-0024)
+- [x] Every plugin listed here is free, open source, and directly downloadable — see [Plugins](#available-plugins) and [ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)
 
-### In progress
+### In progress / partially built
+- [ ] **ERP integration plugins** — the webhook connector (above) is a working *template*; real per-system connectors (`core-universaltill`/Universal Core, SAP, Dynamics/LS Central) aren't built yet (ADR-0014)
+- [ ] **Payment orchestration / least-cost routing** — target markets decided (UK, UAE, Qatar, +), but which providers to route between and build-vs-buy for the multi-acquirer connections are still open (ADR-0016)
+- [ ] **iOS app** — Android is real and shipped; iOS is untouched (ADR-0023)
+- [ ] **Delivery-platform integrations** (Deliveroo, Uber Eats, Just Eat) — the plugin taxonomy already has a `delivery` type and kitchen ticket printing already understands an order-type/table concept, but no actual provider plugin exists yet
 - [ ] Advanced inventory management
 - [ ] Multi-location support
-- [ ] More payment/marketplace/accounting integrations (Square, PayPal,
-      eBay, Amazon, QuickBooks, Xero)
+- [ ] More payment/marketplace/accounting integrations (Square, PayPal, eBay, Amazon, QuickBooks, Xero, QuickFile)
+
+### Confirmed not built yet (verified against the code, not guessed)
+- [ ] **Tips** — no concept anywhere in the sale/payment domain model
+- [ ] **Service charge** — distinct from tips, also entirely absent
+- [ ] **Per-staff sale/commission attribution** — needed for e.g. a barber shop splitting one payment's revenue across the different staff who each served that customer
+- [ ] **Booking / calendar / reservation** — needed for both restaurant table bookings and appointment-based shops (barbers, salons); one underlying feature, not two
+- [ ] **Table-side ordering** (customer's own phone, QR-per-table) and **true remote/online ordering** — neither exists; don't confuse either with the self-order kiosk above
+- [ ] **Order-for-collection** as its own order type (dine-in/takeaway/delivery/phone exists; collection doesn't yet)
+- [ ] **Germany fiscal compliance** (TSE signing, DSFinV-K export) — a legal requirement to sell into Germany, zero code exists (see `docs/germany-pos-parity-backlog.md`)
+- [ ] **Dine-in vs. takeaway VAT rate switching** — the per-line tax rate field exists, and an `OrderType` field exists for kitchen printing, but nothing connects the two yet
+- [ ] Setup wizard shop type + address capture, eager best-effort cloud registration (ADR-0026, drafted not built)
 
 ### Long-term
 - [ ] Employee scheduling, customer loyalty programs
-- [ ] Kitchen display system, table management (restaurants)
-- [ ] Mobile app
+- [ ] Kitchen display system
+- [ ] iOS app, further mobile platform work
 - [ ] Advanced analytics and BI
 - [ ] Hardware manufacturer partnerships, white-label licensing
 
@@ -458,7 +480,7 @@ This means you can:
 
 No restrictions, no fees, forever.
 
-**Cloud services and some premium plugins are proprietary.** See [LICENSE](LICENSE) for complete details.
+**Cloud services are proprietary; third-party vendor plugins may choose their own license too (that's their call — see LICENSE's "Plugin Licensing").** Every plugin *we* (Universal Till) publish is always free, open source, and directly downloadable — forever, no exceptions ([ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)). See [LICENSE](LICENSE) for complete details.
 
 ---
 
