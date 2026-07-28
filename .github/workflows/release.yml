@@ -473,12 +473,20 @@ jobs:
               fail=1
               return
             fi
-            if strings -a "$file" | grep -qx "dev"; then
+            # Capture first, then grep the captured text — NOT `strings | grep
+            # -q`: macOS's strings errors ("failed to flush output") when grep
+            # -q closes the pipe early on its first match, and set -o pipefail
+            # then reports that as the WHOLE pipeline failing even though grep
+            # found what it was looking for — every check failed this way on
+            # this job's first real run despite the versions being correct.
+            local out
+            out="$(strings -a "$file" 2>/dev/null || true)"
+            if grep -qx "dev" <<< "$out"; then
               echo "::error::$label embeds buildinfo.Version=dev — the ldflags -X version injection is broken for this build"
               fail=1
               return
             fi
-            if strings -a "$file" | grep -qxE "v?${VERSION//./\\.}"; then
+            if grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
               echo "ok: $label carries version $VERSION"
             else
               echo "::error::$label does not contain the expected version string $VERSION anywhere"
