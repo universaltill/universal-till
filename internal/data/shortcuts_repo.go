@@ -29,8 +29,17 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 	var err error
 	done := shortcutsObs.trace("load_buttons")
 	defer func() { done(err) }()
+	// image_path falls back to the item's own catalog image (item_images,
+	// role='thumbnail' — same source the catalog list and barcode/scan
+	// resolvers already use) when the button has no image of its own set
+	// explicitly. Without this, a shop's catalog-uploaded item photo showed
+	// up in the catalog list but never on the actual sale-screen tile,
+	// since shortcut_buttons.image_path is a separate column nothing ever
+	// populates from a plain catalog image upload — confirmed live 2026-07-29.
 	rows, err := r.db.QueryContext(ctx, `
-SELECT sb.label, sb.barcode, sb.item_id, sb.image_path, COALESCE(i.base_price, 0)
+SELECT sb.label, sb.barcode, sb.item_id,
+       COALESCE(sb.image_path, (SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1)),
+       COALESCE(i.base_price, 0)
 FROM shortcut_buttons sb
 LEFT JOIN items i ON i.id = sb.item_id
 ORDER BY sb.sort_order, sb.label`)
