@@ -22,23 +22,31 @@ type setupCountry struct {
 	Currency     string
 	TaxRatePct   int
 	TaxInclusive bool
+	// ReducedTaxRatePct is the takeaway/reduced VAT rate (0 = not modeled
+	// for this country yet — order type then never changes the default
+	// rate, a safe no-op, not a claim that the country has no such rate).
+	// Only DE is populated: real, verified German law (§12 UStG, 7%
+	// reduced rate — see docs/germany-pos-parity-backlog.md). Other
+	// countries' reduced/zero VAT rates were NOT researched for this
+	// change and are deliberately left at 0 rather than guessed.
+	ReducedTaxRatePct int
 }
 
 var setupCountries = []setupCountry{
-	{"GB", "setup.country.gb", "GBP", 20, true},
-	{"IR", "setup.country.ir", "IRT", 10, true},
-	{"US", "setup.country.us", "USD", 0, false},
-	{"DE", "setup.country.de", "EUR", 19, true},
-	{"FR", "setup.country.fr", "EUR", 20, true},
-	{"ES", "setup.country.es", "EUR", 21, true},
-	{"IT", "setup.country.it", "EUR", 22, true},
-	{"NL", "setup.country.nl", "EUR", 21, true},
-	{"TR", "setup.country.tr", "TRY", 20, true},
-	{"AE", "setup.country.ae", "AED", 5, true},
-	{"SA", "setup.country.sa", "SAR", 15, true},
-	{"IN", "setup.country.in", "INR", 18, true},
-	{"PK", "setup.country.pk", "PKR", 18, true},
-	{"OTHER", "setup.country.other", "", 0, true},
+	{"GB", "setup.country.gb", "GBP", 20, true, 0},
+	{"IR", "setup.country.ir", "IRT", 10, true, 0},
+	{"US", "setup.country.us", "USD", 0, false, 0},
+	{"DE", "setup.country.de", "EUR", 19, true, 7},
+	{"FR", "setup.country.fr", "EUR", 20, true, 0},
+	{"ES", "setup.country.es", "EUR", 21, true, 0},
+	{"IT", "setup.country.it", "EUR", 22, true, 0},
+	{"NL", "setup.country.nl", "EUR", 21, true, 0},
+	{"TR", "setup.country.tr", "TRY", 20, true, 0},
+	{"AE", "setup.country.ae", "AED", 5, true, 0},
+	{"SA", "setup.country.sa", "SAR", 15, true, 0},
+	{"IN", "setup.country.in", "INR", 18, true, 0},
+	{"PK", "setup.country.pk", "PKR", 18, true, 0},
+	{"OTHER", "setup.country.other", "", 0, true, 0},
 }
 
 // registerSetup wires the first-boot wizard: language → country (prefills
@@ -104,13 +112,19 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 					s.TaxRatePct = n
 				}
 			}
+			if v := r.Form.Get("reduced_tax_rate_pct"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
+					s.ReducedTaxRatePct = n
+				}
+			}
 			s.TaxInclusive = r.Form.Get("tax_inclusive") != "off"
 		})
 		common.SaveState(r.Context(), d.Settings, st)
 		httpx.InitCurrency(st.Currency)
 		d.Engine.SetConfig(pos.Config{
-			TaxInclusive:       st.TaxInclusive,
-			TaxRateBasisPoints: st.TaxRatePct * 100,
+			TaxInclusive:              st.TaxInclusive,
+			TaxRateBasisPoints:        st.TaxRatePct * 100,
+			ReducedTaxRateBasisPoints: st.ReducedTaxRatePct * 100,
 		})
 
 		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {
