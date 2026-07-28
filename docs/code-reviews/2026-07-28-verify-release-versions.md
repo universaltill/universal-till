@@ -68,3 +68,26 @@ unrelated to this change (verified via `git diff` hunk ranges). `go build
 unit-tested outside a real GitHub Actions run — it will get its first real
 exercise on the next release, at which point it should also silently
 confirm the fix (both previously-broken binaries now pass).
+
+## Follow-up: the gate itself had a bug on its first real run
+Cut v0.2.45 to actually exercise this end to end. `linux-shells`,
+`goreleaser`, `macos-app`, `windows-installer`, `android-app` all passed —
+the real fix works. `verify-versions` itself failed: its "Wait for the
+GitHub release to exist" step looped for the full 10-minute timeout
+insisting the release didn't exist, even though `gh release list` showed
+v0.2.45 published a minute *before* the job even started.
+
+Root cause: every sibling job with this same wait-loop pattern
+(`windows-installer`, `macos-app`, `android-app`) runs `actions/checkout@v4`
+first — `gh` infers which repo to talk to from the checked-out git remote.
+This job had no checkout step at all, so `gh release view "$TAG"` failed
+for an unrelated reason (no repo context), and the `>/dev/null 2>&1`
+redirect on that line silently swallowed the real error, making a
+config mistake look exactly like "release not visible yet." Copied the
+wait-loop text from a sibling job without copying the step it depends on.
+Fixed by adding the same `actions/checkout@v4` step. Worth noting plainly:
+even a change added specifically *to* catch mistakes needs its own real
+end-to-end run before trusting it — it had a bug that would have made the
+regression gate itself silently useless (timing out and failing the whole
+release without ever checking a single binary) if the timeout hadn't been
+loud enough to notice.
