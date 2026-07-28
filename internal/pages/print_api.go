@@ -161,6 +161,9 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		if p.ChangeGiven > 0 {
 			doc.Payments = append(doc.Payments, print.KV{Label: "Change", Amount: money(p.ChangeGiven)})
 		}
+		if p.TipAmount > 0 {
+			doc.Payments = append(doc.Payments, print.KV{Label: "Tip", Amount: money(p.TipAmount)})
+		}
 		if p.Method == "cash" {
 			doc.KickDrawer = true
 		}

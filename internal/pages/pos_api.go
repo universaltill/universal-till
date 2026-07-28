@@ -316,6 +316,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Currency  string `json:"currency,omitempty"`
 				Reference string `json:"reference,omitempty"`
 				Change    int64  `json:"change,omitempty"`
+				// Tip is gratuity captured alongside a card-terminal tender
+				// (docs/germany-pos-parity-backlog.md tip-flow gap) -- set by
+				// the caller (e.g. a SumUp reader plugin reading the tip back
+				// from its Cloud API transaction result), same shape as the
+				// existing cash `change` field. Never affects payment coverage.
+				Tip int64 `json:"tip,omitempty"`
 			} `json:"payments"`
 			Discount      int64  `json:"discount,omitempty"`
 			RegisterID    string `json:"registerId,omitempty"`
@@ -415,6 +421,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Currency:    p.Currency,
 				Reference:   p.Reference,
 				ChangeGiven: money.FromMinor(p.Change),
+				TipAmount:   money.FromMinor(p.Tip),
 			})
 		}
 		// Fallback for form-encoded tender buttons (hx-vals)
@@ -664,6 +671,7 @@ type receiptPayment struct {
 	Method    string
 	Applied   int64
 	Change    int64
+	Tip       int64
 	Reference string
 }
 
@@ -783,6 +791,7 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 			Method:    p.MethodID,
 			Applied:   applied.Minor(),
 			Change:    p.ChangeGiven.Minor(),
+			Tip:       p.TipAmount.Minor(),
 			Reference: p.Reference,
 		})
 	}

@@ -54,6 +54,12 @@ type PaymentInput struct {
 	Currency    string
 	Reference   string
 	ChangeGiven money.Money
+	// TipAmount is gratuity captured alongside a card-terminal payment
+	// (docs/germany-pos-parity-backlog.md, "Tips: SumUp reader -> till
+	// auto-sync"). It is metadata only: NOT part of Amount's coverage of
+	// the sale total, and does not affect netPayments/CompleteSale's
+	// payment-sufficiency check. Zero for tenders with no tip (e.g. cash).
+	TipAmount money.Money
 }
 
 const receiptRetryLimit = 5
@@ -111,6 +117,11 @@ func netPayments(payments []PaymentInput) (money.Money, error) {
 		if p.ChangeGiven > p.Amount {
 			return 0, fmt.Errorf("payment %d change cannot exceed amount", i+1)
 		}
+		if p.TipAmount.IsNegative() {
+			return 0, fmt.Errorf("payment %d tip must be >= 0", i+1)
+		}
+		// Tip is intentionally excluded from the sum that must cover the
+		// sale total -- it never offsets or inflates payment coverage.
 		sum = sum.Add(p.Amount.Sub(p.ChangeGiven))
 	}
 	return sum, nil
@@ -280,7 +291,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			}
 
 			for _, p := range in.Payments {
-				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), time.Now().UTC().Format(time.RFC3339)); err != nil {
+				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), p.TipAmount.Minor(), time.Now().UTC().Format(time.RFC3339)); err != nil {
 					return err
 				}
 			}
