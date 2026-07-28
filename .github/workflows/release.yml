@@ -425,6 +425,17 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Every sibling job with this same "wait" step has this first — gh
+      # infers which repo to talk to from the checked-out git remote; without
+      # it, `gh release view` fails for an unrelated reason (no repo
+      # context) that the `>/dev/null 2>&1` redirect below silently
+      # swallows, looking exactly like "release not visible yet" for the
+      # full 30-attempt/10-minute timeout. Found by this job failing that
+      # way on its first real run — see docs/code-reviews/2026-07-28-verify-
+      # release-versions.md's follow-up note.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - name: Wait for the GitHub release to exist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
