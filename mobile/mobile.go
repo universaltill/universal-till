@@ -132,7 +132,16 @@ func Start(dataDir string) (string, error) {
 		close(newInst.done)
 	}()
 
-	if err := waitUntilReady(addr, 10*time.Second, newInst); err != nil {
+	// 10s was too tight in practice: a real low/mid-range Android phone's
+	// first boot (fresh install: 18 migrations against a cold SQLite file,
+	// plus wazero compiling any bundled plugins' WASM with no cache yet)
+	// missed it and surfaced as "server did not become ready within 10s"
+	// (reported 2026-07-28, real device). Desktop's equivalent wait
+	// (cmd/unitill-desktop/desktop.go) made the same ~10s assumption, but
+	// phone hardware skews weaker and more variable than desktop/POS
+	// terminal hardware, so mobile gets more headroom than desktop rather
+	// than copying its number.
+	if err := waitUntilReady(addr, 30*time.Second, newInst); err != nil {
 		cancel()
 		<-newInst.done // wait for the full teardown before reporting failure
 		return "", err
