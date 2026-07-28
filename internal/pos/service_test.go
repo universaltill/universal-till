@@ -142,49 +142,73 @@ func TestScanCacheClearsOnRemove(t *testing.T) {
 	}
 }
 
-// TestOrderTypeTaxSwitching covers §12 UStG's dine-in/takeaway VAT switch
-// (docs/germany-pos-parity-backlog.md): a line with an explicit takeaway
-// rate switches, a line pinned to one rate (no takeaway override, e.g. a
-// cake that's always the reduced rate) never changes, and a line with no
-// per-item tax code at all falls back to the shop's global standard/reduced
-// rates — all mid-basket, matching a customer changing their mind after
-// items are already added.
+// fakeTaxAsker stands in for a real country-specific tax plugin (e.g.
+// ut-plugin-tax-de) in tests — core itself has no notion of what any
+// country's tax rules are, only this interface.
+type fakeTaxAsker struct {
+	takeawayRateByTaxCode map[string]int
+}
+
+func (f fakeTaxAsker) AskTaxRateBP(l BasketLine, orderType string) (int, bool) {
+	if orderType != OrderTypeTakeaway {
+		return 0, false
+	}
+	bp, ok := f.takeawayRateByTaxCode[l.TaxCodeID]
+	return bp, ok
+}
+
+// TestOrderTypeTaxSwitching verifies core has NO built-in tax-rate opinion
+// about order type: with no TaxRateAsker installed, switching order type
+// never changes a line's tax (today's plain default, unaffected by any
+// country's rules). Installing an asker (standing in for a real tax
+// plugin) is what makes it do anything at all — e.g. a drink's tax code
+// switching to a reduced takeaway rate while a cake's tax code, which the
+// asker declines to answer for, stays pinned to its own configured rate.
+// Switching re-derives every current line immediately, including lines
+// added before the order type was chosen or changed (a customer changing
+// their mind mid-order, docs/germany-pos-parity-backlog.md).
 func TestOrderTypeTaxSwitching(t *testing.T) {
 	resolver := mapResolver{
-		"DRINK": {SKU: "DRINK", ItemID: "item-drink", Name: "Coffee", Qty: 1, PriceCents: 1000, TaxRateBP: 1900, TakeawayRateBP: 700},
-		"CAKE":  {SKU: "CAKE", ItemID: "item-cake", Name: "Cake", Qty: 1, PriceCents: 1000, TaxRateBP: 700},
-		"MERCH": {SKU: "MERCH", ItemID: "item-merch", Name: "Mug", Qty: 1, PriceCents: 1000}, // no tax code — uses global rates
+		"DRINK": {SKU: "DRINK", ItemID: "item-drink", TaxCodeID: "tax-drink", Name: "Coffee", Qty: 1, PriceCents: 1000, TaxRateBP: 1900},
+		"CAKE":  {SKU: "CAKE", ItemID: "item-cake", TaxCodeID: "tax-cake", Name: "Cake", Qty: 1, PriceCents: 1000, TaxRateBP: 700},
 	}
-	s := NewServiceWithResolver(Config{
-		TaxRateBasisPoints:        2000, // 20% global standard
-		ReducedTaxRateBasisPoints: 500,  // 5% global reduced
-	}, resolver)
-
-	for _, sku := range []string{"DRINK", "CAKE", "MERCH"} {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+	for _, sku := range []string{"DRINK", "CAKE"} {
 		if _, err := s.ScanQty(sku, 1); err != nil {
 			t.Fatalf("ScanQty(%s) error: %v", sku, err)
 		}
 	}
 
-	b := s.Basket()
-	if b.OrderType != "" {
-		t.Fatalf("expected default order type \"\", got %q", b.OrderType)
-	}
-	if want := money.FromMinor(460); b.Tax != want { // 190 + 70 + 200
-		t.Fatalf("dine-in tax = %v, want %v", b.Tax, want)
+	dineInTax := money.FromMinor(190 + 70) // 19% of 1000 + 7% of 1000
+	if got := s.Basket().Tax; got != dineInTax {
+		t.Fatalf("dine-in tax = %v, want %v", got, dineInTax)
 	}
 
-	b = *s.SetOrderType(OrderTypeTakeaway)
+	// No asker installed: order type has zero effect.
+	s.SetOrderType(OrderTypeTakeaway)
+	if got := s.Basket().Tax; got != dineInTax {
+		t.Fatalf("takeaway with no asker changed tax: got %v, want unchanged %v", got, dineInTax)
+	}
+	s.SetOrderType("")
+
+	// Install the asker: drink switches to 7%, cake (unanswered) stays pinned.
+	s.SetTaxRateAsker(fakeTaxAsker{takeawayRateByTaxCode: map[string]int{"tax-drink": 700}})
+	if got := s.Basket().Tax; got != dineInTax {
+		t.Fatalf("dine-in with asker installed changed tax: got %v, want %v", got, dineInTax)
+	}
+
+	b := *s.SetOrderType(OrderTypeTakeaway)
 	if b.OrderType != OrderTypeTakeaway {
 		t.Fatalf("expected order type %q, got %q", OrderTypeTakeaway, b.OrderType)
 	}
-	if want := money.FromMinor(190); b.Tax != want { // 70 (switched) + 70 (pinned) + 50 (global reduced)
-		t.Fatalf("takeaway tax = %v, want %v", b.Tax, want)
+	takeawayTax := money.FromMinor(70 + 70) // drink switched to 7%, cake pinned at its own 7%
+	if b.Tax != takeawayTax {
+		t.Fatalf("takeaway with asker: tax = %v, want %v", b.Tax, takeawayTax)
 	}
 
 	// Customer changes their mind back to dine-in mid-order.
 	b = *s.SetOrderType("")
-	if want := money.FromMinor(460); b.Tax != want {
-		t.Fatalf("dine-in (reverted) tax = %v, want %v", b.Tax, want)
+	if b.Tax != dineInTax {
+		t.Fatalf("dine-in (reverted) tax = %v, want %v", b.Tax, dineInTax)
 	}
 }

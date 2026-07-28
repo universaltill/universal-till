@@ -311,15 +311,15 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.Bas
 		return pos.BasketLine{}, false
 	}
 	line := pos.BasketLine{
-		SKU:            row.SKU,
-		Name:           row.Name,
-		Qty:            1,
-		PriceCents:     money.FromMinor(row.Price),
-		ItemID:         row.ItemID,
-		VariantID:      row.VariantID,
-		TaxRateBP:      row.TaxRateBP,
-		TakeawayRateBP: row.TakeawayRateBP,
-		IsWeighed:      row.IsWeighed,
+		SKU:        row.SKU,
+		Name:       row.Name,
+		Qty:        1,
+		PriceCents: money.FromMinor(row.Price),
+		ItemID:     row.ItemID,
+		VariantID:  row.VariantID,
+		TaxRateBP:  row.TaxRateBP,
+		TaxCodeID:  row.TaxCodeID,
+		IsWeighed:  row.IsWeighed,
 	}
 	if row.ImageURL != "" {
 		line.ImageURL = row.ImageURL

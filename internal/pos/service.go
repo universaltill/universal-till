@@ -25,63 +25,68 @@ type Service struct {
 	discountPercentBP int64       // percentage discount as basis points (a rate, not money)
 	customerID        string
 	customerName      string
-	// orderType is "" (no explicit choice — treated as dine-in/standard) or
-	// "takeaway". Deliberately NOT defaulting to "takeaway": an explicit tap
-	// is required to apply any reduced rate, so a missed/skipped choice
-	// never under-taxes a sale (§12 UStG dine-in/takeaway VAT switch).
+	// orderType is "" (no explicit choice) or OrderTypeTakeaway. What (if
+	// anything) it does to tax is entirely up to taxAsker.
 	orderType string
+	// taxAsker, when set, can override a line's tax rate per the current
+	// order type — see TaxRateAsker. nil (the default) means core just uses
+	// each line's own configured rate, unaffected by order type.
+	taxAsker TaxRateAsker
 }
 
 type Config struct {
 	TaxInclusive       bool
 	TaxRateBasisPoints int // e.g. 2000 = 20.00%
-	// ReducedTaxRateBasisPoints is the global fallback takeaway rate for
-	// lines with no per-item tax code (TaxRateBP/TakeawayRateBP both 0) —
-	// same "0 = unset" convention as TaxRateBasisPoints. 0 = no reduced
-	// rate configured for this shop's country, so order type never changes
-	// the default rate (safe no-op default).
-	ReducedTaxRateBasisPoints int
 }
 
-// OrderTypeTakeaway is the only order type value that can reduce a line's
-// tax rate; any other value (including "") is treated as dine-in/standard.
+// OrderTypeTakeaway is a value merchants may use for OrderType — dine-in vs.
+// takeaway is a genuinely common distinction (SumUp has the same concept),
+// so core keeps the label as a shared convention. What (if anything) it does
+// to a line's tax rate is entirely up to an installed TaxRateAsker: core has
+// no built-in notion of any country's tax rules.
 const OrderTypeTakeaway = "takeaway"
 
+// TaxRateAsker lets an installed plugin override a line's effective tax
+// rate — e.g. a country-specific order-type VAT switch (Germany's §12 UStG:
+// some items tax differently for takeaway than dine-in). ok=false means the
+// plugin has no opinion on this line; the line's own configured rate is
+// used, same as when no asker is set at all. Wired from internal/pages via
+// Service.SetTaxRateAsker, calling into the plugin event bus — internal/pos
+// itself never talks to the plugin subsystem, keeping this package's only
+// dependency on "what a country's tax rules are" as a pluggable interface.
+type TaxRateAsker interface {
+	AskTaxRateBP(l BasketLine, orderType string) (bp int, ok bool)
+}
+
 // effectiveTaxRateBP resolves the basis points to actually charge for one
-// line under the current order type and global config, per §12 UStG.
-// A line with its own tax code (TaxRateBP != 0) is PINNED to it unless that
-// same tax code also carries an explicit TakeawayRateBP override (e.g. a
-// cake stays at its 7% code always; a drink's code carries both 19% and a
-// 7% takeaway override). Only a line with NO tax code at all falls back to
-// the shop's global standard/reduced rates, which do switch with order
-// type — conflating the two would incorrectly drag a merchant's own
-// deliberately-pinned rate down to the unrelated global reduced rate.
-func effectiveTaxRateBP(l BasketLine, orderType string, cfg Config) int {
-	hasItemTaxCode := l.TaxRateBP != 0
+// line under the current order type: ask the installed TaxRateAsker (if
+// any) first, then fall back to the line's own configured rate — the same
+// plain default as before any tax plugin existed.
+func (s *Service) effectiveTaxRateBP(l BasketLine) int {
+	if s.taxAsker != nil {
+		if bp, ok := s.taxAsker.AskTaxRateBP(l, s.orderType); ok {
+			return bp
+		}
+	}
 	standard := l.TaxRateBP
-	if !hasItemTaxCode {
-		standard = cfg.TaxRateBasisPoints
+	if standard == 0 {
+		standard = s.cfg.TaxRateBasisPoints
 	}
 	if standard == 0 {
-		standard = 2000 // same "default to 20% if unconfigured" as NewServiceWithResolver/SetConfig
+		standard = 2000 // default to 20% if unconfigured
 	}
-	if orderType != OrderTypeTakeaway {
-		return standard
-	}
-	if hasItemTaxCode {
-		if l.TakeawayRateBP != 0 {
-			return l.TakeawayRateBP
-		}
-		return standard // pinned: this item's own tax code has no takeaway override
-	}
-	if cfg.ReducedTaxRateBasisPoints != 0 {
-		return cfg.ReducedTaxRateBasisPoints
-	}
-	return standard // no global reduced rate configured for this shop's country
+	return standard
 }
 
 func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
 	return &Service{cfg: cfg, resolver: r, scanCache: map[string]BasketLine{}}
+}
+
+// SetTaxRateAsker installs (or clears, with nil) the plugin-backed tax-rate
+// override hook and recomputes totals so the change is reflected immediately.
+func (s *Service) SetTaxRateAsker(a TaxRateAsker) {
+	s.taxAsker = a
+	s.recomputeTotals()
 }
 
 // SetConfig swaps the tax configuration IN PLACE, keeping the basket.
@@ -97,24 +102,24 @@ func (s *Service) SetConfig(cfg Config) {
 func (s *Service) Config() Config { return s.cfg }
 
 type BasketLine struct {
-	LineKey      string                  `json:"lineKey,omitempty"` // stable per-line id, assigned when a line is first appended (ADR-0020) — the only safe way to address ONE line once modifiers let several share a SKU
-	SKU          string                  `json:"sku"`
-	Name         string                  `json:"name"`
-	Qty          float64                 `json:"qty"`
-	PriceCents   money.Money             `json:"priceCents"` // effective unit price: base + sum(Modifiers deltas)
-	LineDiscount money.Money             `json:"lineDiscount,omitempty"`
-	LineTotal    money.Money             `json:"lineTotal,omitempty"`
-	ImageURL     string                  `json:"imageUrl,omitempty"`
-	ItemID       string                  `json:"-"`
-	VariantID    string                  `json:"-"`
-	TaxRateBP    int                     `json:"-"`
-	// TakeawayRateBP is the rate to use instead of TaxRateBP when the sale's
-	// OrderType is "takeaway" (0 = this line's tax rate never changes with
-	// order type — e.g. a cake pinned to one reduced rate regardless of
-	// dine-in/takeaway, which just uses a flat tax_code, no override needed).
-	TakeawayRateBP int  `json:"-"`
-	IsWeighed      bool `json:"-"`
-	Modifiers    []data.SelectedModifier `json:"modifiers,omitempty"` // ADR-0020: chosen customizations, already folded into PriceCents
+	LineKey      string      `json:"lineKey,omitempty"` // stable per-line id, assigned when a line is first appended (ADR-0020) — the only safe way to address ONE line once modifiers let several share a SKU
+	SKU          string      `json:"sku"`
+	Name         string      `json:"name"`
+	Qty          float64     `json:"qty"`
+	PriceCents   money.Money `json:"priceCents"` // effective unit price: base + sum(Modifiers deltas)
+	LineDiscount money.Money `json:"lineDiscount,omitempty"`
+	LineTotal    money.Money `json:"lineTotal,omitempty"`
+	ImageURL     string      `json:"imageUrl,omitempty"`
+	ItemID       string      `json:"-"`
+	VariantID    string      `json:"-"`
+	TaxRateBP    int         `json:"-"`
+	// TaxCodeID identifies which tax code this line's rate came from (empty
+	// if the item has none and it's using the shop's global default rate) —
+	// passed to TaxRateAsker so a tax plugin can distinguish item categories
+	// without core needing to know what any of them mean.
+	TaxCodeID string                  `json:"-"`
+	IsWeighed bool                    `json:"-"`
+	Modifiers []data.SelectedModifier `json:"modifiers,omitempty"` // ADR-0020: chosen customizations, already folded into PriceCents
 }
 
 // ModifierSignature is a stable key for two lines' modifier selections —
@@ -349,7 +354,7 @@ func (s *Service) recomputeTotals() {
 	var tax, total money.Money
 	for i := range s.lines {
 		l := &s.lines[i]
-		rateBP := effectiveTaxRateBP(*l, s.orderType, s.cfg)
+		rateBP := s.effectiveTaxRateBP(*l)
 		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, s.cfg.TaxInclusive)
 		tax = tax.Add(lineTax)
 		total = total.Add(lineTotal)
@@ -379,7 +384,7 @@ func (s *Service) OrderType() string { return s.orderType }
 // sale) must both use, so what a cashier sees pre-payment matches what gets
 // recorded/receipted.
 func (s *Service) EffectiveLineTaxRateBP(l BasketLine) int {
-	return effectiveTaxRateBP(l, s.orderType, s.cfg)
+	return s.effectiveTaxRateBP(l)
 }
 
 // SetOrderType sets the sale's order type and re-derives every current

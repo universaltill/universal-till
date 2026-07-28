@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -375,8 +376,8 @@ func TestEventBus_BlockingRollsBackOnError(t *testing.T) {
 	bus.SetEventMode("sale.completed", Blocking)
 
 	handlerErr := errors.New("handler failed")
-	if _, err := bus.SubscribeWithHandler(ctx, manifest.ID, []string{"sale.completed"}, func(ctx context.Context, event Event) error {
-		return handlerErr
+	if _, err := bus.SubscribeWithHandler(ctx, manifest.ID, []string{"sale.completed"}, func(ctx context.Context, event Event) (json.RawMessage, error) {
+		return nil, handlerErr
 	}); err != nil {
 		t.Fatalf("subscribe with handler: %v", err)
 	}
@@ -398,6 +399,75 @@ func TestEventBus_BlockingRollsBackOnError(t *testing.T) {
 	}
 	if !strings.Contains(details, "status=error") {
 		t.Fatalf("expected error status in audit details, got %s", details)
+	}
+}
+
+// TestEventBus_Ask covers the value-returning hook (internal/pos.
+// TaxRateAsker's real-world use): no subscriber → (nil, false, nil), a
+// subscriber that declines (empty response) → also (nil, false, nil), a
+// subscriber that answers → its response, and a handler error aborts the
+// whole Ask instead of silently falling back.
+func TestEventBus_Ask(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+	ctx := context.Background()
+
+	manifest := &Manifest{
+		ID:          "plugin-asker",
+		Name:        "Asker",
+		Version:     "1.0.0",
+		Entrypoint:  "./test",
+		Hooks:       []ManifestHook{{Event: "tax.rate.ask", Action: "rate"}},
+		Permissions: []string{"events:receive"},
+	}
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("persist manifest: %v", err)
+	}
+	if err := GrantPermission(ctx, db, manifest.ID, "events:receive"); err != nil {
+		t.Fatalf("grant permission: %v", err)
+	}
+
+	bus := NewEventBus(db)
+	bus.SetEventMode("tax.rate.ask", Blocking)
+
+	// No subscriber yet.
+	if resp, ok, err := bus.Ask(ctx, "tax.rate.ask", map[string]any{}); err != nil || ok || resp != nil {
+		t.Fatalf("expected no answer with no subscriber, got resp=%s ok=%v err=%v", resp, ok, err)
+	}
+
+	answer := json.RawMessage(`{"rate_bp":700}`)
+	decline := false
+	handlerErr := errors.New("asker: crashed")
+	fail := false
+	if _, err := bus.SubscribeWithHandler(ctx, manifest.ID, []string{"tax.rate.ask"}, func(ctx context.Context, event Event) (json.RawMessage, error) {
+		if fail {
+			return nil, handlerErr
+		}
+		if decline {
+			return nil, nil
+		}
+		return answer, nil
+	}); err != nil {
+		t.Fatalf("subscribe with handler: %v", err)
+	}
+
+	resp, ok, err := bus.Ask(ctx, "tax.rate.ask", map[string]any{})
+	if err != nil || !ok || string(resp) != string(answer) {
+		t.Fatalf("expected answer %s, got resp=%s ok=%v err=%v", answer, resp, ok, err)
+	}
+
+	decline = true
+	if resp, ok, err := bus.Ask(ctx, "tax.rate.ask", map[string]any{}); err != nil || ok || resp != nil {
+		t.Fatalf("expected no answer when handler declines, got resp=%s ok=%v err=%v", resp, ok, err)
+	}
+	decline = false
+
+	fail = true
+	if _, ok, err := bus.Ask(ctx, "tax.rate.ask", map[string]any{}); err == nil || ok {
+		t.Fatalf("expected handler error to propagate, got ok=%v err=%v", ok, err)
+	} else if !strings.Contains(err.Error(), handlerErr.Error()) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

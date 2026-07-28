@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -495,8 +496,8 @@ func TestSelfOrderShop_CheckoutDeclinedByPluginGateNeverCompletesSale(t *testing
 	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
 	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
 		[]string{"payment.demopay.authorize"},
-		func(ctx context.Context, ev plugins.Event) error {
-			return errors.New("demopay: card declined")
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return nil, errors.New("demopay: card declined")
 		}); err != nil {
 		t.Fatal(err)
 	}

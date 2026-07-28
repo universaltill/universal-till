@@ -11,7 +11,7 @@
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}">
     <main class="setup-card" x-data="{ step: {{ if .errKey }}4{{ else }}1{{ end }}, last: 5,
-                                       country: '', currency: '', tax: '', reducedTax: '', taxinc: 'on' }">
+                                       country: '', currency: '', tax: '', taxinc: 'on' }">
       <img class="login-logo" src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
@@ -40,15 +40,14 @@
           <h1>{{ T "setup.country.title" }}</h1>
           <p class="muted">{{ T "setup.country.hint" }}</p>
           <select name="country" x-model="country"
-                  @change="const o = $event.target.selectedOptions[0]; currency = o.dataset.currency || currency; tax = o.dataset.tax ?? tax; reducedTax = o.dataset.reducedTax ?? reducedTax; taxinc = o.dataset.taxinc || taxinc;">
+                  @change="const o = $event.target.selectedOptions[0]; currency = o.dataset.currency || currency; tax = o.dataset.tax ?? tax; taxinc = o.dataset.taxinc || taxinc;">
             <option value="">{{ T "setup.country.choose" }}</option>
             {{ range .countries }}
-            <option value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-reduced-tax="{{ .ReducedTaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}">{{ T .NameKey }}</option>
+            <option value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}">{{ T .NameKey }}</option>
             {{ end }}
           </select>
           <input type="hidden" name="currency" :value="currency">
           <input type="hidden" name="tax_rate_pct" :value="tax">
-          <input type="hidden" name="reduced_tax_rate_pct" :value="reducedTax">
           <input type="hidden" name="tax_inclusive" :value="taxinc">
           <p class="muted" x-show="currency"><span x-text="currency"></span> · <span x-text="tax"></span>% </p>
           <div class="setup-nav">

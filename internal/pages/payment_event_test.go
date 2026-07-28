@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -49,11 +50,11 @@ func TestBlockingPaymentEventGate(t *testing.T) {
 	bus.SetEventMode("payment.stripe.refund", plugins.Blocking)
 	if _, err := bus.SubscribeWithHandler(ctx, "com.universaltill.payment-stripe",
 		[]string{"payment.stripe.refund"},
-		func(ctx context.Context, ev plugins.Event) error {
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
 			if decline {
-				return errors.New("stripe: refund failed")
+				return nil, errors.New("stripe: refund failed")
 			}
-			return nil
+			return nil, nil
 		}); err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
