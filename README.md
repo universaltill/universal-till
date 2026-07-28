@@ -263,6 +263,35 @@ Submit your plugins to the marketplace:
 - Ed25519 signature verification before install
 - Build free or paid plugins
 
+### Available Plugins
+
+Every plugin below is free, open source, and downloadable directly —
+no account, no marketplace, no payment required, ever. The in-app
+marketplace is a one-click convenience layer on top of these same
+public releases, nothing more (see
+[ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)).
+Also browsable at [universaltill.com/plugins](https://www.universaltill.com/plugins).
+
+Each "Download" link always points at the current latest release —
+GitHub's own `/releases/latest/download/` mechanism, no automation to
+keep it updated.
+
+| Plugin | Type | Repo | Download |
+|---|---|---|---|
+| SumUp Card Payments | payment | [ut-plugin-payment-sumup](https://github.com/universaltill/ut-plugin-payment-sumup) | [latest](https://github.com/universaltill/ut-plugin-payment-sumup/releases/latest/download/latest.tar.gz) |
+| Stripe Card Payments | payment | [ut-plugin-payment-stripe](https://github.com/universaltill/ut-plugin-payment-stripe) | [latest](https://github.com/universaltill/ut-plugin-payment-stripe/releases/latest/download/latest.tar.gz) |
+| QR Pay | payment | [ut-plugin-payment-qrpay](https://github.com/universaltill/ut-plugin-payment-qrpay) | [latest](https://github.com/universaltill/ut-plugin-payment-qrpay/releases/latest/download/latest.tar.gz) |
+| Demo Card Terminal | payment | [ut-plugin-payment-demo](https://github.com/universaltill/ut-plugin-payment-demo) | [latest](https://github.com/universaltill/ut-plugin-payment-demo/releases/latest/download/latest.tar.gz) |
+| AI Assistant (self-hosted) | integration | [ut-plugin-integration-ai](https://github.com/universaltill/ut-plugin-integration-ai) | [latest](https://github.com/universaltill/ut-plugin-integration-ai/releases/latest/download/latest.tar.gz) |
+| Webhook / ERP Connector | integration | [ut-plugin-integration-webhook](https://github.com/universaltill/ut-plugin-integration-webhook) | not packaged yet |
+| No-Sale Button | button | [ut-plugin-button-nosale](https://github.com/universaltill/ut-plugin-button-nosale) | [latest](https://github.com/universaltill/ut-plugin-button-nosale/releases/latest/download/latest.tar.gz) |
+| Spanish (Español) | language | [ut-plugin-language-es](https://github.com/universaltill/ut-plugin-language-es) | [latest](https://github.com/universaltill/ut-plugin-language-es/releases/latest/download/latest.tar.gz) |
+| German (Deutsch) | language | [ut-plugin-language-de](https://github.com/universaltill/ut-plugin-language-de) | [latest](https://github.com/universaltill/ut-plugin-language-de/releases/latest/download/latest.tar.gz) |
+| Screen Top Theme | theme | [ut-plugin-theme-screen-top](https://github.com/universaltill/ut-plugin-theme-screen-top) | [latest](https://github.com/universaltill/ut-plugin-theme-screen-top/releases/latest/download/latest.tar.gz) |
+| Buttons Left Theme | theme | [ut-plugin-theme-buttons-left](https://github.com/universaltill/ut-plugin-theme-buttons-left) | [latest](https://github.com/universaltill/ut-plugin-theme-buttons-left/releases/latest/download/latest.tar.gz) |
+| Midnight Theme | theme | [ut-plugin-theme-midnight](https://github.com/universaltill/ut-plugin-theme-midnight) | [latest](https://github.com/universaltill/ut-plugin-theme-midnight/releases/latest/download/latest.tar.gz) |
+| FAQ Page | page | [ut-plugin-faq](https://github.com/universaltill/ut-plugin-faq) | [latest](https://github.com/universaltill/ut-plugin-faq/releases/latest/download/latest.tar.gz) |
+
 ---
 
 ## 🤝 Contributing
