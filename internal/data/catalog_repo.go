@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 type CatalogRepo struct {
@@ -447,7 +448,44 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	if err != nil {
 		return "", fmt.Errorf("insert item: %w", err)
 	}
+	// Without this, a newly created item has NO row in inventory at all
+	// (RecordStockMovement's UPDATE can't create one, only adjust an
+	// existing one) — invisible on the Inventory page until some other
+	// stock action happened to touch it first. Confirmed live: an item
+	// added through this form showed up in the catalog list but nowhere in
+	// Inventory. Genuinely best-effort, not just in name: the item is
+	// already committed and perfectly usable for sale without a stock
+	// row (stock tracking is opt-in), so a failure here — e.g. no
+	// stock_locations table at all, a legitimately stockless deployment —
+	// must never fail item creation itself, only get logged.
+	if err := r.ensureInventoryRow(ctx, in.ID, ""); err != nil {
+		logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+	}
 	return in.ID, nil
+}
+
+// ensureInventoryRow creates a zero-quantity inventory row for a new item or
+// variant (exactly one of itemID/variantID set) at the default stock
+// location, if one doesn't already exist. See CreateItem/CreateVariant.
+func (r *CatalogRepo) ensureInventoryRow(ctx context.Context, itemID, variantID string) error {
+	var locationID string
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM stock_locations WHERE name = 'Main' OR id = 'loc_main' ORDER BY id LIMIT 1`).Scan(&locationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		locationID = "loc_main"
+		if _, err := r.db.ExecContext(ctx, `INSERT INTO stock_locations (id, name) VALUES (?, ?)`, locationID, "Main"); err != nil {
+			return fmt.Errorf("create default location: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("find default location: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
+INSERT OR IGNORE INTO inventory (id, item_id, variant_id, location_id, quantity)
+VALUES (?, ?, ?, ?, 0)
+`, uuid.NewString(), nullIfEmpty(itemID), nullIfEmpty(variantID), locationID)
+	if err != nil {
+		return fmt.Errorf("insert inventory row: %w", err)
+	}
+	return nil
 }
 
 // ItemCostPrice returns the item's cost price in minor units (0 = unset).
@@ -588,6 +626,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 `, in.ID, in.ItemID, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active)
 	if err != nil {
 		return "", fmt.Errorf("insert variant: %w", err)
+	}
+	// Same reasoning as CreateItem: without this a new variant has no
+	// inventory row and is invisible on the Inventory page. Best-effort,
+	// same as CreateItem — never fails variant creation itself.
+	if err := r.ensureInventoryRow(ctx, "", in.ID); err != nil {
+		logging.L().Warnf("catalog: create variant %s: inventory row not created: %v", in.ID, err)
 	}
 	return in.ID, nil
 }
