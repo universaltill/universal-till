@@ -36,20 +36,20 @@ type ShortcutSearchResult struct {
 
 // ShortcutLine represents a priced line derived from a barcode/lookup for shortcuts.
 type ShortcutLine struct {
-	SKU        string
-	Name       string
-	ItemID     string
-	VariantID  string
-	Price      int64
-	TaxRateBP  int
-	// TakeawayRateBP is the tax rate to use instead of TaxRateBP when the
-	// sale's order type is takeaway (0 = no override, e.g. an item pinned to
-	// one rate regardless of order type — see tax_codes.takeaway_rate_basis_points).
-	TakeawayRateBP int
-	IsWeighed      bool
-	ImageURL       string
-	Label          string
-	HasVariant     bool
+	SKU       string
+	Name      string
+	ItemID    string
+	VariantID string
+	Price     int64
+	TaxRateBP int
+	// TaxCodeID identifies which tax code this rate came from ("" if the
+	// item has none) — a tax plugin (internal/pos.TaxRateAsker) uses it to
+	// tell item categories apart; core itself never interprets it.
+	TaxCodeID  string
+	IsWeighed  bool
+	ImageURL   string
+	Label      string
+	HasVariant bool
 }
 
 // SaleLineSnapshot represents stored sale_line fields used by returns.
@@ -2819,24 +2819,24 @@ LIMIT 1
 }
 
 type shortcutPriceRow struct {
-	ItemID         string
-	ItemName       string
-	VariantID      string
-	Variant        string
-	SKU            string
-	Price          int64
-	Image          sql.NullString
-	TaxRateBP      sql.NullInt64
-	TakeawayRateBP sql.NullInt64
-	IsWeighed      sql.NullInt64
-	Label          sql.NullString
+	ItemID    string
+	ItemName  string
+	VariantID string
+	Variant   string
+	SKU       string
+	Price     int64
+	Image     sql.NullString
+	TaxRateBP sql.NullInt64
+	TaxCodeID sql.NullString
+	IsWeighed sql.NullInt64
+	Label     sql.NullString
 }
 
 func (r *POSRepo) resolveVariant(ctx context.Context, code string) (shortcutPriceRow, bool) {
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), COALESCE(t.takeaway_rate_basis_points, 0)
+       COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM variant_barcodes vb
 JOIN item_variants v ON v.id = vb.variant_id
 JOIN items i ON i.id = v.item_id
@@ -2846,7 +2846,7 @@ WHERE vb.barcode = ?
 LIMIT 1
 `, code)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TakeawayRateBP); err != nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -2856,7 +2856,7 @@ func (r *POSRepo) resolveItem(ctx context.Context, code string) (shortcutPriceRo
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), COALESCE(t.takeaway_rate_basis_points, 0)
+       COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM item_barcodes ib
 JOIN items i ON i.id = ib.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
@@ -2865,7 +2865,7 @@ WHERE ib.barcode = ?
 LIMIT 1
 `, code)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TakeawayRateBP); err != nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -2875,7 +2875,7 @@ func (r *POSRepo) resolveShortcut(ctx context.Context, code string) (shortcutPri
 	row := r.db.QueryRowContext(ctx, `
 SELECT sb.item_id, sb.label, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), COALESCE(t.takeaway_rate_basis_points, 0)
+       COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM shortcut_buttons sb
 JOIN items i ON i.id = sb.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
@@ -2884,7 +2884,7 @@ WHERE sb.barcode = ?
 LIMIT 1
 `, code)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.Label, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TakeawayRateBP); err != nil {
+	if err := row.Scan(&res.ItemID, &res.Label, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	res.ItemName = res.Label.String
@@ -2895,14 +2895,14 @@ func (r *POSRepo) resolveSKU(ctx context.Context, sku string) (shortcutPriceRow,
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), COALESCE(t.takeaway_rate_basis_points, 0)
+       COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM items i
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE i.is_active = 1 AND i.sku = ?
 LIMIT 1
 `, sku)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TakeawayRateBP); err != nil {
+	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -2912,7 +2912,7 @@ func (r *POSRepo) resolveNameLike(ctx context.Context, like string) (shortcutPri
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), COALESCE(t.takeaway_rate_basis_points, 0)
+       COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM items i
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE i.is_active = 1 AND i.name LIKE ?
@@ -2920,7 +2920,7 @@ ORDER BY i.name
 LIMIT 1
 `, like)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TakeawayRateBP); err != nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -2936,15 +2936,15 @@ func (r *POSRepo) resolvePrice(ctx context.Context, itemID, variantID string, fa
 
 func (r *POSRepo) toShortcutLine(code string, price int64, row shortcutPriceRow) ShortcutLine {
 	line := ShortcutLine{
-		SKU:            code,
-		Name:           row.ItemName,
-		ItemID:         row.ItemID,
-		VariantID:      row.VariantID,
-		Price:          price,
-		TaxRateBP:      int(row.TaxRateBP.Int64),
-		TakeawayRateBP: int(row.TakeawayRateBP.Int64),
-		IsWeighed:      row.IsWeighed.Int64 == 1,
-		HasVariant:     row.VariantID != "",
+		SKU:        code,
+		Name:       row.ItemName,
+		ItemID:     row.ItemID,
+		VariantID:  row.VariantID,
+		Price:      price,
+		TaxRateBP:  int(row.TaxRateBP.Int64),
+		TaxCodeID:  row.TaxCodeID.String,
+		IsWeighed:  row.IsWeighed.Int64 == 1,
+		HasVariant: row.VariantID != "",
 	}
 	if row.Image.Valid {
 		line.ImageURL = row.Image.String

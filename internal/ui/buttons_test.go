@@ -88,15 +88,15 @@ func TestButtonStoreAdd_ValidatesActiveItem(t *testing.T) {
 	}
 }
 
-// TestPriceResolverAdapter_TakeawayRateBP verifies the resolver reads the
-// new tax_codes.takeaway_rate_basis_points column through to BasketLine —
-// the §12 UStG dine-in/takeaway VAT switch depends on it reaching the
-// basket at scan time (internal/pos.effectiveTaxRateBP consumes it later).
-func TestPriceResolverAdapter_TakeawayRateBP(t *testing.T) {
+// TestPriceResolverAdapter_TaxCodeID verifies the resolver reads an item's
+// tax_code_id through to BasketLine — a tax plugin (internal/pos.
+// TaxRateAsker) uses it to tell item categories apart without core
+// interpreting it itself.
+func TestPriceResolverAdapter_TaxCodeID(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	_, _ = db.Exec(`INSERT INTO tax_codes(id, rate_basis_points, takeaway_rate_basis_points) VALUES('tax-drink', 1900, 700)`)
+	_, _ = db.Exec(`INSERT INTO tax_codes(id, rate_basis_points) VALUES('tax-drink', 1900)`)
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, tax_code_id, is_active) VALUES('itm1','DRINK1','Coffee', 1000, 'tax-drink', 1)`)
 	_, _ = db.Exec(`INSERT INTO item_barcodes(barcode, item_id, is_primary) VALUES('DRINK1','itm1',1)`)
 	store := NewButtonStore(db)
@@ -109,7 +109,7 @@ func TestPriceResolverAdapter_TakeawayRateBP(t *testing.T) {
 	if line.TaxRateBP != 1900 {
 		t.Fatalf("expected TaxRateBP 1900, got %d", line.TaxRateBP)
 	}
-	if line.TakeawayRateBP != 700 {
-		t.Fatalf("expected TakeawayRateBP 700, got %d", line.TakeawayRateBP)
+	if line.TaxCodeID != "tax-drink" {
+		t.Fatalf("expected TaxCodeID tax-drink, got %q", line.TaxCodeID)
 	}
 }

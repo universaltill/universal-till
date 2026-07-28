@@ -132,25 +132,28 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			continue
 		}
 		// Authorization events run BLOCKING: the tender waits for the
-		// verdict (docs: wasm-runtime.md payment authorization).
+		// verdict (docs: wasm-runtime.md payment authorization). ".ask"
+		// events are the generic value-returning hook (EventBus.Ask) — also
+		// blocking, since the caller is waiting on the plugin's answer.
 		for _, evName := range events {
-			if strings.HasSuffix(evName, ".authorize") {
+			if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") {
 				bus.SetEventMode(evName, Blocking)
 			}
 		}
 		pluginID := row.ID
-		handle := func(hctx context.Context, ev Event) error {
+		handle := func(hctx context.Context, ev Event) (json.RawMessage, error) {
 			w.mu.Lock()
 			stale := gen != w.unsubGen
 			w.mu.Unlock()
 			if stale {
-				return nil
+				return nil, nil
 			}
-			if err := w.HandleEvent(hctx, pluginID, ev); err != nil {
+			resp, err := w.HandleEvent(hctx, pluginID, ev)
+			if err != nil {
 				logging.L().Errorf("wasm %s handling %s: %v", pluginID, ev.Type, err)
-				return err
+				return nil, err
 			}
-			return nil
+			return resp, nil
 		}
 		// The handler runs synchronously for Blocking events; for the default
 		// non-blocking mode events land on the channel, so drain it too.
@@ -161,7 +164,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		}
 		go func() {
 			for ev := range ch {
-				_ = handle(context.Background(), ev)
+				_, _ = handle(context.Background(), ev)
 			}
 		}()
 		logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
@@ -194,8 +197,13 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 }
 
 // HandleEvent runs one event through the plugin's module: fresh instance,
-// event JSON on stdin, deadline-bound, stdout/stderr captured.
-func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event) error {
+// event JSON on stdin, deadline-bound, stdout/stderr captured. The plugin's
+// trimmed stdout is returned as-is — most handlers write nothing (or plain
+// log text, which the caller happens to have already logged too); an "ask"
+// style handler (EventBus.Ask) writes its JSON answer here instead, and
+// interpreting that JSON is entirely up to that caller, not this generic
+// runtime.
+func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event) (json.RawMessage, error) {
 	w.mu.Lock()
 	compiled, ok := w.modules[pluginID]
 	timeout := w.timeout
@@ -205,7 +213,7 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 	db := w.db
 	w.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("module not loaded: %s", pluginID)
+		return nil, fmt.Errorf("module not loaded: %s", pluginID)
 	}
 
 	in, err := json.Marshal(map[string]any{
@@ -215,7 +223,7 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 		"payload":   json.RawMessage(ev.Payload),
 	})
 	if err != nil {
-		return fmt.Errorf("encode event: %w", err)
+		return nil, fmt.Errorf("encode event: %w", err)
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, timeout)
@@ -242,10 +250,11 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 		}
 	}
 	if runErr != nil {
-		return fmt.Errorf("wasm handler: %w", runErr)
+		return nil, fmt.Errorf("wasm handler: %w", runErr)
 	}
-	if out := strings.TrimSpace(stdout.String()); out != "" {
+	out := strings.TrimSpace(stdout.String())
+	if out != "" {
 		logging.L().Infof("[wasm:%s] result: %s", pluginID, out)
 	}
-	return nil
+	return json.RawMessage(out), nil
 }
