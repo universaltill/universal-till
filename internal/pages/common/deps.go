@@ -43,6 +43,12 @@ type RuntimeState struct {
 	Region                 string
 	TaxInclusive           bool
 	TaxRatePct             int
+	// ReducedTaxRatePct is the takeaway/reduced-rate VAT percentage (§12
+	// UStG in Germany: 7% takeaway vs. 19% eat-in on drinks) applied to
+	// order-type-eligible lines with no per-item tax code when the sale's
+	// order type is takeaway. 0 = not configured for this country/shop, so
+	// order type never changes the default rate.
+	ReducedTaxRatePct      int
 	AllowNegativeInventory bool
 	UIScale                float64 // interface scale for this till's screen (0 = unset)
 	IdleLockMinutes        int     // idle auto-lock window in minutes (0 = off)

@@ -360,13 +360,9 @@ func kioskSaleLinesAndTotal(d *common.Deps, locID string) ([]pos.SaleLineInput, 
 	var saleLines []pos.SaleLineInput
 	subtotal, taxTotal := money.Zero, money.Zero
 	for _, l := range d.Engine.Lines() {
-		taxBP := l.TaxRateBP
-		if taxBP == 0 {
-			taxBP = d.CurrentState().TaxRatePct * 100
-			if taxBP == 0 {
-				taxBP = 2000
-			}
-		}
+		// Same resolution as the cashier tender handler (pos_api.go) —
+		// required by this function's own invariant above.
+		taxBP := d.Engine.EffectiveLineTaxRateBP(l)
 		saleLines = append(saleLines, pos.SaleLineInput{
 			ItemID:             l.ItemID,
 			VariantID:          l.VariantID,

@@ -293,6 +293,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = basketView.Render(w, b)
 	})
 
+	// Dine-in/takeaway toggle (§12 UStG: some lines' VAT rate depends on
+	// this — docs/germany-pos-parity-backlog.md). Any value other than
+	// pos.OrderTypeTakeaway is treated as dine-in/standard, including "" —
+	// this endpoint is also how a cashier switches BACK to dine-in.
+	mux.HandleFunc("/api/pos/order-type", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		orderType := ""
+		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
+			orderType = pos.OrderTypeTakeaway
+		}
+		b := d.Engine.SetOrderType(orderType)
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		_ = basketView.Render(w, *b)
+	})
+
 	// Clear toast for OOB swap.
 	mux.HandleFunc("/ui/clear-toast", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -383,13 +399,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		var saleLines []pos.SaleLineInput
 		for _, l := range lines {
-			taxBP := l.TaxRateBP
-			if taxBP == 0 {
-				taxBP = d.CurrentState().TaxRatePct * 100
-				if taxBP == 0 {
-					taxBP = 2000 // fallback to 20% if missing to avoid zero-tax totals
-				}
-			}
+			// Single source of truth with the live basket preview
+			// (Service.recomputeTotals) — same order-type-aware resolution,
+			// so what the cashier saw pre-payment is what gets recorded.
+			taxBP := d.Engine.EffectiveLineTaxRateBP(l)
 			// Qty is int; convert to float64 for REAL support
 			saleLines = append(saleLines, pos.SaleLineInput{
 				ItemID:             l.ItemID,

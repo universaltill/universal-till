@@ -390,8 +390,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		httpx.InitCurrency(st.Currency)
 		// In place: replacing the engine would empty a basket in progress.
 		d.Engine.SetConfig(pos.Config{
-			TaxInclusive:       st.TaxInclusive,
-			TaxRateBasisPoints: st.TaxRatePct * 100,
+			TaxInclusive:              st.TaxInclusive,
+			TaxRateBasisPoints:        st.TaxRatePct * 100,
+			ReducedTaxRateBasisPoints: st.ReducedTaxRatePct * 100,
 		})
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -427,6 +428,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				if n, err := strconv.Atoi(value); err == nil {
 					s.TaxRatePct = n
 				}
+			case common.KeyReducedTaxRate:
+				if n, err := strconv.Atoi(value); err == nil {
+					s.ReducedTaxRatePct = n
+				}
 			case "pos.allow_negative_inventory":
 				s.AllowNegativeInventory = truthy(value)
 			}
@@ -437,8 +442,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		case common.KeyTaxInclusive:
 			// In place: replacing the engine would empty a basket in progress.
 			d.Engine.SetConfig(pos.Config{
-				TaxInclusive:       st.TaxInclusive,
-				TaxRateBasisPoints: st.TaxRatePct * 100,
+				TaxInclusive:              st.TaxInclusive,
+				TaxRateBasisPoints:        st.TaxRatePct * 100,
+				ReducedTaxRateBasisPoints: st.ReducedTaxRatePct * 100,
 			})
 		}
 		w.WriteHeader(http.StatusNoContent)
