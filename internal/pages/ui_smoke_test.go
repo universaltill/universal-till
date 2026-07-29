@@ -327,6 +327,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE inventory (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, quantity REAL NOT NULL, updated_at TEXT NOT NULL, UNIQUE(item_id, variant_id, location_id));`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL);`,
 		`CREATE TABLE report_archive (id TEXT PRIMARY KEY, kind TEXT NOT NULL, period TEXT NOT NULL, content_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (kind, period));`,
+		`CREATE TABLE invoices (id TEXT PRIMARY KEY, series TEXT NOT NULL, invoice_no INTEGER NOT NULL, display_no TEXT NOT NULL UNIQUE, kind TEXT NOT NULL DEFAULT 'invoice', sale_id TEXT NOT NULL, original_invoice_id TEXT, customer_name TEXT NOT NULL, customer_address TEXT NOT NULL DEFAULT '', customer_vat_no TEXT NOT NULL DEFAULT '', seller_json TEXT NOT NULL, net_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, gross_total INTEGER NOT NULL, vat_breakdown_json TEXT NOT NULL, issued_at TEXT NOT NULL, issued_by TEXT NOT NULL, UNIQUE(series, invoice_no), UNIQUE(sale_id, kind));`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
