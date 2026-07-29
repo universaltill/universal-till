@@ -1,0 +1,230 @@
+package pages
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/settings"
+)
+
+// --- pure logic ---
+// eodDue and buildEODDoc already have coverage in eod_test.go
+// (TestEODDue, TestBuildEODDoc) — only adding what that file doesn't
+// cover: direct regex verification and the no-sales-yet footer case.
+
+func TestEodTimeRegex(t *testing.T) {
+	valid := []string{"00:00", "09:05", "23:59", "21:00"}
+	invalid := []string{"24:00", "9:05", "23:60", "abc", "", "23:5"}
+	for _, v := range valid {
+		if !eodTimeRe.MatchString(v) {
+			t.Errorf("expected %q to be a valid HH:MM", v)
+		}
+	}
+	for _, v := range invalid {
+		if eodTimeRe.MatchString(v) {
+			t.Errorf("expected %q to be rejected", v)
+		}
+	}
+}
+
+func TestBuildEODDoc_NoReceiptsOmitsFooterLine(t *testing.T) {
+	rep := data.EODReport{Day: "2026-01-01", GeneratedAt: "now"}
+	doc := buildEODDoc(rep, "Task Runner", "utf8")
+	for _, line := range doc.Footer {
+		if strings.Contains(line, "Receipts") {
+			t.Fatalf("expected no receipt-range footer line for a day with no sales, got %+v", doc.Footer)
+		}
+	}
+}
+
+// --- generateEOD (idempotent archival) ---
+
+func newEODTestDeps(t *testing.T) *common.Deps {
+	t.Helper()
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	seedForPages(t, db)
+
+	cfg := &config.Config{
+		Theme:   "default",
+		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL: "http://localhost:8081",
+		},
+	}
+	pm, err := plugins.Init(t.Context(), cfg, db)
+	if err != nil {
+		t.Fatalf("init plugins: %v", err)
+	}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	return &common.Deps{
+		Cfg:      cfg,
+		Db:       db,
+		State:    state,
+		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+		Pm:       pm,
+		Settings: settings.NewStore(db),
+	}
+}
+
+func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
+	dp := newEODTestDeps(t)
+
+	_, created, err := generateEOD(t.Context(), dp, "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected the first generation for this day to report created=true")
+	}
+
+	// Running it again for the SAME day must not re-archive (idempotent —
+	// StartEODScheduler polls every 30s and must not spam a fresh report
+	// each tick).
+	_, created, err = generateEOD(t.Context(), dp, "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("expected the second generation for the same day to report created=false")
+	}
+
+	repo := data.NewPOSRepo(dp.Db)
+	has, err := repo.HasArchivedReport(t.Context(), "eod", "2026-01-01")
+	if err != nil || !has {
+		t.Fatalf("expected the report archived, got has=%v err=%v", has, err)
+	}
+}
+
+// --- HTTP handlers ---
+
+func newEODAPITestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
+	t.Helper()
+	dp := newEODTestDeps(t)
+	mux := http.NewServeMux()
+	registerEODAPI(mux, dp)
+	return mux, dp
+}
+
+func TestPostEODRun_RequiresManager(t *testing.T) {
+	mux, _ := newEODAPITestMux(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+func TestPostEODRun_GeneratesThenReportsAlreadyExists(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newEODAPITestMux(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("expected a success indicator, got %s", rec.Body.String())
+	}
+
+	// Running again the same day: still 200, but reports "already exists"
+	// rather than a second success.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on the second run, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("expected NOT a fresh success indicator on the second same-day run, got %s", rec.Body.String())
+	}
+}
+
+func TestPostEODPrint_NotFoundForUnknownPeriod(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newEODAPITestMux(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/2099-12-31", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a period that was never archived, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostEODPrint_RequiresManager(t *testing.T) {
+	mux, _ := newEODAPITestMux(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/2026-01-01", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+func TestPostEODPrint_NoPrinterConfiguredFailsGracefully(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newEODAPITestMux(t)
+
+	// Archive a report first.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("setup: expected 200 generating the report, got %d", rec.Code)
+	}
+	today := time.Now().Format("2006-01-02")
+
+	// No printer configured (printer.mode defaults to "off") — reprinting
+	// must fail cleanly (502), not panic or hang trying to reach hardware.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/"+today, nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 with no printer configured, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostSettingsEOD_ValidatesTimeFormat(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("enabled=on&time=not-a-time"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a malformed time when enabled, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("enabled=on&time=22:30"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for a valid time, got %d: %s", rec.Code, rec.Body.String())
+	}
+	val, _, err := dp.Settings.Get(t.Context(), keyEODTime)
+	if err != nil || val != "22:30" {
+		t.Fatalf("expected the time setting persisted, got %q err=%v", val, err)
+	}
+
+	// Disabling doesn't require a valid time at all.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("enabled=off&time="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 disabling with no time, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

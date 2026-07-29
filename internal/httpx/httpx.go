@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 	uiassets "github.com/universaltill/universal-till/web"
@@ -255,6 +256,14 @@ func imgVersion(url string) string {
 }
 
 func assetVersion(rel string) string {
+	// Uploaded assets (item/variant photos, receipt logo) live in the stable
+	// per-user data dir (see internal/paths), not the cwd-relative release
+	// tree — check there first so a re-uploaded file gets a fresh ?v= and
+	// isn't served stale from the browser cache. Falls back to the
+	// cwd-relative path for built-in assets shipped in web/.
+	if info, err := os.Stat(paths.Data(rel)); err == nil {
+		return strconv.FormatInt(info.ModTime().Unix(), 10)
+	}
 	if info, err := os.Stat(filepath.Join("web", rel)); err == nil {
 		return strconv.FormatInt(info.ModTime().Unix(), 10)
 	}

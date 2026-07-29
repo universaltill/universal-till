@@ -312,17 +312,30 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL);`,
 		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT, pin_hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL);`,
-		`CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT, loyalty_no TEXT, phone TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE shifts (id TEXT PRIMARY KEY, register_id TEXT NOT NULL, cashier_id TEXT NOT NULL, opened_at TEXT NOT NULL DEFAULT (datetime('now')), closed_at TEXT, opening_cash INTEGER NOT NULL DEFAULT 0, closing_cash INTEGER, expected_cash INTEGER, note TEXT);`,
+		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT, pin_hash TEXT NOT NULL, role TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);`,
+		// customers/held_sales/price_history below are kept column-identical
+		// to internal/db/migrations/001_init.sql and 002_held_sales.sql --
+		// SearchCustomers/ResetTransactionHistory/CleanupObsoleteItems
+		// reference their real columns directly, so a drifted fixture here
+		// makes those code paths pass tests against a schema that doesn't
+		// match production.
+		`CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT, email TEXT, address TEXT, loyalty_no TEXT UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT, type TEXT, is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT);`,
-		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
+		`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT NOT NULL UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT);`,
+		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, till_id TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
+		`CREATE TABLE sale_line_modifiers (id TEXT PRIMARY KEY, sale_line_id TEXT NOT NULL, group_id TEXT, option_id TEXT, group_name_snapshot TEXT NOT NULL, option_name_snapshot TEXT NOT NULL, price_delta_minor INTEGER NOT NULL, FOREIGN KEY (sale_line_id) REFERENCES sale_lines(id));`,
 		`CREATE TABLE sale_discounts (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_id TEXT, type TEXT NOT NULL, value INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT);`,
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, method_id TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT NOT NULL, reference TEXT, change_given INTEGER NOT NULL DEFAULT 0, tip_amount INTEGER NOT NULL DEFAULT 0, paid_at TEXT NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_links (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, original_sale_id TEXT NOT NULL, reason TEXT);`,
 		`CREATE TABLE stock_movements (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, cost_price INTEGER, created_at TEXT NOT NULL);`,
 		`CREATE TABLE inventory (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, quantity REAL NOT NULL, updated_at TEXT NOT NULL, UNIQUE(item_id, variant_id, location_id));`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL);`,
+		`CREATE TABLE report_archive (id TEXT PRIMARY KEY, kind TEXT NOT NULL, period TEXT NOT NULL, content_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (kind, period));`,
+		`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
+		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL DEFAULT (datetime('now')), ends_at TEXT);`,
+		`CREATE TABLE invoices (id TEXT PRIMARY KEY, series TEXT NOT NULL, invoice_no INTEGER NOT NULL, display_no TEXT NOT NULL UNIQUE, kind TEXT NOT NULL DEFAULT 'invoice', sale_id TEXT NOT NULL, original_invoice_id TEXT, customer_name TEXT NOT NULL, customer_address TEXT NOT NULL DEFAULT '', customer_vat_no TEXT NOT NULL DEFAULT '', seller_json TEXT NOT NULL, net_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, gross_total INTEGER NOT NULL, vat_breakdown_json TEXT NOT NULL, issued_at TEXT NOT NULL, issued_by TEXT NOT NULL, UNIQUE(series, invoice_no), UNIQUE(sale_id, kind));`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -479,6 +492,16 @@ func TestInventoryReceiptTriggersStockTableRefresh(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), ">60<") {
 		t.Fatalf("expected updated quantity 60 in stock-table partial, got: %s", rec.Body.String())
+	}
+	// data-name/data-sku on each row are what the page's client-side search
+	// filter (web/ui/pages/inventory.html) reads to decide what to hide —
+	// the partial swap must keep emitting them or the filter has nothing to
+	// match against. The filter re-running after this swap (htmx:afterSwap
+	// listener, added alongside this fix so an active search doesn't reset
+	// to "show everything" on every save) is JS behaviour this Go test can't
+	// exercise; verified live instead — see docs/code-reviews/.
+	if !strings.Contains(rec.Body.String(), `data-name="Apple"`) || !strings.Contains(rec.Body.String(), `data-sku="ABC"`) {
+		t.Fatalf("expected data-name/data-sku attributes the client-side search filter depends on, got: %s", rec.Body.String())
 	}
 }
 

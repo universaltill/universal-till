@@ -928,8 +928,12 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			format = plugins.ImportFormatZip
 		}
 
-		// Create importer
-		verifier, err := plugins.NewManifestVerifier("") // TODO: Add public key path from config
+		// Create importer. Use the configured marketplace Ed25519 public key so a
+		// bundle carrying a signature is actually verified against it — CLAUDE.md:
+		// "Never run an unverified plugin." When no key is configured (dev/offline
+		// default) the verifier has nothing to check and unsigned bundles import,
+		// preserving offline provisioning.
+		verifier, err := plugins.NewManifestVerifier(d.Cfg.Marketplace.PublicKey)
 		if err != nil {
 			log.Printf("Warning: failed to create verifier: %v", err)
 			verifier = nil // Allow import without verification in dev-mode

@@ -798,9 +798,14 @@ type PeriodTotals struct {
 // year earlier — the honest year-over-year comparison (empty year-ago data
 // simply reports zeros; the page hides the card until there is history).
 func (r *POSRepo) PeriodComparison(ctx context.Context, days int) (current, yearAgo PeriodTotals, err error) {
+	// created_at is stored as RFC3339 ("...THH:MM:SSZ"); datetime('now', ...)
+	// produces SQLite's own format ("... HH:MM:SS", space, no suffix). Both
+	// sides must go through datetime(...) or a same-calendar-day comparison
+	// becomes a raw string compare where 'T' sorts after ' ', silently
+	// dropping every same-day sale out of the "current period" upper bound.
 	q := `SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales
 WHERE status = 'completed' AND sale_type = 'sale'
-  AND created_at >= datetime('now', ?) AND created_at < datetime('now', ?)`
+  AND datetime(created_at) >= datetime('now', ?) AND datetime(created_at) < datetime('now', ?)`
 	if err = r.db.QueryRowContext(ctx, q, fmt.Sprintf("-%d days", days), "+0 days").
 		Scan(&current.Count, &current.Total); err != nil {
 		return current, yearAgo, fmt.Errorf("current period: %w", err)
@@ -931,8 +936,8 @@ JOIN sales s ON s.id = sl.sale_id
 JOIN items i ON i.id = COALESCE(NULLIF(sl.item_id, ''),
                                 (SELECT v.item_id FROM item_variants v WHERE v.id = sl.variant_id))
 WHERE s.status = 'completed' AND s.sale_type = 'sale'
-  AND s.created_at >= datetime('now', '-365 days')
-  AND s.created_at <  datetime('now', ?)
+  AND datetime(s.created_at) >= datetime('now', '-365 days')
+  AND datetime(s.created_at) <  datetime('now', ?)
   AND i.is_active = 1
 GROUP BY i.id HAVING units > 0
 ORDER BY units DESC LIMIT ?`, fmt.Sprintf("-%d days", 365-days), limit)
@@ -2721,9 +2726,8 @@ func (r *POSRepo) ResolveShortcutLine(ctx context.Context, code string) (Shortcu
 	// variant barcode
 	if row, ok := r.resolveVariant(ctx, code); ok {
 		price := r.resolvePrice(ctx, "", row.VariantID, row.Price)
-		name := row.ItemName
 		if row.Variant != "" {
-			name = name + " - " + row.Variant
+			row.ItemName = row.ItemName + " - " + row.Variant
 		}
 		return r.toShortcutLine(code, price, row), true
 	}
@@ -2804,7 +2808,7 @@ SELECT price
 FROM price_history
 WHERE %s = ?
   AND datetime(starts_at) <= CURRENT_TIMESTAMP
-  AND (ends_at IS NULL OR ends_at > CURRENT_TIMESTAMP)
+  AND (ends_at IS NULL OR datetime(ends_at) > CURRENT_TIMESTAMP)
 ORDER BY datetime(starts_at) DESC
 LIMIT 1
 `, column)

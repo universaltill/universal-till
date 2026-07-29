@@ -213,6 +213,19 @@ func printReceipt(ctx context.Context, d *common.Deps, receiptNo string) error {
 	return print.PrintDoc(ctx, cfg, doc)
 }
 
+// clampCopies bounds a requested label copy count to [1, 50] — never zero
+// (a blank/unparseable form field must still print something) and never
+// unbounded (a typo like "999" must not queue an absurd print job).
+func clampCopies(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > 50 {
+		return 50
+	}
+	return n
+}
+
 // registerPrintAPI mounts printer settings, test print and reprint.
 func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
@@ -284,13 +297,8 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/print/labels", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("item_id"))
-		copies, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("copies")))
-		if copies < 1 {
-			copies = 1
-		}
-		if copies > 50 {
-			copies = 50
-		}
+		raw, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("copies")))
+		copies := clampCopies(raw)
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fail := func(status int, key string) {
