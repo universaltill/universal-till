@@ -2,15 +2,20 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -272,6 +277,257 @@ func TestSyncJoin_RejectsGarbageCode(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 for an unparseable join code, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- joinPrimary: the replica-side "join a shop via QR" flow ---
+
+// newSyncDepsWithPath builds a Deps backed by a real on-disk SQLite file
+// (so db.Snapshot's VACUUM INTO and the staged restore/identity files have a
+// real DBPath to work against) using the simplified seedForPages schema. It
+// returns the Deps and the DB path so tests can inspect the staged
+// restore-pending.db / replica-identity.json that a join writes.
+func newSyncDepsWithPath(t *testing.T, name string) (*common.Deps, string) {
+	t.Helper()
+	chdirRoot(t)
+	path := filepath.Join(t.TempDir(), name)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		t.Fatalf("busy_timeout: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("foreign_keys: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	seedForPages(t, db)
+
+	cfg := &config.Config{
+		Theme:   "default",
+		DBPath:  path,
+		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL: "http://localhost:8081",
+		},
+	}
+	pm, err := plugins.Init(t.Context(), cfg, db)
+	if err != nil {
+		t.Fatalf("init plugins: %v", err)
+	}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{
+		Cfg:      cfg,
+		Db:       db,
+		State:    state,
+		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+		Pm:       pm,
+		Settings: settings.NewStore(db),
+	}
+	return dp, path
+}
+
+// issueEnrolCode drives the primary's POST /api/sync/enroll-token and pulls
+// the embedded QR payload back out — this is exactly the JSON blob a replica
+// would scan/paste as its join code, and it carries a live one-time token in
+// the primary's in-memory store.
+func issueEnrolCode(t *testing.T, mux http.Handler, primaryURL string) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token",
+		strings.NewReader("url="+primaryURL))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("issue enrol token: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	start := strings.Index(body, `{"url"`)
+	if start == -1 {
+		start = strings.Index(body, `{"token"`)
+	}
+	end := strings.Index(body[start:], "</code>")
+	if start == -1 || end == -1 {
+		t.Fatalf("could not find the enrol payload in %q", body)
+	}
+	return body[start : start+end]
+}
+
+func TestSyncJoin_FullFlow_StagesRestoreAndIdentity(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	// Primary: a real till serving the enrol + snapshot surface over HTTP.
+	primary, _ := newSyncDepsWithPath(t, "primary.db")
+	if err := primary.Settings.Set(t.Context(), "store.name", "Corner Shop"); err != nil {
+		t.Fatalf("set store name: %v", err)
+	}
+	pmux := http.NewServeMux()
+	registerSyncAPI(pmux, primary)
+	srv := httptest.NewServer(pmux)
+	t.Cleanup(srv.Close)
+
+	// The join code the manager would paste on the replica: a live one-time
+	// token bound to THIS primary's URL.
+	code := issueEnrolCode(t, pmux, srv.URL)
+
+	// Replica: independent DB + DBPath; drive its POST /api/sync/join.
+	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerSyncAPI(rmux, replica)
+
+	rec := httptest.NewRecorder()
+	form := "code=" + url.QueryEscape(code) + "&name=Till+2"
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/join", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rmux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on a successful join, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Corner Shop") {
+		t.Fatalf("expected the primary's shop name echoed back on join, got %q", rec.Body.String())
+	}
+
+	// The snapshot must have been downloaded and staged as the pending
+	// restore that applies on the next restart.
+	if !appdb.PendingRestore(replicaPath) {
+		t.Fatalf("expected a staged restore-pending.db after a successful join")
+	}
+	// And the replica identity (its own bearer/prefix/name) staged alongside.
+	idRaw, err := os.ReadFile(appdb.ReplicaIdentityPath(replicaPath))
+	if err != nil {
+		t.Fatalf("expected a staged replica-identity.json: %v", err)
+	}
+	var id appdb.ReplicaIdentity
+	if err := json.Unmarshal(idRaw, &id); err != nil {
+		t.Fatalf("parse staged identity: %v", err)
+	}
+	if id.PrimaryURL != srv.URL {
+		t.Fatalf("expected staged primary_url %q, got %q", srv.URL, id.PrimaryURL)
+	}
+	if id.Bearer == "" || id.TillID == "" {
+		t.Fatalf("expected a staged bearer + till id, got %+v", id)
+	}
+	if id.TillName != "Till 2" {
+		t.Fatalf("expected the joining till's name staged, got %q", id.TillName)
+	}
+	// Primary is till 1; the first replica numbers from 2 (receipt prefixes).
+	if id.ReceiptPrefix != "T2-" {
+		t.Fatalf("expected receipt prefix T2- for the first replica, got %q", id.ReceiptPrefix)
+	}
+
+	// The join was audited on the replica.
+	var n int
+	if err := replica.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'joined_primary'`).Scan(&n); err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected one joined_primary audit row, got %d", n)
+	}
+}
+
+func TestSyncJoin_PrimaryUnreachable(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerSyncAPI(rmux, replica)
+
+	// A well-formed code pointing at a port nothing is listening on.
+	code := `{"url":"http://127.0.0.1:1","token":"whatever"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/join",
+		strings.NewReader("code="+url.QueryEscape(code)+"&name=Till+2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rmux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cannot reach") {
+		t.Fatalf("expected a 'cannot reach the primary' message, got %q", rec.Body.String())
+	}
+	if appdb.PendingRestore(replicaPath) {
+		t.Fatalf("a failed join must not stage a restore")
+	}
+}
+
+func TestSyncJoin_PrimaryRejectsEnrolment(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	primary, _ := newSyncDepsWithPath(t, "primary.db")
+	pmux := http.NewServeMux()
+	registerSyncAPI(pmux, primary)
+	srv := httptest.NewServer(pmux)
+	t.Cleanup(srv.Close)
+
+	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerSyncAPI(rmux, replica)
+
+	// A code with a token the primary never issued: enrol returns 403.
+	code := `{"url":"` + srv.URL + `","token":"never-issued-token"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/join",
+		strings.NewReader("code="+url.QueryEscape(code)+"&name=Till+2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rmux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when the primary rejects the token, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "refused the enrolment") {
+		t.Fatalf("expected an enrolment-refused message, got %q", rec.Body.String())
+	}
+	if appdb.PendingRestore(replicaPath) {
+		t.Fatalf("a refused enrolment must not stage a restore")
+	}
+}
+
+func TestSyncJoin_SnapshotDownloadFails(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	// A stub primary that enrols fine but 500s on the snapshot fetch — the
+	// replica must surface the failure and stage NOTHING (offline-first: no
+	// half-applied restore).
+	stub := http.NewServeMux()
+	stub.HandleFunc("POST /api/sync/enroll", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"till_id":   "till-stub",
+				"bearer":    "stub-bearer",
+				"shop_name": "Stub Shop",
+				"till_no":   2,
+			},
+			"error": nil,
+		})
+	})
+	stub.HandleFunc("GET /api/sync/snapshot", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "snapshot boom", http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(stub)
+	t.Cleanup(srv.Close)
+
+	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerSyncAPI(rmux, replica)
+
+	code := `{"url":"` + srv.URL + `","token":"tok"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/join",
+		strings.NewReader("code="+url.QueryEscape(code)+"&name=Till+2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rmux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when the snapshot download fails, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "snapshot download failed") {
+		t.Fatalf("expected a snapshot-download-failed message, got %q", rec.Body.String())
+	}
+	if appdb.PendingRestore(replicaPath) {
+		t.Fatalf("a failed snapshot download must not leave a staged restore")
+	}
+	if _, err := os.Stat(appdb.ReplicaIdentityPath(replicaPath)); err == nil {
+		t.Fatalf("a failed snapshot download must not stage a replica identity")
 	}
 }
 
