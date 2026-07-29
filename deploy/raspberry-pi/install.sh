@@ -34,6 +34,19 @@ systemctl daemon-reload
 systemctl enable --now unitill-pos.service
 systemctl enable unitill-kiosk.service
 
+echo "==> Installing emoji font (menu icons, plugin/status glyphs)"
+# Base Raspberry Pi OS images ship no color-emoji font, so the app's
+# emoji-glyph icons (e.g. the /menu page) render as blank boxes without
+# this -- confirmed on a real field device, 2026-07-29. Deliberately
+# best-effort and AFTER the core install: this script never needed the
+# network before (offline re-runs must keep working), so a mirror/network
+# failure here must not abort an otherwise-complete POS install.
+if ! (apt-get update -qq && apt-get install -y fonts-noto-color-emoji); then
+  echo "WARN: could not install fonts-noto-color-emoji (offline?); menu icons" >&2
+  echo "      may render as blank boxes until it is installed manually:" >&2
+  echo "      sudo apt-get install fonts-noto-color-emoji" >&2
+fi
+
 echo ""
 echo "Done. The POS starts on boot; the kiosk browser starts with the desktop"
 echo "session. Reboot to see the full flow, or: systemctl start unitill-kiosk"

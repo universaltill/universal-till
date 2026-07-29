@@ -146,9 +146,19 @@ nfpms:
     # Still skippable with `--no-install-recommends` for headless/kiosk-only
     # Pi installs that don't want the desktop stack at all (see
     # packaging/linux/unitill-kiosk-setup.sh, updated to use this flag).
+    # fonts-noto-color-emoji: the POS UI's icons (menu tiles, status
+    # glyphs, plugin buttons) are plain Unicode emoji text, and a base
+    # Raspberry Pi OS image ships NO color-emoji font at all -- confirmed
+    # on a real field device (2026-07-29): every menu icon rendered as a
+    # blank/tofu box until the font was installed. Arch: all; same package
+    # name on every currently-built target (bookworm, jammy, trixie).
+    # NOTE: the kiosk flow documents `--no-install-recommends`, so
+    # packaging/linux/unitill-kiosk-setup.sh ALSO installs this explicitly
+    # (both spots CI-guarded by scripts/ci/guard-emoji-font.sh).
     recommends:
       - libwebkit2gtk-4.1-0
       - libgtk-3-0
+      - fonts-noto-color-emoji
     contents:
       - src: web
         dst: /opt/unitill/web
