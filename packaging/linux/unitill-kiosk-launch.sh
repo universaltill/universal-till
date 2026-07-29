@@ -10,9 +10,13 @@ for _ in $(seq 1 60); do
 done
 
 BROWSER="$(command -v chromium-browser || command -v chromium)"
+# --password-store=basic: without it, Chromium's first touch of its password
+# manager pops a blocking "keyring is locked" GTK dialog over the kiosk with
+# no way to dismiss it from the touchscreen (confirmed live, 2026-07-29).
 exec "$BROWSER" \
   --kiosk --noerrdialogs --disable-infobars --no-first-run \
   --disable-session-crashed-bubble --disable-features=TranslateUI \
   --check-for-update-interval=31536000 \
+  --password-store=basic \
   --ozone-platform=wayland \
   "$URL"
