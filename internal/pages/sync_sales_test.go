@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
@@ -241,5 +242,130 @@ func TestSyncSalesAPI_AppliesBatchAndReportsAppliedSkipped(t *testing.T) {
 	}
 	if resp.Data.Applied != 0 || resp.Data.Skipped != 1 {
 		t.Fatalf("expected a retried batch to be fully skipped, got %+v", resp.Data)
+	}
+}
+
+// --- syncPushTick ---
+
+func TestSyncPushTick_NoPrimaryConfigured_NoOp(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	client := &http.Client{Timeout: 1 * time.Second}
+	syncPushTick(ctx, dp, client)
+	if v, _, _ := dp.Settings.Get(ctx, "sync.push_cursor"); v != "" {
+		t.Fatalf("expected sync.push_cursor untouched with no primary configured, got %q", v)
+	}
+}
+
+func TestSyncPushTick_NoLocalSales_NoOp(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.bearer", "token-abc"); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 1 * time.Second}
+	syncPushTick(ctx, dp, client)
+	if v, _, _ := dp.Settings.Get(ctx, "sync.last_push_at"); v != "" {
+		t.Fatalf("expected no push recorded with no local sales queued, got last_push_at=%q", v)
+	}
+}
+
+func seedLocalSale(t *testing.T, db *common.Deps, id, receipt, createdAt string) {
+	t.Helper()
+	if _, err := db.Db.ExecContext(context.Background(), `
+INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 100, 0, 20, 120, ?, ?)`, id, receipt, createdAt, createdAt); err != nil {
+		t.Fatalf("seed local sale: %v", err)
+	}
+	if _, err := db.Db.ExecContext(context.Background(), `
+INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES(?, ?, 1, 'itm1', 'Apple', 'ABC', 1, 100, 2000, 20, 100, 120)`, id+"-line", id); err != nil {
+		t.Fatalf("seed local sale line: %v", err)
+	}
+	if _, err := db.Db.ExecContext(context.Background(), `
+INSERT INTO payments(id, sale_id, method_id, amount, currency, paid_at) VALUES(?, ?, 'cash', 120, 'GBP', ?)`,
+		id+"-pay", id, createdAt); err != nil {
+		t.Fatalf("seed local sale payment: %v", err)
+	}
+}
+
+func TestSyncPushTick_PushesLocalSalesAndAdvancesCursor(t *testing.T) {
+	primaryMux, primaryDp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+	server := httptest.NewServer(primaryMux)
+	t.Cleanup(server.Close)
+
+	_, replicaDp := newSyncSalesTestDeps(t)
+	seedLocalSale(t, replicaDp, "push-sale-1", "R-PUSH-1", "2026-01-01T10:00:00Z")
+	if err := replicaDp.Settings.Set(ctx, "sync.primary_url", server.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := replicaDp.Settings.Set(ctx, "sync.bearer", "token-abc"); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	syncPushTick(ctx, replicaDp, client)
+
+	var count int
+	if err := primaryDp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales WHERE id = 'push-sale-1'`).Scan(&count); err != nil {
+		t.Fatalf("query primary sales: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected the local sale pushed to the primary, got count=%d", count)
+	}
+	cursor, _, _ := replicaDp.Settings.Get(ctx, "sync.push_cursor")
+	if cursor != "2026-01-01T10:00:00Z" {
+		t.Fatalf("expected sync.push_cursor advanced to the pushed sale's created_at, got %q", cursor)
+	}
+	if v, _, _ := replicaDp.Settings.Get(ctx, "sync.last_push_at"); v == "" {
+		t.Fatalf("expected sync.last_push_at set")
+	}
+	if v, _, _ := replicaDp.Settings.Get(ctx, "sync.last_contact_at"); v == "" {
+		t.Fatalf("expected sync.last_contact_at set")
+	}
+}
+
+// TestSyncPushTick_RejectedResponse_CursorNotAdvanced guards the offline-first
+// retry guarantee: if the primary rejects a push (auth failure, transient
+// error, etc.), the cursor must NOT move -- otherwise the next tick would
+// silently skip re-sending sales that were never actually accepted.
+func TestSyncPushTick_RejectedResponse_CursorNotAdvanced(t *testing.T) {
+	primaryMux, primaryDp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+	server := httptest.NewServer(primaryMux)
+	t.Cleanup(server.Close)
+
+	_, replicaDp := newSyncSalesTestDeps(t)
+	seedLocalSale(t, replicaDp, "push-sale-2", "R-PUSH-2", "2026-01-01T10:00:00Z")
+	if err := replicaDp.Settings.Set(ctx, "sync.primary_url", server.URL); err != nil {
+		t.Fatal(err)
+	}
+	// Wrong bearer -- the primary will reject with 401.
+	if err := replicaDp.Settings.Set(ctx, "sync.bearer", "wrong-token"); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	syncPushTick(ctx, replicaDp, client)
+
+	var count int
+	if err := primaryDp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales WHERE id = 'push-sale-2'`).Scan(&count); err != nil {
+		t.Fatalf("query primary sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected the rejected sale NOT applied on the primary, got count=%d", count)
+	}
+	if v, _, _ := replicaDp.Settings.Get(ctx, "sync.push_cursor"); v != "" {
+		t.Fatalf("expected sync.push_cursor to stay at the start so the next tick retries, got %q", v)
 	}
 }
