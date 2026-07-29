@@ -39,14 +39,35 @@ func saleIsTaxInclusive(d data.SaleDetail) bool {
 	return d.Total == d.Subtotal-d.DiscountTotal
 }
 
+// refundLinePool computes, per refund-line key, the TRUE quantity still
+// refundable: everything originally sold under that key (summed across
+// every original sale line sharing it — e.g. the same item scanned twice
+// as separate lines) minus what real returns have already taken.
+func refundLinePool(lines []data.SaleDetailLine, returned map[string]float64) map[string]float64 {
+	pool := map[string]float64{}
+	for _, l := range lines {
+		pool[data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice)] += l.Qty
+	}
+	for key, r := range returned {
+		pool[key] -= r
+	}
+	for key, v := range pool {
+		if v < 0 {
+			pool[key] = 0
+		}
+	}
+	return pool
+}
+
 // refundableLines computes what's left to give back per line.
 func refundableLines(detail data.SaleDetail, returned map[string]float64) []refundLineView {
+	pool := refundLinePool(detail.Lines, returned)
 	var out []refundLineView
 	for i, l := range detail.Lines {
 		key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice)
-		remaining := l.Qty - returned[key]
-		if remaining < 0 {
-			remaining = 0
+		remaining := l.Qty
+		if remaining > pool[key] {
+			remaining = pool[key]
 		}
 		out = append(out, refundLineView{
 			Index: i, Name: l.Name, SKU: l.SKU, UnitPrice: l.UnitPrice,
@@ -54,8 +75,14 @@ func refundableLines(detail data.SaleDetail, returned map[string]float64) []refu
 		})
 		// Multiple original lines sharing a key split the same remaining
 		// pool; charge this line's view against it so the page never
-		// offers more than is truly refundable overall.
-		returned[key] += remaining
+		// offers more than is truly refundable overall — but starting
+		// from the TRUE pool (total sold under the key minus real
+		// returns), not from each line's own quantity naively subtracted,
+		// which under-counted whenever a prior partial return already
+		// existed (confirmed live via a hand-traced case: two lines of
+		// qty 2 sharing a key, 1 already returned, displayed only 1 unit
+		// remaining total instead of the true 3).
+		pool[key] -= remaining
 	}
 	return out
 }
@@ -139,6 +166,15 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		for _, l := range detail.Lines {
 			origGross += int64(float64(l.UnitPrice) * l.Qty)
 		}
+		// Same TRUE-pool accounting as refundableLines (the page's display
+		// computation) — using each line's own l.Qty - returned[key] here
+		// under-counted whenever multiple original lines shared a key AND
+		// a prior partial return already existed, wrongly rejecting a
+		// legitimate combined request (e.g. lines of qty 2+2, 1 already
+		// returned, true pool 3: requesting 2 on line 0 and 1 on line 1 is
+		// exactly correct but the old check rejected line 0 alone as
+		// "only 1 left").
+		pool := refundLinePool(detail.Lines, returned)
 		for i, l := range detail.Lines {
 			raw := strings.TrimSpace(r.Form.Get("qty_" + strconv.Itoa(i)))
 			if raw == "" || raw == "0" {
@@ -150,12 +186,12 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				return
 			}
 			key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice)
-			remaining := l.Qty - returned[key]
+			remaining := pool[key]
 			if qty > remaining+1e-9 {
 				http.Error(w, fmt.Sprintf("line %q: only %.3g left to refund", l.Name, remaining), http.StatusConflict)
 				return
 			}
-			returned[key] += qty
+			pool[key] -= qty
 			// Prorate the line discount for partial-quantity refunds.
 			share := qty / l.Qty
 			lineDiscount := int64(float64(l.LineDiscount) * share)

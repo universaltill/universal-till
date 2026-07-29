@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // Item-image sync (ADR-0011 D2b follow-up): the DB snapshot and admin
@@ -21,8 +22,16 @@ import (
 // asset manifest + files (bearer-gated, items/ scope only) and the
 // replica's pull tick downloads whatever it is missing.
 
-// assetsRoot is the only directory the sync surface will ever serve.
-const assetsRoot = "web/public/assets/items"
+// assetsRoot is the only directory the sync surface will ever serve —
+// the stable per-user data dir uploads actually land in (paths.Data),
+// NOT a cwd-relative path. This used to be a plain "web/public/assets/items"
+// constant; once item image uploads moved to paths.Data (fixed 2026-07-29,
+// uploads were being lost on every app self-update), this constant silently
+// stopped matching reality — listItemAssets() walked a directory nothing
+// was ever written to anymore, so replica image sync went quietly dead
+// with no error anywhere to notice it by. Caught by a regression test,
+// not a live report.
+func assetsRoot() string { return paths.Data("public", "assets", "items") }
 
 // assetEntry is one file in the manifest; size is the change detector
 // (content-addressed enough for thumbnails, no hashing per poll).
@@ -33,12 +42,13 @@ type assetEntry struct {
 
 // listItemAssets walks the items asset tree.
 func listItemAssets() ([]assetEntry, error) {
+	root := assetsRoot()
 	var out []assetEntry
-	err := filepath.Walk(assetsRoot, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil // a missing tree just means "no images yet"
 		}
-		rel, err := filepath.Rel(assetsRoot, path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
@@ -61,7 +71,7 @@ func safeAssetPath(rel string) (string, bool) {
 	if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
 		return "", false
 	}
-	return filepath.Join(assetsRoot, clean), true
+	return filepath.Join(assetsRoot(), clean), true
 }
 
 // registerSyncAssets mounts the primary-side asset surface.

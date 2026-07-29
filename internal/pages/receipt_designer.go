@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -158,6 +159,14 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		if err != nil || print.RasterLogo(raw) == nil {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "designer.receipt.logo_invalid"))
+			return
+		}
+		// The logo dir is never pre-created on a fresh install (unlike
+		// item images, plugin uploads, and backups, which each MkdirAll
+		// their own target dir) -- without this the FIRST logo upload
+		// ever attempted on a new till fails with ENOENT.
+		if err := os.MkdirAll(filepath.Dir(receiptLogoPath()), 0o755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if err := os.WriteFile(receiptLogoPath(), raw, 0o644); err != nil {

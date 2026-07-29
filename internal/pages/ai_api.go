@@ -20,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"golang.org/x/image/draw"
 )
 
@@ -27,8 +28,16 @@ const (
 	maxIdentifyPhotoBytes = 4 << 20
 	maxReferenceImages    = 60
 	maxAIRefsPerItem      = 5
-	itemAssetDir          = "web/public/assets/items"
 )
+
+// itemAssetDir is the stable per-user data dir item-image tree (uploads
+// land here via internal/pages/catalog/handlers.go's paths.Data(...)
+// calls) -- NOT a cwd-relative path. A plain "web/public/assets/items"
+// constant here would only resolve when the process's cwd happens to be
+// the repo checkout, silently finding zero images once installed
+// (docs/code-reviews/2026-07-29-coverage-batch-11-sync-assets-regression.md
+// fixed the identical bug class in sync_assets.go).
+func itemAssetDir() string { return paths.Data("public", "assets", "items") }
 
 // registerAIAPI wires the camera-identify endpoints (docs repo:
 // architecture/ai-integration.md §g). Strictly assistive: the endpoints 404
@@ -127,8 +136,8 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 				PriceDisplay: httpx.FormatMoney(price, locale),
 				Confidence:   m.Confidence,
 			}
-			if _, err := os.Stat(filepath.Join(itemAssetDir, m.ItemID, "thumb.png")); err == nil {
-				out.ThumbURL = "/assets/items/" + m.ItemID + "/thumb.png"
+			if _, err := os.Stat(filepath.Join(itemAssetDir(), m.ItemID, "thumb.png")); err == nil {
+				out.ThumbURL = "/public/assets/items/" + m.ItemID + "/thumb.png"
 			}
 			matches = append(matches, out)
 		}
@@ -174,7 +183,7 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 		if mediaType == "image/png" {
 			ext = ".png"
 		}
-		dir := filepath.Join(itemAssetDir, itemID, "ai_ref")
+		dir := filepath.Join(itemAssetDir(), itemID, "ai_ref")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
 			return
@@ -202,8 +211,8 @@ func loadReferenceImages(items []ai.CatalogItem) []ai.RefImage {
 		if len(refs) >= maxReferenceImages {
 			break
 		}
-		path := filepath.Join(itemAssetDir, it.ID, "thumb.png")
-		if p, _, ok := latestAIRef(filepath.Join(itemAssetDir, it.ID, "ai_ref")); ok {
+		path := filepath.Join(itemAssetDir(), it.ID, "thumb.png")
+		if p, _, ok := latestAIRef(filepath.Join(itemAssetDir(), it.ID, "ai_ref")); ok {
 			path = p
 		}
 		if data, ok := loadRefJPEG(path); ok {

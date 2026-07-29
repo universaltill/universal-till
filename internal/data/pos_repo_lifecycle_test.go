@@ -1,0 +1,507 @@
+package data
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/universaltill/universal-till/internal/db"
+)
+
+// newPOSLifecycleTestDB opens a fresh DB via the real migrations (shifts,
+// report_archive, sale_links, registers, tills, etc. all need the real
+// schema — a hand-rolled per-file schema would be a lot of duplication for
+// this many tables) and clears the seeded demo data that migrations insert,
+// so each test starts from a known, empty state.
+func newPOSLifecycleTestDB(t *testing.T) *posTestDB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "pos_lifecycle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	for _, tbl := range []string{"payments", "sale_links", "sale_discounts", "sale_lines", "sales", "shifts", "shortcut_buttons", "inventory"} {
+		if _, err := d.DB.ExecContext(ctx, `DELETE FROM `+tbl); err != nil {
+			t.Fatalf("clear seeded %s: %v", tbl, err)
+		}
+	}
+	// shifts.register_id/cashier_id and audit_log.actor_id are real foreign
+	// keys — migrations seed sample catalog data but not registers/users/
+	// stock_locations, so tests that reference reg1/user1/user2/loc1 need
+	// them created first.
+	seeds := []string{
+		`INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('user1','user1','User One','','cashier',1)`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('user2','user2','User Two','','cashier',1)`,
+		`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`,
+	}
+	for _, s := range seeds {
+		if _, err := d.DB.ExecContext(ctx, s); err != nil {
+			t.Fatalf("seed fixture %q: %v", s, err)
+		}
+	}
+	return &posTestDB{d: d, repo: NewPOSRepo(d.DB)}
+}
+
+// posTestDB bundles the opened DB and its repo — avoids importing *sql.DB
+// directly into every test while keeping raw access for seeding.
+type posTestDB struct {
+	d    *db.DB
+	repo *POSRepo
+}
+
+func seedLifecycleSale(t *testing.T, dbx *posTestDB, id, receiptNo, saleType, status, createdAt string, total, taxTotal int64) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?, ?)`, id, receiptNo, status, saleType, total-taxTotal, taxTotal, total, createdAt, createdAt); err != nil {
+		t.Fatalf("seed sale %s: %v", id, err)
+	}
+}
+
+func TestGetShiftOpeningCash(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('shift1','reg1','user1',datetime('now'),5000)`); err != nil {
+		t.Fatal(err)
+	}
+
+	cash, ok, err := dbx.repo.GetShiftOpeningCash(ctx, "shift1")
+	if err != nil || !ok || cash != 5000 {
+		t.Fatalf("expected opening cash 5000, got cash=%d ok=%v err=%v", cash, ok, err)
+	}
+
+	if _, ok, err := dbx.repo.GetShiftOpeningCash(ctx, "missing"); err != nil || ok {
+		t.Fatalf("expected ok=false for an unknown shift, got ok=%v err=%v", ok, err)
+	}
+
+	// A CLOSED shift must not be returned (query filters closed_at IS NULL).
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`UPDATE shifts SET closed_at = datetime('now') WHERE id = 'shift1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := dbx.repo.GetShiftOpeningCash(ctx, "shift1"); err != nil || ok {
+		t.Fatalf("expected ok=false for a closed shift, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestCurrentOpenShift(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, _, err := dbx.repo.CurrentOpenShift(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := dbx.repo.CurrentOpenShift(ctx); err != nil || ok {
+		t.Fatalf("expected no open shift initially, got ok=%v err=%v", ok, err)
+	}
+
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('shift1','reg1','user1','2026-01-01T09:00:00Z',5000)`); err != nil {
+		t.Fatal(err)
+	}
+	s, ok, err := dbx.repo.CurrentOpenShift(ctx)
+	if err != nil || !ok {
+		t.Fatalf("expected an open shift, got ok=%v err=%v", ok, err)
+	}
+	if !s.Open || s.ID != "shift1" || s.OpeningCash != 5000 {
+		t.Fatalf("unexpected shift summary: %+v", s)
+	}
+
+	// A later-opened shift wins (ORDER BY opened_at DESC).
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('shift2','reg1','user2','2026-01-02T09:00:00Z',6000)`); err != nil {
+		t.Fatal(err)
+	}
+	s, ok, err = dbx.repo.CurrentOpenShift(ctx)
+	if err != nil || !ok || s.ID != "shift2" {
+		t.Fatalf("expected the most recently opened shift (shift2), got %+v ok=%v err=%v", s, ok, err)
+	}
+}
+
+func TestListRecentShifts(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO shifts(id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash) VALUES('shift1','reg1','user1','2026-01-01T09:00:00Z','2026-01-01T17:00:00Z',5000,7000,7500)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('shift2','reg1','user2','2026-01-02T09:00:00Z',6000)`); err != nil {
+		t.Fatal(err)
+	}
+
+	shifts, err := dbx.repo.ListRecentShifts(ctx, 0) // limit<=0 defaults to 20
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shifts) != 2 {
+		t.Fatalf("expected 2 shifts, got %d", len(shifts))
+	}
+	// Newest opened_at first.
+	if shifts[0].ID != "shift2" || !shifts[0].Open {
+		t.Fatalf("expected shift2 (still open) first, got %+v", shifts[0])
+	}
+	closed := shifts[1]
+	if closed.ID != "shift1" || closed.Open {
+		t.Fatalf("expected shift1 closed, got %+v", closed)
+	}
+	// Variance is only computed for closed shifts: 7000 - 7500 = -500.
+	if closed.Variance != -500 {
+		t.Fatalf("expected variance -500 (closing 7000 - expected 7500), got %d", closed.Variance)
+	}
+	if shifts[0].Variance != 0 {
+		t.Fatalf("expected zero variance for an open shift, got %d", shifts[0].Variance)
+	}
+}
+
+func TestListRegisters_OnlyActive(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `DELETE FROM registers`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1),('reg2','Retired Till',0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	regs, err := dbx.repo.ListRegisters(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regs) != 1 || regs[0].ID != "reg1" {
+		t.Fatalf("expected only the active register, got %+v", regs)
+	}
+}
+
+func TestInsertSaleDiscountAndLink(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedLifecycleSale(t, dbx, "sale1", "R1", "sale", "completed", "2026-01-01T10:00:00Z", 100, 20)
+
+	if err := dbx.repo.InsertSaleDiscount(ctx, nil, "disc1", "sale1", "", "percent", 10, 10, "loyalty"); err != nil {
+		t.Fatal(err)
+	}
+	var discType string
+	var amount int64
+	if err := dbx.d.DB.QueryRowContext(ctx, `SELECT type, amount FROM sale_discounts WHERE id = ?`, "disc1").Scan(&discType, &amount); err != nil {
+		t.Fatalf("expected the discount row, got %v", err)
+	}
+	if discType != "percent" || amount != 10 {
+		t.Fatalf("unexpected discount row: type=%q amount=%d", discType, amount)
+	}
+
+	seedLifecycleSale(t, dbx, "return1", "R2", "return", "completed", "2026-01-01T11:00:00Z", 50, 10)
+	if err := dbx.repo.InsertSaleLink(ctx, nil, "link1", "return1", "sale1", "faulty item"); err != nil {
+		t.Fatal(err)
+	}
+	orig, err := dbx.repo.OriginalSaleIDFor(ctx, "return1")
+	if err != nil || orig != "sale1" {
+		t.Fatalf("expected sale1 as the original sale, got %q err=%v", orig, err)
+	}
+	// A sale with no link at all: empty string, not an error.
+	if orig, err := dbx.repo.OriginalSaleIDFor(ctx, "sale1"); err != nil || orig != "" {
+		t.Fatalf("expected empty original sale id for a plain sale, got %q err=%v", orig, err)
+	}
+}
+
+func TestUpsertInventory_UpdatesThenInsertsOnMiss(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active,is_weighed,unit) VALUES('itm1','SKU1','Apple',100,1,0,'each')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// No existing row: UPDATE affects 0 rows, falls back to INSERT.
+	if err := dbx.repo.UpsertInventory(ctx, nil, "loc1", "itm1", "", 10, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	var qty float64
+	if err := dbx.d.DB.QueryRowContext(ctx, `SELECT quantity FROM inventory WHERE item_id='itm1' AND location_id='loc1'`).Scan(&qty); err != nil {
+		t.Fatalf("expected an inventory row created, got %v", err)
+	}
+	if qty != 10 {
+		t.Fatalf("expected quantity 10, got %v", qty)
+	}
+
+	// Existing row: UPDATE adds the delta (not a replace).
+	if err := dbx.repo.UpsertInventory(ctx, nil, "loc1", "itm1", "", -3, "2026-01-02T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.d.DB.QueryRowContext(ctx, `SELECT quantity FROM inventory WHERE item_id='itm1' AND location_id='loc1'`).Scan(&qty); err != nil {
+		t.Fatal(err)
+	}
+	if qty != 7 {
+		t.Fatalf("expected quantity 10-3=7, got %v", qty)
+	}
+}
+
+func TestListPaymentMethodIDs_ActiveOnlyDeduped(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `DELETE FROM payment_methods`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1),('card','Card','card',1),('old','Old','cash',0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := dbx.repo.ListPaymentMethodIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 active methods, got %+v", ids)
+	}
+}
+
+func TestReturnChain_ReceiptsAndReturnedQuantities(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active,is_weighed,unit) VALUES('itm1','SKU1','Apple',100,1,0,'each')`); err != nil {
+		t.Fatal(err)
+	}
+	seedLifecycleSale(t, dbx, "sale1", "R-ORIG", "sale", "completed", "2026-01-01T10:00:00Z", 220, 20)
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line1','sale1',1,'itm1','Apple','SKU1',2,100,2000,20,200,220)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// ReceiptExists / ReceiptNo lookups before any return exists.
+	if ok, err := dbx.repo.ReceiptExists(ctx, "R-ORIG"); err != nil || !ok {
+		t.Fatalf("expected the original receipt to exist, got ok=%v err=%v", ok, err)
+	}
+	if ok, err := dbx.repo.ReceiptExists(ctx, "NO-SUCH"); err != nil || ok {
+		t.Fatalf("expected an unknown receipt not to exist, got ok=%v err=%v", ok, err)
+	}
+	if receipts, err := dbx.repo.ReturnReceiptsFor(ctx, "sale1"); err != nil || len(receipts) != 0 {
+		t.Fatalf("expected no returns yet, got %+v err=%v", receipts, err)
+	}
+	if _, ok, err := dbx.repo.OriginalReceiptFor(ctx, "sale1"); err != nil || ok {
+		t.Fatalf("expected sale1 itself to have no 'original receipt' (it's not a return), got ok=%v err=%v", ok, err)
+	}
+
+	// Record a partial return of 1 of the 2 units.
+	seedLifecycleSale(t, dbx, "return1", "R-RETURN", "return", "completed", "2026-01-01T11:00:00Z", 110, 10)
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('rline1','return1',1,'itm1','Apple','SKU1',1,100,2000,10,100,110)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertSaleLink(ctx, nil, "link1", "return1", "sale1", "damaged"); err != nil {
+		t.Fatal(err)
+	}
+
+	receipt, ok, err := dbx.repo.OriginalReceiptFor(ctx, "return1")
+	if err != nil || !ok || receipt != "R-ORIG" {
+		t.Fatalf("expected R-ORIG as the original receipt, got %q ok=%v err=%v", receipt, ok, err)
+	}
+	receipts, err := dbx.repo.ReturnReceiptsFor(ctx, "sale1")
+	if err != nil || len(receipts) != 1 || receipts[0] != "R-RETURN" {
+		t.Fatalf("expected [R-RETURN], got %+v err=%v", receipts, err)
+	}
+
+	returned, err := dbx.repo.ReturnedQuantities(ctx, "sale1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := RefundLineKey("itm1", "", 100)
+	if returned[key] != 1 {
+		t.Fatalf("expected 1 unit already returned at key %q, got %+v", key, returned)
+	}
+}
+
+func TestSaleExistsAndSetSaleProvenance(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedLifecycleSale(t, dbx, "sale1", "R1", "sale", "completed", "2026-01-01T10:00:00Z", 100, 20)
+
+	if ok, err := dbx.repo.SaleExists(ctx, "sale1"); err != nil || !ok {
+		t.Fatalf("expected sale to exist, got ok=%v err=%v", ok, err)
+	}
+	if ok, err := dbx.repo.SaleExists(ctx, "missing"); err != nil || ok {
+		t.Fatalf("expected sale not to exist, got ok=%v err=%v", ok, err)
+	}
+
+	// SetSaleProvenance stamps a journaled-in (cloud-synced) sale with its
+	// originating till and true creation time.
+	if err := dbx.repo.SetSaleProvenance(ctx, "sale1", "till-remote-1", "2025-12-25T08:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	var tillID, createdAt string
+	if err := dbx.d.DB.QueryRowContext(ctx, `SELECT till_id, created_at FROM sales WHERE id='sale1'`).Scan(&tillID, &createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if tillID != "till-remote-1" || createdAt != "2025-12-25T08:00:00Z" {
+		t.Fatalf("provenance not applied: till_id=%q created_at=%q", tillID, createdAt)
+	}
+}
+
+func TestLocalSalesSinceAndCount(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	// A local sale (till_id = '') and a journaled-in one (till_id != '') —
+	// only the local one belongs in the push queue.
+	seedLifecycleSale(t, dbx, "local1", "R-LOCAL", "sale", "completed", "2026-01-01T10:00:00Z", 100, 20)
+	seedLifecycleSale(t, dbx, "remote1", "R-REMOTE", "sale", "completed", "2026-01-01T11:00:00Z", 100, 20)
+	if _, err := dbx.d.DB.ExecContext(ctx, `UPDATE sales SET till_id = 'other-till' WHERE id = 'remote1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	sales, err := dbx.repo.LocalSalesSince(ctx, "2026-01-01T00:00:00Z", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sales) != 1 || sales[0] != "R-LOCAL" {
+		t.Fatalf("expected only the local sale's receipt, got %+v", sales)
+	}
+
+	n, err := dbx.repo.CountLocalSalesSince(ctx, "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected count 1, got %d", n)
+	}
+}
+
+func TestArchiveReport_IdempotentPerKindAndPeriod(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	created, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{"total":100}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected the first archive to report created=true")
+	}
+
+	// Same kind+period again: no-op, reports created=false, doesn't clobber.
+	created, err = dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{"total":999}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("expected the second archive of the same kind+period to report created=false")
+	}
+
+	if has, err := dbx.repo.HasArchivedReport(ctx, "eod", "2026-01-01"); err != nil || !has {
+		t.Fatalf("expected HasArchivedReport=true, got %v err=%v", has, err)
+	}
+	if has, err := dbx.repo.HasArchivedReport(ctx, "eod", "2026-01-02"); err != nil || has {
+		t.Fatalf("expected HasArchivedReport=false for a different period, got %v err=%v", has, err)
+	}
+
+	reports, err := dbx.repo.ListArchivedReports(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || reports[0].Content != `{"total":100}` {
+		t.Fatalf("expected the original (un-clobbered) content, got %+v", reports)
+	}
+}
+
+func TestEndOfDay_AggregatesSalesReturnsAndMethods(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", "2026-01-01T10:00:00Z", 220, 20)
+	seedLifecycleSale(t, dbx, "sale2", "R002", "sale", "completed", "2026-01-01T14:00:00Z", 110, 10)
+	seedLifecycleSale(t, dbx, "return1", "R003", "return", "completed", "2026-01-01T15:00:00Z", 55, 5)
+	// A sale on a different day must not be included.
+	seedLifecycleSale(t, dbx, "sale3", "R004", "sale", "completed", "2026-01-02T10:00:00Z", 1000, 100)
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES
+('pay1','sale1','cash',220,'GBP',0,'2026-01-01T10:00:00Z'),
+('pay2','sale2','card',110,'GBP',0,'2026-01-01T14:00:00Z'),
+('pay3','return1','cash',55,'GBP',0,'2026-01-01T15:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := dbx.repo.EndOfDay(ctx, "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.SalesCount != 2 {
+		t.Fatalf("expected 2 sales, got %d", rep.SalesCount)
+	}
+	if rep.Gross != 330 {
+		t.Fatalf("expected gross 220+110=330, got %d", rep.Gross)
+	}
+	if rep.RefundCount != 1 || rep.RefundTotal != 55 {
+		t.Fatalf("expected 1 refund totalling 55, got count=%d total=%d", rep.RefundCount, rep.RefundTotal)
+	}
+	if rep.Net != 330-55 {
+		t.Fatalf("expected net = gross - refunds = 275, got %d", rep.Net)
+	}
+	if rep.FirstReceipt != "R001" || rep.LastReceipt != "R003" {
+		t.Fatalf("expected receipt range R001..R003, got %q..%q", rep.FirstReceipt, rep.LastReceipt)
+	}
+	if len(rep.Methods) != 2 {
+		t.Fatalf("expected 2 payment methods (cash, card), got %+v", rep.Methods)
+	}
+}
+
+func TestAuditActionSummary(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	// AuditActionSummary's window is relative to the real wall clock
+	// (datetime('now', '-N days')) — use offsets from time.Now(), not
+	// hardcoded dates, so the test doesn't silently break as real time
+	// moves on.
+	relTime := func(d time.Duration) string { return time.Now().Add(d).UTC().Format(time.RFC3339) }
+
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "sale", "sale1", "void", nil, relTime(-time.Hour), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "sale", "sale2", "void", nil, relTime(-2*time.Hour), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertAudit(ctx, nil, "user2", "inventory", "itm1", "override", nil, relTime(-3*time.Hour), ""); err != nil {
+		t.Fatal(err)
+	}
+	// Well outside a realistic reporting window — must not be counted once
+	// the window is small enough to exclude it.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "sale", "sale3", "void", nil, relTime(-60*24*time.Hour), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// A wide-but-not-infinite window (30 days back from "now") naturally
+	// excludes the 60-day-old entry while including the three recent ones.
+	summary, err := dbx.repo.AuditActionSummary(ctx, 30, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var user1Voids int
+	for _, a := range summary {
+		if a.ActorID == "user1" && a.Action == "void" {
+			user1Voids = a.Count
+		}
+	}
+	if user1Voids != 2 {
+		t.Fatalf("expected 2 voids from user1 within a 30-day window (excluding the 60-day-old entry), got %d in %+v", user1Voids, summary)
+	}
+
+	recent, err := dbx.repo.AuditActionSummary(ctx, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range recent {
+		if a.ActorID == "user1" && a.Action == "void" && a.Count > 2 {
+			t.Fatalf("expected the 60-day-old audit entry excluded from a 1-day window, got %+v", recent)
+		}
+	}
+}

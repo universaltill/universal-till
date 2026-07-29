@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/cloudsync"
@@ -204,7 +205,14 @@ func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 		}
 		msg := p.Msg
 		if len(msg) > 200 {
-			msg = msg[:200] + "…"
+			// Walk back to a rune boundary so we never split a multi-byte
+			// character mid-sequence. Assumes msg is already valid UTF-8 (as
+			// logged strings are); it doesn't sanitize already-malformed input.
+			cut := 200
+			for cut > 0 && !utf8.RuneStart(msg[cut]) {
+				cut--
+			}
+			msg = msg[:cut] + "…"
 		}
 		out = append(out, map[string]any{
 			// Nanosecond precision, not RFC3339's whole-second: the cloud

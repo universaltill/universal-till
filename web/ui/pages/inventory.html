@@ -161,15 +161,20 @@
     document.getElementById('stock-cost-minor').value = isNaN(pounds) ? '' : Math.round(pounds * 100);
   });
 
-  // Search filter over stock rows.
+  // Search filter over stock rows. The table is re-rendered from the server
+  // (fresh rows, filter attribute lost) on every stock-updated event — see
+  // #stock-levels-card's hx-trigger — so the filter must re-apply after that
+  // swap, not just on the input event, or a save clears an active search.
   var search = document.getElementById('stock-search');
-  search.addEventListener('input', function () {
+  function applyStockFilter() {
     var q = search.value.toLowerCase();
     document.querySelectorAll('.stock-row').forEach(function (row) {
       var hay = (row.dataset.name + ' ' + row.dataset.sku).toLowerCase();
       row.hidden = q !== '' && hay.indexOf(q) === -1;
     });
-  });
+  }
+  search.addEventListener('input', applyStockFilter);
+  document.getElementById('stock-levels-card').addEventListener('htmx:afterSwap', applyStockFilter);
 })();
 </script>
 {{ end }}
