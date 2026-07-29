@@ -312,6 +312,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL);`,
 		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE shifts (id TEXT PRIMARY KEY, register_id TEXT NOT NULL, cashier_id TEXT NOT NULL, opened_at TEXT NOT NULL DEFAULT (datetime('now')), closed_at TEXT, opening_cash INTEGER NOT NULL DEFAULT 0, closing_cash INTEGER, expected_cash INTEGER, note TEXT);`,
 		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT, pin_hash TEXT NOT NULL, role TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);`,
 		`CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT, loyalty_no TEXT, phone TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT, type TEXT, is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT);`,
