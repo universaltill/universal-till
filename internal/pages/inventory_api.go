@@ -147,6 +147,19 @@ func writeHTML(w http.ResponseWriter, status int, html string) {
 	fmt.Fprint(w, html)
 }
 
+// writeHTMLStockChanged is writeHTML plus HX-Trigger: stock-updated — htmx
+// fires that as a DOM event on <body> once the response lands, and the
+// /inventory page's stock-levels table listens for it (hx-trigger="load,
+// stock-updated from:body") to refetch itself. Without this, a successful
+// receive/adjust/override/return updated the database correctly but the
+// on-screen quantity table just sat there showing the old number until a
+// full page reload — confirmed live 2026-07-29 as "inventory count is not
+// updating" (it was; nothing told the table to look again).
+func writeHTMLStockChanged(w http.ResponseWriter, status int, html string) {
+	w.Header().Set("HX-Trigger", "stock-updated")
+	writeHTML(w, status, html)
+}
+
 // respondError writes error response (JSON or HTML based on request)
 func respondError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
@@ -161,7 +174,7 @@ func respondSuccess(w http.ResponseWriter, r *http.Request, data StockReceiptRes
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, data)
 	} else {
-		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Stock movement created: %s</div>", data.MovementID))
+		writeHTMLStockChanged(w, http.StatusOK, fmt.Sprintf("<div class='success'>Stock movement created: %s</div>", data.MovementID))
 	}
 }
 
@@ -305,7 +318,7 @@ func respondOverrideSuccess(w http.ResponseWriter, r *http.Request, data Overrid
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, data)
 	} else {
-		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Override recorded: %s</div>", data.OverrideID))
+		writeHTMLStockChanged(w, http.StatusOK, fmt.Sprintf("<div class='success'>Override recorded: %s</div>", data.OverrideID))
 	}
 }
 
@@ -492,7 +505,7 @@ func respondReturnSuccess(w http.ResponseWriter, r *http.Request, data ReturnRes
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, data)
 	} else {
-		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Return created: %s (Receipt: %s)</div>", data.ReturnSaleID, data.ReceiptNo))
+		writeHTMLStockChanged(w, http.StatusOK, fmt.Sprintf("<div class='success'>Return created: %s (Receipt: %s)</div>", data.ReturnSaleID, data.ReceiptNo))
 	}
 }
 

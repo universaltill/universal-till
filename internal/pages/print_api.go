@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/print"
 )
 
@@ -62,10 +63,16 @@ const (
 	keyReceiptShowTax     = "receipt.show_tax"
 	keyReceiptShowBarcode = "receipt.show_barcode"
 	keyReceiptShowLogo    = "receipt.show_logo"
-
-	// receiptLogoPath is where the designer stores the uploaded logo.
-	receiptLogoPath = "web/public/assets/logo/receipt-logo.png"
 )
+
+// receiptLogoPath is where the designer stores the uploaded logo — the
+// stable per-user data directory, NOT the release tree: a self-update
+// replaces the release tree wholesale (see internal/pages/static_page.go's
+// fallbackFS doc comment), which silently deleted a shop's uploaded logo
+// when this was "web/public/assets/logo/receipt-logo.png". A function, not
+// a const: paths.DataDir() resolves at runtime (paths.Init runs during
+// config load, after this package's consts would already be evaluated).
+func receiptLogoPath() string { return paths.Data("public", "assets", "logo", "receipt-logo.png") }
 
 // receiptLogoRaster loads and encodes the uploaded logo when the design
 // wants it; nil (no logo) on any failure — never block a receipt.
@@ -73,7 +80,7 @@ func receiptLogoRaster(rd receiptDesign) []byte {
 	if !rd.ShowLogo {
 		return nil
 	}
-	raw, err := os.ReadFile(receiptLogoPath)
+	raw, err := os.ReadFile(receiptLogoPath())
 	if err != nil {
 		return nil
 	}

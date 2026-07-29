@@ -11,7 +11,7 @@
 
 <div class="catalog-layout">
   <div class="catalog-list">
-    <div class="card">
+    <div class="card" id="stock-levels-card" hx-trigger="stock-updated from:body" hx-get="/ui/inventory/stock-table" hx-swap="innerHTML">
       <h2>{{ T "inventory.stock_levels" }}
         {{ if .RunningOut }}<span class="chip chip-warn">⚠ {{ .RunningOut }} {{ T "inventory.running_out" }}</span>{{ end }}</h2>
       <table class="table" id="stock-table">
@@ -40,7 +40,7 @@
 
     <div class="card" style="margin-top:1rem">
       <h2>{{ T "inventory.low_stock" }} <span id="low-stock-badge" class="tag" style="background:rgba(220,38,38,.12); color:var(--danger)">0</span></h2>
-      <div id="low-stock-list" hx-get="/api/inventory/low-stock" hx-trigger="load" hx-swap="innerHTML">
+      <div id="low-stock-list" hx-get="/api/inventory/low-stock" hx-trigger="load, stock-updated from:body" hx-swap="innerHTML">
         {{ T "common.loading" }}
       </div>
     </div>
