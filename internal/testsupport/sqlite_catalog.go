@@ -21,6 +21,7 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE variant_barcodes (barcode TEXT PRIMARY KEY, variant_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE item_images (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, path TEXT NOT NULL, role TEXT DEFAULT 'thumbnail', sort_order INTEGER NOT NULL DEFAULT 0);`,
+		`CREATE TABLE shortcut_buttons (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, label TEXT NOT NULL, image_path TEXT, sort_order INTEGER NOT NULL DEFAULT 0);`,
 		// No stock_locations table on purpose — TestCreateItem_SucceedsWithoutStockLocationsTable
 		// guards CreateItem/CreateVariant's best-effort inventory-row creation
 		// against exactly this schema shape. inventory itself is still here

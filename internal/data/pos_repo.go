@@ -2721,9 +2721,8 @@ func (r *POSRepo) ResolveShortcutLine(ctx context.Context, code string) (Shortcu
 	// variant barcode
 	if row, ok := r.resolveVariant(ctx, code); ok {
 		price := r.resolvePrice(ctx, "", row.VariantID, row.Price)
-		name := row.ItemName
 		if row.Variant != "" {
-			name = name + " - " + row.Variant
+			row.ItemName = row.ItemName + " - " + row.Variant
 		}
 		return r.toShortcutLine(code, price, row), true
 	}
@@ -2804,7 +2803,7 @@ SELECT price
 FROM price_history
 WHERE %s = ?
   AND datetime(starts_at) <= CURRENT_TIMESTAMP
-  AND (ends_at IS NULL OR ends_at > CURRENT_TIMESTAMP)
+  AND (ends_at IS NULL OR datetime(ends_at) > CURRENT_TIMESTAMP)
 ORDER BY datetime(starts_at) DESC
 LIMIT 1
 `, column)
