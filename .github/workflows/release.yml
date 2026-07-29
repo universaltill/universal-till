@@ -82,8 +82,10 @@ jobs:
           echo "### Release ${TAG}" >> "$GITHUB_STEP_SUMMARY"
 
   # Linux desktop shells (GTK/WebKit app window): CGO against the native GTK
-  # dev headers, so each arch builds on its own runner (webkit2gtk-4.0 =
-  # Debian bookworm / Pi OS / Ubuntu 22.04 ABI — hence the 22.04 runners).
+  # dev headers, so each arch builds on its own runner. ADR-0028: targets
+  # webkit2gtk-4.1 (not upstream webview_go's hardcoded 4.0, which current
+  # Raspberry Pi OS / Debian 13 trixie dropped entirely) — 4.1 is available
+  # on ubuntu-22.04 too, so the runner choice itself doesn't need to change.
   linux-shells:
     needs: prepare
     strategy:
@@ -104,7 +106,7 @@ jobs:
       - name: Install GTK/WebKit dev headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
       - name: Build unitill-desktop (${{ matrix.arch }})
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
