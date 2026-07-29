@@ -126,9 +126,21 @@ nfpms:
     homepage: https://universaltill.com
     license: MIT
     bindir: /opt/unitill/bin
-    # The desktop shell links GTK3/WebKitGTK — present on any Linux desktop,
-    # deliberately NOT a hard dependency so headless/kiosk installs stay lean.
-    suggests:
+    # The desktop shell cgo-links directly against GTK3/WebKitGTK
+    # (webview_go's #cgo pkg-config: gtk+-3.0 webkit2gtk-4.0). `recommends`
+    # (not `suggests`, and not `depends`): plain `apt install` pulls these
+    # in by default so the double-click app actually works out of the box
+    # on any Linux desktop -- `suggests` is NEVER auto-installed by apt, so
+    # on a fresh install that didn't already have these libs, the dynamic
+    # linker refuses to even exec unitill-desktop at all (no window, no
+    # visible error to a user just double-clicking an icon) -- it never
+    # reaches Go code, so this isn't the same as webview.New returning nil
+    # (that's the separate no-display-available case, which DOES fall back
+    # to opening a browser -- see cmd/unitill-desktop/webview_fallback.go).
+    # Still skippable with `--no-install-recommends` for headless/kiosk-only
+    # Pi installs that don't want the desktop stack at all (see
+    # packaging/linux/unitill-kiosk-setup.sh, updated to use this flag).
+    recommends:
       - libwebkit2gtk-4.0-37
       - libgtk-3-0
     contents:

@@ -5,7 +5,10 @@
 # power on → till service starts → the screen goes straight to the POS,
 # fullscreen. No desktop, no browser chrome, nothing else visible.
 #
-#   1. Install the till:   sudo apt install ./unitill-pos_*_arm64.deb
+#   1. Install the till:   sudo apt install --no-install-recommends ./unitill-pos_*_arm64.deb
+#                          (skips the desktop-app GTK/WebKit libs -- this
+#                          script installs cage+Chromium instead, so a
+#                          headless Lite box doesn't need both stacks)
 #   2. Run this once:      sudo bash unitill-kiosk-setup.sh
 #   3. Reboot:             sudo reboot
 #
