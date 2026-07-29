@@ -60,3 +60,8 @@ require (
 )
 
 tool golang.org/x/mobile/cmd/gobind
+
+// ADR-0028: patched fork targeting webkit2gtk-4.1 (upstream hardcodes the
+// abandoned webkit2gtk-4.0, which Debian 13 trixie / current Raspberry Pi OS
+// dropped entirely).
+replace github.com/webview/webview_go => ./internal/thirdparty/webview_go
