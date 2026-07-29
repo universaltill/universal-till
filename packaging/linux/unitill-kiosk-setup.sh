@@ -32,6 +32,19 @@ for grp in video render input seat; do
   getent group "$grp" >/dev/null && usermod -aG "$grp" "$KIOSK_USER" || true
 done
 
+# Raspberry Pi OS "with Desktop" images (unlike Lite, which this script's
+# header assumes) ship a display manager (lightdm by default) enabled on
+# graphical.target -- the same target this script points at. Left running,
+# it grabs the console/seat first and cage silently never gets a display
+# (confirmed live, 2026-07-29: cage process ran with zero children, no
+# error logged anywhere -- lightdm had already won the seat). `display-manager`
+# is the systemd alias every DM (lightdm/gdm3/sddm) registers itself under,
+# so this doesn't need to special-case which one is installed.
+if systemctl is-enabled display-manager.service >/dev/null 2>&1 || systemctl is-active display-manager.service >/dev/null 2>&1; then
+  echo "==> Disabling the desktop display manager (conflicts with the kiosk console)…"
+  systemctl disable --now display-manager.service
+fi
+
 echo "==> Installing the kiosk launcher…"
 install -D -m 0755 "$(dirname "$0")/unitill-kiosk-launch.sh" /opt/unitill/bin/unitill-kiosk-launch
 
