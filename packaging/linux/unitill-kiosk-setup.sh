@@ -27,6 +27,15 @@ apt-get install -y --no-install-recommends cage seatd curl
 apt-get install -y --no-install-recommends chromium-browser 2>/dev/null ||
   apt-get install -y --no-install-recommends chromium
 
+echo "==> Installing emoji font (menu icons, plugin/status glyphs)…"
+# The till UI's icons are plain Unicode emoji text, and a base Raspberry Pi
+# OS image ships no color-emoji font at all -- without this every menu icon
+# renders as a blank box (confirmed on a real field device, 2026-07-29).
+# Installed explicitly here because this flow's documented install command
+# (`apt install --no-install-recommends ./unitill-pos_*.deb`, see header)
+# deliberately bypasses the .deb's `recommends` list, which also carries it.
+apt-get install -y --no-install-recommends fonts-noto-color-emoji
+
 echo "==> Kiosk user permissions (video/input)…"
 for grp in video render input seat; do
   getent group "$grp" >/dev/null && usermod -aG "$grp" "$KIOSK_USER" || true
