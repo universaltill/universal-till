@@ -415,6 +415,73 @@ func TestInventoryFormRender(t *testing.T) {
 	}
 }
 
+// TestInventoryReceiptTriggersStockTableRefresh covers a real bug: the
+// stock-levels table only ever rendered once, at page load — a successful
+// receive/adjust/override/return updated the database correctly (confirmed
+// live, quantity matched exactly) but nothing told the on-screen table to
+// look again, so it just sat there showing the old number. Confirmed live
+// 2026-07-29 as "inventory count is not updating." Fixed with an
+// HX-Trigger: stock-updated response header the table listens for
+// (hx-trigger="stock-updated from:body") to refetch itself from the new
+// /ui/inventory/stock-table endpoint.
+func TestInventoryReceiptTriggersStockTableRefresh(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	cfg := &config.Config{
+		Theme:   "default",
+		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL: "http://localhost:8081",
+		},
+	}
+	pm, err := plugins.Init(t.Context(), cfg, db)
+	if err != nil {
+		t.Fatalf("init plugins: %v", err)
+	}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{
+		Cfg:      cfg,
+		Db:       db,
+		State:    state,
+		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+		Pm:       pm,
+		Settings: settings.NewStore(db),
+	}
+
+	mux := http.NewServeMux()
+	registerInventoryPage(mux, dp)
+	registerInventoryAPI(mux, dp)
+
+	formData := "type=receive&item_id=itm1&location_id=loc_main&quantity=10&reason=test"
+	req := httptest.NewRequest(http.MethodPost, "/api/inventory/receipt", strings.NewReader(formData))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/inventory/receipt failed: code %d body %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "stock-updated" {
+		t.Fatalf("expected HX-Trigger: stock-updated on a successful receipt, got %q", got)
+	}
+
+	// The endpoint the table's hx-trigger fetches must reflect the update
+	// (itm1 started at 50, +10 receive = 60) — same repo call the full page
+	// uses, so this also guards against the partial and the full page ever
+	// drifting to different data sources.
+	req = httptest.NewRequest(http.MethodGet, "/ui/inventory/stock-table", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/inventory/stock-table failed: code %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), ">60<") {
+		t.Fatalf("expected updated quantity 60 in stock-table partial, got: %s", rec.Body.String())
+	}
+}
+
 func TestManagerOverrideForm(t *testing.T) {
 	chdirRoot(t)
 	db := openPagesTestDB(t)

@@ -93,3 +93,59 @@ func TestMigrateLegacyPlugins(t *testing.T) {
 		t.Fatalf("migration clobbered existing bundle: %q", b)
 	}
 }
+
+// TestMigrateLegacyUploadedAssets guards the fix for a real bug: item/
+// variant photos and the receipt logo used to be written into the release
+// tree (web/public/assets), which a self-update replaces wholesale — a
+// shop's uploads vanished on the very next update. This migrates anything
+// already sitting in the old location into the stable data dir, once, so
+// fixing the write path doesn't ALSO require every shop to re-upload
+// everything right after finally getting the fix.
+func TestMigrateLegacyUploadedAssets(t *testing.T) {
+	wd := t.TempDir()
+	old, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(old); Init("") })
+	_ = os.Chdir(wd)
+
+	mustWrite := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An item photo, a variant photo nested under it, and the receipt logo —
+	// all in the legacy, cwd-relative release-tree location.
+	mustWrite(filepath.Join("web", "public", "assets", "items", "itm1", "thumb.png"), "item-photo")
+	mustWrite(filepath.Join("web", "public", "assets", "items", "itm1", "variants", "v1", "thumb.png"), "variant-photo")
+	mustWrite(filepath.Join("web", "public", "assets", "logo", "receipt-logo.png"), "logo-bytes")
+	// A BUILT-IN default asset that must NOT be swept into the stable dir —
+	// only items/ and the specific receipt-logo.png file are user content.
+	mustWrite(filepath.Join("web", "public", "assets", "logo", "ut-logo.ico"), "built-in-icon")
+
+	stable := filepath.Join(wd, "stable")
+	Init(stable)
+	MigrateLegacyData(filepath.Join(stable, "unitill-pos.db"))
+
+	if b, err := os.ReadFile(filepath.Join(stable, "public", "assets", "items", "itm1", "thumb.png")); err != nil || string(b) != "item-photo" {
+		t.Fatalf("item photo not migrated: err=%v content=%q", err, b)
+	}
+	if b, err := os.ReadFile(filepath.Join(stable, "public", "assets", "items", "itm1", "variants", "v1", "thumb.png")); err != nil || string(b) != "variant-photo" {
+		t.Fatalf("variant photo not migrated: err=%v content=%q", err, b)
+	}
+	if b, err := os.ReadFile(filepath.Join(stable, "public", "assets", "logo", "receipt-logo.png")); err != nil || string(b) != "logo-bytes" {
+		t.Fatalf("receipt logo not migrated: err=%v content=%q", err, b)
+	}
+	if _, err := os.Stat(filepath.Join(stable, "public", "assets", "logo", "ut-logo.ico")); err == nil {
+		t.Fatal("built-in default asset must NOT be migrated into the stable dir — it would shadow future releases' updates to it")
+	}
+
+	// Idempotent: an existing file in the stable dir is never overwritten.
+	mustWrite(filepath.Join(stable, "public", "assets", "items", "itm1", "thumb.png"), "current")
+	MigrateLegacyData(filepath.Join(stable, "unitill-pos.db"))
+	if b, _ := os.ReadFile(filepath.Join(stable, "public", "assets", "items", "itm1", "thumb.png")); string(b) != "current" {
+		t.Fatalf("migration clobbered an existing uploaded photo: %q", b)
+	}
+}

@@ -57,6 +57,70 @@ func Plugins(parts ...string) string {
 func MigrateLegacyData(dbPath string) {
 	migrateLegacyDB(dbPath)
 	migrateLegacyPlugins()
+	migrateLegacyUploadedAssets()
+}
+
+// migrateLegacyUploadedAssets copies a shop's already-uploaded item/variant
+// photos and receipt logo out of the release tree (web/public/assets) into
+// the stable data directory, the FIRST time this runs after the fix that
+// made new uploads go to the stable location instead. Without this, a shop
+// that uploaded images under the old (broken) behavior would still lose
+// them on the very next update, having to re-upload everything right after
+// finally getting the fix — confirmed live 2026-07-29, this exact scenario.
+//
+// Deliberately narrow, not a blanket copy of web/public/assets: that tree
+// also holds BUILT-IN default assets (the stock logo/icons) which must
+// stay resolvable from the embedded/release tiers so a future release can
+// still update them — copying them into the stable tier would freeze them
+// at whatever version happened to exist during this one migration.
+func migrateLegacyUploadedAssets() {
+	legacyItems := filepath.Join("web", "public", "assets", "items")
+	targetItems := Data("public", "assets", "items")
+	if entries, err := os.ReadDir(legacyItems); err == nil {
+		for _, e := range entries {
+			dst := filepath.Join(targetItems, e.Name())
+			if _, err := os.Stat(dst); err == nil {
+				continue // already present in the stable location
+			}
+			src := filepath.Join(legacyItems, e.Name())
+			if e.IsDir() {
+				if err := os.MkdirAll(dst, 0o755); err != nil {
+					continue
+				}
+				if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
+					_ = os.RemoveAll(dst) // don't leave a half-copied item's images
+				}
+			} else {
+				_ = os.MkdirAll(targetItems, 0o755)
+				copyFileBestEffort(src, dst)
+			}
+		}
+	}
+
+	legacyLogo := filepath.Join("web", "public", "assets", "logo", "receipt-logo.png")
+	targetLogo := Data("public", "assets", "logo", "receipt-logo.png")
+	if _, err := os.Stat(targetLogo); err != nil {
+		if _, err := os.Stat(legacyLogo); err == nil {
+			_ = os.MkdirAll(filepath.Dir(targetLogo), 0o755)
+			copyFileBestEffort(legacyLogo, targetLogo)
+		}
+	}
+}
+
+func copyFileBestEffort(src, dst string) {
+	in, err := os.Open(src)
+	if err != nil {
+		return
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		_ = os.Remove(dst) // don't leave a truncated file behind
+	}
 }
 
 // migrateLegacyDB copies an old cwd-relative database into the resolved data

@@ -25,6 +25,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -507,7 +508,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
 			return
 		}
-		dir := filepath.Join("web", "public", "assets", "items", itemID)
+		dir := paths.Data("public", "assets", "items", itemID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -560,7 +561,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
 			return
 		}
-		dir := filepath.Join("web", "public", "assets", "items", itemID, "variants", variantID)
+		dir := paths.Data("public", "assets", "items", itemID, "variants", variantID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -645,7 +646,7 @@ func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgUR
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join("web", "public", "assets", "items", itemID)
+	dir := paths.Data("public", "assets", "items", itemID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
