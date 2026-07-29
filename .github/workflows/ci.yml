@@ -28,6 +28,8 @@ jobs:
         run: bash scripts/ci/guard-i18n.sh
       - name: Linux desktop webkit2gtk version guard
         run: bash scripts/ci/guard-webkit-version.sh
+      - name: Kiosk launch flags guard
+        run: bash scripts/ci/guard-kiosk-launch-flags.sh
       - name: Build
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
