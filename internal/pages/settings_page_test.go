@@ -183,6 +183,31 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 
 // The claim-code / register-now / fleet enrol endpoints all refuse a non-manager
 // operator before ever touching the marketplace (offline-first, no network in
+// A high-density small touchscreen (e.g. a 10.1" 1920x1200 panel, ~224 PPI)
+// needs more than the old 150% ceiling to render legibly -- the backend
+// already validates up to 2.0 (see the bounds check above), but the
+// settings page itself never offered an option past 150%, so a shop on
+// that hardware had no way to reach a usable scale through the UI at all.
+func TestSettingsPageOffersHighDensityScaleOption(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `value="2"`) {
+		t.Fatalf("settings page offers no 200%% scale option for high-density small panels:\n%s", body)
+	}
+	// The value the backend actually applies for a "200%" pick must itself
+	// be within the already-validated 0.5..2.0 range -- posting it should
+	// succeed, not 400.
+	if rec := postForm(mux, "/api/settings/ui-scale", url.Values{"scale": {"2"}}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("scale=2 (the new option's value) = %d, want 204", rec.Code)
+	}
+}
+
 // the forbidden path). Each answers 200 (HTMX swap target) with an error/muted
 // notice rather than a hard status.
 func TestEnrolEndpointsRefuseNonManager(t *testing.T) {
