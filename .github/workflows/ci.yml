@@ -26,6 +26,8 @@ jobs:
         run: bash scripts/ci/guard-data-access.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
+      - name: Linux desktop webkit2gtk version guard
+        run: bash scripts/ci/guard-webkit-version.sh
       - name: Build
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
