@@ -1,0 +1,24 @@
+<h2>{{ T "inventory.stock_levels" }}
+  {{ if .RunningOut }}<span class="chip chip-warn">⚠ {{ .RunningOut }} {{ T "inventory.running_out" }}</span>{{ end }}</h2>
+<table class="table" id="stock-table">
+  <thead><tr><th>{{ T "basket.col.item" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "inventory.location" }}</th><th>{{ T "basket.col.qty" }}</th><th>{{ T "inventory.reorder_at" }}</th><th>{{ T "inventory.days_left" }}</th></tr></thead>
+  <tbody>
+    {{ if .StockLevels }}
+      {{ range .StockLevels }}
+        <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}">
+          <td class="catalog-name">{{ .Name }}</td>
+          <td class="muted">{{ .SKU }}</td>
+          <td>{{ .LocationName }}</td>
+          <td class="{{ if .Low }}stock-low{{ end }}">{{ .CurrentQty }}</td>
+          <td class="muted">{{ if .ReorderLevel }}{{ .ReorderLevel }}{{ else }}—{{ end }}</td>
+          <td>{{ if lt .DaysLeft 0 }}<span class="muted">—</span>
+              {{ else if .RunsOut }}<span class="days-left days-warn" title="{{ T "inventory.days_left_hint" }}">⚠ {{ .DaysLeft }}</span>
+              {{ if .OrderQty }}<span class="order-hint" title="{{ T "inventory.order_hint_title" }}">{{ T "inventory.order_hint" }} {{ .OrderQty }}</span>{{ end }}
+              {{ else }}<span class="days-left" title="{{ T "inventory.days_left_hint" }}">{{ .DaysLeft }}</span>{{ end }}</td>
+        </tr>
+      {{ end }}
+    {{ else }}
+      <tr><td colspan="6" class="empty">{{ T "inventory.empty" }}</td></tr>
+    {{ end }}
+  </tbody>
+</table>

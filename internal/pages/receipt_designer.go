@@ -78,7 +78,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		rd := receiptDesignFromSettings(r.Context(), d)
 		header := make([]string, 3)
 		copy(header, rd.Header)
-		logoStat, logoErr := os.Stat(receiptLogoPath)
+		logoStat, logoErr := os.Stat(receiptLogoPath())
 		logoV := int64(0)
 		if logoErr == nil {
 			logoV = logoStat.ModTime().Unix()
@@ -142,7 +142,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if r.FormValue("remove") == "1" {
-			_ = os.Remove(receiptLogoPath)
+			_ = os.Remove(receiptLogoPath())
 			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "settings", "receipt", "receipt_logo_removed",
 				nil, time.Now().UTC().Format(time.RFC3339), "")
 			fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "designer.receipt.logo_removed"))
@@ -160,7 +160,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "designer.receipt.logo_invalid"))
 			return
 		}
-		if err := os.WriteFile(receiptLogoPath, raw, 0o644); err != nil {
+		if err := os.WriteFile(receiptLogoPath(), raw, 0o644); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
