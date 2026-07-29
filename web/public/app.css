@@ -271,7 +271,7 @@ body.osk-padded { padding-block-end: 15.5rem; }
    by overriding grid-template-areas/-columns. */
 .pos-container {
   display: grid;
-  grid-template-columns: minmax(330px, 420px) 1fr;
+  grid-template-columns: minmax(20.625rem, 26.25rem) 1fr;
   grid-template-rows: minmax(0, 1fr) minmax(0, 1.15fr);
   grid-template-areas:
     "basket products"
@@ -303,14 +303,22 @@ body.osk-padded { padding-block-end: 15.5rem; }
   overflow-y: auto;
 }
 
-/* Basket: lines scroll, totals pinned at the bottom of the panel. */
-.pos-container > .basket { display: flex; flex-direction: column; overflow: hidden; }
+/* Basket: lines scroll, totals pinned at the bottom of the panel. At a high
+   ui_scale on a short viewport, the toggle row + pinned totals can outgrow
+   the grid row's allotted height entirely, squeezing basket-scroll's flex
+   basis to 0 -- invisible, not just clipped (confirmed live 2026-07-29: a
+   scanned item existed in the DOM and the total updated, but the row
+   itself had zero rendered height, nothing to scroll to). overflow-y: auto
+   here is the fallback once basket-scroll's own min-height (below) can't
+   be satisfied -- the panel becomes genuinely scrollable instead of
+   silently hiding sale contents. */
+.pos-container > .basket { display: flex; flex-direction: column; overflow-y: auto; }
 /* Tender: the panel itself never scrolls — only the active tab body does. */
 .pos-container > .tender { overflow: hidden; }
 /* After a sale the receipt swaps into the basket slot; it keeps the grid area
    and scrolls internally instead of bleeding over other panels. */
 .pos-container > .basket.receipt-view { display: block; overflow-y: auto; }
-.basket-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.basket-scroll { flex: 1; min-height: 6rem; overflow-y: auto; }
 .basket .totals { flex-shrink: 0; }
 
 @media (max-width: 900px) {
@@ -383,7 +391,7 @@ a.btn, a.btn:hover { text-decoration: none; }
                vertical-align: middle; }
 
 /* ---------- Basket ---------- */
-.line-item { max-width: 158px; display: flex; align-items: center; gap: .4rem; }
+.line-item { max-width: 9.875rem; display: flex; align-items: center; gap: .4rem; }
 .line-thumb {
   flex: 0 0 auto; width: 2rem; height: 2rem; object-fit: cover;
   border-radius: 6px; border: 1px solid var(--border);
