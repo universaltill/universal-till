@@ -480,6 +480,16 @@ func TestInventoryReceiptTriggersStockTableRefresh(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), ">60<") {
 		t.Fatalf("expected updated quantity 60 in stock-table partial, got: %s", rec.Body.String())
 	}
+	// data-name/data-sku on each row are what the page's client-side search
+	// filter (web/ui/pages/inventory.html) reads to decide what to hide —
+	// the partial swap must keep emitting them or the filter has nothing to
+	// match against. The filter re-running after this swap (htmx:afterSwap
+	// listener, added alongside this fix so an active search doesn't reset
+	// to "show everything" on every save) is JS behaviour this Go test can't
+	// exercise; verified live instead — see docs/code-reviews/.
+	if !strings.Contains(rec.Body.String(), `data-name="Apple"`) || !strings.Contains(rec.Body.String(), `data-sku="ABC"`) {
+		t.Fatalf("expected data-name/data-sku attributes the client-side search filter depends on, got: %s", rec.Body.String())
+	}
 }
 
 func TestManagerOverrideForm(t *testing.T) {
