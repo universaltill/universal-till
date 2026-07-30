@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 )
@@ -132,18 +134,55 @@ func TestEnabledFromEnv(t *testing.T) {
 	}
 }
 
-// Start with checks disabled must return without spawning the checker; with an
-// already-cancelled context the boot-wait goroutine exits on ctx.Done. Neither
-// timer branch (30s boot wait elapsing, 24h ticker) is exercisable in a unit
-// test without a fake clock — deliberately left uncovered rather than faked.
+// Start with checks disabled must return without spawning the checker (so wg
+// must stay at zero — Wait returns instantly, and that's correct here since
+// no goroutine was ever started). With an already-cancelled context the
+// boot-wait goroutine exits on ctx.Done — and must actually register with wg
+// first, or a caller waiting on wg would never notice it was ever running.
+// Neither timer branch (30s boot wait elapsing, 24h ticker) is exercisable in
+// a unit test without a fake clock — deliberately left uncovered rather than
+// faked.
 func TestStartDisabledAndCancelled(t *testing.T) {
 	t.Setenv("UT_UPDATE_CHECK", "0")
-	Start(context.Background()) // must be a no-op
+	var disabledWG sync.WaitGroup
+	Start(context.Background(), &disabledWG) // must be a no-op
+	if !waitImmediately(&disabledWG) {
+		t.Fatal("disabled Start registered a goroutine it never started")
+	}
 
+	// Not pre-cancelled this time: the goroutine must actually be running
+	// (blocked in its own select) when we check, so a missing wg.Add can't
+	// vacuously pass by racing an already-done ctx.
 	t.Setenv("UT_UPDATE_CHECK", "1")
 	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	Start(ctx, &wg)
+	if waitWithin(&wg, 150*time.Millisecond) {
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — checker goroutine not tracked")
+	}
 	cancel()
-	Start(ctx) // goroutine sees ctx.Done and returns
+	if !waitWithin(&wg, 2*time.Second) {
+		t.Fatal("Start's checker goroutine did not join wg within 2s of ctx cancel")
+	}
+}
+
+// waitImmediately reports whether wg.Wait() returns without blocking at all.
+func waitImmediately(wg *sync.WaitGroup) bool {
+	return waitWithin(wg, 20*time.Millisecond)
+}
+
+func waitWithin(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
 }
 
 func TestNewer(t *testing.T) {

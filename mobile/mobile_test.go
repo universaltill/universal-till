@@ -5,45 +5,28 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 // mobileTestEnv points the till at an isolated temp data dir and disables
 // auth (no PIN session needed to hit /healthz) for every test in this file —
 // mirrors how other live-verification runs in this repo set up a throwaway
 // till instance.
-// It also OWNS the data dir, deliberately NOT via t.TempDir(): app.Run's
-// background services (updates/alerts/enroll, the plugin supervisor) are
-// started as detached goroutines that app.Run does not join on shutdown, so
-// for a moment after Stop() returns a straggler can still write into the
-// data dir (sqlite -wal/-shm and friends). t.TempDir's own RemoveAll cleanup
-// races that and flakes with "TempDir RemoveAll cleanup: directory not
-// empty" (main CI 2026-07-30, run 30531313594). Until app.Run drains its
-// services before returning (queued in ut-docs/QUEUE.md), remove the dir
-// ourselves with a short retry window. Cleanup order (LIFO): Stop runs
-// first, then this retrying removal.
+// Plain t.TempDir() is safe here: app.Run now joins every background
+// goroutine it starts (directly or via server.Start) before returning, so by
+// the time Stop() returns (it blocks on app.Run's return), nothing is still
+// writing into the data dir. Before that fix, a straggler could still be
+// mid-write for a moment after Stop() returned, and t.TempDir()'s own
+// RemoveAll cleanup raced it, flaking with "TempDir RemoveAll cleanup:
+// directory not empty" (main CI 2026-07-30, run 30531313594) — worked around
+// there with a manual dir + retrying removal. That workaround is gone: a
+// single, un-retried RemoveAll succeeding right after Stop() is now the
+// actual proof the join works, not a tolerated flake. Cleanup order (LIFO):
+// Stop runs first, then t.TempDir()'s own (single-attempt) removal.
 func mobileTestEnv(t *testing.T) string {
 	t.Helper()
 	t.Setenv("UT_AUTH", "off")
 	t.Setenv("UT_ENV_FILE", t.TempDir()+"/does-not-exist.env") // don't pick up a stray local pos.env
-	dataDir, err := os.MkdirTemp("", "ut-mobile-test-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			err := os.RemoveAll(dataDir)
-			if err == nil {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Errorf("cleanup data dir: %v", err)
-				return
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	})
+	dataDir := t.TempDir()
 	t.Cleanup(Stop)
 	return dataDir
 }

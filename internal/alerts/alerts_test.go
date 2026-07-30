@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
@@ -116,5 +118,49 @@ func TestPushDigest(t *testing.T) {
 	}
 	if auth != "Bearer tok-1" {
 		t.Fatalf("auth = %q", auth)
+	}
+}
+
+// Start's digest loop must be genuinely joinable: wg.Wait() must NOT return
+// while the loop is still running (a missing wg.Add would let Wait return
+// immediately, vacuously "passing" without ever tracking the goroutine), and
+// MUST return promptly once ctx is cancelled (a missing wg.Done would hang it
+// forever) — this is what lets app.Run safely close the DB right after Wait
+// returns. The loop's first action is a 2-minute wait-or-cancel select, so
+// cancelling well inside that window proves the goroutine is genuinely
+// parked there, not already finished on its own.
+func TestStart_JoinsOnCancel(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "join.db")
+	database, err := db.Open(f)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	Start(ctx, &config.Config{}, database.DB, &wg)
+
+	if waitWithin(&wg, 150*time.Millisecond) {
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — digest goroutine not tracked")
+	}
+	cancel()
+	if !waitWithin(&wg, 2*time.Second) {
+		t.Fatal("Start's digest goroutine did not join wg within 2s of ctx cancel")
+	}
+}
+
+// waitWithin reports whether wg.Wait() returns within d.
+func waitWithin(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
 	}
 }
