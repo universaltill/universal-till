@@ -1,0 +1,43 @@
+/* "Fresh" — a clean, modern light POS theme (board #145 / brief #146).
+   Sky-blue accent, crisp rounded product cards, a bold full-width PAY.
+   Loaded AFTER app.css, so it only re-skins via tokens + a few surfaces;
+   all sizing/layout stays with app.css (incl. the #144 10-inch pass). */
+:root {
+  --brand: #0b1324;
+  --accent: #0ea5e9;          /* sky blue */
+  --accent-contrast: #ffffff;
+  --bg: #f5f8fc;
+  --surface: #ffffff;
+  --surface-2: #eef4fb;
+  --border: #e3ecf6;
+  --text: #0b1324;
+  --muted: #5b6b82;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --shadow: 0 1px 2px rgba(11,19,36,.05), 0 2px 6px rgba(11,19,36,.06);
+}
+
+/* Product tiles: crisper cards with a clear hover/active lift. */
+.btn-tile { border-radius: 16px; box-shadow: 0 2px 6px rgba(11,19,36,.07); }
+.btn-tile:hover { border-color: #bfe0f5; box-shadow: 0 8px 20px rgba(14,165,233,.16); }
+.btn-tile:active { transform: scale(.97); }
+.tile-price { color: var(--accent); font-weight: 800; }
+.thumb { background: var(--surface-2); }
+
+/* Category chips read as pills. */
+.chip, .cat-chip, .category-chip { border-radius: 999px; }
+
+/* Tender: a bold, unmistakable PAY. The primary tender buttons pop. */
+.tender .btn.primary, .btn.primary {
+  box-shadow: 0 2px 10px rgba(14,165,233,.35);
+  letter-spacing: .01em;
+}
+.tender .btn.primary { min-height: 3.4rem; font-size: 1.12rem; }
+
+/* Basket: bold accent total + a clear order-type toggle. */
+.basket .total, .basket .totals .grand, .kpi-value { color: var(--accent); }
+.basket .totals { border-top: 2px solid var(--surface-2); }
+
+/* Header keeps the deep brand bar, white text (like the reference tablets). */
+.nav, header.nav { background: var(--brand); color: #fff; }
+.nav a { color: #dbeafe; }
