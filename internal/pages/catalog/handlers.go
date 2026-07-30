@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"image"
 	_ "image/jpeg"
 	"image/png"
@@ -29,12 +28,18 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
+// newLookupClient is a test seam: production resolves barcodes against the
+// real Open*Facts product databases; tests swap in a client pointed at
+// hermetic httptest servers so nothing in this package can ever touch the
+// network under test.
+var newLookupClient = func() *productlookup.Client { return productlookup.NewClient(nil, nil) }
+
 // Register mounts catalog list/create and barcode attach endpoints.
 // func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
 func Register(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewCatalogRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
-	lookupClient := productlookup.NewClient(nil, nil)
+	lookupClient := newLookupClient()
 
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
 		w.Header().Set("Content-Type", "application/json")
@@ -93,7 +98,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				cost, _ := repo.ItemCostPrice(r.Context(), itemID)
 				costMajor := ""
 				if cost > 0 {
-					costMajor = fmt.Sprintf("%.2f", float64(cost)/100)
+					// Decimal-aware, same as the modifier-option price
+					// handling below: a 0-decimal currency (IRR/JPY/…)
+					// renders whole units, never a hardcoded /100.
+					decimals := httpx.CurrencyByCode(d.CurrentState().Currency).Decimals
+					costMajor = strconv.FormatFloat(float64(cost)/math.Pow(10, float64(decimals)), 'f', decimals, 64)
 				}
 				// ADR-0020: shows deactivated groups/options too (unlike the
 				// sale-time ListGroupsForItem) so a manager can reactivate one.
@@ -165,7 +174,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "invalid cost", http.StatusBadRequest)
 				return
 			}
-			minor = int64(math.Round(f * 100))
+			// Decimal-aware major→minor conversion (see the identical
+			// reasoning on the modifier-option handler below): a hardcoded
+			// *100 would store every cost 100x too high for a 0-decimal
+			// currency shop and wreck the margin report.
+			decimals := httpx.CurrencyByCode(d.CurrentState().Currency).Decimals
+			minor = int64(math.Round(f * math.Pow(10, float64(decimals))))
 		}
 		if err := repo.SetItemCostPrice(r.Context(), itemID, minor); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
