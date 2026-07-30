@@ -18,17 +18,23 @@ set -euo pipefail
 
 [ "$(id -u)" = 0 ] || { echo "Run with sudo."; exit 1; }
 # Prefer the sudo caller (manual `sudo bash unitill-kiosk-setup.sh` run); when
-# invoked without sudo (e.g. auto-run from postinstall as root, no SUDO_USER),
+# invoked without sudo (e.g. a future root-run automation with no SUDO_USER),
 # fall back to the first regular non-system account -- current Raspberry Pi
 # Imager images ask for a custom username since Bookworm, there is no "pi"
-# user by default anymore. Last resort: "pi", for older images.
-KIOSK_USER="${SUDO_USER:-$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 {print $1; exit}')}"
+# user by default anymore. Last resort: "pi", for older images. Reads
+# /etc/passwd directly rather than piping `getent passwd` through `awk
+# '{exit}'` -- the early exit can SIGPIPE getent on a large passwd source
+# (e.g. NSS/LDAP) under this script's `pipefail`, silently aborting setup.
+KIOSK_USER="${SUDO_USER:-$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1; exit}' /etc/passwd)}"
 KIOSK_USER="${KIOSK_USER:-pi}"
 id "$KIOSK_USER" >/dev/null 2>&1 || { echo "User $KIOSK_USER not found — run via sudo from the login user."; exit 1; }
 
 echo "==> Installing kiosk packages (cage + chromium)…"
 apt-get update
-apt-get install -y --no-install-recommends cage seatd curl
+# kbd: provides /usr/bin/chvt, which the generated unit's ExecStartPre
+# needs below -- without it the unit fails to start at all on any image
+# that doesn't already carry kbd (confirmed absent on a plain Debian box).
+apt-get install -y --no-install-recommends cage seatd kbd curl
 # Chromium's package name differs between Raspberry Pi OS and plain Debian.
 apt-get install -y --no-install-recommends chromium-browser 2>/dev/null ||
   apt-get install -y --no-install-recommends chromium

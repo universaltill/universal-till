@@ -33,24 +33,18 @@ if [ -d /run/systemd/system ]; then
     systemctl enable unitill-pos.service >/dev/null 2>&1 || true
     # Start (or restart after upgrade) — never fail the install on it.
     systemctl restart unitill-pos.service >/dev/null 2>&1 || true
-
-    # Raspberry Pi: boot straight into the fullscreen kiosk with no manual
-    # step -- a shop owner installing on real hardware will never run a
-    # setup command by hand (field-reported gap, 2026-07-30). Detected via
-    # the device-tree model string, which the Pi's own firmware/bootloader
-    # sets regardless of which distro is running on top (Pi OS, plain
-    # Debian, Ubuntu all get it). Only on FIRST install (kiosk service not
-    # already present) -- an upgrade must never silently re-run apt/systemd
-    # setup or clobber a configuration the shop already has. Best-effort and
-    # never fatal: this script runs under `set -e`, and kiosk setup needs
-    # network for apt -- a failure here must never abort the till install.
-    if [ -r /proc/device-tree/model ] \
-        && tr -d '\0' < /proc/device-tree/model 2>/dev/null | grep -qi "raspberry pi" \
-        && [ ! -e /etc/systemd/system/unitill-kiosk.service ]; then
-        echo "Raspberry Pi detected — setting up the fullscreen kiosk…"
-        /opt/unitill/bin/unitill-kiosk-setup || echo "Kiosk setup failed (offline install? re-run later: sudo /opt/unitill/bin/unitill-kiosk-setup)"
-    fi
 fi
+
+# NOTE: auto-enabling the kiosk from here was tried and reverted
+# (2026-07-30 review) -- unitill-kiosk-setup installs packages via apt-get,
+# and apt/dpkg hold their lock for this entire postinst script, so a nested
+# apt-get here deadlocks on every real install (reproduced: exit 100,
+# "Could not get lock /var/lib/dpkg/lock-frontend"). Auto-enable needs a
+# proper redesign (package deps instead of an apt call here, e.g. a
+# oneshot systemd unit that runs after dpkg releases its locks) -- logged
+# as its own follow-up in ut-docs/QUEUE.md. Until then: on a Pi,
+# `sudo /opt/unitill/bin/unitill-kiosk-setup` + reboot (this cycle's fix
+# makes that manual step actually work on Debian 13 trixie/Pi5).
 
 echo "Universal Till installed. Open http://localhost:8080 — the first-boot"
 echo "wizard sets language, currency and the admin PIN."
