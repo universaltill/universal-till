@@ -28,6 +28,7 @@ type BackgroundJobs struct {
 	catalogSyncInterval time.Duration
 	telemetryInterval   time.Duration
 	revocationInterval  time.Duration
+	retryBaseDelay      time.Duration // first catalog-sync retry backoff step
 	logger              *log.Logger
 	cfg                 *config.Config
 }
@@ -49,6 +50,7 @@ func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, s
 		catalogSyncInterval: 15 * time.Minute,
 		telemetryInterval:   5 * time.Minute,
 		revocationInterval:  30 * time.Minute,
+		retryBaseDelay:      1 * time.Second,
 		logger:              logger,
 		cfg:                 cfg,
 	}
@@ -123,15 +125,22 @@ func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 		return
 	}
 
-	// Detect device architecture
-	deviceArch := "linux/amd64" // Default, could be runtime.GOOS + "/" + runtime.GOARCH
+	// The catalog is arch-filtered server-side; request the architecture this
+	// till actually runs on — same value every interactive path sends
+	// (plugins_store_page, cloudsync_wire, plugin_api). A hardcoded arch here
+	// made an arm64 till's scheduler overwrite the cache with an
+	// amd64-filtered catalog.
+	deviceArch := deviceArchOf()
 	locale := bj.cfg.DefaultLocale
 	if locale == "" {
 		locale = "en-US" // fallback to US English
 	}
 
 	maxRetries := 3
-	baseDelay := 1 * time.Second
+	baseDelay := bj.retryBaseDelay
+	if baseDelay <= 0 {
+		baseDelay = 1 * time.Second
+	}
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		_, err := bj.catalogRepo.Fetch(ctx, locale, deviceArch)
@@ -140,12 +149,17 @@ func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 			return
 		}
 
-		// Exponential backoff
+		// Exponential backoff; bail out promptly on shutdown instead of
+		// sleeping through it.
 		if attempt < maxRetries-1 {
 			delay := baseDelay * time.Duration(1<<uint(attempt))
 			bj.logger.Printf("[Scheduler] catalog sync failed (attempt %d/%d): %v, retrying in %v",
 				attempt+1, maxRetries, err, delay)
-			time.Sleep(delay)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
 		} else {
 			bj.logger.Printf("[Scheduler] catalog sync failed after %d attempts: %v", maxRetries, err)
 		}
@@ -166,19 +180,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// till powered off nightly still gets one.
 	if db != nil {
 		go func() {
-			run := func() {
-				list, err := dbpkg.ListBackups(cfg.DBPath)
-				if err == nil && len(list) > 0 && time.Since(list[0].ModTime) < 24*time.Hour {
-					return
-				}
-				path, err := dbpkg.Snapshot(db, cfg.DBPath)
-				if err != nil {
-					log.Printf("[Backup] snapshot failed: %v", err)
-					return
-				}
-				log.Printf("[Backup] daily snapshot: %s", path)
-				_ = dbpkg.PruneBackups(cfg.DBPath, 14)
-			}
+			run := func() { runDailyBackup(db, cfg.DBPath) }
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
 			select {
@@ -272,6 +274,31 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	return nil
 }
 
+// deviceArchOf reports the os/arch pair this till runs on. A package var so
+// tests can pin a sentinel value: on linux/amd64 CI the real runtime value is
+// indistinguishable from the historical hardcoded "linux/amd64" default this
+// code once had, so a pass-through test needs a sentinel to catch a
+// re-hardcoding on every platform.
+var deviceArchOf = func() string {
+	return fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+}
+
+// runDailyBackup snapshots the local DB unless a backup newer than 24h
+// already exists, then prunes old snapshots to the newest 14.
+func runDailyBackup(db *sql.DB, dbPath string) {
+	list, err := dbpkg.ListBackups(dbPath)
+	if err == nil && len(list) > 0 && time.Since(list[0].ModTime) < 24*time.Hour {
+		return
+	}
+	path, err := dbpkg.Snapshot(db, dbPath)
+	if err != nil {
+		log.Printf("[Backup] snapshot failed: %v", err)
+		return
+	}
+	log.Printf("[Backup] daily snapshot: %s", path)
+	_ = dbpkg.PruneBackups(dbPath, 14)
+}
+
 // listenWithFallback binds addr, or the next free port when addr's port is
 // already in use, so a busy port doesn't stop the till from starting. It tries
 // the configured port, then the next 20, then lets the OS pick any free port.
@@ -334,7 +361,13 @@ func openSetupPage(listenAddr string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	url := fmt.Sprintf("http://%s:%s", host, port)
+	startBrowser(fmt.Sprintf("http://%s:%s", host, port))
+}
+
+// startBrowser launches the OS default browser at url. A package var so tests
+// can stub it — the real body spawns an actual browser process, which is
+// untestable exec glue (documented, not faked).
+var startBrowser = func(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
