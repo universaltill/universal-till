@@ -56,6 +56,36 @@ func hashBearer(b string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// encodeEnrollCode packs the primary's URL + one-time token into ONE opaque,
+// copy-pasteable code (base64url of the JSON), so the manual pairing "code"
+// never shows raw {"url":…,"token":…} to whoever reads it off the screen.
+// The QR carries the same string. (Issue #7 — until LAN auto-discovery
+// replaces manual pairing entirely.)
+func encodeEnrollCode(url, token string) string {
+	b, _ := json.Marshal(map[string]string{"url": url, "token": token})
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// decodeEnrollCode reverses encodeEnrollCode. It also accepts a raw-JSON
+// payload (a QR/paste from a not-yet-upgraded primary) — base64url can't
+// contain '{' or '"', so the two forms never collide.
+func decodeEnrollCode(code string) (url, token string, err error) {
+	code = strings.TrimSpace(code)
+	var p struct {
+		URL   string `json:"url"`
+		Token string `json:"token"`
+	}
+	if raw, e := base64.RawURLEncoding.DecodeString(code); e == nil {
+		if json.Unmarshal(raw, &p) == nil && p.URL != "" && p.Token != "" {
+			return p.URL, p.Token, nil
+		}
+	}
+	if json.Unmarshal([]byte(code), &p) == nil && p.URL != "" && p.Token != "" {
+		return p.URL, p.Token, nil
+	}
+	return "", "", fmt.Errorf("not a valid enrolment code")
+}
+
 // syncTill authenticates a replica's sync call by its bearer (only the
 // SHA-256 is stored; the hash lookup makes timing attacks moot).
 func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
@@ -96,6 +126,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Issue a one-time enrolment token; responds with the QR + manual code.
+	// (encode/decodeEnrollCode keep the pairing "code" opaque — see below.)
 	mux.HandleFunc("POST /api/sync/enroll-token", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
@@ -113,8 +144,8 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			primaryURL = scheme + "://" + r.Host
 		}
-		payload, _ := json.Marshal(map[string]string{"url": primaryURL, "token": tok})
-		png, err := qrcode.Encode(string(payload), qrcode.Medium, 220)
+		code := encodeEnrollCode(primaryURL, tok)
+		png, err := qrcode.Encode(code, qrcode.Medium, 220)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -127,7 +158,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 			 <code style="user-select:all">%s</code><br>
 			 <small class="muted">%s</small></div>`,
 			base64.StdEncoding.EncodeToString(png),
-			httpx.T(locale, "tills.qr_hint"), string(payload),
+			httpx.T(locale, "tills.qr_hint"), code,
 			httpx.T(locale, "tills.qr_expiry"))
 	})
 
@@ -309,17 +340,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 // joinPrimary runs the whole replica-side join: enrol with the one-time
 // code, download the snapshot, stage restore + identity for the restart.
 func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, error) {
-	var payload struct {
-		URL   string `json:"url"`
-		Token string `json:"token"`
+	primaryURL, token, err := decodeEnrollCode(code)
+	if err != nil {
+		return "", fmt.Errorf("paste the full code shown on the other till")
 	}
-	if err := json.Unmarshal([]byte(code), &payload); err != nil || payload.URL == "" || payload.Token == "" {
-		return "", fmt.Errorf("paste the full code from the primary till's QR")
-	}
-	base := strings.TrimSuffix(payload.URL, "/")
+	base := strings.TrimSuffix(primaryURL, "/")
 	client := &http.Client{Timeout: 60 * time.Second}
 
-	body, _ := json.Marshal(map[string]string{"token": payload.Token, "name": name})
+	body, _ := json.Marshal(map[string]string{"token": token, "name": name})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		base+"/api/sync/enroll", strings.NewReader(string(body)))
 	if err != nil {
@@ -363,7 +391,7 @@ func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, er
 	draw := make([]byte, 16)
 	_, _ = rand.Read(draw)
 	if err := db.StageReplicaIdentity(d.Cfg.DBPath, db.ReplicaIdentity{
-		PrimaryURL:    payload.URL,
+		PrimaryURL:    primaryURL,
 		TillID:        out.Data.TillID,
 		Bearer:        out.Data.Bearer,
 		ReceiptPrefix: fmt.Sprintf("T%d-", out.Data.TillNo),
@@ -374,6 +402,6 @@ func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, er
 	}
 	posRepo := data.NewPOSRepo(d.Db)
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",
-		map[string]any{"primary": payload.URL}, time.Now().UTC().Format(time.RFC3339), "")
+		map[string]any{"primary": primaryURL}, time.Now().UTC().Format(time.RFC3339), "")
 	return out.Data.ShopName, nil
 }

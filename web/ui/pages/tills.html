@@ -14,7 +14,7 @@
     <h3>{{ T "tills.join" }}</h3>
     <p class="muted">{{ T "tills.join_help" }}</p>
     <form hx-post="/api/sync/join" hx-target="#join-msg" hx-swap="innerHTML">
-      <label>{{ T "tills.join_code" }} <input type="text" name="code" placeholder='{"url":"http://192.168.1.10:8080","token":"..."}' required></label>
+      <label>{{ T "tills.join_code" }} <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required></label>
       <label>{{ T "tills.join_name" }} <input type="text" name="name" placeholder="Till 2"></label>
       <button class="btn" type="submit">{{ T "tills.join_btn" }}</button>
       <div id="join-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
