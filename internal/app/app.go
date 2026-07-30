@@ -86,14 +86,33 @@ func Run(ctx context.Context) error {
 	settingsStore.LoadRuntimeConfig(ctx, cfg)
 	_ = settingsStore.SaveRuntimeConfig(ctx, cfg)
 
-	// wg tracks every background goroutine this boot sequence starts —
-	// directly or via server.Start — so Run can wait for all of them to
-	// actually exit before its deferred database.Close() above runs. Without
-	// this, "Run returned" didn't mean "nothing is still writing to the data
-	// dir" (found 2026-07-30 via a mobile-shutdown CI flake).
+	// wg tracks every background goroutine this boot sequence starts directly
+	// (enroll/updates/alerts) or via server.Start, so Run can wait for all of
+	// them to actually exit before its deferred database.Close() above runs.
+	// Without this, "Run returned" didn't mean "nothing is still writing to
+	// the data dir" (found 2026-07-30 via a mobile-shutdown CI flake). NOT
+	// covered, deliberately: internal/plugins.Supervisor's monitorProcess
+	// goroutines (native plugin processes — separate, larger fix, logged in
+	// ut-docs/QUEUE.md) and the wasm runtime's per-plugin event-channel
+	// drainer (internal/plugins/wasm_runtime.go — its channel is only closed
+	// on the next Sync/reload, never on shutdown, so tracking it here would
+	// make every drain time out; also logged).
+	//
+	// bgCtx is independently cancellable from ctx: an early startup error
+	// below (plugins.Init, marketplace.NewCatalogRepository, server.Start's
+	// own listen failure) returns before the caller ever cancels ctx, and
+	// without this, the background goroutines already started (e.g. enroll's
+	// registration loop) would never be told to stop — drainBackgroundServices
+	// would then always time out waiting on goroutines nothing signalled.
+	// stopBg() is deferred so it (and the drain) run on every return path.
 	var wg sync.WaitGroup
+	bgCtx, stopBg := context.WithCancel(ctx)
+	defer func() {
+		stopBg()
+		drainBackgroundServices(&wg, log, backgroundDrainTimeout)
+	}()
 
-	enroll.Init(ctx, cfg, settingsStore, &wg)
+	enroll.Init(bgCtx, cfg, settingsStore, &wg)
 
 	pluginManager, err := plugins.Init(ctx, cfg, database.DB)
 	if err != nil {
@@ -113,8 +132,8 @@ func Run(ctx context.Context) error {
 		log.Warnf("Marketplace not configured (UT_MARKETPLACE_ENDPOINT_URL not set)")
 	}
 
-	updates.Start(ctx, &wg)
-	alerts.Start(ctx, cfg, database.DB, &wg)
+	updates.Start(bgCtx, &wg)
+	alerts.Start(bgCtx, cfg, database.DB, &wg)
 
 	mux := pages.Init(ctx, cfg, pluginManager, database.DB, catalogRepo)
 
@@ -123,9 +142,7 @@ func Run(ctx context.Context) error {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
 
-	runErr := server.Start(ctx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
-	drainBackgroundServices(&wg, log, backgroundDrainTimeout)
-	return runErr
+	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
 }
 
 // backgroundDrainTimeout bounds how long Run waits for background goroutines
@@ -139,7 +156,10 @@ const backgroundDrainTimeout = 10 * time.Second
 // anyway, closing the database regardless (a wedged service is a bug to fix,
 // not a reason to never shut down). timeout is a parameter (rather than using
 // the backgroundDrainTimeout constant directly) so tests can exercise the
-// timeout branch without a real 10-second wait.
+// timeout branch without a real 10-second wait. On timeout the internal
+// wg.Wait() goroutine above is intentionally leaked — harmless (it only
+// blocks on Wait, touching nothing) — and exits whenever the wedged service
+// eventually does.
 func drainBackgroundServices(wg *sync.WaitGroup, log *logging.Logger, timeout time.Duration) {
 	done := make(chan struct{})
 	go func() {

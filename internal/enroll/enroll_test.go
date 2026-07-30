@@ -346,7 +346,14 @@ func TestInit_BackgroundLoopJoinsOnCancel(t *testing.T) {
 		<-r.Context().Done() // never respond on its own — only ctx cancel ends this
 	})
 	srv := httptest.NewServer(mux)
+	// CloseClientConnections before Close: the handler goroutine above is
+	// parked on <-r.Context().Done(), which only fires once the underlying
+	// connection is force-closed — without this, a FAILING run of this test
+	// (e.g. the join regressing) leaves that handler blocked until the
+	// client's own timeout, and srv.Close alone waits it out (~15s stall
+	// before reporting the actual failure).
 	t.Cleanup(srv.Close)
+	t.Cleanup(srv.CloseClientConnections)
 
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL)
