@@ -48,11 +48,14 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		Country:                get(KeyCountry, "GB"),
 		Region:                 get(KeyRegion, ""),
 		TaxRatePct:             cfg.Locales.TaxRate,
+		TaxInclusive:           cfg.Locales.TaxInclusive,
 		AllowNegativeInventory: false,
 	}
 
 	if v := get(KeyTaxInclusive, strconv.FormatBool(cfg.Locales.TaxInclusive)); v != "" {
-		st.TaxInclusive, _ = strconv.ParseBool(v)
+		if b, err := strconv.ParseBool(v); err == nil {
+			st.TaxInclusive = b
+		}
 	}
 	if v := get(KeyUIScale, ""); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -65,7 +68,9 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		}
 	}
 	if v := get("pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
-		st.AllowNegativeInventory, _ = strconv.ParseBool(v)
+		if b, err := strconv.ParseBool(v); err == nil {
+			st.AllowNegativeInventory = b
+		}
 	}
 	st.IdleLockMinutes = DefaultIdleLockMinutes
 	if v := get(KeyIdleLock, ""); v != "" {
