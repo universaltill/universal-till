@@ -5,23 +5,53 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // mobileTestEnv points the till at an isolated temp data dir and disables
 // auth (no PIN session needed to hit /healthz) for every test in this file —
 // mirrors how other live-verification runs in this repo set up a throwaway
 // till instance.
-func mobileTestEnv(t *testing.T) {
+// It also OWNS the data dir, deliberately NOT via t.TempDir(): app.Run's
+// background services (updates/alerts/enroll, the plugin supervisor) are
+// started as detached goroutines that app.Run does not join on shutdown, so
+// for a moment after Stop() returns a straggler can still write into the
+// data dir (sqlite -wal/-shm and friends). t.TempDir's own RemoveAll cleanup
+// races that and flakes with "TempDir RemoveAll cleanup: directory not
+// empty" (main CI 2026-07-30, run 30531313594). Until app.Run drains its
+// services before returning (queued in ut-docs/QUEUE.md), remove the dir
+// ourselves with a short retry window. Cleanup order (LIFO): Stop runs
+// first, then this retrying removal.
+func mobileTestEnv(t *testing.T) string {
 	t.Helper()
 	t.Setenv("UT_AUTH", "off")
 	t.Setenv("UT_ENV_FILE", t.TempDir()+"/does-not-exist.env") // don't pick up a stray local pos.env
+	dataDir, err := os.MkdirTemp("", "ut-mobile-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			err := os.RemoveAll(dataDir)
+			if err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("cleanup data dir: %v", err)
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
 	t.Cleanup(Stop)
+	return dataDir
 }
 
 func TestStartAndStop_RealServerBoots(t *testing.T) {
-	mobileTestEnv(t)
+	dataDir := mobileTestEnv(t)
 
-	addr, err := Start(t.TempDir())
+	addr, err := Start(dataDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -54,9 +84,8 @@ func TestStartAndStop_RealServerBoots(t *testing.T) {
 }
 
 func TestStart_IdempotentWhileRunning(t *testing.T) {
-	mobileTestEnv(t)
+	dataDir := mobileTestEnv(t)
 
-	dataDir := t.TempDir()
 	addr1, err := Start(dataDir)
 	if err != nil {
 		t.Fatalf("first Start: %v", err)
@@ -76,22 +105,23 @@ func TestStart_IdempotentWhileRunning(t *testing.T) {
 }
 
 func TestStart_DifferentDataDirWhileRunningErrors(t *testing.T) {
-	mobileTestEnv(t)
+	dataDir := mobileTestEnv(t)
 
-	if _, err := Start(t.TempDir()); err != nil {
+	if _, err := Start(dataDir); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
 
 	// A second Start with a DIFFERENT dataDir while already running must
 	// fail loudly, not silently ignore the request and keep serving the
-	// first dataDir under a caller's mistaken belief it switched.
+	// first dataDir under a caller's mistaken belief it switched. (This
+	// other dir sees no live server write, so an inline t.TempDir is fine.)
 	if _, err := Start(t.TempDir()); err == nil {
 		t.Fatal("expected Start against a different dataDir while running to error")
 	}
 }
 
 func TestStart_FastFailWhenServerDiesImmediately(t *testing.T) {
-	mobileTestEnv(t)
+	_ = mobileTestEnv(t) // Start below never boots a server; env setup only
 
 	// A regular FILE where the data dir should be a directory makes
 	// db.Open fail immediately (DBPath = filepath.Join(dataDir,
@@ -120,9 +150,8 @@ func TestStart_FastFailWhenServerDiesImmediately(t *testing.T) {
 // from the caller's point of view) simulates that, without needing to
 // engineer an actual server-internal failure.
 func TestIsRunning_DetectsServerDiedWithoutStop(t *testing.T) {
-	mobileTestEnv(t)
+	dataDir := mobileTestEnv(t)
 
-	dataDir := t.TempDir()
 	if _, err := Start(dataDir); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -154,7 +183,7 @@ func TestIsRunning_DetectsServerDiedWithoutStop(t *testing.T) {
 }
 
 func TestStop_SafeWhenNotRunning(t *testing.T) {
-	mobileTestEnv(t)
+	_ = mobileTestEnv(t)
 	Stop() // must not panic
 	if IsRunning() {
 		t.Fatal("IsRunning() should be false when Start was never called")
