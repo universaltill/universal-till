@@ -124,29 +124,3 @@ func UpdatePluginTrustLevel(ctx context.Context, db *sql.DB, pluginID, trustLeve
 
 	return nil
 }
-
-// recordInstallAudit logs plugin installation to audit_log
-func recordInstallAudit(ctx context.Context, db *sql.DB, pluginID, version string, opts InstallOptions) error {
-	repo := data.NewPluginRepo(db)
-	return repo.InsertAudit(ctx, nil, "plugin_install", pluginID, map[string]any{
-		"source":   opts.InstalledFromURL,
-		"checksum": opts.SHA256,
-		"trust":    opts.TrustLevel,
-		"uploader": opts.Uploader,
-		"version":  version,
-	}, time.Now())
-}
-
-// recordUninstallAudit logs plugin uninstallation to audit_log
-func recordUninstallAudit(ctx context.Context, db *sql.DB, pluginID string) error {
-	repo := data.NewPluginRepo(db)
-	return repo.InsertAudit(ctx, nil, "plugin_uninstall", pluginID, map[string]any{}, time.Now())
-}
-
-// recordTrustChangeAudit logs trust level changes to audit_log
-func recordTrustChangeAudit(ctx context.Context, db *sql.DB, pluginID, newTrustLevel string) error {
-	repo := data.NewPluginRepo(db)
-	return repo.InsertAudit(ctx, nil, "plugin_trust_change", pluginID, map[string]any{
-		"trust_level": newTrustLevel,
-	}, time.Now())
-}

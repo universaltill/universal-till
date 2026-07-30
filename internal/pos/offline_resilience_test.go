@@ -397,7 +397,7 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			data_json TEXT,
 			created_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER DEFAULT 1)`,
+		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER DEFAULT 1)`,
 	}
 
 	for _, stmt := range stmts {

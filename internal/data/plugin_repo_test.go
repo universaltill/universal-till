@@ -17,7 +17,7 @@ func newPluginRepoTestDB(t *testing.T) *sql.DB {
 	}
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
+		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
 		`CREATE TABLE plugin_entries (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, type TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, icon_path TEXT, parent_page_key TEXT, target_action TEXT, trigger_event TEXT, config_json TEXT, sort_order INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE plugin_permissions (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, permission TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 0);`,
 	}
@@ -79,7 +79,7 @@ func TestPluginRepo_ListInstalledPlugins_ActiveOnly(t *testing.T) {
 	db := newPluginRepoTestDB(t)
 	repo := NewPluginRepo(db)
 
-	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active,install_state) VALUES('active','Good','1.0',1,'installed')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,author,is_active,install_state) VALUES('active','Good','1.0','dev-1',1,'installed')`); err != nil {
 		t.Fatalf("seed active: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active,install_state) VALUES('inactive','Bad','1.0',0,'installed')`); err != nil {
@@ -92,6 +92,11 @@ func TestPluginRepo_ListInstalledPlugins_ActiveOnly(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ID != "active" {
 		t.Fatalf("expected only active plugin, got %+v", rows)
+	}
+	// The REAL author must round-trip: a hardcoded '' here silently killed the
+	// update checker's author/name catalog matching (batch 5 bug #5).
+	if rows[0].Author != "dev-1" {
+		t.Fatalf("author = %q, want dev-1", rows[0].Author)
 	}
 }
 

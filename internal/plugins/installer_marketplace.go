@@ -287,6 +287,9 @@ func extractMarketplaceTarGz(archivePath, destDir string) error {
 	defer gzReader.Close()
 
 	tarReader := tar.NewReader(gzReader)
+	// Same decompression-bomb cap as the manual importer: bundle files are
+	// size-capped at download time, but decompressed output was unbounded.
+	budget := &extractBudget{remaining: maxExtractedPluginBytes}
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -314,7 +317,7 @@ func extractMarketplaceTarGz(archivePath, destDir string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
+			if err := budget.copy(outFile, tarReader); err != nil {
 				outFile.Close()
 				return err
 			}
