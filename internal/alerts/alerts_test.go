@@ -3,7 +3,6 @@ package alerts
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -32,10 +31,23 @@ func TestUnusualSales(t *testing.T) {
 			t.Fatalf("exec: %v", err)
 		}
 	}
+	// noon anchors seeded sales to midday UTC rather than time.Now()'s clock
+	// time — DayTotal's 'localtime' bucketing means a midnight-adjacent clock
+	// time could still land on the wrong side of a local calendar-day
+	// boundary in a DST-observing zone right after a transition; midday UTC
+	// keeps every plausible UTC offset on the same local day.
+	noon := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
 	sale := func(id string, daysAgo, total int) {
+		// createdAt mirrors what production actually writes (real UTC, see
+		// internal/pos/sales.go's time.Now().UTC().Format(time.RFC3339)) —
+		// DayTotal's query applies a single 'localtime' conversion, which is
+		// only correct if created_at is genuine UTC. Seeding local wall-clock
+		// time here instead double-applies the conversion and silently shifts
+		// the computed date on any non-UTC machine.
+		createdAt := noon.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
 		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
-		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, datetime('now','localtime',?))`,
-			id, "R-"+id, total, total, fmt.Sprintf("-%d days", daysAgo))
+		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
+			id, "R-"+id, total, total, createdAt)
 	}
 	// Baseline: same weekday 1-4 weeks back ≈ 1000/day.
 	sale("b1", 8, 1000)
