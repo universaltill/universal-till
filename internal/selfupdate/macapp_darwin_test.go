@@ -4,6 +4,8 @@ package selfupdate
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -53,5 +55,119 @@ func TestApplyMacAppDmgDownloadFails(t *testing.T) {
 	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
 	if err == nil || !strings.Contains(err.Error(), "download .dmg") {
 		t.Fatalf("err = %v, want download failure", err)
+	}
+}
+
+// countLeakedWorkDirs counts leftover "ut-macupdate-*" temp dirs — used to
+// confirm a failed applyMacApp cleans up the bad download rather than
+// leaving it sitting in the OS temp dir.
+func countLeakedWorkDirs(t *testing.T) int {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "ut-macupdate-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(matches)
+}
+
+// Intel Macs never have a .dmg published for them (.goreleaser.yaml builds
+// darwin/arm64 only, and the macos-app release job only ever builds the
+// arm64 dmg) — applyMacApp must refuse immediately with a clear error
+// instead of attempting a fetch/download that can only ever fail with a
+// confusing "no macOS .dmg in release" message.
+func TestApplyMacAppRejectsIntelMac(t *testing.T) {
+	oldArch := goarch
+	goarch = "amd64"
+	t.Cleanup(func() { goarch = oldArch })
+	// Deliberately no newReleaseServer: releasesLatest still points at the
+	// real GitHub API. If applyMacApp attempted a fetch before the arch
+	// check, this test would hit the network (and likely hang/fail) instead
+	// of returning immediately.
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	if err == nil || !strings.Contains(err.Error(), "Intel Mac") {
+		t.Fatalf("err = %v, want a clear Intel Mac error", err)
+	}
+}
+
+// The dmg checksum, once verified against checksums.txt, must let the flow
+// proceed past the download into the mount step — proven by hitting
+// hdiutil's real "mount .dmg" failure on the fixture's fake (non-dmg) bytes,
+// never the checksum error.
+func TestApplyMacAppDmgChecksumMatchProceeds(t *testing.T) {
+	oldVer := buildinfo.Version
+	buildinfo.Version = "0.1.0"
+	t.Cleanup(func() { buildinfo.Version = oldVer })
+	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
+	dmg := []byte("not a real dmg, just bytes to checksum")
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		dmgName:         dmg,
+		"checksums.txt": []byte(sha256hex(dmg) + "  " + dmgName + "\n"),
+	})
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	if err == nil || !strings.Contains(err.Error(), "mount .dmg") {
+		t.Fatalf("err = %v, want mount failure (proving checksum passed)", err)
+	}
+}
+
+// SECURITY: a mismatched dmg checksum must abort before hdiutil ever mounts
+// it, and the bad download must not be left behind.
+func TestApplyMacAppDmgChecksumMismatchAborts(t *testing.T) {
+	oldVer := buildinfo.Version
+	buildinfo.Version = "0.1.0"
+	t.Cleanup(func() { buildinfo.Version = oldVer })
+	before := countLeakedWorkDirs(t)
+	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
+	dmg := []byte("not a real dmg, just bytes to checksum")
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		dmgName:         dmg,
+		"checksums.txt": []byte(strings.Repeat("0", 64) + "  " + dmgName + "\n"),
+	})
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("err = %v, want checksum mismatch", err)
+	}
+	if after := countLeakedWorkDirs(t); after != before {
+		t.Errorf("bad download not cleaned up: %d leaked work dirs (was %d)", after, before)
+	}
+}
+
+// SECURITY: a release with a .dmg but no checksums.txt at all must fail
+// closed, same as the archive path — a missing checksums.txt only ever means
+// a broken or tampered release, never an unverified install.
+func TestApplyMacAppDmgNoChecksumsFile(t *testing.T) {
+	oldVer := buildinfo.Version
+	buildinfo.Version = "0.1.0"
+	t.Cleanup(func() { buildinfo.Version = oldVer })
+	before := countLeakedWorkDirs(t)
+	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
+	newReleaseServer(t, "v0.2.0", map[string][]byte{dmgName: []byte("dmg bytes")}) // no checksums.txt
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	if err == nil || !strings.Contains(err.Error(), "checksums.txt") {
+		t.Fatalf("err = %v, want refusal over missing checksums.txt", err)
+	}
+	if after := countLeakedWorkDirs(t); after != before {
+		t.Errorf("bad download not cleaned up: %d leaked work dirs (was %d)", after, before)
+	}
+}
+
+// SECURITY: checksums.txt present but missing an entry for the dmg's exact
+// filename must also fail closed (e.g. goreleaser's checksums.txt not yet
+// updated with the dmg line — see packaging/macos/update-checksums.sh).
+func TestApplyMacAppDmgChecksumEntryMissing(t *testing.T) {
+	oldVer := buildinfo.Version
+	buildinfo.Version = "0.1.0"
+	t.Cleanup(func() { buildinfo.Version = oldVer })
+	before := countLeakedWorkDirs(t)
+	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		dmgName:         []byte("dmg bytes"),
+		"checksums.txt": []byte(strings.Repeat("1", 64) + "  " + "some-other-file.tar.gz\n"),
+	})
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	if err == nil || !strings.Contains(err.Error(), "checksum not found") {
+		t.Fatalf("err = %v, want checksum-not-found", err)
+	}
+	if after := countLeakedWorkDirs(t); after != before {
+		t.Errorf("bad download not cleaned up: %d leaked work dirs (was %d)", after, before)
 	}
 }
