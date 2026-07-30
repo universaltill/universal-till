@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -56,11 +57,15 @@ func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, s
 	}
 }
 
-// Start begins all background jobs
-func (bj *BackgroundJobs) Start(ctx context.Context) {
+// Start begins all background jobs. wg is marked Done once every job's
+// goroutine has fully exited (ctx cancelled), so a caller waiting on wg
+// never returns while one of these could still be mid-sync/mid-write.
+func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 	// Catalog sync job (T011) - LOCAL-FIRST: Only sync when cache is stale
 	// User must explicitly refresh via UI to fetch from marketplace
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(bj.catalogSyncInterval)
 		defer ticker.Stop()
 		for {
@@ -81,7 +86,9 @@ func (bj *BackgroundJobs) Start(ctx context.Context) {
 	}()
 
 	// Telemetry reporting job (stub for T024)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(bj.telemetryInterval)
 		defer ticker.Stop()
 		for {
@@ -97,7 +104,9 @@ func (bj *BackgroundJobs) Start(ctx context.Context) {
 	}()
 
 	// Revocation check job (T030)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(bj.revocationInterval)
 		defer ticker.Stop()
 		for {
@@ -166,12 +175,21 @@ func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 	}
 }
 
-func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor) error {
-	// Start background jobs if catalog repository is configured
+// Start boots the HTTP server and every background job it owns. wg is marked
+// Done, per job/goroutine, once each has fully exited (ctx cancelled) —
+// including this function's own graceful-shutdown goroutine — so a caller
+// that both waits on wg AND waits for Start to return (as app.Run does) can
+// safely assume nothing Start ever spawned is still touching db/supervisor
+// once both have happened. wg must not be nil.
+func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, wg *sync.WaitGroup) error {
+	// Start background jobs if catalog repository is configured. Start()
+	// itself only launches goroutines and returns immediately, so it doesn't
+	// need its own wrapping goroutine — jobs' own 3 goroutines register with
+	// wg directly.
 	if catalogRepo != nil {
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
 		jobs := NewBackgroundJobs(catalogRepo, db, supervisor, cfg, logger)
-		go jobs.Start(ctx)
+		jobs.Start(ctx, wg)
 	}
 
 	// Daily local DB backup (docs: architecture/local-backup.md) — runs
@@ -179,7 +197,9 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// newest backup is older than 24h; first check shortly after boot so a
 	// till powered off nightly still gets one.
 	if db != nil {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			run := func() { runDailyBackup(db, cfg.DBPath) }
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
@@ -205,7 +225,9 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// "customers also buy" strip. Runs at startup (tills reboot daily) and
 	// every 24h for always-on installs. Local SQL only — no network.
 	if db != nil {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			repo := data.NewRelatedItemsRepo(db)
 			rebuild := func() {
 				jobCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -247,8 +269,15 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	}
 	cfg.ListenAddr = actualAddr
 
-	// Graceful shutdown when context is cancelled
+	// Graceful shutdown when context is cancelled. Registered with wg because
+	// net/http's Shutdown contract only guarantees Serve returns once
+	// listeners are closed — supervisor.Shutdown below can still be running
+	// after Serve (and so this function) has already returned; without this,
+	// a caller waiting on wg alone could race supervisor.Shutdown's own DB
+	// writes (audit_events) against database.Close().
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		<-ctx.Done()
 		log.Printf("shutting down HTTP server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
