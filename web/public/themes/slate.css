@@ -1,0 +1,30 @@
+/* "Slate" — light POS with a navy accent and COMPACT TEXT tiles (no photos),
+   for grocery/retail catalogs (board #145 / brief #146, ref1 Opencloud look).
+   Hides thumbnails and tightens tiles into dense, color-dotted buttons. */
+:root {
+  --brand: #0f172a;
+  --accent: #1d4ed8;          /* navy/indigo */
+  --accent-contrast: #ffffff;
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface-2: #eef2f7;
+  --border: #dbe3ec;
+  --text: #0f172a;
+  --muted: #64748b;
+  --radius: 8px;
+  --radius-lg: 10px;
+  --shadow: 0 1px 2px rgba(15,23,42,.06);
+}
+/* Text-forward tiles: drop the photo, make tiles denser + a left accent bar. */
+.btn-tile .thumb { display: none; }
+.btn-tile { min-height: 4.6rem; border-radius: 10px; border-inline-start: 4px solid var(--accent);
+            justify-content: center; box-shadow: 0 1px 2px rgba(15,23,42,.06); }
+.grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+.tile-name { font-size: 1rem; }
+.tile-price { color: var(--accent); font-weight: 800; }
+.chip, .cat-chip, .category-chip { border-radius: 6px; }
+.tender .btn.primary, .btn.primary { box-shadow: none; }
+.tender .btn.primary { min-height: 3.2rem; font-size: 1.1rem; }
+.basket .total, .basket .totals .grand, .kpi-value { color: var(--accent); }
+.nav, header.nav { background: var(--brand); color: #fff; }
+.nav a { color: #cbd5e1; }

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -91,11 +93,40 @@ func TestThemesHandler_ServesBuiltinAndPluginCSS(t *testing.T) {
 		}
 	}
 
-	// availableThemes lists both, built-in first.
+	// availableThemes lists built-in themes first (sorted), then plugin themes.
+	// Don't hardcode the built-in count: the embedded set grows as curated
+	// built-in themes are added under web/public/themes (fresh/amber/slate/…),
+	// which the fallback FS unions with the disk dir. Assert the contract
+	// instead — monarch is a built-in, midnight is the plugin theme, built-ins
+	// are sorted and all precede any plugin theme.
 	opts := availableThemes(t.Context(), d)
-	if len(opts) != 2 || opts[0].Key != "monarch" || opts[0].Source != "built-in" ||
-		opts[1].Key != "midnight" || opts[1].Source != "com.x.midnight" {
-		t.Errorf("availableThemes = %+v", opts)
+	var builtinKeys []string
+	firstPluginIdx := len(opts)
+	var midnight *ThemeOption
+	for i := range opts {
+		o := opts[i]
+		if o.Source == "built-in" {
+			if i > firstPluginIdx {
+				t.Errorf("built-in %q appears after a plugin theme; built-ins must be first: %+v", o.Key, opts)
+			}
+			builtinKeys = append(builtinKeys, o.Key)
+			continue
+		}
+		if i < firstPluginIdx {
+			firstPluginIdx = i
+		}
+		if o.Key == "midnight" {
+			midnight = &opts[i]
+		}
+	}
+	if !sort.StringsAreSorted(builtinKeys) {
+		t.Errorf("built-in themes not sorted: %v", builtinKeys)
+	}
+	if !slices.Contains(builtinKeys, "monarch") {
+		t.Errorf("expected monarch among built-in themes, got %v", builtinKeys)
+	}
+	if midnight == nil || midnight.Source != "com.x.midnight" {
+		t.Errorf("expected midnight plugin theme with source com.x.midnight, got %+v", opts)
 	}
 }
 
