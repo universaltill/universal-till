@@ -8,30 +8,50 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
+// goarch is a test seam for runtime.GOARCH. Production code never changes
+// it; tests point it at "amd64" to exercise the Intel-Mac rejection without
+// needing to run on actual Intel hardware.
+var goarch = runtime.GOARCH
+
 // applyMacApp updates a running macOS .app in place: it downloads the new
-// .dmg, copies the new (ad-hoc-signed) .app out of it, checks the signature,
-// then launches a detached helper that quits this app, replaces the bundle in
-// /Applications, and relaunches the new version. Unlike the archive path it
-// never swaps the inner binary (that would break the code signature and the
-// release archive binary is unsigned anyway).
+// .dmg, verifies its SHA-256 against the release's checksums.txt (same
+// fail-closed contract as the archive path in selfupdate.go), copies the new
+// (ad-hoc-signed) .app out of it, checks the signature, then launches a
+// detached helper that quits this app, replaces the bundle in /Applications,
+// and relaunches the new version. Unlike the archive path it never swaps the
+// inner binary (that would break the code signature and the release archive
+// binary is unsigned anyway). Only arm64 is supported — no Intel .dmg is
+// ever published (see the goarch check below).
 func applyMacApp(ctx context.Context, appPath string) error {
 	log := logging.L()
+	// .goreleaser.yaml builds darwin/arm64 only, and the macos-app release
+	// job (.github/workflows/release.yml) only ever builds/attaches an
+	// arm64 dmg — there is no Intel .dmg to fetch. Refuse immediately
+	// rather than let an Intel Mac hit a confusing "no macOS .dmg in
+	// release" error after a wasted fetch.
+	if goarch != "arm64" {
+		return fmt.Errorf("in-app update is not available for Intel Macs — download the latest .dmg from https://www.universaltill.com/download instead")
+	}
 	rel, err := fetchLatest(ctx)
 	if err != nil {
 		return err
 	}
 	version := strings.TrimPrefix(rel.TagName, "v")
 	dmgName := fmt.Sprintf("unitill-pos-%s-macOS-arm64.dmg", version)
-	dmgURL := ""
+	dmgURL, checksumsURL := "", ""
 	for _, a := range rel.Assets {
-		if a.Name == dmgName {
+		switch {
+		case a.Name == dmgName:
 			dmgURL = a.URL
+		case a.Name == "checksums.txt":
+			checksumsURL = a.URL
 		}
 	}
 	if dmgURL == "" {
@@ -50,6 +70,25 @@ func applyMacApp(ctx context.Context, appPath string) error {
 		return cleanupOnErr(fmt.Errorf("download .dmg: %w", err))
 	}
 
+	// Integrity gate #1: verify the downloaded .dmg against the release's
+	// checksums.txt before ever mounting it — codesign below only proves
+	// internal signature consistency (a tampered ad-hoc-signed bundle still
+	// passes it), so this is the only check that catches a swapped-out
+	// download. Fail closed exactly like the archive path (selfupdate.go's
+	// Apply): every real release ships checksums.txt with the dmg's line
+	// appended by the macos-app release job, so a missing entry only ever
+	// means a broken or tampered release.
+	if checksumsURL == "" {
+		return cleanupOnErr(fmt.Errorf("release v%s has no checksums.txt — refusing to install an unverified update", version))
+	}
+	want, err := checksumFor(ctx, checksumsURL, dmgName)
+	if err != nil {
+		return cleanupOnErr(err)
+	}
+	if err := verifySHA256(dmgPath, want); err != nil {
+		return cleanupOnErr(err)
+	}
+
 	// Mount, copy the app out, detach.
 	mnt := filepath.Join(work, "mnt")
 	if err := os.MkdirAll(mnt, 0o755); err != nil {
@@ -65,7 +104,11 @@ func applyMacApp(ctx context.Context, appPath string) error {
 		return cleanupOnErr(fmt.Errorf("copy app out of .dmg: %w", dittoErr))
 	}
 
-	// Integrity gate: the staged app must have a valid (ad-hoc) signature.
+	// Integrity gate #2: the staged app must have a valid (ad-hoc) signature.
+	// This alone was the ONLY check before the checksum gate above — it only
+	// proves internal signature consistency, so a tampered ad-hoc-signed
+	// bundle would still pass it; the checksum gate is what actually catches
+	// a swapped-out download.
 	if out, err := exec.Command("codesign", "--verify", "--deep", "--strict", staged).CombinedOutput(); err != nil {
 		return cleanupOnErr(fmt.Errorf("downloaded app failed signature check: %v: %s", err, strings.TrimSpace(string(out))))
 	}

@@ -296,6 +296,40 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: gh release upload "${TAG}" "dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg" --clobber
+      # goreleaser's checksums.txt only ever covers goreleaser's own
+      # artifacts, so the .dmg built above is never in it. The till's in-app
+      # updater (internal/selfupdate/macapp_darwin.go) verifies the .dmg's
+      # SHA-256 against checksums.txt before mounting it and fails CLOSED if
+      # the entry is missing — so without this step every in-app mac update
+      # would be refused. Wait for goreleaser's checksums.txt to actually be
+      # on the release (same race as the .dmg itself: this job only needs
+      # the RELEASE to exist, not that every goreleaser asset finished
+      # uploading), then fold the dmg's line in and re-upload.
+      - name: Wait for checksums.txt and append the .dmg's SHA-256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/checksums.txt"
+          ok=""
+          for i in $(seq 1 30); do
+            if gh release download "${TAG}" --pattern checksums.txt --dir "$RUNNER_TEMP" --clobber 2>/dev/null; then
+              ok=1
+              break
+            fi
+            echo "checksums.txt not published yet (attempt $i/30)"
+            sleep 20
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::checksums.txt never appeared on release ${TAG} — goreleaser may have failed or not finished uploading"
+            exit 1
+          fi
+          packaging/macos/update-checksums.sh \
+            "$RUNNER_TEMP/checksums.txt" \
+            "dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg"
+          gh release upload "${TAG}" "$RUNNER_TEMP/checksums.txt" --clobber
 
   # Android app (ADR-0023; android/README.md): the same embedded Go server
   # (internal/app.Run via ./mobile, gomobile-bound) as every other platform,
