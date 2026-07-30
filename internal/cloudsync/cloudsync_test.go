@@ -4,17 +4,35 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
+
+// openMigratedDB gives a test a real, fully migrated schema — same helper
+// shape as internal/data's own (unexported there, so duplicated here).
+func openMigratedDB(t *testing.T, name string) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	if err != nil {
+		t.Fatalf("open %s: %v", name, err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
+}
 
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -334,6 +352,516 @@ func TestSetItemPriceReachesVariants(t *testing.T) {
 	if err := db.QueryRow(`SELECT price FROM item_variants WHERE id='var-9'`).Scan(&vprice); err != nil || vprice != 160 {
 		t.Fatalf("variant = %d, %v", vprice, err)
 	}
+}
+
+// apply() with no hooks configured must fail cleanly (not panic) for every
+// directive type that install_plugin/set_setting's existing test coverage
+// doesn't already exercise — remove_plugin was never even given a directive
+// in the big TestTickPushesHeartbeatAndAppliesDirectives table, and every
+// other type's own "hook is nil" branch was untested there too (that table
+// always wired every hook).
+func TestApplyMissingHooksFailCleanly(t *testing.T) {
+	cases := []directive{
+		{ID: "x1", Type: "remove_plugin", Payload: map[string]any{"plugin_id": "p1"}},
+		{ID: "x2", Type: "set_price", Payload: map[string]any{"item_id": "i1", "price_minor": 100}},
+		{ID: "x3", Type: "adjust_stock", Payload: map[string]any{"item_id": "i1", "qty_delta": 1}},
+		{ID: "x4", Type: "rename_item", Payload: map[string]any{"item_id": "i1", "name": "n"}},
+		{ID: "x5", Type: "deactivate_item", Payload: map[string]any{"item_id": "i1"}},
+		{ID: "x6", Type: "create_item", Payload: map[string]any{"name": "n", "price_minor": 100}},
+		{ID: "x7", Type: "add_barcode", Payload: map[string]any{"item_id": "i1", "barcode": "b"}},
+	}
+	for _, d := range cases {
+		status, msg := apply(context.Background(), d, Hooks{})
+		if status != "failed" {
+			t.Fatalf("%s: status = %q, want failed (msg %q)", d.Type, status, msg)
+		}
+	}
+}
+
+// set_setting/install_plugin's own nil-hook branches, and their "hook is
+// present but the required field is blank" branches — the giant fixture
+// table always wired both hooks, so neither nil-hook path ever ran, and it
+// never sent an install_plugin directive with an empty listing_id.
+func TestApplySetSettingAndInstallPluginGaps(t *testing.T) {
+	status, _ := apply(context.Background(), directive{Type: "set_setting", Payload: map[string]any{"key": "k", "value": "v"}}, Hooks{})
+	if status != "failed" {
+		t.Fatalf("set_setting nil hook: status=%q", status)
+	}
+	status, _ = apply(context.Background(), directive{Type: "install_plugin", Payload: map[string]any{"listing_id": "l1"}}, Hooks{})
+	if status != "failed" {
+		t.Fatalf("install_plugin nil hook: status=%q", status)
+	}
+
+	hooks := Hooks{
+		SetSetting:    func(ctx context.Context, key, value string) (string, error) { return "ok", nil },
+		InstallPlugin: func(ctx context.Context, listingID string) (string, error) { return "ok", nil },
+	}
+	status, _ = apply(context.Background(), directive{Type: "set_setting", Payload: map[string]any{"value": "v"}}, hooks)
+	if status != "failed" {
+		t.Fatalf("set_setting empty key: status=%q", status)
+	}
+	status, _ = apply(context.Background(), directive{Type: "install_plugin", Payload: map[string]any{}}, hooks)
+	if status != "failed" {
+		t.Fatalf("install_plugin empty listing_id: status=%q", status)
+	}
+}
+
+// Every hook-present-but-item_id-blank branch: the giant fixture table only
+// ever sent these directives with a real item_id (it varied the OTHER
+// field — price, delta, name — to test rejection), so this specific
+// short-circuit was never hit for any of these five types.
+func TestApplyEmptyItemIDWithHookPresent(t *testing.T) {
+	hooks := Hooks{
+		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) { return "ok", nil },
+		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
+			return "ok", nil
+		},
+		RenameItem:     func(ctx context.Context, itemID, name string) (string, error) { return "ok", nil },
+		DeactivateItem: func(ctx context.Context, itemID string) (string, error) { return "ok", nil },
+		AddBarcode:     func(ctx context.Context, itemID, barcode string) (string, error) { return "ok", nil },
+	}
+	cases := []directive{
+		{Type: "set_price", Payload: map[string]any{"price_minor": float64(100)}},
+		{Type: "adjust_stock", Payload: map[string]any{"qty_delta": float64(1)}},
+		{Type: "rename_item", Payload: map[string]any{"name": "n"}},
+		{Type: "deactivate_item", Payload: map[string]any{}},
+		{Type: "add_barcode", Payload: map[string]any{"barcode": "b"}},
+	}
+	for _, d := range cases {
+		if status, msg := apply(context.Background(), d, hooks); status != "failed" {
+			t.Fatalf("%s with blank item_id: status=%q msg=%q", d.Type, status, msg)
+		}
+	}
+}
+
+// num()/fnum()'s final fallback (`return 0, false`) fires when the payload
+// key is missing entirely or holds a non-numeric type (not just an
+// unparseable string) — untested by every existing case, which always sends
+// either a valid float64 or a numeric-looking string.
+func TestApplyMissingNumericKeyRejected(t *testing.T) {
+	hooks := Hooks{
+		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) { return "ok", nil },
+		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
+			return "ok", nil
+		},
+	}
+	status, _ := apply(context.Background(), directive{Type: "set_price", Payload: map[string]any{"item_id": "i1"}}, hooks)
+	if status != "failed" {
+		t.Fatalf("missing price_minor key: status=%q", status)
+	}
+	status, _ = apply(context.Background(), directive{Type: "adjust_stock", Payload: map[string]any{"item_id": "i1", "qty_delta": true}}, hooks)
+	if status != "failed" {
+		t.Fatalf("bool-typed qty_delta: status=%q", status)
+	}
+}
+
+// A postResult delivery failure must not fail Tick itself — the directive
+// stays "pending" on the cloud and the next tick's re-apply/re-report is
+// exactly how this is meant to recover (see Tick's own comment).
+func TestTickToleratesPostResultFailure(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/stores/sync", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"directives": []map[string]any{
+				{"id": "d1", "type": "set_setting", "payload": map[string]any{"key": "k", "value": "v"}},
+			}},
+		})
+	})
+	mux.HandleFunc("/v1/stores/directives/result", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	hooks := Hooks{SetSetting: func(ctx context.Context, key, value string) (string, error) { return "set", nil }}
+	if err := Tick(context.Background(), testCfg(srv.URL), testDB(t), hooks); err != nil {
+		t.Fatalf("tick should tolerate a postResult failure, got %v", err)
+	}
+}
+
+// pushSnapshotIfChanged's own upload failing (as opposed to the repo-read
+// failures above) must surface as a real error too.
+func TestPushSnapshotIfChangedUploadFails(t *testing.T) {
+	d := openMigratedDB(t, "cloudsync-upload-fail.db")
+	if _, err := d.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('it-1','SKU1','Coke',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB); err == nil {
+		t.Fatal("want error when the catalog-snapshot upload fails")
+	}
+}
+
+// remove_plugin's own success path and its missing-plugin_id rejection — the
+// only directive type the original apply() test table never included at all.
+func TestApplyRemovePluginSuccess(t *testing.T) {
+	var removed string
+	hooks := Hooks{RemovePlugin: func(ctx context.Context, pluginID string) (string, error) {
+		removed = pluginID
+		return "removed x", nil
+	}}
+	status, msg := apply(context.Background(), directive{ID: "r1", Type: "remove_plugin", Payload: map[string]any{"plugin_id": "p-9"}}, hooks)
+	if status != "applied" || msg != "removed x" || removed != "p-9" {
+		t.Fatalf("remove_plugin success: status=%q msg=%q removed=%q", status, msg, removed)
+	}
+	status, msg = apply(context.Background(), directive{ID: "r2", Type: "remove_plugin", Payload: map[string]any{}}, hooks)
+	if status != "failed" {
+		t.Fatalf("remove_plugin missing id: status=%q msg=%q", status, msg)
+	}
+}
+
+// A hook returning an error must surface as a "failed" result carrying the
+// error text — untested by every existing case (all test hooks return nil).
+func TestApplyHookErrorPropagates(t *testing.T) {
+	hooks := Hooks{SetSetting: func(ctx context.Context, key, value string) (string, error) {
+		return "", errors.New("disk full")
+	}}
+	status, msg := apply(context.Background(), directive{ID: "e1", Type: "set_setting", Payload: map[string]any{"key": "k", "value": "v"}}, hooks)
+	if status != "failed" || msg != "disk full" {
+		t.Fatalf("status=%q msg=%q, want failed/disk full", status, msg)
+	}
+}
+
+// An applied hook that returns an empty message must default to "done" — the
+// cloud's result column should never show a blank success.
+func TestApplyDefaultsMessageWhenHookReturnsEmpty(t *testing.T) {
+	hooks := Hooks{SetSetting: func(ctx context.Context, key, value string) (string, error) {
+		return "", nil
+	}}
+	status, msg := apply(context.Background(), directive{ID: "e2", Type: "set_setting", Payload: map[string]any{"key": "k", "value": "v"}}, hooks)
+	if status != "applied" || msg != "done" {
+		t.Fatalf("status=%q msg=%q, want applied/done", status, msg)
+	}
+}
+
+// JSON numbers normally decode as float64, but num()/fnum() also tolerate a
+// string-encoded number — untested by every existing directive fixture,
+// which only ever sends float64 payload values.
+func TestApplyAcceptsStringFormNumbers(t *testing.T) {
+	var pricedMinor int64
+	var delta float64
+	hooks := Hooks{
+		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
+			pricedMinor = priceMinor
+			return "ok", nil
+		},
+		AdjustStock: func(ctx context.Context, itemID string, d float64, reason string) (string, error) {
+			delta = d
+			return "ok", nil
+		},
+	}
+	status, _ := apply(context.Background(), directive{ID: "s1", Type: "set_price", Payload: map[string]any{"item_id": "i1", "price_minor": "250"}}, hooks)
+	if status != "applied" || pricedMinor != 250 {
+		t.Fatalf("string price_minor: status=%q priced=%d", status, pricedMinor)
+	}
+	status, _ = apply(context.Background(), directive{ID: "s2", Type: "adjust_stock", Payload: map[string]any{"item_id": "i1", "qty_delta": "-2.5"}}, hooks)
+	if status != "applied" || delta != -2.5 {
+		t.Fatalf("string qty_delta: status=%q delta=%g", status, delta)
+	}
+	// A non-numeric string must be rejected, not silently parsed as 0.
+	status, _ = apply(context.Background(), directive{ID: "s3", Type: "set_price", Payload: map[string]any{"item_id": "i1", "price_minor": "not-a-number"}}, hooks)
+	if status != "failed" {
+		t.Fatalf("garbage price_minor string: status=%q, want failed", status)
+	}
+}
+
+// pushSync's os.Stat(cfg.DBPath) success branch — every other test points
+// DBPath at "/nonexistent" specifically to skip it.
+func TestPushSyncReportsDBSize(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	db := testDB(t)
+
+	f, err := os.CreateTemp(t.TempDir(), "fake.db")
+	if err != nil {
+		t.Fatalf("temp file: %v", err)
+	}
+	if _, err := f.Write(make([]byte, 2<<20)); err != nil { // 2 MiB
+		t.Fatalf("write: %v", err)
+	}
+	f.Close()
+
+	cfg := testCfg(srv.URL)
+	cfg.DBPath = f.Name()
+	if err := Tick(context.Background(), cfg, db, Hooks{}); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	devs := cloud.syncBodies[0]["devices"].([]any)
+	health := devs[0].(map[string]any)["health"].(map[string]any)
+	if health["db_mb"] != float64(2) {
+		t.Fatalf("db_mb = %v, want 2", health["db_mb"])
+	}
+}
+
+// A non-200 /v1/stores/sync response must surface as a real error out of
+// Tick, not be swallowed — untested by every existing test, which always
+// hits a 200.
+func TestTickPropagatesSyncFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	err := Tick(context.Background(), testCfg(srv.URL), testDB(t), Hooks{})
+	if err == nil {
+		t.Fatal("want error on 500 sync response")
+	}
+}
+
+// A malformed JSON body from /v1/stores/sync must surface as a decode error.
+func TestPushSyncDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+	err := Tick(context.Background(), testCfg(srv.URL), testDB(t), Hooks{})
+	if err == nil {
+		t.Fatal("want decode error on malformed sync response")
+	}
+}
+
+// ListItems/ItemBarcodes failing must surface as a real error from
+// pushSnapshotIfChanged, not panic or silently push an empty snapshot.
+func TestPushSnapshotIfChangedRepoErrors(t *testing.T) {
+	cfg := testCfg("http://unused.example")
+
+	itemsDB := testsupport.NewCatalogTestDB(t)
+	if _, err := itemsDB.Exec(`DROP TABLE items`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := itemsDB.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := pushSnapshotIfChanged(context.Background(), cfg, itemsDB); err == nil {
+		t.Fatal("want error when items table is gone")
+	}
+
+	barcodesDB := testsupport.NewCatalogTestDB(t)
+	if _, err := barcodesDB.Exec(`DROP TABLE item_barcodes`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := barcodesDB.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.SeedItem(t, barcodesDB, testsupport.ItemSeed{ID: "it-1", SKU: "SKU1", Name: "Coke", BasePrice: 100, IsActive: true})
+	if err := pushSnapshotIfChanged(context.Background(), cfg, barcodesDB); err == nil {
+		t.Fatal("want error when item_barcodes table is gone")
+	}
+}
+
+// A real stock quantity must actually reach the snapshot's "qty" field — the
+// existing snapshot test never seeds an inventory row (and the shared test
+// schema has no stock_locations table at all, which ListStockLevels' query
+// LEFT JOINs — so that query silently errors out (the err is never even
+// logged), and this success path had never actually run for real. Per the
+// tester skill's own rule for this exact shape ("use a real fully-migrated
+// database instead of a partial schema that might drift from production"),
+// this uses a real migrated DB rather than patching the minimal schema.
+func TestPushSnapshotIfChangedIncludesRealStockQty(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	d := openMigratedDB(t, "cloudsync.db")
+
+	// Inserted directly (not via testsupport.SeedItem) so tax_code_id is a
+	// real NULL rather than ""  — the real migrated schema FK-enforces it,
+	// unlike the minimal test schema SeedItem is normally used against.
+	if _, err := d.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('it-1','SKU1','Coke',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-1','it-1','loc_main', 7.5)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Tick(context.Background(), testCfg(srv.URL), d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(cloud.snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(cloud.snapshots))
+	}
+	// The real migration seeds its own demo catalog alongside "it-1", so find
+	// this test's own row rather than assuming it's first.
+	var row map[string]any
+	for _, r := range cloud.snapshots[0]["items"].([]any) {
+		m := r.(map[string]any)
+		if m["id"] == "it-1" {
+			row = m
+			break
+		}
+	}
+	if row == nil {
+		t.Fatal("it-1 not present in snapshot")
+	}
+	if row["qty"] != 7.5 {
+		t.Fatalf("qty = %v, want 7.5", row["qty"])
+	}
+}
+
+// waitGoroutineExit proves Start()'s spawned goroutine has actually
+// returned — not inferred from "no more observed HTTP calls" (which stops
+// short of the goroutine's synchronous post-tick work, e.g.
+// uploadPendingIssueReports's filesystem read, and doesn't distinguish a
+// genuine return from a hung loop that just happens to be between network
+// calls). Start() has no join/done signal (a real gap, same class as the
+// standing "app.Run doesn't join its background services" queue item — out
+// of scope to fix here), so this is the direct proxy: sample
+// runtime.NumGoroutine() back down to (at most) its pre-Start baseline.
+// This is what actually catches a goroutine leak — deliberately breaking
+// either of Start()'s two `case <-ctx.Done(): return` branches leaves the
+// goroutine permanently blocked (spinning or parked on a never-firing
+// timer), and this fails loudly instead of passing on a stale HTTP-call
+// count.
+//
+// Known remaining boundary (not fully closed by this function, and not
+// closeable from a test at all without Start() itself gaining a real
+// join signal): confirmed under `go test -race -shuffle=on` that
+// issue_reports_test.go's plain `issuereport.PendingDir = ...` writes can
+// still race a Start-test goroutine's read of that same var, even after
+// this function has observed the goroutine's exit. That's not a timing
+// margin this function could widen — Go's race detector tracks actual
+// synchronization primitives (channels, mutexes, WaitGroups), not
+// wall-clock proof-of-quiescence from polling runtime.NumGoroutine(), so
+// no amount of waiting here creates the happens-before edge the detector
+// wants. Confirmed clean under plain `-race` (no shuffle, this package's
+// and this repo's CI's actual test invocation) at -count=10. Logged as a
+// follow-up on the "app.Run doesn't join its background services" item
+// rather than fixed here — the real fix is the same one that item already
+// needs (a done-channel/WaitGroup on Start()), and duplicating that
+// architecture ad hoc in this batch would conflict with it landing there.
+func waitGoroutineExit(t *testing.T, baseline int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		// The shared package-level httpClient keeps idle keep-alive
+		// connections (and their read-loop goroutines) around well past
+		// when a request completes — real, harmless, and unrelated to
+		// Start()'s own goroutine, but indistinguishable from a leak by
+		// goroutine count alone unless closed explicitly first.
+		httpClient.CloseIdleConnections()
+		if n := runtime.NumGoroutine(); n <= baseline {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutine count still %d after cancel (baseline %d) — Start()'s goroutine leaked", runtime.NumGoroutine(), baseline)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// Start()'s background loop: fires shortly after boot, ticks on its own
+// interval, and stops cleanly when its context is cancelled. Uses the
+// package's own test-overridable firstDelay/tickInterval (see their comment)
+// so this doesn't take real wall-clock minutes.
+func TestStartRunsTickLoopAndStopsOnCancel(t *testing.T) {
+	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	firstDelayNS.Store(int64(5 * time.Millisecond))
+	tickIntervalNS.Store(int64(5 * time.Millisecond))
+
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	db := testDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	count := func() int { cloud.mu.Lock(); defer cloud.mu.Unlock(); return len(cloud.syncBodies) }
+	httpClient.CloseIdleConnections()
+	baseline := runtime.NumGoroutine()
+
+	Start(ctx, testCfg(srv.URL), db, Hooks{})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for count() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d ticks after 2s, want at least 2", count())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	cancel()
+	stoppedAt := count()
+	waitGoroutineExit(t, baseline) // proves the goroutine actually returned before restoring the vars below
+	firstDelayNS.Store(origFirst)
+	tickIntervalNS.Store(origTick)
+	if afterCancel := count(); afterCancel > stoppedAt+1 {
+		// allow one in-flight tick to land right after cancel; anything more
+		// means the loop kept running past ctx.Done().
+		t.Fatalf("ticks kept growing after cancel: %d -> %d", stoppedAt, afterCancel)
+	}
+}
+
+// Cancelling before the first tick ever fires must return the goroutine via
+// its OUTER select's ctx.Done() case, not the loop's inner one — a longer
+// firstDelay than the cancellation makes that the only reachable path.
+func TestStartStopsBeforeFirstTickWhenCancelledEarly(t *testing.T) {
+	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	firstDelayNS.Store(int64(time.Hour)) // long enough it will never fire in this test
+	tickIntervalNS.Store(int64(time.Millisecond))
+
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	db := testDB(t) // created before baseline: sql.Open spawns a permanent
+	// background connectionOpener goroutine for the DB's lifetime — capturing
+	// baseline before this would count it as a false "leak" from Start().
+	ctx, cancel := context.WithCancel(context.Background())
+	count := func() int { cloud.mu.Lock(); defer cloud.mu.Unlock(); return len(cloud.syncBodies) }
+	httpClient.CloseIdleConnections()
+	baseline := runtime.NumGoroutine()
+
+	Start(ctx, testCfg(srv.URL), db, Hooks{})
+	cancel()
+	waitGoroutineExit(t, baseline)
+	firstDelayNS.Store(origFirst)
+	tickIntervalNS.Store(origTick)
+
+	if n := count(); n != 0 {
+		t.Fatalf("tick fired %d times despite being cancelled before firstDelay elapsed", n)
+	}
+}
+
+// A Tick error inside the loop (not the pre-first-tick wait) must be
+// tolerated — logged, not fatal to the goroutine, and the loop keeps ticking.
+func TestStartToleratesTickFailureAndKeepsLooping(t *testing.T) {
+	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	firstDelayNS.Store(int64(2 * time.Millisecond))
+	tickIntervalNS.Store(int64(2 * time.Millisecond))
+
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 1 {
+			w.WriteHeader(http.StatusInternalServerError) // first tick: Tick() returns an error
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"directives": []any{}}})
+	}))
+	defer srv.Close()
+	db := testDB(t) // created before baseline, same reason as the test above
+	ctx, cancel := context.WithCancel(context.Background())
+	count := func() int { mu.Lock(); defer mu.Unlock(); return calls }
+	httpClient.CloseIdleConnections()
+	baseline := runtime.NumGoroutine()
+
+	Start(ctx, testCfg(srv.URL), db, Hooks{})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for count() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d calls after 2s; loop did not survive the first tick's failure", count())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	cancel()
+	waitGoroutineExit(t, baseline)
+	firstDelayNS.Store(origFirst)
+	tickIntervalNS.Store(origTick)
 }
 
 // The real create path is idempotent on retry and refuses a taken barcode.
