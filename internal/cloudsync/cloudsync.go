@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
@@ -31,14 +32,27 @@ import (
 var (
 	httpClient = &http.Client{Timeout: 30 * time.Second}
 	started    = time.Now()
-	// Overridable in tests. A till that was off picks up queued directives
-	// (e.g. a portal-side "install to tills") right after boot, and a running
-	// till within a couple of minutes — each tick is one tiny POST, so the
-	// short interval is cheap (Farshid, 2026-07-19). A push channel could
-	// replace the poll later; the poll stays as the NAT-safe fallback.
-	tickInterval = 2 * time.Minute
-	firstDelay   = 15 * time.Second
+	// tickIntervalNS/firstDelayNS back the two interval knobs below.
+	// atomic.Int64 (nanoseconds), not plain vars: Start()'s loop reads them
+	// on every iteration from its own background goroutine, and tests
+	// override them to run the loop fast — a plain var would race the
+	// goroutine's read against a test's write with no synchronization.
+	tickIntervalNS atomic.Int64
+	firstDelayNS   atomic.Int64
 )
+
+func init() {
+	// A till that was off picks up queued directives (e.g. a portal-side
+	// "install to tills") right after boot, and a running till within a
+	// couple of minutes — each tick is one tiny POST, so the short interval
+	// is cheap (Farshid, 2026-07-19). A push channel could replace the poll
+	// later; the poll stays as the NAT-safe fallback.
+	tickIntervalNS.Store(int64(2 * time.Minute))
+	firstDelayNS.Store(int64(15 * time.Second))
+}
+
+func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }
+func firstDelay() time.Duration   { return time.Duration(firstDelayNS.Load()) }
 
 // Hooks are the till-local actions a directive may trigger. Each returns a
 // short human message for the cloud's result column. A nil hook marks the
@@ -402,7 +416,7 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 // moment), then every few minutes. Ctx-cancelled with the server.
 func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) {
 	go func() {
-		first := time.NewTimer(firstDelay)
+		first := time.NewTimer(firstDelay())
 		defer first.Stop()
 		select {
 		case <-ctx.Done():
@@ -416,7 +430,7 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(tickInterval):
+			case <-time.After(tickInterval()):
 			}
 		}
 	}()
