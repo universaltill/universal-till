@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"html/template"
 	"net/http"
@@ -70,6 +71,22 @@ type SearchResult struct {
 	Name    string
 	Barcode string
 	Image   string
+}
+
+// AddVals returns the JSON payload the Designer's search-result button
+// posts to /api/buttons/add (htmx parses the hx-vals attribute with
+// JSON.parse). Marshaled server-side so a name/barcode/path containing a
+// double quote or backslash survives the HTML-attribute round trip —
+// interpolating the raw fields into a JSON literal inside the template
+// produced invalid JSON for any quoted name, silently breaking add.
+func (r SearchResult) AddVals() string {
+	b, _ := json.Marshal(map[string]string{
+		"label":    r.Name,
+		"code":     r.Barcode,
+		"itemId":   r.ItemID,
+		"imageUrl": r.Image,
+	})
+	return string(b)
 }
 
 // SearchItems finds items (and primary barcodes) to add as shortcuts.
@@ -327,25 +344,3 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.Bas
 	return line, true
 }
 
-func (s *ButtonStore) currentPrice(ctx context.Context, itemID *string, variantID *string, fallback int64) int64 {
-	// Unused after repo move; kept for interface compatibility if needed.
-	price, err := s.posRepo.ResolveCurrentPrice(ctx, deref(itemID), deref(variantID))
-	if err != nil {
-		return fallback
-	}
-	return price
-}
-
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-func nullIfEmpty(s string) any {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	return s
-}

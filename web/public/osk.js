@@ -228,4 +228,15 @@
       if (!wantsOSK(a) && (!osk || !osk.contains(a))) hide();
     }, 50);
   });
+
+  // An autofocused field (the sale screen's scan input) can gain focus
+  // BEFORE this deferred script attaches its focusin listener — on slow
+  // devices (the real Pi) the parser focuses it long before osk.js
+  // evaluates, so no focusin ever fires for it and the keyboard never
+  // appears until focus leaves and comes back. Catch up with the current
+  // focus state at init, mirroring exactly what the focusin handler would
+  // have done.
+  if (enabled && wantsOSK(document.activeElement)) {
+    show(document.activeElement);
+  }
 })();

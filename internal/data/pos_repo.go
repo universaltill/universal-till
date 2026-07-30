@@ -2688,13 +2688,13 @@ func (r *POSRepo) SearchItemsForShortcuts(ctx context.Context, q string, offset,
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.id,
        i.name,
-       (
+       COALESCE((
          SELECT ib.barcode
          FROM item_barcodes ib
          WHERE ib.item_id = i.id
          ORDER BY ib.is_primary DESC
          LIMIT 1
-       ) AS barcode,
+       ), '') AS barcode,
        COALESCE(img.path, '')
 FROM items i
 LEFT JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
