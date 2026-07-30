@@ -308,7 +308,7 @@ func TestBackgroundJobsStart_SyncsWhenStaleThenStops(t *testing.T) {
 		revocationInterval:  time.Hour,
 		retryBaseDelay:      time.Millisecond,
 	}
-	bj.Start(ctx)
+	bj.Start(ctx, &sync.WaitGroup{})
 
 	select {
 	case <-archSeen:
@@ -341,7 +341,7 @@ func TestBackgroundJobsStart_SkipsWhenFresh(t *testing.T) {
 		revocationInterval:  time.Hour,
 		retryBaseDelay:      time.Millisecond,
 	}
-	bj.Start(ctx)
+	bj.Start(ctx, &sync.WaitGroup{})
 
 	time.Sleep(200 * time.Millisecond)
 	select {
@@ -367,6 +367,7 @@ func TestBackgroundJobsStart_CancelStopsLoops(t *testing.T) {
 	plantSnapshot(t, cacheDir, time.Now().Add(-time.Hour))
 
 	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
 	bj := &BackgroundJobs{
 		catalogRepo:         newTestCatalogRepoAt(t, srv.URL, cacheDir),
 		cfg:                 &config.Config{DefaultLocale: "en-US"},
@@ -376,14 +377,29 @@ func TestBackgroundJobsStart_CancelStopsLoops(t *testing.T) {
 		revocationInterval:  time.Hour,
 		retryBaseDelay:      time.Millisecond,
 	}
-	bj.Start(ctx)
+	bj.Start(ctx, &wg)
 
 	select {
 	case <-requests:
 	case <-time.After(5 * time.Second):
 		t.Fatal("scheduler never reached the marketplace")
 	}
+
+	// Before cancel: wg must NOT already be at zero (a missing wg.Add on any
+	// of the 3 job goroutines would let Wait return instantly, vacuously
+	// "passing" the check below without ever tracking them).
+	if waitWithin(&wg, 150*time.Millisecond) {
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — job goroutines not tracked")
+	}
+
 	cancel()
+
+	// Deterministic proof the 3 job goroutines actually exited (not just a
+	// timing-based inference from silence on the requests channel below).
+	if !waitWithin(&wg, 5*time.Second) {
+		t.Fatal("BackgroundJobs goroutines did not join wg within 5s of context cancel")
+	}
+
 	time.Sleep(100 * time.Millisecond) // let in-flight attempts finish
 	for {                              // drain everything that raced the cancel
 		select {
@@ -422,7 +438,7 @@ func TestBackgroundJobsStart_TelemetryFailureIsLoggedNotFatal(t *testing.T) {
 		telemetryInterval:   20 * time.Millisecond,
 		revocationInterval:  time.Hour,
 	}
-	bj.Start(ctx)
+	bj.Start(ctx, &sync.WaitGroup{})
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -458,7 +474,7 @@ func TestBackgroundJobsStart_RevocationTickPollsFeed(t *testing.T) {
 		telemetryInterval:   time.Hour,
 		revocationInterval:  20 * time.Millisecond,
 	}
-	bj.Start(ctx)
+	bj.Start(ctx, &sync.WaitGroup{})
 
 	select {
 	case path := <-requests:
@@ -503,7 +519,8 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
-	go func() { errCh <- Start(ctx, cfg, handler, nil, nil, nil) }()
+	var wg sync.WaitGroup
+	go func() { errCh <- Start(ctx, cfg, handler, nil, nil, nil, &wg) }()
 
 	var url string
 	select {
@@ -522,6 +539,13 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 		t.Fatalf("GET %s -> %d %q, want 200 till-ok", url, resp.StatusCode, body)
 	}
 
+	// Before cancel: wg must NOT already be at zero — the shutdown goroutine
+	// is alive but parked on <-ctx.Done(), so a missing wg.Add there would
+	// let this vacuously "pass" without ever tracking it.
+	if waitWithin(&wg, 150*time.Millisecond) {
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — shutdown goroutine not tracked")
+	}
+
 	cancel()
 	select {
 	case err := <-errCh:
@@ -530,6 +554,13 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Start did not return after context cancel")
+	}
+	// Start's own graceful-shutdown goroutine (srv.Shutdown + supervisor.Shutdown)
+	// must have fully finished by now too, not just be "probably done" —
+	// net/http's Shutdown contract only guarantees Serve returns once listeners
+	// close, so without wg tracking that goroutine, this could otherwise race.
+	if !waitWithin(&wg, 2*time.Second) {
+		t.Fatal("wg did not reach zero within 2s of Start returning — shutdown goroutine not joined")
 	}
 	// Safe to read cfg now that Start has returned: it must hold the address
 	// actually bound (an ephemeral port, not the :0 we asked for).
@@ -545,9 +576,24 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 func TestStart_ReturnsErrorOnBadAddr(t *testing.T) {
 	t.Setenv("UT_OPEN_BROWSER", "false")
 	cfg := &config.Config{ListenAddr: "not-a-listen-addr"}
-	err := Start(context.Background(), cfg, http.NewServeMux(), nil, nil, nil)
+	err := Start(context.Background(), cfg, http.NewServeMux(), nil, nil, nil, &sync.WaitGroup{})
 	if err == nil {
 		t.Fatal("Start succeeded on an unbindable address")
+	}
+}
+
+// waitWithin reports whether wg.Wait() returns within d.
+func waitWithin(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
 	}
 }
 
@@ -570,7 +616,8 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 	cfg := &config.Config{ListenAddr: "127.0.0.1:0", DBPath: dbPath}
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
-	go func() { errCh <- Start(ctx, cfg, http.NewServeMux(), nil, d.DB, nil) }()
+	var wg sync.WaitGroup
+	go func() { errCh <- Start(ctx, cfg, http.NewServeMux(), nil, d.DB, nil, &wg) }()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -583,6 +630,13 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 		t.Fatalf("related-items rebuild never ran at startup; log:\n%s", logBuf.String())
 	}
 
+	// Before cancel: wg must NOT already be at zero — the daily-backup and
+	// related-items goroutines are alive, parked on their own tickers, so a
+	// missing wg.Add on either would let this vacuously "pass" below.
+	if waitWithin(&wg, 150*time.Millisecond) {
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — a background goroutine was not tracked")
+	}
+
 	cancel()
 	select {
 	case err := <-errCh:
@@ -591,6 +645,13 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Start did not return after cancel")
+	}
+	// The related-items ticker goroutine (which reads db) must have actually
+	// exited by now — this test's own t.Cleanup closes d right after, and a
+	// straggler reading a closed *sql.DB is exactly the bug class this
+	// wg-joining fix exists to prevent.
+	if !waitWithin(&wg, 2*time.Second) {
+		t.Fatal("wg did not reach zero within 2s of Start returning — a background goroutine was left unjoined")
 	}
 }
 

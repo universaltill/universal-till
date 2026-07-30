@@ -143,8 +143,10 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 // Init loads (or creates) this till's marketplace identity, fills the empty
 // cfg.Marketplace fields from it, and — when the till is not yet enrolled and
 // not explicitly configured — starts a background registration loop. Call once
-// at startup, after LoadRuntimeConfig and before the server starts.
-func Init(ctx context.Context, cfg *config.Config, kv Settings) {
+// at startup, after LoadRuntimeConfig and before the server starts. wg is
+// marked Done once that background loop (if started) has fully exited, so
+// callers can wait out shutdown instead of returning while it still runs.
+func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGroup) {
 	log := logging.L()
 	storeIDExplicit = os.Getenv("UT_MARKETPLACE_STORE_ID") != ""
 	// At this point cfg.Marketplace.ClientID can only have come from the
@@ -220,7 +222,11 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings) {
 	if !needKey && !needDevice {
 		return
 	}
-	go run(ctx, *m, deviceName, kv, needKey, needDevice)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		run(ctx, *m, deviceName, kv, needKey, needDevice)
+	}()
 }
 
 // EnsureRegistered returns the effective config, first enrolling the till

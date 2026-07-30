@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,12 +49,16 @@ func CheckNow(ctx context.Context) Status {
 }
 
 // Start launches the background checker: once ~30s after boot, then daily.
-// Set UT_UPDATE_CHECK=0 to disable (e.g. air-gapped tills).
-func Start(ctx context.Context) {
+// Set UT_UPDATE_CHECK=0 to disable (e.g. air-gapped tills). wg is marked Done
+// once the checker goroutine has fully exited (ctx cancelled) — callers use
+// it to wait out shutdown instead of returning while the goroutine still runs.
+func Start(ctx context.Context, wg *sync.WaitGroup) {
 	if !enabledFromEnv() {
 		return
 	}
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		select {
 		case <-time.After(30 * time.Second):
 		case <-ctx.Done():

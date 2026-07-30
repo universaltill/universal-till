@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -130,9 +131,13 @@ func unusualSales(ctx context.Context, db *sql.DB) (float64, int64, bool) {
 }
 
 // Start runs the daily digest loop: first push shortly after boot (give
-// enrolment a moment), then every 24h. Ctx-cancelled with the server.
-func Start(ctx context.Context, cfg *config.Config, db *sql.DB) {
+// enrolment a moment), then every 24h. Ctx-cancelled with the server. wg is
+// marked Done once the loop goroutine has fully exited, so callers can wait
+// out shutdown instead of returning while it still runs.
+func Start(ctx context.Context, cfg *config.Config, db *sql.DB, wg *sync.WaitGroup) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		first := time.NewTimer(2 * time.Minute)
 		defer first.Stop()
 		select {
