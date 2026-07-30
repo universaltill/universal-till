@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 )
 
@@ -135,17 +136,26 @@ func TestLoadRuntimeConfig_OverridesFromStore(t *testing.T) {
 
 // Regression: LoadRuntimeConfig used to gate the currency_symbol assignment
 // on whether "store.currency" was set, not "store.currency_symbol" — so a
-// symbol-only override (currency itself left at its cfg default) was
-// silently dropped. Currency and its symbol are independent settings keys
-// and must be loaded independently.
+// symbol-only override (currency itself genuinely unset) was silently
+// dropped. Currency and its symbol are independent settings keys and must
+// be loaded independently.
 func TestLoadRuntimeConfig_CurrencySymbolIndependentOfCurrency(t *testing.T) {
 	ctx := context.Background()
-	s := newTestStore(t)
+	d := openMigratedDB(t, "settings.db")
+	s := NewStore(d.DB)
+
+	// 001_init.sql seeds "store.currency"='GBP' by default — clear it so
+	// this test genuinely exercises "currency unset, symbol set" rather
+	// than accidentally passing because the seeded default is non-empty
+	// (which is exactly what let the original buggy `if curr != ""` guard
+	// slip through: curr is never actually empty in a fresh migrated DB).
+	repo := data.NewSettingsRepo(d.DB)
+	if err := repo.Delete(ctx, "store.currency"); err != nil {
+		t.Fatalf("clear seeded default: %v", err)
+	}
 	if err := s.Set(ctx, "store.currency_symbol", "kr"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// deliberately do NOT set store.currency — cfg.Locales.Currency stays
-	// at its baseCfg default ("GBP")
 
 	cfg := baseCfg()
 	s.LoadRuntimeConfig(ctx, cfg)
