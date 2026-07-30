@@ -113,6 +113,61 @@ func TestReportsPage_GrandTotalsSumDailySales(t *testing.T) {
 	}
 }
 
+func TestReportsPage_RefundsAndNetKPIs(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	// A £3.60 sale and a £1.00 completed return within the default 14-day
+	// window: Refunds must show the return total, Net = Revenue - Refunds.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',300,0,60,360,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('r1','R002','completed','return','GBP',0,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£3.60") {
+		t.Fatalf("expected revenue £3.60 (gross of returns), got: %s", body)
+	}
+	if !strings.Contains(body, "£1.00") {
+		t.Fatalf("expected the £1.00 refund total, got: %s", body)
+	}
+	// Net = 360 - 100 = 260 minor units = £2.60.
+	if !strings.Contains(body, "£2.60") {
+		t.Fatalf("expected net £2.60 (360 - 100), got: %s", body)
+	}
+}
+
+func TestReportsPage_NetGoesNegativeWhenRefundsExceedSales(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	// A refund with no matching sale in the window (e.g. the sale happened
+	// before the window started): Net must go negative rather than the
+	// handler crashing or the template garbling it, and the KPI must carry
+	// the same "stock-low" negative-value treatment as the YoY tile.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('r1','R001','completed','return','GBP',0,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£-1.00") {
+		t.Fatalf("expected the negative net £-1.00, got: %s", body)
+	}
+	if !strings.Contains(body, `kpi-value stock-low">£-1.00`) {
+		t.Fatalf("expected the negative net KPI to carry the stock-low treatment, got: %s", body)
+	}
+}
+
 func TestReportsPage_TillsSectionHiddenUnlessMultipleRegisters(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)
