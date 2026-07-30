@@ -33,6 +33,23 @@ if [ -d /run/systemd/system ]; then
     systemctl enable unitill-pos.service >/dev/null 2>&1 || true
     # Start (or restart after upgrade) — never fail the install on it.
     systemctl restart unitill-pos.service >/dev/null 2>&1 || true
+
+    # Raspberry Pi: boot straight into the fullscreen kiosk with no manual
+    # step -- a shop owner installing on real hardware will never run a
+    # setup command by hand (field-reported gap, 2026-07-30). Detected via
+    # the device-tree model string, which the Pi's own firmware/bootloader
+    # sets regardless of which distro is running on top (Pi OS, plain
+    # Debian, Ubuntu all get it). Only on FIRST install (kiosk service not
+    # already present) -- an upgrade must never silently re-run apt/systemd
+    # setup or clobber a configuration the shop already has. Best-effort and
+    # never fatal: this script runs under `set -e`, and kiosk setup needs
+    # network for apt -- a failure here must never abort the till install.
+    if [ -r /proc/device-tree/model ] \
+        && tr -d '\0' < /proc/device-tree/model 2>/dev/null | grep -qi "raspberry pi" \
+        && [ ! -e /etc/systemd/system/unitill-kiosk.service ]; then
+        echo "Raspberry Pi detected — setting up the fullscreen kiosk…"
+        /opt/unitill/bin/unitill-kiosk-setup || echo "Kiosk setup failed (offline install? re-run later: sudo /opt/unitill/bin/unitill-kiosk-setup)"
+    fi
 fi
 
 echo "Universal Till installed. Open http://localhost:8080 — the first-boot"
