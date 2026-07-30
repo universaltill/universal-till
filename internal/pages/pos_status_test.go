@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	_ "modernc.org/sqlite"
 )
@@ -72,5 +73,56 @@ func TestStatusEndpoint_ParkAndVoid(t *testing.T) {
 	_ = db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id='sale1' AND action='voided'`).Scan(&count)
 	if count == 0 {
 		t.Fatalf("expected audit log for void")
+	}
+}
+
+func TestStatusEndpoint_RecordsSessionOperatorAsActor(t *testing.T) {
+	db := setupStatusDB(t)
+	defer db.Close()
+	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRatePct: 20}}
+	mux := http.NewServeMux()
+	registerPOSAPI(mux, dp)
+
+	b, _ := json.Marshal(map[string]string{"saleId": "sale1", "status": "voided", "reason": "who did this"})
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/sale/status", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req = auth.WithUser(req, auth.User{ID: "op7", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("void failed: %d %s", rec.Code, rec.Body.String())
+	}
+	// The void must be attributed to the logged-in operator, not recorded
+	// actor-less (batch 8 review: pos_api passed "" as actorID).
+	var actor string
+	if err := db.QueryRow(`SELECT COALESCE(actor_id,'') FROM audit_log WHERE entity_id='sale1' AND action='voided'`).Scan(&actor); err != nil {
+		t.Fatalf("read audit actor: %v", err)
+	}
+	if actor != "op7" {
+		t.Fatalf("audit actor_id = %q, want op7", actor)
+	}
+}
+
+func TestStatusEndpoint_UnknownSaleFailsAndWritesNoAudit(t *testing.T) {
+	db := setupStatusDB(t)
+	defer db.Close()
+	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRatePct: 20}}
+	mux := http.NewServeMux()
+	registerPOSAPI(mux, dp)
+
+	b, _ := json.Marshal(map[string]string{"saleId": "ghost", "status": "voided"})
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/sale/status", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("voiding a nonexistent sale returned %d, want 404", rec.Code)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id='ghost'`).Scan(&count); err != nil {
+		t.Fatalf("count audit rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("phantom void left %d audit row(s), want 0", count)
 	}
 }
