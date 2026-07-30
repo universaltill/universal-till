@@ -24,7 +24,7 @@
 
 /* ---------- Base ---------- */
 * { box-sizing: border-box; }
-html { font-size: 16px; }
+html { font-size: 17px; } /* 10-inch touch baseline (#144) */
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif,
@@ -87,20 +87,20 @@ body.menu-screen .session-admin-link { display: none; }
 
 /* Menu launcher page: a grid of large touch tiles. */
 .menu-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 1rem; margin-top: 1rem;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 1.1rem; margin-top: 1rem;
 }
 .menu-tile {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: .6rem; min-height: 130px; padding: 1.2rem;
+  gap: .7rem; min-height: 160px; padding: 1.4rem;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg); box-shadow: var(--shadow);
   color: var(--text); text-decoration: none; text-align: center;
   transition: transform .06s ease, border-color .15s ease;
 }
 .menu-tile:hover, .menu-tile:active { border-color: var(--brand); transform: translateY(-2px); }
-.menu-ico { font-size: 2.4rem; line-height: 1; }
-.menu-label { font-size: 1.05rem; font-weight: 600; }
+.menu-ico { font-size: 2.9rem; line-height: 1; }
+.menu-label { font-size: 1.2rem; font-weight: 600; }
 .btn-touch { min-height: 46px; display: inline-flex; align-items: center; }
 
 /* Language switcher on the touch menu page — big, obvious buttons so a
@@ -224,7 +224,9 @@ body.osk-padded { padding-block-end: 15.5rem; }
 .vg-row .chip-add input[type="text"] { inline-size: 7.5rem; }
 .vg-inactive > input, .vg-inactive > .chip-row { opacity: .55; }
 .vg-new { background: var(--surface-2); border-radius: 8px; padding-inline: .5rem; }
-@media (max-width: 900px) {
+/* Raised to 1300px (was 900): the 17px base (#144) widens .vg-cols'
+   fixed-rem sum past a 1280px 10-inch screen, so arm the scroll earlier. */
+@media (max-width: 1300px) {
   .variant-grid { overflow-x: auto; }
   .vg-cols { min-inline-size: 54rem; }
 }
@@ -354,8 +356,8 @@ label { font-size: .85rem; color: var(--text); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
   background: var(--accent); color: var(--accent-contrast);
-  border: 1px solid transparent; padding: .55rem .95rem; border-radius: 9px;
-  cursor: pointer; font: inherit; font-size: .9rem; font-weight: 600;
+  border: 1px solid transparent; padding: .7rem 1.15rem; border-radius: 9px;
+  cursor: pointer; font: inherit; font-size: 1rem; font-weight: 600; min-height: 3rem;
   text-decoration: none; line-height: 1.2;
   transition: background .12s ease, transform .05s ease;
 }
@@ -369,24 +371,24 @@ label { font-size: .85rem; color: var(--text); }
 .btn.danger:hover { background: #b91c1c; }
 a.btn, a.btn:hover { text-decoration: none; }
 .btn-actions { display: flex; gap: .25rem; justify-content: center; }
-.btn-actions .btn { padding: .4rem .6rem; font-size: .85rem; }
+.btn-actions .btn { padding: .4rem .6rem; font-size: .85rem; min-height: 0; }
 
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
-.grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+.grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .btn-tile {
-  display: flex; flex-direction: column; align-items: stretch; gap: .25rem;
-  padding: .35rem .35rem .45rem; border: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: stretch; gap: .3rem;
+  padding: .55rem .5rem .6rem; min-height: 8.5rem; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
   font: inherit; color: var(--text); cursor: pointer; text-align: center;
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
 }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .btn-tile:active { transform: scale(.97); }
-.tile-name { font-weight: 600; font-size: .8rem; line-height: 1.15; white-space: normal; }
-.tile-price { font-size: .82rem; color: var(--accent); font-weight: 700;
+.tile-name { font-weight: 600; font-size: .95rem; line-height: 1.2; white-space: normal; }
+.tile-price { font-size: .95rem; color: var(--accent); font-weight: 700;
               font-variant-numeric: tabular-nums; }
-.thumb { width: 100%; height: 54px; object-fit: contain;
+.thumb { width: 100%; height: 72px; object-fit: contain;
          border-radius: 7px; background: var(--surface-2); }
 .thumb.small { width: 40px; height: 40px; aspect-ratio: auto; margin-inline-end: .5rem;
                vertical-align: middle; }
