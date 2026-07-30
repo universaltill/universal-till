@@ -17,7 +17,9 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 )
 
-const releasesURL = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
+// releasesURL is a var (not const) purely as a test seam: tests point it at a
+// local httptest server so no test ever talks to the real GitHub API.
+var releasesURL = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
 
 // Status is the latest known release info.
 type Status struct {
@@ -48,10 +50,8 @@ func CheckNow(ctx context.Context) Status {
 // Start launches the background checker: once ~30s after boot, then daily.
 // Set UT_UPDATE_CHECK=0 to disable (e.g. air-gapped tills).
 func Start(ctx context.Context) {
-	if v := os.Getenv("UT_UPDATE_CHECK"); v != "" {
-		if on, err := strconv.ParseBool(v); err == nil && !on {
-			return
-		}
+	if !enabledFromEnv() {
+		return
 	}
 	go func() {
 		select {
@@ -71,6 +71,18 @@ func Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// enabledFromEnv reports whether the background checker should run at all:
+// only an explicit falsy UT_UPDATE_CHECK (e.g. "0", "false") disables it;
+// unset, truthy, or unparseable values leave it enabled.
+func enabledFromEnv() bool {
+	if v := os.Getenv("UT_UPDATE_CHECK"); v != "" {
+		if on, err := strconv.ParseBool(v); err == nil && !on {
+			return false
+		}
+	}
+	return true
 }
 
 func checkOnce(ctx context.Context) {

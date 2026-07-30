@@ -30,14 +30,26 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
-const releasesLatest = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
+// releasesLatest is a var (not const) purely as a test seam: tests point it at
+// a local httptest server so no test ever talks to the real GitHub API.
+var releasesLatest = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
+
+// Test seams. Production code never changes these; tests do, so that the full
+// Apply flow can run hermetically against a temp-dir "install" without ever
+// touching the real running binary or re-exec'ing the test process (a real
+// syscall.Exec would replace the test binary mid-run).
+var (
+	osExecutable = os.Executable
+	reexecFn     = reexec
+	reexecDelay  = 1500 * time.Millisecond
+)
 
 // ErrUnsupported means this install type updates via a native mechanism.
 var ErrUnsupported = errors.New("in-app update is only for archive (.tar.gz) installs; use the installer (Windows) or apt (.deb)")
 
 // Supported reports whether Apply can run for this build/install.
 func Supported() bool {
-	exe, err := os.Executable()
+	exe, err := osExecutable()
 	if err != nil {
 		return false
 	}
@@ -110,7 +122,7 @@ func Apply(ctx context.Context) error {
 	if !Supported() {
 		return ErrUnsupported
 	}
-	exe, err := os.Executable()
+	exe, err := osExecutable()
 	if err != nil {
 		return fmt.Errorf("locate executable: %w", err)
 	}
@@ -155,14 +167,18 @@ func Apply(ctx context.Context) error {
 	if err := download(ctx, archiveURL, archivePath); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
-	if checksumsURL != "" {
-		want, err := checksumFor(ctx, checksumsURL, archiveName)
-		if err != nil {
-			return err
-		}
-		if err := verifySHA256(archivePath, want); err != nil {
-			return err
-		}
+	// Fail closed: every real release ships checksums.txt (.goreleaser.yaml
+	// name_template), so a release without one only ever means a broken or
+	// tampered release — never install unverified.
+	if checksumsURL == "" {
+		return fmt.Errorf("release v%s has no checksums.txt — refusing to install an unverified update", version)
+	}
+	want, err := checksumFor(ctx, checksumsURL, archiveName)
+	if err != nil {
+		return err
+	}
+	if err := verifySHA256(archivePath, want); err != nil {
+		return err
 	}
 
 	// Extract to a staging dir (contains the new binary + web/).
@@ -209,8 +225,8 @@ func Apply(ctx context.Context) error {
 	log.Infof("[selfupdate] updated to v%s — restarting", version)
 	// Re-exec the new binary shortly, so the HTTP response can flush first.
 	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		if err := reexec(exe); err != nil {
+		time.Sleep(reexecDelay)
+		if err := reexecFn(exe); err != nil {
 			logging.L().Errorf("[selfupdate] re-exec failed (restart manually): %v", err)
 		}
 	}()
@@ -302,6 +318,11 @@ func verifySHA256(path, want string) error {
 	return nil
 }
 
+// extractLimit caps how many bytes a single archive entry may extract to
+// (zip-bomb guard). A var so tests can exercise the limit without writing
+// half-gigabyte fixtures.
+var extractLimit int64 = 512 << 20
+
 func extractTarGz(src, dst string) error {
 	f, err := os.Open(src)
 	if err != nil {
@@ -340,11 +361,18 @@ func extractTarGz(src, dst string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, io.LimitReader(tr, 512<<20)); err != nil {
-				out.Close()
+			// Read one byte past the cap so an over-limit entry fails loudly
+			// instead of silently truncating (a truncated binary would pass
+			// the swap — the archive checksum covers the .tar.gz, not the
+			// extracted files).
+			n, err := io.Copy(out, io.LimitReader(tr, extractLimit+1))
+			out.Close()
+			if err != nil {
 				return err
 			}
-			out.Close()
+			if n > extractLimit {
+				return fmt.Errorf("archive entry %s exceeds the %d-byte extraction limit", hdr.Name, extractLimit)
+			}
 		}
 	}
 }
