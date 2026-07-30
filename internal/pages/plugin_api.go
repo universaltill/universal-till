@@ -144,16 +144,8 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		// Create minimal manifest for installation
 		// In production, this would be extracted from the tarball
-		manifestPath := filepath.Join(tmpDir, fmt.Sprintf("plugin-%s.json", targetPlugin.ListingID))
-		manifestJSON := fmt.Sprintf(`{
-			       "id": "%s",
-			       "name": "%s",
-			       "version": "%s",
-			       "entrypoint": "./plugin",
-			       "runtime": "go"
-		       }`, targetPlugin.ListingID, targetPlugin.Name, targetPlugin.Version)
-
-		if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0644); err != nil {
+		manifestPath, err := writeSynthesizedManifest(targetPlugin.ListingID, targetPlugin.Name, targetPlugin.Version)
+		if err != nil {
 			http.Error(w, fmt.Sprintf("write manifest failed: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -309,19 +301,11 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		// For now, assume the package contains plugin.json and a binary
 		// In a real implementation, you'd extract the tarball and find these files
-		manifestPath := filepath.Join(tmpDir, "plugin.json")
 		binaryPath := packagePath // Simplified: treat package as binary
 
 		// Create a minimal manifest for testing (real implementation would extract from package)
-		manifestJSON := fmt.Sprintf(`{
-			"id": "%s",
-			"name": "%s",
-			"version": "%s",
-			"entrypoint": "./plugin",
-			"runtime": "go"
-		}`, pluginID, pluginID, version)
-
-		if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0644); err != nil {
+		manifestPath, err := writeSynthesizedManifest(pluginID, pluginID, version)
+		if err != nil {
 			http.Error(w, fmt.Sprintf("write manifest failed: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -456,6 +440,40 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /api/plugins/check-updates", handleCheckUpdates(d))
 	mux.HandleFunc("POST /api/plugins/import-from-file", handleImportFromFile(d))
 	mux.HandleFunc("GET /api/plugins/{id}/export", handleExportPlugin(d))
+}
+
+// writeSynthesizedManifest writes the minimal manifest the two legacy install
+// endpoints feed to InstallPlugin. Built with json.Marshal — never string
+// interpolation: a plugin name/version containing a quote used to produce
+// invalid JSON (breaking every legitimately-quoted name), and a crafted value
+// could inject arbitrary manifest fields. Written via os.CreateTemp so
+// concurrent installs can never clobber each other's manifest (the previous
+// fixed "plugin.json" path in the shared temp dir was a race).
+func writeSynthesizedManifest(id, name, version string) (string, error) {
+	manifestJSON, err := json.Marshal(map[string]string{
+		"id":         id,
+		"name":       name,
+		"version":    version,
+		"entrypoint": "./plugin",
+		"runtime":    "go",
+	})
+	if err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp("", "unitill-plugin-manifest-*.json")
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(manifestJSON); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 // handleInstallFromMarketplace handles marketplace plugin installation (T017)
