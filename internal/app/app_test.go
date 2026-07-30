@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -55,5 +57,41 @@ func TestDrainBackgroundServices_TimesOutAndLogsWhenWgNeverCompletes(t *testing.
 	}
 	if !found {
 		t.Fatal("expected an ERROR log noting background services were still running after timeout")
+	}
+}
+
+// Run must join its background goroutines on EVERY return path, not just a
+// caller-driven ctx cancel. This drives a real boot all the way through
+// enroll.Init (config.Init's default marketplace endpoint means a fresh,
+// unenrolled till always starts enroll's background registration/signing-key
+// loop) and then fails at server.Start's listen step on a deliberately
+// unbindable address — an early startup error, with the caller's ctx (never
+// cancelled here) still fully live. Before the fix, nothing told enroll's
+// loop to stop in this case, so Run's drain would always hit its full 10s
+// timeout waiting on a goroutine nothing had cancelled. Asserting Run returns
+// in well under that bound is what proves the internally-derived bgCtx (not
+// the caller's ctx) is what actually stops it.
+func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
+	t.Setenv("UT_DATA_DIR", t.TempDir())
+	t.Setenv("UT_ENV_FILE", filepath.Join(t.TempDir(), "does-not-exist.env"))
+	t.Setenv("UT_AUTH", "off")
+	t.Setenv("UT_OPEN_BROWSER", "false")
+	t.Setenv("UT_LISTEN_ADDR", "not-a-valid-listen-address") // server.Start fails fast at bind
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- Run(context.Background()) }() // ctx never cancelled by this test
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Run succeeded despite an unbindable UT_LISTEN_ADDR")
+		}
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Fatalf("Run took %s to return a startup error — background goroutines were "+
+				"apparently only stopped by the 10s drain timeout, not a real cancel", elapsed)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run did not return within 15s of an unbindable listen address")
 	}
 }

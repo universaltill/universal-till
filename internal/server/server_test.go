@@ -384,18 +384,19 @@ func TestBackgroundJobsStart_CancelStopsLoops(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("scheduler never reached the marketplace")
 	}
+
+	// Before cancel: wg must NOT already be at zero (a missing wg.Add on any
+	// of the 3 job goroutines would let Wait return instantly, vacuously
+	// "passing" the check below without ever tracking them).
+	if waitWithin(&wg, 150*time.Millisecond) {
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — job goroutines not tracked")
+	}
+
 	cancel()
 
 	// Deterministic proof the 3 job goroutines actually exited (not just a
 	// timing-based inference from silence on the requests channel below).
-	waitDone := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(waitDone)
-	}()
-	select {
-	case <-waitDone:
-	case <-time.After(5 * time.Second):
+	if !waitWithin(&wg, 5*time.Second) {
 		t.Fatal("BackgroundJobs goroutines did not join wg within 5s of context cancel")
 	}
 
@@ -538,6 +539,13 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 		t.Fatalf("GET %s -> %d %q, want 200 till-ok", url, resp.StatusCode, body)
 	}
 
+	// Before cancel: wg must NOT already be at zero — the shutdown goroutine
+	// is alive but parked on <-ctx.Done(), so a missing wg.Add there would
+	// let this vacuously "pass" without ever tracking it.
+	if waitWithin(&wg, 150*time.Millisecond) {
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — shutdown goroutine not tracked")
+	}
+
 	cancel()
 	select {
 	case err := <-errCh:
@@ -620,6 +628,13 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "[RelatedItems] rebuilt") {
 		t.Fatalf("related-items rebuild never ran at startup; log:\n%s", logBuf.String())
+	}
+
+	// Before cancel: wg must NOT already be at zero — the daily-backup and
+	// related-items goroutines are alive, parked on their own tickers, so a
+	// missing wg.Add on either would let this vacuously "pass" below.
+	if waitWithin(&wg, 150*time.Millisecond) {
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — a background goroutine was not tracked")
 	}
 
 	cancel()

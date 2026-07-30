@@ -18,10 +18,12 @@ import (
 // mid-write for a moment after Stop() returned, and t.TempDir()'s own
 // RemoveAll cleanup raced it, flaking with "TempDir RemoveAll cleanup:
 // directory not empty" (main CI 2026-07-30, run 30531313594) — worked around
-// there with a manual dir + retrying removal. That workaround is gone: a
-// single, un-retried RemoveAll succeeding right after Stop() is now the
-// actual proof the join works, not a tolerated flake. Cleanup order (LIFO):
-// Stop runs first, then t.TempDir()'s own (single-attempt) removal.
+// there with a manual dir + retrying removal. That workaround is gone. NOTE:
+// this is a regression canary, not a proof by itself — it only ever caught
+// the bug as a rare, timing-dependent CI flake (a clean local run here proves
+// nothing on its own; internal/app and internal/server carry the actual
+// deterministic join tests). Cleanup order (LIFO): Stop runs first, then
+// t.TempDir()'s own (single-attempt) removal.
 func mobileTestEnv(t *testing.T) string {
 	t.Helper()
 	t.Setenv("UT_AUTH", "off")
