@@ -22,6 +22,8 @@
   <div class="card kpi"><div class="kpi-label">{{ T "reports.revenue" }}</div><div class="kpi-value">{{ money .GrandTotal }}</div></div>
   <div class="card kpi"><div class="kpi-label">{{ T "reports.sales" }}</div><div class="kpi-value">{{ .GrandCount }}</div></div>
   <div class="card kpi"><div class="kpi-label">{{ T "reports.tax" }}</div><div class="kpi-value">{{ money .GrandTax }}</div></div>
+  <div class="card kpi"><div class="kpi-label">{{ T "reports.refunds" }}</div><div class="kpi-value">{{ money .GrandRefunds }}</div></div>
+  <div class="card kpi"><div class="kpi-label">{{ T "reports.net" }}</div><div class="kpi-value">{{ money .GrandNet }}</div></div>
 </div>
 
 {{ if .IsManager }}

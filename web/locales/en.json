@@ -523,6 +523,8 @@
   "reports.revenue": "Revenue",
   "reports.sales": "Sales",
   "reports.tax": "Tax",
+  "reports.refunds": "Refunds",
+  "reports.net": "Net",
   "reports.this_till": "This till",
   "reports.title": "Reports",
   "reports.today": "Today",
