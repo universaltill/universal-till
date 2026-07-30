@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/issuereport"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 func withTempPendingDir(t *testing.T) {
@@ -32,31 +35,52 @@ func registeredCfg(url string) *config.Config {
 // field the cloud-side receiving endpoint (ADR-0022 spec 012 Phase 2)
 // expects, including an optional video and the recent-logs lines — this
 // function had zero direct coverage before this batch.
+//
+// The bundle is built directly (not via issuereport.Save, which pulls
+// Meta.Logs from the process-wide logging.Recent() ring buffer — shared,
+// mutable, order-dependent across the whole test binary) so Logs and
+// CreatedAt are known values this test can actually assert against,
+// instead of merely asserting a field is present.
 func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
-	withTempPendingDir(t)
-	id, err := issuereport.Save("printer jammed", []byte("fake-audio"), []byte("fake-video"))
-	if err != nil {
-		t.Fatalf("Save: %v", err)
+	dir := t.TempDir()
+	audioPath := filepath.Join(dir, "audio.webm")
+	if err := os.WriteFile(audioPath, []byte("fake-audio"), 0o644); err != nil {
+		t.Fatalf("write audio fixture: %v", err)
 	}
-	bundles, err := issuereport.Pending()
-	if err != nil || len(bundles) != 1 {
-		t.Fatalf("Pending: %v (%d bundles)", err, len(bundles))
+	videoPath := filepath.Join(dir, "video.webm")
+	if err := os.WriteFile(videoPath, []byte("fake-video"), 0o644); err != nil {
+		t.Fatalf("write video fixture: %v", err)
 	}
-	b := bundles[0]
+	createdAt := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	b := issuereport.Bundle{
+		Meta: issuereport.Meta{
+			ID:        "report-123",
+			Note:      "printer jammed",
+			CreatedAt: createdAt,
+			Logs: []logging.Problem{
+				{At: createdAt, Level: "WARN", Msg: "printer offline"},
+				{At: createdAt, Level: "ERROR", Msg: "paper jam sensor tripped"},
+			},
+		},
+		Dir:       dir,
+		AudioPath: audioPath,
+		VideoPath: videoPath,
+	}
 
-	var gotStoreID, gotDeviceless, gotReportID, gotNote, gotAuth string
+	var gotStoreID, gotReportID, gotNote, gotAuth, gotCreatedAt string
 	var gotAudio, gotVideo []byte
-	var gotLogFields int
+	var gotLogs []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
-			t.Fatalf("server: parse multipart: %v", err)
+			t.Errorf("server: parse multipart: %v", err)
+			return
 		}
 		gotStoreID = r.FormValue("store_id")
-		gotDeviceless = r.FormValue("device_id")
 		gotReportID = r.FormValue("report_id")
 		gotNote = r.FormValue("note")
-		gotLogFields = len(r.MultipartForm.Value["logs"])
+		gotCreatedAt = r.FormValue("created_at")
+		gotLogs = append([]string(nil), r.MultipartForm.Value["logs"]...)
 		if fh := r.MultipartForm.File["audio"]; len(fh) == 1 {
 			f, _ := fh[0].Open()
 			gotAudio = make([]byte, fh[0].Size)
@@ -79,18 +103,24 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 	if gotAuth != "Bearer tok-1" {
 		t.Fatalf("auth header = %q", gotAuth)
 	}
-	if gotStoreID != "store-1" || gotReportID != id || gotNote != "printer jammed" {
+	if gotStoreID != "store-1" || gotReportID != "report-123" || gotNote != "printer jammed" {
 		t.Fatalf("fields: store=%q report=%q note=%q", gotStoreID, gotReportID, gotNote)
 	}
-	_ = gotDeviceless // device_id: no enrolled device in this test, empty string is fine
+	if gotCreatedAt != createdAt.Format("2006-01-02T15:04:05.000000000Z07:00") {
+		t.Fatalf("created_at = %q", gotCreatedAt)
+	}
 	if string(gotAudio) != "fake-audio" {
 		t.Fatalf("audio = %q", gotAudio)
 	}
 	if string(gotVideo) != "fake-video" {
 		t.Fatalf("video = %q", gotVideo)
 	}
-	if gotLogFields < 0 {
-		t.Fatalf("logs fields = %d", gotLogFields)
+	wantLogs := []string{
+		createdAt.Format("2006-01-02T15:04:05Z07:00") + "\tWARN\tprinter offline",
+		createdAt.Format("2006-01-02T15:04:05Z07:00") + "\tERROR\tpaper jam sensor tripped",
+	}
+	if len(gotLogs) != len(wantLogs) || gotLogs[0] != wantLogs[0] || gotLogs[1] != wantLogs[1] {
+		t.Fatalf("logs = %v, want %v", gotLogs, wantLogs)
 	}
 }
 
@@ -208,7 +238,9 @@ func TestUploadPendingIssueReportsFullCycle(t *testing.T) {
 		}
 		t.Fatalf("remaining pending = %v, want only %q", ids, failID)
 	}
-	_ = okID
+	if _, err := os.Stat(filepath.Join(issuereport.PendingDir, okID)); !os.IsNotExist(err) {
+		t.Fatalf("discarded bundle dir for %q should be gone, stat err = %v", okID, err)
+	}
 }
 
 // Pending() itself erroring (not just "no bundles yet") must not panic the
