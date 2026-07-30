@@ -102,6 +102,41 @@ compiling mutation before counting it.)
   DB failure silently renders tiles without the customize flag —
   noted; behavior choice predates this batch.
 
+## Addendum — third real bug, found by the PR's own CI gate (medium)
+
+After the main review, the PR's playwright job failed **twice,
+deterministically**, on `settings-osk.spec.ts` + `ui-scale-basket.spec.ts`
+while main stayed green on identical runner images and the suite passed
+locally AND in a matching Linux container. Root-caused, not waved off as
+flake:
+
+- **The product bug**: the sale screen's scan input has `autofocus`; on
+  slow machines (busy CI runners — and the real field Pi) it gains focus
+  BEFORE the deferred `osk.js` attaches its `focusin` listener, and a
+  click on an already-focused input fires no focus events — so with OSK
+  forced on, the keyboard silently never appeared for the very first
+  field until focus left and came back. Empirically proven both ways:
+  on fast machines `#osk` is already open right after load (the
+  autofocus event itself lands after listener attach), which is the only
+  reason the old spec ever passed. Fixed in `web/public/osk.js`: at
+  init, catch up with `document.activeElement` (guarded by the same
+  `enabled`/`wantsOSK` conditions as the focusin handler).
+- **The cascade**: the failed OSK spec never reached its inline
+  `osk=auto` restore, so `ui-scale-basket` ran with the keyboard
+  covering its submit button and its scan click hung. Fixed by moving
+  the restore to `test.afterEach` (runs on failure too).
+- **Deterministic regression test**: new spec delays `osk.js` by 700ms
+  via `page.route` so autofocus always wins the race, then asserts the
+  keyboard appears with NO click. Proven red against unfixed osk.js
+  (exact CI failure mode), green with the fix.
+
+Independent addendum review (opus): **APPROVE ADDENDUM**, no MUST/
+SHOULD-FIX — re-proved the red/green arc itself with retries off, ran
+the full 20/20 suite, verified `show()` idempotence (double-show safe,
+`inputmode` save guarded), auto/non-touch short-circuit, kiosk/Android
+IME-suppression path unchanged, and no leftover servers. One cosmetic
+nitpick (unroute placement) accepted as-is.
+
 ## Adjacent findings logged to QUEUE.md (not chased here)
 
 - `internal/plugins/storage` dead package (above).
