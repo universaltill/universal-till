@@ -32,9 +32,9 @@
       <div class="muted catalog-detail-label">{{ T "catalog.cost_price" }}</div>
       <form class="chip-add" hx-post="/api/catalog/item-cost" hx-target="#catalog-variants" hx-swap="outerHTML">
         <input type="hidden" name="panelItem" value="{{ .ItemID }}">
-        <input type="number" name="cost" step="0.01" min="0" style="max-inline-size:7rem"
+        <input type="number" name="cost" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" min="0" style="max-inline-size:7rem"
                value="{{ .CostMajor }}"
-               placeholder="0.00" title="{{ T "catalog.cost_price_hint" }}">
+               placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}" title="{{ T "catalog.cost_price_hint" }}">
         <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
       </form>
     </aside>
