@@ -23,7 +23,7 @@ func (s *Store) LoadRuntimeConfig(ctx context.Context, cfg *config.Config) {
 	}
 
 	curr_symbol, _, _ := s.Get(ctx, "store.currency_symbol")
-	if curr != "" {
+	if curr_symbol != "" {
 		cfg.Locales.CurrencySymbol = curr_symbol
 	}
 
@@ -61,7 +61,7 @@ func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error
 	if err := s.Set(ctx, "store.locale", cfg.Locales.Locale); err != nil {
 		return err
 	}
-	if err := s.Set(ctx, "pos.tax_inclusive", strconv.FormatBool(cfg.Locales.TaxInclusive)); err != nil {
+	if err := s.Set(ctx, "store.tax_inclusive", strconv.FormatBool(cfg.Locales.TaxInclusive)); err != nil {
 		return err
 	}
 	if err := s.Set(ctx, "store.tax_rate", strconv.Itoa(cfg.Locales.TaxRate)); err != nil {
