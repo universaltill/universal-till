@@ -125,6 +125,13 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	}
 	defer tx.Rollback()
 
+	// A legacy on-disk manifest can carry payment keys that predate
+	// ADR-0031's validation — rolling back must not restore a colliding
+	// tender key that a fresh install would reject.
+	if err := validatePaymentEntryKeys(ctx, repo, tx, pluginID, manifest.Entries); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
 	// Update plugins table
 	if err := repo.UpdatePluginVersion(ctx, tx, pluginID, targetVersion, manifest.Entrypoint, "installed"); err != nil {
 		return err

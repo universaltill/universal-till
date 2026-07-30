@@ -133,6 +133,51 @@ func ComputeSHA256(filePath string) (string, error) {
 }
 
 // PersistManifest saves the manifest to database tables
+// validatePaymentEntryKeys enforces ADR-0031's install-time half for every
+// path that writes plugin_entries type='payment' (PersistManifest AND
+// Rollback — a legacy on-disk manifest can carry keys that predate
+// validation). Keys must be non-empty, whitespace-clean, contain no ':'
+// (reserved namespace separator), and not collide with a non-plugin tender
+// or another plugin's payment key. The plugin's own keys never
+// self-conflict, so reinstall/upgrade pass.
+func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
+	var paymentKeys []string
+	for _, e := range entries {
+		if e.Type != "payment" {
+			continue
+		}
+		if e.Key == "" {
+			return fmt.Errorf("payment entry has an empty key")
+		}
+		if e.Key != strings.TrimSpace(e.Key) {
+			return fmt.Errorf("payment entry key %q has surrounding whitespace", e.Key)
+		}
+		if strings.Contains(e.Key, ":") {
+			return fmt.Errorf("payment entry key %q must not contain ':'", e.Key)
+		}
+		paymentKeys = append(paymentKeys, e.Key)
+	}
+	if len(paymentKeys) == 0 {
+		return nil
+	}
+	conflicts, err := repo.FindPaymentKeyConflicts(ctx, tx, pluginID, paymentKeys)
+	if err != nil {
+		return fmt.Errorf("check payment key conflicts: %w", err)
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	c := conflicts[0]
+	switch {
+	case c.Owner == "":
+		return fmt.Errorf("payment entry key %q collides with an existing built-in or shop-configured tender — pick a plugin-specific key", c.Key)
+	case !c.OwnerInstalled:
+		return fmt.Errorf("payment entry key %q belongs to plugin %s, which is no longer installed — its tender row is retained for sales history; reinstall it or pick a different key", c.Key, c.Owner)
+	default:
+		return fmt.Errorf("payment entry key %q is already provided by plugin %s — pick a different key", c.Key, c.Owner)
+	}
+}
+
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {
 	repo := data.NewPluginRepo(db)
 	tx, err := db.BeginTx(ctx, nil)
@@ -142,6 +187,14 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	defer tx.Rollback()
 
 	now := time.Now().UTC()
+
+	// 0. Payment-entry keys become payment_methods ids verbatim — a key
+	// colliding with a built-in tender or another plugin's method must be
+	// rejected here, loudly, instead of silently never materializing
+	// (the sync layer's ownership guard refuses the capture; ADR-0031).
+	if err := validatePaymentEntryKeys(ctx, repo, tx, m.ID, m.Entries); err != nil {
+		return err
+	}
 
 	// 1. Ensure a plugin_catalog row exists — plugins(id,version) has a
 	// foreign key onto plugin_catalog, and locally imported plugins have no

@@ -1053,11 +1053,83 @@ ORDER BY pe.sort_order, pe.label`)
 	return out, rows.Err()
 }
 
+// PaymentKeyConflict is an install-time payment-entry key collision.
+type PaymentKeyConflict struct {
+	Key            string
+	Owner          string // owning plugin id; empty = built-in or shop-created tender
+	OwnerInstalled bool   // false when the owning plugin's row is gone (uninstalled; its tender row is retained for sales history)
+}
+
+// FindPaymentKeyConflicts returns, for the candidate payment-entry keys of
+// pluginID, those already taken by a non-plugin payment method (built-in or
+// shop-created via EnsurePaymentMethod) or by ANOTHER plugin's payment
+// entry. The plugin's own existing keys never conflict, so reinstall and
+// upgrade stay clean. Companion to SyncPluginPaymentMethods' ownership
+// guard (ADR-0031): the guard makes a collision harmless, this makes it
+// loud at install time.
+func (r *PluginRepo) FindPaymentKeyConflicts(ctx context.Context, tx *sql.Tx, pluginID string, keys []string) ([]PaymentKeyConflict, error) {
+	exec := r.executor(tx)
+	var out []PaymentKeyConflict
+	for _, key := range keys {
+		var owner sql.NullString
+		var ownerInstalled int
+		err := exec.QueryRowContext(ctx, `
+SELECT pm.plugin_id, CASE WHEN p.id IS NULL THEN 0 ELSE 1 END
+FROM payment_methods pm
+LEFT JOIN plugins p ON p.id = pm.plugin_id
+WHERE pm.id = ?`, key).Scan(&owner, &ownerInstalled)
+		switch {
+		case err == sql.ErrNoRows:
+			// no method row; fall through to the entry check
+		case err != nil:
+			return nil, pluginObs.wrap("payment_key_conflicts", err)
+		case !owner.Valid || owner.String == "":
+			out = append(out, PaymentKeyConflict{Key: key})
+			continue
+		case owner.String != pluginID:
+			out = append(out, PaymentKeyConflict{Key: key, Owner: owner.String, OwnerInstalled: ownerInstalled == 1})
+			continue
+		}
+		var entryOwner string
+		err = exec.QueryRowContext(ctx, `
+SELECT plugin_id FROM plugin_entries
+WHERE type = 'payment' AND key = ? AND plugin_id != ? LIMIT 1`, key, pluginID).Scan(&entryOwner)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return nil, pluginObs.wrap("payment_key_conflicts", err)
+		}
+		out = append(out, PaymentKeyConflict{Key: key, Owner: entryOwner, OwnerInstalled: true})
+	}
+	return out, nil
+}
+
 // SyncPluginPaymentMethods derives payment_methods rows from active plugins'
 // payment entries: upserts a method per entry (id = entry key) and
 // deactivates plugin-backed methods whose plugin is gone or disabled.
 // Rows are never deleted — payments history references them.
+//
+// Ownership guard (ADR-0031): the upsert only updates a conflicting row the
+// same plugin already owns. A key colliding with a built-in (plugin_id NULL)
+// or another plugin's method leaves the existing row untouched — the entry
+// simply doesn't materialize (and install-time validation in
+// plugins.PersistManifest rejects such keys with a clear error). Before this
+// guard a plugin declaring key "cash" captured the built-in cash tender, and
+// the deactivate step below then removed cash from checkout entirely when
+// the plugin went away (migration 021 repairs tills hit by that).
 func (r *PluginRepo) SyncPluginPaymentMethods(ctx context.Context) error {
+	// Standing invariant, re-asserted EVERY run (not just migration 021):
+	// the seeded built-ins are never plugin-owned. Damage can re-enter a
+	// repaired till after the one-shot migration — e.g. LAN admin sync
+	// from a not-yet-upgraded primary — and the hijacking plugin may not
+	// even exist locally, so the deactivate step below would otherwise pin
+	// the row inactive forever.
+	if _, err := r.db.ExecContext(ctx, `
+UPDATE payment_methods SET plugin_id = NULL, is_active = 1
+WHERE id IN ('cash', 'card', 'gift') AND plugin_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("sync plugin payment methods (built-in invariant): %w", err)
+	}
 	if _, err := r.db.ExecContext(ctx, `
 INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id)
 SELECT pe.key, pe.label,
@@ -1068,16 +1140,19 @@ JOIN plugins p ON p.id = pe.plugin_id
 WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
-    is_active = 1,
-    plugin_id = excluded.plugin_id`); err != nil {
+    is_active = 1
+WHERE payment_methods.plugin_id = excluded.plugin_id`); err != nil {
 		return fmt.Errorf("sync plugin payment methods (upsert): %w", err)
 	}
+	// Ownership-aware: only the OWNING plugin's live entries keep a row
+	// active — an unrelated plugin's entry with the same key must not.
 	if _, err := r.db.ExecContext(ctx, `
 UPDATE payment_methods SET is_active = 0
-WHERE plugin_id IS NOT NULL AND id NOT IN (
-    SELECT pe.key FROM plugin_entries pe
+WHERE plugin_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM plugin_entries pe
     JOIN plugins p ON p.id = pe.plugin_id
     WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
+      AND pe.key = payment_methods.id AND pe.plugin_id = payment_methods.plugin_id
 )`); err != nil {
 		return fmt.Errorf("sync plugin payment methods (deactivate): %w", err)
 	}
