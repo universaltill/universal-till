@@ -103,6 +103,33 @@ func TestPOSRepo_SalesByDay_AggregatesFiltersOrders(t *testing.T) {
 	}
 }
 
+func TestPOSRepo_RefundsByWindow_SumsReturnsFiltersOthers(t *testing.T) {
+	d := b8OpenDB(t, "refundsbywindow.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	now := b8At(time.Now().Add(-2 * time.Hour))
+	old := b8At(time.Now().Add(-9 * 24 * time.Hour))
+
+	// Two completed returns inside the 7-day window: count 2, total 300+150.
+	b8Sale(t, d, "r1", now, "completed", "return", 0, 300)
+	b8Sale(t, d, "r2", now, "completed", "return", 0, 150)
+	// A completed sale (not a return): must not count.
+	b8Sale(t, d, "s1", now, "completed", "sale", 0, 9999)
+	// A voided return: excluded by status.
+	b8Sale(t, d, "r3", now, "voided", "return", 0, 8888)
+	// A completed return outside the 7-day window: must not count.
+	b8Sale(t, d, "r4", old, "completed", "return", 0, 7777)
+
+	total, count, err := repo.RefundsByWindow(ctx, 7)
+	if err != nil {
+		t.Fatalf("RefundsByWindow: %v", err)
+	}
+	if total != 450 || count != 2 {
+		t.Fatalf("RefundsByWindow = (total=%d, count=%d), want (450, 2)", total, count)
+	}
+}
+
 func TestPOSRepo_SlowItems_AscendingWithFiltersAndLimit(t *testing.T) {
 	d := b8OpenDB(t, "slowitems.db")
 	ctx := context.Background()
@@ -362,7 +389,7 @@ func TestPOSRepo_SeasonalUpcoming_YearAgoWindowAndSuggestions(t *testing.T) {
 	mustExec(t, d, `INSERT INTO item_variants (id, item_id, name, price) VALUES ('v2', 'scarf', 'Red', 800)`)
 	b8Item(t, d, "berry", 300, nil, 1) // fractional (weighed) quantities
 	b8Stock(t, d, "inv3", "berry", "loc1", 1)
-	b8Item(t, d, "middle", 100, nil, 1) // pins the days<=0 default at 28, not less
+	b8Item(t, d, "middle", 100, nil, 1)  // pins the days<=0 default at 28, not less
 	b8Item(t, d, "retired", 100, nil, 0) // inactive: excluded
 	b8Item(t, d, "tooOld", 100, nil, 1)
 	b8Item(t, d, "tooRecent", 100, nil, 1)
@@ -621,6 +648,9 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if rates, err := repo.ItemDailySellRates(ctx, 7); err != nil || len(rates) != 0 {
 		t.Fatalf("ItemDailySellRates empty = (%#v, %v)", rates, err)
 	}
+	if total, count, err := repo.RefundsByWindow(ctx, 7); err != nil || total != 0 || count != 0 {
+		t.Fatalf("RefundsByWindow empty = (%d, %d, %v)", total, count, err)
+	}
 
 	// A closed DB must surface an error from every report, never a silent
 	// empty result (batch-7 convention; also exercises the query-error wraps).
@@ -654,5 +684,8 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	}
 	if _, err := repo.ItemDailySellRates(ctx, 7); err == nil {
 		t.Fatal("ItemDailySellRates on a closed DB must error")
+	}
+	if _, _, err := repo.RefundsByWindow(ctx, 7); err == nil {
+		t.Fatal("RefundsByWindow on a closed DB must error")
 	}
 }

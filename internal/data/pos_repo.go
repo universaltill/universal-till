@@ -705,6 +705,22 @@ GROUP BY day ORDER BY day DESC`, fmt.Sprintf("-%d days", days))
 	return out, rows.Err()
 }
 
+// RefundsByWindow sums completed returns for the last N days — the
+// counterpart SalesByDay excludes (SalesByDay's own doc comment), so
+// callers that show gross-of-returns revenue can still surface refunds
+// alongside it (e.g. /reports' Refunds/Net KPIs).
+func (r *POSRepo) RefundsByWindow(ctx context.Context, days int) (total int64, count int, err error) {
+	err = r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(total), 0), COUNT(*)
+FROM sales
+WHERE status = 'completed' AND sale_type = 'return' AND created_at >= datetime('now', ?)`,
+		fmt.Sprintf("-%d days", days)).Scan(&total, &count)
+	if err != nil {
+		return 0, 0, fmt.Errorf("refunds by window: %w", err)
+	}
+	return total, count, nil
+}
+
 // TopItems returns the best sellers by revenue for the last N days.
 func (r *POSRepo) TopItems(ctx context.Context, days, limit int) ([]TopItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
