@@ -214,8 +214,14 @@ func TestInitHonorsEnvOverrides(t *testing.T) {
 	if cfg.Locales.TaxInclusive {
 		t.Error("TaxInclusive should be false")
 	}
+	// Two distinct fields, two distinct env vars — UT_DEFAULT_LOCALE drives
+	// Locales.Locale, UT_MARKETPLACE_LOCALE drives the top-level
+	// DefaultLocale; easy to conflate since the names point the other way.
+	if cfg.Locales.Locale != "de-DE" {
+		t.Errorf("Locales.Locale = %q, want the UT_DEFAULT_LOCALE override", cfg.Locales.Locale)
+	}
 	if cfg.DefaultLocale != "de-DE" {
-		t.Errorf("DefaultLocale = %q", cfg.DefaultLocale)
+		t.Errorf("DefaultLocale = %q, want the UT_MARKETPLACE_LOCALE override", cfg.DefaultLocale)
 	}
 }
 
