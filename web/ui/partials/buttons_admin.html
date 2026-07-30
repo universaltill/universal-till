@@ -115,7 +115,7 @@ htmx.on('body', 'htmx:afterRequest', function(evt) {
             hx-post="/api/buttons/add"
             hx-target="#buttons-grid-admin"
             hx-swap="outerHTML"
-            hx-vals='{"label":"{{ .Name }}","code":"{{ .Barcode }}","itemId":"{{ .ItemID }}","imageUrl":"{{ .Image }}"}'
+            hx-vals='{{ .AddVals }}'
             hx-on="htmx:afterRequest: document.getElementById('search-results').style.display='none'">
       {{ if .Image }}<img class="thumb" src="{{ .Image }}" alt="{{ .Name }}" />{{ end }}
       <span class="text">
