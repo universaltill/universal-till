@@ -30,8 +30,8 @@ jobs:
         run: bash scripts/ci/guard-webkit-version.sh
       - name: Kiosk launch flags guard
         run: bash scripts/ci/guard-kiosk-launch-flags.sh
-      - name: Kiosk autostart guard
-        run: bash scripts/ci/guard-kiosk-autostart.sh
+      - name: Kiosk boot fixes guard
+        run: bash scripts/ci/guard-kiosk-boot-fixes.sh
       - name: Emoji font guard
         run: bash scripts/ci/guard-emoji-font.sh
       - name: Build
