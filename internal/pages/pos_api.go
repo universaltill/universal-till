@@ -665,8 +665,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "saleId and status required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, "", in.Reason); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, getSessionUserID(r), in.Reason); err != nil {
+			code := http.StatusBadRequest
+			if errors.Is(err, data.ErrSaleNotFound) {
+				code = http.StatusNotFound
+			}
+			http.Error(w, err.Error(), code)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

@@ -275,12 +275,13 @@ VALUES ('sale-blank', '000000010', 'completed', 'sale', 'GBP', 100, 100, '2026-0
 		t.Fatalf("SaleCompletedAt(blank) = ok=%v err=%v, want (false,nil)", ok, err)
 	}
 
-	// NULL completed_at is a Scan error today (string dest), not (false,nil) —
-	// pin the current behavior so a change here is a conscious one.
+	// NULL completed_at reads back as "not completed", same contract as
+	// blank — fixed 2026-07-30 (was a scan error into a string dest;
+	// pos_api.go:616 swallowed it and proceeded with a zero time).
 	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, total, created_at, completed_at)
 VALUES ('sale-null', '000000011', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:00:00Z', NULL)`)
-	if _, ok, err := repo.SaleCompletedAt(ctx, "sale-null"); err == nil || ok {
-		t.Fatalf("SaleCompletedAt(NULL) = ok=%v err=%v, expected the current scan-error behavior", ok, err)
+	if _, ok, err := repo.SaleCompletedAt(ctx, "sale-null"); err != nil || ok {
+		t.Fatalf("SaleCompletedAt(NULL) = ok=%v err=%v, want (false,nil)", ok, err)
 	}
 
 	// Unparseable timestamp is an explicit error.
@@ -341,12 +342,11 @@ func TestPOSRepo_UpdateSaleStatus(t *testing.T) {
 		t.Fatalf("voided_at must survive later transitions: %q -> %q", voidedAt.String, voidedAt2.String)
 	}
 
-	// Unknown sale id: silent no-op, no error — callers get no signal.
-	// This pins CURRENT behavior (no RowsAffected check), not documented
-	// intent; a QUEUE follow-up exists to surface the no-op to callers,
-	// and fixing it must consciously update this assertion.
-	if err := repo.UpdateSaleStatus(ctx, nil, "no-such-sale", "voided"); err != nil {
-		t.Fatalf("UpdateSaleStatus(unknown) = %v, want nil (current silent no-op)", err)
+	// Unknown sale id: an explicit error — fixed 2026-07-30 (was a silent
+	// no-op with no RowsAffected check, so voids of nonexistent sales
+	// "succeeded" and still left an audit row via internal/pos).
+	if err := repo.UpdateSaleStatus(ctx, nil, "no-such-sale", "voided"); err == nil {
+		t.Fatal("UpdateSaleStatus(unknown) = nil, want a not-found error")
 	}
 
 	// Transactional path: a rollback discards the status change.

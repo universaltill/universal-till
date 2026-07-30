@@ -511,7 +511,11 @@ WHERE i.reorder_level > 0
 `
 	args := []any{}
 	if locationID != "" {
-		query += ` AND inv.location_id = ?`
+		// inv.location_id IS NULL = never stocked anywhere (LEFT JOIN
+		// missed; the column itself is NOT NULL so this can't over-match)
+		// — a new item awaiting its first delivery belongs on every
+		// location's reorder list.
+		query += ` AND (inv.location_id = ? OR inv.location_id IS NULL)`
 		args = append(args, locationID)
 	}
 	query += ` ORDER BY i.name`
@@ -591,7 +595,7 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants iv ON iv.id = sl.variant_id
 LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
 LEFT JOIN dept_roots dr ON dr.id = it.category_id
-WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
 GROUP BY department
 ORDER BY revenue DESC`, fmt.Sprintf("-%d days", days))
 	if err != nil {
@@ -629,7 +633,7 @@ SELECT s.till_id, COALESCE(t.name, '') AS name,
        COUNT(*) AS cnt, COALESCE(SUM(s.total), 0) AS revenue
 FROM sales s
 LEFT JOIN tills t ON t.id = s.till_id
-WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
 GROUP BY s.till_id
 ORDER BY revenue DESC`, fmt.Sprintf("-%d days", days))
 	if err != nil {
@@ -659,7 +663,7 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants iv ON iv.id = sl.variant_id
 LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
 LEFT JOIN dept_roots dr ON dr.id = it.category_id
-WHERE s.status = 'completed' AND date(s.created_at) = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at) = date(?)
 GROUP BY department
 ORDER BY revenue DESC`, day)
 	if err != nil {
@@ -678,11 +682,13 @@ ORDER BY revenue DESC`, day)
 }
 
 // SalesByDay aggregates completed sales per day for the last N days.
+// Returns are excluded, matching DayTotal on the same dashboard (and
+// SlowItems/busyBuckets); TaxSummary is the fiscal view and nets them.
 func (r *POSRepo) SalesByDay(ctx context.Context, days int) ([]DailySales, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT date(created_at) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0)
 FROM sales
-WHERE status = 'completed' AND created_at >= datetime('now', ?)
+WHERE status = 'completed' AND sale_type = 'sale' AND created_at >= datetime('now', ?)
 GROUP BY day ORDER BY day DESC`, fmt.Sprintf("-%d days", days))
 	if err != nil {
 		return nil, fmt.Errorf("sales by day: %w", err)
@@ -705,7 +711,7 @@ func (r *POSRepo) TopItems(ctx context.Context, days, limit int) ([]TopItem, err
 SELECT sl.name_snapshot, SUM(sl.quantity), COALESCE(SUM(sl.total_after_tax), 0) AS revenue
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
 GROUP BY sl.name_snapshot ORDER BY revenue DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
 	if err != nil {
 		return nil, fmt.Errorf("top items: %w", err)
@@ -768,7 +774,7 @@ WHERE i.is_active = 1 AND inv.quantity > 0
     SELECT DISTINCT COALESCE(NULLIF(sl.item_id, ''), v.item_id) FROM sale_lines sl
     JOIN sales s ON s.id = sl.sale_id
     LEFT JOIN item_variants v ON v.id = sl.variant_id
-    WHERE s.status = 'completed'
+    WHERE s.status = 'completed' AND s.sale_type = 'sale'
       AND COALESCE(NULLIF(sl.item_id, ''), v.item_id) IS NOT NULL
       AND s.created_at >= datetime('now', ?)
   )
@@ -1005,7 +1011,7 @@ func (r *POSRepo) PaymentBreakdown(ctx context.Context, days int) ([]MethodTotal
 SELECT p.method_id, COUNT(*), COALESCE(SUM(p.amount - p.change_given), 0) AS applied
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
 GROUP BY p.method_id ORDER BY applied DESC`, fmt.Sprintf("-%d days", days))
 	if err != nil {
 		return nil, fmt.Errorf("payment breakdown: %w", err)
@@ -2031,15 +2037,22 @@ func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID string) (int
 }
 
 // UpdateSaleStatus updates sale status (and optionally voided_at when voided).
+// ErrSaleNotFound reports a status update against a sale id that doesn't
+// exist — callers distinguish it (404) from validation failures (400).
+var ErrSaleNotFound = errors.New("sale not found")
+
 func (r *POSRepo) UpdateSaleStatus(ctx context.Context, tx *sql.Tx, saleID, status string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := r.exec(tx).ExecContext(ctx, `
+	res, err := r.exec(tx).ExecContext(ctx, `
 UPDATE sales
 SET status = ?, voided_at = CASE WHEN ? = 'voided' THEN ? ELSE voided_at END
 WHERE id = ?
 `, status, status, now, saleID)
 	if err != nil {
 		return fmt.Errorf("update sale status: %w", err)
+	}
+	if n, rerr := res.RowsAffected(); rerr == nil && n == 0 {
+		return fmt.Errorf("update sale status: %w: %s", ErrSaleNotFound, saleID)
 	}
 	return nil
 }
@@ -2333,14 +2346,15 @@ func (r *POSRepo) SaleTotals(ctx context.Context, saleID string) (string, int64,
 
 // SaleCompletedAt returns the completed_at timestamp for a sale.
 func (r *POSRepo) SaleCompletedAt(ctx context.Context, saleID string) (time.Time, bool, error) {
-	var completed string
-	err := r.db.QueryRowContext(ctx, `SELECT completed_at FROM sales WHERE id = ?`, saleID).Scan(&completed)
+	var completedNS sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT completed_at FROM sales WHERE id = ?`, saleID).Scan(&completedNS)
 	if err == sql.ErrNoRows {
 		return time.Time{}, false, nil
 	}
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("sale completed_at: %w", err)
 	}
+	completed := completedNS.String
 	if strings.TrimSpace(completed) == "" {
 		return time.Time{}, false, nil
 	}
