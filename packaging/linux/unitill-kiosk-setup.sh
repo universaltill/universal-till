@@ -17,7 +17,13 @@
 set -euo pipefail
 
 [ "$(id -u)" = 0 ] || { echo "Run with sudo."; exit 1; }
-KIOSK_USER="${SUDO_USER:-pi}"
+# Prefer the sudo caller (manual `sudo bash unitill-kiosk-setup.sh` run); when
+# invoked without sudo (e.g. auto-run from postinstall as root, no SUDO_USER),
+# fall back to the first regular non-system account -- current Raspberry Pi
+# Imager images ask for a custom username since Bookworm, there is no "pi"
+# user by default anymore. Last resort: "pi", for older images.
+KIOSK_USER="${SUDO_USER:-$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 {print $1; exit}')}"
+KIOSK_USER="${KIOSK_USER:-pi}"
 id "$KIOSK_USER" >/dev/null 2>&1 || { echo "User $KIOSK_USER not found — run via sudo from the login user."; exit 1; }
 
 echo "==> Installing kiosk packages (cage + chromium)…"
@@ -69,6 +75,17 @@ Conflicts=getty@tty1.service
 User=${KIOSK_USER}
 PAMName=login
 TTYPath=/dev/tty1
+# Debian 13 (trixie) on Pi5 boots with the active VT on tty7, not tty1 --
+# without forcing it, cage's logind session never becomes active and cage
+# dies with "Timeout waiting session to become active" (confirmed live on a
+# field Pi5, 2026-07-30). The leading "+" runs this as root regardless of
+# the service's own User=.
+ExecStartPre=+/usr/bin/chvt 1
+# This service runs under PAMName=login (a logind session), but seatd is
+# also installed above -- without pinning the backend, libseat picks seatd
+# instead and fails "Could not poll connection: Broken pipe" (confirmed live
+# on the same field Pi5).
+Environment=LIBSEAT_BACKEND=logind
 StandardInput=tty
 StandardOutput=journal
 StandardError=journal

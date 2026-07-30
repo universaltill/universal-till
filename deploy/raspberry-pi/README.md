@@ -1,5 +1,15 @@
 # Universal Till on a Raspberry Pi (dedicated till)
 
+> **⚠️ Deprecated, unsupported on current Raspberry Pi OS.** This X11/
+> autologin path needs "Pi OS with Desktop" and a desktop autologin session
+> — current Raspberry Pi OS tracks Debian 13 (trixie), which no longer sets
+> this up as cleanly, and this path has never received the tty1/logind
+> fixes proven necessary on a real Pi5 (see `packaging/linux/
+> unitill-kiosk-setup.sh`'s `ExecStartPre=chvt 1` / `LIBSEAT_BACKEND`).
+> **Use `packaging/linux/unitill-kiosk-setup.sh` instead** (Wayland/cage) —
+> that's the path the `.deb` ships and now auto-enables on Pi hardware with
+> no manual step at all. Kept here for reference only, not deleted.
+
 Turns a Raspberry Pi into a boot-to-POS kiosk:
 
 - **`unitill-pos.service`** — runs the POS binary on boot (`UT_KIOSK=1` enables
