@@ -217,6 +217,59 @@ func TestSaveRuntimeConfig_RoundTripsThroughLoad(t *testing.T) {
 	}
 }
 
+// 001_init.sql seeds "store.name"='My Store' by default, and baseCfg() also
+// uses "My Store" — so TestLoadRuntimeConfig_EmptyStoreKeepsDefaults can't
+// actually distinguish "kept cfg.StoreName" from "read the seeded row" for
+// this field (an independent review of this batch caught the same blind
+// spot the currency_symbol test above was already fixed for). Clear the
+// seeded row and use a cfg value that couldn't be confused with it.
+func TestLoadRuntimeConfig_EmptyNameKeepsCfgDefault(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "settings.db")
+	s := NewStore(d.DB)
+	if err := data.NewSettingsRepo(d.DB).Delete(ctx, "store.name"); err != nil {
+		t.Fatalf("clear seeded default: %v", err)
+	}
+
+	cfg := baseCfg()
+	cfg.StoreName = "Farshid's Shop"
+	s.LoadRuntimeConfig(ctx, cfg)
+
+	if cfg.StoreName != "Farshid's Shop" {
+		t.Fatalf("StoreName = %q, want unchanged cfg default %q when store.name is genuinely unset", cfg.StoreName, "Farshid's Shop")
+	}
+}
+
+// SaveRuntimeConfig's bug #2 above was exactly a key-name divergence
+// between what it wrote and what LoadRuntimeConfig/pages/common read back —
+// the round-trip test catches Save and Load disagreeing, but not both
+// sides silently agreeing on the WRONG key. Pin the literal key names here
+// (rather than referencing internal/pages/common's Key* constants, which
+// would risk an import cycle since common imports settings) so a future
+// rename on either side fails loudly.
+func TestSaveRuntimeConfig_WritesExpectedKeys(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "settings.db")
+	s := NewStore(d.DB)
+
+	if err := s.SaveRuntimeConfig(ctx, baseCfg()); err != nil {
+		t.Fatalf("SaveRuntimeConfig: %v", err)
+	}
+
+	all, err := s.All(ctx)
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	for _, k := range []string{
+		"theme", "store.name", "store.currency", "store.currency_symbol",
+		"store.locale", "store.tax_inclusive", "store.tax_rate",
+	} {
+		if _, ok := all[k]; !ok {
+			t.Errorf("SaveRuntimeConfig did not write expected key %q (all keys: %v)", k, all)
+		}
+	}
+}
+
 func TestSaveRuntimeConfig_PropagatesRepoError(t *testing.T) {
 	ctx := context.Background()
 	d := openMigratedDB(t, "settings.db")
