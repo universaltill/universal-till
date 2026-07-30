@@ -458,6 +458,27 @@ func TestUpdateSaleStatus_Void(t *testing.T) {
 	}
 }
 
+func TestUpdateSaleStatus_UnknownSaleErrorsAndWritesNoAudit(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	// Voiding a sale that doesn't exist must fail loudly — and the whole
+	// transaction must roll back, leaving NO "voided" audit row for a sale
+	// that was never voided (audit-log poisoning, batch 8 review).
+	err := UpdateSaleStatus(ctx, db, "no-such-sale", "voided", "actor1", "phantom")
+	if err == nil {
+		t.Fatal("UpdateSaleStatus(unknown sale) = nil, want error")
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id='no-such-sale'`).Scan(&count); err != nil {
+		t.Fatalf("count audit rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("phantom void left %d audit row(s), want 0", count)
+	}
+}
+
 func TestCompleteSale_AllowsChangeAcrossPayments(t *testing.T) {
 	ctx := context.Background()
 	db := setupSaleDB(t)

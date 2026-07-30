@@ -39,7 +39,7 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 	return []ai.AskTool{
 		{
 			Name:        "sales_by_day",
-			Description: "Daily sales totals: per day the number of completed sales, revenue total and tax total (minor units).",
+			Description: "Daily sales totals: per day the number of completed sales, revenue total and tax total (minor units). Returns/refunds are excluded, not netted.",
 			Params:      days,
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
 				return repo.SalesByDay(ctx, intArg(args, "days", 14, 1, 365))
@@ -47,7 +47,7 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 		},
 		{
 			Name:        "top_items",
-			Description: "Best-selling items over a period: name, quantity sold, revenue (minor units).",
+			Description: "Best-selling items over a period: name, quantity sold, revenue (minor units). Returns/refunds are excluded.",
 			Params: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
