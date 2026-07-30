@@ -499,7 +499,7 @@ SELECT
 	i.id,
 	i.name,
 	COALESCE(i.sku, ''),
-	inv.location_id,
+	COALESCE(inv.location_id, ''),
 	COALESCE(sl.name, ''),
 	COALESCE(inv.quantity, 0),
 	i.reorder_level
@@ -871,8 +871,8 @@ SELECT sl.name_snapshot,
        CAST(SUM(sl.quantity * COALESCE(v.cost_price, i.cost_price)) AS INTEGER) AS cost
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-LEFT JOIN items i ON i.id = sl.item_id
 LEFT JOIN item_variants v ON v.id = sl.variant_id
+LEFT JOIN items i ON i.id = COALESCE(NULLIF(sl.item_id, ''), v.item_id)
 WHERE s.status = 'completed' AND s.sale_type = 'sale'
   AND s.created_at >= datetime('now', ?)
   AND COALESCE(v.cost_price, i.cost_price) IS NOT NULL
