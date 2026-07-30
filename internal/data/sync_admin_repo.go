@@ -30,6 +30,8 @@ type adminTable struct {
 	// kept-but-retired row must release values like sku/username, or the
 	// primary's row upserts into a UNIQUE violation and the whole apply
 	// rolls back — on every pull, forever.
+	skipCols []string // till-LOCAL columns that must never travel: excluded
+	// from the dump and ignored on apply even if an older primary sends them.
 }
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
@@ -44,7 +46,10 @@ var adminTables = []adminTable{
 	{name: "brands", pk: []string{"id"}, unique: []string{"name"}},
 	{name: "categories", pk: []string{"id"}},
 	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"}},
-	{name: "payment_methods", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
+	// plugin_id is till-local derived state (which plugin installed on THIS
+	// till owns the method) — importing it re-hijacks a repaired built-in
+	// from a not-yet-upgraded primary (ADR-0031).
+	{name: "payment_methods", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}, skipCols: []string{"plugin_id"}},
 	{name: "users", pk: []string{"id"}, hasIsActive: true, unique: []string{"username"}},
 	{name: "items", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "item_barcodes", pk: []string{"barcode"}},
@@ -119,6 +124,11 @@ func (r *SyncAdminRepo) DumpAdmin(ctx context.Context) (AdminBundle, error) {
 				}
 			}
 			recs = kept
+		}
+		for _, c := range t.skipCols {
+			for _, rec := range recs {
+				delete(rec, c)
+			}
 		}
 		bundle.Tables[t.name] = recs
 	}
@@ -313,10 +323,17 @@ func upsertRow(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, rec
 	for _, c := range t.pk {
 		isPK[c] = true
 	}
+	skip := map[string]bool{}
+	for _, c := range t.skipCols {
+		skip[c] = true
+	}
 	var names []string
 	var args []any
 	var sets []string
 	for _, c := range cols {
+		if skip[c] {
+			continue // till-local column; ignore even if an older primary sends it
+		}
 		v, ok := rec[c]
 		if !ok {
 			continue // column the primary doesn't know (newer replica schema)
