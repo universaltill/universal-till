@@ -918,8 +918,8 @@ ORDER BY name COLLATE NOCASE
 
 func (r *PluginRepo) ListInstalledPlugins(ctx context.Context) ([]InstalledPluginRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, version, '' as author, COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active
-FROM plugins 
+SELECT id, name, version, COALESCE(author, ''), COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active
+FROM plugins
 WHERE is_active = 1
 `)
 	if err != nil {
