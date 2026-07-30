@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -157,21 +158,34 @@ func TestLoadState_NegativeOverridesIgnored(t *testing.T) {
 	}
 }
 
-// A non-numeric stored value must not panic or corrupt state — LoadState
-// silently falls back rather than propagating a parse error.
-func TestLoadState_UnparsableValuesFallBackSilently(t *testing.T) {
+// A non-numeric/non-bool stored value must not panic or corrupt state —
+// LoadState silently falls back to the cfg default rather than propagating
+// a parse error. Uses a cfg whose TaxInclusive default is TRUE specifically
+// so this is a real proof, not a coincidence: strconv.ParseBool/Atoi/
+// ParseFloat's own error-path zero values (false/0/0.0) all happen to equal
+// this package's OTHER defaults, so a naive assertion here could pass even
+// if LoadState discarded the cfg default and fell through to a bare zero
+// value instead of actually keeping it (a real bug this test caught in
+// TaxInclusive/AllowNegativeInventory: they used to do exactly that, via
+// `st.TaxInclusive, _ = strconv.ParseBool(v)` swallowing the error and
+// leaving the zero value — fixed to guard on `err == nil` like every
+// sibling field already does).
+func TestLoadState_UnparsableValuesFallBackToCfgDefault(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	for _, k := range []string{KeyTaxInclusive, KeyUIScale, KeyTaxRate, KeyIdleLock, KeyKioskIdleReset} {
+	for _, k := range []string{KeyTaxInclusive, KeyUIScale, KeyTaxRate, KeyIdleLock, KeyKioskIdleReset, "pos.allow_negative_inventory"} {
 		if err := store.Set(ctx, k, "not-a-number"); err != nil {
 			t.Fatalf("seed %s: %v", k, err)
 		}
 	}
 
-	st := LoadState(ctx, store, baseCfg())
+	cfg := baseCfg()
+	cfg.Locales.TaxInclusive = true // distinguishes "kept the cfg default" from "fell to the zero value"
 
-	if st.TaxInclusive {
-		t.Errorf("TaxInclusive = true from unparsable value, want default false")
+	st := LoadState(ctx, store, cfg)
+
+	if !st.TaxInclusive {
+		t.Errorf("TaxInclusive = false from an unparsable stored value, want cfg default true (must not silently discard it)")
 	}
 	if st.UIScale != 0 {
 		t.Errorf("UIScale = %v from unparsable value, want 0", st.UIScale)
@@ -184,6 +198,38 @@ func TestLoadState_UnparsableValuesFallBackSilently(t *testing.T) {
 	}
 	if st.KioskIdleResetSeconds != DefaultKioskIdleResetSeconds {
 		t.Errorf("KioskIdleResetSeconds = %d from unparsable value, want default %d", st.KioskIdleResetSeconds, DefaultKioskIdleResetSeconds)
+	}
+	// AllowNegativeInventory's own "default" is a fixed false, not cfg-derived,
+	// so an unparsable value must still leave it at that same false — this
+	// assertion alone can't distinguish the bug (false is both the buggy
+	// zero-value AND the correct default here), which is exactly why
+	// TaxInclusive above is pinned to true instead.
+	if st.AllowNegativeInventory {
+		t.Errorf("AllowNegativeInventory = true from unparsable value, want default false")
+	}
+}
+
+// 001_init.sql seeds "store.currency"='GBP' by default, and baseCfg() also
+// uses "GBP" — so every other LoadState test in this file can't actually
+// distinguish "fell back to cfg.Locales.Currency" from "read the seeded
+// row" for the Currency field. Clear the seeded row and use a cfg default
+// that couldn't be confused with it, so this one genuinely proves the
+// get(KeyCurrency, cfg.Locales.Currency) wiring, not just its coincidental
+// agreement with the migration's own default.
+func TestLoadState_CurrencyFallsBackToCfgDefaultWhenUnset(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "state.db")
+	store := settings.NewStore(d.DB)
+	if err := data.NewSettingsRepo(d.DB).Delete(ctx, KeyCurrency); err != nil {
+		t.Fatalf("clear seeded default: %v", err)
+	}
+
+	cfg := baseCfg()
+	cfg.Locales.Currency = "JPY"
+
+	st := LoadState(ctx, store, cfg)
+	if st.Currency != "JPY" {
+		t.Fatalf("Currency = %q, want cfg default %q when store.currency is genuinely unset", st.Currency, "JPY")
 	}
 }
 
@@ -262,10 +308,32 @@ func TestBuildMenu(t *testing.T) {
 	if got[1] != want {
 		t.Errorf("BuildMenu()[1] = %+v, want %+v", got[1], want)
 	}
+}
 
-	// The base slice itself must not be mutated (BuildMenu appends to a copy).
+// BuildMenu must not write into the caller's backing array — a naive
+// `items := base` (rather than a fresh copy) would only be caught if base
+// has spare capacity, since Go's append reuses backing storage when it
+// fits. A same-length composite literal always has len==cap, so append
+// reallocates regardless of whether BuildMenu copies first — this test
+// gives base real spare capacity via a sentinel so a missing copy is
+// actually observable.
+func TestBuildMenu_DoesNotWriteIntoCallersBackingArray(t *testing.T) {
+	backing := make([]MenuItem, 2, 4)
+	backing[0] = MenuItem{Href: "/", Label: "Home"}
+	sentinel := MenuItem{Href: "/sentinel", Label: "Sentinel"}
+	backing[1] = sentinel
+	base := backing[:1] // len 1, cap 4 — plenty of room for append to reuse in place
+
+	pm := &plugins.Manager{MenuPlugins: map[string]plugins.MenuPlugin{
+		"a": {Route: "/plugin-a", Label: "Plugin A"},
+	}}
+	_ = BuildMenu(base, pm)
+
+	if backing[1] != sentinel {
+		t.Fatalf("BuildMenu overwrote the caller's backing array at index 1: got %+v, want untouched sentinel %+v", backing[1], sentinel)
+	}
 	if len(base) != 1 {
-		t.Fatalf("BuildMenu mutated the caller's base slice: len=%d, want 1", len(base))
+		t.Fatalf("BuildMenu mutated the caller's base slice header: len=%d, want 1", len(base))
 	}
 }
 
