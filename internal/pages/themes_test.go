@@ -28,7 +28,7 @@ func themeTestDeps(t *testing.T) (*common.Deps, string, string) {
 	}
 	t.Cleanup(func() { db.Close() })
 	for _, s := range []string{
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, is_active INTEGER NOT NULL DEFAULT 1, runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
+		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER NOT NULL DEFAULT 1, runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
 		`CREATE TABLE plugin_entries (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, type TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, config_json TEXT, sort_order INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
 	} {
 		if _, err := db.Exec(s); err != nil {

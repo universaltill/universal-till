@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -160,10 +161,13 @@ func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadReques
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Open/create .part file
+	// Open/create .part file. O_RDWR, not O_WRONLY: the resume path below
+	// re-reads the existing content to seed the hash, and reading a
+	// write-only descriptor fails with EBADF — which made EVERY resumed
+	// download fail (proven by TestDownloadResumesFromPartFile).
 	var f *os.File
 	if resumeFrom > 0 {
-		f, err = os.OpenFile(partFile, os.O_WRONLY|os.O_APPEND, 0644)
+		f, err = os.OpenFile(partFile, os.O_RDWR|os.O_APPEND, 0644)
 	} else {
 		f, err = os.Create(partFile)
 	}
@@ -198,7 +202,7 @@ func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadReques
 	// Verify checksum
 	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
 	if actualChecksum != req.ExpectedChecksum {
-		return nil, fmt.Errorf("checksum mismatch: expected %s, got %s", req.ExpectedChecksum, actualChecksum)
+		return nil, fmt.Errorf("%w: expected %s, got %s", errChecksumMismatch, req.ExpectedChecksum, actualChecksum)
 	}
 
 	return &DownloadResult{
@@ -264,18 +268,22 @@ func (dm *DownloadManager) copyFile(src, dst string) error {
 	return dstFile.Sync()
 }
 
+// errChecksumMismatch marks a completed download whose content hash doesn't
+// match the marketplace-issued checksum. Permanent: re-downloading the same
+// artifact (worse — RESUMING from the already-complete corrupt .part file)
+// can never fix it.
+var errChecksumMismatch = errors.New("checksum mismatch")
+
 // isRetryable determines if an error should trigger a retry
 func (dm *DownloadManager) isRetryable(err error) bool {
-	// Retry on network errors, timeouts, and transient HTTP errors
-	// Don't retry on context cancellation or checksum mismatches
-	if err == context.Canceled || err == context.DeadlineExceeded {
+	// Retry on network errors, timeouts, and transient HTTP errors.
+	// Don't retry on context cancellation or checksum mismatches. Errors from
+	// downloadOnce arrive wrapped, so plain == comparison would never match.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-
-	// Checksum mismatch is not retryable
-	if fmt.Sprintf("%v", err) == "checksum mismatch" {
+	if errors.Is(err, errChecksumMismatch) {
 		return false
 	}
-
 	return true
 }

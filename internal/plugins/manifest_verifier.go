@@ -135,6 +135,14 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	// Signature verification (if public key configured)
 	result.SignatureVerified = mv.publicKey == nil // true if no verification configured
 
+	// Fail closed: with a public key configured, an unsigned manifest must be
+	// rejected, not silently skipped (every marketplace-published manifest is
+	// signed; a missing signature only ever means tampered/hand-built input).
+	// Dev mode — no key configured — is unaffected.
+	if mv.publicKey != nil && manifest.Signature == "" {
+		result.Errors = append(result.Errors, "manifest missing required field: signature (public key is configured)")
+	}
+
 	if mv.publicKey != nil && manifest.Signature != "" {
 		// Verify Ed25519 signature
 		sigBytes, err := hex.DecodeString(manifest.Signature)
@@ -220,10 +228,11 @@ func (mv *ManifestVerifier) VerifyCompatibility(manifest *Manifest, systemArch, 
 		return fmt.Errorf("incompatible architecture: plugin requires %s, system is %s", manifest.DeviceArch, systemArch)
 	}
 
-	// Check minimum POS version (if specified)
+	// Check minimum POS version (if specified). Compare numerically per part —
+	// a lexicographic string compare mis-orders any double-digit component
+	// ("0.2.49" < "0.2.5", "0.10.0" < "0.9.0").
 	if manifest.MinPOSVersion != "" {
-		// Simple version comparison (semantic versioning would be better in production)
-		if manifest.MinPOSVersion > posVersion {
+		if compareVersions(manifest.MinPOSVersion, posVersion) > 0 {
 			return fmt.Errorf("incompatible POS version: plugin requires >= %s, system is %s", manifest.MinPOSVersion, posVersion)
 		}
 	}

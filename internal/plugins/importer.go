@@ -43,21 +43,33 @@ type ImportResult struct {
 	Warnings      []string
 }
 
+// maxExtractedPluginBytes caps how much a plugin archive may expand to on
+// disk. The archive FILE is size-checked before extraction, but compressed
+// data can expand orders of magnitude (a decompression bomb) — without a cap
+// on the extracted output a 200MB upload could fill the till's disk before
+// checkDiskBudget (which runs after extraction) ever sees it. 1GB matches the
+// documented per-plugin storage budget in checkDiskBudget.
+const maxExtractedPluginBytes = int64(1024 * 1024 * 1024)
+
 // Importer handles manual plugin imports from local files
 type Importer struct {
 	db             *sql.DB
 	pluginBaseDir  string
 	verifier       *ManifestVerifier
 	manifestParser func(io.Reader) (*Manifest, error)
+	// maxExtractedBytes bounds total decompressed output per import
+	// (maxExtractedPluginBytes unless a test lowers it).
+	maxExtractedBytes int64
 }
 
 // NewImporter creates a new plugin importer
 func NewImporter(db *sql.DB, pluginBaseDir string, verifier *ManifestVerifier) *Importer {
 	return &Importer{
-		db:             db,
-		pluginBaseDir:  pluginBaseDir,
-		verifier:       verifier,
-		manifestParser: ParseManifest,
+		db:                db,
+		pluginBaseDir:     pluginBaseDir,
+		verifier:          verifier,
+		manifestParser:    ParseManifest,
+		maxExtractedBytes: maxExtractedPluginBytes,
 	}
 }
 
@@ -89,9 +101,14 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 		req.Format = detectFormat(req.FilePath)
 	}
 
-	// Create temporary extraction directory
-	tempDir := filepath.Join(imp.pluginBaseDir, "tmp", fmt.Sprintf("import-%d", os.Getpid()))
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
+	// Create temporary extraction directory. MkdirTemp (not a fixed
+	// pid-derived name): two imports in the same process would otherwise
+	// share one directory and extract over / delete each other.
+	if err := os.MkdirAll(filepath.Join(imp.pluginBaseDir, "tmp"), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	tempDir, err := os.MkdirTemp(filepath.Join(imp.pluginBaseDir, "tmp"), "import-*")
+	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
@@ -115,17 +132,13 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 		return nil, fmt.Errorf("invalid manifest: %w", err)
 	}
 
-	// Verify manifest (signature check can be skipped in dev-mode)
+	// Verify manifest (signature check can be skipped in dev-mode). The
+	// manifest was already parsed above; VerifyManifest re-reads the file
+	// itself, so there is nothing to reopen (the old reopen leaked the new
+	// handle — the deferred Close was bound to the original one).
 	if !req.SkipSignature && imp.verifier != nil {
-		manifestFile.Close()
-		_, err := imp.verifier.VerifyManifest(manifestPath)
-		if err != nil {
+		if _, err := imp.verifier.VerifyManifest(manifestPath); err != nil {
 			return nil, fmt.Errorf("manifest verification failed: %w", err)
-		}
-		// Reopen for parsing
-		manifestFile, err = os.Open(manifestPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to reopen manifest: %w", err)
 		}
 	}
 
@@ -192,6 +205,35 @@ func (imp *Importer) extractArchive(archivePath, destDir string, format ImportFo
 	}
 }
 
+// extractBudget tracks the total decompressed output of one extraction so a
+// small archive can't expand into a disk-filling bomb. Not safe for
+// concurrent use; each extraction gets its own.
+type extractBudget struct {
+	remaining int64
+}
+
+func (imp *Importer) newExtractBudget() *extractBudget {
+	limit := imp.maxExtractedBytes
+	if limit <= 0 {
+		limit = maxExtractedPluginBytes
+	}
+	return &extractBudget{remaining: limit}
+}
+
+// copy streams src into dst, failing loudly (never truncating silently) once
+// the archive's total decompressed output exceeds the budget.
+func (b *extractBudget) copy(dst io.Writer, src io.Reader) error {
+	n, err := io.Copy(dst, io.LimitReader(src, b.remaining+1))
+	if err != nil {
+		return err
+	}
+	b.remaining -= n
+	if b.remaining < 0 {
+		return fmt.Errorf("archive decompresses beyond the allowed size and exceeds the extraction limit")
+	}
+	return nil
+}
+
 // extractZip extracts a ZIP archive with security checks
 func (imp *Importer) extractZip(archivePath, destDir string) error {
 	reader, err := zip.OpenReader(archivePath)
@@ -200,6 +242,7 @@ func (imp *Importer) extractZip(archivePath, destDir string) error {
 	}
 	defer reader.Close()
 
+	budget := imp.newExtractBudget()
 	for _, file := range reader.File {
 		target := filepath.Join(destDir, file.Name)
 
@@ -232,7 +275,7 @@ func (imp *Importer) extractZip(archivePath, destDir string) error {
 			return fmt.Errorf("failed to open file in archive: %w", err)
 		}
 
-		_, err = io.Copy(outFile, rc)
+		err = budget.copy(outFile, rc)
 		rc.Close()
 		outFile.Close()
 
@@ -260,6 +303,7 @@ func (imp *Importer) extractTarGz(archivePath, destDir string) error {
 
 	tarReader := tar.NewReader(gzReader)
 
+	budget := imp.newExtractBudget()
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -292,7 +336,7 @@ func (imp *Importer) extractTarGz(archivePath, destDir string) error {
 				return fmt.Errorf("failed to create file: %w", err)
 			}
 
-			if _, err := io.Copy(outFile, tarReader); err != nil {
+			if err := budget.copy(outFile, tarReader); err != nil {
 				outFile.Close()
 				return fmt.Errorf("failed to write file: %w", err)
 			}
