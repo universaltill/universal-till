@@ -118,29 +118,32 @@ func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 		t.Fatalf("expected 200 issuing a token, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	// The QR payload (json with token+url) is embedded as plain text too.
-	start := strings.Index(body, `{"token"`)
+	// The manual "code" in the <code> element must be the OPAQUE code, not
+	// raw JSON leaking {"url":…,"token":…} to whoever reads the screen (#7).
+	marker := `<code style="user-select:all">`
+	start := strings.Index(body, marker)
 	if start == -1 {
-		start = strings.Index(body, `{"url"`)
+		t.Fatalf("expected a <code> element with the enrolment code, got %s", body)
 	}
-	if start == -1 {
-		t.Fatalf("expected the enrolment payload embedded in the response, got %s", body)
-	}
+	start += len(marker)
 	end := strings.Index(body[start:], "</code>")
 	if end == -1 {
-		t.Fatalf("expected a closing </code> after the payload, got %s", body)
+		t.Fatalf("expected a closing </code>, got %s", body)
 	}
-	payload := body[start : start+end]
-	var parsed struct{ URL, Token string }
-	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
-		t.Fatalf("expected valid JSON payload, got %q: %v", payload, err)
+	code := body[start : start+end]
+	for _, bad := range []string{"{", "\"token\"", "\"url\""} {
+		if strings.Contains(code, bad) {
+			t.Fatalf("rendered code still leaks %q: %s", bad, code)
+		}
 	}
-	if parsed.Token == "" || parsed.URL != "http://192.168.1.10:8080" {
-		t.Fatalf("unexpected payload: %+v", parsed)
+	// It must decode back to the primary URL + a token.
+	url, token, err := decodeEnrollCode(code)
+	if err != nil || url != "http://192.168.1.10:8080" || token == "" {
+		t.Fatalf("rendered code did not decode: url=%q token=%q err=%v", url, token, err)
 	}
 
 	// Consume the token to enrol a new replica.
-	enrollBody, _ := json.Marshal(map[string]string{"token": parsed.Token, "name": "Till 2"})
+	enrollBody, _ := json.Marshal(map[string]string{"token": token, "name": "Till 2"})
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(enrollBody)))
 	req.Header.Set("Content-Type", "application/json")
@@ -345,13 +348,15 @@ func issueEnrolCode(t *testing.T, mux http.Handler, primaryURL string) string {
 		t.Fatalf("issue enrol token: code %d body %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	start := strings.Index(body, `{"url"`)
+	marker := `<code style="user-select:all">`
+	start := strings.Index(body, marker)
 	if start == -1 {
-		start = strings.Index(body, `{"token"`)
+		t.Fatalf("could not find the enrol code in %q", body)
 	}
+	start += len(marker)
 	end := strings.Index(body[start:], "</code>")
-	if start == -1 || end == -1 {
-		t.Fatalf("could not find the enrol payload in %q", body)
+	if end == -1 {
+		t.Fatalf("could not find closing </code> in %q", body)
 	}
 	return body[start : start+end]
 }
@@ -558,5 +563,38 @@ func TestTillsPage_ListsEnrolledTills(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Front Till") {
 		t.Fatalf("expected the enrolled till listed, got body without it")
+	}
+}
+
+// --- pairing code is opaque, not raw JSON (issue #7) ---
+
+func TestEnrollCode_RoundTripOpaque(t *testing.T) {
+	code := encodeEnrollCode("http://192.168.1.10:8080", "tok-abc123")
+	// The manual code the manager reads/pastes must NOT leak the JSON
+	// internals a customer/staffer shouldn't see or mistype.
+	for _, bad := range []string{"{", "}", "\"", "token", "http", "url"} {
+		if strings.Contains(code, bad) {
+			t.Fatalf("enroll code leaks %q: %s", bad, code)
+		}
+	}
+	url, tok, err := decodeEnrollCode(code)
+	if err != nil || url != "http://192.168.1.10:8080" || tok != "tok-abc123" {
+		t.Fatalf("round-trip failed: url=%q tok=%q err=%v", url, tok, err)
+	}
+}
+
+func TestDecodeEnrollCode_LegacyRawJSON(t *testing.T) {
+	// A QR/paste from a not-yet-upgraded primary is raw JSON — still accept it.
+	url, tok, err := decodeEnrollCode(`{"url":"http://10.0.0.9:8080","token":"legacy"}`)
+	if err != nil || url != "http://10.0.0.9:8080" || tok != "legacy" {
+		t.Fatalf("legacy JSON decode failed: url=%q tok=%q err=%v", url, tok, err)
+	}
+}
+
+func TestDecodeEnrollCode_Rejects(t *testing.T) {
+	for _, bad := range []string{"", "   ", "not-a-code", "eyJ4IjoxfQ", `{"url":"","token":""}`, `{"url":"x"}`} {
+		if _, _, err := decodeEnrollCode(bad); err == nil {
+			t.Fatalf("expected error for %q", bad)
+		}
 	}
 }
