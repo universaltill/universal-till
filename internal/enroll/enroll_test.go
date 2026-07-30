@@ -120,7 +120,7 @@ func TestInitFreshTillDoesNotRegisterStore(t *testing.T) {
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL)
 
-	Init(context.Background(), cfg, kv)
+	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
 
 	deviceID := kv.get(keyDeviceID)
 	if !strings.HasPrefix(deviceID, "till-") {
@@ -243,7 +243,7 @@ func TestInitAlreadyEnrolledSkipsRegistration(t *testing.T) {
 	}
 	cfg := freshConfig(srv.URL)
 
-	Init(context.Background(), cfg, kv)
+	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
 
 	if cfg.Marketplace.ClientID != "store-old" || cfg.Marketplace.StoreID != "store-old" {
 		t.Fatalf("cfg not filled from persisted enrolment: %q/%q", cfg.Marketplace.ClientID, cfg.Marketplace.StoreID)
@@ -268,7 +268,7 @@ func TestInitExplicitConfigWinsAndSkipsEnrolment(t *testing.T) {
 	cfg.Marketplace.PublicKey = strings.Repeat("ef", 32)
 	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-1")
 
-	Init(context.Background(), cfg, kv)
+	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
 
 	time.Sleep(50 * time.Millisecond)
 	if *calls != 0 {
@@ -291,7 +291,7 @@ func TestEnsureRegisteredRetriesAcrossAttempts(t *testing.T) {
 	srv, calls := testMarketplace(t, 2) // first two register calls fail
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL)
-	Init(context.Background(), cfg, kv)
+	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
 
 	for i := 1; i <= 3; i++ {
 		eff := EnsureRegistered(context.Background(), cfg, kv)
@@ -314,7 +314,7 @@ func TestInitKeylessExplicitTillStillFetchesSigningKey(t *testing.T) {
 	cfg := freshConfig(srv.URL)
 	cfg.Marketplace.ClientID = "merchant-1" // explicit merchant, but no public key
 
-	Init(context.Background(), cfg, kv)
+	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
 
 	waitFor(t, "signing key", func() bool { return kv.get(keyPublicKey) != "" })
 	time.Sleep(50 * time.Millisecond)
@@ -323,6 +323,62 @@ func TestInitKeylessExplicitTillStillFetchesSigningKey(t *testing.T) {
 	}
 	if eff := Effective(cfg); eff.Marketplace.PublicKey != strings.Repeat("ab", 32) {
 		t.Fatalf("effective public key = %q", eff.Marketplace.PublicKey)
+	}
+}
+
+// Init's background registration loop must be genuinely joinable: wg.Wait()
+// must NOT return while the loop is still in flight (a missing wg.Add would
+// let Wait return immediately, vacuously "passing" without ever tracking the
+// goroutine), and MUST return promptly once ctx is cancelled (a missing
+// wg.Done, or a goroutine that ignores cancellation, would hang it forever).
+// Both directions matter: this is what lets a caller (app.Run, at shutdown)
+// safely assume nothing this goroutine touches is still live once Wait
+// returns. Uses a handler that blocks until the request's own context is
+// cancelled, so the fetch is provably still in flight until then, and a
+// channel the handler closes on entry so the test knows the goroutine has
+// genuinely reached the blocked call before asserting anything.
+func TestInit_BackgroundLoopJoinsOnCancel(t *testing.T) {
+	resetState()
+	reqReceived := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ui/api/signing-key", func(w http.ResponseWriter, r *http.Request) {
+		close(reqReceived)
+		<-r.Context().Done() // never respond on its own — only ctx cancel ends this
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	kv := newFakeKV()
+	cfg := freshConfig(srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	Init(ctx, cfg, kv, &wg)
+
+	select {
+	case <-reqReceived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background loop never reached the signing-key request")
+	}
+
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+
+	// The request is still blocked server-side — wg.Wait() must NOT be done yet.
+	select {
+	case <-waitDone:
+		t.Fatal("wg.Wait() returned while the background loop was still in flight — goroutine not tracked")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Init's background loop did not exit within 2s of ctx cancel")
 	}
 }
 

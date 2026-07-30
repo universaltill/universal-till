@@ -12,6 +12,8 @@ package app
 import (
 	"context"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/universaltill/universal-till/internal/alerts"
@@ -84,7 +86,14 @@ func Run(ctx context.Context) error {
 	settingsStore.LoadRuntimeConfig(ctx, cfg)
 	_ = settingsStore.SaveRuntimeConfig(ctx, cfg)
 
-	enroll.Init(ctx, cfg, settingsStore)
+	// wg tracks every background goroutine this boot sequence starts —
+	// directly or via server.Start — so Run can wait for all of them to
+	// actually exit before its deferred database.Close() above runs. Without
+	// this, "Run returned" didn't mean "nothing is still writing to the data
+	// dir" (found 2026-07-30 via a mobile-shutdown CI flake).
+	var wg sync.WaitGroup
+
+	enroll.Init(ctx, cfg, settingsStore, &wg)
 
 	pluginManager, err := plugins.Init(ctx, cfg, database.DB)
 	if err != nil {
@@ -104,8 +113,8 @@ func Run(ctx context.Context) error {
 		log.Warnf("Marketplace not configured (UT_MARKETPLACE_ENDPOINT_URL not set)")
 	}
 
-	updates.Start(ctx)
-	alerts.Start(ctx, cfg, database.DB)
+	updates.Start(ctx, &wg)
+	alerts.Start(ctx, cfg, database.DB, &wg)
 
 	mux := pages.Init(ctx, cfg, pluginManager, database.DB, catalogRepo)
 
@@ -114,7 +123,34 @@ func Run(ctx context.Context) error {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
 
-	return server.Start(ctx, cfg, mux, catalogRepo, database.DB, supervisor)
+	runErr := server.Start(ctx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
+	drainBackgroundServices(&wg, log, backgroundDrainTimeout)
+	return runErr
+}
+
+// backgroundDrainTimeout bounds how long Run waits for background goroutines
+// to exit before giving up and closing the database anyway.
+const backgroundDrainTimeout = 10 * time.Second
+
+// drainBackgroundServices blocks until every goroutine registered on wg has
+// exited, so the caller's subsequent database.Close() never races a
+// straggler. Bounded: a service that ignores ctx cancellation must not hang
+// shutdown forever — after timeout elapses this logs loudly and returns
+// anyway, closing the database regardless (a wedged service is a bug to fix,
+// not a reason to never shut down). timeout is a parameter (rather than using
+// the backgroundDrainTimeout constant directly) so tests can exercise the
+// timeout branch without a real 10-second wait.
+func drainBackgroundServices(wg *sync.WaitGroup, log *logging.Logger, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		log.Errorf("shutdown: background services still running %s after cancel — closing database anyway", timeout)
+	}
 }
 
 // bootstrapPluginDirectories creates required plugin cache directories
