@@ -304,7 +304,7 @@ func TestSaveState_Atomic(t *testing.T) {
 	d := openMigratedDB(t, "state_atomic.db")
 	store := settings.NewStore(d.DB)
 
-	if err := SaveState(ctx, store, RuntimeState{Currency: "GBP", TaxRatePct: 2000}); err != nil {
+	if err := SaveState(ctx, store, RuntimeState{Currency: "GBP", TaxRatePct: 20}); err != nil {
 		t.Fatalf("seed SaveState: %v", err)
 	}
 
@@ -315,7 +315,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	err := SaveState(ctx, store, RuntimeState{Currency: "EUR", TaxRatePct: 700})
+	err := SaveState(ctx, store, RuntimeState{Currency: "EUR", TaxRatePct: 7})
 	if err == nil {
 		t.Fatal("SaveState with an aborting trigger returned nil error, want non-nil")
 	}
@@ -334,8 +334,8 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 	if err != nil || !ok {
 		t.Fatalf("Get(%s) = ok=%v err=%v, want the seeded row intact", KeyTaxRate, ok, err)
 	}
-	if rate != "2000" {
-		t.Fatalf("TaxRatePct = %q after a failed save, want seeded %q", rate, "2000")
+	if rate != "20" {
+		t.Fatalf("TaxRatePct = %q after a failed save, want seeded %q", rate, "20")
 	}
 }
 

@@ -552,6 +552,7 @@
   "selforder.welcome": "أهلاً بك!",
   "settings.add_update": "إضافة / تحديث",
   "settings.all": "كل الإعدادات",
+  "settings.error.save_failed": "تعذر الحفظ — يرجى المحاولة مرة أخرى.",
   "settings.backup.col_date": "التاريخ",
   "settings.backup.col_file": "الملف",
   "settings.backup.col_size": "الحجم",

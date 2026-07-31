@@ -552,6 +552,7 @@
   "selforder.welcome": "Hoş geldiniz!",
   "settings.add_update": "Ekle / Güncelle",
   "settings.all": "Tüm ayarlar",
+  "settings.error.save_failed": "Kaydedilemedi — lütfen tekrar deneyin.",
   "settings.backup.col_date": "Tarih",
   "settings.backup.col_file": "Dosya",
   "settings.backup.col_size": "Boyut",
