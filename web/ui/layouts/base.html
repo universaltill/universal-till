@@ -15,6 +15,7 @@
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
+    <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-currency="{{ currency.Code }}" data-currency-decimals="{{ currency.Decimals }}"

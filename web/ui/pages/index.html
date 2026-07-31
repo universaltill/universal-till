@@ -26,9 +26,15 @@
        it never scrolls. Split-tender element IDs are load-bearing (app.js). -->
   <div class="tender" x-data="{ tab: 'pay' }">
     <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
-      <input type="text" name="code" placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" autofocus required>
+      <!-- inputmode="none": keep scanner focus without inviting any IME at
+           load (ut-docs#155) — the OSK/toggle covers deliberate typing.
+           NOT when the OSK is off: a touch till with the OSK disabled would
+           otherwise have no way to type a barcode at all. -->
+      <input type="text" name="code" {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" autofocus required>
       <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}" aria-label="{{ T "tender.scan.qty" }}">
       <button class="btn" type="submit">{{ T "tender.scan.add" }}</button>
+      <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
+              title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
       {{ if .aiIdentify }}
       <button class="btn secondary" type="button" id="ai-identify-open" hidden
               title="{{ T "ai.identify.button" }}">📷</button>
