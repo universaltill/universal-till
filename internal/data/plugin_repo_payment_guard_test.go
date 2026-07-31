@@ -289,3 +289,64 @@ func repairMigrationPath(t *testing.T) string {
 	}
 	return matches[0]
 }
+
+// Follow-up from PR #102's review (ut-docs#16): a shop-created tender
+// captured pre-fix isn't auto-repaired by migration 021 (a row alone can't
+// distinguish a capture from a genuine plugin method) — a startup warning
+// needs a way to find these.
+func TestFindOrphanedPaymentMethods(t *testing.T) {
+	d := pgOpenDB(t, "orphan.db")
+	ctx := context.Background()
+	repo := NewPluginRepo(d.DB)
+
+	// Simulates a pre-fix capture: plugin_id set, but no matching plugins
+	// row exists on this till (the hijacking plugin was never installed
+	// here, or was removed long ago with no repair migration targeting it —
+	// migration 021 only restores the three seeded built-ins).
+	mustExec(t, d, `INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id)
+VALUES ('orphaned', 'Orphaned Tender', 'card', 1, 100, 'com.gone.forever')`)
+
+	// A genuinely live plugin-owned method must NOT be flagged.
+	pgPlugin(t, d, "com.live.pay", 1)
+	pgEntry(t, d, "pe-live", "com.live.pay", "livepay", "Live Pay")
+	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	orphans, err := repo.FindOrphanedPaymentMethods(ctx)
+	if err != nil {
+		t.Fatalf("FindOrphanedPaymentMethods: %v", err)
+	}
+	if len(orphans) != 1 {
+		t.Fatalf("expected exactly 1 orphan, got %d: %+v", len(orphans), orphans)
+	}
+	got := orphans[0]
+	if got.ID != "orphaned" || got.Name != "Orphaned Tender" || got.PluginID != "com.gone.forever" {
+		t.Fatalf("unexpected orphan row: %+v", got)
+	}
+}
+
+// Legacy state predating install-time name validation: a plugin entry whose
+// LABEL collides with an existing tender's name (different id) must not
+// abort the whole sync (and therefore plugins.Init at startup) — the
+// colliding row simply doesn't materialize, same treatment ADR-0031 already
+// gives an id collision.
+func TestSyncPluginPaymentMethods_LegacyNameCollisionDoesNotAbortSync(t *testing.T) {
+	d := pgOpenDB(t, "namecollision.db")
+	ctx := context.Background()
+	repo := NewPluginRepo(d.DB)
+
+	pgPlugin(t, d, "com.namecollide.pay", 1)
+	pgEntry(t, d, "pe-namecollide", "com.namecollide.pay", "namecollide", "Cash")
+
+	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
+		t.Fatalf("sync must not abort on a legacy name collision, got: %v", err)
+	}
+	got, ok := pgMethod(t, d, "cash")
+	if !ok || got.Name != "Cash" || got.PluginID != "" {
+		t.Fatalf("built-in cash must be unaffected by a colliding plugin name: %+v ok=%v", got, ok)
+	}
+	if _, ok := pgMethod(t, d, "namecollide"); ok {
+		t.Fatal("name-colliding plugin method must not materialize (same as an id collision), but must not abort the sync either")
+	}
+}

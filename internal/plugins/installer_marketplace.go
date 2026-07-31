@@ -240,11 +240,13 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 		return nil, fmt.Errorf("move verified plugin into place: %w", err)
 	}
 
-	if err := i.upsertCatalogEntry(ctx, manifest, spec.SourceURL, spec.Checksum, spec.Signature); err != nil {
-		_ = os.RemoveAll(finalDir)
-		return nil, fmt.Errorf("persist plugin catalog entry: %w", err)
-	}
-
+	// PersistManifest runs first (and validates — ADR-0031's payment key/name
+	// checks among others) before any catalog row is written: it own an
+	// EnsureCatalogEntry step covering the plugins(id,version) FK, so a
+	// rejected manifest never leaves a catalog row behind (ut-docs#16 — the
+	// prior order left an orphan plugin_catalog row on a rejected install,
+	// since EnsureCatalogEntry's ON CONFLICT DO NOTHING is a no-op once
+	// upsertCatalogEntry had already written the row).
 	if err := PersistManifest(ctx, i.db, manifest, InstallOptions{
 		InstalledFromURL: spec.SourceURL,
 		SHA256:           spec.Checksum,
@@ -253,6 +255,11 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	}); err != nil {
 		_ = os.RemoveAll(finalDir)
 		return nil, fmt.Errorf("persist plugin manifest: %w", err)
+	}
+
+	if err := i.upsertCatalogEntry(ctx, manifest, spec.SourceURL, spec.Checksum, spec.Signature); err != nil {
+		_ = os.RemoveAll(finalDir)
+		return nil, fmt.Errorf("persist plugin catalog entry: %w", err)
 	}
 
 	// Marketplace installs are Ed25519-verified and their manifest (including
