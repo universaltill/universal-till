@@ -4,10 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 
-	config "github.com/universaltill/universal-till/internal/config"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 )
 
@@ -116,12 +114,7 @@ func TestResolveLocaleCookieFallback(t *testing.T) {
 
 func TestFuncsForExposesMoneyAndI18n(t *testing.T) {
 	InitCurrency("EUR")
-	locales := filepath.Join("..", "..", "web", "locales")
-	i18n, err := config.NewI18n(locales, "en")
-	if err != nil {
-		t.Fatalf("NewI18n: %v", err)
-	}
-	InitI18n(i18n, "en")
+	InitI18n(realI18n(t), "en")
 
 	// money is locale-bound now: an en locale keeps Latin digits…
 	funcs := FuncsFor("en")
