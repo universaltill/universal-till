@@ -495,7 +495,32 @@ jobs:
             --pattern "unitill-pos_*_linux_amd64.tar.gz" \
             --pattern "unitill-pos_*_windows_amd64.zip" \
             --pattern "unitill-pos_*_darwin_arm64.tar.gz" \
-            --pattern "unitill-pos-*-macOS-arm64.dmg"
+            --pattern "unitill-pos-*-macOS-arm64.dmg" \
+            --pattern "checksums.txt"
+      # Regression gate for the macos-app job's "append the .dmg's SHA-256"
+      # step (packaging/macos/update-checksums.sh): internal/selfupdate's mac
+      # update path (macapp_darwin.go) fails closed if the dmg's
+      # checksums.txt entry is missing or wrong, so a silent failure there
+      # would only surface as every in-app mac update being refused, not as a
+      # release-time error. Assert it here instead of waiting to find out.
+      - name: The .dmg's checksums.txt entry must match the published artifact
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd dist-check
+          dmg="unitill-pos-${VERSION}-macOS-arm64.dmg"
+          want="$(awk -v f="$dmg" '$2 == f { print $1 }' checksums.txt)"
+          if [ -z "$want" ]; then
+            echo "::error::checksums.txt has no entry for $dmg — the macos-app job's checksum-append step may have failed silently"
+            exit 1
+          fi
+          got="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+          if [ "$want" != "$got" ]; then
+            echo "::error::checksums.txt entry for $dmg ($want) does not match the actual published artifact ($got)"
+            exit 1
+          fi
+          echo "ok: checksums.txt entry for $dmg matches the published artifact"
       - name: Every binary must report the real version, never "dev"
         env:
           VERSION: ${{ needs.prepare.outputs.version }}

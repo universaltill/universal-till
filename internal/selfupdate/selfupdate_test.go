@@ -8,8 +8,11 @@ import (
 
 // supportedFor is the OS/location POLICY gate (pure, no filesystem access):
 // which install shapes can ever self-update. Windows uses its installer;
-// android/ios have no self-swap; apt owns /usr. macOS is always eligible (the
-// .dmg whole-bundle replace via applyMacApp). Everything else on unix is
+// android/ios have no self-swap; apt owns /usr. macOS is always
+// location-eligible here (the .dmg whole-bundle replace via applyMacApp) —
+// the arch gate (only arm64 .dmgs are ever published, ut-docs#18) is applied
+// by Supported() via macAppBundleSupported, NOT here, same split as the
+// writability precondition below. Everything else on unix is
 // location-eligible — the final precondition (is the binary's dir actually
 // writable by the running service user?) is applied by Supported() via
 // dirWritable, NOT here. /opt/unitill is deliberately NOT blocklisted: the Pi
@@ -87,5 +90,20 @@ func TestAppBundlePath(t *testing.T) {
 	}
 	if got := appBundlePath("/Users/ali/unitill/unitill-pos"); got != "" {
 		t.Errorf("non-bundle should be empty, got %q", got)
+	}
+}
+
+// macAppBundleSupported gates Supported()'s darwin .app-bundle branch: only
+// arm64 dmgs are ever published (.goreleaser.yaml + the macos-app release job
+// both build arm64 only), so an Intel Mac must never see "Update now" — it
+// would only ever fail at applyMacApp's own Intel refusal (macapp_darwin.go).
+// Pure/parameterized (ut-docs#18) so this is unit-testable without real Intel
+// hardware or a darwin build, mirroring supportedFor's exe/goos param seam.
+func TestMacAppBundleSupported(t *testing.T) {
+	if !macAppBundleSupported("arm64") {
+		t.Error("arm64 (the only published .dmg arch) should be supported")
+	}
+	if macAppBundleSupported("amd64") {
+		t.Error("Intel (amd64) must not be supported — no Intel .dmg is ever published")
 	}
 }

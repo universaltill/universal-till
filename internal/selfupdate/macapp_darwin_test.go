@@ -19,6 +19,38 @@ import (
 // unitill-pos/unitill-desktop processes and replaces /Applications bundles.
 // That remainder is deliberately uncovered, not faked.
 
+// End-to-end proof of Supported()'s Intel gating (ut-docs#18): unlike
+// TestMacAppBundleSupported (the pure helper, unit-tested cross-platform in
+// selfupdate_test.go), this exercises the real runtime.GOOS=="darwin" wiring
+// inside Supported() itself — only possible on an actual darwin build/test
+// run, same constraint as this file's other tests. An Intel Mac must never
+// see "Update now": clicking it would only ever fail at applyMacApp's own
+// Intel refusal below.
+func TestSupportedFalseOnIntelMacAppBundle(t *testing.T) {
+	oldExec, oldArch := osExecutable, goarch
+	osExecutable = func() (string, error) {
+		return "/Applications/Universal Till.app/Contents/MacOS/unitill-pos", nil
+	}
+	goarch = "amd64"
+	t.Cleanup(func() { osExecutable, goarch = oldExec, oldArch })
+	if Supported() {
+		t.Error("Supported() = true for an Intel Mac .app bundle, want false — no Intel .dmg is ever published")
+	}
+}
+
+// The arm64 counterpart: a real Apple Silicon Mac must still see "Update now".
+func TestSupportedTrueOnArm64MacAppBundle(t *testing.T) {
+	oldExec, oldArch := osExecutable, goarch
+	osExecutable = func() (string, error) {
+		return "/Applications/Universal Till.app/Contents/MacOS/unitill-pos", nil
+	}
+	goarch = "arm64"
+	t.Cleanup(func() { osExecutable, goarch = oldExec, oldArch })
+	if !Supported() {
+		t.Error("Supported() = false for an arm64 Mac .app bundle, want true")
+	}
+}
+
 // Apply routes a darwin .app-bundle executable into applyMacApp instead of the
 // archive-swap path — proven by hitting applyMacApp's distinctive error.
 func TestApplyRoutesAppBundleToMacPath(t *testing.T) {

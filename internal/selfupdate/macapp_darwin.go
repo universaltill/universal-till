@@ -8,17 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 
 	"github.com/universaltill/universal-till/internal/logging"
 )
-
-// goarch is a test seam for runtime.GOARCH. Production code never changes
-// it; tests point it at "amd64" to exercise the Intel-Mac rejection without
-// needing to run on actual Intel hardware.
-var goarch = runtime.GOARCH
 
 // applyMacApp updates a running macOS .app in place: it downloads the new
 // .dmg, verifies its SHA-256 against the release's checksums.txt (same
@@ -31,11 +25,14 @@ var goarch = runtime.GOARCH
 // ever published (see the goarch check below).
 func applyMacApp(ctx context.Context, appPath string) error {
 	log := logging.L()
-	// .goreleaser.yaml builds darwin/arm64 only, and the macos-app release
-	// job (.github/workflows/release.yml) only ever builds/attaches an
-	// arm64 dmg — there is no Intel .dmg to fetch. Refuse immediately
-	// rather than let an Intel Mac hit a confusing "no macOS .dmg in
-	// release" error after a wasted fetch.
+	// Belt-and-suspenders: Supported() (selfupdate.go) already hides the
+	// "Update now" button for an Intel Mac via this same goarch var
+	// (ut-docs#18), so Apply() should never route here for one in practice.
+	// Kept as this function's own guard anyway — it's the only thing
+	// standing between a future caller that bypasses Supported() and a
+	// wasted fetch. .goreleaser.yaml builds darwin/arm64 only, and the
+	// macos-app release job (.github/workflows/release.yml) only ever
+	// builds/attaches an arm64 dmg — there is no Intel .dmg to fetch.
 	if goarch != "arm64" {
 		return fmt.Errorf("in-app update is not available for Intel Macs — download the latest .dmg from https://www.universaltill.com/download instead")
 	}
