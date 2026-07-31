@@ -154,6 +154,58 @@ func TestRenderWithRendersAndReports500OnBadFile(t *testing.T) {
 	}
 }
 
+// The status-bar update chip is the thing a user actually clicks (ut-docs#152
+// field report: a Windows user clicked it expecting an in-place update, like
+// the self-update button below it, and got a browser download page instead).
+// Both branches render as the same "sb-item sb-update" pill with the same up
+// arrow, distinguished only by their text -- so when self-update isn't
+// supported, that text must say plainly that clicking downloads something,
+// not just "available".
+func TestBaseLayoutUpdateChipSaysDownloadWhenSelfUpdateUnsupported(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	funcs := FuncsFor("en")
+	funcs["updateavailable"] = func() bool { return true }
+	funcs["canselfupdate"] = func() bool { return false }
+	funcs["latestversion"] = func() string { return "9.9.9" }
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		funcs,
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	body := w.Body.String()
+	idx := strings.Index(body, `class="sb-item sb-update"`)
+	if idx == -1 {
+		t.Fatalf("expected the status-bar update chip to render, got %.500s", body)
+	}
+	// The chip itself, not the rest of the page -- base.html's own inline
+	// script text ("Downloading update…", for the self-apply button's
+	// in-progress state) also contains the substring "Download", so
+	// asserting against the whole body would false-pass even without the
+	// chip's own text saying so.
+	end := strings.Index(body[idx:], "</a>")
+	if end == -1 {
+		t.Fatalf("expected the update-unavailable chip to be a link (<a>...</a>), got %.500s", body[idx:])
+	}
+	chip := body[idx : idx+end]
+	if !strings.Contains(chip, `href="https://www.universaltill.com/download"`) {
+		t.Fatalf("expected the status-bar update chip to link to the download page, got %q", chip)
+	}
+	if !strings.Contains(chip, "Download") {
+		t.Fatalf("status-bar update chip must say Download when self-update isn't supported, not just \"available\" (ut-docs#152), got %q", chip)
+	}
+	if strings.Contains(body, `id="sb-update-btn"`) {
+		t.Fatalf("expected no in-app self-apply button when canselfupdate is false, got %.500s", body)
+	}
+}
+
 func TestNewMuxDispatchesRegisteredRoutes(t *testing.T) {
 	mux := NewMux()
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
