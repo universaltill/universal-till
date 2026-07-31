@@ -37,8 +37,19 @@ func TestUpdateFallbackHTML(t *testing.T) {
 	if !strings.Contains(kiosk, "available for this install") { // apostrophe is HTML-escaped
 		t.Errorf("kiosk fallback should state in-app update is unavailable, got %q", kiosk)
 	}
+
+	// A Mac that can't self-update (ut-docs#18: an Intel Mac, since no Intel
+	// .dmg is ever published) has a browser and can act on a link just like
+	// Windows — it must NOT fall into the unix-kiosk dead-end branch, or the
+	// Settings page contradicts the status bar (which already links out via
+	// base.html's canselfupdate-false branch).
+	mac := updateUnavailableHTML("en", "0.2.51", "darwin")
+	if !strings.Contains(mac, `href="https://www.universaltill.com/download"`) {
+		t.Errorf("macOS fallback should keep the download link, got %q", mac)
+	}
+
 	// Both still surface the available version so the operator knows one exists.
-	for _, h := range []string{win, kiosk} {
+	for _, h := range []string{win, kiosk, mac} {
 		if !strings.Contains(h, "0.2.51") {
 			t.Errorf("fallback should show the available version, got %q", h)
 		}
