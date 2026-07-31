@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -29,7 +30,7 @@ import (
 // an operator makes locally — remote installs still go through the
 // download-token + Ed25519 verification path, remote settings through the
 // same store + state re-derive as the settings pages.
-func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.Context)) {
+func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.Context), wg *sync.WaitGroup) {
 	hooks := cloudsync.Hooks{
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			if err := d.Settings.Set(ctx, key, value); err != nil {
@@ -120,7 +121,7 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 			}
 		},
 	}
-	cloudsync.Start(ctx, d.Cfg, d.Db, hooks)
+	cloudsync.Start(ctx, d.Cfg, d.Db, hooks, wg)
 }
 
 // cloudInstallPlugin mirrors handleInstallFromMarketplace for a directive:
