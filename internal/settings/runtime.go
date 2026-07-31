@@ -44,28 +44,17 @@ func (s *Store) LoadRuntimeConfig(ctx context.Context, cfg *config.Config) {
 
 }
 
-// SaveRuntimeConfig updates DB from a RuntimeConfig.
+// SaveRuntimeConfig updates DB from a RuntimeConfig. All seven keys are
+// written in one transaction, so a mid-way failure never leaves a partial
+// mix of old and new values behind.
 func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error {
-	if err := s.Set(ctx, "theme", cfg.Theme); err != nil {
-		return err
-	}
-	if err := s.Set(ctx, "store.name", cfg.StoreName); err != nil {
-		return err
-	}
-	if err := s.Set(ctx, "store.currency", cfg.Locales.Currency); err != nil {
-		return err
-	}
-	if err := s.Set(ctx, "store.currency_symbol", cfg.Locales.CurrencySymbol); err != nil {
-		return err
-	}
-	if err := s.Set(ctx, "store.locale", cfg.Locales.Locale); err != nil {
-		return err
-	}
-	if err := s.Set(ctx, "store.tax_inclusive", strconv.FormatBool(cfg.Locales.TaxInclusive)); err != nil {
-		return err
-	}
-	if err := s.Set(ctx, "store.tax_rate", strconv.Itoa(cfg.Locales.TaxRate)); err != nil {
-		return err
-	}
-	return nil
+	return s.SetMany(ctx, map[string]string{
+		"theme":                 cfg.Theme,
+		"store.name":            cfg.StoreName,
+		"store.currency":        cfg.Locales.Currency,
+		"store.currency_symbol": cfg.Locales.CurrencySymbol,
+		"store.locale":          cfg.Locales.Locale,
+		"store.tax_inclusive":   strconv.FormatBool(cfg.Locales.TaxInclusive),
+		"store.tax_rate":        strconv.Itoa(cfg.Locales.TaxRate),
+	})
 }
