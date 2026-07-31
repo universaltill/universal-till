@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/ai"
@@ -27,7 +28,18 @@ import (
 	"github.com/universaltill/universal-till/web/locales"
 )
 
-func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository) http.Handler {
+// Init builds the page mux. bgCtx and wg belong to app.Run's background-
+// service drain. bgCtx (not ctx) is load-bearing for anything joined on wg:
+// app.Run's stopBg() cancels ONLY bgCtx, so a wg-joined loop hung off ctx
+// would never be signalled on the return paths where the caller's ctx is
+// still live (an early startup error, server.Start's own bind failure) and
+// the drain would eat its full 10s timeout on every shutdown —
+// app.TestRun_JoinsBackgroundGoroutinesOnEarlyServerError gates exactly this.
+// Today only StartCloudSync is wired this way; StartSyncPush, StartSyncPull
+// and StartEODScheduler below still run unjoined on ctx and can race
+// database.Close() the same way cloudsync used to (ut-docs#153 tracks them,
+// alongside #8's other scoped-out siblings).
+func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository, wg *sync.WaitGroup) http.Handler {
 	log := logging.L()
 	mux := http.NewServeMux()
 
@@ -206,9 +218,9 @@ func Init(ctx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.
 		}
 	}
 	StartSyncPull(ctx, dp, rederiveSettings)
-	StartCloudSync(ctx, dp, rederiveSettings) // ADR-0018 cloud heartbeat + directives
-	StartEODScheduler(ctx, dp)                // background Z-report (docs: G30)
-	registerInvoices(mux, dp)                 // VAT invoices + credit notes (G31)
+	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
+	StartEODScheduler(ctx, dp)                      // background Z-report (docs: G30)
+	registerInvoices(mux, dp)                       // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
 	registerInventoryAPI(mux, dp)
