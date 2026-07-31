@@ -92,24 +92,24 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 
 		// Locale/currency/tax — same application path as /api/settings/save.
-		st := d.UpdateState(func(s *common.RuntimeState) {
-			if v := strings.TrimSpace(r.Form.Get("currency")); v != "" && httpx.CurrencyByCode(v).Code == v {
-				s.Currency = v
+		st := d.CurrentState()
+		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" && httpx.CurrencyByCode(v).Code == v {
+			st.Currency = v
+		}
+		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
+			st.Country = v
+		}
+		if v := r.Form.Get("tax_rate_pct"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
+				st.TaxRatePct = n
 			}
-			if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
-				s.Country = v
-			}
-			if v := r.Form.Get("tax_rate_pct"); v != "" {
-				if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
-					s.TaxRatePct = n
-				}
-			}
-			s.TaxInclusive = r.Form.Get("tax_inclusive") != "off"
-		})
+		}
+		st.TaxInclusive = r.Form.Get("tax_inclusive") != "off"
 		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
 			renderWizard(w, r, "setup.error.save_failed")
 			return
 		}
+		d.SetState(st)
 		httpx.InitCurrency(st.Currency)
 		d.Engine.SetConfig(pos.Config{
 			TaxInclusive:       st.TaxInclusive,
@@ -117,9 +117,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		})
 
 		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {
-			_ = d.Settings.Set(r.Context(), "store.name", name)
+			if err := d.Settings.Set(r.Context(), "store.name", name); err != nil {
+				http.Error(w, "setup failed", http.StatusInternalServerError)
+				return
+			}
 		}
-		_ = d.Settings.Set(r.Context(), "setup.completed", "true")
+		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {
+			http.Error(w, "setup failed", http.StatusInternalServerError)
+			return
+		}
 
 		// Admin operator + session — the same first-boot semantics as
 		// POST /api/auth/setup (which stays as the bare fallback).

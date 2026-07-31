@@ -66,6 +66,17 @@ func (d *Deps) UpdateState(fn func(*RuntimeState)) RuntimeState {
 	return d.State
 }
 
+// SetState replaces the runtime state wholesale under the write lock. Callers
+// that persist a candidate state via SaveState before committing it in
+// memory (ut-docs#157) use this instead of UpdateState, so a failed save
+// never becomes the new in-memory state — otherwise it would silently ride
+// along on the next unrelated successful save.
+func (d *Deps) SetState(st RuntimeState) {
+	d.StateMu.Lock()
+	defer d.StateMu.Unlock()
+	d.State = st
+}
+
 type MenuItem struct {
 	Href  string
 	Label string

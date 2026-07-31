@@ -552,6 +552,7 @@
   "selforder.welcome": "Welcome!",
   "settings.add_update": "Add / Update",
   "settings.all": "All Settings",
+  "settings.error.save_failed": "Could not save — please try again.",
   "settings.backup.col_date": "Date",
   "settings.backup.col_file": "File",
   "settings.backup.col_size": "Size",

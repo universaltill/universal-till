@@ -552,6 +552,7 @@
   "selforder.welcome": "خوش آمدید!",
   "settings.add_update": "افزودن / به‌روزرسانی",
   "settings.all": "همه تنظیمات",
+  "settings.error.save_failed": "ذخیره ممکن نشد — لطفاً دوباره تلاش کنید.",
   "settings.backup.col_date": "تاریخ",
   "settings.backup.col_file": "پرونده",
   "settings.backup.col_size": "حجم",
