@@ -119,17 +119,21 @@ func toJSON(v any) template.JS {
 
 // jsonVals builds a JSON object literal from alternating key/value pairs, for
 // an hx-vals attribute (htmx JSON.parses it). Deliberately returns a plain
-// string, NOT template.JS like toJSON above — template.JS tells html/template
-// to skip escaping entirely, which is correct inside a <script> block but
-// wrong inside hx-vals='...': a literal apostrophe in the marshaled JSON
-// would break out of the single-quoted attribute unescaped. A plain string
-// still gets html/template's normal attribute-context escaping, exactly like
-// internal/ui.SearchResult.AddVals (the same fix, for the buttons_admin.html
-// case) — this is the general-purpose version for templates that don't have
-// a rich view-model struct to hang a bespoke Vals() method off of (ut-docs#19:
-// catalog_variants/suggestions/self_order_grid/basket previously interpolated
-// raw fields into a hand-written JSON literal, invalid JSON for any quoted
-// value, same class of bug AddVals fixed).
+// string, matching internal/ui.SearchResult.AddVals (the same fix, for the
+// buttons_admin.html case) — this is the general-purpose version for
+// templates that don't have a rich view-model struct to hang a bespoke
+// Vals() method off of (ut-docs#19: buttons/catalog_variants/suggestions/
+// self_order_grid/self_order_cart/basket previously interpolated raw fields
+// into a hand-written JSON literal, invalid JSON for any quoted value, same
+// class of bug AddVals fixed). NOTE: html/template's contextual escaper
+// applies the same attribute-value escaping to a plain string here as it
+// would to toJSON's template.JS in this specific attribute context — the
+// two aren't observably different for hx-vals='...' today. A plain string is
+// still the right choice: it doesn't rely on the escaper correctly
+// classifying the surrounding markup as non-script (template.JS's
+// "pre-approved" content is only actually safe inside an execution context
+// like <script> or an inline event handler), so this can't silently become
+// unsafe if a future edit moves a call site there.
 func jsonVals(pairs ...any) (string, error) {
 	if len(pairs)%2 != 0 {
 		return "", fmt.Errorf("jsonVals: odd number of arguments (%d)", len(pairs))

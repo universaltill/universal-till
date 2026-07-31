@@ -378,6 +378,7 @@
   "plugins.import.warning": "ثبّت الإضافات من مصادر موثوقة فقط. الاستيراد اليدوي يتجاوز اعتماد المتجر.",
   "plugins.install": "تثبيت",
   "plugins.permission.granted": "تم منح الإذن",
+  "plugins.marketplace.install_success": "تم تثبيت الإضافة بنجاح",
   "plugins.permission.revoked": "تم إلغاء الإذن",
   "plugins.install.error.configuration": "تثبيت المتجر غير مهيّأ.",
   "plugins.install.error.forbidden": "يمكن للمدير فقط تثبيت الإضافات.",

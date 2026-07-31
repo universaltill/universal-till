@@ -47,7 +47,7 @@
       <div class="pay-grid">
         {{ range .payMethods }}
         <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" data-method="{{ .ID }}" hx-post="/api/pos/tender"
-                hx-vals='{"amount":0,"method":"{{ .ID }}"}' hx-include="#offline-flag"
+                hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
                 hx-target="#basket" hx-swap="outerHTML">{{ .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
         {{ else }}
         <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
