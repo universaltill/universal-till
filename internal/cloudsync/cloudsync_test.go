@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -700,55 +699,46 @@ func TestPushSnapshotIfChangedIncludesRealStockQty(t *testing.T) {
 	}
 }
 
-// waitGoroutineExit proves Start()'s spawned goroutine has actually
-// returned — not inferred from "no more observed HTTP calls" (which stops
-// short of the goroutine's synchronous post-tick work, e.g.
-// uploadPendingIssueReports's filesystem read, and doesn't distinguish a
-// genuine return from a hung loop that just happens to be between network
-// calls). Start() has no join/done signal (a real gap, same class as the
-// standing "app.Run doesn't join its background services" queue item — out
-// of scope to fix here), so this is the direct proxy: sample
-// runtime.NumGoroutine() back down to (at most) its pre-Start baseline.
-// This is what actually catches a goroutine leak — deliberately breaking
-// either of Start()'s two `case <-ctx.Done(): return` branches leaves the
-// goroutine permanently blocked (spinning or parked on a never-firing
-// timer), and this fails loudly instead of passing on a stale HTTP-call
-// count.
-//
-// Known remaining boundary (not fully closed by this function, and not
-// closeable from a test at all without Start() itself gaining a real
-// join signal): confirmed under `go test -race -shuffle=on` that
-// issue_reports_test.go's plain `issuereport.PendingDir = ...` writes can
-// still race a Start-test goroutine's read of that same var, even after
-// this function has observed the goroutine's exit. That's not a timing
-// margin this function could widen — Go's race detector tracks actual
-// synchronization primitives (channels, mutexes, WaitGroups), not
-// wall-clock proof-of-quiescence from polling runtime.NumGoroutine(), so
-// no amount of waiting here creates the happens-before edge the detector
-// wants. Confirmed clean under plain `-race` (no shuffle, this package's
-// and this repo's CI's actual test invocation) at -count=10. Logged as a
-// follow-up on the "app.Run doesn't join its background services" item
-// rather than fixed here — the real fix is the same one that item already
-// needs (a done-channel/WaitGroup on Start()), and duplicating that
-// architecture ad hoc in this batch would conflict with it landing there.
-func waitGoroutineExit(t *testing.T, baseline int) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		// The shared package-level httpClient keeps idle keep-alive
-		// connections (and their read-loop goroutines) around well past
-		// when a request completes — real, harmless, and unrelated to
-		// Start()'s own goroutine, but indistinguishable from a leak by
-		// goroutine count alone unless closed explicitly first.
-		httpClient.CloseIdleConnections()
-		if n := runtime.NumGoroutine(); n <= baseline {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("goroutine count still %d after cancel (baseline %d) — Start()'s goroutine leaked", runtime.NumGoroutine(), baseline)
-		}
-		time.Sleep(2 * time.Millisecond)
+// joinWithin reports whether every goroutine on wg exited within d — the
+// real join signal (an actual synchronization primitive, so the race detector
+// gets the happens-before edge the old runtime.NumGoroutine() polling never
+// provided; ut-docs#8).
+func joinWithin(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() { defer close(done); wg.Wait() }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
 	}
+}
+
+// waitJoined is the test-body form: fail fast and loudly if the goroutine
+// ignored ctx cancellation.
+func waitJoined(t *testing.T, wg *sync.WaitGroup) {
+	t.Helper()
+	if !joinWithin(wg, 3*time.Second) {
+		t.Fatal("cloudsync Start goroutine still running 3s after ctx cancel")
+	}
+}
+
+// startJoined registers the unconditional cleanup join: even a test that
+// t.Fatal-ed before reaching its own cancel() must not leave the goroutine
+// ticking into later tests (that leak is the exact PendingDir race ut-docs#8
+// exists to kill, and it also leaks the shortened tick intervals). Registered
+// AFTER the interval-restore cleanups, so it runs BEFORE them (LIFO).
+func startJoined(t *testing.T, ctx context.Context, cancel context.CancelFunc, cfg *config.Config, db *sql.DB, hooks Hooks) *sync.WaitGroup {
+	t.Helper()
+	var wg sync.WaitGroup
+	Start(ctx, cfg, db, hooks, &wg)
+	t.Cleanup(func() {
+		cancel()
+		if !joinWithin(&wg, 3*time.Second) {
+			t.Error("cleanup: cloudsync Start goroutine still running 3s after cancel")
+		}
+	})
+	return &wg
 }
 
 // Start()'s background loop: fires shortly after boot, ticks on its own
@@ -757,6 +747,10 @@ func waitGoroutineExit(t *testing.T, baseline int) {
 // so this doesn't take real wall-clock minutes.
 func TestStartRunsTickLoopAndStopsOnCancel(t *testing.T) {
 	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	// Cleanup order matters (LIFO): the restore below must run AFTER the
+	// startJoined cleanup has proven the goroutine exited — a still-ticking
+	// goroutine with restored (minutes-long) intervals would just park.
+	t.Cleanup(func() { firstDelayNS.Store(origFirst); tickIntervalNS.Store(origTick) })
 	firstDelayNS.Store(int64(5 * time.Millisecond))
 	tickIntervalNS.Store(int64(5 * time.Millisecond))
 
@@ -766,10 +760,8 @@ func TestStartRunsTickLoopAndStopsOnCancel(t *testing.T) {
 	db := testDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	count := func() int { cloud.mu.Lock(); defer cloud.mu.Unlock(); return len(cloud.syncBodies) }
-	httpClient.CloseIdleConnections()
-	baseline := runtime.NumGoroutine()
 
-	Start(ctx, testCfg(srv.URL), db, Hooks{})
+	wg := startJoined(t, ctx, cancel, testCfg(srv.URL), db, Hooks{})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for count() < 2 {
@@ -781,9 +773,7 @@ func TestStartRunsTickLoopAndStopsOnCancel(t *testing.T) {
 
 	cancel()
 	stoppedAt := count()
-	waitGoroutineExit(t, baseline) // proves the goroutine actually returned before restoring the vars below
-	firstDelayNS.Store(origFirst)
-	tickIntervalNS.Store(origTick)
+	waitJoined(t, wg) // proves the goroutine actually returned before asserting tick counts
 	if afterCancel := count(); afterCancel > stoppedAt+1 {
 		// allow one in-flight tick to land right after cancel; anything more
 		// means the loop kept running past ctx.Done().
@@ -796,25 +786,20 @@ func TestStartRunsTickLoopAndStopsOnCancel(t *testing.T) {
 // firstDelay than the cancellation makes that the only reachable path.
 func TestStartStopsBeforeFirstTickWhenCancelledEarly(t *testing.T) {
 	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	t.Cleanup(func() { firstDelayNS.Store(origFirst); tickIntervalNS.Store(origTick) })
 	firstDelayNS.Store(int64(time.Hour)) // long enough it will never fire in this test
 	tickIntervalNS.Store(int64(time.Millisecond))
 
 	cloud := &fakeCloud{}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
-	db := testDB(t) // created before baseline: sql.Open spawns a permanent
-	// background connectionOpener goroutine for the DB's lifetime — capturing
-	// baseline before this would count it as a false "leak" from Start().
+	db := testDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	count := func() int { cloud.mu.Lock(); defer cloud.mu.Unlock(); return len(cloud.syncBodies) }
-	httpClient.CloseIdleConnections()
-	baseline := runtime.NumGoroutine()
 
-	Start(ctx, testCfg(srv.URL), db, Hooks{})
+	wg := startJoined(t, ctx, cancel, testCfg(srv.URL), db, Hooks{})
 	cancel()
-	waitGoroutineExit(t, baseline)
-	firstDelayNS.Store(origFirst)
-	tickIntervalNS.Store(origTick)
+	waitJoined(t, wg)
 
 	if n := count(); n != 0 {
 		t.Fatalf("tick fired %d times despite being cancelled before firstDelay elapsed", n)
@@ -825,6 +810,7 @@ func TestStartStopsBeforeFirstTickWhenCancelledEarly(t *testing.T) {
 // tolerated — logged, not fatal to the goroutine, and the loop keeps ticking.
 func TestStartToleratesTickFailureAndKeepsLooping(t *testing.T) {
 	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	t.Cleanup(func() { firstDelayNS.Store(origFirst); tickIntervalNS.Store(origTick) })
 	firstDelayNS.Store(int64(2 * time.Millisecond))
 	tickIntervalNS.Store(int64(2 * time.Millisecond))
 
@@ -842,13 +828,11 @@ func TestStartToleratesTickFailureAndKeepsLooping(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"directives": []any{}}})
 	}))
 	defer srv.Close()
-	db := testDB(t) // created before baseline, same reason as the test above
+	db := testDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	count := func() int { mu.Lock(); defer mu.Unlock(); return calls }
-	httpClient.CloseIdleConnections()
-	baseline := runtime.NumGoroutine()
 
-	Start(ctx, testCfg(srv.URL), db, Hooks{})
+	wg := startJoined(t, ctx, cancel, testCfg(srv.URL), db, Hooks{})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for count() < 2 {
@@ -859,9 +843,7 @@ func TestStartToleratesTickFailureAndKeepsLooping(t *testing.T) {
 	}
 
 	cancel()
-	waitGoroutineExit(t, baseline)
-	firstDelayNS.Store(origFirst)
-	tickIntervalNS.Store(origTick)
+	waitJoined(t, wg)
 }
 
 // The real create path is idempotent on retry and refuses a taken barcode.
@@ -877,4 +859,47 @@ func TestCloudCreateItemIdempotency(t *testing.T) {
 	if _, ok, err := repo.FindActiveItemByName(ctx, "Sprite"); err != nil || !ok {
 		t.Fatalf("find by name: ok=%v err=%v", ok, err)
 	}
+}
+
+// TestStartJoinsWaitGroupOnCancel pins the join contract Start now carries:
+// cancellation is provable through an actual synchronization primitive (a
+// happens-before edge the race detector honors), not goroutine-count polling.
+// Deliberately cancels only after at least one tick has fired, so the join is
+// proven from the INNER select (mid-loop) — the early-cancel path is already
+// covered by TestStartStopsBeforeFirstTickWhenCancelledEarly.
+func TestStartJoinsWaitGroupOnCancel(t *testing.T) {
+	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	t.Cleanup(func() { firstDelayNS.Store(origFirst); tickIntervalNS.Store(origTick) })
+	firstDelayNS.Store(int64(2 * time.Millisecond))
+	tickIntervalNS.Store(int64(2 * time.Millisecond))
+
+	db := testDB(t)
+	var mu sync.Mutex
+	ticks := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		ticks++
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	wg := startJoined(t, ctx, cancel, testCfg(srv.URL), db, Hooks{})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		n := ticks
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no tick within 2s")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+	waitJoined(t, wg)
 }

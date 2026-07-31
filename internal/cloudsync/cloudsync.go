@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -413,9 +414,13 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 }
 
 // Start runs the sync loop: first tick shortly after boot (give enrolment a
-// moment), then every few minutes. Ctx-cancelled with the server.
-func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) {
+// moment), then every few minutes. Ctx-cancelled with the server. The
+// goroutine registers on wg so app.Run's shutdown drain can prove it exited
+// before the database closes (same join shape as updates/alerts/enroll).
+func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg *sync.WaitGroup) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		first := time.NewTimer(firstDelay())
 		defer first.Stop()
 		select {

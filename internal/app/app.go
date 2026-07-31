@@ -86,17 +86,20 @@ func Run(ctx context.Context) error {
 	settingsStore.LoadRuntimeConfig(ctx, cfg)
 	_ = settingsStore.SaveRuntimeConfig(ctx, cfg)
 
-	// wg tracks every background goroutine this boot sequence starts directly
-	// (enroll/updates/alerts) or via server.Start, so Run can wait for all of
-	// them to actually exit before its deferred database.Close() above runs.
-	// Without this, "Run returned" didn't mean "nothing is still writing to
-	// the data dir" (found 2026-07-30 via a mobile-shutdown CI flake). NOT
-	// covered, deliberately: internal/plugins.Supervisor's monitorProcess
-	// goroutines (native plugin processes — separate, larger fix, logged in
-	// ut-docs/QUEUE.md) and the wasm runtime's per-plugin event-channel
-	// drainer (internal/plugins/wasm_runtime.go — its channel is only closed
-	// on the next Sync/reload, never on shutdown, so tracking it here would
-	// make every drain time out; also logged).
+	// wg tracks the background goroutines this boot sequence starts —
+	// directly (enroll/updates/alerts), via server.Start, or via pages.Init
+	// (cloudsync, since ut-docs#8) — so Run can wait for them to actually
+	// exit before its deferred database.Close() above runs. Without this,
+	// "Run returned" didn't mean "nothing is still writing to the data dir"
+	// (found 2026-07-30 via a mobile-shutdown CI flake). NOT yet covered —
+	// the drain is NOT complete: pages.Init's StartSyncPush/StartSyncPull/
+	// StartEODScheduler loops still run unjoined on ctx and do DB work
+	// (ut-docs#153); internal/plugins.Supervisor's monitorProcess goroutines
+	// (native plugin processes — separate, larger fix) and the wasm runtime's
+	// per-plugin event-channel drainer (internal/plugins/wasm_runtime.go —
+	// its channel is only closed on the next Sync/reload, never on shutdown,
+	// so tracking it here would make every drain time out) are also logged
+	// on that same card.
 	//
 	// bgCtx is independently cancellable from ctx: an early startup error
 	// below (plugins.Init, marketplace.NewCatalogRepository, server.Start's
@@ -135,7 +138,7 @@ func Run(ctx context.Context) error {
 	updates.Start(bgCtx, &wg)
 	alerts.Start(bgCtx, cfg, database.DB, &wg)
 
-	mux := pages.Init(ctx, cfg, pluginManager, database.DB, catalogRepo)
+	mux := pages.Init(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
 
 	supervisor := plugins.NewSupervisor(database.DB)
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
