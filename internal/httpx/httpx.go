@@ -192,11 +192,19 @@ func IsRTL(locale string) bool {
 	return false
 }
 
+// translator returns the wired i18n, or nil. The typed assertion matters:
+// InitI18n(nil, ...) stores a typed nil *config.I18n, which an interface
+// nil-check alone would treat as present and then panic on method call.
+func translator() *config.I18n {
+	t, _ := i18nRef.Load().(*config.I18n)
+	return t
+}
+
 // T translates a key for a locale outside templates (handlers building toasts
 // or fragments). Falls back to the key itself, mirroring the template func.
 func T(locale, key string) string {
-	if tAny := i18nRef.Load(); tAny != nil {
-		return tAny.(*config.I18n).T(locale, key)
+	if t := translator(); t != nil {
+		return t.T(locale, key)
 	}
 	return key
 }
@@ -313,14 +321,14 @@ func FuncsFor(locale string) template.FuncMap {
 		return "ltr"
 	}
 	funcs["locales"] = func() []string {
-		if tAny := i18nRef.Load(); tAny != nil {
-			return tAny.(*config.I18n).Available()
+		if t := translator(); t != nil {
+			return t.Available()
 		}
 		return []string{"en"}
 	}
 	funcs["T"] = func(key string) string {
-		if tAny := i18nRef.Load(); tAny != nil {
-			return tAny.(*config.I18n).T(locale, key)
+		if t := translator(); t != nil {
+			return t.T(locale, key)
 		}
 		return key
 	}
