@@ -53,44 +53,83 @@ func Supported() bool {
 	if err != nil {
 		return false
 	}
-	return supportedFor(exe, runtime.GOOS)
-}
-
-// supportedFor is the testable core of Supported: in-app self-update only works
-// for the portable archive (.tar.gz) installs, where swapping the binary in
-// place is safe.
-func supportedFor(exe, goos string) bool {
-	if goos == "windows" {
-		return false // updates via the installer
-	}
-	if goos == "android" || goos == "ios" {
-		// Neither had a real self-update mechanism to begin with — this was
-		// falling through to the desktop default (true) with nothing to
-		// back it up. Apply() only ever fetches a
-		// unitill-pos_<version>_<goos>_<arch>.tar.gz release archive (or,
-		// on darwin, a .dmg via applyMacApp); no such archive is ever
-		// published for android/ios (mobile/mobile.go's release job
-		// attaches an .apk, nothing a self-swap could use), so tapping
-		// "Update now" here was guaranteed to fail with a confusing "no
-		// release archive" error — same user-visible symptom as the
-		// stale-cache Mac bug fixed alongside this, different root cause
-		// (a feature that was never actually built for this platform, not
-		// a timing bug). False here makes the status bar correctly fall
-		// back to the plain "Update available" download-page link instead
-		// (same fallback Windows already uses). A real mobile in-app
-		// updater (download the .apk, launch Android's package-install
-		// intent) is a genuine feature to build later, not implemented by
-		// this change.
+	if !supportedFor(exe, runtime.GOOS) {
 		return false
 	}
-	// Packaged installs update via their package manager, not a self-swap.
-	for _, p := range []string{"/usr/", "/opt/unitill/"} {
-		if strings.HasPrefix(exe, p) {
-			return false // .deb → apt
-		}
+	// A macOS .app updates the whole bundle via the .dmg (applyMacApp handles
+	// its own privilege/relaunch path), so it isn't gated on plain
+	// dir-writability. A *portable* darwin binary outside a bundle still does
+	// the tar.gz swap below, so it needs a writable dir just like linux.
+	if runtime.GOOS == "darwin" && appBundlePath(exe) != "" {
+		return true
 	}
-	// A macOS .app updates via the .dmg (whole-bundle replace + relaunch), not by
-	// swapping the inner binary — handled by applyMacApp. Still supported.
+	// The real precondition for a portable unix install: Apply's swaps are
+	// renames within (a) the binary's directory — for the binary + its .bak —
+	// and (b) the server's working directory — for the on-disk web/ override,
+	// which the server resolves cwd-relative, NOT next to the binary (the Pi
+	// kiosk runs /opt/unitill/bin/unitill-pos with cwd=/opt/unitill and web at
+	// /opt/unitill/web). Both must be writable by the service user, or Apply
+	// would fail — or worse, half-complete — mid-swap. Checking this directly,
+	// instead of guessing from the path, is what lets a service-writable
+	// /opt/unitill kiosk install self-update while a root-owned one honestly
+	// reports "no in-app update" rather than the old kiosk dead-end
+	// (board ut-docs#147).
+	if !dirWritable(filepath.Dir(exe)) {
+		return false
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != filepath.Dir(exe) && !dirWritable(cwd) {
+		return false
+	}
+	return true
+}
+
+// supportedFor is the OS/location POLICY gate (pure, no filesystem access):
+// which install shapes can *ever* self-update. The final writability
+// precondition is applied by Supported(), not here.
+func supportedFor(exe, goos string) bool {
+	switch goos {
+	case "windows":
+		return false // updates via the installer
+	case "android", "ios":
+		// Neither has a real self-update mechanism. Apply() only ever fetches
+		// a unitill-pos_<version>_<goos>_<arch>.tar.gz archive (or, on darwin,
+		// a .dmg via applyMacApp); no such archive is published for
+		// android/ios (their release job attaches an .apk, nothing a self-swap
+		// can use), so "Update now" here would fail with a confusing "no
+		// release archive" error. False makes the status bar fall back to the
+		// plain download link instead (same as Windows). A real mobile
+		// updater (fetch the .apk, launch the package-install intent) is a
+		// feature to build later.
+		return false
+	case "darwin":
+		// A macOS .app updates via the .dmg (whole-bundle replace + relaunch),
+		// handled by applyMacApp — always location-eligible.
+		return true
+	}
+	// apt/dpkg owns the /usr system prefix — never self-swap there (its
+	// domain). /opt/unitill is NOT blocklisted: the Pi kiosk installs there as
+	// the service user and self-updates fine; the old blanket /opt block was
+	// the bug behind the kiosk dead-end (ut-docs#147). Whether this particular
+	// install can actually be swapped is decided by dirWritable in Supported().
+	if strings.HasPrefix(exe, "/usr/") {
+		return false
+	}
+	return true
+}
+
+// dirWritable reports whether dir can be written by the current process — the
+// precondition for the rename-based binary swap in Apply. It probes by
+// creating and removing a temp file, which honours ownership, ACLs and
+// read-only mounts more reliably than inspecting the mode bits. A non-existent
+// or non-writable directory returns false.
+func dirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".unitill-uptest-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
 	return true
 }
 
@@ -135,6 +174,18 @@ func Apply(ctx context.Context) error {
 		}
 	}
 	installDir := filepath.Dir(exe)
+	// The server resolves its on-disk web/ override relative to its working
+	// directory (registerStatic → filepath.Join("web","public")), which is NOT
+	// necessarily the binary's directory: the Pi kiosk runs
+	// /opt/unitill/bin/unitill-pos with WorkingDirectory=/opt/unitill and web
+	// at /opt/unitill/web. Swap web/ where the server actually reads it, or a
+	// self-update silently serves stale /public assets over the freshly-swapped
+	// binary's newer embedded ones (ut-docs#148). For a flat portable install
+	// cwd == installDir, so this is unchanged there.
+	webBase := installDir
+	if cwd, err := os.Getwd(); err == nil {
+		webBase = cwd
+	}
 
 	rel, err := fetchLatest(ctx)
 	if err != nil {
@@ -206,7 +257,7 @@ func Apply(ctx context.Context) error {
 
 	// Swap web/ if the archive shipped it (keep a backup, best-effort).
 	if _, err := os.Stat(newWeb); err == nil {
-		curWeb := filepath.Join(installDir, "web")
+		curWeb := filepath.Join(webBase, "web")
 		webBak := curWeb + ".bak"
 		_ = os.RemoveAll(webBak)
 		if _, err := os.Stat(curWeb); err == nil {

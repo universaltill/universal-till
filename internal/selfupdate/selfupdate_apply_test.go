@@ -126,9 +126,27 @@ type installFixture struct {
 	reexecd chan string
 }
 
+// chdirTo switches the process working directory for the duration of the test
+// (restored on cleanup). Safe here because these tests are non-parallel.
+func chdirTo(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+}
+
 func newInstallFixture(t *testing.T) *installFixture {
 	t.Helper()
 	dir := t.TempDir()
+	// Run "from" the install dir, like a real portable install (cwd ==
+	// installDir). Apply resolves the on-disk web/ override relative to cwd, so
+	// this both mirrors production and keeps the test off the real repo's web/.
+	chdirTo(t, dir)
 	exe := filepath.Join(dir, "unitill-pos")
 	f := &installFixture{dir: dir, exe: exe, oldBin: "OLD-BINARY-v1", reexecd: make(chan string, 1)}
 	if err := os.WriteFile(exe, []byte(f.oldBin), 0o755); err != nil {
@@ -194,6 +212,71 @@ func TestApplySuccessSwapsBinaryAndWeb(t *testing.T) {
 		if exe != fix.exe {
 			t.Errorf("re-exec'd %q, want %q", exe, fix.exe)
 		}
+	case <-time.After(2 * time.Second):
+		t.Error("re-exec never scheduled")
+	}
+}
+
+// Regression for ut-docs#148 (found reviewing the #147 fix): on the Pi kiosk
+// layout the binary lives in a bin/ subdir while web/ sits in the working
+// directory (the server reads it cwd-relative). Apply must swap web/ where the
+// server reads it (cwd/web), NOT next to the binary (cwd/bin/web) — otherwise a
+// self-update leaves stale /public assets shadowing the new embedded ones.
+func TestApplySwapsWebAtWorkingDirNotBinaryDir(t *testing.T) {
+	dir := t.TempDir()
+	chdirTo(t, dir) // cwd = install root, like unitill-pos.service WorkingDirectory
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(binDir, "unitill-pos")
+	if err := os.WriteFile(exe, []byte("OLD-BINARY-v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "web", "index.html"), []byte("OLD-WEB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reexecd := make(chan string, 1)
+	oldExec, oldReexec, oldDelay, oldVer := osExecutable, reexecFn, reexecDelay, buildinfo.Version
+	osExecutable = func() (string, error) { return exe, nil }
+	reexecFn = func(path string) error { reexecd <- path; return nil }
+	reexecDelay = 5 * time.Millisecond
+	buildinfo.Version = "0.1.0"
+	t.Cleanup(func() {
+		osExecutable, reexecFn, reexecDelay, buildinfo.Version = oldExec, oldReexec, oldDelay, oldVer
+	})
+
+	name := archiveNameFor("0.2.0")
+	archive := makeTarGz(t, []tarEntry{
+		{name: "unitill-pos", body: "NEW-BINARY-v2"},
+		{name: "web", dir: true},
+		{name: "web/index.html", body: "NEW-WEB"},
+	})
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		name:            archive,
+		"checksums.txt": []byte(sha256hex(archive) + "  " + name + "\n"),
+	})
+
+	if err := Apply(context.Background()); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "NEW-BINARY-v2" {
+		t.Errorf("binary not swapped, content = %q", got)
+	}
+	// web/ swapped at the working dir (where the server reads it)...
+	if got, _ := os.ReadFile(filepath.Join(dir, "web", "index.html")); string(got) != "NEW-WEB" {
+		t.Errorf("web not swapped at cwd/web, content = %q", got)
+	}
+	// ...NOT dumped next to the binary where nothing reads it.
+	if _, err := os.Stat(filepath.Join(binDir, "web")); !os.IsNotExist(err) {
+		t.Errorf("web wrongly written under the binary dir (bin/web): err=%v", err)
+	}
+	select {
+	case <-reexecd:
 	case <-time.After(2 * time.Second):
 		t.Error("re-exec never scheduled")
 	}
@@ -309,9 +392,15 @@ func TestApplyArchiveMissingBinary(t *testing.T) {
 	}
 }
 
-func TestApplyBackupFailureLeavesBinary(t *testing.T) {
+// A read-only install directory can't be swapped into. The writability
+// precondition (Supported → dirWritable) now catches this up front and returns
+// ErrUnsupported, so the binary is never touched and the UI shows the clean
+// "no in-app update" fallback rather than half-attempting a swap that fails at
+// the rename. (Before ut-docs#147 this only surfaced as a "back up current
+// binary" rename error mid-Apply.)
+func TestApplyReadOnlyDirIsUnsupportedAndLeavesBinary(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("running as root; read-only dir does not block rename")
+		t.Skip("running as root; read-only dir does not block writes")
 	}
 	fix := newInstallFixture(t)
 	name := archiveNameFor("0.2.0")
@@ -325,11 +414,11 @@ func TestApplyBackupFailureLeavesBinary(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(fix.dir, 0o755) })
 	err := Apply(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "back up current binary") {
-		t.Fatalf("err = %v, want backup failure", err)
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported for a read-only install dir", err)
 	}
 	if got, _ := os.ReadFile(fix.exe); string(got) != fix.oldBin {
-		t.Errorf("binary changed despite backup failure: %q", got)
+		t.Errorf("binary changed despite unwritable dir: %q", got)
 	}
 }
 

@@ -666,6 +666,7 @@
   "settings.update.download": "دانلود",
   "settings.update.title": "به‌روزرسانی نرم‌افزار",
   "settings.update.up_to_date": "شما به‌روز هستید",
+  "settings.update.unavailable_here": "به‌روزرسانی درون‌برنامه‌ای برای این نصب در دسترس نیست",
   "settings.value": "مقدار",
   "setup.back": "قبلی",
   "setup.country.ae": "امارات متحده عربی",
