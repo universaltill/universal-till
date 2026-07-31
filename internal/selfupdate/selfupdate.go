@@ -63,14 +63,24 @@ func Supported() bool {
 	if runtime.GOOS == "darwin" && appBundlePath(exe) != "" {
 		return true
 	}
-	// The real precondition for a portable unix install: the in-place swap is a
-	// rename WITHIN the binary's directory (see Apply), so it succeeds only when
-	// that directory is writable by the running service user. Checking this
-	// directly — instead of guessing from the path — is what lets a
-	// service-writable /opt/unitill kiosk install self-update, while a
-	// root-owned one honestly reports "no in-app update" rather than the old
-	// kiosk dead-end (board ut-docs#147).
-	return dirWritable(filepath.Dir(exe))
+	// The real precondition for a portable unix install: Apply's swaps are
+	// renames within (a) the binary's directory — for the binary + its .bak —
+	// and (b) the server's working directory — for the on-disk web/ override,
+	// which the server resolves cwd-relative, NOT next to the binary (the Pi
+	// kiosk runs /opt/unitill/bin/unitill-pos with cwd=/opt/unitill and web at
+	// /opt/unitill/web). Both must be writable by the service user, or Apply
+	// would fail — or worse, half-complete — mid-swap. Checking this directly,
+	// instead of guessing from the path, is what lets a service-writable
+	// /opt/unitill kiosk install self-update while a root-owned one honestly
+	// reports "no in-app update" rather than the old kiosk dead-end
+	// (board ut-docs#147).
+	if !dirWritable(filepath.Dir(exe)) {
+		return false
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != filepath.Dir(exe) && !dirWritable(cwd) {
+		return false
+	}
+	return true
 }
 
 // supportedFor is the OS/location POLICY gate (pure, no filesystem access):
@@ -164,6 +174,18 @@ func Apply(ctx context.Context) error {
 		}
 	}
 	installDir := filepath.Dir(exe)
+	// The server resolves its on-disk web/ override relative to its working
+	// directory (registerStatic → filepath.Join("web","public")), which is NOT
+	// necessarily the binary's directory: the Pi kiosk runs
+	// /opt/unitill/bin/unitill-pos with WorkingDirectory=/opt/unitill and web
+	// at /opt/unitill/web. Swap web/ where the server actually reads it, or a
+	// self-update silently serves stale /public assets over the freshly-swapped
+	// binary's newer embedded ones (ut-docs#148). For a flat portable install
+	// cwd == installDir, so this is unchanged there.
+	webBase := installDir
+	if cwd, err := os.Getwd(); err == nil {
+		webBase = cwd
+	}
 
 	rel, err := fetchLatest(ctx)
 	if err != nil {
@@ -235,7 +257,7 @@ func Apply(ctx context.Context) error {
 
 	// Swap web/ if the archive shipped it (keep a backup, best-effort).
 	if _, err := os.Stat(newWeb); err == nil {
-		curWeb := filepath.Join(installDir, "web")
+		curWeb := filepath.Join(webBase, "web")
 		webBak := curWeb + ".bak"
 		_ = os.RemoveAll(webBak)
 		if _, err := os.Stat(curWeb); err == nil {
