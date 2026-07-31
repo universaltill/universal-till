@@ -172,7 +172,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.import.success"))))
+		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.marketplace.install_success"))))
 	})
 
 	// Marketplace: list available binaries from marketplace service
@@ -333,7 +333,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 
 		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.import.success"))))
+		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.marketplace.install_success"))))
 	})
 
 	// Grant/revoke permissions

@@ -378,6 +378,7 @@
   "plugins.import.warning": "فقط افزونه‌های منابع مطمئن را نصب کنید. نصب دستی از تأیید فروشگاه عبور می‌کند.",
   "plugins.install": "نصب",
   "plugins.permission.granted": "دسترسی اعطا شد",
+  "plugins.marketplace.install_success": "افزونه با موفقیت نصب شد",
   "plugins.permission.revoked": "دسترسی لغو شد",
   "plugins.install.error.configuration": "نصب از بازارچه پیکربندی نشده است.",
   "plugins.install.error.forbidden": "فقط مدیر می‌تواند افزونه نصب کند.",
