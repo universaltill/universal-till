@@ -5,7 +5,7 @@ import path from 'node:path';
 
 // DOCS_ROOT points at the docs repo ROOT (post-2026-07-07 overhaul layout:
 // README.md + architecture.md at the root, references under reference/).
-const docsRoot = process.env.DOCS_ROOT || path.join(process.env.HOME || '~', 'repos/unitill/docs');
+const docsRoot = process.env.DOCS_ROOT || path.join(process.env.HOME || '~', 'repos/unitill/ut-docs');
 
 test.describe('Docs Hub Consistency', () => {
   // ut-docs is private (2026-07-31): CI only checks it out when the

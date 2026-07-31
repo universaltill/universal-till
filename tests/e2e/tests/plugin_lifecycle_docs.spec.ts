@@ -5,7 +5,7 @@ import path from 'node:path';
 
 // DOCS_ROOT points at the docs repo ROOT; plugin references live under
 // reference/ since the 2026-07-07 docs overhaul.
-const docsRoot = process.env.DOCS_ROOT || path.join(process.env.HOME || '~', 'repos/unitill/docs');
+const docsRoot = process.env.DOCS_ROOT || path.join(process.env.HOME || '~', 'repos/unitill/ut-docs');
 
 test.describe('Plugin Lifecycle and Manifest Docs', () => {
   // ut-docs is private (2026-07-31): CI only checks it out when the
