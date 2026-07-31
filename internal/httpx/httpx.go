@@ -32,6 +32,7 @@ var baseFuncs = template.FuncMap{
 	"enrolled":        func() bool { return enroll.CurrentStatus().Registered },
 	"enrolstore":      func() string { return enroll.CurrentStatus().StoreID },
 	"enroldevice":     func() string { return enroll.CurrentStatus().DeviceID },
+	"jsonVals":        jsonVals,
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.
@@ -114,6 +115,35 @@ func minorUnits(amount any) (int64, bool) {
 func toJSON(v any) template.JS {
 	b, _ := json.Marshal(v)
 	return template.JS(string(b))
+}
+
+// jsonVals builds a JSON object literal from alternating key/value pairs, for
+// an hx-vals attribute (htmx JSON.parses it). Deliberately returns a plain
+// string, NOT template.JS like toJSON above — template.JS tells html/template
+// to skip escaping entirely, which is correct inside a <script> block but
+// wrong inside hx-vals='...': a literal apostrophe in the marshaled JSON
+// would break out of the single-quoted attribute unescaped. A plain string
+// still gets html/template's normal attribute-context escaping, exactly like
+// internal/ui.SearchResult.AddVals (the same fix, for the buttons_admin.html
+// case) — this is the general-purpose version for templates that don't have
+// a rich view-model struct to hang a bespoke Vals() method off of (ut-docs#19:
+// catalog_variants/suggestions/self_order_grid/basket previously interpolated
+// raw fields into a hand-written JSON literal, invalid JSON for any quoted
+// value, same class of bug AddVals fixed).
+func jsonVals(pairs ...any) (string, error) {
+	if len(pairs)%2 != 0 {
+		return "", fmt.Errorf("jsonVals: odd number of arguments (%d)", len(pairs))
+	}
+	m := make(map[string]any, len(pairs)/2)
+	for i := 0; i < len(pairs); i += 2 {
+		key, ok := pairs[i].(string)
+		if !ok {
+			return "", fmt.Errorf("jsonVals: argument %d is a %T, not a string key", i, pairs[i])
+		}
+		m[key] = pairs[i+1]
+	}
+	b, err := json.Marshal(m)
+	return string(b), err
 }
 
 // InitI18n wires a translator and default locale into the template layer.

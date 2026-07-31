@@ -12,7 +12,7 @@
     </button>
     {{ else }}
     <button type="button" class="selforder-tile" data-cat="{{ .CategoryID }}"
-            hx-post="/api/self-order/scan" hx-vals='{"code":"{{ .Code }}"}'
+            hx-post="/api/self-order/scan" hx-vals='{{ jsonVals "code" .Code }}'
             hx-target="#selforder-cart" hx-swap="outerHTML">
       <img class="selforder-tile-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy" onerror="this.style.display='none'">
       <span class="selforder-tile-name">{{ .Name }}</span>
