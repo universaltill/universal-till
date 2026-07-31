@@ -132,6 +132,17 @@ func TestIndexAndBasketRender(t *testing.T) {
 	if !strings.Contains(home, `option value="cash"`) {
 		t.Fatalf("expected cash payment method option")
 	}
+	// Tied to the scan input specifically (via the adjacent "autofocus" it
+	// alone carries on this page) — a bare `data-osk="off"` substring
+	// match would also coincidentally match <body data-osk="off"> if the
+	// global OSK setting were ever "off", making the assertion pass for
+	// the wrong reason.
+	if !strings.Contains(home, `data-osk="off" autofocus`) {
+		t.Fatalf("expected scan input to suppress the on-screen keyboard by default")
+	}
+	if !strings.Contains(home, `id="scan-keyboard-open"`) {
+		t.Fatalf("expected a manual on-screen-keyboard toggle button on the sale screen")
+	}
 	expectOK(http.MethodGet, "/ui/basket")
 	expectOK(http.MethodGet, "/settings")
 	expectOK(http.MethodGet, "/plugins")
