@@ -55,8 +55,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// settings + state
 	setStore := settings.NewStore(db)
 	state := common.LoadState(ctx, setStore, cfg)
-	// Ensure defaults are persisted (e.g., theme).
-	common.SaveState(ctx, setStore, common.RuntimeState{
+	// Ensure defaults are persisted (e.g., theme). Non-fatal on error
+	// (offline-first: a boot must never be blocked on a settings write) —
+	// the in-memory state above is already correct for this boot either way.
+	if err := common.SaveState(ctx, setStore, common.RuntimeState{
 		Theme:                  state.Theme,
 		Currency:               state.Currency,
 		Country:                state.Country,
@@ -64,7 +66,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		TaxInclusive:           state.TaxInclusive,
 		TaxRatePct:             state.TaxRatePct,
 		AllowNegativeInventory: state.AllowNegativeInventory,
-	})
+	}); err != nil {
+		log.Errorf("persist default settings: %v", err)
+	}
 
 	// i18n / currency
 	i18n, err := config.NewI18nFS(locales.FS, cfg.Locales.Locale)
