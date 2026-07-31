@@ -135,8 +135,27 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return nil, err
 	}
+	warnOrphanedPaymentMethods(ctx, repo)
 	m.Wasm.Sync(ctx, db)
 	return m, nil
+}
+
+// warnOrphanedPaymentMethods logs a startup warning for every payment_methods
+// row stamped with a plugin_id that no longer has an installed plugin — a
+// shop-created or built-in tender captured before ADR-0031's ownership guard
+// shipped, which migration 021 only repairs for the three seeded built-ins.
+// A row alone can't distinguish that capture from a genuine plugin method
+// whose plugin was simply uninstalled (retained for sales history), so this
+// surfaces the gap instead of guessing at a fix (ut-docs#16).
+func warnOrphanedPaymentMethods(ctx context.Context, repo *data.PluginRepo) {
+	orphans, err := repo.FindOrphanedPaymentMethods(ctx)
+	if err != nil {
+		log.Printf("check for orphaned plugin-owned payment methods: %v", err)
+		return
+	}
+	for _, o := range orphans {
+		log.Printf("payment method %s (%q) is plugin-owned by %s, which is not installed on this till — reinstall the plugin, or reassign/rename the tender if this is a stale capture", o.ID, o.Name, o.PluginID)
+	}
 }
 
 // Reload refreshes installed plugins and menu entries (used after install/uninstall).

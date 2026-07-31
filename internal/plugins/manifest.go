@@ -138,10 +138,14 @@ func ComputeSHA256(filePath string) (string, error) {
 // Rollback — a legacy on-disk manifest can carry keys that predate
 // validation). Keys must be non-empty, whitespace-clean, contain no ':'
 // (reserved namespace separator), and not collide with a non-plugin tender
-// or another plugin's payment key. The plugin's own keys never
-// self-conflict, so reinstall/upgrade pass.
+// or another plugin's payment key. Labels (payment_methods.name is also
+// UNIQUE) get the same collision check — ut-docs#16, ADR-0031's documented
+// residual: without this, two tenders wanting the same label hard-failed
+// the sync at every startup instead of getting a clear install-time error.
+// The plugin's own keys/labels never self-conflict, so reinstall/upgrade
+// pass.
 func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
-	var paymentKeys []string
+	var paymentKeys, paymentNames []string
 	for _, e := range entries {
 		if e.Type != "payment" {
 			continue
@@ -156,6 +160,7 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 			return fmt.Errorf("payment entry key %q must not contain ':'", e.Key)
 		}
 		paymentKeys = append(paymentKeys, e.Key)
+		paymentNames = append(paymentNames, e.Label)
 	}
 	if len(paymentKeys) == 0 {
 		return nil
@@ -164,18 +169,29 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 	if err != nil {
 		return fmt.Errorf("check payment key conflicts: %w", err)
 	}
-	if len(conflicts) == 0 {
+	if len(conflicts) > 0 {
+		c := conflicts[0]
+		switch {
+		case c.Owner == "":
+			return fmt.Errorf("payment entry key %q collides with an existing built-in or shop-configured tender — pick a plugin-specific key", c.Key)
+		case !c.OwnerInstalled:
+			return fmt.Errorf("payment entry key %q belongs to plugin %s, which is no longer installed — its tender row is retained for sales history; reinstall it or pick a different key", c.Key, c.Owner)
+		default:
+			return fmt.Errorf("payment entry key %q is already provided by plugin %s — pick a different key", c.Key, c.Owner)
+		}
+	}
+	nameConflicts, err := repo.FindPaymentNameConflicts(ctx, tx, pluginID, paymentNames)
+	if err != nil {
+		return fmt.Errorf("check payment name conflicts: %w", err)
+	}
+	if len(nameConflicts) == 0 {
 		return nil
 	}
-	c := conflicts[0]
-	switch {
-	case c.Owner == "":
-		return fmt.Errorf("payment entry key %q collides with an existing built-in or shop-configured tender — pick a plugin-specific key", c.Key)
-	case !c.OwnerInstalled:
-		return fmt.Errorf("payment entry key %q belongs to plugin %s, which is no longer installed — its tender row is retained for sales history; reinstall it or pick a different key", c.Key, c.Owner)
-	default:
-		return fmt.Errorf("payment entry key %q is already provided by plugin %s — pick a different key", c.Key, c.Owner)
+	c := nameConflicts[0]
+	if c.Owner == "" {
+		return fmt.Errorf("payment entry label %q collides with an existing built-in or shop-configured tender's name — pick a distinct label", c.Key)
 	}
+	return fmt.Errorf("payment entry label %q is already used by plugin %s — pick a distinct label", c.Key, c.Owner)
 }
 
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {
