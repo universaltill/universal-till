@@ -15,14 +15,17 @@ import (
 )
 
 // updateUnavailableHTML renders the status line for "a newer version exists but
-// in-app apply can't run on this install". On Windows a download link is
-// actionable (the user runs the installer); on a unix kiosk a website link is a
-// dead end — fullscreen with no way out and no installer to run — so it states
-// the situation plainly with no link (board ut-docs#147). A correctly
-// provisioned kiosk never reaches here: selfupdate.Supported() is true for a
+// in-app apply can't run on this install". On Windows and macOS a download
+// link is actionable — both are windowed desktop OSes with a browser, so a
+// user who can't self-update (Windows: no in-app updater at all; macOS: an
+// Intel Mac, ut-docs#18 — no Intel .dmg is ever published) can still get the
+// new version themselves. On a unix kiosk a website link is a dead end —
+// fullscreen with no way out and no installer to run — so it states the
+// situation plainly with no link (board ut-docs#147). A correctly provisioned
+// kiosk never reaches here: selfupdate.Supported() is true for a
 // service-writable install, so the inline Apply button is shown instead.
 func updateUnavailableHTML(locale, latest, goos string) string {
-	if goos == "windows" {
+	if goos == "windows" || goos == "darwin" {
 		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="https://www.universaltill.com/download" rel="noopener">%s</a></span>`,
 			html.EscapeString(httpx.T(locale, "status.update_available")),
 			html.EscapeString(latest),

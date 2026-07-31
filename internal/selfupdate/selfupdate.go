@@ -42,6 +42,13 @@ var (
 	osExecutable = os.Executable
 	reexecFn     = reexec
 	reexecDelay  = 1500 * time.Millisecond
+	// goarch is a test seam for runtime.GOARCH, shared between Supported()
+	// (gates whether "Update now" ever appears) and applyMacApp
+	// (macapp_darwin.go, the click-time Intel refusal) so both use one
+	// source of truth for "is this an Intel Mac" instead of two vars that
+	// could drift apart. Declared here (not macapp_darwin.go) because
+	// Supported() needs it on every platform's build, not just darwin's.
+	goarch = runtime.GOARCH
 )
 
 // ErrUnsupported means this install type updates via a native mechanism.
@@ -61,7 +68,7 @@ func Supported() bool {
 	// dir-writability. A *portable* darwin binary outside a bundle still does
 	// the tar.gz swap below, so it needs a writable dir just like linux.
 	if runtime.GOOS == "darwin" && appBundlePath(exe) != "" {
-		return true
+		return macAppBundleSupported(goarch)
 	}
 	// The real precondition for a portable unix install: Apply's swaps are
 	// renames within (a) the binary's directory — for the binary + its .bak —
@@ -131,6 +138,18 @@ func dirWritable(dir string) bool {
 	_ = f.Close()
 	_ = os.Remove(name)
 	return true
+}
+
+// macAppBundleSupported reports whether a macOS .app-bundle install can
+// self-update via the .dmg whole-bundle replace (applyMacApp). Only arm64
+// dmgs are ever published (.goreleaser.yaml + the macos-app release job both
+// build arm64 only) — an Intel Mac must never see the "Update now" button,
+// only the plain download-page chip (the same treatment Windows already
+// gets, ut-docs#152), since clicking it would only ever fail at
+// applyMacApp's own Intel refusal (macapp_darwin.go) with a confusing
+// "no macOS .dmg" style error.
+func macAppBundleSupported(arch string) bool {
+	return arch == "arm64"
 }
 
 // appBundlePath returns the path of the enclosing macOS .app bundle when the
