@@ -25,6 +25,11 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 	return s.repo.Set(ctx, key, value)
 }
 
+// SetMany upserts every pair in one transaction — all or nothing.
+func (s *Store) SetMany(ctx context.Context, kv map[string]string) error {
+	return s.repo.SetMany(ctx, kv)
+}
+
 // All returns all key/value pairs from settings.
 func (s *Store) All(ctx context.Context) (map[string]string, error) {
 	return s.repo.All(ctx)

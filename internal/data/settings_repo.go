@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"sort"
 	"time"
 )
 
@@ -48,6 +49,47 @@ ON CONFLICT(key) DO UPDATE SET
 `, key, value, time.Now().UTC())
 	if err != nil {
 		return settingsObs.wrapf("set", "set setting %s", err, key)
+	}
+	return nil
+}
+
+// SetMany upserts every key/value pair in one transaction — all or nothing.
+// Keys are written in sorted order so failures are deterministic.
+func (r *SettingsRepo) SetMany(ctx context.Context, kv map[string]string) error {
+	var err error
+	done := settingsObs.trace("set_many")
+	defer func() { done(err) }()
+
+	if len(kv) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(kv))
+	for k := range kv {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return settingsObs.wrap("set_many", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	for _, k := range keys {
+		if _, err = tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	value = excluded.value,
+	updated_at = excluded.updated_at
+`, k, kv[k], now); err != nil {
+			return settingsObs.wrapf("set_many", "set setting %s", err, k)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return settingsObs.wrap("set_many", err)
 	}
 	return nil
 }
