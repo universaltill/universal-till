@@ -87,11 +87,24 @@ func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
 		if err == nil {
 			t.Fatal("Run succeeded despite an unbindable UT_LISTEN_ADDR")
 		}
-		if elapsed := time.Since(start); elapsed > 3*time.Second {
-			t.Fatalf("Run took %s to return a startup error — background goroutines were "+
-				"apparently only stopped by the 10s drain timeout, not a real cancel", elapsed)
+		// Two signals distinguish "a healthy boot that happened to be slow"
+		// (a loaded CI runner once took 3.7s of legitimate startup — a plain
+		// wall-clock threshold flaked there, 2026-07-31) from the regression
+		// this test exists for. A real bgCtx/join regression ALWAYS costs the
+		// full drain bound on top of boot time AND logs the drain-timeout
+		// error; a slow-but-healthy boot does neither.
+		if elapsed := time.Since(start); elapsed >= backgroundDrainTimeout {
+			t.Fatalf("Run took %s (>= the %s drain timeout) to return a startup error — "+
+				"background goroutines were only stopped by the drain giving up, not a real cancel",
+				elapsed, backgroundDrainTimeout)
 		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("Run did not return within 15s of an unbindable listen address")
+		for _, p := range logging.Recent() {
+			if p.Level == "ERROR" && p.At.After(start) &&
+				strings.Contains(p.Msg, "background services still running") {
+				t.Fatalf("Run's drain hit its timeout on an early startup error: %s", p.Msg)
+			}
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not return within 30s of an unbindable listen address")
 	}
 }
