@@ -993,5 +993,6 @@
   "issuereport.saving": "Saving…",
   "issuereport.saved": "Saved. It will upload automatically once this shop is online.",
   "issuereport.save_error": "Couldn't save the report — try again.",
-  "issuereport.logs_note": "The till's recent warning/error logs are attached automatically."
+  "issuereport.logs_note": "The till's recent warning/error logs are attached automatically.",
+  "osk.toggle": "Keyboard"
 }
