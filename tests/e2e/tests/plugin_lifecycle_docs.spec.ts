@@ -1,5 +1,6 @@
 import { test, expect } from '../support/fixtures';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 // DOCS_ROOT points at the docs repo ROOT; plugin references live under
@@ -7,6 +8,9 @@ import path from 'node:path';
 const docsRoot = process.env.DOCS_ROOT || path.join(process.env.HOME || '~', 'repos/unitill/docs');
 
 test.describe('Plugin Lifecycle and Manifest Docs', () => {
+  // ut-docs is private (2026-07-31): CI only checks it out when the
+  // DOCS_READ_TOKEN secret exists. Skip visibly instead of failing on reads.
+  test.skip(!existsSync(docsRoot), `docs repo not present at ${docsRoot} (private ut-docs not checked out)`);
   test('lifecycle doc includes publish -> install -> telemetry -> update flow', async () => {
     const contents = await readFile(path.join(docsRoot, 'reference', 'plugin-lifecycle.md'), 'utf8');
 

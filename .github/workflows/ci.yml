@@ -46,13 +46,24 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     needs: build
+    env:
+      # ut-docs went private (2026-07-31), so the default GITHUB_TOKEN can no
+      # longer read it — a PAT with read access to universaltill/ut-docs must
+      # be provided as the DOCS_READ_TOKEN secret. Without it the docs-hub
+      # specs skip (loudly), rather than failing the whole e2e job.
+      DOCS_READ_TOKEN: ${{ secrets.DOCS_READ_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Checkout docs repo for docs-hub tests
+        if: env.DOCS_READ_TOKEN != ''
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/docs
           path: ./docs
+          token: ${{ env.DOCS_READ_TOKEN }}
+      - name: Warn that docs-hub specs will skip
+        if: env.DOCS_READ_TOKEN == ''
+        run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, docs-hub e2e specs will be skipped"
       - uses: actions/setup-go@v5
         with: { go-version: '1.25' }
       - uses: actions/setup-node@v4
