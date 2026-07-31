@@ -26,14 +26,41 @@
        it never scrolls. Split-tender element IDs are load-bearing (app.js). -->
   <div class="tender" x-data="{ tab: 'pay' }">
     <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
-      <input type="text" name="code" placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" autofocus required>
+      <input type="text" name="code" placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" data-osk="off" autofocus required>
       <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}" aria-label="{{ T "tender.scan.qty" }}">
       <button class="btn" type="submit">{{ T "tender.scan.add" }}</button>
+      <button class="btn secondary" type="button" id="scan-keyboard-open"
+              title="{{ T "tender.scan.keyboard" }}" aria-label="{{ T "tender.scan.keyboard" }}">⌨</button>
       {{ if .aiIdentify }}
       <button class="btn secondary" type="button" id="ai-identify-open" hidden
               title="{{ T "ai.identify.button" }}">📷</button>
       {{ end }}
     </form>
+    <script>
+      (function () {
+        var open = document.getElementById('scan-keyboard-open');
+        if (!open) return;
+        open.addEventListener('click', function () {
+          var el = document.querySelector('input[name=code]');
+          if (!el) return;
+          // Opt this field back into normal OSK eligibility (it starts
+          // data-osk="off" to suppress the auto-open on load) and focus
+          // it — osk.js's own focusin listener shows the keyboard from
+          // there, the same path every other field already uses. Restore
+          // the suppression on the next blur so this is a one-shot,
+          // deliberate open, not a permanent latch — otherwise the next
+          // "New Sale" reset (which refocuses this same field) would
+          // re-pop the keyboard on every following sale, reintroducing
+          // the original bug for the rest of the page's lifetime.
+          el.removeAttribute('data-osk');
+          el.focus();
+          el.addEventListener('blur', function restoreOff() {
+            el.setAttribute('data-osk', 'off');
+            el.removeEventListener('blur', restoreOff);
+          }, { once: true });
+        });
+      })();
+    </script>
 
     <div id="held-sales" hx-get="/ui/held" hx-trigger="load" hx-swap="outerHTML"></div>
 

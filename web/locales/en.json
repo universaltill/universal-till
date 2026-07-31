@@ -755,6 +755,7 @@
   "tender.reference_placeholder": "Last 4, auth code",
   "tender.scan.add": "Add",
   "tender.scan.barcode": "Barcode",
+  "tender.scan.keyboard": "Keyboard",
   "tender.scan.qty": "Qty",
   "tender.tab.pay": "Pay",
   "tender.tab.split": "Split",

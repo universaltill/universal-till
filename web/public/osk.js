@@ -84,7 +84,12 @@
   }
 
   function wantsOSK(el) {
-    if (!el || el.dataset.osk === 'off' || el.readOnly || el.disabled) return false;
+    if (!el || el.readOnly || el.disabled) return false;
+    // A field's own data-osk="off" (e.g. the sale screen's scan input)
+    // opts out of AUTO-mode auto-show only. An admin's explicit "Always
+    // on" (mode === 'on', for a kiosk with no physical keyboard at all)
+    // is a stronger, deliberate signal and still wins on every field.
+    if (el.dataset.osk === 'off' && mode !== 'on') return false;
     if (el.tagName === 'TEXTAREA') return true;
     if (el.tagName !== 'INPUT') return false;
     return ['text', 'search', 'password', 'email', 'url', 'number', 'tel'].indexOf(el.type) !== -1;

@@ -580,6 +580,12 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);
    see packaging/linux/unitill-kiosk-setup.sh. */
 body.kiosk { font-size: .9375rem; touch-action: manipulation; }
+/* cursor is inherited, but .btn/.btn-tile/.tab/etc. all set their own
+   `cursor: pointer` — an inherited `cursor: none` on body alone would
+   lose to every one of those declarations. Force it on every descendant
+   too so the cursor is actually hidden across the kiosk UI, not just
+   over bare background. */
+body.kiosk, body.kiosk * { cursor: none; }
 body.kiosk.sale-screen { overflow: hidden; }
 body.kiosk .container { padding: .6rem .8rem 0; }
 body.kiosk .kiosk-header { margin: 0 0 .6rem; }
