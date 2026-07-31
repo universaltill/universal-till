@@ -993,5 +993,6 @@
   "issuereport.saving": "Kaydediliyor…",
   "issuereport.saved": "Kaydedildi. Bu mağaza internete bağlandığında otomatik olarak yüklenecek.",
   "issuereport.save_error": "Rapor kaydedilemedi — tekrar deneyin.",
-  "issuereport.logs_note": "Kasanın son uyarı/hata günlükleri otomatik olarak eklenir."
+  "issuereport.logs_note": "Kasanın son uyarı/hata günlükleri otomatik olarak eklenir.",
+  "osk.toggle": "Klavye"
 }

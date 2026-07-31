@@ -22,6 +22,7 @@
   if (!enabled) {
     window.addEventListener('touchstart', function once() {
       enabled = true;
+      updateToggles();
       window.removeEventListener('touchstart', once);
     }, { passive: true });
   }
@@ -171,7 +172,20 @@
     }
   }
 
+  function restoreInputmode(el) {
+    var prev = el.dataset.oskPrevInputmode;
+    if (prev) el.setAttribute('inputmode', prev);
+    else if (prev !== undefined) el.removeAttribute('inputmode');
+    delete el.dataset.oskPrevInputmode;
+  }
+
   function show(el) {
+    // Re-tapping the field the OSK is already open for (caret placement)
+    // must not reset the layer/shift or re-trigger the smooth scroll.
+    if (current === el && osk && osk.classList.contains('osk-open')) return;
+    // Retargeting to another field: release the old one's inputmode, or it
+    // stays "none" for the life of the page (dead native IME on Android).
+    if (current && current !== el) restoreInputmode(current);
     current = el;
     if (!osk) build();
     shift = false;
@@ -204,39 +218,58 @@
   }
 
   function hide() {
-    if (current) {
-      var prev = current.dataset.oskPrevInputmode;
-      if (prev) current.setAttribute('inputmode', prev);
-      else current.removeAttribute('inputmode');
-      delete current.dataset.oskPrevInputmode;
-    }
+    if (current) restoreInputmode(current);
     current = null;
     if (!osk) return;
     osk.classList.remove('osk-open');
     document.body.classList.remove('osk-padded');
   }
 
+  // ut-docs#155: the OSK opens ONLY from a deliberate user action — a click/
+  // tap on an OSK-able field, or a data-osk-toggle button. Programmatic focus
+  // (the sale screen's autofocus, the checkout-start button's delayed
+  // .focus() for the scanner) must never pop it; this REVERSES the earlier
+  // "catch up with the autofocused field at init" behavior, per the field
+  // report. Click (not focusin) is the show trigger so that tapping the
+  // already-focused scan input — which fires no focusin — still opens it.
+  document.addEventListener('click', function (ev) {
+    if (!enabled) return;
+    var t = ev.target.closest ? ev.target.closest('[data-osk-toggle]') : null;
+    if (t) {
+      // Note: a toggle outside a <form> has no target and no-ops by design.
+      var target = null, els = t.form ? t.form.elements : [];
+      for (var i = 0; i < els.length; i++) {
+        if (wantsOSK(els[i])) { target = els[i]; break; }
+      }
+      var open = osk && osk.classList.contains('osk-open');
+      // Open for a DIFFERENT field (e.g. the qty pad): retarget to this
+      // form's field instead of making the operator tap twice.
+      if (open && (!target || current === target)) { hide(); return; }
+      if (target) { target.focus(); show(target); }
+      return;
+    }
+    if (wantsOSK(ev.target)) show(ev.target);
+  });
   document.addEventListener('focusin', function (ev) {
     if (!enabled) return;
-    if (wantsOSK(ev.target)) show(ev.target);
-    else if (!osk || !osk.contains(ev.target)) hide();
+    // Focus moving somewhere non-OSK-able closes the keyboard; opening is
+    // click-only (above).
+    if (!wantsOSK(ev.target) && (!osk || !osk.contains(ev.target))) hide();
   });
   document.addEventListener('focusout', function (ev) {
-    // If focus lands on another OSK-able field, focusin re-shows immediately.
+    // If focus lands on another OSK-able field, its click re-shows it.
     setTimeout(function () {
       var a = document.activeElement;
       if (!wantsOSK(a) && (!osk || !osk.contains(a))) hide();
     }, 50);
   });
 
-  // An autofocused field (the sale screen's scan input) can gain focus
-  // BEFORE this deferred script attaches its focusin listener — on slow
-  // devices (the real Pi) the parser focuses it long before osk.js
-  // evaluates, so no focusin ever fires for it and the keyboard never
-  // appears until focus leaves and comes back. Catch up with the current
-  // focus state at init, mirroring exactly what the focusin handler would
-  // have done.
-  if (enabled && wantsOSK(document.activeElement)) {
-    show(document.activeElement);
+  // On-demand affordance: reveal any data-osk-toggle buttons (they ship
+  // hidden) whenever the OSK is available at all. Mode 'off' never reaches
+  // here, so the buttons stay hidden there.
+  function updateToggles() {
+    var btns = document.querySelectorAll('[data-osk-toggle]');
+    for (var i = 0; i < btns.length; i++) btns[i].hidden = !enabled;
   }
+  updateToggles();
 })();

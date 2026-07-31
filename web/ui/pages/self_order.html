@@ -14,6 +14,7 @@
       .selforder-hint { color:var(--muted, #6b7280); max-width:32rem; }
       .selforder-start { min-height:64px; padding-inline:2.5rem; font-size:1.15rem; }
     </style>
+    <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
   </head>
   <body class="selforder-screen{{ if kiosk }} kiosk{{ end }}" data-kiosk-idle-reset="{{ .idleResetSecs }}">
     <main>
