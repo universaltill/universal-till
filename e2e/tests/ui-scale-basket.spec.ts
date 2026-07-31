@@ -26,7 +26,7 @@ test('basket stays visible at the maximum ui_scale on a short viewport', async (
   await page.waitForEvent('load');
 
   await page.goto('/');
-  await page.getByRole('textbox').first().fill('5000000000011');
+  await page.getByRole('textbox').first().fill('5000000000012');
   // #basket is a full hx-swap="outerHTML" -- wait for that exact response
   // before inspecting layout, or a race between the swap and boundingBox()
   // can read a stale/mid-swap node.

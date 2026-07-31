@@ -8,7 +8,7 @@ import { watchConsole } from './helpers';
 // twice in the Go layer (images written to the wrong path; a stale
 // cache-busting version serving old bytes) but could never PROVE fixed
 // without a real browser actually loading the <img>. Uses Sparkling Water
-// 500ml (itm003, barcode 5000000000035) — untouched by any other spec.
+// 500ml (itm003, barcode 5000000000036) — untouched by any other spec.
 test('uploading a catalog item photo makes it appear on the till', async ({ page }) => {
   const assertClean = watchConsole(page);
 
@@ -39,7 +39,7 @@ test('uploading a catalog item photo makes it appear on the till', async ({ page
   // old seeded one) renders on the basket line — not just that the
   // upload "succeeded" server-side.
   await page.goto('/');
-  await page.getByRole('textbox').first().fill('5000000000035');
+  await page.getByRole('textbox').first().fill('5000000000036');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Sparkling Water');
 

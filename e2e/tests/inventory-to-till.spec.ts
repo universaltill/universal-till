@@ -4,7 +4,7 @@ import { watchConsole } from './helpers';
 // The flow Farshid asked for directly: receive stock on the Inventory
 // page, then go sell that exact item at the till, then confirm the stock
 // level actually dropped — end to end, through the real UI, not a mocked
-// API call. Uses Pepsi Can 330ml (itm002, £1.15, barcode 5000000000028) —
+// API call. Uses Pepsi Can 330ml (itm002, £1.15, barcode 5000000000029) —
 // deliberately NOT the Coca-Cola item sale.spec.ts/rtl.spec.ts already
 // scan, so stock-level assertions here aren't perturbed by another spec's
 // sale landing between the "receive" and "sell" steps.
@@ -39,7 +39,7 @@ test('receive stock on Inventory, then sell that item at the till', async ({ pag
 
   // Now go sell one at the till.
   await page.goto('/');
-  await page.getByRole('textbox').first().fill('5000000000028');
+  await page.getByRole('textbox').first().fill('5000000000029');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Pepsi');
   await expect(page.locator('.basket .total')).toContainText('1.15');
