@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"runtime"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -12,6 +13,26 @@ import (
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 )
+
+// updateUnavailableHTML renders the status line for "a newer version exists but
+// in-app apply can't run on this install". On Windows a download link is
+// actionable (the user runs the installer); on a unix kiosk a website link is a
+// dead end — fullscreen with no way out and no installer to run — so it states
+// the situation plainly with no link (board ut-docs#147). A correctly
+// provisioned kiosk never reaches here: selfupdate.Supported() is true for a
+// service-writable install, so the inline Apply button is shown instead.
+func updateUnavailableHTML(locale, latest, goos string) string {
+	if goos == "windows" {
+		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="https://www.universaltill.com/download" rel="noopener">%s</a></span>`,
+			html.EscapeString(httpx.T(locale, "status.update_available")),
+			html.EscapeString(latest),
+			html.EscapeString(httpx.T(locale, "settings.update.download")))
+	}
+	return fmt.Sprintf(`<span>⬆ %s v%s — %s</span>`,
+		html.EscapeString(httpx.T(locale, "status.update_available")),
+		html.EscapeString(latest),
+		html.EscapeString(httpx.T(locale, "settings.update.unavailable_here")))
+}
 
 // registerUpdateAPI exposes the manager-gated in-app updater. It downloads the
 // latest release, verifies its checksum, swaps the binary + web assets, and
@@ -91,10 +112,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 				html.EscapeString(httpx.T(locale, "settings.update.apply_confirm")),
 				html.EscapeString(httpx.T(locale, "status.update_now")))
 		default:
-			fmt.Fprintf(w, `<span>⬆ %s v%s — <a href="https://www.universaltill.com/download" rel="noopener">%s</a></span>`,
-				html.EscapeString(httpx.T(locale, "status.update_available")),
-				html.EscapeString(st.Latest),
-				html.EscapeString(httpx.T(locale, "settings.update.download")))
+			fmt.Fprint(w, updateUnavailableHTML(locale, st.Latest, runtime.GOOS))
 		}
 	})
 }
