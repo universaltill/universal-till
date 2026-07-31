@@ -208,6 +208,50 @@ func TestSettingsPageOffersHighDensityScaleOption(t *testing.T) {
 	}
 }
 
+// SaveState's write must be all-or-nothing at the HTTP boundary too
+// (ut-docs#157): a failed settings-page save must answer 5xx and must not
+// apply the change to the live sale engine, or a shop would silently
+// mis-price sales on the old currency/tax combination.
+func TestSettingsSave_FailsClosedOnSaveError(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	// Seed a known-good baseline the same way a real shop would have one.
+	if rec := postForm(mux, "/api/settings/save", url.Values{
+		"currency":   {"GBP"},
+		"taxRatePct": {"20"},
+	}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("seed save = %d", rec.Code)
+	}
+
+	if _, err := d.Db.Exec(`
+CREATE TRIGGER boom BEFORE INSERT ON settings
+WHEN NEW.key = 'store.tax_rate'
+BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rec := postForm(mux, "/api/settings/save", url.Values{
+		"currency":   {"EUR"},
+		"taxRatePct": {"7"},
+	}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("save with an aborting trigger = %d, want 500", rec.Code)
+	}
+
+	// The DB must still hold the seeded values — no partial currency-only write.
+	if v, _, _ := d.Settings.Get(t.Context(), "store.currency"); v != "GBP" {
+		t.Fatalf("store.currency = %q after failed save, want seeded %q (partial write not rolled back)", v, "GBP")
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "store.tax_rate"); v != "20" {
+		t.Fatalf("store.tax_rate = %q after failed save, want seeded %q", v, "20")
+	}
+	// The live sale engine must not have picked up the failed-to-persist
+	// currency/tax combination.
+	if d.Engine.Config().TaxRateBasisPoints != 2000 {
+		t.Fatalf("engine TaxRateBasisPoints = %d after failed save, want unchanged 2000 (700 would mean the failed 7%% rate was silently applied)", d.Engine.Config().TaxRateBasisPoints)
+	}
+}
+
 // the forbidden path). Each answers 200 (HTMX swap target) with an error/muted
 // notice rather than a hard status.
 func TestEnrolEndpointsRefuseNonManager(t *testing.T) {

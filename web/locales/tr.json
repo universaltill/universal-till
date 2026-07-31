@@ -688,6 +688,7 @@
   "setup.country.us": "Amerika Birleşik Devletleri",
   "setup.done.hint": "Ürünleri, kasaları ve yazıcıları menüden istediğiniz zaman ekleyebilirsiniz. Kasayı açmak için aşağıya dokunun.",
   "setup.done.title": "Her şey hazır!",
+  "setup.error.save_failed": "Ayarlarınız kaydedilemedi — lütfen tekrar deneyin.",
   "setup.finish": "Satışa başla",
   "setup.join.help": "Bu dükkânda zaten bir Universal Till var mı? O kasada Ayarlar → Kasalar → Eşleştirme kodunu göster'i açın, ardından kodu buraya tarayın veya yapıştırın. Bu kasa tüm dükkânı — ürünler, fiyatlar, personel PIN'leri — kopyalar ve yeniden başlar.",
   "setup.join.title": "Mevcut bir dükkâna katıl",
