@@ -309,9 +309,15 @@ func TestApplyArchiveMissingBinary(t *testing.T) {
 	}
 }
 
-func TestApplyBackupFailureLeavesBinary(t *testing.T) {
+// A read-only install directory can't be swapped into. The writability
+// precondition (Supported → dirWritable) now catches this up front and returns
+// ErrUnsupported, so the binary is never touched and the UI shows the clean
+// "no in-app update" fallback rather than half-attempting a swap that fails at
+// the rename. (Before ut-docs#147 this only surfaced as a "back up current
+// binary" rename error mid-Apply.)
+func TestApplyReadOnlyDirIsUnsupportedAndLeavesBinary(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("running as root; read-only dir does not block rename")
+		t.Skip("running as root; read-only dir does not block writes")
 	}
 	fix := newInstallFixture(t)
 	name := archiveNameFor("0.2.0")
@@ -325,11 +331,11 @@ func TestApplyBackupFailureLeavesBinary(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(fix.dir, 0o755) })
 	err := Apply(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "back up current binary") {
-		t.Fatalf("err = %v, want backup failure", err)
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported for a read-only install dir", err)
 	}
 	if got, _ := os.ReadFile(fix.exe); string(got) != fix.oldBin {
-		t.Errorf("binary changed despite backup failure: %q", got)
+		t.Errorf("binary changed despite unwritable dir: %q", got)
 	}
 }
 

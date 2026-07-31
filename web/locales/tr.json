@@ -666,6 +666,7 @@
   "settings.update.download": "İndir",
   "settings.update.title": "Yazılım güncellemesi",
   "settings.update.up_to_date": "Güncelsiniz",
+  "settings.update.unavailable_here": "Bu kurulum için uygulama içi güncelleme kullanılamıyor",
   "settings.value": "Değer",
   "setup.back": "Geri",
   "setup.country.ae": "Birleşik Arap Emirlikleri",

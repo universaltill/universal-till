@@ -666,6 +666,7 @@
   "settings.update.download": "Download",
   "settings.update.title": "Software update",
   "settings.update.up_to_date": "You are up to date",
+  "settings.update.unavailable_here": "In-app update isn't available for this install",
   "settings.value": "Value",
   "setup.back": "Back",
   "setup.country.ae": "United Arab Emirates",

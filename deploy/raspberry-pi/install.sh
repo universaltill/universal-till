@@ -25,6 +25,13 @@ fi
 echo "==> Installing web assets + env"
 cp -R "$REPO_ROOT/web" "$DEST/web"
 [[ -f "$DEST/pos.env" ]] || cp "$REPO_ROOT/pos.env.dev" "$DEST/pos.env"
+# Own the whole install tree as the `pos` service user. This is REQUIRED for
+# in-app self-update, not just tidiness: the updater swaps the binary with an
+# os.Rename inside $DEST/bin and swaps $DEST/web, both of which need the running
+# service (User=pos) to have write on those directories. If this tree is left
+# root-owned (e.g. after a later `sudo go build -o $DEST/bin/...`), self-update
+# silently downgrades to "not supported" and Settings→Update dead-ends — see
+# ut-docs#147. Keep $DEST pos-owned whenever you rebuild in place.
 chown -R pos:pos "$DEST"
 
 echo "==> Installing systemd units"

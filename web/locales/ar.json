@@ -666,6 +666,7 @@
   "settings.update.download": "تنزيل",
   "settings.update.title": "تحديث البرنامج",
   "settings.update.up_to_date": "أنت على أحدث إصدار",
+  "settings.update.unavailable_here": "التحديث داخل التطبيق غير متاح لهذا التثبيت",
   "settings.value": "القيمة",
   "setup.back": "رجوع",
   "setup.country.ae": "الإمارات العربية المتحدة",
