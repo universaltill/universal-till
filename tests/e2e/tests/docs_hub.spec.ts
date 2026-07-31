@@ -1,5 +1,6 @@
 import { test, expect } from '../support/fixtures';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 // DOCS_ROOT points at the docs repo ROOT (post-2026-07-07 overhaul layout:
@@ -7,6 +8,9 @@ import path from 'node:path';
 const docsRoot = process.env.DOCS_ROOT || path.join(process.env.HOME || '~', 'repos/unitill/docs');
 
 test.describe('Docs Hub Consistency', () => {
+  // ut-docs is private (2026-07-31): CI only checks it out when the
+  // DOCS_READ_TOKEN secret exists. Skip visibly instead of failing on reads.
+  test.skip(!existsSync(docsRoot), `docs repo not present at ${docsRoot} (private ut-docs not checked out)`);
   test('docs hub README exists and links to POS, marketplace, plugins', async () => {
     const contents = await readFile(path.join(docsRoot, 'README.md'), 'utf8');
 
