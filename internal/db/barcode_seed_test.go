@@ -49,6 +49,48 @@ func TestSeedItemBarcodesValidEAN13(t *testing.T) {
 	}
 }
 
+// ut-docs#17 follow-up (independent review): variant_barcodes also seeds
+// barcode_type='EAN13' rows and carried the same fabricated check digit.
+func TestSeedVariantBarcodesValidEAN13(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "variant-barcodes.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	rows, err := d.DB.Query(`SELECT barcode FROM variant_barcodes`)
+	if err != nil {
+		t.Fatalf("query variant_barcodes: %v", err)
+	}
+	defer rows.Close()
+
+	var barcodes []string
+	for rows.Next() {
+		var barcode string
+		if err := rows.Scan(&barcode); err != nil {
+			t.Fatalf("scan barcode: %v", err)
+		}
+		barcodes = append(barcodes, barcode)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(barcodes) != 12 {
+		t.Fatalf("got %d seeded variant_barcodes, want 12", len(barcodes))
+	}
+
+	var invalid []string
+	for _, barcode := range barcodes {
+		if !isValidEAN13(barcode) {
+			invalid = append(invalid, barcode)
+		}
+	}
+	if len(invalid) > 0 {
+		t.Fatalf("seeded variant_barcodes with invalid EAN-13 check digit: %v", invalid)
+	}
+}
+
 // isValidEAN13 reports whether barcode is 13 digits and its final digit is
 // the correct mod-10 weighted check digit (odd positions from the left, 1-
 // indexed, weight 1; even positions weight 3).
