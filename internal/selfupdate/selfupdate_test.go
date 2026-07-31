@@ -29,6 +29,18 @@ func TestSupportedFor(t *testing.T) {
 		{"linux /opt kiosk install (writability decides in Supported)", "/opt/unitill/bin/unitill-pos", "linux", true},
 		{"deb /usr (apt's domain)", "/usr/bin/unitill-pos", "linux", false},
 		{"windows", `C:\\Program Files\\UniversalTill\\unitill-pos.exe`, "windows", false},
+		// The shipped installer (packaging/windows/installer.nsi) is a
+		// per-user, non-admin install to %LOCALAPPDATA% specifically because
+		// that directory IS writable by the running process — unlike Program
+		// Files above. supportedFor must still refuse windows here: the
+		// blocker is re-executing/overwriting a currently-running .exe (ut-docs#152
+		// field report, v0.2.14), not directory writability, so the
+		// dirWritable() carve-out that lets a service-writable /opt/unitill
+		// self-update on linux must never extend to windows.
+		{"windows per-user LOCALAPPDATA install (writable, still no self-swap)", `C:\\Users\\ali\\AppData\\Local\\Programs\\Universal Till\\unitill-pos.exe`, "windows", false},
+		// Same point for the portable .zip + run-unitill.bat layout, extracted
+		// anywhere writable by the user (Desktop, Downloads, …).
+		{"windows portable zip extraction (writable, still no self-swap)", `C:\\Users\\ali\\Downloads\\unitill-pos_0.2.51_windows_amd64\\unitill-pos.exe`, "windows", false},
 		{"android", "/data/app/com.universaltill.pos/lib/arm64/libmobile.so", "android", false},
 		{"ios", "/var/containers/Bundle/Application/x/Universal Till.app/unitill-pos", "ios", false},
 	}
