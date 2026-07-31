@@ -211,8 +211,10 @@ release:
     the applications menu (its own window, like the mac/windows app). From the
     `tar.gz`: `./unitill-desktop`. Server-style still works: `./run-unitill.sh`.
 
-    **Raspberry Pi kiosk (Pi OS Lite, no desktop):** install the `.deb`, then
-    `sudo /opt/unitill/bin/unitill-kiosk-setup` and reboot — the Pi boots
-    straight into the till, fullscreen.
+    **Raspberry Pi kiosk (Pi OS Lite, no desktop):** install the `.deb` and
+    reboot — a fresh install sets the fullscreen kiosk up automatically on
+    first boot (opt out first with `sudo touch /etc/unitill/no-kiosk` if you
+    don't want that). On upgrades, desktop images, or other Debian boxes,
+    run `sudo /opt/unitill/bin/unitill-kiosk-setup` once and reboot.
 
     Every download opens the setup wizard at http://localhost:8080.

@@ -578,7 +578,7 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
    Touch-first: bigger targets, no text selection or tap highlights, no
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);
-   see deploy/raspberry-pi/. */
+   see packaging/linux/unitill-kiosk-setup.sh. */
 body.kiosk { font-size: .9375rem; touch-action: manipulation; }
 body.kiosk.sale-screen { overflow: hidden; }
 body.kiosk .container { padding: .6rem .8rem 0; }
