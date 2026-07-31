@@ -31,8 +31,8 @@ func TestStore_GetSetAll(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	// "theme" is not one of 001_init.sql's seeded defaults (store.name,
-	// store.currency, pos.tax_inclusive), so it's genuinely absent here.
+	// "theme" is not one of the migrated schema's seeded defaults
+	// (store.name, store.currency), so it's genuinely absent here.
 	if _, ok, err := s.Get(ctx, "theme"); err != nil || ok {
 		t.Fatalf("Get(theme) before any Set = ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
@@ -73,11 +73,11 @@ func baseCfg() *config.Config {
 	}
 }
 
-// Beyond 001_init.sql's own seeded rows (store.name, store.currency,
-// pos.tax_inclusive — which happen to already match baseCfg's values, and
-// pos.tax_inclusive isn't a key LoadRuntimeConfig reads at all), nothing
-// else is in the DB: every other field must keep whatever the caller's cfg
-// already had (env/default-derived), not get zeroed out.
+// Beyond the migrated schema's seeded rows (store.name, store.currency —
+// which happen to already match baseCfg's values; 001 also seeded the dead
+// pos.tax_inclusive key, removed by migration 022), nothing else is in the
+// DB: every other field must keep whatever the caller's cfg already had
+// (env/default-derived), not get zeroed out.
 func TestLoadRuntimeConfig_EmptyStoreKeepsDefaults(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -278,5 +278,43 @@ func TestSaveRuntimeConfig_PropagatesRepoError(t *testing.T) {
 
 	if err := s.SaveRuntimeConfig(ctx, baseCfg()); err == nil {
 		t.Fatal("SaveRuntimeConfig on a closed DB returned nil error, want non-nil")
+	}
+}
+
+// ut-docs#12: SaveRuntimeConfig writes 7 keys; a mid-way failure must leave
+// the settings table exactly as it was, not with a prefix of the new values.
+// A trigger aborts the insert of store.locale (which sorts after
+// store.currency), so a non-transactional save would already have committed
+// the new currency by the time the failure hits.
+func TestSaveRuntimeConfig_Atomic(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "atomic.db")
+	s := NewStore(d.DB)
+
+	if _, err := d.DB.Exec(`
+CREATE TRIGGER boom BEFORE INSERT ON settings
+WHEN NEW.key = 'store.locale'
+BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	cfg := baseCfg()
+	cfg.Locales.Currency = "EUR" // differs from 001's seeded 'GBP'
+
+	if err := s.SaveRuntimeConfig(ctx, cfg); err == nil {
+		t.Fatal("SaveRuntimeConfig with an aborting trigger returned nil error, want non-nil")
+	}
+
+	curr, ok, err := s.Get(ctx, "store.currency")
+	if err != nil || !ok {
+		t.Fatalf("Get(store.currency) = ok=%v err=%v, want the seeded row intact", ok, err)
+	}
+	if curr != "GBP" {
+		t.Fatalf("store.currency = %q after failed save, want seeded %q (partial write not rolled back)", curr, "GBP")
+	}
+	// store.currency_symbol sorts between store.currency and store.locale,
+	// so a non-transactional save would have committed it before the abort.
+	if _, ok, _ := s.Get(ctx, "store.currency_symbol"); ok {
+		t.Fatal("store.currency_symbol was written despite the save failing; save must be all-or-nothing")
 	}
 }
