@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -22,6 +23,22 @@ import (
 )
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
+
+// firstDelayNS/tickIntervalNS back Start's two interval knobs (nanoseconds,
+// atomic.Int64 rather than plain vars for the same reason as cloudsync's
+// twin: the loop goroutine reads them independently of a test's write).
+var (
+	firstDelayNS   atomic.Int64
+	tickIntervalNS atomic.Int64
+)
+
+func init() {
+	firstDelayNS.Store(int64(2 * time.Minute))
+	tickIntervalNS.Store(int64(24 * time.Hour))
+}
+
+func firstDelay() time.Duration   { return time.Duration(firstDelayNS.Load()) }
+func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }
 
 // runningOutCount mirrors the inventory page's model: items whose on-hand
 // stock covers ≤7 days at the 28-day selling rate.
@@ -138,7 +155,7 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, wg *sync.WaitGro
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		first := time.NewTimer(2 * time.Minute)
+		first := time.NewTimer(firstDelay())
 		defer first.Stop()
 		select {
 		case <-ctx.Done():
@@ -160,7 +177,7 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, wg *sync.WaitGro
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(24 * time.Hour):
+			case <-time.After(tickInterval()):
 			}
 		}
 	}()
