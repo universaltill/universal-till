@@ -135,26 +135,32 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return nil, err
 	}
-	warnOrphanedPaymentMethods(ctx, repo)
+	warnPaymentMethodAnomalies(ctx, repo)
 	m.Wasm.Sync(ctx, db)
 	return m, nil
 }
 
-// warnOrphanedPaymentMethods logs a startup warning for every payment_methods
-// row stamped with a plugin_id that no longer has an installed plugin — a
-// shop-created or built-in tender captured before ADR-0031's ownership guard
-// shipped, which migration 021 only repairs for the three seeded built-ins.
-// A row alone can't distinguish that capture from a genuine plugin method
-// whose plugin was simply uninstalled (retained for sales history), so this
-// surfaces the gap instead of guessing at a fix (ut-docs#16).
-func warnOrphanedPaymentMethods(ctx context.Context, repo *data.PluginRepo) {
+// warnPaymentMethodAnomalies logs startup warnings for payment_methods
+// states that SyncPluginPaymentMethods deliberately leaves alone rather
+// than erroring on (ut-docs#16) — silent otherwise, which is exactly what
+// the independent review of the first pass at this fix flagged as a
+// regression (a suppressed rename/materialization vanishing with no error
+// and no log line).
+func warnPaymentMethodAnomalies(ctx context.Context, repo *data.PluginRepo) {
 	orphans, err := repo.FindOrphanedPaymentMethods(ctx)
 	if err != nil {
 		log.Printf("check for orphaned plugin-owned payment methods: %v", err)
-		return
 	}
 	for _, o := range orphans {
 		log.Printf("payment method %s (%q) is plugin-owned by %s, which is not installed on this till — reinstall the plugin, or reassign/rename the tender if this is a stale capture", o.ID, o.Name, o.PluginID)
+	}
+
+	suppressed, err := repo.FindSuppressedPaymentNameEntries(ctx)
+	if err != nil {
+		log.Printf("check for suppressed plugin payment-method labels: %v", err)
+	}
+	for _, s := range suppressed {
+		log.Printf("plugin %s's payment entry %s cannot use label %q — already used by payment method %s; pick a distinct label or rename the conflicting tender", s.PluginID, s.Key, s.Label, s.BlockingID)
 	}
 }
 
@@ -174,6 +180,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return err
 	}
+	warnPaymentMethodAnomalies(ctx, repo)
 	m.Wasm.Sync(ctx, m.db)
 	m.syncLocales()
 	return nil
