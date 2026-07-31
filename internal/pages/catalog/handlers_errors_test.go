@@ -1,8 +1,11 @@
 package catalog
 
 import (
+	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,6 +202,48 @@ func TestBarcodeAttach_PanelResponse(t *testing.T) {
 	}
 	if !strings.Contains(body, "5000001") {
 		t.Fatal("panel must show the newly attached barcode")
+	}
+}
+
+// This attach endpoint doesn't enforce productlookup.ValidBarcode's
+// digits-only format (that check only gates the external-lookup flow), so a
+// barcode containing quote/apostrophe characters can genuinely reach the
+// render path. catalog_variants.html previously interpolated it directly
+// into a hand-written hx-vals JSON literal -- the same bug class
+// buttons_admin.html's AddVals fixed (ut-docs#19) -- producing invalid JSON
+// for any such value. Regression guard for the httpx.jsonVals fix.
+func TestBarcodeAttach_PanelHxValsSurvivesQuotedBarcode(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Coffee", BasePrice: 300, IsActive: true})
+
+	weird := `we"ird'code`
+	rec := postForm(t, mux, "/api/catalog/barcode", "barcode="+url.QueryEscape(weird)+"&itemId=itm1&panelItem=itm1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	idx := strings.Index(body, `hx-post="/api/catalog/barcode/delete"`)
+	if idx == -1 {
+		t.Fatalf("expected a barcode-delete button, got %.500s", body)
+	}
+	valsIdx := strings.Index(body[idx:], "hx-vals='")
+	if valsIdx == -1 {
+		t.Fatalf("expected an hx-vals attribute on the delete button, got %.500s", body[idx:])
+	}
+	start := idx + valsIdx + len("hx-vals='")
+	end := strings.Index(body[start:], "'")
+	if end == -1 {
+		t.Fatalf("unterminated hx-vals attribute")
+	}
+	raw := body[start : start+end]
+
+	var vals map[string]string
+	if err := json.Unmarshal([]byte(html.UnescapeString(raw)), &vals); err != nil {
+		t.Fatalf("hx-vals is not valid JSON after HTML-unescape: %v (raw attribute: %q)", err, raw)
+	}
+	if vals["barcode"] != weird {
+		t.Errorf("barcode round-trip = %q, want %q", vals["barcode"], weird)
 	}
 }
 

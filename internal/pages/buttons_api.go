@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"html"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -97,7 +98,8 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			q = r.FormValue("search")
 		}
 		if len(strings.TrimSpace(q)) < 3 {
-			_, _ = w.Write([]byte("<div class=\"results muted\">Type 3+ characters</div>"))
+			locale := httpx.ResolveLocale(w, r)
+			_, _ = w.Write([]byte(`<div class="results muted">` + html.EscapeString(httpx.T(locale, "designer.search_type_hint")) + `</div>`))
 			return
 		}
 		offset := 0
