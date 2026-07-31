@@ -35,6 +35,61 @@ if [ -d /run/systemd/system ]; then
     systemctl restart unitill-pos.service >/dev/null 2>&1 || true
 fi
 
+# On a Raspberry Pi appliance, a FRESH install should boot straight into the
+# fullscreen POS — a shop owner will never run the manual kiosk setup
+# (ut-docs#6). The setup itself calls apt, which can't run inside this dpkg
+# transaction, so stage a one-shot first-boot service that runs it on the
+# next boot. Deliberately narrow (independent review, 2026-07-31):
+#   - fresh installs only ($1=configure with empty $2) — an UPGRADE must
+#     never convert an existing field Pi that chose not to run the kiosk;
+#   - Debian-family Pi OS only (Ubuntu-on-Pi resolves chromium to a snap
+#     that doesn't reliably run under cage);
+#   - no enabled display manager — a Pi OS "with Desktop" box keeps its
+#     desktop; kiosk-ifying it (which disables the DM) stays a deliberate
+#     manual `unitill-kiosk-setup` call;
+#   - opt out any time: sudo touch /etc/unitill/no-kiosk
+is_pi_appliance() {
+    [ "$1" = "configure" ] || return 1
+    [ -z "$2" ] || return 1                 # upgrade → never auto-stage
+    [ -d /run/systemd/system ] || return 1
+    grep -qs "Raspberry Pi" /proc/device-tree/model || return 1
+    grep -qsE '^ID=(debian|raspbian)' /etc/os-release || return 1
+    if systemctl is-enabled display-manager.service >/dev/null 2>&1; then
+        return 1                            # desktop image → manual opt-in only
+    fi
+    return 0
+}
+if is_pi_appliance "${1:-}" "${2:-}"; then
+    mkdir -p /etc/unitill
+    cat > /etc/systemd/system/unitill-kiosk-firstboot.service << 'EOF'
+[Unit]
+Description=Universal Till kiosk first-boot setup (installs cage/chromium, enables the kiosk)
+Wants=network-online.target
+After=network-online.target unitill-pos.service
+ConditionPathExists=!/etc/unitill/no-kiosk
+ConditionPathExists=!/var/lib/unitill/kiosk-setup-done
+ConditionPathExists=/opt/unitill/bin/unitill-kiosk-setup
+
+[Service]
+Type=oneshot
+# The setup writes /var/lib/unitill/kiosk-setup-done itself, only after
+# verifying the kiosk service actually came up — a failed run leaves no
+# marker, stays enabled, and retries (offline first boot, apt lock, ...).
+ExecStart=/opt/unitill/bin/unitill-kiosk-setup --auto
+ExecStartPost=/usr/bin/systemctl disable unitill-kiosk-firstboot.service
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable unitill-kiosk-firstboot.service >/dev/null 2>&1 || true
+    echo "Raspberry Pi appliance detected: fullscreen kiosk will be set up on next boot."
+    echo "To keep this Pi kiosk-free instead: sudo touch /etc/unitill/no-kiosk"
+fi
+
 echo "Universal Till installed. Open http://localhost:8080 — the first-boot"
 echo "wizard sets language, currency and the admin PIN."
 echo "Config: /opt/unitill/pos.env · Data: /opt/unitill/data"
