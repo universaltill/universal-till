@@ -91,22 +91,28 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 	return st
 }
 
-func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) {
-	_ = store.Set(ctx, KeyTheme, st.Theme)
-	_ = store.Set(ctx, KeyCurrency, st.Currency)
-	_ = store.Set(ctx, KeyCountry, st.Country)
-	_ = store.Set(ctx, KeyRegion, st.Region)
-	_ = store.Set(ctx, KeyTaxInclusive, strconv.FormatBool(st.TaxInclusive))
-	_ = store.Set(ctx, KeyTaxRate, strconv.Itoa(st.TaxRatePct))
+// SaveState writes every field in one transaction (store.SetMany), so a
+// mid-way failure (disk full, SQLITE_BUSY) never leaves a partial mix of
+// old and new settings behind — matching Store.SaveRuntimeConfig's guarantee.
+func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) error {
+	kv := map[string]string{
+		KeyTheme:                       st.Theme,
+		KeyCurrency:                    st.Currency,
+		KeyCountry:                     st.Country,
+		KeyRegion:                      st.Region,
+		KeyTaxInclusive:                strconv.FormatBool(st.TaxInclusive),
+		KeyTaxRate:                     strconv.Itoa(st.TaxRatePct),
+		"pos.allow_negative_inventory": strconv.FormatBool(st.AllowNegativeInventory),
+		KeyIdleLock:                    strconv.Itoa(st.IdleLockMinutes),
+		KeyKioskIdleReset:              strconv.Itoa(st.KioskIdleResetSeconds),
+	}
 	if st.UIScale > 0 {
-		_ = store.Set(ctx, KeyUIScale, strconv.FormatFloat(st.UIScale, 'f', -1, 64))
+		kv[KeyUIScale] = strconv.FormatFloat(st.UIScale, 'f', -1, 64)
 	}
-	_ = store.Set(ctx, "pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory))
-	_ = store.Set(ctx, KeyIdleLock, strconv.Itoa(st.IdleLockMinutes))
-	_ = store.Set(ctx, KeyKioskIdleReset, strconv.Itoa(st.KioskIdleResetSeconds))
 	if st.OSKMode != "" {
-		_ = store.Set(ctx, KeyOSK, st.OSKMode)
+		kv[KeyOSK] = st.OSKMode
 	}
+	return store.SetMany(ctx, kv)
 }
 
 func BuildMenu(base []MenuItem, pm *plugins.Manager) []MenuItem {

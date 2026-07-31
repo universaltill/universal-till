@@ -106,7 +106,10 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			}
 			s.TaxInclusive = r.Form.Get("tax_inclusive") != "off"
 		})
-		common.SaveState(r.Context(), d.Settings, st)
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			renderWizard(w, r, "setup.error.save_failed")
+			return
+		}
 		httpx.InitCurrency(st.Currency)
 		d.Engine.SetConfig(pos.Config{
 			TaxInclusive:       st.TaxInclusive,

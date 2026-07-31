@@ -256,7 +256,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		st := d.UpdateState(func(s *common.RuntimeState) { s.IdleLockMinutes = n })
-		common.SaveState(r.Context(), d.Settings, st)
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
 		d.AuthSvc.SetIdleLockMinutes(n)
 		if !auth.Disabled(os.Getenv("UT_AUTH")) {
 			httpx.InitIdleLock(n)
@@ -280,7 +283,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		st := d.UpdateState(func(s *common.RuntimeState) { s.KioskIdleResetSeconds = n })
-		common.SaveState(r.Context(), d.Settings, st)
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -312,7 +318,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		st := d.UpdateState(func(s *common.RuntimeState) { s.UIScale = f })
-		common.SaveState(r.Context(), d.Settings, st)
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
 		httpx.InitUIScale(f)
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -326,7 +335,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		st := d.UpdateState(func(s *common.RuntimeState) { s.OSKMode = mode })
-		common.SaveState(r.Context(), d.Settings, st)
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
 		httpx.InitOSKMode(mode)
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -361,7 +373,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		if v := strings.TrimSpace(r.Form.Get("theme")); v != "" {
 			st := d.UpdateState(func(s *common.RuntimeState) { s.Theme = v })
-			common.SaveState(r.Context(), d.Settings, st)
+			if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -386,7 +401,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				}
 			}
 		})
-		common.SaveState(r.Context(), d.Settings, st)
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
 		httpx.InitCurrency(st.Currency)
 		// In place: replacing the engine would empty a basket in progress.
 		d.Engine.SetConfig(pos.Config{
