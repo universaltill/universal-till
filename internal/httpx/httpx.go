@@ -168,14 +168,27 @@ func InitIdleLock(minutes int) {
 	idleLockSecs.Store(int64(minutes) * 60)
 }
 
-func uiScalePx() string {
+func currentUIScale() float64 {
 	scale := 1.0
 	if v := uiScale.Load(); v != nil {
 		if f, ok := v.(float64); ok {
 			scale = f
 		}
 	}
-	return strconv.FormatFloat(16*scale, 'f', -1, 64)
+	return scale
+}
+
+func uiScalePx() string {
+	return strconv.FormatFloat(16*currentUIScale(), 'f', -1, 64)
+}
+
+// uiScaleCSS exposes the raw clamped multiplier (not pre-multiplied by a
+// fixed 16px) for pages whose root font-size is a CSS-driven fluid/viewport
+// value rather than a server-computed px (ut-docs#161's sale screen) — the
+// stylesheet combines it with the fluid baseline via
+// calc(var(--ui-scale) * var(--fluid-fs)).
+func uiScaleCSS() string {
+	return strconv.FormatFloat(currentUIScale(), 'f', -1, 64)
 }
 
 // IsRTL reports whether a locale reads right-to-left (language prefix match,
@@ -309,6 +322,7 @@ func FuncsFor(locale string) template.FuncMap {
 		return false
 	}
 	funcs["uiscalepx"] = uiScalePx
+	funcs["uiscale"] = uiScaleCSS
 	funcs["oskmode"] = oskModeVal
 	funcs["idlelocksecs"] = func() int64 { return idleLockSecs.Load() }
 	funcs["barcodesvg"] = BarcodeSVG // scannable CODE39 for receipt numbers
