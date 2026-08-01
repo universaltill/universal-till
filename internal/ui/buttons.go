@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	pos "github.com/universaltill/universal-till/internal/pos"
 	uiassets "github.com/universaltill/universal-till/web"
@@ -370,7 +371,14 @@ type ButtonsHTTP struct {
 
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	btns, _ := h.Store.Load()
-	cats, _ := h.Store.LoadCategories(r.Context())
+	cats, err := h.Store.LoadCategories(r.Context())
+	if err != nil {
+		// Not fatal to the render — every button still shows, just
+		// ungrouped (BuildCategoryGroups buckets them as uncategorized)
+		// — but worth a log line: a till stuck like this permanently
+		// loses category grouping/coloring with no visible sign why.
+		logging.L().Errorf("buttons list: load categories: %v", err)
+	}
 	_ = h.View.Render(w, "buttons", map[string]any{
 		"Groups": BuildCategoryGroups(btns, cats),
 	})
