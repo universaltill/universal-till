@@ -1105,6 +1105,133 @@ WHERE type = 'payment' AND key = ? AND plugin_id != ? LIMIT 1`, key, pluginID).S
 	return out, nil
 }
 
+// FindPaymentNameConflicts returns, for the candidate payment-entry labels
+// of pluginID, those already taken by a non-plugin payment method (built-in
+// or shop-created) or by ANOTHER plugin's payment entry — checking both
+// payment_methods.name (also UNIQUE) AND plugin_entries.label directly,
+// same two-step shape as FindPaymentKeyConflicts, since a just-installed
+// sibling plugin's entries haven't necessarily been synced into
+// payment_methods yet. A plugin choosing a label that collides with an
+// existing tender's name would otherwise hard-fail the sync's INSERT at
+// every startup (ut-docs#16, ADR-0031's documented residual). The plugin's
+// own existing rows never conflict, so reinstall/upgrade stay clean.
+func (r *PluginRepo) FindPaymentNameConflicts(ctx context.Context, tx *sql.Tx, pluginID string, names []string) ([]PaymentKeyConflict, error) {
+	exec := r.executor(tx)
+	var out []PaymentKeyConflict
+	for _, name := range names {
+		var owner sql.NullString
+		var ownerInstalled int
+		err := exec.QueryRowContext(ctx, `
+SELECT pm.plugin_id, CASE WHEN p.id IS NULL THEN 0 ELSE 1 END
+FROM payment_methods pm
+LEFT JOIN plugins p ON p.id = pm.plugin_id
+WHERE pm.name = ? AND COALESCE(pm.plugin_id, '') != ?`, name, pluginID).Scan(&owner, &ownerInstalled)
+		switch {
+		case err == sql.ErrNoRows:
+			// no method row; fall through to the entry check
+		case err != nil:
+			return nil, pluginObs.wrap("payment_name_conflicts", err)
+		case !owner.Valid || owner.String == "":
+			out = append(out, PaymentKeyConflict{Key: name})
+			continue
+		default:
+			out = append(out, PaymentKeyConflict{Key: name, Owner: owner.String, OwnerInstalled: ownerInstalled == 1})
+			continue
+		}
+		var entryOwner string
+		err = exec.QueryRowContext(ctx, `
+SELECT plugin_id FROM plugin_entries
+WHERE type = 'payment' AND label = ? AND plugin_id != ? LIMIT 1`, name, pluginID).Scan(&entryOwner)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return nil, pluginObs.wrap("payment_name_conflicts", err)
+		}
+		out = append(out, PaymentKeyConflict{Key: name, Owner: entryOwner, OwnerInstalled: true})
+	}
+	return out, nil
+}
+
+// OrphanedPaymentMethod is a plugin-owned payment_methods row whose owning
+// plugin no longer exists on this till — a shop-created or built-in tender
+// captured before ADR-0031's ownership guard shipped, which migration 021
+// only repairs for the three seeded built-ins (cash/card/gift). A row alone
+// can't distinguish that capture from a genuine, still-valid plugin method
+// whose plugin was simply uninstalled (sales history retains those rows
+// deliberately) — this is surfaced as a startup warning, not auto-repaired.
+type OrphanedPaymentMethod struct {
+	ID       string
+	Name     string
+	PluginID string
+}
+
+// FindOrphanedPaymentMethods returns every payment_methods row stamped with
+// a plugin_id that has no corresponding plugins row.
+func (r *PluginRepo) FindOrphanedPaymentMethods(ctx context.Context) ([]OrphanedPaymentMethod, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT pm.id, pm.name, pm.plugin_id
+FROM payment_methods pm
+WHERE pm.plugin_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM plugins p WHERE p.id = pm.plugin_id)`)
+	if err != nil {
+		return nil, pluginObs.wrap("find_orphaned_payment_methods", err)
+	}
+	defer rows.Close()
+	var out []OrphanedPaymentMethod
+	for rows.Next() {
+		var o OrphanedPaymentMethod
+		if err := rows.Scan(&o.ID, &o.Name, &o.PluginID); err != nil {
+			return nil, pluginObs.wrap("find_orphaned_payment_methods", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// SuppressedPaymentNameEntry is an active plugin payment entry that could
+// not materialize (or rename) into its own payment_methods row because
+// another row already holds its label — the sync's name-collision guards
+// (SyncPluginPaymentMethods) leave the entry's row alone rather than error,
+// so this is how the caller (plugins.Init) turns that silence into a
+// startup warning instead of a tender quietly not appearing (ut-docs#16,
+// found by the independent review of the first pass at this fix).
+type SuppressedPaymentNameEntry struct {
+	PluginID   string
+	Key        string
+	Label      string
+	BlockingID string // the payment_methods row already holding Label
+}
+
+// FindSuppressedPaymentNameEntries returns every active plugin payment
+// entry whose (key, label) hasn't fully landed in payment_methods because a
+// DIFFERENT row already owns that label.
+func (r *PluginRepo) FindSuppressedPaymentNameEntries(ctx context.Context) ([]SuppressedPaymentNameEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT pe.plugin_id, pe.key, pe.label, blocker.id
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+JOIN payment_methods blocker ON blocker.name = pe.label AND blocker.id != pe.key
+WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
+  AND NOT EXISTS (
+      SELECT 1 FROM payment_methods pm
+      WHERE pm.id = pe.key AND pm.name = pe.label AND pm.plugin_id = pe.plugin_id
+  )`)
+	if err != nil {
+		return nil, pluginObs.wrap("find_suppressed_payment_name_entries", err)
+	}
+	defer rows.Close()
+	var out []SuppressedPaymentNameEntry
+	for rows.Next() {
+		var s SuppressedPaymentNameEntry
+		if err := rows.Scan(&s.PluginID, &s.Key, &s.Label, &s.BlockingID); err != nil {
+			return nil, pluginObs.wrap("find_suppressed_payment_name_entries", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // SyncPluginPaymentMethods derives payment_methods rows from active plugins'
 // payment entries: upserts a method per entry (id = entry key) and
 // deactivates plugin-backed methods whose plugin is gone or disabled.
@@ -1118,6 +1245,26 @@ WHERE type = 'payment' AND key = ? AND plugin_id != ? LIMIT 1`, key, pluginID).S
 // guard a plugin declaring key "cash" captured the built-in cash tender, and
 // the deactivate step below then removed cash from checkout entirely when
 // the plugin went away (migration 021 repairs tills hit by that).
+//
+// Two defenses against payment_methods.name's separate UNIQUE constraint
+// (SQLite routes an upsert to whichever clause's target matches the
+// constraint actually violated), both needed — an independent review of
+// the first found the DO UPDATE branch alone still reachable and boot-
+// fatal (ut-docs#16):
+//   - The INSERT path carries a second ON CONFLICT(name) DO NOTHING: a
+//     LEGACY entry whose label collides with an existing tender's name (an
+//     install predating FindPaymentNameConflicts) simply doesn't
+//     materialize instead of aborting this whole statement.
+//   - The DO UPDATE's own `name` write is guarded by a CASE: a plugin
+//     renaming (or swapping labels between) its OWN already-materialized
+//     entries — accepted at install time since neither label conflicts
+//     with the OTHER plugin's rows — must not itself attempt writing a
+//     name another row still holds. Without this, every future startup's
+//     sync hard-aborted on the very next run after such a rename.
+//
+// Both leave the stale name in place rather than erroring — the entry
+// simply doesn't relabel until the collision clears, same "silently
+// doesn't materialize" treatment id collisions already get.
 func (r *PluginRepo) SyncPluginPaymentMethods(ctx context.Context) error {
 	// Standing invariant, re-asserted EVERY run (not just migration 021):
 	// the seeded built-ins are never plugin-owned. Damage can re-enter a
@@ -1139,9 +1286,13 @@ FROM plugin_entries pe
 JOIN plugins p ON p.id = pe.plugin_id
 WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
 ON CONFLICT(id) DO UPDATE SET
-    name = excluded.name,
+    name = CASE WHEN EXISTS (
+        SELECT 1 FROM payment_methods pm2
+        WHERE pm2.name = excluded.name AND pm2.id != payment_methods.id
+    ) THEN payment_methods.name ELSE excluded.name END,
     is_active = 1
-WHERE payment_methods.plugin_id = excluded.plugin_id`); err != nil {
+WHERE payment_methods.plugin_id = excluded.plugin_id
+ON CONFLICT(name) DO NOTHING`); err != nil {
 		return fmt.Errorf("sync plugin payment methods (upsert): %w", err)
 	}
 	// Ownership-aware: only the OWNING plugin's live entries keep a row

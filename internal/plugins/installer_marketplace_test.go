@@ -519,3 +519,86 @@ func (m *mockTokenClient) GetToken(ctx context.Context) (string, error) {
 func (m *mockTokenClient) ClearCache() error {
 	return nil
 }
+
+// Found by the independent review of ut-docs#15 / logged as ut-docs#16:
+// upsertCatalogEntry runs BEFORE PersistManifest, so a manifest that fails
+// PersistManifest's own validation (here: a payment entry key colliding
+// with the built-in cash tender, ADR-0031) still leaves its plugin_catalog
+// row behind — PersistManifest's own EnsureCatalogEntry call is a
+// same-transaction no-op since the row already exists (ON CONFLICT DO
+// NOTHING), so it's never a substitute for it running first.
+func TestMarketplaceInstallerLeavesNoCatalogRowOnRejectedInstall(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	manifest := &Manifest{
+		ID:            "com.test.rejected",
+		Name:          "Rejected Plugin",
+		Version:       "1.0.0",
+		Entrypoint:    "./plugin-bin",
+		Executable:    "plugin-bin",
+		Runtime:       "go",
+		CanonicalType: "payment",
+		DeviceArch:    "linux/amd64",
+		Entries: []ManifestEntry{
+			{Type: "payment", Key: "cash", Label: "Evil Cash"},
+		},
+	}
+	artifact := signedMarketplaceArtifactWithManifest(t, privateKey, manifest)
+	checksum := checksumSHA256Hex(t, artifact)
+
+	server := marketplaceInstallTestServer(t, artifact, map[string]any{
+		"data": map[string]any{
+			"token":               "tok-1",
+			"bundle_url":          "",
+			"release_id":          "release-1",
+			"version":             manifest.Version,
+			"checksum_sha256":     checksum,
+			"signature":           manifest.Signature,
+			"expires_at":          "2026-03-16T16:00:00Z",
+			"resumable_supported": true,
+		},
+		"error": nil,
+	})
+	defer server.Close()
+
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+
+	cfg := &config.Config{
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL:       server.URL,
+			APIVersion:        "1.0.0",
+			ClientID:          "merchant-1",
+			ClientSecret:      "secret-1",
+			StoreID:           "store-1",
+			DeviceID:          "device-1",
+			PublicKey:         hex.EncodeToString(publicKey),
+			RequestTimeoutSec: 30,
+		},
+	}
+
+	installer := newTestMarketplaceInstaller(t, cfg, db)
+	_, err = installer.Install(context.Background(), MarketplaceInstallRequest{
+		ListingID:  "listing-1",
+		Version:    manifest.Version,
+		TrustTier:  "verified",
+		MerchantID: "merchant-1",
+		StoreID:    "store-1",
+		DeviceID:   "device-1",
+		DeviceArch: "linux/amd64",
+	})
+	if err == nil {
+		t.Fatal("expected install to be rejected due to a payment key colliding with the built-in cash tender")
+	}
+	assertPluginNotInstalled(t, db, manifest.ID)
+
+	var catalogCount int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM plugin_catalog WHERE id = ?`, manifest.ID).Scan(&catalogCount); err != nil {
+		t.Fatalf("query plugin_catalog: %v", err)
+	}
+	if catalogCount != 0 {
+		t.Fatalf("rejected install left an orphan plugin_catalog row behind, count=%d", catalogCount)
+	}
+}

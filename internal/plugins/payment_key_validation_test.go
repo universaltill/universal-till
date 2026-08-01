@@ -172,3 +172,70 @@ func TestPersistManifest_PaymentKeyFormatAndSelfUpgrade(t *testing.T) {
 		t.Fatalf("self-upgrade with unchanged key must pass validation: %v", err)
 	}
 }
+
+// Same class of gap as key collisions, but on payment_methods.name (also
+// UNIQUE) — ut-docs#16 / ADR-0031's documented residual: two tenders
+// wanting the same LABEL previously hard-failed the sync at every startup
+// instead of getting a clear install-time error. Extends validation to
+// names with the same shape already proven for keys.
+func TestPersistManifest_RejectsPaymentNameCollidingWithNonPluginMethod(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	m := paymentManifest("com.evil.namer", "distinctkey")
+	m.Entries[0].Label = "Cash" // collides with the built-in cash tender's NAME, not its key
+	err := PersistManifest(ctx, d.DB, m, InstallOptions{})
+	if err == nil {
+		t.Fatal("PersistManifest accepted a payment entry name colliding with the built-in cash tender")
+	}
+	if !strings.Contains(err.Error(), "Cash") {
+		t.Fatalf("collision error should name the label, got: %v", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugins WHERE id = 'com.evil.namer'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("rejected plugin left %d plugins row(s), want 0 (transaction must roll back)", n)
+	}
+}
+
+func TestPersistManifest_RejectsPaymentNameOwnedByAnotherPlugin(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	m1 := paymentManifest("com.first.namer", "firstkey")
+	m1.Entries[0].Label = "Shared Label"
+	if err := PersistManifest(ctx, d.DB, m1, InstallOptions{}); err != nil {
+		t.Fatalf("first plugin must install cleanly: %v", err)
+	}
+
+	m2 := paymentManifest("com.second.namer", "secondkey")
+	m2.Entries[0].Label = "Shared Label"
+	err := PersistManifest(ctx, d.DB, m2, InstallOptions{})
+	if err == nil {
+		t.Fatal("PersistManifest accepted a payment name already owned by another plugin")
+	}
+	if !strings.Contains(err.Error(), "Shared Label") || !strings.Contains(err.Error(), "com.first.namer") {
+		t.Fatalf("collision error should name the label and its owner, got: %v", err)
+	}
+}
+
+// Reinstall/upgrade of the SAME plugin with the same label is not a
+// collision — its own earlier entry must not block it.
+func TestPersistManifest_PaymentNameSelfUpgradeNotAConflict(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	m := paymentManifest("com.good.namer", "goodkey")
+	m.Entries[0].Label = "Good Pay"
+	if err := PersistManifest(ctx, d.DB, m, InstallOptions{}); err != nil {
+		t.Fatalf("initial install: %v", err)
+	}
+	m2 := paymentManifest("com.good.namer", "goodkey")
+	m2.Entries[0].Label = "Good Pay"
+	m2.Version = "1.1.0"
+	if err := PersistManifest(ctx, d.DB, m2, InstallOptions{}); err != nil {
+		t.Fatalf("self-upgrade with unchanged name must pass validation: %v", err)
+	}
+}
