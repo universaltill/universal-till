@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"database/sql"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
@@ -161,6 +162,98 @@ func TestButtonsHTTPRemove_StoreErrorIs400(t *testing.T) {
 	h.Remove(rec, req)
 	if rec.Code != 400 {
 		t.Fatalf("Remove with failing store = %d, want 400", rec.Code)
+	}
+}
+
+// newButtonsHTTPWithDB is newButtonsHTTP plus the underlying *sql.DB, for
+// tests that need to seed categories directly (ButtonStore itself has no
+// category-writing method — categories come from the catalog/import side).
+func newButtonsHTTPWithDB(t *testing.T, partial string) (*ButtonsHTTP, *sql.DB) {
+	t.Helper()
+	db := setupFullTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	store := NewButtonStore(db)
+	renderer, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "index.html"),
+		filepath.Join("web", "ui", "partials", partial),
+		httpx.FuncsFor("en"),
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	return &ButtonsHTTP{Store: *store, View: renderer}, db
+}
+
+// TestButtonsHTTPList_RendersNestedColorCodedGroups drives the real
+// rendered HTML (not just the pure grouping function) — the highest-risk
+// part of this feature, since html/template's CSS-context escaping can
+// silently mangle an inline style value (rewriting anything it doesn't
+// like to "ZgotmplZ", with no error) if a color value is ever malformed.
+// This pins the happy path stays clean: a real hex color survives verbatim
+// and a nested category structurally nests in the HTML output.
+func TestButtonsHTTPList_RendersNestedColorCodedGroups(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('drinks','Drinks',NULL,0,NULL)`)
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('hot','Hot Drinks','drinks',0,'#1D4ED8')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm1','S1','Latte', 320, 1, 'hot')`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Latte','itm1',0)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, "ZgotmplZ") {
+		t.Fatalf("html/template mangled a color value: %s", body)
+	}
+	if !strings.Contains(body, "--cat-color: #1D4ED8") {
+		t.Fatalf("expected the explicit hex color to survive verbatim in the style attribute, got: %s", body)
+	}
+	drinksIdx := strings.Index(body, ">Drinks<")
+	hotIdx := strings.Index(body, ">Hot Drinks<")
+	latteIdx := strings.Index(body, "Latte")
+	if drinksIdx == -1 || hotIdx == -1 || latteIdx == -1 {
+		t.Fatalf("expected Drinks, Hot Drinks and Latte all present, got: %s", body)
+	}
+	if !(drinksIdx < hotIdx && hotIdx < latteIdx) {
+		t.Fatalf("expected Drinks, then nested Hot Drinks, then Latte in document order, got: %s", body)
+	}
+	if strings.Contains(body, "Uncategorized") {
+		t.Fatalf("did not expect an uncategorized bucket when every button has a category: %s", body)
+	}
+}
+
+// TestButtonsHTTPList_FlatWhenNoCategoriesConfigured pins the fallback: a
+// till with no categories set on anything (every existing till today, since
+// the grid was flat until this feature) must render its tiles flat, not
+// under a single pointless "Uncategorized" header — a real regression an
+// earlier version of this change shipped with (caught by independent
+// review) since every button's synthetic bucket was still just "a group".
+func TestButtonsHTTPList_FlatWhenNoCategoriesConfigured(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','S1','Loose Sweet', 10, 1)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Loose Sweet','itm1',0)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, "Uncategorized") {
+		t.Fatalf("expected no Uncategorized header when nothing has a category, got: %s", body)
+	}
+	if strings.Contains(body, "category-header") {
+		t.Fatalf("expected no category header at all in the flat fallback, got: %s", body)
+	}
+	if !strings.Contains(body, "Loose Sweet") {
+		t.Fatalf("expected the tile to still render, got: %s", body)
 	}
 }
 

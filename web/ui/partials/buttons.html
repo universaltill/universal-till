@@ -3,10 +3,20 @@
 <div class="products">
   <h2>{{ T "products.title" }}</h2>
   <div id="buttons-grid" class="category-groups">
-    {{ range .Groups }}
-      {{ template "category-group" . }}
-    {{ else }}
+    {{ if not .Groups }}
       <p class="empty">{{ T "products.empty" }}</p>
+    {{ else if and (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
+      {{/* No category has ever been assigned to anything on this till's
+           sale screen — BuildCategoryGroups's only group is the synthetic
+           uncategorized bucket. Render flat, same as before this feature,
+           instead of one pointless "Uncategorized" header every existing
+           till (nothing has categories configured yet) would otherwise
+           show above its entire grid. */}}
+      <div class="grid">
+        {{ range (index .Groups 0).Buttons }}{{ template "product-tile" . }}{{ end }}
+      </div>
+    {{ else }}
+      {{ range .Groups }}{{ template "category-group" . }}{{ end }}
     {{ end }}
   </div>
   <!-- Action buttons contributed by installed plugins -->
