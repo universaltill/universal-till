@@ -254,10 +254,31 @@ func (eb *EventBus) SubscribeWithHandler(ctx context.Context, pluginID string, e
 // - Non-blocking: enqueue to subscriber channels, audit denials/drops, never rollback.
 // - Blocking: execute handlers synchronously, return error on failure to allow rollback.
 func (eb *EventBus) Publish(ctx context.Context, eventType string, payload interface{}) (string, error) {
+	id, _, err := eb.publish(ctx, eventType, payload)
+	return id, err
+}
+
+// PublishAuthorize behaves exactly like Publish for a Blocking event — same
+// accept/reject/permission-denial semantics, same rollback-on-error contract
+// — but also returns the responding plugin's raw response instead of
+// discarding it. Payment authorize callers use this to read back
+// plugin-reported data (e.g. a reader-captured tip amount) alongside the
+// approve/decline verdict. resp is nil when there's nothing to report (no
+// subscriber, a non-blocking event, or a handler that answered with an
+// empty body).
+func (eb *EventBus) PublishAuthorize(ctx context.Context, eventType string, payload interface{}) (json.RawMessage, error) {
+	_, resp, err := eb.publish(ctx, eventType, payload)
+	return resp, err
+}
+
+// publish is Publish's real implementation; it additionally returns the
+// last successful Blocking handler's raw response so PublishAuthorize can
+// surface it without duplicating the dispatch/permission/audit logic above.
+func (eb *EventBus) publish(ctx context.Context, eventType string, payload interface{}) (eventID string, resp json.RawMessage, err error) {
 	// Encode payload
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal payload: %w", err)
+		return "", nil, fmt.Errorf("marshal payload: %w", err)
 	}
 
 	event := Event{
@@ -274,7 +295,7 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 
 	if !exists || len(subscribers) == 0 {
 		_ = eb.auditEvent(ctx, event.ID, eventType, 0)
-		return event.ID, nil
+		return event.ID, nil, nil
 	}
 
 	mode := eb.GetEventMode(eventType)
@@ -284,7 +305,7 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 		if err := CheckPermission(ctx, eb.dbHandle(), sub.PluginID, "events:receive"); err != nil {
 			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
 			if mode == Blocking {
-				return "", fmt.Errorf("event %s denied for plugin %s: %w", eventType, sub.PluginID, err)
+				return "", nil, fmt.Errorf("event %s denied for plugin %s: %w", eventType, sub.PluginID, err)
 			}
 			continue
 		}
@@ -294,15 +315,17 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 			if sub.Handler == nil {
 				msg := "blocking event requires handler"
 				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", msg)
-				return "", fmt.Errorf("blocking event %s failed for plugin %s: %s", eventType, sub.PluginID, msg)
+				return "", nil, fmt.Errorf("blocking event %s failed for plugin %s: %s", eventType, sub.PluginID, msg)
 			}
-			// Publish's callers only ever care about accept/reject (payment
-			// authorization); a response value from an "ask" style handler
-			// is discarded here — use Ask instead when the answer matters.
-			if _, err := sub.Handler(ctx, event); err != nil {
+			// Most Blocking callers only care about accept/reject (payment
+			// authorization); PublishAuthorize is how a caller opts into
+			// also reading the handler's raw response.
+			handlerResp, err := sub.Handler(ctx, event)
+			if err != nil {
 				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
-				return "", fmt.Errorf("blocking event %s failed for plugin %s: %w", eventType, sub.PluginID, err)
+				return "", nil, fmt.Errorf("blocking event %s failed for plugin %s: %w", eventType, sub.PluginID, err)
 			}
+			resp = handlerResp
 			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "success", "")
 			dispatched++
 		default:
@@ -321,7 +344,7 @@ func (eb *EventBus) Publish(ctx context.Context, eventType string, payload inter
 		fmt.Printf("warning: failed to audit event: %v\n", err)
 	}
 
-	return event.ID, nil
+	return event.ID, resp, nil
 }
 
 // Ask sends a blocking event to subscribed plugins and returns the first

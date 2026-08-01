@@ -493,6 +493,7 @@ func TestSelfOrderShop_CheckoutDeclinedByPluginGateNeverCompletesSale(t *testing
 	}
 
 	bus := plugins.SharedBus(d.DB)
+	t.Cleanup(bus.ResetSubscribers) // process-global singleton — don't leak this always-decline handler to later tests
 	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
 	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
 		[]string{"payment.demopay.authorize"},
@@ -523,6 +524,80 @@ func TestSelfOrderShop_CheckoutDeclinedByPluginGateNeverCompletesSale(t *testing
 	_ = d.DB.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&n)
 	if n != 0 {
 		t.Fatal("a declined checkout must not create a sale")
+	}
+}
+
+// A card-terminal plugin (e.g. ut-plugin-payment-sumup's reader flow) can
+// report the tip it captured on its blocking payment.<key>.authorize
+// response; completeTender must apply it to the persisted payment even
+// though the tender request itself carried no tip — proving the response
+// actually reaches the sale, not just that the gate approves/declines.
+func TestSelfOrderShop_CheckoutAppliesPluginReportedTipFromAuthorizeResponse(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	if _, err := d.DB.Exec(`INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', '0.1.0', '1', '2026-07-17')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.NewPluginRepo(d.DB).SyncPluginPaymentMethods(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(d.DB)
+	// SharedBus is a process-global singleton (wasm_runtime.go), so a stale
+	// subscriber left registered under the same plugin id/event by an
+	// earlier test in this package (e.g. the decline test right above,
+	// which also uses "com.universaltill.payment-demo"/"demopay") would
+	// otherwise still fire here too — reset for a clean slate.
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers) // don't leak this test's always-approve handler to whatever runs after it
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved","tip_amount":150}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/self-order/checkout", strings.NewReader("method=demopay"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req2)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var tip int64
+	if err := d.DB.QueryRow(`SELECT tip_amount FROM payments p JOIN sales s ON s.id = p.sale_id WHERE s.status = 'completed'`).Scan(&tip); err != nil {
+		t.Fatalf("expected a completed sale's payment row: %v", err)
+	}
+	if tip != 150 {
+		t.Fatalf("want tip_amount 150 (from the plugin's authorize response), got %d", tip)
 	}
 }
 

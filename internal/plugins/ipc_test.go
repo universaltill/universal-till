@@ -471,6 +471,66 @@ func TestEventBus_Ask(t *testing.T) {
 	}
 }
 
+// TestEventBus_PublishAuthorize covers the payment-authorize seam
+// (internal/pages.completeTender's real use, via blockingPaymentEventWithResponse):
+// same accept/reject/permission-denial contract as Publish's Blocking mode,
+// but the approving handler's raw response comes back too instead of being
+// discarded.
+func TestEventBus_PublishAuthorize(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+	ctx := context.Background()
+
+	manifest := &Manifest{
+		ID:          "plugin-payment",
+		Name:        "Payment",
+		Version:     "1.0.0",
+		Entrypoint:  "./test",
+		Hooks:       []ManifestHook{{Event: "payment.test.authorize", Action: "authorize"}},
+		Permissions: []string{"events:receive"},
+	}
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("persist manifest: %v", err)
+	}
+	if err := GrantPermission(ctx, db, manifest.ID, "events:receive"); err != nil {
+		t.Fatalf("grant permission: %v", err)
+	}
+
+	bus := NewEventBus(db)
+	bus.SetEventMode("payment.test.authorize", Blocking)
+
+	// No subscriber yet: behaves exactly like Publish (an event ID, nil
+	// response, no error — "no gate").
+	if _, resp, err := bus.publish(ctx, "payment.test.authorize", map[string]any{}); err != nil || resp != nil {
+		t.Fatalf("expected no gate with no subscriber, got resp=%s err=%v", resp, err)
+	}
+
+	answer := json.RawMessage(`{"provider":"test","outcome":"approved","tip_amount":150}`)
+	declineErr := errors.New("test: card declined")
+	decline := false
+	if _, err := bus.SubscribeWithHandler(ctx, manifest.ID, []string{"payment.test.authorize"}, func(ctx context.Context, event Event) (json.RawMessage, error) {
+		if decline {
+			return nil, declineErr
+		}
+		return answer, nil
+	}); err != nil {
+		t.Fatalf("subscribe with handler: %v", err)
+	}
+
+	resp, err := bus.PublishAuthorize(ctx, "payment.test.authorize", map[string]any{"amount": int64(1000)})
+	if err != nil || string(resp) != string(answer) {
+		t.Fatalf("expected approval response %s, got resp=%s err=%v", answer, resp, err)
+	}
+
+	decline = true
+	if resp, err := bus.PublishAuthorize(ctx, "payment.test.authorize", map[string]any{"amount": int64(1000)}); err == nil {
+		t.Fatalf("expected decline to propagate as an error, got resp=%s", resp)
+	} else if !strings.Contains(err.Error(), declineErr.Error()) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestEventBus_Unsubscribe(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
