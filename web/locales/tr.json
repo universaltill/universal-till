@@ -16,6 +16,7 @@
   "audit.col.entity": "Varlık",
   "audit.col.when": "Ne zaman",
   "audit.empty": "Eşleşen denetim kaydı yok.",
+  "audit.export_btn": "CSV dışa aktar",
   "audit.filter.action": "İşlem şunu içerir…",
   "audit.filter.all_actors": "Tüm kullanıcılar",
   "audit.filter.all_types": "Tüm türler",

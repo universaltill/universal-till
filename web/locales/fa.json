@@ -16,6 +16,7 @@
   "audit.col.entity": "موجودیت",
   "audit.col.when": "زمان",
   "audit.empty": "هیچ رکورد مطابقی یافت نشد.",
+  "audit.export_btn": "برون‌بری CSV",
   "audit.filter.action": "عملیات شامل…",
   "audit.filter.all_actors": "همه کاربران",
   "audit.filter.all_types": "همه انواع",

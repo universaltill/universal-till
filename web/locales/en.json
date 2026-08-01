@@ -16,6 +16,7 @@
   "audit.col.entity": "Entity",
   "audit.col.when": "When",
   "audit.empty": "No matching audit entries.",
+  "audit.export_btn": "Export CSV",
   "audit.filter.action": "Action contains…",
   "audit.filter.all_actors": "All users",
   "audit.filter.all_types": "All types",

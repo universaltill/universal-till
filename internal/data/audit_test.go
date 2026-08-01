@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -122,6 +123,106 @@ func TestPOSRepo_ListAudit_FiltersAndOrdersNewestFirst(t *testing.T) {
 	}
 	if len(paged) != 1 || paged[0].Action != "void" {
 		t.Fatalf("expected the middle entry with limit=1 offset=1, got %+v", paged)
+	}
+}
+
+func TestPOSRepo_ListAuditForExport_ReturnsAllMatchingRowsUnbounded(t *testing.T) {
+	db := newAuditTestDB(t)
+	repo := NewPOSRepo(db)
+	ctx := context.Background()
+
+	// ListAudit's default page is 50 rows; insert more than that and confirm
+	// export returns everything, not just one page.
+	for i := 0; i < 60; i++ {
+		ts := fmt.Sprintf("2026-01-01T%02d:%02d:00Z", i/60, i%60)
+		if err := repo.InsertAudit(ctx, nil, "", "sale", fmt.Sprintf("R-%d", i), "void", nil, ts, ""); err != nil {
+			t.Fatalf("seed entry %d: %v", i, err)
+		}
+	}
+
+	paged, err := repo.ListAudit(ctx, AuditFilters{})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(paged) != 50 {
+		t.Fatalf("expected ListAudit's default page to cap at 50, got %d", len(paged))
+	}
+
+	exported, truncated, err := repo.ListAuditForExport(ctx, AuditFilters{})
+	if err != nil {
+		t.Fatalf("ListAuditForExport: %v", err)
+	}
+	if truncated {
+		t.Fatal("expected truncated=false well under the export ceiling")
+	}
+	if len(exported) != 60 {
+		t.Fatalf("expected all 60 entries from export, got %d", len(exported))
+	}
+}
+
+func TestPOSRepo_ListAuditForExport_BareUntilDateIncludesWholeDay(t *testing.T) {
+	db := newAuditTestDB(t)
+	repo := NewPOSRepo(db)
+	ctx := context.Background()
+
+	if err := repo.InsertAudit(ctx, nil, "", "sale", "R-1", "void", nil, "2026-01-01T23:59:00Z", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	exported, _, err := repo.ListAuditForExport(ctx, AuditFilters{Until: "2026-01-01"})
+	if err != nil {
+		t.Fatalf("ListAuditForExport: %v", err)
+	}
+	if len(exported) != 1 {
+		t.Fatalf("expected the bare-date Until=2026-01-01 to include the whole day, got %d entries", len(exported))
+	}
+}
+
+func TestPOSRepo_ListAuditForExport_TruncatesAtCeilingAndSignalsIt(t *testing.T) {
+	db := newAuditTestDB(t)
+	repo := NewPOSRepo(db)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		ts := fmt.Sprintf("2026-01-01T00:%02d:00Z", i)
+		if err := repo.InsertAudit(ctx, nil, "", "sale", fmt.Sprintf("R-%d", i), "void", nil, ts, ""); err != nil {
+			t.Fatalf("seed entry %d: %v", i, err)
+		}
+	}
+
+	exported, truncated, err := repo.listAuditForExportWithCeiling(ctx, AuditFilters{}, 3)
+	if err != nil {
+		t.Fatalf("listAuditForExportWithCeiling: %v", err)
+	}
+	if !truncated {
+		t.Fatal("expected truncated=true when matches exceed the ceiling")
+	}
+	if len(exported) != 3 {
+		t.Fatalf("expected exactly ceiling (3) rows, got %d", len(exported))
+	}
+}
+
+func TestPOSRepo_ListAuditForExport_FiltersMatchListAudit(t *testing.T) {
+	db := newAuditTestDB(t)
+	repo := NewPOSRepo(db)
+	ctx := context.Background()
+
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('u1','alice','Alice','manager')`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := repo.InsertAudit(ctx, nil, "u1", "plugin", "com.x.faq", "install", nil, "2026-01-01T10:00:00Z", ""); err != nil {
+		t.Fatalf("seed 1: %v", err)
+	}
+	if err := repo.InsertAudit(ctx, nil, "", "sale", "R-1", "void", nil, "2026-01-01T11:00:00Z", ""); err != nil {
+		t.Fatalf("seed 2: %v", err)
+	}
+
+	exported, _, err := repo.ListAuditForExport(ctx, AuditFilters{EntityType: "plugin"})
+	if err != nil {
+		t.Fatalf("ListAuditForExport: %v", err)
+	}
+	if len(exported) != 1 || exported[0].Action != "install" {
+		t.Fatalf("expected entity_type=plugin to narrow to the install entry, got %+v", exported)
 	}
 }
 

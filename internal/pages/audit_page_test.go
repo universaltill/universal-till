@@ -1,14 +1,17 @@
 package pages
 
 import (
+	"encoding/csv"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -111,5 +114,151 @@ func TestAuditPage_FiltersNarrowResults(t *testing.T) {
 	}
 	if strings.Contains(body, "void") {
 		t.Fatal("expected the sale entry to be filtered out by entity_type=plugin")
+	}
+}
+
+func TestAuditExport_ManagerOnly(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerAuditPage(mux, dp)
+
+	get := func(u *auth.User) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/audit/export", nil)
+		if u != nil {
+			req = auth.WithUser(req, *u)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := get(nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("no session = %d, want 403", rec.Code)
+	}
+	if rec := get(&auth.User{ID: "cashier-1", Role: "cashier"}); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier = %d, want 403", rec.Code)
+	}
+}
+
+func TestAuditExport_CSVHeadersFiltersAndAuditEntry(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role, created_at) VALUES ('mgr-1','manager1','Manager One','x','manager','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed manager user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES
+		('a1', 'mgr-1', 'plugin', 'com.x.faq', 'plugin_install', '{"version":"1.0.0"}', '2026-01-02T10:00:00Z'),
+		('a2', NULL, 'sale', 's1', 'void', NULL, '2026-01-02T11:00:00Z')`); err != nil {
+		t.Fatalf("seed audit entries: %v", err)
+	}
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerAuditPage(mux, dp)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/audit/export?entity_type=plugin", nil),
+		auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/csv; charset=utf-8" {
+		t.Fatalf("expected a CSV content type, got %q", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(got, `attachment; filename="audit-log-`) {
+		t.Fatalf("expected an audit-log attachment filename, got %q", got)
+	}
+
+	rows, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("expected valid CSV, got parse error: %v\nbody:\n%s", err, rec.Body.String())
+	}
+	if len(rows) != 2 { // header + the one plugin entry (sale entry filtered out)
+		t.Fatalf("expected header + 1 filtered row, got %d rows: %v", len(rows), rows)
+	}
+	if got := rows[0]; got[0] != "When" || got[1] != "Actor" || got[4] != "Action" {
+		t.Fatalf("unexpected CSV header row: %v", got)
+	}
+	if got := rows[1]; got[1] != "Manager One" || got[4] != "plugin_install" {
+		t.Fatalf("expected the manager's plugin_install row, got %v", got)
+	}
+
+	repo := data.NewPOSRepo(db)
+	entries, err := repo.ListAudit(req.Context(), data.AuditFilters{Action: "audit_exported"})
+	if err != nil {
+		t.Fatalf("ListAudit for audit_exported: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected the export itself to write one audit_exported entry, got %d", len(entries))
+	}
+}
+
+func TestAuditExportFilename_TruncationIsVisibleNotJustAHeader(t *testing.T) {
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+
+	if got, want := auditExportFilename(now, false, 42), "audit-log-2026-08-01"; got != want {
+		t.Fatalf("untruncated filename = %q, want %q", got, want)
+	}
+	got := auditExportFilename(now, true, 9999)
+	if !strings.HasPrefix(got, "audit-log-2026-08-01") {
+		t.Fatalf("truncated filename lost its date prefix: %q", got)
+	}
+	if !strings.Contains(got, "TRUNCATED") || !strings.Contains(got, "9999") {
+		t.Fatalf("expected the truncated filename to visibly say so and carry the row count, got %q", got)
+	}
+}
+
+// A genuinely NULL actor_id (a plugin-originated entry, as opposed to the
+// seeded 'system' user some deployments have) must fall back to a literal
+// "system" in the CSV, not an empty cell.
+func TestAuditExport_NullActorFallsBackToSystemLiteral(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	if _, err := db.Exec(`INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES
+		('a1', NULL, 'plugin', 'p1', 'plugin_install', NULL, '2026-01-01T10:00:00Z')`); err != nil {
+		t.Fatalf("seed audit entry: %v", err)
+	}
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerAuditPage(mux, dp)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/audit/export", nil), auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("expected valid CSV, got parse error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected header + 1 row, got %d: %v", len(rows), rows)
+	}
+	if got := rows[1][1]; got != "system" {
+		t.Fatalf("expected a NULL-actor entry to export Actor=%q, got %q", "system", got)
 	}
 }
