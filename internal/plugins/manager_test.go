@@ -272,3 +272,20 @@ func TestSetLocalizerSyncsPluginLocales(t *testing.T) {
 		t.Fatalf("Reload did not re-sync locales (calls=%d)", loc.calls)
 	}
 }
+
+// ut-docs#16: an orphan-owned payment_methods row (plugin_id pointing at a
+// plugin that isn't installed) must produce a startup warning, not fail
+// Init — this is a log-only surface, not a hard error.
+func TestManagerInit_ToleratesOrphanedPaymentMethod(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+
+	if _, err := db.Exec(`INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id)
+		VALUES ('orphaned', 'Orphaned Tender', 'card', 1, 100, 'com.gone.forever')`); err != nil {
+		t.Fatalf("seed orphaned payment method: %v", err)
+	}
+
+	if _, err := Init(ctx, &config.Config{Env: "test"}, db); err != nil {
+		t.Fatalf("Init must tolerate an orphaned payment method (log-only warning), got: %v", err)
+	}
+}
