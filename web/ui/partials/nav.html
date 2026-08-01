@@ -1,6 +1,8 @@
 {{ define "nav" -}}
 <nav class="nav">
-  <div class="logo"><img src="/public/assets/logo/ut-logo-name.svg" alt="Universal Till Logo" /></div>
+  <!-- Light wordmark variant: the standard logo's navy half is invisible
+       against the dark --brand nav every shipped theme uses (ut-docs#213). -->
+  <div class="logo"><img src="/public/assets/logo/ut-logo-name-light.svg" alt="Universal Till Logo" /></div>
   <!-- One shared touch header on every page: the ☰ button opens the /menu
        launcher of big touch tiles — that page IS the navigation. -->
   <a href="/" class="nav-toggle" data-testid="nav-till">🧾 {{ T "nav.till" }}</a>

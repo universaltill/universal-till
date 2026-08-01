@@ -150,8 +150,27 @@ type Basket struct {
 	CustomerID   string       `json:"customerId,omitempty"`
 	CustomerName string       `json:"customerName,omitempty"`
 	ToastMessage string       `json:"toastMessage,omitempty"`
+	// ToastLevel classifies ToastMessage for the sale screen's single
+	// notification surface (ut-docs#213): "info" (default), "success" or
+	// "error". Errors persist until dismissed; info/success auto-expire.
+	ToastLevel string `json:"toastLevel,omitempty"`
 	// OrderType is "" (dine-in/standard) or OrderTypeTakeaway.
 	OrderType string `json:"orderType,omitempty"`
+}
+
+// ItemCount is the total quantity in the basket for the sale screen's
+// count badge: unit lines contribute their quantity, weighed lines
+// (0.35 kg of cheese) read as one item each rather than a fraction.
+func (b Basket) ItemCount() int {
+	n := 0
+	for _, l := range b.Lines {
+		if l.IsWeighed {
+			n++
+			continue
+		}
+		n += int(l.Qty + 0.5)
+	}
+	return n
 }
 
 func (s *Service) Scan(code string) (*Basket, error) {

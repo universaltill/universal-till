@@ -1014,5 +1014,15 @@
   "issuereport.saved": "Saved. It will upload automatically once this shop is online.",
   "issuereport.save_error": "Couldn't save the report — try again.",
   "issuereport.logs_note": "The till's recent warning/error logs are attached automatically.",
-  "osk.toggle": "Keyboard"
+  "osk.toggle": "Keyboard",
+  "basket.count_label": "Items in basket",
+  "notice.dismiss": "Dismiss",
+  "pos.toast.scan_prompt": "Scan a barcode",
+  "pos.toast.item_not_found": "Item not found",
+  "pos.toast.customer_linked": "Customer %s linked",
+  "pos.toast.customer_not_found": "Customer not found",
+  "pos.toast.promo_applied": "Promotion %s applied",
+  "pos.error.server": "Something went wrong. Please try again.",
+  "pos.error.network": "Connection problem — the till keeps working offline.",
+  "pos.toast.insufficient_stock": "Not enough stock to complete this sale"
 }
