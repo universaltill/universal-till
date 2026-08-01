@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 // isSecretSettingKey reports whether a plugin setting holds a credential that
@@ -114,6 +115,12 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			changed++
+		}
+		if changed > 0 {
+			// A setting can feed a plugin's ".ask" answers (settings_get host
+			// fn) — drop cached answers or the till keeps charging the old
+			// rate until an unrelated reload (ut-docs#222 review finding).
+			plugins.SharedBus(d.Db).BumpGeneration()
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "plugin", pluginID, "plugin_settings_saved",
 			map[string]any{"changed": changed}, time.Now().UTC().Format(time.RFC3339), "")
