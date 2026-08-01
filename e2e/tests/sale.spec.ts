@@ -9,7 +9,7 @@ test('a cash sale completes end to end', async ({ page }) => {
   // Scan a seeded demo barcode (Coca-Cola Can 330ml, £1.20 — the default
   // config is tax-INCLUSIVE (UT_TAX_INCLUSIVE defaults to true), so the
   // displayed price already includes VAT; there's no separate add-on).
-  await page.getByRole('textbox').first().fill('5000000000011');
+  await page.getByRole('textbox').first().fill('5000000000012');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
   await expect(page.locator('.basket .total')).toContainText('1.20');
