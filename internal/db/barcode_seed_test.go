@@ -91,6 +91,45 @@ func TestSeedVariantBarcodesValidEAN13(t *testing.T) {
 	}
 }
 
+// The upgrade path: a till that installed before migration 023 existed
+// already has the broken checksums from 001's seed. Simulate by rewinding
+// schema_migrations past 023 and restoring one broken barcode, then
+// reopening — 023 alone must correct it on the next boot.
+func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "barcode-upgrade.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`UPDATE item_barcodes SET barcode = '5000000000011' WHERE barcode = '5000000000012'`); err != nil {
+		t.Fatalf("simulate pre-023 broken checksum: %v", err)
+	}
+	// >= 23, not = 23: migrate() gates on MAX(version) (see db.go), so
+	// leaving a later migration's row in place would mask the watermark
+	// and skip reapplying 023 — the same trap this commit just fixed in
+	// dead_seed_test.go.
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 23`); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err = Open(path) // re-applies only 023
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var barcode string
+	if err := d.DB.QueryRow(`SELECT barcode FROM item_barcodes WHERE item_id = 'itm001'`).Scan(&barcode); err != nil {
+		t.Fatal(err)
+	}
+	if barcode != "5000000000012" {
+		t.Fatalf("itm001 barcode = %q after 023 upgrade, want %q", barcode, "5000000000012")
+	}
+}
+
 // isValidEAN13 reports whether barcode is 13 digits and its final digit is
 // the correct mod-10 weighted check digit (odd positions from the left, 1-
 // indexed, weight 1; even positions weight 3).
