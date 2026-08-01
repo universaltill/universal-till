@@ -131,18 +131,85 @@ func TestIssueReportAPI_ManagerOnly(t *testing.T) {
 	}
 }
 
-func TestIssueReportAPI_RequiresAudio(t *testing.T) {
+func TestIssueReportAPI_RequiresNoteOrAudio(t *testing.T) {
 	withTempIssueReportDir(t)
 	mux := newIssueReportTestMux(t)
 
-	body, ctype := multipartIssueReport(t, "no audio attached", false, false)
+	body, ctype := multipartIssueReport(t, "", false, false)
 	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
 	req.Header.Set("Content-Type", ctype)
 	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("missing audio = %d, want 400: %s", rec.Code, rec.Body.String())
+		t.Fatalf("missing note and audio = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestIssueReportAPI_AcceptsNoteWithoutAudio(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	body, ctype := multipartIssueReport(t, "printer jammed, typed only", false, false)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("note-only save = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 saved bundle, got %d", len(bundles))
+	}
+	if bundles[0].AudioPath != "" {
+		t.Errorf("AudioPath = %q, want empty (note-only report)", bundles[0].AudioPath)
+	}
+}
+
+// A note wrapped in whitespace (trailing newline from some client, stray
+// leading space) must be trimmed before it's stored and before it decides
+// whether a description was actually provided — otherwise "   " would pass
+// the required-description check as non-empty while saving useless
+// whitespace as the report's note.
+func TestIssueReportAPI_TrimsNoteBeforeStoring(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	body, ctype := multipartIssueReport(t, "  printer jammed, typed only  \n", false, false)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 saved bundle, got %d", len(bundles))
+	}
+	if bundles[0].Meta.Note != "printer jammed, typed only" {
+		t.Errorf("Meta.Note = %q, want trimmed", bundles[0].Meta.Note)
+	}
+
+	whitespaceOnly, ctype2 := multipartIssueReport(t, "   \n\t  ", false, false)
+	req2 := httptest.NewRequest(http.MethodPost, "/api/issue-reports", whitespaceOnly)
+	req2.Header.Set("Content-Type", ctype2)
+	req2 = auth.WithUser(req2, auth.User{ID: "mgr-1", Role: "manager"})
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("whitespace-only note = %d, want 400: %s", rec2.Code, rec2.Body.String())
 	}
 }
 

@@ -1,7 +1,8 @@
 // Package issuereport is the till-side half of ADR-0022 / spec 012: a
-// manager captures a voice note (+ optional screen recording) and the
-// till's recent logs into a bundle saved on local disk, queued for upload
-// to Universal Till Cloud on the cloudsync retry cadence (internal/cloudsync).
+// manager captures a description (typed and/or spoken as a voice note, plus
+// an optional screen recording) and the till's recent logs into a bundle
+// saved on local disk, queued for upload to Universal Till Cloud on the
+// cloudsync retry cadence (internal/cloudsync).
 //
 // Saving a bundle never talks to the network and always succeeds regardless
 // of connectivity (same offline-first bar as the rest of this till) — upload
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,15 +45,16 @@ type Meta struct {
 type Bundle struct {
 	Meta      Meta
 	Dir       string
-	AudioPath string // always present
+	AudioPath string // "" when no voice note was captured
 	VideoPath string // "" when no screen recording was captured
 }
 
-// Save writes a new bundle to the pending queue. Audio is required (the
-// voice note is the whole point of the tool); video is optional.
+// Save writes a new bundle to the pending queue. A description is required —
+// either typed (note) or spoken (audio) — but not both; video is always
+// optional.
 func Save(note string, audio, video []byte) (string, error) {
-	if len(audio) == 0 {
-		return "", fmt.Errorf("issuereport: audio capture is required")
+	if strings.TrimSpace(note) == "" && len(audio) == 0 {
+		return "", fmt.Errorf("issuereport: a description (typed note or voice recording) is required")
 	}
 	id := newBundleID()
 	dir := filepath.Join(PendingDir, id)
@@ -69,8 +72,10 @@ func Save(note string, audio, video []byte) (string, error) {
 }
 
 func saveBundleFiles(dir, id, note string, audio, video []byte) error {
-	if err := os.WriteFile(filepath.Join(dir, "audio.webm"), audio, 0o644); err != nil {
-		return fmt.Errorf("issuereport: write audio: %w", err)
+	if len(audio) > 0 {
+		if err := os.WriteFile(filepath.Join(dir, "audio.webm"), audio, 0o644); err != nil {
+			return fmt.Errorf("issuereport: write audio: %w", err)
+		}
 	}
 	if len(video) > 0 {
 		if err := os.WriteFile(filepath.Join(dir, "video.webm"), video, 0o644); err != nil {
@@ -114,9 +119,9 @@ func Pending() ([]Bundle, error) {
 		if err := json.Unmarshal(mb, &meta); err != nil {
 			continue
 		}
-		b := Bundle{Meta: meta, Dir: dir, AudioPath: filepath.Join(dir, "audio.webm")}
-		if _, err := os.Stat(b.AudioPath); err != nil {
-			continue // no audio, not a usable bundle
+		b := Bundle{Meta: meta, Dir: dir}
+		if _, err := os.Stat(filepath.Join(dir, "audio.webm")); err == nil {
+			b.AudioPath = filepath.Join(dir, "audio.webm")
 		}
 		if _, err := os.Stat(filepath.Join(dir, "video.webm")); err == nil {
 			b.VideoPath = filepath.Join(dir, "video.webm")

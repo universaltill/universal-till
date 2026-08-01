@@ -36,7 +36,7 @@
   var T = {
     voiceRecord: "{{ T "issuereport.voice_record" }}",
     voiceStop: "{{ T "issuereport.voice_stop" }}",
-    voiceRequired: "{{ T "issuereport.voice_required" }}",
+    descriptionRequired: "{{ T "issuereport.description_required" }}",
     voiceUnsupported: "{{ T "issuereport.voice_unsupported" }}",
     micError: "{{ T "issuereport.mic_error" }}",
     screenRecord: "{{ T "issuereport.screen_record" }}",
@@ -186,15 +186,16 @@
   }
 
   saveBtn.addEventListener('click', function () {
-    if (!voiceBlob) {
-      statusEl.textContent = T.voiceRequired;
+    var note = noteEl.value.trim();
+    if (!note && !voiceBlob) {
+      statusEl.textContent = T.descriptionRequired;
       return;
     }
     saveBtn.disabled = true;
     statusEl.textContent = T.saving;
     var fd = new FormData();
-    fd.append('note', noteEl.value || '');
-    fd.append('audio', voiceBlob, 'audio.webm');
+    fd.append('note', note);
+    if (voiceBlob) fd.append('audio', voiceBlob, 'audio.webm');
     if (screenBlob) fd.append('video', screenBlob, 'video.webm');
     fetch('/api/issue-reports', { method: 'POST', body: fd })
       .then(function (r) { if (!r.ok) throw new Error('save failed'); return r.json(); })
