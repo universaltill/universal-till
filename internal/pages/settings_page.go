@@ -73,20 +73,22 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			feeRows = append(feeRows, fr)
 		}
+		exportEntries, _ := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		data := map[string]any{
-			"title":       "Settings",
-			"theme":       st.Theme,
-			"themes":      availableThemes(r.Context(), d),
-			"settings":    st,
-			"settingsMap": all,
-			"menuItems":   d.Menu,
-			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
-			"isManager":   isManagerOrAuthOff(r),
-			"printer":     printerConfig(r.Context(), d),
-			"backups":     listBackupsForUI(d),
-			"payMethods":  payMethods,
-			"payDefault":  payDefault,
-			"payFees":     feeRows,
+			"title":         "Settings",
+			"theme":         st.Theme,
+			"themes":        availableThemes(r.Context(), d),
+			"settings":      st,
+			"settingsMap":   all,
+			"menuItems":     d.Menu,
+			"uiScale":       strconv.FormatFloat(scale, 'f', -1, 64),
+			"isManager":     isManagerOrAuthOff(r),
+			"printer":       printerConfig(r.Context(), d),
+			"backups":       listBackupsForUI(d),
+			"payMethods":    payMethods,
+			"payDefault":    payDefault,
+			"payFees":       feeRows,
+			"exportEntries": exportEntries,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
