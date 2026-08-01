@@ -30,6 +30,7 @@ var iconFor = map[string]string{
 	"/users":        "👤",
 	"/translations": "🌐",
 	"/tills":        "🖥️",
+	"/report-issue": "🐞",
 }
 
 func registerMenu(mux *http.ServeMux, d *common.Deps) {
@@ -50,6 +51,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		if isManagerOrAuthOff(r) {
 			add("/users", "users.title")
 			add("/translations", "translations.title")
+			add("/report-issue", "issuereport.title")
 		}
 		httpx.Render("ui/pages/menu.html", map[string]any{
 			"title": "Menu",

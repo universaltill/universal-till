@@ -15,10 +15,38 @@ func withTempPendingDir(t *testing.T) {
 	t.Cleanup(func() { PendingDir = orig })
 }
 
-func TestSaveRequiresAudio(t *testing.T) {
+func TestSaveRequiresNoteOrAudio(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := Save("note", nil, nil); err == nil {
-		t.Fatal("expected error when audio is empty")
+	if _, err := Save("", nil, nil); err == nil {
+		t.Fatal("expected error when both note and audio are empty")
+	}
+}
+
+func TestSaveAcceptsNoteOnly(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("printer jammed, no voice note", nil, nil)
+	if err != nil {
+		t.Fatalf("Save with note only: %v", err)
+	}
+	bundles, err := Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 pending bundle, got %d", len(bundles))
+	}
+	if bundles[0].Meta.ID != id {
+		t.Errorf("Meta.ID = %q, want %q", bundles[0].Meta.ID, id)
+	}
+	if bundles[0].AudioPath != "" {
+		t.Errorf("AudioPath = %q, want empty (no voice note captured)", bundles[0].AudioPath)
+	}
+}
+
+func TestSaveAcceptsAudioOnly(t *testing.T) {
+	withTempPendingDir(t)
+	if _, err := Save("", []byte("fake-audio"), nil); err != nil {
+		t.Fatalf("Save with audio only: %v", err)
 	}
 }
 

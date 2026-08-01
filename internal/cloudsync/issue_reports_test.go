@@ -155,6 +155,42 @@ func TestUploadIssueReportOmitsVideoWhenAbsent(t *testing.T) {
 	}
 }
 
+// A note-only bundle (no voice recording) must omit the audio part entirely
+// rather than send an empty one — mirrors the existing video-absent case.
+func TestUploadIssueReportOmitsAudioWhenAbsent(t *testing.T) {
+	withTempPendingDir(t)
+	if _, err := issuereport.Save("typed only, no voice note", nil, nil); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	bundles, err := issuereport.Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].AudioPath != "" {
+		t.Fatalf("AudioPath = %q, want empty", bundles[0].AudioPath)
+	}
+
+	var hadAudioPart bool
+	var gotNote string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(10 << 20)
+		hadAudioPart = len(r.MultipartForm.File["audio"]) > 0
+		gotNote = r.FormValue("note")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := uploadIssueReport(context.Background(), registeredCfg(srv.URL), bundles[0]); err != nil {
+		t.Fatalf("uploadIssueReport: %v", err)
+	}
+	if hadAudioPart {
+		t.Fatal("audio part sent for a bundle with no voice recording")
+	}
+	if gotNote != "typed only, no voice note" {
+		t.Fatalf("note = %q", gotNote)
+	}
+}
+
 func TestUploadIssueReportUnregistered(t *testing.T) {
 	withTempPendingDir(t)
 	if _, err := issuereport.Save("note", []byte("a"), nil); err != nil {

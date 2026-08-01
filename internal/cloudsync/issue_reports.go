@@ -52,8 +52,10 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 	_ = w.WriteField("report_id", b.Meta.ID)
 	_ = w.WriteField("note", b.Meta.Note)
 	_ = w.WriteField("created_at", b.Meta.CreatedAt.Format("2006-01-02T15:04:05.000000000Z07:00"))
-	if err := attachFile(w, "audio", "audio.webm", b.AudioPath); err != nil {
-		return err
+	if b.AudioPath != "" {
+		if err := attachFile(w, "audio", "audio.webm", b.AudioPath); err != nil {
+			return err
+		}
 	}
 	if b.VideoPath != "" {
 		if err := attachFile(w, "video", "video.webm", b.VideoPath); err != nil {

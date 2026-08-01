@@ -131,18 +131,44 @@ func TestIssueReportAPI_ManagerOnly(t *testing.T) {
 	}
 }
 
-func TestIssueReportAPI_RequiresAudio(t *testing.T) {
+func TestIssueReportAPI_RequiresNoteOrAudio(t *testing.T) {
 	withTempIssueReportDir(t)
 	mux := newIssueReportTestMux(t)
 
-	body, ctype := multipartIssueReport(t, "no audio attached", false, false)
+	body, ctype := multipartIssueReport(t, "", false, false)
 	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
 	req.Header.Set("Content-Type", ctype)
 	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("missing audio = %d, want 400: %s", rec.Code, rec.Body.String())
+		t.Fatalf("missing note and audio = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestIssueReportAPI_AcceptsNoteWithoutAudio(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	body, ctype := multipartIssueReport(t, "printer jammed, typed only", false, false)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("note-only save = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 saved bundle, got %d", len(bundles))
+	}
+	if bundles[0].AudioPath != "" {
+		t.Errorf("AudioPath = %q, want empty (note-only report)", bundles[0].AudioPath)
 	}
 }
 

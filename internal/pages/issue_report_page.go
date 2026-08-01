@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
@@ -35,10 +36,10 @@ func readCappedOrReject(r io.Reader, limit int64) ([]byte, error) {
 }
 
 // registerIssueReportPage serves the manager-gated "report an issue" panel
-// (ADR-0022, spec 012): capture a voice note + optional screen recording,
-// save locally regardless of connectivity, queue for cloud upload. Not
-// reachable from the self-order kiosk surface — staff-operated tills and
-// back-office only.
+// (ADR-0022, spec 012): capture a typed and/or spoken description + optional
+// screen recording, save locally regardless of connectivity, queue for cloud
+// upload. Not reachable from the self-order kiosk surface — staff-operated
+// tills and back-office only.
 func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/report-issue", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
@@ -70,15 +71,18 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		note := r.Form.Get("note")
 
-		audioFile, _, err := r.FormFile("audio")
-		if err != nil {
-			http.Error(w, "audio recording required", http.StatusBadRequest)
-			return
+		var audio []byte
+		if audioFile, _, err := r.FormFile("audio"); err == nil {
+			defer audioFile.Close()
+			audio, err = readCappedOrReject(audioFile, issueReportMaxBytes)
+			if err != nil {
+				http.Error(w, "voice recording too large", http.StatusBadRequest)
+				return
+			}
 		}
-		defer audioFile.Close()
-		audio, err := readCappedOrReject(audioFile, issueReportMaxBytes)
-		if err != nil {
-			http.Error(w, "audio recording too large", http.StatusBadRequest)
+
+		if strings.TrimSpace(note) == "" && len(audio) == 0 {
+			http.Error(w, "a description (typed or spoken) is required", http.StatusBadRequest)
 			return
 		}
 
