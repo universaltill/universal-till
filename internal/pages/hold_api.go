@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -14,6 +15,20 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
+
+// maxHoldLabelRunes bounds a cashier-typed tab name (e.g. "Haaft 1") --
+// unlike the previous CustomerName/timestamp fallback, this field is now
+// free text straight off the request, and it's re-rendered on every sale
+// screen load until resumed.
+const maxHoldLabelRunes = 64
+
+func truncateRunes(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:max])
+}
 
 // registerHoldAPI wires hold/resume: park the current basket so another
 // customer can be served, then bring it back. Held sales are persisted
@@ -38,13 +53,17 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			renderBasket(w, r, httpx.T(locale, "hold.error.empty"), "error")
 			return
 		}
+		_ = r.ParseForm()
 		snap := d.Engine.Snapshot()
 		payload, err := json.Marshal(snap)
 		if err != nil {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
-		label := strings.TrimSpace(snap.CustomerName)
+		label := truncateRunes(strings.TrimSpace(r.Form.Get("label")), maxHoldLabelRunes)
+		if label == "" {
+			label = strings.TrimSpace(snap.CustomerName)
+		}
 		if label == "" {
 			label = time.Now().Format("15:04")
 		}
