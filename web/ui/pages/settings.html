@@ -404,6 +404,7 @@
   </form>
 </div>
 {{ end }}
+{{ if .isManager }}
 <div class="card">
   <h2>{{ T "settings.currency.title" }}</h2>
   <p class="muted">{{ T "settings.currency.help" }}</p>
@@ -418,7 +419,6 @@
   </form>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
 </div>
-{{ if .isManager }}
 <div class="card">
   <h2>{{ T "settings.all" }}</h2>
   <table class="table">
