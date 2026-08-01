@@ -959,10 +959,48 @@ body.login-screen {
                        break-inside: avoid; }
 /* Wide tables (backups list) scroll INSIDE their card, never past its edge. */
 .settings-grid .card .table { display: block; overflow-x: auto; }
+/* Cards whose content is inherently wide (backup file table, the raw
+   settings key/value table) span the full grid width instead of
+   overflowing their single-column card — column-span is the multi-column-
+   native way to do this; switching .settings-grid itself to CSS Grid would
+   undo the masonry packing every other card relies on. */
+.settings-grid .card.settings-wide { column-span: all; }
 .settings-grid h2 { margin-block: 0 .6rem; font-size: 1.05rem; }
 .settings-grid form select, .settings-grid form input[type="text"],
 .settings-grid form input[type="number"], .settings-grid form input[type="password"] {
   min-block-size: 2.3rem; }
+/* Payments card fee rows: a fixed grid so a long provider name (e.g.
+   "Card (Stripe)") never wraps the percent/fixed inputs onto a second
+   line — it ellipsizes instead, which is the correct tradeoff at this
+   card's normal column width. Independent review (2026-08-01) caught two
+   real bugs in the first draft: the number-input track was too narrow for
+   its own field's max value (100.00%) at ANY viewport/UI-scale, since the
+   rem-based width and rem-based font scale together — and the fixed track
+   widths clipped the Save button under .card's overflow:hidden on narrow
+   viewports with no way to reach it. Fixed here: wider input track + the
+   same reduced-padding treatment .vg-row already uses for number inputs
+   (app.css, variants grid), and an overflow-x:auto escape hatch on the row
+   itself — same pattern this file already uses for wide tables inside a
+   card (.settings-grid .card .table, just above). */
+.fee-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) 4.8rem auto 4.8rem auto;
+  align-items: center;
+  gap: .4rem;
+  margin-block-end: .4rem;
+  overflow-x: auto;
+}
+.fee-row .fee-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fee-row input[type="number"] {
+  inline-size: 4.8rem; min-inline-size: 4.8rem;
+  padding: .35rem .4rem;
+}
+.fee-row .fee-msg { grid-column: 1 / -1; }
 .set-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .set-tight { margin-block-start: .35rem; }
 .set-below { margin-block-end: .6rem; }
