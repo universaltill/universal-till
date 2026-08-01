@@ -47,7 +47,7 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     // A real click completing a real sale is the strongest proof: it
     // fails if the button is present-but-unclickable in any way a
     // geometry check can't see.
-    await page.getByRole('textbox').first().fill('5000000000011');
+    await page.getByRole('textbox').first().fill('5000000000012');
     await page.locator('.scan-row button[type=submit]').click();
     await expect(page.locator('#basket')).toContainText('Coca-Cola');
 

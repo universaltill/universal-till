@@ -50,7 +50,10 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('pos.tax_inclusive', 'false'), ('store.tax_inclusive', 'true')`); err != nil {
 		t.Fatalf("seed pre-upgrade state: %v", err)
 	}
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version = 22`); err != nil {
+	// Rewind everything >= 22, not just row 22: migrate() gates on
+	// MAX(version), so leaving a later migration's row (e.g. 23+) in place
+	// would mask the watermark and skip reapplying 22 entirely.
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 22`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
 	if err := d.Close(); err != nil {
