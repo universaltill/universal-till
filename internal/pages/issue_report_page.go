@@ -69,7 +69,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "invalid upload", http.StatusBadRequest)
 			return
 		}
-		note := r.Form.Get("note")
+		note := strings.TrimSpace(r.Form.Get("note"))
 
 		var audio []byte
 		if audioFile, _, err := r.FormFile("audio"); err == nil {
@@ -81,7 +81,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		if strings.TrimSpace(note) == "" && len(audio) == 0 {
+		if note == "" && len(audio) == 0 {
 			http.Error(w, "a description (typed or spoken) is required", http.StatusBadRequest)
 			return
 		}
