@@ -104,7 +104,11 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`UPDATE item_barcodes SET barcode = '5000000000011' WHERE barcode = '5000000000012'`); err != nil {
 		t.Fatalf("simulate pre-023 broken checksum: %v", err)
 	}
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version = 23`); err != nil {
+	// >= 23, not = 23: migrate() gates on MAX(version) (see db.go), so
+	// leaving a later migration's row in place would mask the watermark
+	// and skip reapplying 023 — the same trap this commit just fixed in
+	// dead_seed_test.go.
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 23`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
 	if err := d.Close(); err != nil {
