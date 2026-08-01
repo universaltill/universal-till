@@ -15,6 +15,18 @@
        with modifier groups; closed by its own Cancel/submit handlers. -->
   <dialog id="modifier-modal" class="modifier-modal"></dialog>
 
+  <!-- Client-side slot of the sale screen's single notification surface
+       (ut-docs#213, docs/sale-screen-notifications.md): app.js
+       fills it on htmx request failures. Server-rendered notices ride the
+       #basket swap instead (partials/basket.html). Strings ride data-*
+       attributes so app.js stays locale-free. -->
+  <div id="pos-alert" class="pos-notice error" role="alert" hidden
+       data-msg-server="{{ T "pos.error.server" }}"
+       data-msg-network="{{ T "pos.error.network" }}">
+    <span class="notice-text"></span>
+    <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+  </div>
+
   <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
     <!-- Basket loads on page load -->
     <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>

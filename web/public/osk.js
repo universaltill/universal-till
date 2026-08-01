@@ -213,8 +213,15 @@
       el.dataset.oskPrevInputmode = el.getAttribute('inputmode') || '';
     }
     el.setAttribute('inputmode', 'none');
-    // Keep the focused field visible above the keyboard.
-    setTimeout(function () { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 60);
+    // Keep the focused field visible above the keyboard. Instant, not
+    // smooth: a smooth scroll animates layout for ~300-500ms after the
+    // keyboard opens, and any tap landing mid-animation (a fast operator
+    // going straight for a button, or an automated test) hits stale
+    // coordinates — with the ut-docs#213 layout that can mean the fixed
+    // OSK sheet itself, which swallows the tap silently (caught as a
+    // ~40% e2e flake in settings-osk.spec.ts once sale-screen-213.spec.ts
+    // ran before it).
+    setTimeout(function () { el.scrollIntoView({ block: 'center' }); }, 60);
   }
 
   function hide() {
@@ -232,6 +239,16 @@
   // "catch up with the autofocused field at init" behavior, per the field
   // report. Click (not focusin) is the show trigger so that tapping the
   // already-focused scan input — which fires no focusin — still opens it.
+  // The toggle must never steal focus (same rule as the OSK's own keys):
+  // a button takes focus on pointerdown, which fires focusin -> hide()
+  // BEFORE the click handler runs — the handler then sees "closed" and
+  // re-opens, so the toggle races itself and "close" only wins on lucky
+  // timing (caught as an e2e flake in settings-osk.spec.ts once
+  // ut-docs#213 moved the tender panel and shifted that timing).
+  document.addEventListener('pointerdown', function (ev) {
+    var t = ev.target.closest ? ev.target.closest('[data-osk-toggle]') : null;
+    if (t) ev.preventDefault();
+  });
   document.addEventListener('click', function (ev) {
     if (!enabled) return;
     var t = ev.target.closest ? ev.target.closest('[data-osk-toggle]') : null;

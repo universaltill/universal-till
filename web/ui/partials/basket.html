@@ -1,9 +1,22 @@
 {{ define "basket" }}
 <div class="basket" id="basket">
   {{ if .ToastMessage }}
-    <div class="toast info" id="toast-message">{{ .ToastMessage }}</div>
+    {{ if eq .ToastLevel "error" }}
+    <div class="pos-notice error" id="toast-message" role="alert">
+      <span class="notice-text">{{ .ToastMessage }}</span>
+      <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+    </div>
+    {{ else }}
+    <div class="pos-notice {{ if eq .ToastLevel "success" }}success{{ else }}info{{ end }}" id="toast-message" role="status">
+      <span class="notice-text">{{ .ToastMessage }}</span>
+      <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+    </div>
+    {{ end }}
   {{ end }}
-  <h2>{{ T "basket.title" }}</h2>
+  <h2>{{ T "basket.title" }}
+    <span class="basket-count" data-testid="basket-count" title="{{ T "basket.count_label" }}">{{ .ItemCount }}</span>
+    <span class="visually-hidden">{{ T "basket.count_label" }}</span>
+  </h2>
   <div class="order-type-toggle" role="group" aria-label="{{ T "basket.order_type.label" }}">
     <button type="button" class="btn{{ if eq .OrderType "takeaway" }} secondary{{ end }}"
             aria-pressed="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
@@ -38,19 +51,21 @@
                 </span>
               </td>
               <td>
-                <input class="qty-input" type="number" name="qty" value="{{ printf "%.2f" .Qty }}" min="0" step="{{ if .IsWeighed }}0.01{{ else }}1{{ end }}"
-                       hx-post="/api/pos/line"
-                       hx-vals='{{ jsonVals "key" .LineKey }}'
-                       hx-include="closest tr"
-                       hx-target="#basket"
-                       hx-swap="outerHTML" />
-                <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount }}" min="0" step="1"
-                       title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
-                       hx-post="/api/pos/line"
-                       hx-vals='{{ jsonVals "key" .LineKey }}'
-                       hx-include="closest tr"
-                       hx-target="#basket"
-                       hx-swap="outerHTML" />
+                <div class="line-inputs">
+                  <input class="qty-input" type="number" name="qty" value="{{ printf "%.2f" .Qty }}" min="0" step="{{ if .IsWeighed }}0.01{{ else }}1{{ end }}"
+                         hx-post="/api/pos/line"
+                         hx-vals='{{ jsonVals "key" .LineKey }}'
+                         hx-include="closest tr"
+                         hx-target="#basket"
+                         hx-swap="outerHTML" />
+                  <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount }}" min="0" step="1"
+                         title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
+                         hx-post="/api/pos/line"
+                         hx-vals='{{ jsonVals "key" .LineKey }}'
+                         hx-include="closest tr"
+                         hx-target="#basket"
+                         hx-swap="outerHTML" />
+                </div>
               </td>
               <td>{{ money .PriceCents }}</td>
               <td>{{ money .LineTotal }}</td>

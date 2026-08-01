@@ -21,11 +21,12 @@ import (
 func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewHeldSalesRepo(d.Db)
 
-	renderBasket := func(w http.ResponseWriter, r *http.Request, toast string) {
+	renderBasket := func(w http.ResponseWriter, r *http.Request, toast, level string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
 		b.ToastMessage = toast
+		b.ToastLevel = level
 		_ = basketView.Render(w, &b)
 	}
 
@@ -34,13 +35,13 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
 		if !d.Engine.HasItems() {
-			renderBasket(w, r, httpx.T(locale, "hold.error.empty"))
+			renderBasket(w, r, httpx.T(locale, "hold.error.empty"), "error")
 			return
 		}
 		snap := d.Engine.Snapshot()
 		payload, err := json.Marshal(snap)
 		if err != nil {
-			renderBasket(w, r, httpx.T(locale, "hold.error.failed"))
+			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
 		label := strings.TrimSpace(snap.CustomerName)
@@ -55,12 +56,12 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			Payload:    string(payload),
 		}
 		if err := repo.Insert(ctx, held); err != nil {
-			renderBasket(w, r, httpx.T(locale, "hold.error.failed"))
+			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
 		d.Engine.Reset()
 		w.Header().Set("HX-Trigger", "held-changed")
-		renderBasket(w, r, httpx.T(locale, "hold.toast.held"))
+		renderBasket(w, r, httpx.T(locale, "hold.toast.held"), "success")
 	})
 
 	// Resume a held sale into the (empty) basket.
@@ -70,21 +71,21 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("id"))
 		if id == "" {
-			renderBasket(w, r, httpx.T(locale, "hold.error.not_found"))
+			renderBasket(w, r, httpx.T(locale, "hold.error.not_found"), "error")
 			return
 		}
 		if d.Engine.HasItems() {
-			renderBasket(w, r, httpx.T(locale, "hold.error.busy"))
+			renderBasket(w, r, httpx.T(locale, "hold.error.busy"), "error")
 			return
 		}
 		held, found, err := repo.Get(ctx, id)
 		if err != nil || !found {
-			renderBasket(w, r, httpx.T(locale, "hold.error.not_found"))
+			renderBasket(w, r, httpx.T(locale, "hold.error.not_found"), "error")
 			return
 		}
 		var snap pos.BasketSnapshot
 		if err := json.Unmarshal([]byte(held.Payload), &snap); err != nil {
-			renderBasket(w, r, httpx.T(locale, "hold.error.failed"))
+			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
 		d.Engine.Restore(snap)
@@ -93,7 +94,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = err
 		}
 		w.Header().Set("HX-Trigger", "held-changed")
-		renderBasket(w, r, httpx.T(locale, "hold.toast.resumed"))
+		renderBasket(w, r, httpx.T(locale, "hold.toast.resumed"), "success")
 	})
 
 	// Held-sales strip: chips the cashier taps to resume.

@@ -181,19 +181,6 @@ func TestResetHandler_ClearsBasket(t *testing.T) {
 	}
 }
 
-func TestClearToastHandler(t *testing.T) {
-	mux, _ := newPOSTestDeps(t)
-	req := httptest.NewRequest(http.MethodGet, "/ui/clear-toast", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), `id="toast-error"`) {
-		t.Fatalf("expected empty toast container, got: %s", rec.Body.String())
-	}
-}
-
 func TestTenderHandler_JSONAcceptReturnsSaleSummary(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
@@ -395,8 +382,11 @@ func TestTenderHandler_InsufficientStockShowsToastAndKeepsBasket(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (in-place toast, not an error status), got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "toast-error") {
-		t.Fatalf("expected an in-place error toast, got: %s", rec.Body.String())
+	// ut-docs#213: the unified notice surface replaced the hand-built
+	// #toast-error overlay — an insufficient-stock rejection renders as a
+	// persistent error-level pos-notice inside the basket swap.
+	if !strings.Contains(rec.Body.String(), "pos-notice error") {
+		t.Fatalf("expected an error-level pos-notice, got: %s", rec.Body.String())
 	}
 	if len(dp.Engine.Basket().Lines) == 0 {
 		t.Fatalf("expected basket to survive an insufficient-stock rejection")
