@@ -127,8 +127,9 @@ func TestTelemetryEndpoint(t *testing.T) {
 	}
 }
 
-// UI scale / theme / save / upsert are the ungated per-till display + store
-// preferences; they validate and reflect into runtime state.
+// UI scale / theme are ungated per-till display preferences; save/upsert are
+// manager-gated (ut-docs#179) store-wide settings. All validate and reflect
+// into runtime state for a manager.
 func TestDisplayAndStoreSettings(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
@@ -155,12 +156,12 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	// card actually posts. TaxInclusive/AllowNegativeInventory are NOT settable
 	// via /save (see TestSaveSettingsCurrencyOnlyDoesNotClearTaxOrInventoryFlags);
 	// they go through /upsert below, same as a real manager would use the
-	// settings page's generic key/value editor.
+	// settings page's generic key/value editor. Manager-gated (ut-docs#179).
 	rec := postForm(mux, "/api/settings/save", url.Values{
 		"currency":   {"EUR"},
 		"country":    {"DE"},
 		"taxRatePct": {"19"},
-	}, nil)
+	}, &mgrUser)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("save = %d", rec.Code)
 	}
@@ -170,22 +171,22 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	}
 
 	// Upsert: empty key is a 400; a known key reflects into state.
-	if rec := postForm(mux, "/api/settings/upsert", url.Values{"value": {"x"}}, nil); rec.Code != http.StatusBadRequest {
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"value": {"x"}}, &mgrUser); rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty key = %d, want 400", rec.Code)
 	}
-	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, nil); rec.Code != http.StatusNoContent {
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("upsert = %d", rec.Code)
 	}
 	if !d.CurrentState().TaxInclusive {
 		t.Fatal("upsert did not reflect store.tax_inclusive=true into state")
 	}
-	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"true"}}, nil); rec.Code != http.StatusNoContent {
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"true"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("upsert = %d", rec.Code)
 	}
 	if !d.CurrentState().AllowNegativeInventory {
 		t.Fatal("upsert did not reflect pos.allow_negative_inventory=true into state")
 	}
-	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"false"}}, nil); rec.Code != http.StatusNoContent {
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"false"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("upsert = %d", rec.Code)
 	}
 	if d.CurrentState().AllowNegativeInventory {
@@ -193,6 +194,81 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	}
 	if v, _, _ := d.Settings.Get(t.Context(), "pos.allow_negative_inventory"); v != "false" {
 		t.Fatalf("stored allow_negative = %q", v)
+	}
+}
+
+// A cashier (and an unauthenticated/no-session request) is refused on both
+// mutating settings endpoints, matching every other mutating settings
+// endpoint's isManagerOrAuthOff gate in this file (ut-docs#179 — /save and
+// /upsert were the two exceptions that had none).
+func TestSaveAndUpsertSettings_RequireManager(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	for _, tc := range []struct {
+		name string
+		user *auth.User
+	}{
+		{"no session", nil},
+		{"cashier", &cashUser},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, tc.user); rec.Code != http.StatusForbidden {
+				t.Fatalf("save = %d, want 403", rec.Code)
+			}
+			if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, tc.user); rec.Code != http.StatusForbidden {
+				t.Fatalf("upsert = %d, want 403", rec.Code)
+			}
+		})
+	}
+
+	// Neither refused call actually wrote anything.
+	if d.CurrentState().Currency == "GBP" {
+		t.Fatal("cashier/no-session save must not have changed currency")
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "store.tax_inclusive"); v == "true" {
+		t.Fatal("cashier/no-session upsert must not have written store.tax_inclusive")
+	}
+
+	// A manager still succeeds (sanity check the gate isn't fail-closed for everyone).
+	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("manager save = %d, want 204", rec.Code)
+	}
+}
+
+// The template half of the fix (ut-docs#179 review finding): a cashier's
+// rendered /settings page must not contain the currency card or the raw
+// key/value table — both post to now manager-gated endpoints, so a cashier
+// seeing them would be a dead, confusing control. A manager still sees both.
+func TestSettingsPage_HidesManagerOnlyCardsFromCashier(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	get := func(user *auth.User) string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		if user != nil {
+			req = auth.WithUser(req, *user)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	cashierHTML := get(&cashUser)
+	if strings.Contains(cashierHTML, `id="new-setting"`) {
+		t.Fatal("cashier sees the raw settings.all key/value table")
+	}
+	if strings.Contains(cashierHTML, `name="currency"`) {
+		t.Fatal("cashier sees the currency card")
+	}
+
+	managerHTML := get(&mgrUser)
+	if !strings.Contains(managerHTML, `id="new-setting"`) {
+		t.Fatal("manager should see the raw settings.all key/value table")
+	}
+	if !strings.Contains(managerHTML, `name="currency"`) {
+		t.Fatal("manager should see the currency card")
 	}
 }
 
@@ -212,7 +288,7 @@ func TestSaveSettingsCurrencyOnlyDoesNotClearTaxOrInventoryFlags(t *testing.T) {
 	common.SaveState(t.Context(), d.Settings, st)
 
 	// Reproduce the real shipped form exactly: only "currency" is posted.
-	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, nil)
+	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, &mgrUser)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("save = %d", rec.Code)
 	}
@@ -275,7 +351,7 @@ func TestSettingsSave_FailsClosedOnSaveError(t *testing.T) {
 	if rec := postForm(mux, "/api/settings/save", url.Values{
 		"currency":   {"GBP"},
 		"taxRatePct": {"20"},
-	}, nil); rec.Code != http.StatusNoContent {
+	}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("seed save = %d", rec.Code)
 	}
 
@@ -289,7 +365,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 	rec := postForm(mux, "/api/settings/save", url.Values{
 		"currency":   {"EUR"},
 		"taxRatePct": {"7"},
-	}, nil)
+	}, &mgrUser)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("save with an aborting trigger = %d, want 500", rec.Code)
 	}
@@ -314,7 +390,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 func TestSettingsSave_FailedSaveDoesNotLeakIntoLaterSave(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}, "taxRatePct": {"20"}}, nil); rec.Code != http.StatusNoContent {
+	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}, "taxRatePct": {"20"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("seed save = %d", rec.Code)
 	}
 
@@ -325,7 +401,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"EUR"}, "taxRatePct": {"7"}}, nil)
+	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"EUR"}, "taxRatePct": {"7"}}, &mgrUser)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("failed save = %d, want 500", rec.Code)
 	}

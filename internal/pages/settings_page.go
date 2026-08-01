@@ -391,7 +391,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	mux.HandleFunc("/api/settings/save", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/settings/save", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 		_ = r.ParseForm()
 		st := d.CurrentState()
 		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" {
@@ -430,7 +434,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// generic key/value upsert
-	mux.HandleFunc("/api/settings/upsert", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/settings/upsert", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
 		_ = r.ParseForm()
 		key := strings.TrimSpace(r.Form.Get("key"))
 		value := strings.TrimSpace(r.Form.Get("value"))
