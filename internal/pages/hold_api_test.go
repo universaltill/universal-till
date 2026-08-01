@@ -216,6 +216,79 @@ func TestHoldHandler_LabelsWithCustomerNameWhenSet(t *testing.T) {
 	}
 }
 
+func TestHoldHandler_ExplicitLabelOverridesCustomerName(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	dp.Engine.SetCustomer("cust1", "Jane Doe")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/hold", strings.NewReader("label=Table+4"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var label string
+	if err := dp.Db.QueryRow(`SELECT label FROM held_sales`).Scan(&label); err != nil {
+		t.Fatalf("query held_sales: %v", err)
+	}
+	if label != "Table 4" {
+		t.Fatalf("expected an explicit label to win over the attached customer name, got %q", label)
+	}
+}
+
+func TestHoldHandler_ExplicitLabelWithNoCustomer(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/hold", strings.NewReader("label=Haaft+1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var label string
+	if err := dp.Db.QueryRow(`SELECT label FROM held_sales`).Scan(&label); err != nil {
+		t.Fatalf("query held_sales: %v", err)
+	}
+	if label != "Haaft 1" {
+		t.Fatalf("expected the explicit label to be stored even with no customer attached, got %q", label)
+	}
+}
+
+func TestHoldHandler_LabelTruncatedAtMaxRunes(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	huge := strings.Repeat("é", 5000) // multi-byte rune, exercises rune- not byte-based truncation
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/hold", strings.NewReader("label="+huge))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var label string
+	if err := dp.Db.QueryRow(`SELECT label FROM held_sales`).Scan(&label); err != nil {
+		t.Fatalf("query held_sales: %v", err)
+	}
+	runes := []rune(label)
+	if len(runes) != 64 {
+		preview := runes
+		if len(preview) > 20 {
+			preview = preview[:20]
+		}
+		t.Fatalf("expected the label truncated to 64 runes, got %d runes (%q…)", len(runes), string(preview))
+	}
+}
+
 func TestHeldStrip_ListsHeldSalesAsChips(t *testing.T) {
 	mux, dp := newHoldTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
