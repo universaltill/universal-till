@@ -885,4 +885,19 @@ body.login-screen {
 .set-gap-s { margin-block-start: .45rem; }
 .set-divider { margin-block-start: .8rem; border-block-start: 1px solid var(--border);
                padding-block-start: .6rem; }
+
+/* Self-order kiosk exit (ADR-0020, ut-docs#208): a discreet PIN-gated way
+   back to till settings, reachable from every kiosk screen (start, browse,
+   cart, checkout share this one fixed corner control — cart/checkout are
+   rendered into self_order_shop.html, not separate pages). Plain <a
+   href="/login">, not htmx — a real full-page navigation reuses the
+   existing PIN login flow as-is rather than a new in-kiosk auth check;
+   invalid PIN rejection and session creation are that flow's own job.
+   inset-inline-start (not left) so this stays correct under RTL locales. */
+.selforder-exit { position: fixed; top: .75rem; inset-inline-start: .75rem; z-index: 10;
+  inline-size: 2.25rem; block-size: 2.25rem; display: flex; align-items: center;
+  justify-content: center; border-radius: 999px; background: var(--surface, #fff);
+  border: 1px solid var(--border, #d1d5db); color: var(--muted, #6b7280);
+  font-size: 1rem; text-decoration: none; opacity: .55; }
+.selforder-exit:hover, .selforder-exit:focus-visible { opacity: 1; }
 @media (max-width: 40rem) { .settings-grid { columns: 1; } }

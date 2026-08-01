@@ -200,3 +200,41 @@ func TestSelfOrderPage_ServesAnonymousRequest(t *testing.T) {
 		t.Errorf("kiosk landing missing shop name: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#208: the kiosk start screen has no way back to till settings
+// today — a direct gap against universal-till/CLAUDE.md's offline-first
+// "Status/lock/exit must always be reachable" rule. A discreet exit
+// control must be present, linking to the existing /login flow (reusing
+// the existing PIN-auth mechanism, not a new one).
+func TestSelfOrderPage_HasPinGatedExitLink(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/self-order", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /self-order = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/login"`) {
+		t.Fatalf("self-order landing missing an exit link to /login: %s", body)
+	}
+	if !strings.Contains(body, "selforder-exit") {
+		t.Fatalf("self-order landing missing the discreet exit affordance styling: %s", body)
+	}
+}
