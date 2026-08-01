@@ -375,7 +375,11 @@ func TestPOSRepo_DayTotal_LocalCalendarDays(t *testing.T) {
 	}
 }
 
-func TestPOSRepo_SeasonalUpcoming_YearAgoWindowAndSuggestions(t *testing.T) {
+// Single-year parity: with exactly one year of history, solar-window items
+// keep the old SeasonalUpcoming numbers (Expected == last year's units).
+// One deliberate semantic change: sales in the lunar k=1 window [-354,-326)
+// are now caught too ("tooRecent" below) — that's the ut-docs#84 lunar fix.
+func TestPOSRepo_SeasonalForecast_YearAgoWindowAndSuggestions(t *testing.T) {
 	d := b8OpenDB(t, "seasonal.db")
 	ctx := context.Background()
 	repo := NewPOSRepo(d.DB)
@@ -394,8 +398,9 @@ func TestPOSRepo_SeasonalUpcoming_YearAgoWindowAndSuggestions(t *testing.T) {
 	b8Item(t, d, "tooOld", 100, nil, 1)
 	b8Item(t, d, "tooRecent", 100, nil, 1)
 
-	// Window with days=28 is [now-365d, now-337d). -364d and -360d are inside;
-	// -366d (before) and -330d (after) are out.
+	// Solar window with days=28 is [now-365d, now-337d). -364d and -360d are
+	// inside; -366d is before BOTH windows (lunar starts -354d) and stays
+	// out. -330d is outside solar but inside lunar [-354d, -326d) → now in.
 	at := func(daysAgo int) string { return b8At(time.Now().AddDate(0, 0, -daysAgo)) }
 	seed := func(saleID, itemID, variantID, name string, qty float64, when string) {
 		b8Sale(t, d, saleID, when, "completed", "sale", 0, 100)
@@ -414,48 +419,53 @@ func TestPOSRepo_SeasonalUpcoming_YearAgoWindowAndSuggestions(t *testing.T) {
 	// one [-365d,-351d): only visible when days<=0 really defaults to 28.
 	seed("s8", "middle", "", "Middle", 1, at(340))
 
-	rows, err := repo.SeasonalUpcoming(ctx, 28, 10)
+	rows, _, err := repo.SeasonalForecast(ctx, 28, 10)
 	if err != nil {
-		t.Fatalf("SeasonalUpcoming: %v", err)
+		t.Fatalf("SeasonalForecast: %v", err)
 	}
-	if len(rows) != 5 {
-		t.Fatalf("expected 5 seasonal items, got %d: %+v", len(rows), rows)
+	if len(rows) != 6 {
+		t.Fatalf("expected 6 seasonal items, got %d: %+v", len(rows), rows)
 	}
-	// Ordered by last-year units DESC.
-	if rows[0].Name != "Name pumpkin" || rows[0].LastYear != 5 || rows[0].OnHand != 2 || rows[0].SuggestQty != 3 {
-		t.Fatalf("pumpkin = %+v, want lastYear 5 onHand 2 suggest 3", rows[0])
+	// Ordered by expected units DESC. tooRecent (-330d, lunar-only window)
+	// leads: the old code missed it entirely.
+	if rows[0].Name != "Name tooRecent" || rows[0].Expected != 9 || !rows[0].Lunar || rows[0].SuggestQty != 9 {
+		t.Fatalf("tooRecent = %+v, want expected 9 Lunar=true suggest 9", rows[0])
 	}
-	if rows[1].Name != "Name scarf" || rows[1].LastYear != 4 || rows[1].OnHand != 0 || rows[1].SuggestQty != 4 {
-		t.Fatalf("scarf (variant path) = %+v, want lastYear 4 onHand 0 suggest 4", rows[1])
+	if rows[1].Name != "Name pumpkin" || rows[1].Expected != 5 || rows[1].OnHand != 2 || rows[1].SuggestQty != 3 || rows[1].Lunar {
+		t.Fatalf("pumpkin = %+v, want expected 5 onHand 2 suggest 3", rows[1])
+	}
+	if rows[2].Name != "Name scarf" || rows[2].Expected != 4 || rows[2].OnHand != 0 || rows[2].SuggestQty != 4 {
+		t.Fatalf("scarf (variant path) = %+v, want expected 4 onHand 0 suggest 4", rows[2])
 	}
 	// Fractional need rounds UP: ceil(2.5 - 1) = 2 (Floor would give 1).
-	if rows[2].Name != "Name berry" || rows[2].LastYear != 2.5 || rows[2].OnHand != 1 || rows[2].SuggestQty != 2 {
-		t.Fatalf("berry = %+v, want lastYear 2.5 onHand 1 suggest 2", rows[2])
+	if rows[3].Name != "Name berry" || rows[3].Expected != 2.5 || rows[3].OnHand != 1 || rows[3].SuggestQty != 2 {
+		t.Fatalf("berry = %+v, want expected 2.5 onHand 1 suggest 2", rows[3])
 	}
 	// Fully covered: suggestion clamps to 0, never negative.
-	if rows[3].Name != "Name covered" || rows[3].LastYear != 2 || rows[3].OnHand != 10 || rows[3].SuggestQty != 0 {
-		t.Fatalf("covered = %+v, want lastYear 2 onHand 10 suggest 0", rows[3])
+	if rows[4].Name != "Name covered" || rows[4].Expected != 2 || rows[4].OnHand != 10 || rows[4].SuggestQty != 0 {
+		t.Fatalf("covered = %+v, want expected 2 onHand 10 suggest 0", rows[4])
 	}
-	if rows[4].Name != "Name middle" || rows[4].LastYear != 1 || rows[4].SuggestQty != 1 {
-		t.Fatalf("middle = %+v, want lastYear 1 suggest 1", rows[4])
+	// middle (-340d) sits in BOTH windows: max(), not sum — still 1.
+	if rows[5].Name != "Name middle" || rows[5].Expected != 1 || rows[5].SuggestQty != 1 {
+		t.Fatalf("middle = %+v, want expected 1 suggest 1", rows[5])
 	}
 
 	// days <= 0 falls back to the 28-day default: identical result,
 	// INCLUDING "middle" (sold -340d), which a shorter default would drop.
-	def, err := repo.SeasonalUpcoming(ctx, 0, 10)
+	def, _, err := repo.SeasonalForecast(ctx, 0, 10)
 	if err != nil {
-		t.Fatalf("SeasonalUpcoming(0): %v", err)
+		t.Fatalf("SeasonalForecast(0): %v", err)
 	}
-	if len(def) != 5 || def[0].Name != rows[0].Name || def[0].SuggestQty != rows[0].SuggestQty || def[4].Name != "Name middle" {
+	if len(def) != 6 || def[0].Name != rows[0].Name || def[0].SuggestQty != rows[0].SuggestQty || def[5].Name != "Name middle" {
 		t.Fatalf("days<=0 must default to 28 (incl. the -340d sale): got %+v", def)
 	}
 
-	// LIMIT trims from the bottom of the units ordering.
-	top, err := repo.SeasonalUpcoming(ctx, 28, 1)
+	// LIMIT trims from the bottom of the expected ordering.
+	top, _, err := repo.SeasonalForecast(ctx, 28, 1)
 	if err != nil {
-		t.Fatalf("SeasonalUpcoming(limit 1): %v", err)
+		t.Fatalf("SeasonalForecast(limit 1): %v", err)
 	}
-	if len(top) != 1 || top[0].Name != "Name pumpkin" {
+	if len(top) != 1 || top[0].Name != "Name tooRecent" {
 		t.Fatalf("limit 1 must keep the biggest seasonal seller, got %+v", top)
 	}
 }
@@ -636,8 +646,8 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if total, count, err := repo.DayTotal(ctx, 0); err != nil || total != 0 || count != 0 {
 		t.Fatalf("DayTotal empty = (%d, %d, %v)", total, count, err)
 	}
-	if rows, err := repo.SeasonalUpcoming(ctx, 28, 5); err != nil || len(rows) != 0 {
-		t.Fatalf("SeasonalUpcoming empty = (%v, %v)", rows, err)
+	if rows, cats, err := repo.SeasonalForecast(ctx, 28, 5); err != nil || len(rows) != 0 || len(cats) != 0 {
+		t.Fatalf("SeasonalForecast empty = (%v, %v, %v)", rows, cats, err)
 	}
 	if rows, err := repo.SalesByWeekday(ctx, 7); err != nil || len(rows) != 0 {
 		t.Fatalf("SalesByWeekday empty = (%v, %v)", rows, err)
@@ -673,8 +683,8 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if _, _, err := repo.DayTotal(ctx, 0); err == nil {
 		t.Fatal("DayTotal on a closed DB must error")
 	}
-	if _, err := repo.SeasonalUpcoming(ctx, 28, 5); err == nil {
-		t.Fatal("SeasonalUpcoming on a closed DB must error")
+	if _, _, err := repo.SeasonalForecast(ctx, 28, 5); err == nil {
+		t.Fatal("SeasonalForecast on a closed DB must error")
 	}
 	if _, err := repo.SalesByWeekday(ctx, 7); err == nil {
 		t.Fatal("SalesByWeekday on a closed DB must error")
