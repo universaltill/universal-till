@@ -127,8 +127,9 @@ func TestTelemetryEndpoint(t *testing.T) {
 	}
 }
 
-// UI scale / theme / save / upsert are the ungated per-till display + store
-// preferences; they validate and reflect into runtime state.
+// UI scale / theme are ungated per-till display preferences; save/upsert are
+// manager-gated (ut-docs#179) store-wide settings. All validate and reflect
+// into runtime state for a manager.
 func TestDisplayAndStoreSettings(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
@@ -155,12 +156,12 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	// card actually posts. TaxInclusive/AllowNegativeInventory are NOT settable
 	// via /save (see TestSaveSettingsCurrencyOnlyDoesNotClearTaxOrInventoryFlags);
 	// they go through /upsert below, same as a real manager would use the
-	// settings page's generic key/value editor.
+	// settings page's generic key/value editor. Manager-gated (ut-docs#179).
 	rec := postForm(mux, "/api/settings/save", url.Values{
 		"currency":   {"EUR"},
 		"country":    {"DE"},
 		"taxRatePct": {"19"},
-	}, nil)
+	}, &mgrUser)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("save = %d", rec.Code)
 	}
@@ -170,22 +171,22 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	}
 
 	// Upsert: empty key is a 400; a known key reflects into state.
-	if rec := postForm(mux, "/api/settings/upsert", url.Values{"value": {"x"}}, nil); rec.Code != http.StatusBadRequest {
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"value": {"x"}}, &mgrUser); rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty key = %d, want 400", rec.Code)
 	}
-	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, nil); rec.Code != http.StatusNoContent {
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("upsert = %d", rec.Code)
 	}
 	if !d.CurrentState().TaxInclusive {
 		t.Fatal("upsert did not reflect store.tax_inclusive=true into state")
 	}
-	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"true"}}, nil); rec.Code != http.StatusNoContent {
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"true"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("upsert = %d", rec.Code)
 	}
 	if !d.CurrentState().AllowNegativeInventory {
 		t.Fatal("upsert did not reflect pos.allow_negative_inventory=true into state")
 	}
-	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"false"}}, nil); rec.Code != http.StatusNoContent {
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"false"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("upsert = %d", rec.Code)
 	}
 	if d.CurrentState().AllowNegativeInventory {
@@ -193,6 +194,42 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	}
 	if v, _, _ := d.Settings.Get(t.Context(), "pos.allow_negative_inventory"); v != "false" {
 		t.Fatalf("stored allow_negative = %q", v)
+	}
+}
+
+// A cashier (and an unauthenticated/no-session request) is refused on both
+// mutating settings endpoints, matching every other mutating settings
+// endpoint's isManagerOrAuthOff gate in this file (ut-docs#179 — /save and
+// /upsert were the two exceptions that had none).
+func TestSaveAndUpsertSettings_RequireManager(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	for _, tc := range []struct {
+		name string
+		user *auth.User
+	}{
+		{"no session", nil},
+		{"cashier", &cashUser},
+	} {
+		if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, tc.user); rec.Code != http.StatusForbidden {
+			t.Fatalf("%s: save = %d, want 403", tc.name, rec.Code)
+		}
+		if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, tc.user); rec.Code != http.StatusForbidden {
+			t.Fatalf("%s: upsert = %d, want 403", tc.name, rec.Code)
+		}
+	}
+
+	// Neither refused call actually wrote anything.
+	if d.CurrentState().Currency == "GBP" {
+		t.Fatal("cashier/no-session save must not have changed currency")
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "store.tax_inclusive"); v == "true" {
+		t.Fatal("cashier/no-session upsert must not have written store.tax_inclusive")
+	}
+
+	// A manager still succeeds (sanity check the gate isn't fail-closed for everyone).
+	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("manager save = %d, want 204", rec.Code)
 	}
 }
 
@@ -212,7 +249,7 @@ func TestSaveSettingsCurrencyOnlyDoesNotClearTaxOrInventoryFlags(t *testing.T) {
 	common.SaveState(t.Context(), d.Settings, st)
 
 	// Reproduce the real shipped form exactly: only "currency" is posted.
-	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, nil)
+	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, &mgrUser)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("save = %d", rec.Code)
 	}
@@ -275,7 +312,7 @@ func TestSettingsSave_FailsClosedOnSaveError(t *testing.T) {
 	if rec := postForm(mux, "/api/settings/save", url.Values{
 		"currency":   {"GBP"},
 		"taxRatePct": {"20"},
-	}, nil); rec.Code != http.StatusNoContent {
+	}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("seed save = %d", rec.Code)
 	}
 
@@ -289,7 +326,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 	rec := postForm(mux, "/api/settings/save", url.Values{
 		"currency":   {"EUR"},
 		"taxRatePct": {"7"},
-	}, nil)
+	}, &mgrUser)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("save with an aborting trigger = %d, want 500", rec.Code)
 	}
@@ -314,7 +351,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 func TestSettingsSave_FailedSaveDoesNotLeakIntoLaterSave(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}, "taxRatePct": {"20"}}, nil); rec.Code != http.StatusNoContent {
+	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}, "taxRatePct": {"20"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("seed save = %d", rec.Code)
 	}
 
@@ -325,7 +362,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"EUR"}, "taxRatePct": {"7"}}, nil)
+	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"EUR"}, "taxRatePct": {"7"}}, &mgrUser)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("failed save = %d, want 500", rec.Code)
 	}
