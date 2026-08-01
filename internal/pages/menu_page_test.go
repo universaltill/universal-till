@@ -120,6 +120,9 @@ func TestMenuPage_ManagerOnlyTilesGatedByRole(t *testing.T) {
 	if strings.Contains(rec.Body.String(), `href="/users"`) {
 		t.Fatalf("expected no /users tile for a non-manager request, got: %s", rec.Body.String())
 	}
+	if strings.Contains(rec.Body.String(), `href="/report-issue"`) {
+		t.Fatalf("expected no /report-issue tile for a non-manager request, got: %s", rec.Body.String())
+	}
 
 	t.Setenv("UT_AUTH", "off")
 	rec2 := httptest.NewRecorder()
@@ -130,5 +133,8 @@ func TestMenuPage_ManagerOnlyTilesGatedByRole(t *testing.T) {
 	body := rec2.Body.String()
 	if !strings.Contains(body, `href="/users"`) || !strings.Contains(body, `href="/translations"`) {
 		t.Fatalf("expected the manager-only tiles with UT_AUTH=off, got: %s", body)
+	}
+	if !strings.Contains(body, `href="/report-issue"`) || !strings.Contains(body, "🐞") {
+		t.Fatalf("expected the report-issue tile with its icon, reachable from the menu with UT_AUTH=off, got: %s", body)
 	}
 }
