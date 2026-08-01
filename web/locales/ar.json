@@ -548,6 +548,7 @@
   "selforder.confirm.receipt": "رقم الطلب",
   "selforder.confirm.title": "تم تقديم الطلب!",
   "selforder.decrease": "إنقاص الكمية",
+  "selforder.exit": "الخروج إلى إعدادات الصندوق (يتطلب رمز PIN)",
   "selforder.increase": "زيادة الكمية",
   "selforder.no_items": "لم يتم العثور على أصناف.",
   "selforder.remove": "إزالة",

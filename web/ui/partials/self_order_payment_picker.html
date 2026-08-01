@@ -19,4 +19,9 @@
           onclick="var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML='';">
     {{ T "modifiers.cancel" }}
   </button>
+  <!-- A native <dialog> in its open state makes everything OUTSIDE it
+       inert, so the page-level exit control (self_order_shop.html) is
+       unreachable during checkout — this is its own copy (ut-docs#208
+       review finding). -->
+  <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
 </div>

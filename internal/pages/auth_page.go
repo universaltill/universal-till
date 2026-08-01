@@ -25,25 +25,59 @@ func setSessionCookie(w http.ResponseWriter, token string, maxAge int) {
 	})
 }
 
+// sanitizeLoginNext allow-lists the login flow's post-auth destination —
+// it must never echo an arbitrary redirect target back from client input
+// (open-redirect risk). "kiosk" is the only recognized value today: the
+// self-order kiosk's exit-with-PIN link (ut-docs#208) needs a destination
+// other than "/", since "/" itself redirects right back to /self-order for
+// every session while display.mode=self_order (see registerIndex) — that
+// redirect exists for anonymous customers, but it also caught out a
+// manager arriving via /login for the exact same reason, silently looping
+// them back into the kiosk instead of ever reaching settings.
+func sanitizeLoginNext(v string) string {
+	if v == "kiosk" {
+		return "kiosk"
+	}
+	return ""
+}
+
+// loginDestination maps a sanitized "next" to the actual redirect target.
+func loginDestination(next string) string {
+	if next == "kiosk" {
+		return "/settings"
+	}
+	return "/"
+}
+
 func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
 
-	renderLogin := func(w http.ResponseWriter, r *http.Request, errKey string) {
+	renderLogin := func(w http.ResponseWriter, r *http.Request, errKey, next string) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
 		if err != nil {
 			http.Error(w, "auth unavailable", http.StatusInternalServerError)
 			return
 		}
-		httpx.RenderPartial("ui/pages/login.html", map[string]any{
+		data := map[string]any{
 			"firstBoot": firstBoot,
 			"errKey":    errKey,
-		})(w, r)
+			"next":      next,
+		}
+		// The kiosk exit's own back-out and idle-reset: without these, one
+		// stray tap into the PIN pad — easy on an unattended touchscreen —
+		// strands the terminal indefinitely, since /login itself has no
+		// exit/idle mechanism of its own (ut-docs#208 review finding).
+		if next == "kiosk" {
+			data["kioskIdleResetSecs"] = d.CurrentState().KioskIdleResetSeconds
+		}
+		httpx.RenderPartial("ui/pages/login.html", data)(w, r)
 	}
 
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
+		next := sanitizeLoginNext(r.URL.Query().Get("next"))
 		if c, err := r.Cookie(auth.CookieName); err == nil {
 			if _, ok := svc.Resolve(r.Context(), c.Value); ok {
-				http.Redirect(w, r, "/", http.StatusSeeOther)
+				http.Redirect(w, r, loginDestination(next), http.StatusSeeOther)
 				return
 			}
 		}
@@ -53,22 +87,23 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			http.Redirect(w, r, "/setup", http.StatusSeeOther)
 			return
 		}
-		renderLogin(w, r, "")
+		renderLogin(w, r, "", next)
 	})
 
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		pin := r.PostFormValue("pin")
+		next := sanitizeLoginNext(r.PostFormValue("next"))
 		user, token, err := svc.Login(r.Context(), pin)
 		now := time.Now().UTC().Format(time.RFC3339)
 		switch {
 		case errors.Is(err, auth.ErrLockedOut):
 			_ = posRepo.InsertAudit(r.Context(), nil, "", "user", "-", "login_locked_out", nil, now, "")
-			renderLogin(w, r, "auth.error.locked")
+			renderLogin(w, r, "auth.error.locked", next)
 			return
 		case errors.Is(err, auth.ErrInvalidPIN):
 			_ = posRepo.InsertAudit(r.Context(), nil, "", "user", "-", "login_failed", nil, now, "")
-			renderLogin(w, r, "auth.error.invalid")
+			renderLogin(w, r, "auth.error.invalid", next)
 			return
 		case err != nil:
 			http.Error(w, "login failed", http.StatusInternalServerError)
@@ -76,7 +111,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, user.ID, "user", user.ID, "login", nil, now, "")
 		setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, loginDestination(next), http.StatusSeeOther)
 	})
 
 	// One-time first-boot: set the seeded admin's PIN and sign in. Refuses
@@ -90,16 +125,16 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		_ = r.ParseForm()
 		pin, pin2 := r.PostFormValue("pin"), r.PostFormValue("pin_confirm")
 		if auth.ValidatePINFormat(pin) != nil {
-			renderLogin(w, r, "auth.error.pin_format")
+			renderLogin(w, r, "auth.error.pin_format", "")
 			return
 		}
 		if pin != pin2 {
-			renderLogin(w, r, "auth.error.pin_mismatch")
+			renderLogin(w, r, "auth.error.pin_mismatch", "")
 			return
 		}
 		hash, err := auth.HashPIN(pin)
 		if err != nil {
-			renderLogin(w, r, "auth.error.pin_format")
+			renderLogin(w, r, "auth.error.pin_format", "")
 			return
 		}
 		// The seeded 'system' user stays a service identity; first boot

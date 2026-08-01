@@ -548,6 +548,7 @@
   "selforder.confirm.receipt": "شماره سفارش",
   "selforder.confirm.title": "سفارش ثبت شد!",
   "selforder.decrease": "کاهش تعداد",
+  "selforder.exit": "خروج به تنظیمات صندوق (نیاز به پین)",
   "selforder.increase": "افزایش تعداد",
   "selforder.no_items": "کالایی یافت نشد.",
   "selforder.remove": "حذف",

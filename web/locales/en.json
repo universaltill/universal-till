@@ -548,6 +548,7 @@
   "selforder.confirm.receipt": "Order number",
   "selforder.confirm.title": "Order placed!",
   "selforder.decrease": "Decrease quantity",
+  "selforder.exit": "Exit to till settings (PIN required)",
   "selforder.increase": "Increase quantity",
   "selforder.no_items": "No items found.",
   "selforder.remove": "Remove",

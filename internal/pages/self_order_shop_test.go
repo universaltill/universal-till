@@ -623,3 +623,29 @@ func TestSelfOrderShop_RoutesAreAuthExempt(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#208: the browse/cart/checkout screen (self_order_shop.html covers
+// all three — cart and checkout are rendered into it, not separate pages)
+// has no way back to till settings today. A discreet exit control must be
+// reachable here, linking to the real /login flow — not a new auth
+// mechanism — so a valid manager/cashier PIN there returns to the normal
+// gated till surface, and an invalid one is rejected by that existing flow
+// with no access granted.
+func TestSelfOrderShop_HasPinGatedExitLink(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/self-order/shop", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /self-order/shop = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/login?next=kiosk"`) {
+		t.Fatalf("self-order shop screen missing an exit link to /login?next=kiosk: %s", body)
+	}
+	if !strings.Contains(body, "selforder-exit") {
+		t.Fatalf("self-order shop screen missing the discreet exit affordance styling: %s", body)
+	}
+}
