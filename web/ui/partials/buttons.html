@@ -2,33 +2,9 @@
 {{ define "buttons" }}
 <div class="products">
   <h2>{{ T "products.title" }}</h2>
-  <div id="buttons-grid" class="grid">
-    {{ range .Buttons }}
-      {{ if .HasModifiers }}
-      <button
-        class="btn-tile"
-        hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
-        hx-trigger="click"
-        hx-target="#modifier-modal"
-        hx-swap="innerHTML"
-        hx-on::after-request="document.getElementById('modifier-modal').showModal()">
-        {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
-        <span class="tile-name">{{ .Label }}</span>
-        {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
-      </button>
-      {{ else }}
-      <button
-        class="btn-tile"
-        hx-post="/api/pos/scan"
-        hx-vals='{{ jsonVals "code" .Code }}'
-        hx-trigger="click"
-        hx-target="#basket"
-        hx-swap="outerHTML">
-        {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
-        <span class="tile-name">{{ .Label }}</span>
-        {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
-      </button>
-      {{ end }}
+  <div id="buttons-grid" class="category-groups">
+    {{ range .Groups }}
+      {{ template "category-group" . }}
     {{ else }}
       <p class="empty">{{ T "products.empty" }}</p>
     {{ end }}
@@ -36,4 +12,49 @@
   <!-- Action buttons contributed by installed plugins -->
   <div hx-get="/ui/plugin-buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
+{{ end }}
+
+{{/* One category (and, recursively, its nested subcategories) in the
+     sale-screen grid. .Color is always a resolved #RRGGBB (explicit or a
+     deterministic auto-color — see ui.BuildCategoryGroups), never empty. A
+     synthetic "uncategorized" bucket has an empty .ID, so it's labeled via
+     i18n rather than the (absent) category name. */}}
+{{ define "category-group" }}
+<section class="category-group" style="--cat-color: {{ .Color }}">
+  <h3 class="category-header">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
+  {{ if .Buttons }}
+  <div class="grid">
+    {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
+  </div>
+  {{ end }}
+  {{ range .Children }}{{ template "category-group" . }}{{ end }}
+</section>
+{{ end }}
+
+{{ define "product-tile" }}
+  {{ if .HasModifiers }}
+  <button
+    class="btn-tile"
+    hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
+    hx-trigger="click"
+    hx-target="#modifier-modal"
+    hx-swap="innerHTML"
+    hx-on::after-request="document.getElementById('modifier-modal').showModal()">
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    <span class="tile-name">{{ .Label }}</span>
+    {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+  </button>
+  {{ else }}
+  <button
+    class="btn-tile"
+    hx-post="/api/pos/scan"
+    hx-vals='{{ jsonVals "code" .Code }}'
+    hx-trigger="click"
+    hx-target="#basket"
+    hx-swap="outerHTML">
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    <span class="tile-name">{{ .Label }}</span>
+    {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+  </button>
+  {{ end }}
 {{ end }}

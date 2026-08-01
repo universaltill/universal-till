@@ -84,6 +84,48 @@ func TestEnsureCategory(t *testing.T) {
 	}
 }
 
+// TestListCategories pins the flat shape the sale-screen category grid
+// builds its nested/color-coded tree from: parent_id and color survive
+// round-trip, ordering is sort_order-then-name, and an unset color/parent
+// comes back as "" (not NULL leaking through) so callers never need a
+// sql.NullString.
+func TestListCategories(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedCategoryTree(t, db, "drinks", "Drinks", "", 1, "#1D4ED8")
+	testsupport.SeedCategoryTree(t, db, "hot-drinks", "Hot Drinks", "drinks", 0, "")
+	testsupport.SeedCategoryTree(t, db, "cakes", "Cakes", "", 0, "")
+
+	cats, err := repo.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("ListCategories: %v", err)
+	}
+	if len(cats) != 3 {
+		t.Fatalf("len = %d, want 3: %+v", len(cats), cats)
+	}
+
+	// sort_order then name: Cakes(0) < Hot Drinks(0, name-tiebreak) < Drinks(1).
+	if cats[0].ID != "cakes" || cats[1].ID != "hot-drinks" || cats[2].ID != "drinks" {
+		t.Fatalf("unexpected order: %+v", cats)
+	}
+
+	byID := map[string]data.CategoryNode{}
+	for _, c := range cats {
+		byID[c.ID] = c
+	}
+	drinks := byID["drinks"]
+	if drinks.ParentID != "" || drinks.Color != "#1D4ED8" || drinks.Name != "Drinks" {
+		t.Fatalf("unexpected top-level category: %+v", drinks)
+	}
+	hot := byID["hot-drinks"]
+	if hot.ParentID != "drinks" || hot.Color != "" {
+		t.Fatalf("unexpected child category: %+v", hot)
+	}
+}
+
 func TestGetItemLabel(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()

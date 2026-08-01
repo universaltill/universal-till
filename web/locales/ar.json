@@ -484,6 +484,7 @@
   "plugins.type_label": "النوع:",
   "products.empty": "لا توجد منتجات بعد. أضِف بعضها في المصمّم.",
   "products.title": "المنتجات",
+  "products.uncategorized": "بدون تصنيف",
   "receipt.auto_reset": "إعادة ضبط تلقائية خلال ٦٠ ثانية…",
   "receipt.change": "الباقي",
   "receipt.legal.plugin_label": "إشعار قانوني (%s v%s)",
