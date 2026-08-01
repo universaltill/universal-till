@@ -1,8 +1,10 @@
 package pages
 
 import (
+	"encoding/csv"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -65,4 +67,69 @@ func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 			"HasPrev":     page > 1,
 		})(w, r)
 	})
+
+	mux.HandleFunc("GET /api/audit/export", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+
+		repo := data.NewPOSRepo(d.Db)
+		q := r.URL.Query()
+		filters := data.AuditFilters{
+			EntityType: q.Get("entity_type"),
+			ActorID:    q.Get("actor_id"),
+			Action:     q.Get("action"),
+			Since:      q.Get("since"),
+			Until:      q.Get("until"),
+		}
+
+		entries, truncated, err := repo.ListAuditForExport(r.Context(), filters)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		filename := auditExportFilename(time.Now().UTC(), truncated, len(entries))
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`.csv"`)
+		if truncated {
+			w.Header().Set("X-Export-Truncated", "true")
+		}
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"When", "Actor", "Entity Type", "Entity ID", "Action", "Details"})
+		for _, e := range entries {
+			actor := e.ActorName
+			if actor == "" {
+				actor = "system"
+			}
+			_ = cw.Write([]string{e.CreatedAt, actor, e.EntityType, e.EntityID, e.Action, e.DataJSON})
+		}
+		if truncated {
+			_ = cw.Write([]string{"", "", "", "", "TRUNCATED", "Only the newest " + strconv.Itoa(len(entries)) + " matching entries are included — narrow the date range to see older entries."})
+		}
+		cw.Flush()
+
+		_ = repo.InsertAudit(r.Context(), nil, getSessionUserID(r), "audit_log", "-", "audit_exported",
+			map[string]any{
+				"rows": len(entries), "truncated": truncated,
+				"entity_type": filters.EntityType, "actor_id": filters.ActorID,
+				"action": filters.Action, "since": filters.Since, "until": filters.Until,
+			},
+			time.Now().UTC().Format(time.RFC3339), "")
+	})
+}
+
+// auditExportFilename builds the export's download filename. A truncated
+// result gets a visible "-TRUNCATED-first-N" suffix — this is a fiscal/
+// compliance export, and the X-Export-Truncated response header alone is
+// invisible in a normal browser download, so truncation (which drops the
+// OLDEST rows in the selected range, since the underlying query is
+// newest-first) must be visible in the artifact itself.
+func auditExportFilename(now time.Time, truncated bool, rowCount int) string {
+	name := "audit-log-" + now.Format("2006-01-02")
+	if truncated {
+		name += "-TRUNCATED-first-" + strconv.Itoa(rowCount)
+	}
+	return name
 }

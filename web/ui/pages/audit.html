@@ -24,6 +24,7 @@
     <input type="date" name="until" value="{{ .Until }}">
     <button class="btn" type="submit">{{ T "audit.filter.apply" }}</button>
     {{ if or .EntityType .ActorID .Action .Since .Until }}<a class="btn secondary" href="/audit">{{ T "audit.filter.clear" }}</a>{{ end }}
+    <a class="btn secondary" href="/api/audit/export?entity_type={{ .EntityType }}&actor_id={{ .ActorID }}&action={{ .Action }}&since={{ .Since }}&until={{ .Until }}" download>{{ T "audit.export_btn" }}</a>
   </form>
 </div>
 
