@@ -327,6 +327,48 @@ func TestTenderHandler_QuickTenderFormFallback(t *testing.T) {
 	}
 }
 
+// ut-docs#72, regression found by independent review: the quick-tender
+// buttons (web/ui/pages/index.html) always POST amount=0, relying on the
+// handler's zero-amount-payment fallback to fill in the real total. That
+// fallback used to compute its own local total WITHOUT the service
+// charge, so setting a non-zero rate broke every quick-tender button with
+// a 400 "payments do not cover total" -- the feature couldn't be turned
+// on at all. This proves the real HTTP path, not just the engine.
+func TestTenderHandler_QuickTenderCoversServiceCharge(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.ServiceChargeRatePct = 10 })
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	// Exactly the shape a shipped quick-tender button posts: amount=0,
+	// relying on the server to fill in the real (inflated) total.
+	rec := posPostForm(mux, "/api/pos/tender", "method=cash&amount=0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (quick-tender must cover the service charge on its own), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// ABC: price 100, 20% tax = 20, 10% service charge on the 100
+	// subtotal = 10 -> total 130.
+	var total, serviceCharge int64
+	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales`).Scan(&total, &serviceCharge); err != nil {
+		t.Fatalf("query sale: %v", err)
+	}
+	if serviceCharge != 10 {
+		t.Fatalf("expected service_charge_amount 10, got %d", serviceCharge)
+	}
+	if total != 130 {
+		t.Fatalf("expected total 130 (100 + 20 tax + 10 service charge), got %d", total)
+	}
+	var paymentAmount int64
+	if err := dp.Db.QueryRow(`SELECT amount FROM payments`).Scan(&paymentAmount); err != nil {
+		t.Fatalf("query payment: %v", err)
+	}
+	if paymentAmount != 130 {
+		t.Fatalf("expected the zero-amount payment to be filled in as 130, got %d", paymentAmount)
+	}
+}
+
 func TestTenderHandler_EmptyBasketRejected(t *testing.T) {
 	mux, _ := newPOSTestDeps(t)
 	rec := posPostForm(mux, "/api/pos/tender", "method=cash&amount=100")

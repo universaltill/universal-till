@@ -16,14 +16,27 @@ import (
 
 // SaleInput captures the data needed to persist a sale (or return).
 type SaleInput struct {
-	SaleType               string // sale|return
-	SaleID                 string
-	RegisterID             string
-	CashierID              string
-	CustomerID             string
-	Currency               string
-	TaxInclusive           bool
-	SaleDiscount           money.Money // fixed discount (minor units) applied to whole sale
+	SaleType     string // sale|return
+	SaleID       string
+	RegisterID   string
+	CashierID    string
+	CustomerID   string
+	Currency     string
+	TaxInclusive bool
+	SaleDiscount money.Money // fixed discount (minor units) applied to whole sale
+	// ServiceCharge is the ALREADY-COMPUTED till-set service charge amount
+	// (minor units) to add to total -- deliberately a fixed amount, same
+	// shape as SaleDiscount, NOT a rate: the caller (the live checkout
+	// handler) computes it from the currently configured rate, and a
+	// synced/replayed sale (internal/pages/sync_sales.go) passes the
+	// ORIGINAL amount straight through from the journaled sale, exactly
+	// like SaleDiscount already does -- a rate stored here instead would
+	// silently recompute against whatever rate happens to be configured
+	// at replay time, which is wrong for history. Unlike
+	// PaymentInput.TipAmount (metadata, excluded from the sale total), a
+	// service charge is revenue the customer owes and DOES participate in
+	// netPayments' payment-sufficiency check.
+	ServiceCharge          money.Money
 	Lines                  []SaleLineInput
 	Payments               []PaymentInput
 	OriginalSaleID         string // for returns; creates sale_links entry when set
@@ -75,28 +88,33 @@ var receiptAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo)
 	return repo.NextReceiptNo(ctx, tx)
 }
 
-func computeSaleTotals(in SaleInput) (subtotal, taxTotal, total money.Money, err error) {
+func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, total money.Money, err error) {
 	for _, l := range in.Lines {
 		if err := validateLine(l); err != nil {
-			return 0, 0, 0, err
+			return 0, 0, 0, 0, err
 		}
 		lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
 		if l.LineDiscount.IsNegative() || l.LineDiscount > lineBase {
-			return 0, 0, 0, fmt.Errorf("invalid line discount for item %s", l.ItemID)
+			return 0, 0, 0, 0, fmt.Errorf("invalid line discount for item %s", l.ItemID)
 		}
 		lineNet := lineBase.Sub(l.LineDiscount)
 		lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
 		subtotal = subtotal.Add(lineNet)
 		taxTotal = taxTotal.Add(lineTax)
 	}
-	total = subtotal.Sub(in.SaleDiscount)
+	discountedSubtotal := subtotal.Sub(in.SaleDiscount)
+	if in.ServiceCharge.IsNegative() {
+		return 0, 0, 0, 0, fmt.Errorf("service charge must be >= 0")
+	}
+	serviceCharge = in.ServiceCharge
+	total = discountedSubtotal.Add(serviceCharge)
 	if !in.TaxInclusive {
 		total = total.Add(taxTotal)
 	}
 	if total.IsNegative() {
 		total = 0
 	}
-	return subtotal, taxTotal, total, nil
+	return subtotal, taxTotal, serviceCharge, total, nil
 }
 
 func netPayments(payments []PaymentInput) (money.Money, error) {
@@ -165,7 +183,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	if in.Currency == "" {
 		in.Currency = "GBP"
 	}
-	subtotal, taxTotal, total, err := computeSaleTotals(in)
+	subtotal, taxTotal, serviceCharge, total, err := computeSaleTotals(in)
 	if err != nil {
 		return "", err
 	}
@@ -222,7 +240,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
-			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), in.Note, now, tenderType, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
+			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), serviceCharge.Minor(), in.Note, now, tenderType, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}
@@ -312,16 +330,17 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			}
 
 			if err := repo.InsertAudit(ctx, tx, in.ActorID, "sale", saleID, auditAction(in.SaleType), map[string]any{
-				"subtotal": subtotal,
-				"taxTotal": taxTotal,
-				"total":    total,
-				"action":   auditAction(in.SaleType),
-				"reason":   in.Note,
-				"offline":  in.Offline,
-				"tender":   tenderType,
-				"sync":     syncStatus,
-				"plugins":  plugins,
-				"ts":       time.Now().UTC().Format(time.RFC3339),
+				"subtotal":      subtotal,
+				"taxTotal":      taxTotal,
+				"serviceCharge": serviceCharge,
+				"total":         total,
+				"action":        auditAction(in.SaleType),
+				"reason":        in.Note,
+				"offline":       in.Offline,
+				"tender":        tenderType,
+				"sync":          syncStatus,
+				"plugins":       plugins,
+				"ts":            time.Now().UTC().Format(time.RFC3339),
 			}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
 				return err
 			}

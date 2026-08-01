@@ -36,7 +36,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT);`,
 		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, base_price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
+		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, service_charge_amount INTEGER NOT NULL DEFAULT 0, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_line_modifiers (id TEXT PRIMARY KEY, sale_line_id TEXT NOT NULL, group_id TEXT, option_id TEXT, group_name_snapshot TEXT NOT NULL, option_name_snapshot TEXT NOT NULL, price_delta_minor INTEGER NOT NULL, FOREIGN KEY (sale_line_id) REFERENCES sale_lines(id));`,
 		`CREATE TABLE sale_discounts (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_id TEXT, type TEXT NOT NULL, value INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT);`,
@@ -583,6 +583,109 @@ func TestCompleteSale_PersistsTipAmountWithoutAffectingTotal(t *testing.T) {
 	}
 	if saleTotal != 370 {
 		t.Fatalf("tip must not inflate sale total; expected 370, got %d", saleTotal)
+	}
+}
+
+// ut-docs#72: service charge is a till-set percentage ADDED to the sale
+// total -- unlike tip (metadata, excluded from total), payments must cover
+// the inflated total. A payment that only covers the pre-service-charge
+// subtotal must be rejected as underpayment.
+func TestCompleteSale_ServiceChargeInflatesTotalAndRequiresPayment(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Steak', 1000, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	baseIn := SaleInput{
+		SaleType:      "sale",
+		Currency:      "GBP",
+		ServiceCharge: 100, // 10% of the 1000 subtotal, pre-computed by the caller
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Steak", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 0, LocationID: "loc1"},
+		},
+	}
+
+	// A payment covering only the pre-service-charge subtotal (1000) must
+	// be rejected: total is 1000 + 10% = 1100.
+	underpaid := baseIn
+	underpaid.Payments = []PaymentInput{{MethodID: "cash", Amount: 1000}}
+	if _, err := CompleteSale(ctx, db, underpaid); err == nil {
+		t.Fatalf("expected payment covering only pre-service-charge subtotal to be rejected as underpayment")
+	}
+
+	// A payment covering the inflated total succeeds and persists the
+	// computed service charge amount alongside the inflated total.
+	paid := baseIn
+	paid.Payments = []PaymentInput{{MethodID: "cash", Amount: 1100}}
+	saleID, err := CompleteSale(ctx, db, paid)
+	if err != nil {
+		t.Fatalf("CompleteSale with sufficient payment: %v", err)
+	}
+	var total, serviceCharge int64
+	if err := db.QueryRow(`SELECT total, service_charge_amount FROM sales WHERE id=?`, saleID).Scan(&total, &serviceCharge); err != nil {
+		t.Fatalf("read sale: %v", err)
+	}
+	if serviceCharge != 100 {
+		t.Fatalf("expected service_charge_amount 100, got %d", serviceCharge)
+	}
+	if total != 1100 {
+		t.Fatalf("expected total 1100 (1000 + 10%% service charge), got %d", total)
+	}
+}
+
+// ut-docs#72: a sale's service charge and a payment's tip must never
+// cross-contaminate -- each lands in its own column with its own
+// semantics (service charge inflates the total; tip does not).
+func TestCompleteSale_ServiceChargeAndTipDoNotCrossContaminate(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Steak', 1000, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
+
+	in := SaleInput{
+		SaleType:      "sale",
+		Currency:      "GBP",
+		ServiceCharge: 100, // 10% of the 1000 subtotal -> total 1100
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Steak", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 0, LocationID: "loc1"},
+		},
+		// 1150 = 1100 total (incl. service charge) + 50 discretionary tip on
+		// top, charged as one card transaction.
+		Payments: []PaymentInput{
+			{MethodID: "card", Amount: 1150, TipAmount: 50},
+		},
+	}
+
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("CompleteSale: %v", err)
+	}
+
+	var saleTotal, serviceCharge int64
+	if err := db.QueryRow(`SELECT total, service_charge_amount FROM sales WHERE id=?`, saleID).Scan(&saleTotal, &serviceCharge); err != nil {
+		t.Fatalf("read sale: %v", err)
+	}
+	if serviceCharge != 100 {
+		t.Fatalf("expected service_charge_amount 100, got %d", serviceCharge)
+	}
+	if saleTotal != 1100 {
+		t.Fatalf("expected sale total 1100 (tip must not inflate it), got %d", saleTotal)
+	}
+
+	var tip int64
+	if err := db.QueryRow(`SELECT tip_amount FROM payments WHERE sale_id=?`, saleID).Scan(&tip); err != nil {
+		t.Fatalf("read payment: %v", err)
+	}
+	if tip != 50 {
+		t.Fatalf("expected tip_amount 50 on the payment, got %d", tip)
 	}
 }
 

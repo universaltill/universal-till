@@ -111,6 +111,14 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 23`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
+	// Rewinding the ledger doesn't undo migration 024's physical DDL
+	// (ALTER TABLE ADD COLUMN isn't idempotent, unlike 023's UPDATE) --
+	// without this, replaying 024 on reopen fails with "duplicate column".
+	// Drop it too so the simulated pre-023 state is physically accurate,
+	// same as a real till that never had it (ut-docs#72).
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN service_charge_amount`); err != nil {
+		t.Fatalf("rewind service_charge_amount column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
