@@ -61,7 +61,7 @@
 
   <div class="card form-row search-box" style="position: relative;">
     <input type="search" name="search" id="search" placeholder="{{ T "designer.search_placeholder" }}"
-           hx-get="/api/buttons/search" hx-target="#search-results" hx-trigger="keyup changed delay:300ms"
+           hx-get="/api/buttons/search" hx-target="#search-results" hx-trigger="input changed delay:300ms"
            hx-params="*"
            autocomplete="off">
     <div id="search-results" class="search-results" style="
@@ -91,14 +91,19 @@ document.getElementById('search').addEventListener('input', function() {
   }
 });
 
-htmx.on('#search-results', 'htmx:afterSwap', function(evt) {
-  const box = document.getElementById('search-results');
+// Plain DOM listeners on body, not htmx.on(): htmx's custom events bubble
+// to body like any other DOM event, so this needs no `htmx` global — unlike
+// htmx.on(), which requires htmx.min.js (loaded `defer` in base.html) to
+// have already run. Parse-time registration works because these listen on
+// body, not #search-results itself (swapped in later by htmx).
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+  if (evt.target.id !== 'search-results') return;
   if (document.getElementById('search').value.length >= 3) {
-    box.style.display = 'block';
+    evt.target.style.display = 'block';
   }
 });
 
-htmx.on('body', 'htmx:afterRequest', function(evt) {
+document.body.addEventListener('htmx:afterRequest', function(evt) {
   if (evt.detail.elt && evt.detail.elt.id === 'search') {
     const box = document.getElementById('search-results');
     if (box) box.style.display = 'block';

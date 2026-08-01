@@ -1,21 +1,9 @@
-import { test, expect, Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { test, expect } from '@playwright/test';
+import { watchConsole, setOskMode } from './helpers';
 
-// The OSK mode is a SERVER-side setting shared by every spec on this
-// server. Restore 'auto' even when a test body fails — a failed run used
-// to leak osk=on into later specs (the open keyboard then covered the
-// scan submit button in ui-scale-basket.spec.ts and its click hung).
-async function setOskMode(page: Page, mode: string) {
-  await page.goto('/settings');
-  const osk = page.locator('form[hx-post="/api/settings/osk"] select');
-  await osk.selectOption(mode);
-  await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/api/settings/osk')),
-    osk.locator('..').locator('button[type=submit]').click(),
-  ]);
-  await page.waitForEvent('load');
-}
-
+// A failed run used to leak osk=on into later specs (the open keyboard
+// then covered the scan submit button in ui-scale-basket.spec.ts and its
+// click hung) — restore 'auto' even when a test body fails.
 test.afterEach(async ({ page }) => {
   await setOskMode(page, 'auto');
 });
