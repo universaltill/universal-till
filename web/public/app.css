@@ -887,17 +887,30 @@ body.login-screen {
                padding-block-start: .6rem; }
 
 /* Self-order kiosk exit (ADR-0020, ut-docs#208): a discreet PIN-gated way
-   back to till settings, reachable from every kiosk screen (start, browse,
-   cart, checkout share this one fixed corner control — cart/checkout are
-   rendered into self_order_shop.html, not separate pages). Plain <a
-   href="/login">, not htmx — a real full-page navigation reuses the
-   existing PIN login flow as-is rather than a new in-kiosk auth check;
+   back to till settings, reachable from every kiosk screen — the start
+   screen, the browse/cart screen (in the header's own flex row, never
+   fixed-over-content: an earlier fixed-corner version sat directly on top
+   of the Back button, a real independent-review finding), and inside each
+   of the three modals self_order_shop.html swaps into #selforder-modal
+   (modifier picker, payment picker, confirmation) — a native <dialog> in
+   its open (top-layer) state makes everything OUTSIDE it inert, so a
+   corner control living only in the page body is unreachable during
+   checkout; each dialog partial gets its own copy instead. Plain <a
+   href="/login?next=kiosk">, not htmx — a real full-page navigation reuses
+   the existing PIN login flow as-is rather than a new in-kiosk auth check;
    invalid PIN rejection and session creation are that flow's own job.
-   inset-inline-start (not left) so this stays correct under RTL locales. */
-.selforder-exit { position: fixed; top: .75rem; inset-inline-start: .75rem; z-index: 10;
-  inline-size: 2.25rem; block-size: 2.25rem; display: flex; align-items: center;
-  justify-content: center; border-radius: 999px; background: var(--surface, #fff);
+   Sized to this repo's own touch-target floor (.btn's 3rem), same as every
+   other kiosk control (app.css "kiosk must never be SMALLER than
+   non-kiosk" rule) — discreet via muted color/opacity, never via a
+   sub-floor hit target. */
+.selforder-exit { display: inline-flex; align-items: center; justify-content: center;
+  min-inline-size: 3rem; min-block-size: 3rem; border-radius: 999px; background: var(--surface, #fff);
   border: 1px solid var(--border, #d1d5db); color: var(--muted, #6b7280);
-  font-size: 1rem; text-decoration: none; opacity: .55; }
+  font-size: 1.1rem; text-decoration: none; opacity: .55; flex: none; }
 .selforder-exit:hover, .selforder-exit:focus-visible { opacity: 1; }
+/* Only the plain start screen (no header, nothing else near a corner) uses
+   a fixed corner placement — inset-inline-start/inset-block-start (never
+   left/top) so it stays correct under RTL locales. */
+.selforder-screen .selforder-exit { position: fixed; inset-block-start: .75rem;
+  inset-inline-start: .75rem; z-index: 10; }
 @media (max-width: 40rem) { .settings-grid { columns: 1; } }

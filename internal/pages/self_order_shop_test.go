@@ -642,8 +642,8 @@ func TestSelfOrderShop_HasPinGatedExitLink(t *testing.T) {
 		t.Fatalf("GET /self-order/shop = %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `href="/login"`) {
-		t.Fatalf("self-order shop screen missing an exit link to /login: %s", body)
+	if !strings.Contains(body, `href="/login?next=kiosk"`) {
+		t.Fatalf("self-order shop screen missing an exit link to /login?next=kiosk: %s", body)
 	}
 	if !strings.Contains(body, "selforder-exit") {
 		t.Fatalf("self-order shop screen missing the discreet exit affordance styling: %s", body)

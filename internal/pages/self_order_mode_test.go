@@ -3,6 +3,7 @@ package pages
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -231,10 +232,106 @@ func TestSelfOrderPage_HasPinGatedExitLink(t *testing.T) {
 		t.Fatalf("GET /self-order = %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `href="/login"`) {
-		t.Fatalf("self-order landing missing an exit link to /login: %s", body)
+	if !strings.Contains(body, `href="/login?next=kiosk"`) {
+		t.Fatalf("self-order landing missing an exit link to /login?next=kiosk: %s", body)
 	}
 	if !strings.Contains(body, "selforder-exit") {
 		t.Fatalf("self-order landing missing the discreet exit affordance styling: %s", body)
+	}
+}
+
+// ut-docs#208 review finding: the markup-presence tests above prove the
+// link exists, not that using it actually works — and on a self_order-mode
+// till it didn't: "/" (what a bare /login redirects to on success)
+// unconditionally bounces every session back to /self-order
+// (registerIndex, and TestSelfOrderModeRedirectsEverySession above), so a
+// manager who followed the exit link and entered a valid PIN landed right
+// back on the anonymous kiosk screen, never reaching till settings. This
+// drives the real round trip against a fully-migrated DB (real sessions
+// table, real auth.Service) and asserts the actual acceptance criteria:
+// valid PIN reaches the gated till surface, invalid PIN grants nothing.
+func TestSelfOrderExit_PinLoginReachesTillSettingsNotKioskLoop(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	if _, err := d.DB.Exec(`INSERT INTO settings(key, value) VALUES ('display.mode', 'self_order')`); err != nil {
+		t.Fatal(err)
+	}
+	svc := auth.NewService(d.DB)
+	mgrID, err := svc.Repo().CreateUser(t.Context(), "mgr", "Manager", "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("4321")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), mgrID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+	registerAuth(mux, dp, svc)
+	h := auth.Middleware(mux, svc)
+
+	// The exit link itself: GET /self-order/shop (covers browse/cart/
+	// checkout) must point at /login?next=kiosk.
+	kioskRec := httptest.NewRecorder()
+	h.ServeHTTP(kioskRec, httptest.NewRequest(http.MethodGet, "/self-order/shop", nil))
+	if !strings.Contains(kioskRec.Body.String(), `href="/login?next=kiosk"`) {
+		t.Fatalf("kiosk shop screen exit link: %s", kioskRec.Body.String())
+	}
+
+	// An invalid PIN is rejected — no session cookie, no access granted.
+	badRec := httptest.NewRecorder()
+	badReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"0000"}, "next": {"kiosk"}}.Encode()))
+	badReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(badRec, badReq)
+	if badRec.Code != http.StatusOK {
+		t.Fatalf("invalid PIN: code=%d", badRec.Code)
+	}
+	for _, c := range badRec.Result().Cookies() {
+		if c.Name == auth.CookieName && c.Value != "" {
+			t.Fatalf("invalid PIN must not set a session cookie, got %q", c.Value)
+		}
+	}
+
+	// A valid manager PIN via the kiosk exit must land on the real gated
+	// till surface (/settings) — NOT loop back to /self-order.
+	okRec := httptest.NewRecorder()
+	okReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"4321"}, "next": {"kiosk"}}.Encode()))
+	okReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(okRec, okReq)
+	if okRec.Code != http.StatusSeeOther {
+		t.Fatalf("valid PIN: code=%d body=%s", okRec.Code, okRec.Body.String())
+	}
+	if loc := okRec.Header().Get("Location"); loc != "/settings" {
+		t.Fatalf("valid PIN via kiosk exit redirected to %q, want /settings (not looped back into the kiosk)", loc)
+	}
+	var cookie *http.Cookie
+	for _, c := range okRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("valid PIN did not set a session cookie")
+	}
+	if u, ok := svc.Resolve(t.Context(), cookie.Value); !ok || u.ID != mgrID {
+		t.Fatalf("session cookie does not resolve to the manager: %+v ok=%v", u, ok)
+	}
+
+	// Following the redirect: /settings itself must actually render for
+	// that session (not itself bounce back into /self-order).
+	settingsRec := httptest.NewRecorder()
+	settingsReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	settingsReq.AddCookie(cookie)
+	h.ServeHTTP(settingsRec, settingsReq)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("GET /settings with the new session = %d: %s", settingsRec.Code, settingsRec.Body.String())
 	}
 }
