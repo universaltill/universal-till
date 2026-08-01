@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -283,9 +284,20 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 // plugin's error when it declines. Shared by the tender authorize gate and
 // the refund gate — the two blocking legs of the payment-provider contract.
 func blockingPaymentEvent(ctx context.Context, d *common.Deps, method, suffix string, payload map[string]any) error {
+	_, err := blockingPaymentEventWithResponse(ctx, d, method, suffix, payload)
+	return err
+}
+
+// blockingPaymentEventWithResponse behaves exactly like blockingPaymentEvent
+// but also returns the responding plugin's raw response instead of
+// discarding it — the tender authorize gate uses this to read back
+// plugin-reported data (e.g. a reader-captured tip amount) alongside the
+// approve/decline verdict. resp is nil in every case blockingPaymentEvent
+// would return nil with nothing to report (no entry, no subscriber).
+func blockingPaymentEventWithResponse(ctx context.Context, d *common.Deps, method, suffix string, payload map[string]any) (json.RawMessage, error) {
 	entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(ctx)
 	if err != nil || len(entries) == 0 {
-		return nil
+		return nil, nil
 	}
 	for _, e := range entries {
 		if e.EntryKey != method || e.TriggerEvent == "" {
@@ -294,15 +306,16 @@ func blockingPaymentEvent(ctx context.Context, d *common.Deps, method, suffix st
 		event := strings.TrimSuffix(e.TriggerEvent, ".requested") + "." + suffix
 		bus := plugins.SharedBus(d.Db)
 		if !bus.HasSubscribers(event) {
-			return nil
+			return nil, nil
 		}
 		payload["plugin_id"] = e.PluginID
-		if _, err := bus.Publish(ctx, event, payload); err != nil {
-			return err
+		resp, err := bus.PublishAuthorize(ctx, event, payload)
+		if err != nil {
+			return nil, err
 		}
-		return nil
+		return resp, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // computeRefundTotal mirrors the engine's total math so the refund payment

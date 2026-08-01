@@ -51,15 +51,32 @@ func completeTender(ctx context.Context, d *common.Deps, repo *data.POSRepo, sal
 	// blockingPaymentEvent (refund_page.go) is the same gate the refund
 	// flow uses for payment.<key>.refund; no subscriber = no gate
 	// (back-compat with post-settle-only plugins like qrpay).
-	for _, p := range payments {
-		if err := blockingPaymentEvent(ctx, d, p.MethodID, "authorize", map[string]any{
+	for i, p := range payments {
+		resp, err := blockingPaymentEventWithResponse(ctx, d, p.MethodID, "authorize", map[string]any{
 			"method":    p.MethodID,
 			"amount":    p.Amount.Minor(),
 			"reference": p.Reference,
-		}); err != nil {
+		})
+		if err != nil {
 			return "", &paymentDeclinedError{Method: p.MethodID}
 		}
+		// A card-terminal plugin (e.g. a reader that prompts the customer
+		// for a tip) can report the tip it actually captured back on its
+		// authorize response — this overrides whatever tip (if any) the
+		// tender request itself carried, since the reader-confirmed amount
+		// is the source of truth. An absent/malformed/negative field is
+		// ignored, leaving the request's own tip (typically zero) in place.
+		if tip, ok := pluginReportedTipAmount(resp); ok {
+			payments[i].TipAmount = money.FromMinor(tip)
+		}
 	}
+	// Both call sites happen to pass a `payments` slice that shares
+	// `saleInput.Payments`'s backing array, so the mutation above already
+	// reaches CompleteSale by aliasing — but relying on that silently is
+	// fragile (a caller passing a defensive copy would drop every
+	// plugin-reported tip with no compile error and no test failure).
+	// Make it explicit instead.
+	saleInput.Payments = payments
 
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
@@ -118,6 +135,26 @@ func completeTender(ctx context.Context, d *common.Deps, repo *data.POSRepo, sal
 	printKitchenAsync(d, receiptNo, actorID)
 
 	return saleID, nil
+}
+
+// pluginReportedTipAmount extracts an optional `tip_amount` (integer minor
+// units, same convention as pos_api's own `tip` tender field) from a
+// payment.<key>.authorize plugin's response — e.g. a card-terminal plugin
+// that read back a customer-selected tip from the reader. ok is false (tip
+// left as the request sent it) when resp is empty, unparseable, missing the
+// field, or the field is negative — a plugin bug here must never invent or
+// corrupt a tip, only ever report a real non-negative one.
+func pluginReportedTipAmount(resp json.RawMessage) (amount int64, ok bool) {
+	if len(resp) == 0 {
+		return 0, false
+	}
+	var parsed struct {
+		TipAmount *int64 `json:"tip_amount"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil || parsed.TipAmount == nil || *parsed.TipAmount < 0 {
+		return 0, false
+	}
+	return *parsed.TipAmount, true
 }
 
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
