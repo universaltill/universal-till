@@ -87,3 +87,18 @@ line.
 **Safe to merge.** Nothing blocking. One real, pre-existing (not
 introduced by this change) authorization gap found and carded as
 ut-docs#179; all in-scope nitpicks fixed in-branch.
+
+## Addendum (2026-08-01, DevOps close-out)
+
+This branch was cut from `main` before ut-docs#157's `SaveState`
+atomicity fix (#128) merged, which rewrote `/api/settings/save` from a
+closure-based `d.UpdateState(...)` call to `CurrentState`/`SetState` with
+an explicit save-error check — a real content conflict, not a trivial
+rebase. Resolved by re-applying this branch's actual diff (omit the two
+unconditional `TaxInclusive`/`AllowNegativeInventory` writes, keep the
+explanatory comment) on top of #128's newer error-handled shape, so both
+fixes are preserved. Re-verified after resolution: `go build ./...`,
+`go test ./...` (green; same single pre-existing `internal/issuereport`
+flake as before, confirmed unrelated), `scripts/ci/guard-data-access.sh`,
+`scripts/ci/guard-i18n.sh` all clean. Merged via merge commit per this
+repo's convention.
