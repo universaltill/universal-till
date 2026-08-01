@@ -3,6 +3,7 @@ package pages
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -168,8 +170,9 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Pm.Reload(r.Context())
 		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 
+		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Plugin installed successfully"))
+		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.marketplace.install_success"))))
 	})
 
 	// Marketplace: list available binaries from marketplace service
@@ -328,8 +331,9 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Pm.Reload(r.Context())
 		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 
+		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Plugin installed successfully"))
+		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.marketplace.install_success"))))
 	})
 
 	// Grant/revoke permissions
@@ -361,8 +365,9 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Permission granted"))
+		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.permission.granted"))))
 	})
 
 	mux.HandleFunc("/api/plugins/permissions/revoke", func(w http.ResponseWriter, r *http.Request) {
@@ -393,8 +398,9 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Permission revoked"))
+		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.permission.revoked"))))
 	})
 
 	// Update trust level
@@ -426,8 +432,9 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Trust level updated"))
+		w.Write([]byte(html.EscapeString(httpx.T(locale, "plugins.trust.level_updated"))))
 	})
 
 	// T017: Marketplace plugin installation endpoints (009-cloud-marketplace Phase 4)

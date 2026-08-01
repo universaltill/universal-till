@@ -16,16 +16,16 @@
       </div>
       <div class="selforder-cart-line-qty">
         <button type="button" class="btn secondary selforder-qty-btn"
-                hx-post="/api/self-order/line" hx-vals='{"key":"{{ .LineKey }}","delta":"-1"}'
+                hx-post="/api/self-order/line" hx-vals='{{ jsonVals "key" .LineKey "delta" "-1" }}'
                 hx-target="#selforder-cart" hx-swap="outerHTML" aria-label="{{ T "selforder.decrease" }}">−</button>
         <span class="selforder-qty-value">{{ printf "%.0f" .Qty }}</span>
         <button type="button" class="btn secondary selforder-qty-btn"
-                hx-post="/api/self-order/line" hx-vals='{"key":"{{ .LineKey }}","delta":"1"}'
+                hx-post="/api/self-order/line" hx-vals='{{ jsonVals "key" .LineKey "delta" "1" }}'
                 hx-target="#selforder-cart" hx-swap="outerHTML" aria-label="{{ T "selforder.increase" }}">+</button>
       </div>
       <span class="selforder-cart-line-total">{{ money .LineTotal }}</span>
       <button type="button" class="btn danger btn-x" title="{{ T "selforder.remove" }}"
-              hx-post="/api/self-order/remove" hx-vals='{"key":"{{ .LineKey }}"}'
+              hx-post="/api/self-order/remove" hx-vals='{{ jsonVals "key" .LineKey }}'
               hx-target="#selforder-cart" hx-swap="outerHTML">✕</button>
     </li>
     {{ end }}

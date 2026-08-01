@@ -32,6 +32,7 @@ var baseFuncs = template.FuncMap{
 	"enrolled":        func() bool { return enroll.CurrentStatus().Registered },
 	"enrolstore":      func() string { return enroll.CurrentStatus().StoreID },
 	"enroldevice":     func() string { return enroll.CurrentStatus().DeviceID },
+	"jsonVals":        jsonVals,
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.
@@ -114,6 +115,39 @@ func minorUnits(amount any) (int64, bool) {
 func toJSON(v any) template.JS {
 	b, _ := json.Marshal(v)
 	return template.JS(string(b))
+}
+
+// jsonVals builds a JSON object literal from alternating key/value pairs, for
+// an hx-vals attribute (htmx JSON.parses it). Deliberately returns a plain
+// string, matching internal/ui.SearchResult.AddVals (the same fix, for the
+// buttons_admin.html case) — this is the general-purpose version for
+// templates that don't have a rich view-model struct to hang a bespoke
+// Vals() method off of (ut-docs#19: buttons/catalog_variants/suggestions/
+// self_order_grid/self_order_cart/basket previously interpolated raw fields
+// into a hand-written JSON literal, invalid JSON for any quoted value, same
+// class of bug AddVals fixed). NOTE: html/template's contextual escaper
+// applies the same attribute-value escaping to a plain string here as it
+// would to toJSON's template.JS in this specific attribute context — the
+// two aren't observably different for hx-vals='...' today. A plain string is
+// still the right choice: it doesn't rely on the escaper correctly
+// classifying the surrounding markup as non-script (template.JS's
+// "pre-approved" content is only actually safe inside an execution context
+// like <script> or an inline event handler), so this can't silently become
+// unsafe if a future edit moves a call site there.
+func jsonVals(pairs ...any) (string, error) {
+	if len(pairs)%2 != 0 {
+		return "", fmt.Errorf("jsonVals: odd number of arguments (%d)", len(pairs))
+	}
+	m := make(map[string]any, len(pairs)/2)
+	for i := 0; i < len(pairs); i += 2 {
+		key, ok := pairs[i].(string)
+		if !ok {
+			return "", fmt.Errorf("jsonVals: argument %d is a %T, not a string key", i, pairs[i])
+		}
+		m[key] = pairs[i+1]
+	}
+	b, err := json.Marshal(m)
+	return string(b), err
 }
 
 // InitI18n wires a translator and default locale into the template layer.

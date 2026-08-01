@@ -16,7 +16,7 @@
         <span class="chip">{{ .Barcode }}{{ if .IsPrimary }} ★{{ end }}
           <button type="button" title="{{ T "catalog.barcode.remove_confirm" }}"
                   hx-post="/api/catalog/barcode/delete"
-                  hx-vals='{"barcode":"{{ .Barcode }}","panelItem":"{{ $.ItemID }}"}'
+                  hx-vals='{{ jsonVals "barcode" .Barcode "panelItem" $.ItemID }}'
                   hx-confirm="{{ T "catalog.barcode.remove_confirm" }}"
                   hx-target="#catalog-variants" hx-swap="outerHTML">✕</button>
         </span>
@@ -93,7 +93,7 @@
             <span class="chip">{{ . }}
               <button type="button"
                       hx-post="/api/catalog/barcode/delete"
-                      hx-vals='{"barcode":"{{ . }}","panelItem":"{{ $.ItemID }}"}'
+                      hx-vals='{{ jsonVals "barcode" . "panelItem" $.ItemID }}'
                       hx-confirm="{{ T "catalog.barcode.remove_confirm" }}"
                       hx-target="#catalog-variants" hx-swap="outerHTML">✕</button>
             </span>

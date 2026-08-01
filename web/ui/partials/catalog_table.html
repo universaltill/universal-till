@@ -26,7 +26,7 @@
               <button class="btn secondary catalog-edit" type="button">{{ T "common.edit" }}</button>
               <button class="btn danger" type="button"
                       hx-post="/api/catalog/item/deactivate"
-                      hx-vals='{"id":"{{ .ID }}"}'
+                      hx-vals='{{ jsonVals "id" .ID }}'
                       hx-confirm="Deactivate {{ .Name }}?"
                       hx-target="#catalog-table" hx-swap="outerHTML">✕</button>
             </td>

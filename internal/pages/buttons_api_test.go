@@ -1,6 +1,8 @@
 package pages
 
 import (
+	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -47,6 +49,53 @@ func TestButtonsUIFragmentRendersSeededButtons(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Apple Tile") {
 		t.Fatalf("buttons fragment missing seeded label: %s", rec.Body.String())
+	}
+}
+
+// The sale-screen tile itself (not just the Designer admin panel) previously
+// interpolated a shortcut button's barcode/code directly into a hand-written
+// hx-vals JSON literal -- same bug class as buttons_admin.html's AddVals fix,
+// but higher-impact: this is the tile a cashier actually taps at checkout
+// (ut-docs#19, flagged by independent review as the highest-impact miss in
+// the original sweep). shortcut_buttons.barcode has no format restriction
+// (TestBarcodeAttach_PanelHxValsSurvivesQuotedBarcode already proves a
+// quote-containing barcode can be attached), so a button seeded with one
+// must still round-trip as valid JSON via httpx.jsonVals.
+func TestButtonsUIFragment_HxValsSurvivesQuotedCode(t *testing.T) {
+	mux, d := newButtonsMux(t)
+	weird := `we"ird'code`
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES (?,'Weird Tile','itm1')`, weird); err != nil {
+		t.Fatalf("seed button: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	idx := strings.Index(body, `hx-post="/api/pos/scan"`)
+	if idx == -1 {
+		t.Fatalf("expected a sale-screen tile posting to /api/pos/scan, got %.500s", body)
+	}
+	valsIdx := strings.Index(body[idx:], "hx-vals='")
+	if valsIdx == -1 {
+		t.Fatalf("expected an hx-vals attribute on the tile, got %.500s", body[idx:])
+	}
+	start := idx + valsIdx + len("hx-vals='")
+	end := strings.Index(body[start:], "'")
+	if end == -1 {
+		t.Fatalf("unterminated hx-vals attribute")
+	}
+	raw := body[start : start+end]
+
+	var vals map[string]string
+	if err := json.Unmarshal([]byte(html.UnescapeString(raw)), &vals); err != nil {
+		t.Fatalf("hx-vals is not valid JSON after HTML-unescape: %v (raw attribute: %q)", err, raw)
+	}
+	if vals["code"] != weird {
+		t.Errorf("code round-trip = %q, want %q", vals["code"], weird)
 	}
 }
 

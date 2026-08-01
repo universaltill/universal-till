@@ -265,6 +265,46 @@ func TestToJSON(t *testing.T) {
 	}
 }
 
+// jsonVals is the shared, escape-safe helper for building an hx-vals JSON
+// literal from a template (ut-docs#19): several partials (catalog_variants,
+// suggestions, self_order_grid, basket) interpolated raw field values
+// directly into a hand-written hx-vals='{"k":"{{ .V }}"}' literal, the same
+// pattern that produced invalid JSON for any quoted name in buttons_admin.html
+// (fixed there by internal/ui.SearchResult.AddVals, marshaling server-side).
+// Unlike toJSON (template.JS, deliberately unescaped for <script> contexts),
+// jsonVals returns a plain string so html/template still HTML-escapes it for
+// the attribute-value context it's meant for — required because a literal
+// apostrophe in the marshaled JSON would otherwise break out of hx-vals='...'
+// (single-quoted), not just double-quote-breaking a hardcoded literal.
+func TestJSONVals_QuotesBackslashesAndApostrophesSurvive(t *testing.T) {
+	out, err := jsonVals("barcode", `weird"name\here'quote`, "qty", 3)
+	if err != nil {
+		t.Fatalf("jsonVals: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("jsonVals output is not valid JSON: %v (%s)", err, out)
+	}
+	if got["barcode"] != `weird"name\here'quote` {
+		t.Errorf("barcode round-trip = %v", got["barcode"])
+	}
+	if got["qty"] != float64(3) {
+		t.Errorf("qty round-trip = %v", got["qty"])
+	}
+}
+
+func TestJSONVals_OddArgCountErrors(t *testing.T) {
+	if _, err := jsonVals("barcode", "123", "orphan"); err == nil {
+		t.Error("expected an error for an odd number of arguments")
+	}
+}
+
+func TestJSONVals_NonStringKeyErrors(t *testing.T) {
+	if _, err := jsonVals(1, "123"); err == nil {
+		t.Error("expected an error for a non-string key")
+	}
+}
+
 func TestMinorUnits(t *testing.T) {
 	cases := []struct {
 		in   any

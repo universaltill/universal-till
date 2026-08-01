@@ -20,7 +20,7 @@
       <button
         class="btn-tile"
         hx-post="/api/pos/scan"
-        hx-vals='{"code":"{{ .Code }}"}'
+        hx-vals='{{ jsonVals "code" .Code }}'
         hx-trigger="click"
         hx-target="#basket"
         hx-swap="outerHTML">
