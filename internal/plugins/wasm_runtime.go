@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
@@ -281,7 +282,90 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 	}
 	out := strings.TrimSpace(stdout.String())
 	if out != "" {
-		logging.L().Infof("[wasm:%s] result: %s", pluginID, out)
+		logging.L().Infof("%s", wasmResultLogLine(pluginID, ev.Type, out))
 	}
 	return json.RawMessage(out), nil
+}
+
+// wasmResultLogLine builds the exact line logged for a handler's stdout
+// result. Non-".ask" events (e.g. sale.completed) keep the original,
+// unredacted format — out of scope for ut-docs#202. ".ask" events (the
+// generic value-returning hook, EventBus.Ask) go through
+// safeAskResultForLog: export.requested.ask can answer with a full
+// exported dataset (base64 in content_b64), and that must never reach the
+// log verbatim ("no secrets in logs", GDPR-adjacent given the
+// customer-erasure endpoint sits right next to the export one).
+func wasmResultLogLine(pluginID, eventType, out string) string {
+	if !strings.HasSuffix(eventType, ".ask") {
+		return fmt.Sprintf("[wasm:%s] result: %s", pluginID, out)
+	}
+	return fmt.Sprintf("[wasm:%s] result (%s, %d bytes): %s", pluginID, eventType, len(out), safeAskResultForLog(out))
+}
+
+// maxAskFieldBytes caps how much of a single JSON field's raw value in an
+// ".ask" response reaches the log before safeAskResultForLog replaces it
+// with a size-only placeholder. A handler like tax.rate.ask answers with a
+// couple of small fields and is never affected.
+const maxAskFieldBytes = 200
+
+// maxAskLogBytes bounds the final logged line for an ".ask" result, after
+// per-field redaction: covers a non-object/malformed answer, and a
+// well-formed object that stays under maxAskFieldBytes on every individual
+// field but sums well past anything useful for debugging (many small
+// fields, or one very long key).
+const maxAskLogBytes = 500
+
+// looksLikeBlobFieldName reports whether key is conventionally a
+// base64-encoded blob field (export.requested.ask's content_b64, and any
+// future hook following the same naming) — redacted regardless of size.
+// Byte-size alone doesn't catch every risk here: a SMALL export can still
+// carry real customer PII (e.g. a name/email on one receipt line), so a
+// small content_b64 must be redacted too, not just an oversized one.
+func looksLikeBlobFieldName(key string) bool {
+	return strings.Contains(strings.ToLower(key), "b64")
+}
+
+// safeAskResultForLog returns out unchanged when it's already small and
+// every field is safe to log as-is; otherwise any field whose raw JSON
+// value exceeds maxAskFieldBytes, or whose name looks like a base64 blob,
+// is replaced with an "<omitted: N bytes>" placeholder — the event's shape
+// and small fields (ok/error/message) stay visible without ever logging
+// the risky value itself. Non-object output, or an object that's still too
+// large after redaction, falls back to hard (rune-safe) truncation.
+func safeAskResultForLog(out string) string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &fields); err != nil {
+		return truncateForLog(out)
+	}
+
+	redacted := false
+	for k, v := range fields {
+		if len(v) > maxAskFieldBytes || looksLikeBlobFieldName(k) {
+			placeholder, _ := json.Marshal(fmt.Sprintf("<omitted: %d bytes>", len(v)))
+			fields[k] = placeholder
+			redacted = true
+		}
+	}
+	if !redacted && len(out) <= maxAskLogBytes {
+		return out
+	}
+	b, err := json.Marshal(fields)
+	if err != nil {
+		return fmt.Sprintf("(redaction failed, %d bytes)", len(out))
+	}
+	return truncateForLog(string(b))
+}
+
+// truncateForLog hard-caps s at maxAskLogBytes, cutting at a valid UTF-8
+// rune boundary so a multi-byte character (e.g. an RTL export filename)
+// never splits into invalid UTF-8 in the log.
+func truncateForLog(s string) string {
+	if len(s) <= maxAskLogBytes {
+		return s
+	}
+	cut := maxAskLogBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s...(truncated, %d bytes total)", s[:cut], len(s))
 }
