@@ -162,6 +162,9 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	if rd.ShowTax {
 		doc.Totals = append(doc.Totals, print.KV{Label: "Tax", Amount: money(detail.TaxTotal)})
 	}
+	if detail.ServiceCharge != 0 {
+		doc.Totals = append(doc.Totals, print.KV{Label: "Service Charge", Amount: money(detail.ServiceCharge)})
+	}
 	doc.Totals = append(doc.Totals, print.KV{Label: "TOTAL", Amount: money(detail.Total), Strong: true})
 	for _, p := range detail.Payments {
 		doc.Payments = append(doc.Payments, print.KV{Label: strings.ToUpper(p.Method[:1]) + p.Method[1:], Amount: money(p.Amount)})

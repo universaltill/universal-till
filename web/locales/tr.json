@@ -306,6 +306,7 @@
   "journal.detail.payments": "Ödemeler",
   "journal.detail.price": "Fiyat",
   "journal.detail.qty": "Adet",
+  "journal.detail.service_charge": "Servis Ücreti",
   "journal.detail.sku": "SKU",
   "journal.detail.subtotal": "Ara toplam",
   "journal.detail.sync": "eşitleme",

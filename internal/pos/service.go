@@ -37,6 +37,13 @@ type Service struct {
 type Config struct {
 	TaxInclusive       bool
 	TaxRateBasisPoints int // e.g. 2000 = 20.00%
+	// ServiceChargeRateBasisPoints (ut-docs#72) is the till-set service
+	// charge rate, applied to (subtotal - discount) and added on top --
+	// live/display-only here (it drives what the basket shows BEFORE
+	// tender); CompleteSale itself is given the already-computed amount,
+	// not this rate, so a synced/replayed sale never recomputes against
+	// whatever rate happens to be configured at replay time.
+	ServiceChargeRateBasisPoints int
 }
 
 // OrderTypeTakeaway is a value merchants may use for OrderType — dine-in vs.
@@ -140,16 +147,21 @@ func (l BasketLine) ModifierSignature() string {
 }
 
 type Basket struct {
-	Lines        []BasketLine `json:"lines"`
-	Subtotal     money.Money  `json:"subtotal"`
-	Tax          money.Money  `json:"tax"`
-	Total        money.Money  `json:"total"`
-	Discount     money.Money  `json:"discount"`
-	DiscountType string       `json:"discountType,omitempty"` // amount|percent
-	DiscountRaw  int64        `json:"discountRaw,omitempty"`  // minor units or basis points (kept raw)
-	CustomerID   string       `json:"customerId,omitempty"`
-	CustomerName string       `json:"customerName,omitempty"`
-	ToastMessage string       `json:"toastMessage,omitempty"`
+	Lines    []BasketLine `json:"lines"`
+	Subtotal money.Money  `json:"subtotal"`
+	Tax      money.Money  `json:"tax"`
+	Total    money.Money  `json:"total"`
+	Discount money.Money  `json:"discount"`
+	// ServiceCharge (ut-docs#72) is already folded into Total -- broken out
+	// here, like Tax and Discount, so the sale screen can show it as its
+	// own line rather than leaving the gap between Subtotal+Tax and Total
+	// unexplained.
+	ServiceCharge money.Money `json:"serviceCharge,omitempty"`
+	DiscountType  string      `json:"discountType,omitempty"` // amount|percent
+	DiscountRaw   int64       `json:"discountRaw,omitempty"`  // minor units or basis points (kept raw)
+	CustomerID    string      `json:"customerId,omitempty"`
+	CustomerName  string      `json:"customerName,omitempty"`
+	ToastMessage  string      `json:"toastMessage,omitempty"`
 	// ToastLevel classifies ToastMessage for the sale screen's single
 	// notification surface (ut-docs#213): "info" (default), "success" or
 	// "error". Errors persist until dismissed; info/success auto-expire.
@@ -379,7 +391,12 @@ func (s *Service) recomputeTotals() {
 		total = total.Add(lineTotal)
 	}
 	s.basket.Tax = tax
-	total = total.Sub(discount)
+	// Service charge (ut-docs#72): same base as CompleteSale/pos_api.go use
+	// -- the pre-tax net subtotal, after discount -- so what's shown here,
+	// before tender, matches what CompleteSale will actually demand.
+	serviceCharge, _ := ComputeTaxBasisPoints(sub.Sub(discount), s.cfg.ServiceChargeRateBasisPoints, false)
+	s.basket.ServiceCharge = serviceCharge
+	total = total.Sub(discount).Add(serviceCharge)
 	if total.IsNegative() {
 		total = 0
 	}

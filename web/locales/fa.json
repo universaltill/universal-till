@@ -306,6 +306,7 @@
   "journal.detail.payments": "پرداخت‌ها",
   "journal.detail.price": "قیمت",
   "journal.detail.qty": "تعداد",
+  "journal.detail.service_charge": "هزینه خدمات",
   "journal.detail.sku": "کد کالا",
   "journal.detail.subtotal": "جمع جزء",
   "journal.detail.sync": "همگام‌سازی",

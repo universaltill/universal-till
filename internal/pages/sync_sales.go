@@ -84,6 +84,12 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	if j.Sale.DiscountTotal > 0 {
 		in.SaleDiscount = money.FromMinor(j.Sale.DiscountTotal)
 	}
+	if j.Sale.ServiceCharge > 0 {
+		// The ORIGINAL amount, not recomputed from whatever rate the
+		// primary happens to have configured right now (ut-docs#72) --
+		// same reasoning as SaleDiscount above.
+		in.ServiceCharge = money.FromMinor(j.Sale.ServiceCharge)
+	}
 	for _, p := range j.Sale.Payments {
 		in.Payments = append(in.Payments, pos.PaymentInput{
 			MethodID: p.Method, Amount: money.FromMinor(p.Amount),

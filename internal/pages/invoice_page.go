@@ -119,13 +119,18 @@ func issueInvoice(ctx context.Context, d *common.Deps, sale data.SaleDetail, kin
 	for _, b := range bands {
 		net, tax = net+b.Net, tax+b.Tax
 	}
+	// ut-docs#72: a service charge is not itself a VAT-rated line (no band
+	// of its own in vatBreakdown), but it IS part of what the customer
+	// actually paid -- GrossTotal must match the receipt/sale total, or
+	// the issued invoice understates what was charged.
+	gross := net + tax + sale.ServiceCharge
 	series, _, _ := d.Settings.Get(ctx, "sync.receipt_prefix")
 	row, err := data.NewInvoiceRepo(d.Db).Create(ctx, data.InvoiceInput{
 		Series: strings.TrimSpace(series), Kind: kind, SaleID: sale.ID,
 		OriginalInvoiceID: origInvoiceID,
 		CustomerName:      name, CustomerAddress: address, CustomerVATNo: vatNo,
 		SellerJSON: string(sellerJSON),
-		NetTotal:   net, TaxTotal: tax, GrossTotal: net + tax,
+		NetTotal:   net, TaxTotal: tax, GrossTotal: gross,
 		VATBreakdownJSON: string(breakdownJSON),
 		IssuedAt:         time.Now().UTC().Format(time.RFC3339), IssuedBy: actor,
 	})
