@@ -213,6 +213,8 @@
   "hold.error.empty": "Nothing to hold — the basket is empty",
   "hold.error.failed": "Could not hold the sale",
   "hold.error.not_found": "Held sale not found",
+  "hold.modal.placeholder": "e.g. Table 4, Sarah",
+  "hold.modal.title": "Name this tab (optional)",
   "hold.strip.title": "On hold:",
   "hold.toast.held": "Sale held — you can serve the next customer",
   "hold.toast.resumed": "Sale resumed",
