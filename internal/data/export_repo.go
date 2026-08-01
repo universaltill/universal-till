@@ -32,6 +32,45 @@ type ExportSalePayment struct {
 	Amount money.Money `json:"amount"`
 }
 
+// ExportStockRow is one item's on-hand quantity at one stock location, for
+// an export/report plugin's "export.requested.ask" payload (ut-docs#59).
+// It reflects current on-hand stock, not a historical level as of the
+// requested date range's end — there is no stock-movement history table to
+// reconstruct a past-dated quantity from (a future card if a real fiscal
+// format ever needs it).
+type ExportStockRow struct {
+	ItemID       string  `json:"item_id"`
+	Name         string  `json:"name"`
+	SKU          string  `json:"sku"`
+	LocationID   string  `json:"location_id"`
+	LocationName string  `json:"location_name"`
+	CurrentQty   float64 `json:"current_qty"`
+	ReorderLevel int     `json:"reorder_level"`
+}
+
+// StockForExport returns current on-hand stock per active item/location for
+// an export/report plugin's payload — the same rows ListStockLevels already
+// serves the inventory page, reshaped with JSON tags for the wire.
+func (r *POSRepo) StockForExport(ctx context.Context) ([]ExportStockRow, error) {
+	levels, err := r.ListStockLevels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ExportStockRow, len(levels))
+	for i, l := range levels {
+		out[i] = ExportStockRow{
+			ItemID:       l.ItemID,
+			Name:         l.Name,
+			SKU:          l.SKU,
+			LocationID:   l.LocationID,
+			LocationName: l.LocationName,
+			CurrentQty:   l.CurrentQty,
+			ReorderLevel: l.ReorderLevel,
+		}
+	}
+	return out, nil
+}
+
 // SalesForExport returns completed sales in [from, to] (inclusive of the
 // whole final day — same "append a sentinel high character" trick as
 // InvoiceRepo.List) with their tax-band and payment-method breakdowns, for
