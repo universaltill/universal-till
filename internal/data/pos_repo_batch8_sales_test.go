@@ -39,7 +39,7 @@ VALUES ('cash', 'Cash', 'cash', 1)`)
 
 	// subtotal 1000, discount 100, tax 180, total 1080 — exact minor units.
 	if err := repo.InsertSale(ctx, nil, saleID, receiptNo, "sale", "", "", "", "GBP",
-		1000, 100, 180, 1080, "batch8 note", createdAt, "cash", true, "queued", 2, "", ""); err != nil {
+		1000, 100, 180, 1080, 0, "batch8 note", createdAt, "cash", true, "queued", 2, "", ""); err != nil {
 		t.Fatalf("InsertSale: %v", err)
 	}
 	// Insert line 2 first: ListSaleLineSnapshots/GetSaleDetail must order by line_no,
@@ -221,7 +221,7 @@ func TestPOSRepo_InsertSale_ReadBackRoundtrip(t *testing.T) {
 	// Duplicate receipt_no violates the sales UNIQUE constraint — checkout
 	// relies on this to make receipt reuse impossible.
 	err = repo.InsertSale(ctx, nil, "sale-dup", "000000001", "sale", "", "", "", "GBP",
-		1, 0, 0, 1, "", created, "cash", false, "queued", 0, "", "")
+		1, 0, 0, 1, 0, "", created, "cash", false, "queued", 0, "", "")
 	if err == nil {
 		t.Fatal("InsertSale with duplicate receipt_no must fail")
 	}

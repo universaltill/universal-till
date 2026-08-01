@@ -130,6 +130,51 @@ func TestJournalDetailRendersSaleReturnsAndOriginal(t *testing.T) {
 	}
 }
 
+// ut-docs#72: the journal detail Totals card must show a distinct Service
+// Charge line when non-zero -- otherwise Subtotal + Tax visibly doesn't add
+// up to Total, since a service charge (unlike tip) is folded into Total.
+func TestJournalDetail_ShowsServiceChargeDistinctFromTotal(t *testing.T) {
+	mux, d := newJournalMux(t)
+	// subtotal 1000, tax 0, service_charge 100 -> total 1100.
+	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, service_charge_amount, created_at)
+		VALUES ('sale-sc', 'R-SC-1', 'completed', 'sale', 'cash', 1, 'queued', 'GBP', 1000, 0, 0, 1100, 100, datetime('now'))`); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES ('sale-sc-l1', 'sale-sc', 1, 'itm1', 'Steak', 1, 1000, 0, 0, 1000, 1000)`); err != nil {
+		t.Fatalf("seed sale line: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO payments(id, sale_id, method_id, amount, currency, paid_at)
+		VALUES ('sale-sc-p1', 'sale-sc', 'cash', 1100, 'GBP', datetime('now'))`); err != nil {
+		t.Fatalf("seed payment: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/journal/R-SC-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/journal/R-SC-1 = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Service Charge") {
+		t.Fatalf("expected a Service Charge line, got: %s", body)
+	}
+	if !strings.Contains(body, "£1.00") {
+		t.Fatalf("expected £1.00 service charge amount, got: %s", body)
+	}
+
+	// A sale with no service charge (the existing seedJournalPageSale
+	// fixture, service_charge_amount defaults to 0) must NOT show the line.
+	seedJournalPageSale(t, d, "sale-nosc", "R-NOSC-1", "sale")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/journal/R-NOSC-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/journal/R-NOSC-1 = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "Service Charge") {
+		t.Fatalf("expected no Service Charge line when service_charge_amount is 0, got: %s", rec.Body.String())
+	}
+}
+
 func TestJournalFragmentLimitsAndFullView(t *testing.T) {
 	mux, d := newJournalMux(t)
 	for i := 1; i <= 7; i++ {

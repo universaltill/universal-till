@@ -200,6 +200,58 @@ func TestBuildReceiptDoc_TipAndChangeShowAsPaymentLines(t *testing.T) {
 	}
 }
 
+// ut-docs#72: a non-zero service charge shows as its own receipt line,
+// distinct from Tax/Discount/TOTAL and from a payment's Tip line.
+func TestBuildReceiptDoc_ServiceChargeShowsAsDistinctTotalsLine(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, created_at, completed_at)
+VALUES('sale-sc', 'R-SC1', 'completed', 'sale', 'GBP', 1000, 0, 0, 1100, 100, datetime('now'), datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('sale-sc-line1', 'sale-sc', 1, 'itm1', 'Apple', 'ABC', 1, 1000, 0, 0, 1000, 1000)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, tip_amount, paid_at) VALUES('sale-sc-pay','sale-sc','cash',1100,'GBP',0,0,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := buildReceiptDoc(ctx, dp, "R-SC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var serviceCharge *string
+	for i, kv := range doc.Totals {
+		if kv.Label == "Service Charge" {
+			serviceCharge = &doc.Totals[i].Amount
+		}
+	}
+	if serviceCharge == nil {
+		t.Fatalf("expected a Service Charge totals line, got %+v", doc.Totals)
+	}
+	if *serviceCharge != "£1.00" {
+		t.Fatalf("expected Service Charge £1.00 (service_charge_amount=100), got %q", *serviceCharge)
+	}
+}
+
+// A sale with no service charge (the common case, service_charge_amount
+// defaults to 0) must NOT show a Service Charge line at all.
+func TestBuildReceiptDoc_NoServiceChargeLineWhenZero(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
+
+	doc, err := buildReceiptDoc(context.Background(), dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range doc.Totals {
+		if kv.Label == "Service Charge" {
+			t.Fatalf("expected no Service Charge line when service_charge_amount is 0, got %+v", doc.Totals)
+		}
+	}
+}
+
 func TestBuildReceiptDoc_UnknownReceipt(t *testing.T) {
 	_, dp := newPrintAPITestDeps(t)
 	if _, err := buildReceiptDoc(context.Background(), dp, "NO-SUCH-RECEIPT"); err == nil {

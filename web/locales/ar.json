@@ -306,6 +306,7 @@
   "journal.detail.payments": "المدفوعات",
   "journal.detail.price": "السعر",
   "journal.detail.qty": "الكمية",
+  "journal.detail.service_charge": "رسوم الخدمة",
   "journal.detail.sku": "رمز الصنف",
   "journal.detail.subtotal": "المجموع الفرعي",
   "journal.detail.sync": "مزامنة",
