@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -230,6 +231,77 @@ func TestTenderHandler_JSONAcceptReturnsSaleSummary(t *testing.T) {
 	}
 }
 
+// The cashier tender endpoint shares completeTender with the self-order
+// kiosk (self_order_shop_test.go has the kiosk-side version of this test);
+// this proves the plugin-reported-tip path also reaches a sale placed
+// through /api/pos/tender directly, not just through the kiosk handler —
+// an independent review flagged that only the kiosk path had coverage,
+// and that the fix's persistence actually depended on undocumented slice
+// aliasing between completeTender's two parameters (since fixed by setting
+// saleInput.Payments = payments explicitly in completeTender itself).
+func TestTenderHandler_AppliesPluginReportedTipFromAuthorizeResponse(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers() // process-global singleton; isolate from other tests using the same plugin id/event
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved","tip_amount":150}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"demopay","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		SaleID string `json:"saleId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("expected valid JSON, got: %v\nbody: %s", err, rec.Body.String())
+	}
+
+	var tip int64
+	if err := dp.Db.QueryRow(`SELECT tip_amount FROM payments WHERE sale_id = ?`, out.SaleID).Scan(&tip); err != nil {
+		t.Fatalf("expected a payment row for the sale: %v", err)
+	}
+	if tip != 150 {
+		t.Fatalf("want tip_amount 150 (from the plugin's authorize response) on the cashier tender path, got %d", tip)
+	}
+}
+
 func TestTenderHandler_InvalidJSONBodyRejected(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
@@ -382,5 +454,34 @@ func TestStockMovementReason(t *testing.T) {
 		if got := stockMovementReason(in); got != want {
 			t.Errorf("stockMovementReason(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// pluginReportedTipAmount must only ever apply a real, well-formed,
+// non-negative tip a plugin reports on its authorize response — anything
+// else (no response, no field, a bad type, a negative amount) must leave
+// the tender's own tip untouched rather than corrupting or inventing one.
+func TestPluginReportedTipAmount(t *testing.T) {
+	cases := []struct {
+		name    string
+		resp    json.RawMessage
+		wantAmt int64
+		wantOK  bool
+	}{
+		{"empty response", nil, 0, false},
+		{"no tip field", json.RawMessage(`{"provider":"sumup","outcome":"approved"}`), 0, false},
+		{"zero tip", json.RawMessage(`{"tip_amount":0}`), 0, true},
+		{"positive tip", json.RawMessage(`{"tip_amount":150}`), 150, true},
+		{"negative tip ignored", json.RawMessage(`{"tip_amount":-50}`), 0, false},
+		{"malformed json ignored", json.RawMessage(`not json`), 0, false},
+		{"wrong type ignored", json.RawMessage(`{"tip_amount":"lots"}`), 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			amt, ok := pluginReportedTipAmount(c.resp)
+			if ok != c.wantOK || (ok && amt != c.wantAmt) {
+				t.Fatalf("pluginReportedTipAmount(%s) = (%d, %v), want (%d, %v)", c.resp, amt, ok, c.wantAmt, c.wantOK)
+			}
+		})
 	}
 }
