@@ -255,8 +255,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "minutes must be between 0 and 480", http.StatusBadRequest)
 			return
 		}
-		st := d.UpdateState(func(s *common.RuntimeState) { s.IdleLockMinutes = n })
-		common.SaveState(r.Context(), d.Settings, st)
+		st := d.CurrentState()
+		st.IdleLockMinutes = n
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
 		d.AuthSvc.SetIdleLockMinutes(n)
 		if !auth.Disabled(os.Getenv("UT_AUTH")) {
 			httpx.InitIdleLock(n)
@@ -279,8 +284,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "seconds must be between 0 and 600", http.StatusBadRequest)
 			return
 		}
-		st := d.UpdateState(func(s *common.RuntimeState) { s.KioskIdleResetSeconds = n })
-		common.SaveState(r.Context(), d.Settings, st)
+		st := d.CurrentState()
+		st.KioskIdleResetSeconds = n
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -311,8 +321,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "scale must be between 0.5 and 2.0", http.StatusBadRequest)
 			return
 		}
-		st := d.UpdateState(func(s *common.RuntimeState) { s.UIScale = f })
-		common.SaveState(r.Context(), d.Settings, st)
+		st := d.CurrentState()
+		st.UIScale = f
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
 		httpx.InitUIScale(f)
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -325,8 +340,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "mode must be auto, on or off", http.StatusBadRequest)
 			return
 		}
-		st := d.UpdateState(func(s *common.RuntimeState) { s.OSKMode = mode })
-		common.SaveState(r.Context(), d.Settings, st)
+		st := d.CurrentState()
+		st.OSKMode = mode
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
 		httpx.InitOSKMode(mode)
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -360,38 +380,46 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/settings/theme", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if v := strings.TrimSpace(r.Form.Get("theme")); v != "" {
-			st := d.UpdateState(func(s *common.RuntimeState) { s.Theme = v })
-			common.SaveState(r.Context(), d.Settings, st)
+			st := d.CurrentState()
+			st.Theme = v
+			if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+				return
+			}
+			d.SetState(st)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("/api/settings/save", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		st := d.UpdateState(func(s *common.RuntimeState) {
-			if v := strings.TrimSpace(r.Form.Get("currency")); v != "" {
-				s.Currency = v
+		st := d.CurrentState()
+		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" {
+			st.Currency = v
+		}
+		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
+			st.Country = v
+		}
+		if v := strings.TrimSpace(r.Form.Get("region")); v != "" {
+			st.Region = v
+		}
+		// TaxInclusive/AllowNegativeInventory are deliberately NOT set here:
+		// the only caller (the currency card) never posts them, and an
+		// unconditional write silently zeroed both on every currency change
+		// (ut-docs#178). They're settable via /api/settings/upsert instead
+		// (store.tax_inclusive / pos.allow_negative_inventory).
+		// taxRatePct keeps its guard below though no shipped UI posts it
+		// here either — not dead code, exercised by TestDisplayAndStoreSettings.
+		if v := r.Form.Get("taxRatePct"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				st.TaxRatePct = n
 			}
-			if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
-				s.Country = v
-			}
-			if v := strings.TrimSpace(r.Form.Get("region")); v != "" {
-				s.Region = v
-			}
-			// TaxInclusive/AllowNegativeInventory are deliberately NOT set here:
-			// the only caller (the currency card) never posts them, and an
-			// unconditional write silently zeroed both on every currency change
-			// (ut-docs#178). They're settable via /api/settings/upsert instead
-			// (store.tax_inclusive / pos.allow_negative_inventory).
-			// taxRatePct keeps its guard below though no shipped UI posts it
-			// here either — not dead code, exercised by TestDisplayAndStoreSettings.
-			if v := r.Form.Get("taxRatePct"); v != "" {
-				if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-					s.TaxRatePct = n
-				}
-			}
-		})
-		common.SaveState(r.Context(), d.Settings, st)
+		}
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
 		httpx.InitCurrency(st.Currency)
 		// In place: replacing the engine would empty a basket in progress.
 		d.Engine.SetConfig(pos.Config{

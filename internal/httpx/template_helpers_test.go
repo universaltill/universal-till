@@ -302,6 +302,27 @@ func TestInitUIScaleClampsAndScalesRootPx(t *testing.T) {
 	}
 }
 
+// uiScaleCSS exposes the raw clamped multiplier (not pre-multiplied by 16px)
+// so the sale screen's fluid, viewport-responsive root size (ut-docs#161,
+// app.css's --fluid-fs) can be scaled further by the operator's manual
+// Settings > UI scale choice via `calc(var(--ui-scale) * var(--fluid-fs))`,
+// instead of the fixed 16px baseline uiScalePx bakes in.
+func TestUIScaleCSSClampsToRawMultiplier(t *testing.T) {
+	defer InitUIScale(1.0)
+	InitUIScale(1.3)
+	if got := uiScaleCSS(); got != "1.3" {
+		t.Fatalf("uiScaleCSS(1.3) = %q; want 1.3", got)
+	}
+	InitUIScale(3.0) // out of range resets to 1.0
+	if got := uiScaleCSS(); got != "1" {
+		t.Fatalf("uiScaleCSS(out-of-range) = %q; want 1", got)
+	}
+	InitUIScale(0.4) // below range resets to 1.0
+	if got := uiScaleCSS(); got != "1" {
+		t.Fatalf("uiScaleCSS(below-range) = %q; want 1", got)
+	}
+}
+
 func TestInitOSKModeValidatesInput(t *testing.T) {
 	defer InitOSKMode("auto")
 	InitOSKMode("on")
