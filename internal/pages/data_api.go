@@ -1,15 +1,41 @@
 package pages
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 )
+
+// exportRequestPayload is the event payload a subscribing export/report
+// plugin receives on "export.requested.ask" (EventBus.Ask) — mirrors
+// tax_hook.go's taxRateAskPayload convention for a value-returning hook.
+type exportRequestPayload struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	EntryKey string `json:"entry_key"`
+}
+
+// exportResponse is the JSON a plugin writes to stdout to answer
+// "export.requested.ask". Exactly one of ContentB64 (an inline file for the
+// till to stream back as a download) or Message (a plain status, e.g. "sent
+// to fiskaly") is expected; Error carries the reason when OK is false.
+type exportResponse struct {
+	OK         bool   `json:"ok"`
+	Filename   string `json:"filename,omitempty"`
+	ContentB64 string `json:"content_b64,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
 
 // registerDataAPI wires the manager-gated Data-management actions. Clearing
 // test data before go-live is all-or-nothing and audited (it cannot cherry-pick
@@ -113,5 +139,108 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		respond(w, http.StatusOK, true, fmt.Sprintf("removed %d obsolete products", n))
+	})
+
+	// Dispatch a date-ranged export/report to an installed export- or
+	// report-type plugin (ut-docs#189). The engine's event dispatch is
+	// already generic across canonical_type (proven by tax.rate.ask); this
+	// is the host-side trigger for export/report entries specifically —
+	// mirrors tax_hook.go's use of plugins.SharedBus/bus.Ask.
+	mux.HandleFunc("POST /api/data/export", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			respond(w, http.StatusForbidden, false, "manager only")
+			return
+		}
+		_ = r.ParseForm()
+		from := strings.TrimSpace(r.FormValue("from"))
+		to := strings.TrimSpace(r.FormValue("to"))
+		if from == "" || to == "" {
+			respond(w, http.StatusBadRequest, false, "from and to are required (YYYY-MM-DD)")
+			return
+		}
+		if _, err := time.Parse("2006-01-02", from); err != nil {
+			respond(w, http.StatusBadRequest, false, "from must be YYYY-MM-DD")
+			return
+		}
+		if _, err := time.Parse("2006-01-02", to); err != nil {
+			respond(w, http.StatusBadRequest, false, "to must be YYYY-MM-DD")
+			return
+		}
+
+		entries, err := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+		if len(entries) == 0 {
+			respond(w, http.StatusBadRequest, false, "no export plugin installed")
+			return
+		}
+
+		entryKey := strings.TrimSpace(r.FormValue("entry_key"))
+		var entry data.ExportEntryRow
+		switch {
+		case entryKey != "":
+			found := false
+			for _, e := range entries {
+				if e.Key == entryKey {
+					entry = e
+					found = true
+					break
+				}
+			}
+			if !found {
+				respond(w, http.StatusNotFound, false, "no installed export entry with that key")
+				return
+			}
+		case len(entries) == 1:
+			entry = entries[0]
+		default:
+			respond(w, http.StatusBadRequest, false, "multiple export plugins installed — specify entry_key")
+			return
+		}
+
+		resp, ok, err := plugins.SharedBus(d.Db).Ask(r.Context(), "export.requested.ask", exportRequestPayload{
+			From: from, To: to, EntryKey: entry.Key,
+		})
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+		if !ok {
+			respond(w, http.StatusBadRequest, false, "export plugin did not respond")
+			return
+		}
+
+		var parsed exportResponse
+		if jerr := json.Unmarshal(resp, &parsed); jerr != nil {
+			respond(w, http.StatusInternalServerError, false, "export plugin returned an invalid response")
+			return
+		}
+		if !parsed.OK {
+			respond(w, http.StatusBadRequest, false, parsed.Error)
+			return
+		}
+		if parsed.ContentB64 != "" {
+			raw, derr := base64.StdEncoding.DecodeString(parsed.ContentB64)
+			if derr != nil {
+				respond(w, http.StatusInternalServerError, false, "export plugin returned invalid content")
+				return
+			}
+			filename := parsed.Filename
+			if filename == "" {
+				filename = fmt.Sprintf("export-%s-to-%s.bin", from, to)
+			}
+			ctype := mime.TypeByExtension(filepath.Ext(filename))
+			if ctype == "" {
+				ctype = "application/octet-stream"
+			}
+			w.Header().Set("Content-Type", ctype)
+			w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(raw)
+			return
+		}
+		respond(w, http.StatusOK, true, parsed.Message)
 	})
 }

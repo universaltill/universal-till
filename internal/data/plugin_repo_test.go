@@ -174,6 +174,68 @@ func TestPluginRepo_ListButtonEntries(t *testing.T) {
 	}
 }
 
+func TestPluginRepo_ListExportEntries(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('none','No Entries','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin: %v", err)
+	}
+	if rows, err := repo.ListExportEntries(ctx); err != nil || len(rows) != 0 {
+		t.Fatalf("expected no export entries when none installed, got %+v err=%v", rows, err)
+	}
+
+	// One 'export'-type entry and one 'report'-type entry, on different
+	// active plugins — both must be returned.
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('e1','Excel Exporter','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin e1: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,sort_order,is_active) VALUES('ee1','e1','export','csv_export','CSV Export',1,1)`); err != nil {
+		t.Fatalf("seed export entry: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('r1','DSFinV-K Report','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin r1: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,sort_order,is_active) VALUES('re1','r1','report','dsfinvk','DSFinV-K Report',2,1)`); err != nil {
+		t.Fatalf("seed report entry: %v", err)
+	}
+	// An entry on an inactive plugin must be excluded.
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('e2','Old Exporter','0.1',0)`); err != nil {
+		t.Fatalf("seed plugin e2: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,sort_order,is_active) VALUES('ee2','e2','export','old_export','Old Export',3,1)`); err != nil {
+		t.Fatalf("seed export entry e2: %v", err)
+	}
+	// A non-export/report entry must be excluded too.
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('pe1','e1','page','p','P',1)`); err != nil {
+		t.Fatalf("seed page entry: %v", err)
+	}
+
+	rows, err := repo.ListExportEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListExportEntries: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 export/report entries, got %d: %+v", len(rows), rows)
+	}
+	byKey := map[string]ExportEntryRow{}
+	for _, r := range rows {
+		byKey[r.Key] = r
+	}
+	csvRow, ok := byKey["csv_export"]
+	if !ok || csvRow.PluginID != "e1" || csvRow.Label != "CSV Export" || csvRow.SortOrder != 1 {
+		t.Fatalf("unexpected csv_export row: %+v (present=%v)", csvRow, ok)
+	}
+	reportRow, ok := byKey["dsfinvk"]
+	if !ok || reportRow.PluginID != "r1" || reportRow.Label != "DSFinV-K Report" || reportRow.SortOrder != 2 {
+		t.Fatalf("unexpected dsfinvk row: %+v (present=%v)", reportRow, ok)
+	}
+	if _, ok := byKey["old_export"]; ok {
+		t.Fatalf("expected the inactive plugin's export entry excluded, got %+v", rows)
+	}
+}
+
 // Upgrade path for plugin settings: values the operator configured must
 // survive a manifest re-apply, dupes from the old NULL-scope_id upsert must
 // collapse, a scope change in the manifest must move the row (keeping its

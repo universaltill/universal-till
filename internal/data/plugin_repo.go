@@ -1405,6 +1405,47 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 	return res, rows.Err()
 }
 
+// ExportEntryRow is a plugin-provided export/report trigger (plugin_entries
+// type='export' or type='report'). The manager-gated /api/data/export
+// dispatcher (internal/pages/data_api.go) asks the owning plugin, by Key, to
+// produce the export via EventBus.Ask("export.requested.ask", ...).
+type ExportEntryRow struct {
+	PluginID  string
+	Key       string
+	Label     string
+	SortOrder int
+}
+
+// ListExportEntries returns active export/report entries from active
+// plugins — the Data-management settings page's export dispatcher populates
+// its entry picker from this.
+func (r *PluginRepo) ListExportEntries(ctx context.Context) ([]ExportEntryRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+    p.id,
+    pe.key,
+    pe.label,
+    pe.sort_order
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type IN ('export', 'report') AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.plugin_id, pe.key
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_export_entries", err)
+	}
+	defer rows.Close()
+	var res []ExportEntryRow
+	for rows.Next() {
+		var row ExportEntryRow
+		if err := rows.Scan(&row.PluginID, &row.Key, &row.Label, &row.SortOrder); err != nil {
+			return nil, pluginObs.wrap("list_export_entries", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
 // ThemeRow is a UI theme provided by an installed plugin (plugin_entries
 // type='theme'). ConfigJSON carries the theme config, e.g. {"css":"assets/theme.css"}.
 type ThemeRow struct {

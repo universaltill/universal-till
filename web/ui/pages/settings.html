@@ -201,6 +201,36 @@
     <span id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
   </div>
   <div id="cat-results" class="set-gap-s"></div>
+
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.data.export.title" }}</h3>
+  <p class="muted">{{ T "settings.data.export.help" }}</p>
+  {{ if .exportEntries }}
+  <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+    <label>{{ T "settings.data.export.from_label" }}
+      <input type="date" id="export-from">
+    </label>
+    <label>{{ T "settings.data.export.to_label" }}
+      <input type="date" id="export-to">
+    </label>
+    {{ if gt (len .exportEntries) 1 }}
+    <label>{{ T "settings.data.export.entry_label" }}
+      <select id="export-entry-key">
+        {{ range .exportEntries }}
+        <option value="{{ .Key }}">{{ .Label }}</option>
+        {{ end }}
+      </select>
+    </label>
+    {{ else }}
+    <span>{{ (index .exportEntries 0).Label }}</span>
+    <input type="hidden" id="export-entry-key" value="{{ (index .exportEntries 0).Key }}">
+    {{ end }}
+    <button class="btn secondary" id="export-run-btn" data-testid="data-export">{{ T "settings.data.export.run_btn" }}</button>
+    <span id="export-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+  </div>
+  {{ else }}
+  <p class="muted">{{ T "settings.data.export.none_installed" }}</p>
+  {{ end }}
 </div>
 
 <script>
@@ -297,6 +327,45 @@
       if (r.ok) { conf.value = ''; out.innerHTML = ''; run.disabled = true; }
       else { run.disabled = false; }
     }); }).catch(function (e) { run.disabled = false; msg.textContent = '✗ ' + e; });
+  });
+})();
+(function () {
+  var btn = document.getElementById('export-run-btn');
+  if (!btn) return;
+  var msg = document.getElementById('export-msg');
+  var from = document.getElementById('export-from');
+  var to = document.getElementById('export-to');
+  var entryKey = document.getElementById('export-entry-key');
+  btn.addEventListener('click', function () {
+    if (!from.value || !to.value) { msg.textContent = '✗ pick a from/to date'; return; }
+    btn.disabled = true; msg.textContent = '⏳ …';
+    var body = { from: from.value, to: to.value };
+    if (entryKey && entryKey.value) { body.entry_key = entryKey.value; }
+    fetch('/api/data/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body).toString()
+    }).then(function (r) {
+      var ct = r.headers.get('Content-Type') || '';
+      if (ct.indexOf('application/json') === -1) {
+        // A file: trigger a browser download.
+        var cd = r.headers.get('Content-Disposition') || '';
+        var m = /filename="?([^";]+)"?/.exec(cd);
+        var filename = m ? m[1] : 'export.bin';
+        return r.blob().then(function (blob) {
+          btn.disabled = false; msg.textContent = '✓ downloaded ' + filename;
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url; a.download = filename;
+          document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(url);
+        });
+      }
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        btn.disabled = false;
+        msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
+      });
+    }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
   });
 })();
 </script>
