@@ -403,8 +403,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if v := strings.TrimSpace(r.Form.Get("region")); v != "" {
 			st.Region = v
 		}
-		st.TaxInclusive = r.Form.Get("taxInclusive") == "on"
-		st.AllowNegativeInventory = r.Form.Get("allowNegativeInventory") == "on"
+		// TaxInclusive/AllowNegativeInventory are deliberately NOT set here:
+		// the only caller (the currency card) never posts them, and an
+		// unconditional write silently zeroed both on every currency change
+		// (ut-docs#178). They're settable via /api/settings/upsert instead
+		// (store.tax_inclusive / pos.allow_negative_inventory).
+		// taxRatePct keeps its guard below though no shipped UI posts it
+		// here either — not dead code, exercised by TestDisplayAndStoreSettings.
 		if v := r.Form.Get("taxRatePct"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 				st.TaxRatePct = n

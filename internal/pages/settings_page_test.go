@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 func TestShortDeviceID(t *testing.T) {
@@ -150,25 +151,39 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 		t.Fatalf("theme = %q, want dark", d.CurrentState().Theme)
 	}
 
-	// Store save: currency/country/tax/flags.
+	// Store save: currency/country/tax rate — the fields the shipped currency
+	// card actually posts. TaxInclusive/AllowNegativeInventory are NOT settable
+	// via /save (see TestSaveSettingsCurrencyOnlyDoesNotClearTaxOrInventoryFlags);
+	// they go through /upsert below, same as a real manager would use the
+	// settings page's generic key/value editor.
 	rec := postForm(mux, "/api/settings/save", url.Values{
-		"currency":               {"EUR"},
-		"country":                {"DE"},
-		"taxRatePct":             {"19"},
-		"taxInclusive":           {"on"},
-		"allowNegativeInventory": {"on"},
+		"currency":   {"EUR"},
+		"country":    {"DE"},
+		"taxRatePct": {"19"},
 	}, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("save = %d", rec.Code)
 	}
 	st := d.CurrentState()
-	if st.Currency != "EUR" || st.Country != "DE" || st.TaxRatePct != 19 || !st.TaxInclusive || !st.AllowNegativeInventory {
+	if st.Currency != "EUR" || st.Country != "DE" || st.TaxRatePct != 19 {
 		t.Fatalf("save not applied: %+v", st)
 	}
 
 	// Upsert: empty key is a 400; a known key reflects into state.
 	if rec := postForm(mux, "/api/settings/upsert", url.Values{"value": {"x"}}, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty key = %d, want 400", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert = %d", rec.Code)
+	}
+	if !d.CurrentState().TaxInclusive {
+		t.Fatal("upsert did not reflect store.tax_inclusive=true into state")
+	}
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"true"}}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert = %d", rec.Code)
+	}
+	if !d.CurrentState().AllowNegativeInventory {
+		t.Fatal("upsert did not reflect pos.allow_negative_inventory=true into state")
 	}
 	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"pos.allow_negative_inventory"}, "value": {"false"}}, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("upsert = %d", rec.Code)
@@ -178,6 +193,47 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	}
 	if v, _, _ := d.Settings.Get(t.Context(), "pos.allow_negative_inventory"); v != "false" {
 		t.Fatalf("stored allow_negative = %q", v)
+	}
+}
+
+// Regression: the shipped currency card (web/ui/pages/settings.html) posts
+// ONLY "currency" to /api/settings/save — it has no taxInclusive/
+// allowNegativeInventory fields at all. The handler must not silently zero
+// those flags just because a currency-only POST didn't include them (ut-docs#178).
+func TestSaveSettingsCurrencyOnlyDoesNotClearTaxOrInventoryFlags(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	// Seed both flags on, as a shop that explicitly enabled them would have —
+	// persisted to the store as well as in-memory, matching a real boot.
+	st := d.UpdateState(func(s *common.RuntimeState) {
+		s.TaxInclusive = true
+		s.AllowNegativeInventory = true
+	})
+	common.SaveState(t.Context(), d.Settings, st)
+
+	// Reproduce the real shipped form exactly: only "currency" is posted.
+	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save = %d", rec.Code)
+	}
+
+	got := d.CurrentState()
+	if got.Currency != "GBP" {
+		t.Fatalf("currency = %q, want GBP", got.Currency)
+	}
+	if !got.TaxInclusive {
+		t.Fatal("currency-only save silently cleared TaxInclusive (state)")
+	}
+	if !got.AllowNegativeInventory {
+		t.Fatal("currency-only save silently cleared AllowNegativeInventory (state)")
+	}
+
+	// Persistence must reflect the same, not just the in-memory copy.
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyTaxInclusive); v != "true" {
+		t.Fatalf("stored %s = %q, want true", common.KeyTaxInclusive, v)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "pos.allow_negative_inventory"); v != "true" {
+		t.Fatalf("stored pos.allow_negative_inventory = %q, want true", v)
 	}
 }
 
