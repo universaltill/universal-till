@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -247,6 +248,81 @@ func TestReportsPage_ManagerOnlySectionsGatedByRole(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `name="time"`) {
 		t.Fatalf("expected the manager-only EOD settings form hidden for a non-manager, got: %s", rec.Body.String())
+	}
+}
+
+func TestReportsPage_SeasonalCardRendersLunarBadgeAndCategoryRollup(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	// A categorized solar-window seller and an uncategorized lunar-window
+	// one (-330d: inside lunar k=1 [-354,-326), outside solar [-365,-337)).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO categories(id,name) VALUES('c1','Bakery')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active,category_id) VALUES('bread','SKU-b','Sourdough',100,1,'c1')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('dates','SKU-d','Fresh Dates',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	seedSeasonalSale := func(saleID, itemID string, qty float64, daysAgo int) {
+		t.Helper()
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES(?,?,'completed','sale','GBP',100,0,0,100,datetime('now',?))`,
+			saleID, "R-"+saleID, fmt.Sprintf("-%d days", daysAgo)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES(?,?,1,?,?,?,100,0,0,0,100,100)`,
+			saleID+"-l1", saleID, itemID, "Line "+itemID, qty); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedSeasonalSale("sy1", "bread", 10, 360)
+	seedSeasonalSale("sy2", "dates", 9, 330)
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// The lunar-window item renders with the lunar badge; the solar one doesn't.
+	if !strings.Contains(body, "🌙") || !strings.Contains(body, "lunar") {
+		t.Fatalf("expected the lunar badge on the lunar-window item, got: %s", body)
+	}
+	// Category rollup: heading, the real category, and the uncategorized bucket.
+	if !strings.Contains(body, "By category") || !strings.Contains(body, "Bakery") || !strings.Contains(body, "Uncategorized") {
+		t.Fatalf("expected the category rollup with Bakery + Uncategorized, got: %s", body)
+	}
+}
+
+func TestReportsPage_SeasonalCategoryRollupHiddenWhenOnlyUncategorized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('loose','SKU-l','Loose Leaf',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('sy1','R-sy1','completed','sale','GBP',100,0,0,100,datetime('now','-360 days'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('sy1-l1','sy1',1,'loose','Loose Leaf',5,100,0,0,0,100,100)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// The seasonal card itself shows…
+	if !strings.Contains(body, "Loose Leaf") {
+		t.Fatalf("expected the seasonal card with the item, got: %s", body)
+	}
+	// …but a rollup that would only restate "Uncategorized" is suppressed.
+	if strings.Contains(body, "By category") {
+		t.Fatalf("expected the category rollup hidden when every item is uncategorized, got: %s", body)
 	}
 }
 

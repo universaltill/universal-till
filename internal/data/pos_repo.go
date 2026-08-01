@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -932,53 +933,236 @@ WHERE status = 'completed' AND sale_type = 'sale'
 	return total, count, nil
 }
 
-// SeasonalItem is one item's expected upcoming demand based on the SAME
-// window last year — the order-ahead signal (Farshid: "look at previous
-// years' sales and understand what the shop needs to order in advance").
+// SeasonalItem is one item's expected demand for the upcoming window — the
+// order-ahead signal — averaged across up to three prior years. Each prior
+// year is inspected through TWO windows: the same solar-calendar window
+// (k×365 days back) and the same lunar-calendar window (k×354 days back —
+// lunar-tied demand such as Ramadan shifts ~11 days earlier every Gregorian
+// year). A year contributes whichever signal is stronger, so both fixed-date
+// and moving-holiday demand are caught without any hardcoded holiday list.
+// Deliberate bias: for k=1 the two windows overlap ~17 of 28 days, so max()
+// can lean on sales up to ~11 days outside the solar window and nudge the
+// suggestion UP for lumpy demand — accepted, because missing a real
+// moving-holiday spike costs a shop more than a modestly generous advisory
+// order hint. Likewise an item that stopped selling is averaged DOWN year
+// by year but only disappears once its last signal ages past the 3-year
+// horizon — the fade-out is the signal that it's dying, not a bug.
 type SeasonalItem struct {
 	Name       string
-	LastYear   float64 // units sold in the same upcoming window last year
+	Category   string  // category name; empty when uncategorized
+	Expected   float64 // average units per prior year, rounded to 1 decimal
+	Years      int     // the average's divisor: years back to the item's oldest signal (gap years included)
+	Lunar      bool    // the lunar-window signal outweighed the solar one
 	OnHand     float64
-	SuggestQty int // ceil(lastYear − onHand), 0 when covered
+	SuggestQty int // ceil(Expected − OnHand), 0 when covered
 }
 
-// SeasonalUpcoming looks at the NEXT `days` days one year ago and returns
-// the items that sold then, with current stock and a suggested top-up.
-// Empty when the shop has no year-old history — the UI hides the card.
-func (r *POSRepo) SeasonalUpcoming(ctx context.Context, days, limit int) ([]SeasonalItem, error) {
-	if days <= 0 {
-		days = 28
-	}
-	rows, err := r.db.QueryContext(ctx, `
-SELECT i.name,
-       SUM(sl.quantity) AS units,
-       COALESCE((SELECT SUM(inv.quantity) FROM inventory inv WHERE inv.item_id = i.id), 0) AS on_hand
+// SeasonalCategory is the same forecast rolled up per category. SuggestQty
+// sums the member items' suggestions (one item's surplus can't cover
+// another), so it can exceed ceil(Expected − OnHand).
+type SeasonalCategory struct {
+	Name       string // empty = uncategorized bucket
+	Expected   float64
+	OnHand     float64
+	SuggestQty int
+}
+
+// lunarYearDays is the mean lunar (Hijri) year length in days.
+const lunarYearDays = 354.37
+
+// seasonalWindowSQL sums units per item inside one historical window.
+const seasonalWindowSQL = `
+SELECT i.id, i.name, COALESCE(c.name, ''), SUM(sl.quantity) AS units
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
 JOIN items i ON i.id = COALESCE(NULLIF(sl.item_id, ''),
                                 (SELECT v.item_id FROM item_variants v WHERE v.id = sl.variant_id))
+LEFT JOIN categories c ON c.id = i.category_id
 WHERE s.status = 'completed' AND s.sale_type = 'sale'
-  AND datetime(s.created_at) >= datetime('now', '-365 days')
+  AND datetime(s.created_at) >= datetime('now', ?)
   AND datetime(s.created_at) <  datetime('now', ?)
   AND i.is_active = 1
-GROUP BY i.id HAVING units > 0
-ORDER BY units DESC LIMIT ?`, fmt.Sprintf("-%d days", 365-days), limit)
-	if err != nil {
-		return nil, fmt.Errorf("seasonal upcoming: %w", err)
+GROUP BY i.id HAVING units > 0`
+
+// SeasonalForecast looks at the NEXT `days` days across up to three prior
+// years (solar + lunar windows, see SeasonalItem) and returns the items that
+// sold then with current stock and a suggested top-up, plus the same
+// forecast rolled up by category. The category rollup always covers ALL
+// forecast items; `limit` trims only the item list (limit <= 0 = unlimited,
+// unlike the old SQL LIMIT which returned nothing for 0). Both slices are
+// empty when the shop has no year-old history — the UI hides the card.
+func (r *POSRepo) SeasonalForecast(ctx context.Context, days, limit int) ([]SeasonalItem, []SeasonalCategory, error) {
+	if days <= 0 {
+		days = 28
 	}
-	defer rows.Close()
-	var out []SeasonalItem
-	for rows.Next() {
-		var it SeasonalItem
-		if err := rows.Scan(&it.Name, &it.LastYear, &it.OnHand); err != nil {
-			return nil, fmt.Errorf("scan seasonal: %w", err)
+	if days > 180 {
+		days = 180 // clamp, don't silently reinterpret a long window as 28
+	}
+	// A prior year k contributes only once history reaches back to its
+	// solar window's end; cap at 3 years.
+	var ageDays sql.NullFloat64
+	if err := r.db.QueryRowContext(ctx, `
+SELECT julianday('now') - julianday(MIN(created_at)) FROM sales
+WHERE status = 'completed' AND sale_type = 'sale'`).Scan(&ageDays); err != nil {
+		return nil, nil, fmt.Errorf("seasonal history age: %w", err)
+	}
+	yearsAvail := 0
+	for k := 1; k <= 3; k++ {
+		if ageDays.Valid && ageDays.Float64 >= float64(k*365-days) {
+			yearsAvail = k
 		}
-		if need := it.LastYear - it.OnHand; need > 0 {
+	}
+	if yearsAvail == 0 {
+		return nil, nil, nil
+	}
+
+	type acc struct {
+		name, category string
+		solar, lunar   [4]float64 // indexed by year k (1..3)
+	}
+	accs := map[string]*acc{}
+	scanWindow := func(k, offset int, lunar bool) error {
+		rows, err := r.db.QueryContext(ctx, seasonalWindowSQL,
+			fmt.Sprintf("-%d days", offset), fmt.Sprintf("-%d days", offset-days))
+		if err != nil {
+			return fmt.Errorf("seasonal window: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, name, category string
+			var units float64
+			if err := rows.Scan(&id, &name, &category, &units); err != nil {
+				return fmt.Errorf("scan seasonal window: %w", err)
+			}
+			a := accs[id]
+			if a == nil {
+				a = &acc{name: name, category: category}
+				accs[id] = a
+			}
+			if lunar {
+				a.lunar[k] = units
+			} else {
+				a.solar[k] = units
+			}
+		}
+		return rows.Err()
+	}
+	for k := 1; k <= yearsAvail; k++ {
+		if err := scanWindow(k, k*365, false); err != nil {
+			return nil, nil, err
+		}
+		if err := scanWindow(k, int(math.Round(float64(k)*lunarYearDays)), true); err != nil {
+			return nil, nil, err
+		}
+	}
+	if len(accs) == 0 {
+		return nil, nil, nil
+	}
+
+	// On-hand per parent item, folding variant-level stock up to the item
+	// (a variant row has item_id NULL by schema CHECK — without the join,
+	// variant-tracked items would look out of stock and drive phantom orders).
+	onHand := map[string]float64{}
+	scanOnHand := func() error {
+		rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(inv.item_id, v.item_id) AS iid, SUM(inv.quantity)
+FROM inventory inv
+LEFT JOIN item_variants v ON v.id = inv.variant_id
+WHERE COALESCE(inv.item_id, v.item_id) IS NOT NULL
+GROUP BY iid`)
+		if err != nil {
+			return fmt.Errorf("seasonal on-hand: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			var qty float64
+			if err := rows.Scan(&id, &qty); err != nil {
+				return fmt.Errorf("scan seasonal on-hand: %w", err)
+			}
+			onHand[id] = qty
+		}
+		return rows.Err()
+	}
+	if err := scanOnHand(); err != nil {
+		return nil, nil, err
+	}
+
+	type sortableItem struct {
+		SeasonalItem
+		id string // final sort tie-break: display names can collide
+	}
+	sortable := make([]sortableItem, 0, len(accs))
+	catAccs := map[string]*SeasonalCategory{}
+	for id, a := range accs {
+		// Average from the item's oldest signal forward: a newcomer isn't
+		// diluted by shop history predating it; a faded one-off is.
+		firstK := 0
+		for k := yearsAvail; k >= 1; k-- {
+			if a.solar[k] > 0 || a.lunar[k] > 0 {
+				firstK = k
+				break
+			}
+		}
+		var sum, sumSolar, sumLunar float64
+		for k := 1; k <= firstK; k++ {
+			sum += math.Max(a.solar[k], a.lunar[k])
+			sumSolar += a.solar[k]
+			sumLunar += a.lunar[k]
+		}
+		it := SeasonalItem{
+			Name:     a.name,
+			Category: a.category,
+			Expected: math.Round(sum/float64(firstK)*10) / 10,
+			Years:    firstK,
+			Lunar:    sumLunar > sumSolar,
+			OnHand:   math.Round(onHand[id]*10) / 10, // SUM of REALs drifts; this renders raw
+		}
+		if need := it.Expected - it.OnHand; need > 0 {
 			it.SuggestQty = int(math.Ceil(need))
 		}
-		out = append(out, it)
+		sortable = append(sortable, sortableItem{SeasonalItem: it, id: id})
+
+		c := catAccs[a.category]
+		if c == nil {
+			c = &SeasonalCategory{Name: a.category}
+			catAccs[a.category] = c
+		}
+		c.Expected += it.Expected
+		c.OnHand += it.OnHand
+		c.SuggestQty += it.SuggestQty
 	}
-	return out, rows.Err()
+	sort.Slice(sortable, func(i, j int) bool {
+		if sortable[i].Expected != sortable[j].Expected {
+			return sortable[i].Expected > sortable[j].Expected
+		}
+		if sortable[i].Name != sortable[j].Name {
+			return sortable[i].Name < sortable[j].Name
+		}
+		return sortable[i].id < sortable[j].id
+	})
+	if limit > 0 && len(sortable) > limit {
+		sortable = sortable[:limit]
+	}
+	items := make([]SeasonalItem, 0, len(sortable))
+	for _, s := range sortable {
+		items = append(items, s.SeasonalItem)
+	}
+	cats := make([]SeasonalCategory, 0, len(catAccs))
+	for _, c := range catAccs {
+		// Re-round the accumulated floats: summing 1-decimal values drifts
+		// (1.1+2.2 = 3.3000000000000003) and this renders straight into HTML.
+		c.Expected = math.Round(c.Expected*10) / 10
+		c.OnHand = math.Round(c.OnHand*10) / 10
+		cats = append(cats, *c)
+	}
+	sort.Slice(cats, func(i, j int) bool {
+		if cats[i].Expected != cats[j].Expected {
+			return cats[i].Expected > cats[j].Expected
+		}
+		return cats[i].Name < cats[j].Name
+	})
+	return items, cats, nil
 }
 
 // BusySlot is one weekday or hour bucket of sales activity.
