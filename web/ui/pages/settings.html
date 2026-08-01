@@ -418,6 +418,7 @@
   </form>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
 </div>
+{{ if .isManager }}
 <div class="card">
   <h2>{{ T "settings.all" }}</h2>
   <table class="table">
@@ -444,5 +445,6 @@
   </table>
   <form id="new-setting" hx-post="/api/settings/upsert" hx-swap="none"></form>
 </div>
+{{ end }}
 </div>
 {{ end }}
