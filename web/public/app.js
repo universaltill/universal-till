@@ -317,9 +317,13 @@ window.utCurrency = (function(){
   document.addEventListener('htmx:load', initSplitTender);
 })();
 
+// Sale-screen notification surface (ut-docs#213,
+// docs/sale-screen-notifications.md): info/success notices
+// auto-expire; error notices persist until the operator dismisses them.
 function scheduleToastDismiss(){
   var toast = document.getElementById('toast-message');
   if (!toast || toast.dataset.dismissed === '1') return;
+  if (toast.classList.contains('error')) return; // errors persist until dismissed
   toast.dataset.dismissed = '1';
   setTimeout(function(){
     toast.classList.add('hide');
@@ -328,11 +332,64 @@ function scheduleToastDismiss(){
         toast.parentNode.removeChild(toast);
       }
     }, 250);
-  }, 1500);
+  }, 2500);
 }
 
 document.addEventListener('DOMContentLoaded', scheduleToastDismiss);
 document.addEventListener('htmx:afterSwap', scheduleToastDismiss);
+
+// Dismiss control — delegated so it survives every #basket outerHTML swap.
+document.addEventListener('click', function(e){
+  var btn = e.target.closest ? e.target.closest('.notice-dismiss') : null;
+  if (!btn) return;
+  var notice = btn.closest('.pos-notice');
+  if (!notice) return;
+  if (notice.id === 'pos-alert') { notice.hidden = true; return; } // reusable slot
+  notice.classList.add('hide');
+  setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
+});
+
+// Request failures surface in the client-side slot (#pos-alert) — a server
+// error response or an unreachable server would otherwise fail silently
+// (there was no htmx error handler at all before ut-docs#213). Strings come
+// from data-* attributes so this file stays locale-free.
+(function(){
+  function showAlert(kind){
+    var alertBox = document.getElementById('pos-alert');
+    if (!alertBox) return;
+    var msg = kind === 'network' ? alertBox.dataset.msgNetwork : alertBox.dataset.msgServer;
+    // Unhide BEFORE writing the text: a role=alert region that changes
+    // while display:none doesn't reliably announce to screen readers.
+    alertBox.hidden = false;
+    alertBox.querySelector('.notice-text').textContent = msg || '';
+  }
+  // A 400 from a sale-screen endpoint whose body is a rendered basket
+  // fragment carries its own .pos-notice (e.g. modifier validation): swap
+  // it in and clear the error flag so the specific message shows instead
+  // of the generic alert. Path-scoped like self-order's equivalent
+  // handler. (htmx never swaps 4xx by default — before ut-docs#213 these
+  // rendered error toasts were silently dropped on the sale screen.)
+  document.body.addEventListener('htmx:beforeSwap', function(ev){
+    var d = ev.detail;
+    if (!d || !d.xhr || d.xhr.status !== 400) return;
+    var path = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
+    if (path.indexOf('/api/pos/') !== 0) return;
+    if (typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
+      d.shouldSwap = true;
+      d.isError = false;
+    }
+  });
+  document.body.addEventListener('htmx:responseError', function(){ showAlert('server'); });
+  document.body.addEventListener('htmx:sendError', function(){ showAlert('network'); });
+  // Self-heal: the first successful request clears a stale alert, so an
+  // intermittent-connectivity till doesn't wear a permanent red banner
+  // (offline-first: transient failure must not leave persistent chrome).
+  document.body.addEventListener('htmx:afterRequest', function(ev){
+    if (!ev.detail || !ev.detail.successful) return;
+    var alertBox = document.getElementById('pos-alert');
+    if (alertBox && !alertBox.hidden) alertBox.hidden = true;
+  });
+})();
 
 function offlineOverrideEnabled(){
   var toggle = document.getElementById('offline-override');

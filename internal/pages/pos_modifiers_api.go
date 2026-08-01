@@ -115,6 +115,7 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(http.StatusBadRequest)
 			b := d.Engine.Basket()
 			b.ToastMessage = msg
+			b.ToastLevel = "error"
 			_ = basketView.Render(w, &b)
 		}
 

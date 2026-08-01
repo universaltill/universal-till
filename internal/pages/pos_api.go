@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -191,7 +192,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			d.Engine.SetCustomerID(cid)
 		}
 
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
 		render := func(b *pos.Basket) {
 			_ = basketView.Render(w, b)
@@ -199,7 +201,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		if code == "" {
 			b := d.Engine.Basket()
-			b.ToastMessage = "Scan a barcode"
+			b.ToastMessage = httpx.T(locale, "pos.toast.scan_prompt")
+			b.ToastLevel = "info"
 			render(&b)
 			return
 		}
@@ -215,12 +218,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			if custID, custName, ok := repo.LookupCustomer(r.Context(), code); ok {
 				d.Engine.SetCustomer(custID, custName)
 				b := d.Engine.Basket()
-				b.ToastMessage = fmt.Sprintf("Customer %s linked", custName)
+				b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.customer_linked"), custName)
+				b.ToastLevel = "success"
 				render(&b)
 				return
 			}
 			b := d.Engine.Basket()
-			b.ToastMessage = "Customer not found"
+			b.ToastMessage = httpx.T(locale, "pos.toast.customer_not_found")
+			b.ToastLevel = "error"
 			render(&b)
 			return
 		}
@@ -240,7 +245,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				d.Engine.SetDiscount(money.FromMinor(value))
 			}
 			b := d.Engine.Basket()
-			b.ToastMessage = fmt.Sprintf("Promotion %s applied", code)
+			b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.promo_applied"), code)
+			b.ToastLevel = "success"
 			render(&b)
 			return
 		}
@@ -254,7 +260,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		b := d.Engine.Basket()
-		b.ToastMessage = "Item not found"
+		b.ToastMessage = httpx.T(locale, "pos.toast.item_not_found")
+		b.ToastLevel = "error"
 		render(&b)
 	})
 
@@ -344,12 +351,6 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, *b)
-	})
-
-	// Clear toast for OOB swap.
-	mux.HandleFunc("/ui/clear-toast", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<div id="toast-error"></div>`)
 	})
 
 	// Reset basket for new customer.
@@ -603,18 +604,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				locale := httpx.ResolveLocale(w, r)
 				funcs := httpx.FuncsFor(locale)
 				b := d.Engine.Basket()
+				// Localized, generic message on the persistent notice — the raw
+				// engine error carries internal item/location IDs and English
+				// prose that must not sit on a cashier-facing surface. The
+				// detail stays available server-side via the log below.
+				log.Printf("tender rejected: %v", err)
+				b.ToastMessage = httpx.T(locale, "pos.toast.insufficient_stock")
+				b.ToastLevel = "error"
 				basketView, _ := ui.NewBasketView(funcs)
-				var buf bytes.Buffer
-				_ = basketView.Render(&buf, b)
-				html := buf.String()
-				var out bytes.Buffer
-				// prepend toast inside the basket container so it renders in-place
-				out.WriteString(`<div class="toast toast-error" id="toast-error">` + err.Error() + `</div>`)
-				out.WriteString(html)
-				out.WriteString(`<script>setTimeout(function(){var t=document.getElementById('toast-error');if(t){t.remove();}},2000);</script>`)
 				w.Header().Set("Content-Type", "text/html")
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write(out.Bytes())
+				_ = basketView.Render(w, b)
 				return
 			}
 			http.Error(w, err.Error(), http.StatusBadRequest)

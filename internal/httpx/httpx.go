@@ -399,7 +399,6 @@ func Render(tplPath string, data any) http.HandlerFunc {
 			"ui/partials/buttons.html",
 			"ui/partials/buttons_admin.html",
 			"ui/partials/basket.html",
-			"ui/partials/toast.html",
 			"ui/partials/plugin_install_modal.html",
 			"ui/partials/plugin_manual_import.html",
 		))

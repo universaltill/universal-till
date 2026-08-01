@@ -1014,5 +1014,15 @@
   "issuereport.saved": "Kaydedildi. Bu mağaza internete bağlandığında otomatik olarak yüklenecek.",
   "issuereport.save_error": "Rapor kaydedilemedi — tekrar deneyin.",
   "issuereport.logs_note": "Kasanın son uyarı/hata günlükleri otomatik olarak eklenir.",
-  "osk.toggle": "Klavye"
+  "osk.toggle": "Klavye",
+  "basket.count_label": "Sepetteki ürün sayısı",
+  "notice.dismiss": "Kapat",
+  "pos.toast.scan_prompt": "Bir barkod okutun",
+  "pos.toast.item_not_found": "Ürün bulunamadı",
+  "pos.toast.customer_linked": "Müşteri %s bağlandı",
+  "pos.toast.customer_not_found": "Müşteri bulunamadı",
+  "pos.toast.promo_applied": "%s promosyonu uygulandı",
+  "pos.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
+  "pos.error.network": "Bağlantı sorunu — kasa çevrimdışı çalışmaya devam eder.",
+  "pos.toast.insufficient_stock": "Bu satışı tamamlamak için yeterli stok yok"
 }

@@ -91,7 +91,10 @@ body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex
   box-shadow: 0 1px 4px rgba(0,0,0,.25);
 }
 .logo { display: flex; align-items: center; }
-.logo img { height: 28px; display: block; }
+/* rem, not px: the logo must follow --ui-scale / the fluid baseline like
+   everything else (ut-docs#213 — it was the nav's last fixed-px sizing,
+   illegibly small on a 10-inch high-density till). */
+.logo img { height: 2.4rem; display: block; }
 .nav-right { display: flex; align-items: center; gap: .5rem; margin-inline-start: .5rem; }
 /* The shared touch header: EVERY page shows the same ☰ Menu button (a proper
    touch target) that opens the /menu launcher of big tiles — no page has its
@@ -302,10 +305,23 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .pos-container {
   display: grid;
   grid-template-columns: minmax(20.625rem, 26.25rem) 1fr;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1.15fr);
+  /* ut-docs#213: the basket is a full-height first-class column (the
+     operator must see what's rung up — the old stacked basket/tender
+     split left ~1 visible line at 1280x800). The tender panel sits under
+     the products grid, sized to its content. The products row carries an
+     8rem floor — an auto row is maximized BEFORE an fr row gets leftover
+     space, so without the floor every pixel of vertical pressure (OSK's
+     15.5rem body padding, ui-scale 2 on a short screen) would come out of
+     the products grid until it rendered at zero height, the exact
+     invisible-not-clipped failure class .basket-scroll's and .tab-panel's
+     6rem floors exist for. With the floor, the tender panel compresses
+     first and scrolls internally (shared overflow-y: auto below), which
+     keeps every payment button reachable (see
+     e2e/tests/tender-panel-reachable.spec.ts). */
+  grid-template-rows: minmax(8rem, 1fr) minmax(0, auto);
   grid-template-areas:
     "basket products"
-    "tender products";
+    "basket tender";
   gap: .8rem;
   align-items: stretch;
   /* Fill whatever space is left below the nav + kiosk header — robust to
@@ -432,6 +448,15 @@ a.btn, a.btn:hover { text-decoration: none; }
                vertical-align: middle; }
 
 /* ---------- Basket ---------- */
+/* Screen-reader-only text (aria-label is ignored on generic spans). */
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+/* Always-visible total-quantity badge next to the basket title (ut-docs#213). */
+.basket-count { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.7em; padding: .08em .5em; margin-inline-start: .45rem;
+  border-radius: 999px; background: var(--accent); color: var(--accent-contrast, #fff);
+  font-size: .72em; font-weight: 700; font-variant-numeric: tabular-nums;
+  vertical-align: middle; line-height: 1.4; }
 .line-item { max-width: 9.875rem; display: flex; align-items: center; gap: .4rem; }
 .line-thumb {
   flex: 0 0 auto; width: 2rem; height: 2rem; object-fit: cover;
@@ -459,8 +484,12 @@ a.btn, a.btn:hover { text-decoration: none; }
                     min-height: 44px; }
 .modifier-price { margin-inline-start: auto; color: var(--accent); font-variant-numeric: tabular-nums; }
 .modifier-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-block-start: .5rem; }
+/* qty + line-discount side by side, not stacked — a stacked pair nearly
+   doubled every row's height and was the main reason only ~1 line item
+   fit in the old basket panel (ut-docs#213). */
+.line-inputs { display: flex; align-items: center; gap: .25rem; justify-content: flex-end; }
 .qty-input { width: 3.6rem; padding: .3rem .35rem; font-size: .85rem; }
-.disc-input { width: 3.6rem; padding: .3rem .35rem; font-size: .8rem; margin-top: .2rem; }
+.disc-input { width: 3.6rem; padding: .3rem .35rem; font-size: .8rem; }
 .btn-x { padding: .3rem .55rem; font-size: .8rem; min-height: 0; }
 
 .order-type-toggle { display: flex; gap: .4rem; margin-bottom: .6rem; }
@@ -499,7 +528,34 @@ a.btn, a.btn:hover { text-decoration: none; }
 .basket td { padding: .4rem .45rem; }
 .basket th { padding: .4rem .45rem; }
 
-/* ---------- Toasts ---------- */
+/* ---------- Sale-screen notices (ut-docs#213) ----------
+   THE notification surface for the sale screen — one component, two slots:
+   server-rendered inside #basket (partials/basket.html) and the client-side
+   #pos-alert (pages/index.html). Errors persist until dismissed; info and
+   success auto-expire (app.js). In-flow, never a centered overlay, so it
+   can't occlude the pay buttons mid-sale. Pattern doc:
+   docs/sale-screen-notifications.md. */
+.pos-notice { display: flex; align-items: center; gap: .6rem;
+  padding: .55rem .8rem; border-radius: var(--radius); margin-block-end: .5rem;
+  font-weight: 600; font-size: .92rem; border: 1px solid transparent;
+  opacity: 1; transition: opacity .25s ease; flex-shrink: 0; }
+.pos-notice.hide { opacity: 0; }
+.pos-notice[hidden] { display: none; }
+.pos-notice .notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pos-notice.info { background: rgba(37, 99, 235, .1); color: var(--accent);
+  border-color: rgba(37, 99, 235, .3); }
+.pos-notice.success { background: rgba(22, 163, 74, .12); color: var(--success);
+  border-color: rgba(22, 163, 74, .35); }
+.pos-notice.error { background: rgba(220, 38, 38, .1); color: var(--danger);
+  border-color: rgba(220, 38, 38, .35); }
+.notice-dismiss { flex: 0 0 auto; background: transparent; border: none;
+  color: inherit; font: inherit; font-size: 1rem; cursor: pointer;
+  padding: .15rem .4rem; border-radius: 6px; min-height: 0; line-height: 1; }
+.notice-dismiss:hover { background: rgba(15, 23, 42, .08); }
+#pos-alert { margin-block-end: .6rem; }
+
+/* ---------- Toasts (legacy overlay — self-order screens only; the sale
+   screen uses .pos-notice above) ---------- */
 .toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
   padding: .9rem 1.2rem; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
   z-index: 2000; background: #0f172a; color: #e2e8f0; min-width: 240px; text-align: center;

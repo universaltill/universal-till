@@ -1014,5 +1014,15 @@
   "issuereport.saved": "تم الحفظ. سيُرفع تلقائيًا بمجرد اتصال هذا المتجر بالإنترنت.",
   "issuereport.save_error": "تعذّر حفظ التقرير — حاول مرة أخرى.",
   "issuereport.logs_note": "تُرفق سجلات التحذيرات/الأخطاء الأخيرة للكاشير تلقائيًا.",
-  "osk.toggle": "لوحة المفاتيح"
+  "osk.toggle": "لوحة المفاتيح",
+  "basket.count_label": "عدد العناصر في السلة",
+  "notice.dismiss": "إغلاق",
+  "pos.toast.scan_prompt": "امسح الباركود",
+  "pos.toast.item_not_found": "الصنف غير موجود",
+  "pos.toast.customer_linked": "تم ربط العميل %s",
+  "pos.toast.customer_not_found": "العميل غير موجود",
+  "pos.toast.promo_applied": "تم تطبيق العرض %s",
+  "pos.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
+  "pos.error.network": "مشكلة في الاتصال — تواصل الكاشير العمل دون اتصال.",
+  "pos.toast.insufficient_stock": "المخزون غير كافٍ لإتمام هذه العملية"
 }
