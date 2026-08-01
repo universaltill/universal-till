@@ -211,12 +211,14 @@ func TestSaveAndUpsertSettings_RequireManager(t *testing.T) {
 		{"no session", nil},
 		{"cashier", &cashUser},
 	} {
-		if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, tc.user); rec.Code != http.StatusForbidden {
-			t.Fatalf("%s: save = %d, want 403", tc.name, rec.Code)
-		}
-		if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, tc.user); rec.Code != http.StatusForbidden {
-			t.Fatalf("%s: upsert = %d, want 403", tc.name, rec.Code)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, tc.user); rec.Code != http.StatusForbidden {
+				t.Fatalf("save = %d, want 403", rec.Code)
+			}
+			if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, tc.user); rec.Code != http.StatusForbidden {
+				t.Fatalf("upsert = %d, want 403", rec.Code)
+			}
+		})
 	}
 
 	// Neither refused call actually wrote anything.
@@ -230,6 +232,43 @@ func TestSaveAndUpsertSettings_RequireManager(t *testing.T) {
 	// A manager still succeeds (sanity check the gate isn't fail-closed for everyone).
 	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("manager save = %d, want 204", rec.Code)
+	}
+}
+
+// The template half of the fix (ut-docs#179 review finding): a cashier's
+// rendered /settings page must not contain the currency card or the raw
+// key/value table — both post to now manager-gated endpoints, so a cashier
+// seeing them would be a dead, confusing control. A manager still sees both.
+func TestSettingsPage_HidesManagerOnlyCardsFromCashier(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	get := func(user *auth.User) string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		if user != nil {
+			req = auth.WithUser(req, *user)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	cashierHTML := get(&cashUser)
+	if strings.Contains(cashierHTML, `id="new-setting"`) {
+		t.Fatal("cashier sees the raw settings.all key/value table")
+	}
+	if strings.Contains(cashierHTML, `name="currency"`) {
+		t.Fatal("cashier sees the currency card")
+	}
+
+	managerHTML := get(&mgrUser)
+	if !strings.Contains(managerHTML, `id="new-setting"`) {
+		t.Fatal("manager should see the raw settings.all key/value table")
+	}
+	if !strings.Contains(managerHTML, `name="currency"`) {
+		t.Fatal("manager should see the currency card")
 	}
 }
 
