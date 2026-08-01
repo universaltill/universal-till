@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -95,18 +96,123 @@ func TestLookupRejectsInvalidBarcode(t *testing.T) {
 	}
 }
 
+// Each case must be refused BY THE ALLOWLIST ITSELF — asserting only
+// err != nil would still pass if the guard were deleted entirely (the
+// request would then hit a real host and fail with a network error
+// instead, silently defeating the SSRF check this test exists to prove).
 func TestFetchImageAllowlist(t *testing.T) {
 	c := NewClient(nil, nil)
-	bad := []string{
-		"http://images.openfoodfacts.org/a.jpg",       // not https
-		"https://evil.example.com/a.jpg",              // wrong host
-		"https://openfoodfacts.org.evil.com/a.jpg",    // suffix spoof
-		"https://localhost/a.jpg",                     // internal
-		"https://images.openfoodfacts.org@evil.com/x", // userinfo trick
+	cases := []struct {
+		url        string
+		wantReason string
+	}{
+		{"http://images.openfoodfacts.org/a.jpg", "https"},             // not https
+		{"https://evil.example.com/a.jpg", "not allowed"},              // wrong host
+		{"https://openfoodfacts.org.evil.com/a.jpg", "not allowed"},    // suffix spoof
+		{"https://localhost/a.jpg", "not allowed"},                     // internal
+		{"https://images.openfoodfacts.org@evil.com/x", "not allowed"}, // userinfo trick
 	}
-	for _, u := range bad {
-		if _, err := c.FetchImage(context.Background(), u); err == nil {
-			t.Errorf("FetchImage(%q) succeeded, want refusal", u)
+	for _, tc := range cases {
+		_, err := c.FetchImage(context.Background(), tc.url)
+		if err == nil {
+			t.Errorf("FetchImage(%q) succeeded, want refusal", tc.url)
+			continue
 		}
+		if !strings.Contains(err.Error(), tc.wantReason) {
+			t.Errorf("FetchImage(%q) error = %q, want it to contain %q (i.e. refused by the allowlist, not some other failure)", tc.url, err.Error(), tc.wantReason)
+		}
+	}
+}
+
+// rewriteTransport lets a test present an allowlisted hostname to
+// FetchImage's URL-validation step while the actual bytes go to a local
+// httptest.Server — the allowlist check runs on url.Parse(imageURL), not on
+// the transport, so this exercises the real request/response path without
+// needing a TLS cert for a fake openfoodfacts.org.
+type rewriteTransport struct{ target string }
+
+func (rt *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.URL.Scheme = "http"
+	req.URL.Host = rt.target
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestFetchImageSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") != userAgent {
+			t.Errorf("missing custom User-Agent")
+		}
+		_, _ = w.Write([]byte("fake-jpeg-bytes"))
+	}))
+	defer srv.Close()
+	c := NewClient(&http.Client{Transport: &rewriteTransport{target: strings.TrimPrefix(srv.URL, "http://")}}, nil)
+
+	body, err := c.FetchImage(context.Background(), "https://images.openfoodfacts.org/front.jpg")
+	if err != nil {
+		t.Fatalf("FetchImage: %v", err)
+	}
+	if string(body) != "fake-jpeg-bytes" {
+		t.Errorf("body = %q", body)
+	}
+}
+
+func TestFetchImageNon200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClient(&http.Client{Transport: &rewriteTransport{target: strings.TrimPrefix(srv.URL, "http://")}}, nil)
+
+	if _, err := c.FetchImage(context.Background(), "https://images.openfoodfacts.org/gone.jpg"); err == nil {
+		t.Fatal("want an error for a non-200 image response")
+	}
+}
+
+func TestFetchImageTransportError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	srv.Close() // connection refused from here on
+	c := NewClient(&http.Client{Transport: &rewriteTransport{target: addr}}, nil)
+
+	if _, err := c.FetchImage(context.Background(), "https://images.openfoodfacts.org/gone.jpg"); err == nil {
+		t.Fatal("want a transport error when the image host is unreachable")
+	}
+}
+
+// lookupOne's own request-construction error path: a source whose BaseURL
+// carries a control character fails at http.NewRequestWithContext before
+// any network call — distinct from ErrNotFound/transport-error handling.
+func TestLookupMalformedSourceURL(t *testing.T) {
+	c := NewClient(nil, []Source{{Name: "bad", BaseURL: "http://example.com\n"}})
+	_, err := c.Lookup(context.Background(), "40084107")
+	if err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("want a request-construction error, got %v", err)
+	}
+}
+
+// A source answering with an unexpected non-404 status (e.g. its own 500)
+// must surface as a transport-class error, not be treated as ErrNotFound.
+func TestLookupUnexpectedStatus(t *testing.T) {
+	src, _ := newTestSource(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	c := NewClient(nil, []Source{src})
+	_, err := c.Lookup(context.Background(), "40084107")
+	if err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("want a transport-class error for HTTP 500, got %v", err)
+	}
+}
+
+// A source answering 200 with unparseable JSON must surface a decode error,
+// not silently fall through as ErrNotFound.
+func TestLookupDecodeError(t *testing.T) {
+	src, _ := newTestSource(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{not json`))
+	})
+	c := NewClient(nil, []Source{src})
+	_, err := c.Lookup(context.Background(), "40084107")
+	if err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("want a decode error, got %v", err)
 	}
 }
