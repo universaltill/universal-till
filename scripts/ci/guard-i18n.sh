@@ -4,6 +4,11 @@
 #   1. Every {{ T "key" }} used in a template must exist in web/locales/en.json.
 #   2. Every locale file must define exactly the same key set as en.json
 #      (the base locale) — no missing translations, no orphan keys.
+#   3. No Go-side literal replaces a template's own job: a raw English string
+#      written straight to an HTTP response (w.Write/fmt.Fprintf(w, ...)) is
+#      invisible to checks 1-2 above, which only ever look at web/ui/*.html
+#      (found ut-docs#19 — /api/buttons/search's "Type 3+ characters" hint,
+#      plus four plugin_api.go status strings, none going through httpx.T).
 # Fails CI so a new page/string can't ship untranslated.
 set -euo pipefail
 
@@ -50,7 +55,81 @@ for path in sorted(glob.glob("web/locales/*.json")):
         for k in only_loc:
             print("  orphan :", k)
 
+
+# 3. Go-side hardcoded user-facing strings (ut-docs#19): a string literal
+#    passed directly as the body of an HTTP response write is invisible to
+#    checks 1-2, which only scan web/ui/*.html. Heuristic, deliberately
+#    narrow to keep false positives near zero: only literal double-quoted
+#    strings (not backtick raw strings, not a variable built up elsewhere)
+#    passed directly as the argument to w.Write([]byte("...")),
+#    fmt.Fprintf/Fprint/Fprintln(w, "...") on the SAME line -- calls this
+#    codebase uses specifically to write an HTML/HTMX-fragment response body
+#    (not http.Error, not a JSON "message" field -- both already established
+#    elsewhere in this codebase as not going through T(), a separate,
+#    knowingly-deferred class, not this guard's scope) -- and only literals
+#    that look like actual prose (two adjacent alphabetic words), so a
+#    content-type string, a single technical token, or a single-word status
+#    like "Saved" never flags (a real gap, not a false-positive risk: the
+#    heuristic trades recall for near-zero false positives on a first pass,
+#    same tradeoff every regex-based guard in this repo makes). Genuinely
+#    catches only the shape of bug this card found, not every way a string
+#    could evade a line-based regex -- a real audit still needs a human
+#    occasionally, this just keeps the exact class found here from
+#    regressing silently. A reviewed exception can be marked `// i18n:ignore`
+#    on the same line.
+call_re = re.compile(
+    r'(?:w\.Write\(\[\]byte\(|fmt\.Fprintf\(\s*w,\s*|fmt\.Fprint(?:ln)?\(\s*w,\s*)"((?:[^"\\]|\\.)*)"'
+)
+prose_re = re.compile(r'[A-Za-z]{2,}\s+[A-Za-z]{2,}')
+
+go_hits = []
+for f in sorted(glob.glob("internal/**/*.go", recursive=True)):
+    if f.endswith("_test.go"):
+        continue
+    for i, line in enumerate(open(f, encoding="utf-8").read().splitlines(), 1):
+        if "i18n:ignore" in line:
+            continue
+        for m in call_re.finditer(line):
+            literal = m.group(1).replace('\\"', '"')
+            if prose_re.search(literal):
+                go_hits.append((f, i, literal))
+
+if go_hits:
+    fail = True
+    print("guard-i18n: hardcoded user-facing strings in Go HTTP responses (route through httpx.T):")
+    for f, i, literal in go_hits:
+        print(f"  {f}:{i}: {literal!r}")
+
+# 4. Hand-written hx-vals JSON literals (ut-docs#19): the exact shape of bug
+#    this card fixed in 6 templates -- hx-vals='{"k":"{{ .V }}"}' instead of
+#    hx-vals='{{ jsonVals "k" .V }}' -- breaks (invalid JSON, or a value
+#    escaping the attribute) for any quoted/apostrophe-containing value.
+#    A plain grep can't tell a genuinely-safe hardcoded-constant hx-vals
+#    (e.g. basket.html's {"order_type":"takeaway"}, no template action
+#    inside) from an unsafe one: flag only an hx-vals value that starts with
+#    a literal JSON-object skeleton ({" ...) -- as opposed to starting with
+#    the {{ jsonVals ... }} template action itself, the already-fixed
+#    pattern -- AND still contains a {{ ... }} action somewhere inside it
+#    (a raw field interpolated into that hardcoded skeleton).
+hxvals_re = re.compile(r"hx-vals='([^']*)'")
+hxvals_hits = []
+for f in sorted(glob.glob("web/ui/**/*.html", recursive=True)):
+    for i, line in enumerate(open(f, encoding="utf-8").read().splitlines(), 1):
+        if "i18n:ignore" in line:
+            continue
+        for m in hxvals_re.finditer(line):
+            val = m.group(1)
+            if val.startswith('{"') and "{{" in val:
+                hxvals_hits.append((f, i, line.strip()))
+
+if hxvals_hits:
+    fail = True
+    print("guard-i18n: hand-written hx-vals JSON literal (use {{ jsonVals \"k\" .V }} instead):")
+    for f, i, line in hxvals_hits:
+        print(f"  {f}:{i}: {line}")
+
 if fail:
     sys.exit(1)
-print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json")
+print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json; "
+      f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found")
 PY
