@@ -62,6 +62,13 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// subset of its fields — a prior partial literal here silently dropped
 	// IdleLockMinutes/KioskIdleResetSeconds (ut-docs#177), disabling
 	// auto-lock and kiosk idle-reset from the second boot onward.
+	// MUST run before the UT_UI_SCALE resolution below: state.UIScale is
+	// still whatever LoadState found in the store (0 if never configured),
+	// so SaveState's own `> 0` guard (state.go) skips writing it here —
+	// this is what keeps the env-derived provisioning scale from being
+	// persisted per-till (see the rederiveSettings comment further down).
+	// Moving this call after the UIScale resolution would silently start
+	// persisting UT_UI_SCALE as if a manager had set it.
 	if err := common.SaveState(ctx, setStore, state); err != nil {
 		log.Errorf("persist default settings: %v", err)
 	}

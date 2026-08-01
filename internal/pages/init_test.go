@@ -50,7 +50,20 @@ func TestInit_IdleAndKioskDefaultsSurviveTwoConsecutiveBoots(t *testing.T) {
 	boot(1) // fresh install: config-derived defaults get persisted for the first time
 	boot(2) // restart: must re-resolve the SAME defaults, not zeros left by a lossy persist
 
-	st := common.LoadState(ctx, settings.NewStore(d.DB), cfg)
+	store := settings.NewStore(d.DB)
+
+	// Check the raw persisted rows directly, not just LoadState's resolved
+	// view — the bug WROTE "0" to the store, and an absent key would also
+	// resolve correctly via LoadState's own default fallback, which alone
+	// wouldn't prove the boot-persist step is what's actually correct here.
+	if v, ok, err := store.Get(ctx, common.KeyIdleLock); err != nil || !ok || v != "10" {
+		t.Errorf("raw store %s = (%q, ok=%v, err=%v), want (\"10\", true, nil)", common.KeyIdleLock, v, ok, err)
+	}
+	if v, ok, err := store.Get(ctx, common.KeyKioskIdleReset); err != nil || !ok || v != "60" {
+		t.Errorf("raw store %s = (%q, ok=%v, err=%v), want (\"60\", true, nil)", common.KeyKioskIdleReset, v, ok, err)
+	}
+
+	st := common.LoadState(ctx, store, cfg)
 	if st.IdleLockMinutes != common.DefaultIdleLockMinutes {
 		t.Errorf("after two boots, IdleLockMinutes = %d, want default %d (auto-lock silently disabled)",
 			st.IdleLockMinutes, common.DefaultIdleLockMinutes)
