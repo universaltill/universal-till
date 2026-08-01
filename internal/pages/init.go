@@ -58,15 +58,11 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// Ensure defaults are persisted (e.g., theme). Non-fatal on error
 	// (offline-first: a boot must never be blocked on a settings write) —
 	// the in-memory state above is already correct for this boot either way.
-	if err := common.SaveState(ctx, setStore, common.RuntimeState{
-		Theme:                  state.Theme,
-		Currency:               state.Currency,
-		Country:                state.Country,
-		Region:                 state.Region,
-		TaxInclusive:           state.TaxInclusive,
-		TaxRatePct:             state.TaxRatePct,
-		AllowNegativeInventory: state.AllowNegativeInventory,
-	}); err != nil {
+	// Pass the RuntimeState LoadState just resolved, not a hand-copied
+	// subset of its fields — a prior partial literal here silently dropped
+	// IdleLockMinutes/KioskIdleResetSeconds (ut-docs#177), disabling
+	// auto-lock and kiosk idle-reset from the second boot onward.
+	if err := common.SaveState(ctx, setStore, state); err != nil {
 		log.Errorf("persist default settings: %v", err)
 	}
 
