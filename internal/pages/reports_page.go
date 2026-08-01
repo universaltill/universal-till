@@ -25,7 +25,19 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		margins, _ := repo.MarginByItem(r.Context(), days, 10)
 		curPeriod, lastYear, _ := repo.PeriodComparison(r.Context(), days)
 		taxBands, _ := repo.TaxSummary(r.Context(), days)
-		seasonal, _ := repo.SeasonalUpcoming(r.Context(), 28, 10)
+		seasonal, seasonalCats, _ := repo.SeasonalForecast(r.Context(), 28, 10)
+		// The rollup only earns its screen space with real categories — a
+		// lone "uncategorized" bucket restates the item table.
+		hasNamedCat := false
+		for _, c := range seasonalCats {
+			if c.Name != "" {
+				hasNamedCat = true
+				break
+			}
+		}
+		if !hasNamedCat {
+			seasonalCats = nil
+		}
 		type taxRow struct {
 			Rate string
 			Net  int64
@@ -150,6 +162,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"YoYPct":       yoyPct,
 			"TaxRows":      taxRows,
 			"Seasonal":     seasonal,
+			"SeasonalCats": seasonalCats,
 			"RunningOut":   runningOut,
 			"WeekdayBars":  weekdayBars,
 			"HourBars":     hourBars,
