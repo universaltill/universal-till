@@ -304,7 +304,11 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    by overriding grid-template-areas/-columns. */
 .pos-container {
   display: grid;
-  grid-template-columns: minmax(20.625rem, 26.25rem) 1fr;
+  /* 22rem floor, not 20.625: with classic (non-overlay) scrollbars and
+     wider font metrics (Linux/CI, some kiosk builds), the narrower column
+     wrapped item names to 3 lines and pushed the remove button past the
+     panel edge — tall rows broke the >=4-visible-lines AC (ut-docs#213). */
+  grid-template-columns: minmax(22rem, 26.25rem) 1fr;
   /* ut-docs#213: the basket is a full-height first-class column (the
      operator must see what's rung up — the old stacked basket/tender
      split left ~1 visible line at 1280x800). The tender panel sits under
@@ -464,7 +468,11 @@ a.btn, a.btn:hover { text-decoration: none; }
 }
 .line-thumb-empty { background: var(--surface); display: inline-block; }
 .line-text { min-width: 0; }
-.line-name { display: block; font-weight: 600; font-size: .88rem; line-height: 1.2; }
+/* Clamp to 2 lines so row height has a ceiling on every font stack — a
+   3-line wrap (seen on Linux/CI metrics) broke the >=4-visible-lines AC.
+   Full names still print on receipts; the row shows an ellipsis. */
+.line-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; font-weight: 600; font-size: .88rem; line-height: 1.2; }
 .line-item small { font-size: .68rem; }
 .line-modifiers { list-style: none; margin: .15rem 0 0; padding: 0; }
 .line-modifiers li { font-size: .72rem; line-height: 1.3; }
@@ -488,8 +496,8 @@ a.btn, a.btn:hover { text-decoration: none; }
    doubled every row's height and was the main reason only ~1 line item
    fit in the old basket panel (ut-docs#213). */
 .line-inputs { display: flex; align-items: center; gap: .25rem; justify-content: flex-end; }
-.qty-input { width: 3.6rem; padding: .3rem .35rem; font-size: .85rem; }
-.disc-input { width: 3.6rem; padding: .3rem .35rem; font-size: .8rem; }
+.qty-input { width: 3.4rem; padding: .3rem .3rem; font-size: .85rem; }
+.disc-input { width: 3.4rem; padding: .3rem .3rem; font-size: .8rem; }
 .btn-x { padding: .3rem .55rem; font-size: .8rem; min-height: 0; }
 
 .order-type-toggle { display: flex; gap: .4rem; margin-bottom: .6rem; }

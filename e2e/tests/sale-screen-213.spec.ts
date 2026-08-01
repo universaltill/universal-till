@@ -32,6 +32,14 @@ async function resetBasket(page) {
 }
 
 test.describe('sale screen basket layout + count + notices (ut-docs#213)', () => {
+  // Server-side reset regardless of UI state, ALWAYS — a failed assertion
+  // must not leave basket lines that cascade into the next specs on this
+  // shared server (e2e/README.md rule; this exact cascade turned one CI
+  // layout failure into three red specs on the first PR run).
+  test.afterEach(async ({ page }) => {
+    await page.request.post('/api/pos/reset');
+  });
+
   test('>=4 basket lines visible without scrolling at 1280x800', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/');
