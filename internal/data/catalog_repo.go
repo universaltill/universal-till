@@ -367,6 +367,38 @@ type Lookup struct {
 	Name string
 }
 
+// CategoryNode is one row of the category table, flat — callers assemble
+// the parent/child tree themselves from ParentID.
+type CategoryNode struct {
+	ID        string
+	Name      string
+	ParentID  string // empty for a top-level category
+	SortOrder int
+	Color     string // empty when no explicit color is set
+}
+
+// ListCategories returns every category (flat, parent_id/color intact) for
+// building the sale-screen's nested, color-coded category grid.
+func (r *CatalogRepo) ListCategories(ctx context.Context) ([]CategoryNode, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, '')
+FROM categories
+ORDER BY sort_order, name`)
+	if err != nil {
+		return nil, fmt.Errorf("list categories: %w", err)
+	}
+	defer rows.Close()
+	var out []CategoryNode
+	for rows.Next() {
+		var c CategoryNode
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color); err != nil {
+			return nil, fmt.Errorf("list categories: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *CatalogRepo) ReadLookup(ctx context.Context, table string) ([]Lookup, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM `+table+` WHERE (is_active IS NULL OR is_active = 1) ORDER BY name`)
 	if err != nil {

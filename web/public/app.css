@@ -431,6 +431,18 @@ a.btn, a.btn:hover { text-decoration: none; }
 .btn-actions { display: flex; gap: .25rem; justify-content: center; }
 .btn-actions .btn { padding: .4rem .6rem; font-size: .85rem; min-height: 0; }
 
+/* ---------- Category groups ----------
+   Each section's --cat-color custom property is set inline per group (an
+   explicit per-category color, or a deterministic auto-color — see
+   ui.BuildCategoryGroups); the border/heading here just consume it. */
+.category-groups { display: flex; flex-direction: column; gap: 1rem; }
+.category-group { display: flex; flex-direction: column; gap: .5rem; }
+.category-group .category-group { margin-inline-start: 1rem; }
+.category-header {
+  margin: 0; padding-inline-start: .5rem; font-size: 1rem; font-weight: 700;
+  border-inline-start: 4px solid var(--cat-color, var(--accent));
+}
+
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
 .grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(8.8rem, 1fr)); }
