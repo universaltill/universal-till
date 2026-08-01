@@ -103,7 +103,21 @@ Verdict on first pass: **hold** — 3 SHOULD-FIX, 5 NIT, one process note. All a
   full-height with 4–5 lines, badge live, light logo legible, tender
   reachable, OSK overlay geometry sane.
 
-## Safe to merge: yes (post-fixes)
+## Post-review: first CI run caught a rendering-stack dependency
+
+The PR's first CI run failed ONLY the new layout assertions, only on
+Linux: classic (non-overlay) scrollbars + wider font metrics wrapped item
+names to 3 lines, clipped the remove button past the panel edge, and left
+3 (not ≥4) rows fully visible — invisible on macOS overlay-scrollbar
+rendering despite 9 green local runs. Fixed by widening the basket
+column floor (20.625 → 22rem), trimming the line inputs to 3.4rem, and
+clamping `.line-name` to 2 lines so row height has a ceiling on every
+font stack. The failure also exposed that the spec's basket cleanup only
+ran on success — one failed assertion cascaded leftover lines into two
+more specs; cleanup now runs unconditionally in `afterEach` via a
+server-side reset. Verified green locally and on CI after the fix.
+
+## Safe to merge: yes (post-fixes, CI green)
 
 ## Deferred (cards filed)
 
