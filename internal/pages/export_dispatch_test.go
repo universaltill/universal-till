@@ -317,6 +317,84 @@ func TestExportDispatch_PayloadIncludesSalesData(t *testing.T) {
 	}
 }
 
+// TestExportDispatch_PayloadIncludesStockData is the ut-docs#59 counterpart
+// to TestExportDispatch_PayloadIncludesSalesData: the payload must also
+// carry current stock levels (data.POSRepo.StockForExport) so a subscribing
+// export/report plugin can build a stock-level export, not just a sales one.
+func TestExportDispatch_PayloadIncludesStockData(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-stk','SKU-STK','Stock Widget',500,3,1)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv-stk','itm-stk',NULL,'loc_main',7.5,datetime('now'))`)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp1", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Stock []struct {
+			ItemID       string  `json:"item_id"`
+			Name         string  `json:"name"`
+			SKU          string  `json:"sku"`
+			LocationID   string  `json:"location_id"`
+			LocationName string  `json:"location_name"`
+			CurrentQty   float64 `json:"current_qty"`
+			ReorderLevel int     `json:"reorder_level"`
+		} `json:"stock"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	// seedForPages already seeds one baseline inventory row (itm1 @
+	// loc_main, qty 50) alongside the one seeded above -- assert on the
+	// row this test cares about rather than the exact count.
+	var got *struct {
+		ItemID       string  `json:"item_id"`
+		Name         string  `json:"name"`
+		SKU          string  `json:"sku"`
+		LocationID   string  `json:"location_id"`
+		LocationName string  `json:"location_name"`
+		CurrentQty   float64 `json:"current_qty"`
+		ReorderLevel int     `json:"reorder_level"`
+	}
+	for i := range payload.Stock {
+		if payload.Stock[i].ItemID == "itm-stk" {
+			got = &payload.Stock[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected itm-stk in stock payload, got %+v", payload.Stock)
+	}
+	if got.Name != "Stock Widget" || got.SKU != "SKU-STK" || got.LocationID != "loc_main" {
+		t.Fatalf("unexpected stock row: %+v", got)
+	}
+	if got.CurrentQty != 7.5 || got.ReorderLevel != 3 {
+		t.Fatalf("unexpected qty/reorder: %+v", got)
+	}
+}
+
 func TestExportDispatch_RequiresManager(t *testing.T) {
 	mux, _ := newDataAPITestDeps(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/data/export",

@@ -27,6 +27,10 @@ type exportRequestPayload struct {
 	// -- without it a subscribing export plugin (e.g. a future DATEV or
 	// DSFinV-K plugin) has nothing to build a real file from.
 	Sales []data.ExportSaleRow `json:"sales"`
+	// Stock is current on-hand stock per item/location (ut-docs#59) -- a
+	// snapshot as of now, not as of To; there is no stock-movement history
+	// to reconstruct a past-dated level from.
+	Stock []data.ExportStockRow `json:"stock"`
 }
 
 // exportResponse is the JSON a plugin writes to stdout to answer
@@ -214,7 +218,14 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		sales, err := data.NewPOSRepo(d.Db).SalesForExport(r.Context(), from, to)
+		posRepo := data.NewPOSRepo(d.Db)
+		sales, err := posRepo.SalesForExport(r.Context(), from, to)
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+
+		stock, err := posRepo.StockForExport(r.Context())
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
@@ -224,7 +235,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		// plugin above, and must not silently accept another installed
 		// plugin's answer to the same event type (ut-docs#189 review).
 		resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(r.Context(), entry.PluginID, "export.requested.ask", exportRequestPayload{
-			From: from, To: to, EntryKey: entry.Key, Sales: sales,
+			From: from, To: to, EntryKey: entry.Key, Sales: sales, Stock: stock,
 		})
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())

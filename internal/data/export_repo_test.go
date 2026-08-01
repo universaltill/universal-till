@@ -194,3 +194,57 @@ func TestSalesForExport_EmptyRange(t *testing.T) {
 		t.Fatalf("expected no sales, got %+v", got)
 	}
 }
+
+// TestStockForExport is the ut-docs#59 counterpart to TestSalesForExport:
+// an export/report plugin needs current stock levels, not just sales, to
+// build a "speedy"-parity stock export. StockForExport reshapes
+// ListStockLevels' rows (already exercised in depth by
+// TestListStockLevels_Batch8 -- active-only, per-location, variant-exclusion)
+// with JSON tags for the wire; this just proves the reshape carries every
+// field through correctly.
+func TestStockForExport(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbx.d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-stock', 'SKU-STK', 'Stock Widget', 500, 3, 1)`)
+	// Inactive item's inventory must not leak into the export (matches
+	// ListStockLevels' i.is_active = 1 filter).
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-stock-off', 'SKU-OFF', 'Inactive Widget', 500, 0, 0)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity) VALUES('inv1', 'itm-stock', NULL, 'loc1', 7.5)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity) VALUES('inv2', 'itm-stock-off', NULL, 'loc1', 99)`)
+
+	got, err := dbx.repo.StockForExport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 active stock row, got %+v", got)
+	}
+	row := got[0]
+	if row.ItemID != "itm-stock" || row.Name != "Stock Widget" || row.SKU != "SKU-STK" {
+		t.Fatalf("unexpected item fields: %+v", row)
+	}
+	if row.LocationID != "loc1" || row.LocationName != "Main" {
+		t.Fatalf("unexpected location fields: %+v", row)
+	}
+	if row.CurrentQty != 7.5 || row.ReorderLevel != 3 {
+		t.Fatalf("unexpected qty/reorder fields: %+v", row)
+	}
+}
+
+func TestStockForExport_Empty(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	got, err := dbx.repo.StockForExport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no stock rows, got %+v", got)
+	}
+}
