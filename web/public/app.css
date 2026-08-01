@@ -496,6 +496,15 @@ a.btn, a.btn:hover { text-decoration: none; }
 }
 .modifier-modal::backdrop { background: rgba(15, 23, 42, .45); }
 .modifier-modal:not([open]) { display: none; }
+/* Hold Sale naming (ut-docs#46) is opened non-modal (dialog.show(), not
+   showModal()): a showModal() dialog makes everything outside it inert,
+   including the custom on-screen keyboard (#osk, appended to <body>, not
+   inside the dialog) that kiosk Pis depend on -- there's no OS keyboard to
+   fall back to there. Anchored near the top rather than vertically
+   centered so it never sits under the OSK's fixed 15.5rem bottom panel
+   while it's open. */
+#hold-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+#hold-label-input { width: 100%; margin-block: .5rem .75rem; }
 .modifier-group { border: 1px solid var(--border); border-radius: var(--radius);
                    padding: .6rem .75rem; margin-block-end: .75rem; }
 .modifier-group legend { font-weight: 600; padding-inline: .25rem; }

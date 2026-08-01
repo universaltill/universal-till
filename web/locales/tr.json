@@ -213,6 +213,8 @@
   "hold.error.empty": "Bekletilecek bir şey yok — sepet boş",
   "hold.error.failed": "Satış bekletilemedi",
   "hold.error.not_found": "Bekletilen satış bulunamadı",
+  "hold.modal.placeholder": "örn. Masa 4, Sarah",
+  "hold.modal.title": "Bu siparişi adlandırın (isteğe bağlı)",
   "hold.strip.title": "Beklemede:",
   "hold.toast.held": "Satış bekletildi — sıradaki müşteriye hizmet verebilirsiniz",
   "hold.toast.resumed": "Satışa devam edildi",

@@ -15,6 +15,25 @@
        with modifier groups; closed by its own Cancel/submit handlers. -->
   <dialog id="modifier-modal" class="modifier-modal"></dialog>
 
+  <!-- Name-this-tab step for Hold Sale (ut-docs#46): optional free-text
+       label so multiple concurrent held sales read like "Haaft 1" instead
+       of only a CRM customer name or a bare timestamp. Static (no server
+       round-trip to open) since it needs no per-open data. -->
+  <dialog id="hold-modal" class="modifier-modal" aria-labelledby="hold-modal-title">
+    <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML"
+          hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); }">
+      <h3 id="hold-modal-title">{{ T "hold.modal.title" }}</h3>
+      <input type="text" id="hold-label-input" name="label" maxlength="64"
+             aria-labelledby="hold-modal-title" placeholder="{{ T "hold.modal.placeholder" }}" autofocus>
+      <div class="modifier-actions">
+        <button type="button" class="btn secondary"
+                onclick="document.getElementById('hold-modal').close(); document.getElementById('hold-label-input').value='';">
+          {{ T "common.cancel" }}</button>
+        <button type="submit" class="btn primary">{{ T "hold.action" }}</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Client-side slot of the sale screen's single notification surface
        (ut-docs#213, docs/sale-screen-notifications.md): app.js
        fills it on htmx request failures. Server-rendered notices ride the
@@ -136,7 +155,9 @@
     </div>
 
     <div class="tender-footer">
-      <button class="btn secondary" hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML">{{ T "hold.action" }}</button>
+      <button class="btn secondary" type="button"
+              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
+        {{ T "hold.action" }}</button>
       <button class="btn secondary" hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.new_customer" }}</button>
     </div>
   </div>

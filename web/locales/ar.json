@@ -213,6 +213,8 @@
   "hold.error.empty": "لا شيء لتعليقه — السلة فارغة",
   "hold.error.failed": "تعذّر تعليق البيع",
   "hold.error.not_found": "البيع المعلّق غير موجود",
+  "hold.modal.placeholder": "مثلاً: طاولة 4، سارة",
+  "hold.modal.title": "سمِّ هذا الطلب (اختياري)",
   "hold.strip.title": "معلّق:",
   "hold.toast.held": "عُلّق البيع — يمكنك خدمة العميل التالي",
   "hold.toast.resumed": "استُؤنف البيع",
