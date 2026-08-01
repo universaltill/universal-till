@@ -306,6 +306,7 @@
   "journal.detail.payments": "Payments",
   "journal.detail.price": "Price",
   "journal.detail.qty": "Qty",
+  "journal.detail.service_charge": "Service Charge",
   "journal.detail.sku": "SKU",
   "journal.detail.subtotal": "Subtotal",
   "journal.detail.sync": "sync",

@@ -112,8 +112,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		d.SetState(st)
 		httpx.InitCurrency(st.Currency)
 		d.Engine.SetConfig(pos.Config{
-			TaxInclusive:       st.TaxInclusive,
-			TaxRateBasisPoints: st.TaxRatePct * 100,
+			TaxInclusive:                 st.TaxInclusive,
+			TaxRateBasisPoints:           st.TaxRatePct * 100,
+			ServiceChargeRateBasisPoints: st.ServiceChargeRatePct * 100,
 		})
 
 		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {

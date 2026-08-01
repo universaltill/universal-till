@@ -43,6 +43,7 @@ type RuntimeState struct {
 	Region                 string
 	TaxInclusive           bool
 	TaxRatePct             int
+	ServiceChargeRatePct   int // till-set service charge %, added to the sale total (distinct from tip); 0 = disabled
 	AllowNegativeInventory bool
 	UIScale                float64 // interface scale for this till's screen (0 = unset)
 	IdleLockMinutes        int     // idle auto-lock window in minutes (0 = off)

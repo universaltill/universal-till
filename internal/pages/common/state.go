@@ -11,16 +11,17 @@ import (
 )
 
 const (
-	KeyTheme          = "theme"
-	KeyCurrency       = "store.currency"
-	KeyCountry        = "store.country"
-	KeyRegion         = "store.region"
-	KeyTaxInclusive   = "store.tax_inclusive"
-	KeyTaxRate        = "store.tax_rate"
-	KeyUIScale        = "display.ui_scale"
-	KeyOSK            = "display.osk"
-	KeyIdleLock       = "auth.idle_lock_minutes"
-	KeyKioskIdleReset = "kiosk.idle_reset_seconds"
+	KeyTheme             = "theme"
+	KeyCurrency          = "store.currency"
+	KeyCountry           = "store.country"
+	KeyRegion            = "store.region"
+	KeyTaxInclusive      = "store.tax_inclusive"
+	KeyTaxRate           = "store.tax_rate"
+	KeyServiceChargeRate = "store.service_charge_rate_pct"
+	KeyUIScale           = "display.ui_scale"
+	KeyOSK               = "display.osk"
+	KeyIdleLock          = "auth.idle_lock_minutes"
+	KeyKioskIdleReset    = "kiosk.idle_reset_seconds"
 )
 
 // DefaultIdleLockMinutes locks an unattended till after 10 minutes unless
@@ -67,6 +68,11 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 			st.TaxRatePct = n
 		}
 	}
+	if v := get(KeyServiceChargeRate, "0"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			st.ServiceChargeRatePct = n
+		}
+	}
 	if v := get("pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			st.AllowNegativeInventory = b
@@ -102,6 +108,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyRegion:                      st.Region,
 		KeyTaxInclusive:                strconv.FormatBool(st.TaxInclusive),
 		KeyTaxRate:                     strconv.Itoa(st.TaxRatePct),
+		KeyServiceChargeRate:           strconv.Itoa(st.ServiceChargeRatePct),
 		"pos.allow_negative_inventory": strconv.FormatBool(st.AllowNegativeInventory),
 		KeyIdleLock:                    strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:              strconv.Itoa(st.KioskIdleResetSeconds),

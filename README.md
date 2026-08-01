@@ -408,6 +408,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Self-serve vendor registration for the marketplace (ADR-0024)
 - [x] Every plugin listed here is free, open source, and directly downloadable — see [Plugins](#available-plugins) and [ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)
 - [x] Tips — `payments.tip_amount` in the core domain model and manual entry via `/api/pos/tender`, tested end to end. Automatic sync of a tip the customer picks on a SumUp reader also ships, but that half is **not yet verified against a live SumUp sandbox** — see [ut-plugin-payment-sumup](https://github.com/universaltill/ut-plugin-payment-sumup)'s README "Tips" section before relying on it in production
+- [x] Service charge — `sales.service_charge_amount`, a till-set percentage (`store.service_charge_rate_pct`) automatically added to the sale total, distinct from a discretionary tip (which never affects the total). Shown as its own receipt line when non-zero
 
 ### In progress / partially built
 - [ ] **ERP integration plugins** — the webhook connector (above) is a working *template*; real per-system connectors (`core-universaltill`/Universal Core, SAP, Dynamics/LS Central) aren't built yet (ADR-0014)
@@ -419,7 +420,6 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [ ] More payment/marketplace/accounting integrations (Square, PayPal, eBay, Amazon, QuickBooks, Xero, QuickFile)
 
 ### Confirmed not built yet (verified against the code, not guessed)
-- [ ] **Service charge** — distinct from tips (which are now built, see Shipped above), also entirely absent
 - [ ] **Tip reporting/export line** — tips are captured and persisted but not yet broken out on any report/export (often handled separately for German payroll/tax purposes; needs an accountant-verified spike, not guessed at)
 - [ ] **Per-staff sale/commission attribution** — needed for e.g. a barber shop splitting one payment's revenue across the different staff who each served that customer
 - [ ] **Booking / calendar / reservation** — needed for both restaurant table bookings and appointment-based shops (barbers, salons); one underlying feature, not two

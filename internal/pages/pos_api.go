@@ -510,7 +510,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if discount.IsZero() {
 			discount = d.Engine.SaleDiscount()
 		}
-		total := subtotal.Sub(discount)
+		// Service charge (ut-docs#72) computed here, off the same
+		// post-discount subtotal the basket engine uses for its own
+		// on-screen total (internal/pos/service.go recomputeTotals) --
+		// same rate, same base, so what's quoted on screen, what's
+		// demanded here for a zero-amount tender button, and what
+		// CompleteSale enforces all agree. The AMOUNT (not the rate) is
+		// what flows into SaleInput, same shape as SaleDiscount.
+		serviceCharge, _ := pos.ComputeTaxBasisPoints(subtotal.Sub(discount), d.CurrentState().ServiceChargeRatePct*100, false)
+		total := subtotal.Sub(discount).Add(serviceCharge)
 		if !d.CurrentState().TaxInclusive {
 			total = total.Add(taxTotal)
 		}
@@ -583,6 +591,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			Currency:               d.CurrentState().Currency,
 			TaxInclusive:           d.CurrentState().TaxInclusive,
 			SaleDiscount:           discount,
+			ServiceCharge:          serviceCharge,
 			Lines:                  saleLines,
 			Payments:               payments,
 			Note:                   in.Note,

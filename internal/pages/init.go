@@ -104,8 +104,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	btnStore := ui.NewButtonStore(db)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}
 	engine := pos.NewServiceWithResolver(pos.Config{
-		TaxInclusive:       state.TaxInclusive,
-		TaxRateBasisPoints: state.TaxRatePct * 100,
+		TaxInclusive:                 state.TaxInclusive,
+		TaxRateBasisPoints:           state.TaxRatePct * 100,
+		ServiceChargeRateBasisPoints: state.ServiceChargeRatePct * 100,
 	}, resolver)
 	// Country-specific tax rules (e.g. Germany's dine-in/takeaway VAT
 	// switch) are entirely a plugin's call — core has no built-in opinion,
@@ -211,8 +212,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// In-place tax swap: replacing the engine (as the settings
 		// handlers do) would empty the basket of a sale in progress.
 		if newCfg := (pos.Config{
-			TaxInclusive:       applied.TaxInclusive,
-			TaxRateBasisPoints: applied.TaxRatePct * 100,
+			TaxInclusive:                 applied.TaxInclusive,
+			TaxRateBasisPoints:           applied.TaxRatePct * 100,
+			ServiceChargeRateBasisPoints: applied.ServiceChargeRatePct * 100,
 		}); dp.Engine.Config() != newCfg {
 			dp.Engine.SetConfig(newCfg)
 		}
