@@ -55,6 +55,36 @@ type WasmRuntime struct {
 	unsubGen   int // bumped per sync so stale handlers no-op
 }
 
+// exportTimeout is the deadline granted to the export/report event class
+// (ut-docs#221) instead of the blanket w.timeout every other ".ask" event
+// uses. Gathering real sales/tax/payment data and building an actual export
+// file is legitimately slower than a small value-returning hook like
+// tax.rate.ask (which keeps its existing 2s timeout, unchanged by this).
+const exportTimeout = 30 * time.Second
+
+// isExportClassEvent reports whether eventType is in the export/report
+// event class that needs exportTimeout rather than the default deadline.
+func isExportClassEvent(eventType string) bool {
+	return eventType == "export.requested.ask"
+}
+
+// timeoutFor picks the deadline HandleEvent gives eventType for pluginID:
+// the net:* permission widening applies as before, then the export/report
+// class floor is applied on top (never narrows a wider net timeout, only
+// ensures export-class events get at least exportTimeout).
+func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
+	w.mu.Lock()
+	timeout := w.timeout
+	if w.hasNet[pluginID] {
+		timeout = w.netTimeout // room for the http_request host call
+	}
+	w.mu.Unlock()
+	if isExportClassEvent(eventType) && timeout < exportTimeout {
+		timeout = exportTimeout
+	}
+	return timeout
+}
+
 // NewWasmRuntime creates the runtime; baseDir is the plugin install root
 // (e.g. ./data/plugins).
 func NewWasmRuntime(baseDir string) *WasmRuntime {
@@ -206,15 +236,12 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event) (json.RawMessage, error) {
 	w.mu.Lock()
 	compiled, ok := w.modules[pluginID]
-	timeout := w.timeout
-	if w.hasNet[pluginID] {
-		timeout = w.netTimeout // room for the http_request host call
-	}
 	db := w.db
 	w.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("module not loaded: %s", pluginID)
 	}
+	timeout := w.timeoutFor(pluginID, ev.Type)
 
 	in, err := json.Marshal(map[string]any{
 		"id":        ev.ID,
