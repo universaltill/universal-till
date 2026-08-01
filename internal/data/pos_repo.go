@@ -1762,14 +1762,12 @@ func endOfDayIfBareDate(v string) string {
 	return v
 }
 
-// ListAudit returns audit_log rows newest-first, matching all supplied
-// filters (AND). Manager-gated at the handler — this reads system-wide
-// history, not scoped to the caller.
-func (r *POSRepo) ListAudit(ctx context.Context, f AuditFilters) ([]AuditEntry, error) {
-	limit := f.Limit
-	if limit <= 0 || limit > 500 {
-		limit = 50
-	}
+// buildAuditWhere builds the shared WHERE clause + args for AuditFilters,
+// used by both ListAudit and ListAuditForExport so the bare-date Until fix
+// (endOfDayIfBareDate) can't drift between a paginated-browse code path and
+// a bulk-export one — see docs/code-reviews/2026-07-24-audit-trail-page.md
+// for the bug this already caused once.
+func buildAuditWhere(f AuditFilters) (string, []any) {
 	var where []string
 	var args []any
 	if f.EntityType != "" {
@@ -1792,15 +1790,30 @@ func (r *POSRepo) ListAudit(ctx context.Context, f AuditFilters) ([]AuditEntry, 
 		where = append(where, "a.created_at <= ?")
 		args = append(args, endOfDayIfBareDate(f.Until))
 	}
+	clause := ""
+	if len(where) > 0 {
+		clause = " WHERE " + strings.Join(where, " AND ")
+	}
+	return clause, args
+}
+
+const auditExportCeiling = 10000
+
+// ListAudit returns audit_log rows newest-first, matching all supplied
+// filters (AND). Manager-gated at the handler — this reads system-wide
+// history, not scoped to the caller.
+func (r *POSRepo) ListAudit(ctx context.Context, f AuditFilters) ([]AuditEntry, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	whereClause, args := buildAuditWhere(f)
 	query := `
 SELECT a.id, COALESCE(a.actor_id, ''), COALESCE(u.display_name, ''),
        a.entity_type, a.entity_id, a.action, COALESCE(a.data_json, ''), a.created_at
 FROM audit_log a
-LEFT JOIN users u ON u.id = a.actor_id`
-	if len(where) > 0 {
-		query += " WHERE " + strings.Join(where, " AND ")
-	}
-	query += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?"
+LEFT JOIN users u ON u.id = a.actor_id` + whereClause + `
+ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, f.Offset)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -1820,6 +1833,47 @@ LEFT JOIN users u ON u.id = a.actor_id`
 		return nil, fmt.Errorf("list audit_log: %w", err)
 	}
 	return out, nil
+}
+
+// ListAuditForExport returns every AuditEntry matching f (no pagination —
+// f.Limit/f.Offset are ignored), up to a hard ceiling so a pathological
+// filter can't exhaust memory reading the live SQLite file. If more than
+// ceiling rows match, the result is truncated to ceiling and truncated=true.
+func (r *POSRepo) ListAuditForExport(ctx context.Context, f AuditFilters) ([]AuditEntry, bool, error) {
+	return r.listAuditForExportWithCeiling(ctx, f, auditExportCeiling)
+}
+
+func (r *POSRepo) listAuditForExportWithCeiling(ctx context.Context, f AuditFilters, ceiling int) ([]AuditEntry, bool, error) {
+	whereClause, args := buildAuditWhere(f)
+	query := `
+SELECT a.id, COALESCE(a.actor_id, ''), COALESCE(u.display_name, ''),
+       a.entity_type, a.entity_id, a.action, COALESCE(a.data_json, ''), a.created_at
+FROM audit_log a
+LEFT JOIN users u ON u.id = a.actor_id` + whereClause + `
+ORDER BY a.created_at DESC LIMIT ?`
+	args = append(args, ceiling+1)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("list audit_log for export: %w", err)
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.EntityType, &e.EntityID, &e.Action, &e.DataJSON, &e.CreatedAt); err != nil {
+			return nil, false, fmt.Errorf("scan audit_log: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("list audit_log for export: %w", err)
+	}
+	truncated := len(out) > ceiling
+	if truncated {
+		out = out[:ceiling]
+	}
+	return out, truncated, nil
 }
 
 // DistinctAuditEntityTypes powers the entity-type filter dropdown.

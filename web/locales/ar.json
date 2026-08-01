@@ -16,6 +16,7 @@
   "audit.col.entity": "الكيان",
   "audit.col.when": "الوقت",
   "audit.empty": "لا توجد سجلات مطابقة.",
+  "audit.export_btn": "تصدير CSV",
   "audit.filter.action": "الإجراء يحتوي على…",
   "audit.filter.all_actors": "كل المستخدمين",
   "audit.filter.all_types": "كل الأنواع",
