@@ -1407,8 +1407,10 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 
 // ExportEntryRow is a plugin-provided export/report trigger (plugin_entries
 // type='export' or type='report'). The manager-gated /api/data/export
-// dispatcher (internal/pages/data_api.go) asks the owning plugin, by Key, to
-// produce the export via EventBus.Ask("export.requested.ask", ...).
+// dispatcher (internal/pages/data_api.go) resolves Key to this row, then
+// asks PluginID specifically (EventBus.AskPlugin("export.requested.ask",
+// ...) — never a broadcast Ask, which would let a different installed
+// plugin answer on this entry's behalf) to produce the export.
 type ExportEntryRow struct {
 	PluginID  string
 	Key       string

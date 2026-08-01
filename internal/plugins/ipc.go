@@ -373,6 +373,52 @@ func (eb *EventBus) Ask(ctx context.Context, eventType string, payload interface
 	return nil, false, nil
 }
 
+// AskPlugin is Ask restricted to a single, already-identified plugin —
+// for callers that resolved WHICH installed plugin should answer before
+// asking (e.g. a specific entries[] key, matched 1:1 to its owning
+// pluginID) and must not accept an answer from any other subscriber of the
+// same event type. Unlike Ask, which is for "any plugin with an opinion
+// may answer" hooks (tax.rate.ask), this is for "exactly this plugin must
+// answer" hooks — broadcasting here would let an unrelated installed
+// plugin silently answer on the targeted plugin's behalf.
+func (eb *EventBus) AskPlugin(ctx context.Context, pluginID, eventType string, payload interface{}) (json.RawMessage, bool, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal payload: %w", err)
+	}
+	event := Event{
+		ID:        uuid.NewString(),
+		Type:      eventType,
+		Timestamp: time.Now().UTC(),
+		Payload:   payloadBytes,
+	}
+
+	eb.mu.RLock()
+	subscribers := eb.subscribers[eventType]
+	eb.mu.RUnlock()
+
+	for _, sub := range subscribers {
+		if sub.PluginID != pluginID || sub.Handler == nil {
+			continue
+		}
+		if err := CheckPermission(ctx, eb.dbHandle(), sub.PluginID, "events:receive"); err != nil {
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
+			continue
+		}
+		resp, err := sub.Handler(ctx, event)
+		if err != nil {
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
+			return nil, false, fmt.Errorf("ask %s failed for plugin %s: %w", eventType, sub.PluginID, err)
+		}
+		eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "success", "")
+		if len(resp) == 0 {
+			continue // handler ran but declined to answer — no other subscriber is eligible
+		}
+		return resp, true, nil
+	}
+	return nil, false, nil
+}
+
 // Acknowledge records event acknowledgment from a plugin
 func (eb *EventBus) Acknowledge(ctx context.Context, eventID, pluginID string, success bool, errorMsg string) error {
 	status := "success"
