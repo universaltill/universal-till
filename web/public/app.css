@@ -24,7 +24,25 @@
 
 /* ---------- Base ---------- */
 * { box-sizing: border-box; }
-html { font-size: 17px; } /* 10-inch touch baseline (#144) */
+/* Fluid root size: 17px at a 1024px-wide till up to 20px at 1920px, so
+   text/touch-targets (almost everything else is rem-based) scale with the
+   viewport instead of the fixed 10-inch-only baseline from #144
+   (ut-docs#161). Two-point linear fit anchored at (1024px, 17px) and
+   (1920px, 20px): slope = 3/896 ≈ .00335px per viewport px.
+   min() with a matching vh-based curve so a WIDE-but-SHORT till (e.g.
+   1920x800) doesn't inflate every rem past the tender panel's fixed
+   vertical budget (independent review of ut-docs#161 caught this live:
+   width-only growth clipped the Cash/Card/Gift Card buttons on exactly
+   that class of screen) — height, not just width, bounds the growth.
+   Composed with --ui-scale (base.html, from the operator's Settings > UI
+   scale choice, default 1) so that existing manual scale-up still layers
+   on top of the automatic viewport fit instead of replacing it. --ui-scale
+   is unset on the few standalone screens (login/setup/self-order) that
+   still set an inline px font-size directly — that inline value always
+   wins over this rule there, so the "1" fallback below is inert for them,
+   not load-bearing. */
+:root { --fluid-fs: clamp(17px, min(13.57px + 0.335vw, 13.25px + 0.625vh), 20px); }
+html { font-size: calc(var(--ui-scale, 1) * var(--fluid-fs)); }
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif,
@@ -43,6 +61,10 @@ a { color: var(--accent); }
    nav, whatever height the nav ends up (one row or two). */
 body { display: flex; flex-direction: column; min-height: 100dvh; margin: 0; }
 .container { max-width: 1500px; margin: 0 auto; padding: 1rem 1.25rem 2rem; width: 100%; }
+/* Sale screen fills the full viewport width — no dead side gutters on wide
+   till displays (ut-docs#161). Admin/reports/settings pages keep the
+   1500px reading-width cap above. */
+body.sale-screen .container { max-width: none; }
 /* Main grows to fill the viewport so the status bar never floats mid-screen
    on short pages (menu, settings, …). */
 body > main.container { flex: 1 0 auto; }
@@ -321,8 +343,16 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    be satisfied -- the panel becomes genuinely scrollable instead of
    silently hiding sale contents. */
 .pos-container > .basket { display: flex; flex-direction: column; overflow-y: auto; }
-/* Tender: the panel itself never scrolls — only the active tab body does. */
-.pos-container > .tender { overflow: hidden; }
+/* Tender: normally the panel itself doesn't need to scroll — only the
+   active tab body does (.tab-panel's own overflow-y: auto) — because its
+   content is sized to fit. But at a high manual UI scale stacked on top of
+   the fluid viewport fit (ut-docs#161 independent review, live-confirmed:
+   Cash/Card/Gift Card/Hold Sale/New Customer clipped and unreachable on a
+   1920x1200 kiosk at scale 2.0), the panel's total content can still
+   outgrow its grid row. Same fallback as .basket above (shared overflow-y:
+   auto from the block that ends at line 333) instead of .tender's own
+   overflow:hidden — every payment button stays reachable by scrolling
+   instead of silently disappearing past a hard clip. */
 /* After a sale the receipt swaps into the basket slot; it keeps the grid area
    and scrolls internally instead of bleeding over other panels. */
 .pos-container > .basket.receipt-view { display: block; overflow-y: auto; }
@@ -383,7 +413,7 @@ a.btn, a.btn:hover { text-decoration: none; }
 
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
-.grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(8.8rem, 1fr)); }
 .btn-tile {
   display: flex; flex-direction: column; align-items: stretch; gap: .3rem;
   padding: .55rem .5rem .6rem; min-height: 8.5rem; border: 1px solid var(--border);
@@ -396,7 +426,7 @@ a.btn, a.btn:hover { text-decoration: none; }
 .tile-name { font-weight: 600; font-size: .95rem; line-height: 1.2; white-space: normal; }
 .tile-price { font-size: .95rem; color: var(--accent); font-weight: 700;
               font-variant-numeric: tabular-nums; }
-.thumb { width: 100%; height: 72px; object-fit: contain;
+.thumb { width: 100%; height: 4.25rem; object-fit: contain;
          border-radius: 7px; background: var(--surface-2); }
 .thumb.small { width: 40px; height: 40px; aspect-ratio: auto; margin-inline-end: .5rem;
                vertical-align: middle; }
@@ -515,7 +545,17 @@ a.btn, a.btn:hover { text-decoration: none; }
   color: var(--muted); cursor: pointer; margin-bottom: -2px;
 }
 .tab-bar .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab-panel { flex: 1; min-height: 0; overflow-y: auto; display: flex;
+/* min-height: 6rem (not 0) mirrors .basket-scroll's own floor above --
+   the independent review of ut-docs#161 measured .tab-panel collapsing to
+   a real, hit-testable 0 clientHeight (Cash/Card/Gift Card rendered
+   nowhere, not merely clipped) once .tender itself became scrollable:
+   same "flex:1, min-height:0 inside a now-scrollable ancestor" collapse
+   .basket-scroll's own comment (line ~336) already documents and floors
+   against. The floor plus .tender's outer overflow-y: auto together mean
+   the tab body can shrink, but never past a size where its own buttons
+   become genuinely unreachable — past that floor, the OUTER panel scrolls
+   instead. */
+.tab-panel { flex: 1; min-height: 6rem; overflow-y: auto; display: flex;
              flex-direction: column; gap: .5rem; }
 
 .pay-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
@@ -599,8 +639,10 @@ body.kiosk h1, body.kiosk h2, body.kiosk .status-pill, body.kiosk label,
 body.kiosk .basket th, body.kiosk .journal th {
   -webkit-user-select: none; user-select: none;
 }
-body.kiosk .btn { min-height: 2.75rem; }
-body.kiosk .btn-tile { min-height: 5.4rem; }
+/* .btn/.btn-tile touch targets: kiosk must never be SMALLER than non-kiosk
+   (real screens, real fingers) — previously 2.75rem/5.4rem here shrank
+   below the 3rem/8.5rem base rules and fell under a 48px effective floor
+   at common till widths (ut-docs#161). Kiosk now inherits the base sizes. */
 body.kiosk input, body.kiosk select { min-height: 2.4rem; }
 body.kiosk .qty-input, body.kiosk .disc-input { min-height: 2.1rem; }
 body.kiosk .basket .total { font-size: 1.45rem; }

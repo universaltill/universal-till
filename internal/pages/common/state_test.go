@@ -250,7 +250,9 @@ func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 		KioskIdleResetSeconds:  45,
 	}
 
-	SaveState(ctx, store, want)
+	if err := SaveState(ctx, store, want); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
 	got := LoadState(ctx, store, baseCfg())
 
 	if got != want {
@@ -264,8 +266,12 @@ func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 func TestSaveState_ZeroUIScaleDoesNotClobberPriorValue(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	SaveState(ctx, store, RuntimeState{UIScale: 1.5})
-	SaveState(ctx, store, RuntimeState{UIScale: 0})
+	if err := SaveState(ctx, store, RuntimeState{UIScale: 1.5}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if err := SaveState(ctx, store, RuntimeState{UIScale: 0}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
 
 	st := LoadState(ctx, store, baseCfg())
 	if st.UIScale != 1.5 {
@@ -277,12 +283,59 @@ func TestSaveState_ZeroUIScaleDoesNotClobberPriorValue(t *testing.T) {
 func TestSaveState_EmptyOSKModeDoesNotClobberPriorValue(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	SaveState(ctx, store, RuntimeState{OSKMode: "on"})
-	SaveState(ctx, store, RuntimeState{OSKMode: ""})
+	if err := SaveState(ctx, store, RuntimeState{OSKMode: "on"}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if err := SaveState(ctx, store, RuntimeState{OSKMode: ""}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
 
 	st := LoadState(ctx, store, baseCfg())
 	if st.OSKMode != "on" {
 		t.Fatalf("OSKMode = %q after an empty-value save, want the untouched prior value %q", st.OSKMode, "on")
+	}
+}
+
+// SaveState writes every field in one transaction; a mid-way failure must
+// leave no partial mix of old and new values (mirrors
+// settings.TestSaveRuntimeConfig_Atomic for the settings-page write path).
+func TestSaveState_Atomic(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "state_atomic.db")
+	store := settings.NewStore(d.DB)
+
+	if err := SaveState(ctx, store, RuntimeState{Currency: "GBP", TaxRatePct: 20}); err != nil {
+		t.Fatalf("seed SaveState: %v", err)
+	}
+
+	if _, err := d.DB.Exec(`
+CREATE TRIGGER boom BEFORE INSERT ON settings
+WHEN NEW.key = 'store.tax_rate'
+BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	err := SaveState(ctx, store, RuntimeState{Currency: "EUR", TaxRatePct: 7})
+	if err == nil {
+		t.Fatal("SaveState with an aborting trigger returned nil error, want non-nil")
+	}
+
+	curr, ok, err := store.Get(ctx, KeyCurrency)
+	if err != nil || !ok {
+		t.Fatalf("Get(%s) = ok=%v err=%v, want the seeded row intact", KeyCurrency, ok, err)
+	}
+	// store.currency sorts (and would have been written) before
+	// store.tax_rate, so a non-transactional save would have committed it
+	// before the abort.
+	if curr != "GBP" {
+		t.Fatalf("Currency = %q after a failed save, want seeded %q (partial write not rolled back)", curr, "GBP")
+	}
+	rate, ok, err := store.Get(ctx, KeyTaxRate)
+	if err != nil || !ok {
+		t.Fatalf("Get(%s) = ok=%v err=%v, want the seeded row intact", KeyTaxRate, ok, err)
+	}
+	if rate != "20" {
+		t.Fatalf("TaxRatePct = %q after a failed save, want seeded %q", rate, "20")
 	}
 }
 

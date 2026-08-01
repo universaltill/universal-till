@@ -264,6 +264,95 @@ func TestSettingsPageOffersHighDensityScaleOption(t *testing.T) {
 	}
 }
 
+// SaveState's write must be all-or-nothing at the HTTP boundary too
+// (ut-docs#157): a failed settings-page save must answer 5xx and must not
+// apply the change to the live sale engine, or a shop would silently
+// mis-price sales on the old currency/tax combination.
+func TestSettingsSave_FailsClosedOnSaveError(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	// Seed a known-good baseline the same way a real shop would have one.
+	if rec := postForm(mux, "/api/settings/save", url.Values{
+		"currency":   {"GBP"},
+		"taxRatePct": {"20"},
+	}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("seed save = %d", rec.Code)
+	}
+
+	if _, err := d.Db.Exec(`
+CREATE TRIGGER boom BEFORE INSERT ON settings
+WHEN NEW.key = 'store.tax_rate'
+BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rec := postForm(mux, "/api/settings/save", url.Values{
+		"currency":   {"EUR"},
+		"taxRatePct": {"7"},
+	}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("save with an aborting trigger = %d, want 500", rec.Code)
+	}
+
+	// The DB must still hold the seeded values — no partial currency-only write.
+	if v, _, _ := d.Settings.Get(t.Context(), "store.currency"); v != "GBP" {
+		t.Fatalf("store.currency = %q after failed save, want seeded %q (partial write not rolled back)", v, "GBP")
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "store.tax_rate"); v != "20" {
+		t.Fatalf("store.tax_rate = %q after failed save, want seeded %q", v, "20")
+	}
+	// The live sale engine must not have picked up the failed-to-persist
+	// currency/tax combination.
+	if d.Engine.Config().TaxRateBasisPoints != 2000 {
+		t.Fatalf("engine TaxRateBasisPoints = %d after failed save, want unchanged 2000 (700 would mean the failed 7%% rate was silently applied)", d.Engine.Config().TaxRateBasisPoints)
+	}
+}
+
+// A rejected save must not leak into the in-memory state either — otherwise
+// a later, unrelated successful save silently re-persists the change the
+// operator was just told failed (ut-docs#157 review finding).
+func TestSettingsSave_FailedSaveDoesNotLeakIntoLaterSave(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}, "taxRatePct": {"20"}}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("seed save = %d", rec.Code)
+	}
+
+	if _, err := d.Db.Exec(`
+CREATE TRIGGER boom2 BEFORE INSERT ON settings
+WHEN NEW.key = 'store.tax_rate'
+BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"EUR"}, "taxRatePct": {"7"}}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("failed save = %d, want 500", rec.Code)
+	}
+	if d.CurrentState().Currency != "GBP" {
+		t.Fatalf("in-memory currency = %q after failed save, want unchanged %q (leaked into in-memory state)", d.CurrentState().Currency, "GBP")
+	}
+
+	if _, err := d.Db.Exec(`DROP TRIGGER boom2`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+
+	// An unrelated, otherwise-successful save must not silently persist the
+	// previously-rejected currency/tax-rate change.
+	if rec := postForm(mux, "/api/settings/ui-scale", url.Values{"scale": {"1.5"}}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("unrelated ui-scale save = %d", rec.Code)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "store.currency"); v != "GBP" {
+		t.Fatalf("store.currency = %q after an unrelated save, want still %q (rejected change leaked)", v, "GBP")
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "store.tax_rate"); v != "20" {
+		t.Fatalf("store.tax_rate = %q after an unrelated save, want still %q", v, "20")
+	}
+	if d.Engine.Config().TaxRateBasisPoints != 2000 {
+		t.Fatalf("engine TaxRateBasisPoints = %d after an unrelated save, want unchanged 2000", d.Engine.Config().TaxRateBasisPoints)
+	}
+}
+
 // the forbidden path). Each answers 200 (HTMX swap target) with an error/muted
 // notice rather than a hard status.
 func TestEnrolEndpointsRefuseNonManager(t *testing.T) {
