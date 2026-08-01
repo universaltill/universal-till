@@ -218,13 +218,14 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		sales, err := data.NewPOSRepo(d.Db).SalesForExport(r.Context(), from, to)
+		posRepo := data.NewPOSRepo(d.Db)
+		sales, err := posRepo.SalesForExport(r.Context(), from, to)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
 		}
 
-		stock, err := data.NewPOSRepo(d.Db).StockForExport(r.Context())
+		stock, err := posRepo.StockForExport(r.Context())
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
