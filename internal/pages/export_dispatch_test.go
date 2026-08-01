@@ -239,6 +239,84 @@ func TestExportDispatch_PluginError(t *testing.T) {
 	}
 }
 
+// TestExportDispatch_PayloadIncludesSalesData is the regression for
+// ut-docs#221: export.requested.ask carried only {from,to,entry_key} before
+// this change, so a real export/report plugin had no actual sale/tax/
+// payment data to build a file from. This asserts the host now gathers the
+// real sales in range (via data.POSRepo.SalesForExport) and includes them
+// in the payload the plugin receives.
+func TestExportDispatch_PayloadIncludesSalesData(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+	          VALUES('sale1','R900','completed','sale','GBP',1000,0,200,1200,'2026-01-15T10:00:00Z')`)
+	mustExec(`INSERT INTO sale_lines(id, sale_id, line_no, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+	          VALUES('line1','sale1',1,'Widget',1,1000,2000,200,1000,1200)`)
+	mustExec(`INSERT INTO payments(id, sale_id, method_id, amount, currency, paid_at)
+	          VALUES('pay1','sale1','cash',1200,'GBP','2026-01-15T10:00:00Z')`)
+	// Outside the requested range -- must not appear in the captured payload.
+	mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+	          VALUES('sale2','R901','completed','sale','GBP',500,0,0,500,'2026-02-15T10:00:00Z')`)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp1", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Sales []struct {
+			ReceiptNo string `json:"receipt_no"`
+			Total     int64  `json:"total"`
+			TaxLines  []struct {
+				RateBP int64 `json:"rate_bp"`
+				Net    int64 `json:"net"`
+				Tax    int64 `json:"tax"`
+			} `json:"tax_lines"`
+			Payments []struct {
+				Method string `json:"method"`
+				Amount int64  `json:"amount"`
+			} `json:"payments"`
+		} `json:"sales"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if len(payload.Sales) != 1 {
+		t.Fatalf("expected exactly the in-range sale, got %+v", payload.Sales)
+	}
+	s := payload.Sales[0]
+	if s.ReceiptNo != "R900" || s.Total != 1200 {
+		t.Fatalf("unexpected sale row: %+v", s)
+	}
+	if len(s.TaxLines) != 1 || s.TaxLines[0].RateBP != 2000 || s.TaxLines[0].Net != 1000 || s.TaxLines[0].Tax != 200 {
+		t.Fatalf("unexpected tax lines: %+v", s.TaxLines)
+	}
+	if len(s.Payments) != 1 || s.Payments[0].Method != "cash" || s.Payments[0].Amount != 1200 {
+		t.Fatalf("unexpected payments: %+v", s.Payments)
+	}
+}
+
 func TestExportDispatch_RequiresManager(t *testing.T) {
 	mux, _ := newDataAPITestDeps(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/data/export",

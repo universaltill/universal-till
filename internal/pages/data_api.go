@@ -23,6 +23,10 @@ type exportRequestPayload struct {
 	From     string `json:"from"`
 	To       string `json:"to"`
 	EntryKey string `json:"entry_key"`
+	// Sales is the actual sale/tax/payment data for [From, To] (ut-docs#221)
+	// -- without it a subscribing export plugin (e.g. a future DATEV or
+	// DSFinV-K plugin) has nothing to build a real file from.
+	Sales []data.ExportSaleRow `json:"sales"`
 }
 
 // exportResponse is the JSON a plugin writes to stdout to answer
@@ -210,11 +214,17 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		sales, err := data.NewPOSRepo(d.Db).SalesForExport(r.Context(), from, to)
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+
 		// AskPlugin, not Ask: entry was resolved to a specific owning
 		// plugin above, and must not silently accept another installed
 		// plugin's answer to the same event type (ut-docs#189 review).
 		resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(r.Context(), entry.PluginID, "export.requested.ask", exportRequestPayload{
-			From: from, To: to, EntryKey: entry.Key,
+			From: from, To: to, EntryKey: entry.Key, Sales: sales,
 		})
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
