@@ -364,6 +364,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// A fresh grant can change what a subscribed plugin answers (e.g.
+		// events:receive turning cached declines into real overrides) —
+		// drop cached ".ask" answers (ut-docs#222 review finding).
+		plugins.SharedBus(d.Db).BumpGeneration()
 
 		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
@@ -397,6 +401,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Revoking must take effect on the NEXT recompute, as it did
+		// pre-cache: Ask skips permission-denied subscribers, but only a
+		// generation bump makes the cache re-ask (ut-docs#222 review finding).
+		plugins.SharedBus(d.Db).BumpGeneration()
 
 		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)

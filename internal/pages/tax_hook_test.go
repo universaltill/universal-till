@@ -3,6 +3,7 @@ package pages
 import (
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -16,6 +17,10 @@ func TestAskTaxRateBP_NoSubscribers(t *testing.T) {
 	db := openPagesTestDB(t)
 	defer db.Close()
 	seedForPages(t, db)
+
+	// The bus is a process-wide singleton: drop any subscription another
+	// test in this package leaked, or "no subscribers" isn't what we test.
+	plugins.SharedBus(db).ResetSubscribers()
 
 	asker := &pluginTaxRateAsker{db: db}
 	rate, ok := asker.AskTaxRateBP(pos.BasketLine{

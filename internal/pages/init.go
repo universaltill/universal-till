@@ -220,6 +220,11 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		if overrides, err := data.NewTranslationRepo(dp.Db).ListOverrides(c); err == nil {
 			i18n.SetShopOverrides(overrides)
 		}
+		// The replica drift loop / cloud directives can rewrite
+		// plugin_settings rows (sync_admin ApplyAdmin) without a plugin
+		// reload — cached ".ask" answers must not survive that
+		// (ut-docs#222 review finding).
+		plugins.SharedBus(dp.Db).BumpGeneration()
 	}
 	StartSyncPull(ctx, dp, rederiveSettings)
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain

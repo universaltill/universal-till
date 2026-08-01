@@ -34,6 +34,7 @@ type EventBus struct {
 	mu          sync.RWMutex
 	subscribers map[string][]EventSubscriber // event_type -> subscribers
 	eventModes  map[string]EventDispatchMode // event_type -> dispatch mode
+	generation  uint64                       // bumped whenever the subscriber set changes
 }
 
 // SetDB rebinds the bus to a live database handle (see SharedBus).
@@ -177,6 +178,31 @@ func (eb *EventBus) ResetSubscribers() {
 		}
 	}
 	eb.subscribers = make(map[string][]EventSubscriber)
+	eb.generation++
+}
+
+// Generation identifies the current answer-relevant plugin state: it changes
+// whenever a plugin (un)subscribes, and whenever BumpGeneration reports an
+// out-of-band change. A caller caching answers from a blocking ".ask" hook
+// (see pluginTaxRateAsker) drops its cache the moment the generation moves.
+func (eb *EventBus) Generation() uint64 {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return eb.generation
+}
+
+// BumpGeneration invalidates cached ".ask" answers without touching the
+// subscriber set. Call it after any mutation that can change what a
+// subscribed plugin would answer for the same payload even though nothing
+// (re)subscribed: a plugin_settings write (both shipped tax plugins read a
+// setting via the settings_get host fn inside their ask handler) or a
+// permission grant/revoke (Ask skips permission-denied subscribers).
+// Mutations that go through Manager.Reload don't need it — ResetSubscribers
+// already bumps.
+func (eb *EventBus) BumpGeneration() {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	eb.generation++
 }
 
 // SetEventMode configures the dispatch mode for an event type
@@ -236,6 +262,7 @@ func (eb *EventBus) subscribe(ctx context.Context, pluginID string, eventTypes [
 	for _, eventType := range eventTypes {
 		eb.subscribers[eventType] = append(eb.subscribers[eventType], subscriber)
 	}
+	eb.generation++
 
 	return ch, nil
 }
@@ -433,4 +460,5 @@ func (eb *EventBus) Unsubscribe(pluginID string) {
 		}
 		eb.subscribers[eventType] = filtered
 	}
+	eb.generation++
 }
