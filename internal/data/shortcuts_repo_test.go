@@ -68,3 +68,44 @@ func TestLoadButtons_FallsBackToCatalogImage(t *testing.T) {
 		t.Fatalf("expected no image for Croissant, got %q", got)
 	}
 }
+
+// TestLoadButtons_CarriesItemCategoryID pins that each loaded button carries
+// its item's category_id — the sale-screen grid needs this to group tiles
+// under their category. An item with no category must come back with an
+// empty CategoryID, not error or a synthetic value.
+func TestLoadButtons_CarriesItemCategoryID(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	ex := func(q string, args ...any) {
+		if _, err := d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+
+	ex(`INSERT INTO categories (id, name) VALUES ('cat-drinks','Drinks')`)
+	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit, category_id) VALUES ('item-a','SKU-A','Latte',320,1,0,'each','cat-drinks')`)
+	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('BTN-A','item-a','Latte',1)`)
+
+	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-b','SKU-B','Loose Sweet',10,1,0,'each')`)
+	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('BTN-B','item-b','Loose Sweet',2)`)
+
+	repo := data.NewShortcutsRepo(d.DB)
+	btns, err := repo.LoadButtons(ctx)
+	if err != nil {
+		t.Fatalf("LoadButtons: %v", err)
+	}
+	byLabel := map[string]data.ShortcutButton{}
+	for _, b := range btns {
+		byLabel[b.Label] = b
+	}
+	if got := byLabel["Latte"].CategoryID; got != "cat-drinks" {
+		t.Fatalf("expected CategoryID cat-drinks for Latte, got %q", got)
+	}
+	if got := byLabel["Loose Sweet"].CategoryID; got != "" {
+		t.Fatalf("expected empty CategoryID for an uncategorized item, got %q", got)
+	}
+}

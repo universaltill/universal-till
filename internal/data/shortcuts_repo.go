@@ -18,11 +18,12 @@ func NewShortcutsRepo(db *sql.DB) *ShortcutsRepo {
 var shortcutsObs = newRepoObservability("shortcuts")
 
 type ShortcutButton struct {
-	Label    string
-	Barcode  string
-	ItemID   string
-	ImageURL string
-	Price    int64 // item base price in minor units, for display on the tile
+	Label      string
+	Barcode    string
+	ItemID     string
+	ImageURL   string
+	Price      int64  // item base price in minor units, for display on the tile
+	CategoryID string // the item's category, empty when uncategorized
 }
 
 func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, error) {
@@ -39,7 +40,7 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sb.label, sb.barcode, sb.item_id,
        COALESCE(sb.image_path, (SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1)),
-       COALESCE(i.base_price, 0)
+       COALESCE(i.base_price, 0), COALESCE(i.category_id, '')
 FROM shortcut_buttons sb
 LEFT JOIN items i ON i.id = sb.item_id
 ORDER BY sb.sort_order, sb.label`)
@@ -51,7 +52,7 @@ ORDER BY sb.sort_order, sb.label`)
 	for rows.Next() {
 		var b ShortcutButton
 		var img sql.NullString
-		if err := rows.Scan(&b.Label, &b.Barcode, &b.ItemID, &img, &b.Price); err != nil {
+		if err := rows.Scan(&b.Label, &b.Barcode, &b.ItemID, &img, &b.Price, &b.CategoryID); err != nil {
 			err = shortcutsObs.wrap("load_buttons", err)
 			return nil, err
 		}

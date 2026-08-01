@@ -484,6 +484,7 @@
   "plugins.type_label": "Tür:",
   "products.empty": "Henüz ürün yok. Tasarımcı'dan bazıları ekleyin.",
   "products.title": "Ürünler",
+  "products.uncategorized": "Kategorisiz",
   "receipt.auto_reset": "60 sn içinde otomatik sıfırlanır...",
   "receipt.change": "Para üstü",
   "receipt.legal.plugin_label": "Yasal uyarı (%s v%s)",

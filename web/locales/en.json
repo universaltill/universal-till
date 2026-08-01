@@ -484,6 +484,7 @@
   "plugins.type_label": "Type:",
   "products.empty": "No products yet. Add some in Designer.",
   "products.title": "Products",
+  "products.uncategorized": "Uncategorized",
   "receipt.auto_reset": "Auto-reset in 60s...",
   "receipt.change": "Change",
   "receipt.legal.plugin_label": "Legal notice (%s v%s)",

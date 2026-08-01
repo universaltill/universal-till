@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"html/template"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	pos "github.com/universaltill/universal-till/internal/pos"
 	uiassets "github.com/universaltill/universal-till/web"
@@ -24,6 +27,7 @@ type Button struct {
 	ImageURL     string `json:"imageUrl,omitempty"`
 	Price        int64  `json:"price,omitempty"` // minor units, display only
 	HasModifiers bool   `json:"hasModifiers,omitempty"`
+	CategoryID   string `json:"categoryId,omitempty"` // the item's category, empty when uncategorized
 }
 
 // ButtonVM is the view-model passed to templates.
@@ -39,31 +43,181 @@ type ButtonVM struct {
 func ToVM(b []Button) []ButtonVM {
 	out := make([]ButtonVM, 0, len(b))
 	for _, x := range b {
-		out = append(out, ButtonVM{
-			Label:        x.Label,
-			Code:         x.Code,
-			ItemID:       x.ItemID,
-			ImageURL:     x.ImageURL,
-			Price:        x.Price,
-			HasModifiers: x.HasModifiers,
-		})
+		out = append(out, toButtonVM(x))
 	}
 	return out
 }
 
+func toButtonVM(x Button) ButtonVM {
+	return ButtonVM{
+		Label:        x.Label,
+		Code:         x.Code,
+		ItemID:       x.ItemID,
+		ImageURL:     x.ImageURL,
+		Price:        x.Price,
+		HasModifiers: x.HasModifiers,
+	}
+}
+
+// CategoryGroup is one node of the nested, color-coded sale-screen category
+// tree — a category's own buttons plus its (already-pruned) subcategories.
+// The synthetic "uncategorized" bucket (buttons whose item has no category,
+// or whose category_id no longer resolves) has an empty ID and no Children;
+// callers/templates tell it apart from a real category by ID == "".
+type CategoryGroup struct {
+	ID       string
+	Name     string
+	Color    string
+	Buttons  []ButtonVM
+	Children []*CategoryGroup
+}
+
+var hexColorRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// categoryPalette is a fixed set of readable, distinct accent colors used
+// to auto-color-code a category that has no explicit color set — chosen so
+// every till gets a color-coded grid out of the box, no admin configuration
+// required, and the same category always lands on the same swatch.
+var categoryPalette = []string{
+	"#2563EB", "#DC2626", "#059669", "#D97706",
+	"#7C3AED", "#DB2777", "#0891B2", "#65A30D",
+}
+
+// uncategorizedColor is the fixed neutral swatch for the synthetic
+// "uncategorized" bucket — deliberately outside categoryPalette so it never
+// visually collides with (and is never mistaken for) a real category.
+const uncategorizedColor = "#64748B"
+
+// resolveCategoryColor returns a category's explicit color if it's a valid
+// #RRGGBB hex value, else a deterministic per-ID color from categoryPalette
+// so the grid is color-coded even before any admin ever sets a color.
+func resolveCategoryColor(c data.CategoryNode) string {
+	if hexColorRE.MatchString(c.Color) {
+		return c.Color
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(c.ID))
+	return categoryPalette[h.Sum32()%uint32(len(categoryPalette))]
+}
+
+// BuildCategoryGroups nests buttons under their item's category (following
+// each category's ParentID to build the tree cats itself doesn't carry
+// nesting for) — "deep category trees, not a flat product list." Branches
+// with no buttons anywhere in their subtree are pruned so an unused
+// imported category never shows as an empty header on the till. Buttons
+// with no category, or a category_id that no longer resolves, land in a
+// trailing synthetic bucket (ID == ""), included only when non-empty.
+func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode) []*CategoryGroup {
+	byID := make(map[string]*CategoryGroup, len(cats))
+	nodeByID := make(map[string]data.CategoryNode, len(cats))
+	for _, c := range cats {
+		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c)}
+		nodeByID[c.ID] = c
+	}
+
+	var roots []*CategoryGroup
+	for _, c := range cats {
+		g := byID[c.ID]
+		if c.ParentID != "" && c.ParentID != c.ID {
+			// A category whose ParentID chain loops back to itself (a
+			// malformed import/edit) must never be attached as a child of
+			// its own descendant: since it would then only be reachable
+			// from within its own cycle, never from a real root, every
+			// button in it would silently vanish from the grid instead of
+			// just failing to nest as deep as configured. Treat it as a
+			// root instead — buttons stay visible, the cycle is broken.
+			if parent, ok := byID[c.ParentID]; ok && !isCategoryAncestor(c.ID, c.ParentID, nodeByID) {
+				parent.Children = append(parent.Children, g)
+				continue
+			}
+		}
+		roots = append(roots, g)
+	}
+
+	var uncategorized []ButtonVM
+	for _, b := range buttons {
+		g, ok := byID[b.CategoryID]
+		if b.CategoryID == "" || !ok {
+			uncategorized = append(uncategorized, toButtonVM(b))
+			continue
+		}
+		g.Buttons = append(g.Buttons, toButtonVM(b))
+	}
+
+	kept := roots[:0]
+	for _, g := range roots {
+		if pruneEmptyCategoryGroup(g) {
+			kept = append(kept, g)
+		}
+	}
+	roots = kept
+
+	if len(uncategorized) > 0 {
+		roots = append(roots, &CategoryGroup{Color: uncategorizedColor, Buttons: uncategorized})
+	}
+	return roots
+}
+
+// isCategoryAncestor reports whether id is an ancestor of candidateID,
+// walking candidateID's ParentID chain upward. A local seen-set bounds the
+// walk even if the data has a cycle not involving id itself, so this
+// always terminates instead of looping on already-malformed input.
+func isCategoryAncestor(id, candidateID string, nodes map[string]data.CategoryNode) bool {
+	seen := map[string]bool{}
+	cur := candidateID
+	for cur != "" {
+		if cur == id {
+			return true
+		}
+		if seen[cur] {
+			return false
+		}
+		seen[cur] = true
+		n, ok := nodes[cur]
+		if !ok {
+			return false
+		}
+		cur = n.ParentID
+	}
+	return false
+}
+
+// pruneEmptyCategoryGroup drops child branches with no buttons anywhere in
+// their subtree and reports whether g itself still has any left.
+func pruneEmptyCategoryGroup(g *CategoryGroup) bool {
+	kept := g.Children[:0]
+	hasAny := len(g.Buttons) > 0
+	for _, c := range g.Children {
+		if pruneEmptyCategoryGroup(c) {
+			kept = append(kept, c)
+			hasAny = true
+		}
+	}
+	g.Children = kept
+	return hasAny
+}
+
 // ButtonStore persists shortcut buttons in the shortcut_buttons table via repo.
 type ButtonStore struct {
-	repo    *data.ShortcutsRepo
-	posRepo *data.POSRepo
-	modRepo *data.ModifierRepo
+	repo        *data.ShortcutsRepo
+	posRepo     *data.POSRepo
+	modRepo     *data.ModifierRepo
+	catalogRepo *data.CatalogRepo
 }
 
 func NewButtonStore(db *sql.DB) *ButtonStore {
 	return &ButtonStore{
-		repo:    data.NewShortcutsRepo(db),
-		posRepo: data.NewPOSRepo(db),
-		modRepo: data.NewModifierRepo(db),
+		repo:        data.NewShortcutsRepo(db),
+		posRepo:     data.NewPOSRepo(db),
+		modRepo:     data.NewModifierRepo(db),
+		catalogRepo: data.NewCatalogRepo(db),
 	}
+}
+
+// LoadCategories returns the flat category list the sale-screen grid nests
+// buttons under (see BuildCategoryGroups).
+func (s *ButtonStore) LoadCategories(ctx context.Context) ([]data.CategoryNode, error) {
+	return s.catalogRepo.ListCategories(ctx)
 }
 
 type SearchResult struct {
@@ -132,6 +286,7 @@ func (s *ButtonStore) Load() ([]Button, error) {
 			ImageURL:     b.ImageURL,
 			Price:        b.Price,
 			HasModifiers: hasMods[b.ItemID],
+			CategoryID:   b.CategoryID,
 		})
 	}
 	return out, nil
@@ -216,8 +371,16 @@ type ButtonsHTTP struct {
 
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	btns, _ := h.Store.Load()
+	cats, err := h.Store.LoadCategories(r.Context())
+	if err != nil {
+		// Not fatal to the render — every button still shows, just
+		// ungrouped (BuildCategoryGroups buckets them as uncategorized)
+		// — but worth a log line: a till stuck like this permanently
+		// loses category grouping/coloring with no visible sign why.
+		logging.L().Errorf("buttons list: load categories: %v", err)
+	}
 	_ = h.View.Render(w, "buttons", map[string]any{
-		"Buttons": ToVM(btns),
+		"Groups": BuildCategoryGroups(btns, cats),
 	})
 }
 
@@ -343,4 +506,3 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.Bas
 	}
 	return line, true
 }
-
