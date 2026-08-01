@@ -471,6 +471,72 @@ func TestEventBus_Ask(t *testing.T) {
 	}
 }
 
+// TestEventBus_AskPlugin_DoesNotAcceptAnswerFromOtherSubscriber is the
+// regression for the bug an independent review found in ut-docs#189: a
+// caller that already resolved WHICH installed plugin should answer (e.g.
+// by entries[].key) must not silently accept a different plugin's answer
+// to the same event type. Ask() broadcasts to the first answering
+// subscriber; AskPlugin() must not.
+func TestEventBus_AskPlugin_DoesNotAcceptAnswerFromOtherSubscriber(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+	ctx := context.Background()
+
+	for _, id := range []string{"plugin-right", "plugin-wrong"} {
+		manifest := &Manifest{
+			ID: id, Name: id, Version: "1.0.0", Entrypoint: "./test",
+			Hooks:       []ManifestHook{{Event: "export.requested.ask", Action: "export"}},
+			Permissions: []string{"events:receive"},
+		}
+		if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+			t.Fatalf("persist manifest %s: %v", id, err)
+		}
+		if err := GrantPermission(ctx, db, manifest.ID, "events:receive"); err != nil {
+			t.Fatalf("grant permission %s: %v", id, err)
+		}
+	}
+
+	bus := NewEventBus(db)
+	bus.SetEventMode("export.requested.ask", Blocking)
+
+	// "wrong" subscribes first and always answers — if AskPlugin ever
+	// broadcasts like Ask does, this is the answer that would leak through.
+	if _, err := bus.SubscribeWithHandler(ctx, "plugin-wrong", []string{"export.requested.ask"},
+		func(ctx context.Context, event Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"ok":true,"message":"answered by wrong plugin"}`), nil
+		}); err != nil {
+		t.Fatalf("subscribe wrong: %v", err)
+	}
+
+	// "right" is the plugin the caller actually resolved (e.g. via
+	// entries[].key → owning pluginID) but hasn't answered yet in this
+	// sub-test — AskPlugin targeting it must get nothing, NOT wrong's answer.
+	if resp, ok, err := bus.AskPlugin(ctx, "plugin-right", "export.requested.ask", map[string]any{}); err != nil || ok || resp != nil {
+		t.Fatalf("expected no answer (plugin-right has no handler yet), got resp=%s ok=%v err=%v", resp, ok, err)
+	}
+
+	rightAnswer := json.RawMessage(`{"ok":true,"message":"answered by right plugin"}`)
+	if _, err := bus.SubscribeWithHandler(ctx, "plugin-right", []string{"export.requested.ask"},
+		func(ctx context.Context, event Event) (json.RawMessage, error) {
+			return rightAnswer, nil
+		}); err != nil {
+		t.Fatalf("subscribe right: %v", err)
+	}
+
+	resp, ok, err := bus.AskPlugin(ctx, "plugin-right", "export.requested.ask", map[string]any{})
+	if err != nil || !ok || string(resp) != string(rightAnswer) {
+		t.Fatalf("expected right plugin's answer %s, got resp=%s ok=%v err=%v", rightAnswer, resp, ok, err)
+	}
+
+	// Ask() (unrestricted) would return whichever subscriber answers
+	// first — confirms this is genuinely a broadcast-vs-targeted
+	// difference, not a coincidence of subscription order.
+	if resp, ok, err := bus.Ask(ctx, "export.requested.ask", map[string]any{}); err != nil || !ok || string(resp) != `{"ok":true,"message":"answered by wrong plugin"}` {
+		t.Fatalf("sanity check failed: expected broadcast Ask to hit the first (wrong) subscriber, got resp=%s ok=%v err=%v", resp, ok, err)
+	}
+}
+
 func TestEventBus_Unsubscribe(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

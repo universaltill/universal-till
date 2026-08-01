@@ -17,7 +17,7 @@ import (
 )
 
 // exportRequestPayload is the event payload a subscribing export/report
-// plugin receives on "export.requested.ask" (EventBus.Ask) — mirrors
+// plugin receives on "export.requested.ask" (EventBus.AskPlugin) — mirrors
 // tax_hook.go's taxRateAskPayload convention for a value-returning hook.
 type exportRequestPayload struct {
 	From     string `json:"from"`
@@ -141,11 +141,15 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		respond(w, http.StatusOK, true, fmt.Sprintf("removed %d obsolete products", n))
 	})
 
-	// Dispatch a date-ranged export/report to an installed export- or
-	// report-type plugin (ut-docs#189). The engine's event dispatch is
+	// Dispatch a date-ranged export/report to a SPECIFIC installed export-
+	// or report-type entry (ut-docs#189). The engine's event dispatch is
 	// already generic across canonical_type (proven by tax.rate.ask); this
 	// is the host-side trigger for export/report entries specifically —
-	// mirrors tax_hook.go's use of plugins.SharedBus/bus.Ask.
+	// mirrors tax_hook.go's use of plugins.SharedBus, but resolves the
+	// entry to its owning plugin first and asks that plugin only
+	// (AskPlugin, not a broadcast Ask) — a different installed plugin
+	// subscribed to the same event name must never be able to answer on
+	// another plugin's behalf.
 	mux.HandleFunc("POST /api/data/export", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			respond(w, http.StatusForbidden, false, "manager only")
@@ -158,12 +162,18 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, false, "from and to are required (YYYY-MM-DD)")
 			return
 		}
-		if _, err := time.Parse("2006-01-02", from); err != nil {
+		fromDate, err := time.Parse("2006-01-02", from)
+		if err != nil {
 			respond(w, http.StatusBadRequest, false, "from must be YYYY-MM-DD")
 			return
 		}
-		if _, err := time.Parse("2006-01-02", to); err != nil {
+		toDate, err := time.Parse("2006-01-02", to)
+		if err != nil {
 			respond(w, http.StatusBadRequest, false, "to must be YYYY-MM-DD")
+			return
+		}
+		if fromDate.After(toDate) {
+			respond(w, http.StatusBadRequest, false, "from must not be after to")
 			return
 		}
 
@@ -196,11 +206,14 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		case len(entries) == 1:
 			entry = entries[0]
 		default:
-			respond(w, http.StatusBadRequest, false, "multiple export plugins installed — specify entry_key")
+			respond(w, http.StatusBadRequest, false, "multiple export entries installed — specify entry_key")
 			return
 		}
 
-		resp, ok, err := plugins.SharedBus(d.Db).Ask(r.Context(), "export.requested.ask", exportRequestPayload{
+		// AskPlugin, not Ask: entry was resolved to a specific owning
+		// plugin above, and must not silently accept another installed
+		// plugin's answer to the same event type (ut-docs#189 review).
+		resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(r.Context(), entry.PluginID, "export.requested.ask", exportRequestPayload{
 			From: from, To: to, EntryKey: entry.Key,
 		})
 		if err != nil {
@@ -218,7 +231,11 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if !parsed.OK {
-			respond(w, http.StatusBadRequest, false, parsed.Error)
+			errMsg := parsed.Error
+			if errMsg == "" {
+				errMsg = "export plugin declined without a reason"
+			}
+			respond(w, http.StatusBadRequest, false, errMsg)
 			return
 		}
 		if parsed.ContentB64 != "" {
@@ -236,11 +253,18 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 				ctype = "application/octet-stream"
 			}
 			w.Header().Set("Content-Type", ctype)
-			w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+			// mime.FormatMediaType quotes/escapes filename safely — a raw
+			// `"`+filename+`"` would let a crafted filename close the
+			// quoted attribute early (ut-docs#189 review finding).
+			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(filename)}))
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(raw)
 			return
 		}
-		respond(w, http.StatusOK, true, parsed.Message)
+		msg := parsed.Message
+		if msg == "" {
+			msg = "export plugin accepted the request"
+		}
+		respond(w, http.StatusOK, true, msg)
 	})
 }

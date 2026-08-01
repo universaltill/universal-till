@@ -346,11 +346,15 @@
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(body).toString()
     }).then(function (r) {
-      var ct = r.headers.get('Content-Type') || '';
-      if (ct.indexOf('application/json') === -1) {
-        // A file: trigger a browser download.
-        var cd = r.headers.get('Content-Disposition') || '';
-        var m = /filename="?([^";]+)"?/.exec(cd);
+      // A file response always carries Content-Disposition: attachment
+      // (set only on the file branch of POST /api/data/export); the JSON
+      // status response never does. Content-Type alone isn't a safe
+      // signal here — a plugin's file can legitimately be
+      // application/json (e.g. a JSON export format), which would
+      // otherwise be misread as the status envelope and never downloaded.
+      var cd = r.headers.get('Content-Disposition') || '';
+      if (cd.indexOf('attachment') !== -1) {
+        var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
         var filename = m ? m[1] : 'export.bin';
         return r.blob().then(function (blob) {
           btn.disabled = false; msg.textContent = '✓ downloaded ' + filename;

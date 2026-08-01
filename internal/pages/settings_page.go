@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -73,7 +74,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			feeRows = append(feeRows, fr)
 		}
-		exportEntries, _ := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
+		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
+		if exportEntriesErr != nil {
+			// Non-fatal: the settings page still renders without the
+			// export section, matching a genuinely-empty install — but a
+			// real DB error here shouldn't look identical to that in the
+			// logs (ut-docs#189 review).
+			logging.L().Errorf("list export entries: %v", exportEntriesErr)
+		}
 		data := map[string]any{
 			"title":         "Settings",
 			"theme":         st.Theme,
