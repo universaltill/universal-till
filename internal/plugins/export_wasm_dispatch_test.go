@@ -74,8 +74,25 @@ func TestExportDispatch_RealWasmModule(t *testing.T) {
 	// TestEventBus_Ask's pattern in ipc_test.go).
 	bus.SetEventMode("export.requested.ask", Blocking)
 
+	// Real sale/tax/payment data (ut-docs#221) — same wire shape
+	// data.ExportSaleRow marshals to (internal/data/export_repo.go) — sent
+	// as this ask's payload. The guest decodes it and echoes a count/sum in
+	// its response message, proving real data reaches a real compiled WASM
+	// module (not just that the round-trip doesn't error).
 	resp, ok, err := bus.Ask(ctx, "export.requested.ask", map[string]any{
 		"from": "2026-01-01", "to": "2026-01-31", "entry_key": "csv",
+		"sales": []map[string]any{
+			{
+				"receipt_no": "R1", "created_at": "2026-01-15T10:00:00Z", "total": 1200,
+				"tax_lines": []map[string]any{{"rate_bp": 2000, "net": 1000, "tax": 200}},
+				"payments":  []map[string]any{{"method": "cash", "amount": 1200}},
+			},
+			{
+				"receipt_no": "R2", "created_at": "2026-01-16T10:00:00Z", "total": 800,
+				"tax_lines": []map[string]any{{"rate_bp": 0, "net": 800, "tax": 0}},
+				"payments":  []map[string]any{{"method": "card", "amount": 800}},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("ask: %v", err)
@@ -88,6 +105,7 @@ func TestExportDispatch_RealWasmModule(t *testing.T) {
 		OK         bool   `json:"ok"`
 		Filename   string `json:"filename"`
 		ContentB64 string `json:"content_b64"`
+		Message    string `json:"message"`
 	}
 	if err := json.Unmarshal(resp, &parsed); err != nil {
 		t.Fatalf("parse response %s: %v", resp, err)
@@ -101,5 +119,11 @@ func TestExportDispatch_RealWasmModule(t *testing.T) {
 	}
 	if string(content) != "id,total\n1,9.99\n" {
 		t.Fatalf("content = %q, want the guest's fixed CSV bytes", content)
+	}
+	// count=2 (both sales rows), sum=2000 (1200+800) -- proves the guest
+	// actually parsed the "sales" field it received, not just round-tripped
+	// an unopened payload.
+	if parsed.Message != "count=2 sum=2000" {
+		t.Fatalf("message = %q, want the guest's real count/sum of the sales it received", parsed.Message)
 	}
 }
