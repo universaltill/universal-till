@@ -33,6 +33,7 @@
       <h1>{{ T "auth.enter_pin" }}</h1>
       <form method="post" action="/api/auth/login" x-data="{ pin: '' }" @submit="if (!pin) $event.preventDefault()">
         <input type="hidden" name="pin" :value="pin" />
+        {{ if eq .next "kiosk" }}<input type="hidden" name="next" value="kiosk" />{{ end }}
         <div class="pin-dots" aria-live="polite">
           <template x-for="i in 8"><span class="pin-dot" :class="{ filled: i <= pin.length }"></span></template>
         </div>
@@ -45,11 +46,36 @@
           <button type="submit" class="btn primary pin-key" :disabled="pin.length < 4">{{ T "auth.sign_in" }}</button>
         </div>
       </form>
+      {{ if eq .next "kiosk" }}
+      <a class="btn secondary" href="/self-order">← {{ T "selforder.back" }}</a>
+      {{ end }}
       {{ end }}
 
       <footer class="login-footer">
         <span>{{ T "auth.attribution" }}</span>
       </footer>
     </main>
+    {{ if eq .next "kiosk" }}
+    <script>
+      // A stray tap into the kiosk exit's PIN pad must not strand an
+      // unattended self-order terminal indefinitely — this page has no
+      // exit/idle mechanism of its own otherwise (ut-docs#208 review
+      // finding). Same client-side-only pattern as the self-order screens
+      // themselves (no server session exists here to revoke).
+      (function () {
+        var secs = {{ .kioskIdleResetSecs }};
+        if (!secs || secs <= 0) return;
+        var timer;
+        function reset() {
+          clearTimeout(timer);
+          timer = setTimeout(function () { window.location.href = '/self-order'; }, secs * 1000);
+        }
+        ['pointerdown', 'keydown', 'touchstart'].forEach(function (evt) {
+          document.addEventListener(evt, reset, { passive: true });
+        });
+        reset();
+      })();
+    </script>
+    {{ end }}
   </body>
 </html>

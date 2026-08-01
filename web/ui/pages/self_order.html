@@ -17,6 +17,7 @@
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
   </head>
   <body class="selforder-screen{{ if kiosk }} kiosk{{ end }}" data-kiosk-idle-reset="{{ .idleResetSecs }}">
+    <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
     <main>
       <img class="selforder-logo" src="/public/assets/logo/ut-logo.svg" alt="" />
       {{ if .shopName }}<p class="selforder-shop">{{ .shopName }}</p>{{ end }}

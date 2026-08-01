@@ -548,6 +548,7 @@
   "selforder.confirm.receipt": "Sipariş numarası",
   "selforder.confirm.title": "Sipariş alındı!",
   "selforder.decrease": "Miktarı azalt",
+  "selforder.exit": "Kasa ayarlarına çık (PIN gerekli)",
   "selforder.increase": "Miktarı artır",
   "selforder.no_items": "Ürün bulunamadı.",
   "selforder.remove": "Kaldır",

@@ -50,6 +50,7 @@
              autocomplete="off"
              hx-get="/api/self-order/search" hx-trigger="input changed delay:300ms, search"
              hx-target="#selforder-grid" hx-swap="outerHTML" hx-include="this">
+      <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
     </header>
 
     {{ if .Categories }}
