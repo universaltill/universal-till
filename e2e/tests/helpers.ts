@@ -10,3 +10,17 @@ export function watchConsole(page: Page): () => void {
   });
   return () => expect(errors, 'page produced console errors').toEqual([]);
 }
+
+// The OSK mode is a SERVER-side setting shared by every spec on this server
+// — callers must restore 'auto' in an afterEach even when the test body
+// fails, or a failed run leaks e.g. osk=on into unrelated later specs.
+export async function setOskMode(page: Page, mode: string) {
+  await page.goto('/settings');
+  const osk = page.locator('form[hx-post="/api/settings/osk"] select');
+  await osk.selectOption(mode);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/settings/osk')),
+    osk.locator('..').locator('button[type=submit]').click(),
+  ]);
+  await page.waitForEvent('load');
+}

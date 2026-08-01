@@ -86,3 +86,37 @@ func TestDesigner_RendersSeededButtons(t *testing.T) {
 		t.Fatalf("expected the seeded button label rendered in the grid, got %s", rec.Body.String())
 	}
 }
+
+// The on-screen keyboard (web/public/osk.js) types by calling setRangeText
+// then dispatchEvent(new Event('input')) — a tapped virtual key never fires
+// a native keydown/keyup, only a synthetic "input". A search box trigger
+// scoped to "keyup" alone (as this one was before ut-docs#196) never fires
+// for OSK-driven typing, so product search silently returns nothing on
+// touch tills while working fine on a desktop keyboard. Guard: the trigger
+// must include "input", the event OSK actually dispatches.
+func TestDesigner_SearchBoxTriggerFiresOnSyntheticInputEvent(t *testing.T) {
+	dp := newDesignerTestDeps(t)
+	mux := http.NewServeMux()
+	registerDesigner(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/designer", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /designer: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	idx := strings.Index(body, `id="search"`)
+	if idx == -1 {
+		t.Fatalf("search box missing from designer page: %s", body)
+	}
+	tagStart := strings.LastIndex(body[:idx], "<input")
+	if tagStart == -1 {
+		t.Fatalf("no <input tag containing id=\"search\": %s", body)
+	}
+	tagEnd := strings.Index(body[idx:], ">")
+	tag := body[tagStart : idx+tagEnd]
+	if !strings.Contains(tag, `hx-trigger="input`) {
+		t.Fatalf("search box hx-trigger must fire on the \"input\" event (OSK-compatible), got: %s", tag)
+	}
+}
