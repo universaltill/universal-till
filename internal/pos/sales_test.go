@@ -869,3 +869,60 @@ VALUES ('existing', '000000001', 'completed', 'sale', 'GBP', 500, 0, 0, 500, 0, 
 		t.Fatalf("unexpected receipts: %v", receipts)
 	}
 }
+
+// TestCompleteSale_ClampsUnknownOrderTypeToDineIn covers the independent
+// review finding on ut-docs#181: internal/pages/sync_sales.go's journal
+// replay passes a remote peer's OrderType straight through, unvalidated,
+// unlike the live checkout's own form-parsing which only ever produces ""
+// or OrderTypeTakeaway. CompleteSale is the one choke point every caller
+// (cashier, kiosk, sync replay) goes through, so it must clamp there.
+func TestCompleteSale_ClampsUnknownOrderTypeToDineIn(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	line := SaleLineInput{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"}
+	payment := PaymentInput{MethodID: "cash", Amount: 500}
+
+	saleID, err := CompleteSale(ctx, db, SaleInput{
+		SaleType:  "sale",
+		Currency:  "GBP",
+		OrderType: "'; DROP TABLE sales; --",
+		Lines:     []SaleLineInput{line},
+		Payments:  []PaymentInput{payment},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSale (garbage order type): %v", err)
+	}
+	repo := data.NewPOSRepo(db)
+	detail, ok, err := repo.GetSaleDetailByID(ctx, saleID)
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetailByID: ok=%v err=%v", ok, err)
+	}
+	if detail.OrderType != "" {
+		t.Fatalf("unrecognized OrderType was NOT clamped to dine-in: got %q", detail.OrderType)
+	}
+
+	saleID2, err := CompleteSale(ctx, db, SaleInput{
+		SaleType:  "sale",
+		Currency:  "GBP",
+		OrderType: OrderTypeTakeaway,
+		Lines:     []SaleLineInput{line},
+		Payments:  []PaymentInput{payment},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSale (takeaway): %v", err)
+	}
+	detail2, ok, err := repo.GetSaleDetailByID(ctx, saleID2)
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetailByID: ok=%v err=%v", ok, err)
+	}
+	if detail2.OrderType != OrderTypeTakeaway {
+		t.Fatalf("legitimate OrderTypeTakeaway was clamped away: got %q", detail2.OrderType)
+	}
+}
