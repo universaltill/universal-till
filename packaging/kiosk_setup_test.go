@@ -207,7 +207,7 @@ func TestPostinstallStagesKioskFirstBootOnPiAppliancesOnly(t *testing.T) {
 	if !anyLineContains(code, `"Raspberry Pi"`, "/proc/device-tree/model") {
 		t.Error("postinstall.sh: Raspberry Pi detection is gone")
 	}
-	if !anyLineContains(unit, "ExecStart=/opt/unitill/bin/unitill-kiosk-setup --auto") {
+	if !anyLineContains(unit, "ExecStart=/usr/lib/unitill/unitill-kiosk-setup --auto") {
 		t.Error("postinstall.sh: first-boot unit no longer runs unitill-kiosk-setup --auto")
 	}
 	// The three review-mandated gates (2026-07-31): fresh installs only,
@@ -227,7 +227,7 @@ func TestPostinstallStagesKioskFirstBootOnPiAppliancesOnly(t *testing.T) {
 		t.Error("first-boot unit lost Restart=on-failure — an offline first boot would never retry within the boot")
 	}
 	// Orphan guard: the unit must not fire against a removed package.
-	if !anyLineContains(unit, "ConditionPathExists=/opt/unitill/bin/unitill-kiosk-setup") {
+	if !anyLineContains(unit, "ConditionPathExists=/usr/lib/unitill/unitill-kiosk-setup") {
 		t.Error("first-boot unit lost its binary-exists condition")
 	}
 	// Dev boxes need the documented opt-out.
@@ -296,4 +296,199 @@ func TestStaleX11KioskPathStaysRetired(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("..", "deploy", "raspberry-pi")); !os.IsNotExist(err) {
 		t.Error("deploy/raspberry-pi is back — the retired X11 kiosk path must not return")
 	}
+}
+
+// TestKioskHelpersStayOffPosWritableTree guards ut-docs#255: ut-docs#151 made
+// the whole /opt/unitill tree pos-writable (`chown -R pos:pos /opt/unitill`
+// in postinstall.sh, required for selfupdate.Supported()). unitill-kiosk-setup
+// is root-executed (unitill-kiosk-firstboot.service has no User=, and the
+// manual `sudo unitill-kiosk-setup` flow is root too) — if its install/
+// reference path is anywhere under /opt/unitill, the pos service user (runs
+// the network-facing HTTP server + in-process third-party WASM plugins) can
+// plant a script root will execute. unitill-kiosk-launch runs as the kiosk
+// user, not root (only unitill-kiosk.service's ExecStartPre=+chvt is root),
+// but the same pos-writable exposure still lets pos hand the kiosk session
+// an arbitrary script, so it moves too. Asserted as a property
+// (not-under-/opt/unitill), not just equality to one literal new path, so a
+// future edit landing either script back under /opt/unitill in a different
+// exact string still fails this.
+func TestKioskHelpersStayOffPosWritableTree(t *testing.T) {
+	assertNotUnderOptUnitill := func(t *testing.T, label, path string) {
+		t.Helper()
+		if path == "" {
+			t.Errorf("%s: path not found", label)
+			return
+		}
+		if strings.Contains(path, "/opt/unitill") {
+			t.Errorf("%s resolves under /opt/unitill (%s) — that tree is pos-writable (postinstall.sh's chown -R pos:pos /opt/unitill, ut-docs#151), so a root-executed helper must never live there (ut-docs#255)", label, path)
+		}
+	}
+
+	// nfpm package contents (.goreleaser.yaml): where the .deb installs the
+	// two scripts.
+	goreleaser, err := os.ReadFile(filepath.Join("..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatalf("read .goreleaser.yaml: %v", err)
+	}
+	setupDst := nfpmDst(string(goreleaser), "unitill-kiosk-setup.sh")
+	launchDst := nfpmDst(string(goreleaser), "unitill-kiosk-launch.sh")
+	assertNotUnderOptUnitill(t, ".goreleaser.yaml nfpm dst for unitill-kiosk-setup", setupDst)
+	assertNotUnderOptUnitill(t, ".goreleaser.yaml nfpm dst for unitill-kiosk-launch.sh", launchDst)
+	// The two scripts are read from the same directory at runtime
+	// (unitill-kiosk-setup.sh's `install -D "$(dirname "$0")/unitill-kiosk-launch.sh" ...`)
+	// — nfpm shipping them to different directories would make setup fail to
+	// find its sibling (independent review finding, ut-docs#255).
+	if setupDst != "" && launchDst != "" && filepath.Dir(setupDst) != filepath.Dir(launchDst) {
+		t.Errorf("nfpm ships unitill-kiosk-setup to %s but unitill-kiosk-launch.sh to %s — unitill-kiosk-setup.sh looks for its sibling launch script via $(dirname \"$0\"), so they must share a directory", setupDst, launchDst)
+	}
+
+	// postinstall.sh's first-boot unit: what it ExecStarts/ConditionPathExists as root.
+	post := readScript(t, "packaging/scripts/postinstall.sh")
+	unit := heredocBlock(t, post, "/etc/systemd/system/unitill-kiosk-firstboot.service")
+	execStart := lineValue(unit, "ExecStart=")
+	assertNotUnderOptUnitill(t, "unitill-kiosk-firstboot.service ExecStart", execStart)
+	condPath := lineContaining(unit, "ConditionPathExists=", "unitill-kiosk-setup")
+	assertNotUnderOptUnitill(t, "unitill-kiosk-firstboot.service ConditionPathExists(unitill-kiosk-setup)", condPath)
+
+	// unitill-kiosk-setup.sh: where it self-installs the launch script, and
+	// what the kiosk.service unit it writes ExecStarts as the kiosk user.
+	setup := readScript(t, "packaging/linux/unitill-kiosk-setup.sh")
+	setupCode := codeLines(setup)
+	installDst := ""
+	for _, l := range setupCode {
+		if strings.HasPrefix(l, "install -D") && strings.Contains(l, "unitill-kiosk-launch") {
+			fields := strings.Fields(l)
+			installDst = fields[len(fields)-1]
+		}
+	}
+	assertNotUnderOptUnitill(t, "unitill-kiosk-setup.sh install -D destination for unitill-kiosk-launch", installDst)
+
+	kioskUnit := heredocBlock(t, setup, "/etc/systemd/system/unitill-kiosk.service")
+	execStartCmd := lineValue(kioskUnit, "ExecStart=")
+	assertNotUnderOptUnitill(t, "unitill-kiosk.service ExecStart", execStartCmd)
+	// The unit ExecStarts the exact path unitill-kiosk-setup.sh just
+	// installed the launch script to — a mismatch here means cage starts
+	// against a path nothing was ever copied to (independent review
+	// finding, ut-docs#255: verified live with a deliberately mismatched
+	// pair, and the individual not-under-/opt/unitill checks above stayed
+	// green against it).
+	execStartFields := strings.Fields(execStartCmd)
+	execStartTarget := ""
+	if len(execStartFields) > 0 {
+		execStartTarget = execStartFields[len(execStartFields)-1]
+	}
+	if installDst != "" && execStartTarget != "" && installDst != execStartTarget {
+		t.Errorf("unitill-kiosk-setup.sh installs the launch script to %s but unitill-kiosk.service ExecStarts %s", installDst, execStartTarget)
+	}
+}
+
+// TestPostinstallMigratesStaleKioskUnitsFromBeforeUsrLibMove guards the
+// upgrade path for ut-docs#255. unitill-kiosk-firstboot.service and
+// unitill-kiosk.service are NOT dpkg-managed (both written by heredoc at
+// install/setup time, not shipped as package `contents:`), so moving the
+// scripts' *package* install path alone (the fix above) does nothing for a
+// box that installed/set up its kiosk before this package version — its
+// on-disk unit files still say /opt/unitill/bin, and dpkg upgrading the
+// package to the new nfpm dst does not touch them. Concretely, on such a
+// box: the pos->root path this ticket exists to close still exists (the
+// stale firstboot unit's ConditionPathExists/ExecStart still point at
+// /opt/unitill/bin/unitill-kiosk-setup, which chown -R pos:pos /opt/unitill
+// still makes pos-writable every invocation), and a box whose kiosk was
+// already set up loses its kiosk launcher entirely once nfpm stops shipping
+// anything at the old /opt/unitill/bin/unitill-kiosk-launch.sh path
+// (independent review finding, ut-docs#255). This asserts postinstall.sh
+// migrates both stale units in place, unconditionally (every invocation,
+// not gated behind the fresh-install-only is_pi_appliance check) — same
+// "runs on every invocation, not just fresh installs" property the existing
+// chown assertion above already requires of itself.
+func TestPostinstallMigratesStaleKioskUnitsFromBeforeUsrLibMove(t *testing.T) {
+	post := readScript(t, "packaging/scripts/postinstall.sh")
+	code := codeLines(post)
+
+	if !anyLineContains(code, "unitill-kiosk-firstboot.service", "sed", "/opt/unitill/bin/unitill-kiosk-setup", "/usr/lib/unitill/unitill-kiosk-setup") {
+		t.Error("postinstall.sh: no in-place rewrite of a stale unitill-kiosk-firstboot.service's /opt/unitill/bin/unitill-kiosk-setup reference to /usr/lib/unitill/unitill-kiosk-setup — a box that installed before ut-docs#255 keeps the pos->root path open after upgrading")
+	}
+	if !anyLineContains(code, "unitill-kiosk.service", "sed", "/opt/unitill/bin/unitill-kiosk-launch", "/usr/lib/unitill/unitill-kiosk-launch") {
+		t.Error("postinstall.sh: no in-place rewrite of a stale unitill-kiosk.service's /opt/unitill/bin/unitill-kiosk-launch reference to /usr/lib/unitill/unitill-kiosk-launch")
+	}
+	if !anyLineContains(code, "cp", "/opt/unitill/bin/unitill-kiosk-launch", "/usr/lib/unitill/unitill-kiosk-launch") {
+		t.Error("postinstall.sh: repoints unitill-kiosk.service at /usr/lib/unitill/unitill-kiosk-launch without ever copying the already-installed launch script there — an already-kiosked Pi's launcher would reference a path nothing put a file at")
+	}
+
+	// Must run on every invocation, not just fresh installs — same property
+	// the chown -R pos:pos /opt/unitill assertion above already enforces on
+	// itself, and for the same reason: an upgrade must self-heal.
+	migrationRawIdx := strings.Index(post, "/opt/unitill/bin/unitill-kiosk-setup")
+	// The first mention of this literal in the (fixed) script is inside a
+	// comment above the chown line explaining why the split exists; skip
+	// past any comment lines to find the first CODE line that mentions it.
+	migrationCodeIdx := -1
+	for _, l := range code {
+		if strings.Contains(l, "/opt/unitill/bin/unitill-kiosk-setup") {
+			migrationCodeIdx = strings.Index(post, l)
+			break
+		}
+	}
+	if migrationRawIdx < 0 || migrationCodeIdx < 0 {
+		t.Fatal("postinstall.sh: no migration code line references /opt/unitill/bin/unitill-kiosk-setup at all")
+	}
+	piGateRawIdx := strings.Index(post, `if is_pi_appliance "${1:-}" "${2:-}"; then`)
+	if piGateRawIdx < 0 {
+		t.Fatal("postinstall.sh: is_pi_appliance gate is gone — test needs updating")
+	}
+	if migrationCodeIdx > piGateRawIdx {
+		t.Error("postinstall.sh: the stale-unit migration is positioned after the is_pi_appliance (fresh-install-only) gate — it must run unconditionally, before any conditional, on every invocation, or upgrades on non-Pi-appliance boxes (any plain Debian .deb install) never get migrated")
+	}
+}
+
+// nfpmDst returns the `dst:` value of the nfpm (`.deb`) contents entry whose
+// `src:` ends with the given filename. Tolerates the `- src: ...` list-item
+// form. Scoped to start after the `nfpms:` key — the same two scripts also
+// appear (under different, irrelevant dst paths) in the plain tar.gz
+// `archives:` section earlier in the file, which has no root/pos split and
+// must not be matched here.
+func nfpmDst(yaml, srcSuffix string) string {
+	if idx := strings.Index(yaml, "\nnfpms:"); idx >= 0 {
+		yaml = yaml[idx:]
+	}
+	lines := strings.Split(yaml, "\n")
+	for i, l := range lines {
+		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "-"))
+		trimmed = strings.TrimSpace(trimmed)
+		if strings.HasPrefix(trimmed, "src:") && strings.HasSuffix(trimmed, srcSuffix) {
+			for _, next := range lines[i+1:] {
+				nt := strings.TrimSpace(next)
+				if strings.HasPrefix(nt, "dst:") {
+					return strings.TrimSpace(strings.TrimPrefix(nt, "dst:"))
+				}
+				if strings.HasPrefix(nt, "src:") || strings.HasPrefix(strings.TrimPrefix(nt, "- "), "src:") {
+					break
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// lineValue returns the value after the first code line starting with
+// prefix (e.g. "ExecStart=/usr/lib/unitill/x" for prefix "ExecStart=").
+func lineValue(lines []string, prefix string) string {
+	for _, l := range lines {
+		if strings.HasPrefix(l, prefix) {
+			return strings.TrimPrefix(l, prefix)
+		}
+	}
+	return ""
+}
+
+// lineContaining returns the value after prefix on the first code line that
+// starts with prefix AND contains sub — for picking one specific
+// ConditionPathExists= line out of several on the same unit.
+func lineContaining(lines []string, prefix, sub string) string {
+	for _, l := range lines {
+		if strings.HasPrefix(l, prefix) && strings.Contains(l, sub) {
+			return strings.TrimPrefix(l, prefix)
+		}
+	}
+	return ""
 }

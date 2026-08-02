@@ -33,8 +33,38 @@ chown -R pos:pos /var/lib/unitill
 # covered this with the same chown; do it here too. Runs on every
 # invocation (fresh install AND upgrade): dpkg re-extracts package files as
 # root-owned on every upgrade, so this must reassert every time, not just
-# once.
+# once. The root-executed kiosk helpers (unitill-kiosk-setup,
+# unitill-kiosk-launch) deliberately live outside this tree, at
+# /usr/lib/unitill — never pos-writable (ut-docs#255), or the pos service
+# user could plant a script root re-executes via unitill-kiosk-firstboot.service.
 chown -R pos:pos /opt/unitill
+
+# ut-docs#255 migration: unitill-kiosk-firstboot.service and
+# unitill-kiosk.service are NOT dpkg-managed (both written by heredoc, one
+# by this script and one by unitill-kiosk-setup.sh, not shipped as package
+# `contents:`), so a box that installed or ran kiosk setup before this fix
+# still has one or both referencing the old pos-writable /opt/unitill/bin
+# path — dpkg moving the *package's* copy of the scripts to /usr/lib/unitill
+# does nothing to those already-written unit files. Without this, the
+# pos->root path this ticket exists to close survives upgrading on every
+# box that installed before it. Runs on every invocation (fresh install AND
+# upgrade), before the fresh-install-only gate below — same reasoning as
+# the chown above. Idempotent: every check is a no-op once migrated.
+if [ -f /opt/unitill/bin/unitill-kiosk-launch ] && [ ! -e /usr/lib/unitill/unitill-kiosk-launch ]; then
+    # Carry the already-installed launch script to its new home first —
+    # it's self-copied by unitill-kiosk-setup.sh's own `install -D`, not
+    # dpkg-owned, so the new package version doesn't put a copy at the new
+    # path on its own. Without this, repointing unitill-kiosk.service below
+    # would reference a path nothing has put a file at yet.
+    mkdir -p /usr/lib/unitill
+    cp -p /opt/unitill/bin/unitill-kiosk-launch /usr/lib/unitill/unitill-kiosk-launch
+fi
+if [ -f /etc/systemd/system/unitill-kiosk-firstboot.service ] && grep -q '/opt/unitill/bin/unitill-kiosk-setup' /etc/systemd/system/unitill-kiosk-firstboot.service; then
+    sed -i 's#/opt/unitill/bin/unitill-kiosk-setup#/usr/lib/unitill/unitill-kiosk-setup#g' /etc/systemd/system/unitill-kiosk-firstboot.service
+fi
+if [ -f /etc/systemd/system/unitill-kiosk.service ] && grep -q '/opt/unitill/bin/unitill-kiosk-launch' /etc/systemd/system/unitill-kiosk.service; then
+    sed -i 's#/opt/unitill/bin/unitill-kiosk-launch#/usr/lib/unitill/unitill-kiosk-launch#g' /etc/systemd/system/unitill-kiosk.service
+fi
 
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
@@ -76,14 +106,14 @@ Wants=network-online.target
 After=network-online.target unitill-pos.service
 ConditionPathExists=!/etc/unitill/no-kiosk
 ConditionPathExists=!/var/lib/unitill/kiosk-setup-done
-ConditionPathExists=/opt/unitill/bin/unitill-kiosk-setup
+ConditionPathExists=/usr/lib/unitill/unitill-kiosk-setup
 
 [Service]
 Type=oneshot
 # The setup writes /var/lib/unitill/kiosk-setup-done itself, only after
 # verifying the kiosk service actually came up — a failed run leaves no
 # marker, stays enabled, and retries (offline first boot, apt lock, ...).
-ExecStart=/opt/unitill/bin/unitill-kiosk-setup --auto
+ExecStart=/usr/lib/unitill/unitill-kiosk-setup --auto
 ExecStartPost=/usr/bin/systemctl disable unitill-kiosk-firstboot.service
 Restart=on-failure
 RestartSec=60
