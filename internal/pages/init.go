@@ -238,6 +238,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartSyncPull(ctx, dp, rederiveSettings)
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	StartEODScheduler(ctx, dp)                      // background Z-report (docs: G30)
+	StartAutoUpdateScheduler(ctx, dp)               // background unattended update (ut-docs#79)
 	registerInvoices(mux, dp)                       // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
