@@ -36,7 +36,12 @@ type SaleInput struct {
 	// PaymentInput.TipAmount (metadata, excluded from the sale total), a
 	// service charge is revenue the customer owes and DOES participate in
 	// netPayments' payment-sufficiency check.
-	ServiceCharge          money.Money
+	ServiceCharge money.Money
+	// OrderType is "" (dine-in/standard) or pos.OrderTypeTakeaway --
+	// whatever the checkout's basket already carries (Service.OrderType);
+	// persisted so a completed sale's receipt/journal/kitchen ticket can
+	// show it after the fact.
+	OrderType              string
 	Lines                  []SaleLineInput
 	Payments               []PaymentInput
 	OriginalSaleID         string // for returns; creates sale_links entry when set
@@ -240,7 +245,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
-			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), serviceCharge.Minor(), in.Note, now, tenderType, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
+			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), serviceCharge.Minor(), in.Note, now, tenderType, in.OrderType, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}

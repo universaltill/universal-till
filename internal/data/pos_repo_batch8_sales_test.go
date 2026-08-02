@@ -39,7 +39,7 @@ VALUES ('cash', 'Cash', 'cash', 1)`)
 
 	// subtotal 1000, discount 100, tax 180, total 1080 — exact minor units.
 	if err := repo.InsertSale(ctx, nil, saleID, receiptNo, "sale", "", "", "", "GBP",
-		1000, 100, 180, 1080, 0, "batch8 note", createdAt, "cash", true, "queued", 2, "", ""); err != nil {
+		1000, 100, 180, 1080, 0, "batch8 note", createdAt, "cash", "", true, "queued", 2, "", ""); err != nil {
 		t.Fatalf("InsertSale: %v", err)
 	}
 	// Insert line 2 first: ListSaleLineSnapshots/GetSaleDetail must order by line_no,
@@ -194,7 +194,7 @@ func TestPOSRepo_InsertSale_ReadBackRoundtrip(t *testing.T) {
 		t.Fatalf("GetSaleDetailByID: ok=%v err=%v", ok, err)
 	}
 	if detail.ID != "sale-rt" || detail.ReceiptNo != "000000001" || detail.Status != "completed" ||
-		detail.SaleType != "sale" || detail.TenderType != "cash" || !detail.Offline ||
+		detail.SaleType != "sale" || detail.TenderType != "cash" || detail.OrderType != "" || !detail.Offline ||
 		detail.SyncStatus != "queued" || detail.Currency != "GBP" ||
 		detail.Subtotal != 1000 || detail.DiscountTotal != 100 || detail.TaxTotal != 180 ||
 		detail.Total != 1080 || detail.CreatedAt != created || detail.CashierID != "" {
@@ -221,7 +221,7 @@ func TestPOSRepo_InsertSale_ReadBackRoundtrip(t *testing.T) {
 	// Duplicate receipt_no violates the sales UNIQUE constraint — checkout
 	// relies on this to make receipt reuse impossible.
 	err = repo.InsertSale(ctx, nil, "sale-dup", "000000001", "sale", "", "", "", "GBP",
-		1, 0, 0, 1, 0, "", created, "cash", false, "queued", 0, "", "")
+		1, 0, 0, 1, 0, "", created, "cash", "", false, "queued", 0, "", "")
 	if err == nil {
 		t.Fatal("InsertSale with duplicate receipt_no must fail")
 	}
@@ -231,6 +231,45 @@ func TestPOSRepo_InsertSale_ReadBackRoundtrip(t *testing.T) {
 		"Ghost", "", "", 1, 100, 0, 0, 0, 100, 100)
 	if err == nil {
 		t.Fatal("InsertSaleLine with no item_id and no variant_id must fail")
+	}
+}
+
+// TestPOSRepo_InsertSale_OrderTypeRoundtrip covers ut-docs#181: order_type
+// was tracked in-memory during checkout but discarded at sale completion,
+// so a past sale's receipt/journal/kitchen ticket could never show whether
+// it was dine-in or takeaway. Confirms it now survives InsertSale ->
+// GetSaleDetail intact.
+func TestPOSRepo_InsertSale_OrderTypeRoundtrip(t *testing.T) {
+	d := openBatch8DB(t, "order-type.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	mustExec(t, d, `INSERT OR IGNORE INTO items (id, sku, name, base_price, is_active)
+VALUES ('itm-ot', 'OT-SKU', 'Order Type Item', 500, 1)`)
+
+	created := "2026-08-02T09:00:00Z"
+	if err := repo.InsertSale(ctx, nil, "sale-ot", "000000099", "sale", "", "", "", "GBP",
+		500, 0, 0, 500, 0, "", created, "cash", "takeaway", false, "synced", 0, "", ""); err != nil {
+		t.Fatalf("InsertSale: %v", err)
+	}
+	if err := repo.InsertSaleLine(ctx, nil, "sale-ot-l1", "sale-ot", 1, "itm-ot", "",
+		"Order Type Item", "OT-SKU", "", 1, 500, 0, 0, 0, 500, 500); err != nil {
+		t.Fatalf("InsertSaleLine: %v", err)
+	}
+
+	detail, ok, err := repo.GetSaleDetail(ctx, "000000099")
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetail: ok=%v err=%v", ok, err)
+	}
+	if detail.OrderType != "takeaway" {
+		t.Fatalf("GetSaleDetail.OrderType = %q, want %q", detail.OrderType, "takeaway")
+	}
+
+	byID, ok, err := repo.GetSaleDetailByID(ctx, "sale-ot")
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetailByID: ok=%v err=%v", ok, err)
+	}
+	if byID.OrderType != "takeaway" {
+		t.Fatalf("GetSaleDetailByID.OrderType = %q, want %q", byID.OrderType, "takeaway")
 	}
 }
 
