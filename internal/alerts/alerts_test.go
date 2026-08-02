@@ -287,6 +287,51 @@ func TestPushDigest_NothingRunningOutIsNotPushed(t *testing.T) {
 	}
 }
 
+// runningOutCount's own comment says it "mirrors the inventory page's
+// model" (internal/pages/inventory_page.go's stockLevelsForDisplay) — once
+// that model became lead-time-aware (universaltill/ut-docs#85), this must
+// stay in sync or the daily digest silently under-counts items the
+// inventory page is already warning about.
+func TestRunningOutCount_LeadTimeAware(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "leadtime-digest.db")
+	database, err := db.Open(f)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	d := database.DB
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v (%s)", err, q)
+		}
+	}
+	// Same fixture shape as inventory_prediction_test.go's
+	// TestInventoryLeadTimeAwareWarnAndReorder: rate 2/day, 16 on hand →
+	// DaysLeft=8, a 10-day lead time. The flat "<=7" check would miss this
+	// (8 > 7); the inventory page's own effective-warn-days logic warns
+	// on it (8 <= 10).
+	mustExec(`INSERT INTO items (id, name, sku, base_price, is_active, lead_time_days) VALUES ('it-slow','Slow Ship','SHIP',100,1,10)`)
+	mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-1','Shop floor')`)
+	mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-1','it-slow','loc-1',16)`)
+	for i := 0; i < 14; i++ {
+		saleID := "s-" + string(rune('a'+i))
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+		          VALUES (?, ?, 'completed', 'sale', 400, 0, 400, datetime('now', ?))`,
+			saleID, "R-"+saleID, "-"+string(rune('0'+i%9))+" days")
+		mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		          VALUES (?, ?, 1, 'it-slow', 'Slow Ship', 4, 100, 0, 0, 0, 400, 400)`, "l-"+saleID, saleID)
+	}
+
+	n, err := runningOutCount(context.Background(), d)
+	if err != nil {
+		t.Fatalf("runningOutCount: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("runningOutCount = %d, want 1 (the item's own 10-day lead time makes DaysLeft=8 count as running out, same as /inventory)", n)
+	}
+}
+
 func TestPushDigest_PropagatesPushNotifyError(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "notifyerr.db")
 	database, err := db.Open(f)

@@ -51,13 +51,16 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		if lastYear.Total > 0 {
 			yoyPct = int((curPeriod.Total - lastYear.Total) * 100 / lastYear.Total)
 		}
-		// Low-stock heads-up (same 28-day model as the inventory page): a
-		// chip on the reports header so the owner sees it without digging.
+		// Low-stock heads-up (same model as the inventory page, via
+		// LowStockItem.EffectiveWarnDays — this chip links straight to
+		// /inventory, so it must never disagree with what that page itself
+		// warns about): a chip on the reports header so the owner sees it
+		// without digging.
 		runningOut := 0
 		if rates, err := repo.ItemDailySellRates(r.Context(), 28); err == nil && len(rates) > 0 {
 			if lvls, err := repo.ListStockLevels(r.Context()); err == nil {
 				for _, l := range lvls {
-					if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty/rate <= 7 {
+					if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty/rate <= float64(l.EffectiveWarnDays()) {
 						runningOut++
 					}
 				}

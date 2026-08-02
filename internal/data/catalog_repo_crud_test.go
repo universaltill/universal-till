@@ -610,6 +610,34 @@ func TestUpdateItem(t *testing.T) {
 	}
 }
 
+// Lead time (days to receive a reorder, universaltill/ut-docs#85) feeds the
+// inventory page's warn/reorder-suggestion thresholds — same shape as the
+// existing cost-price round trip.
+func TestItemLeadTimeDays_RoundTrip(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
+
+	// Unset (the migration's default) reads back as 0.
+	if got, err := repo.ItemLeadTimeDays(ctx, "i1"); err != nil || got != 0 {
+		t.Fatalf("unset lead time = %d %v, want 0 nil", got, err)
+	}
+
+	if err := repo.SetItemLeadTimeDays(ctx, "i1", 10); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got, err := repo.ItemLeadTimeDays(ctx, "i1"); err != nil || got != 10 {
+		t.Fatalf("lead time roundtrip = %d %v, want 10 nil", got, err)
+	}
+
+	if err := repo.SetItemLeadTimeDays(ctx, "", 5); err == nil {
+		t.Fatal("expected an error for an empty id")
+	}
+}
+
 func TestUpdateVariant(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()

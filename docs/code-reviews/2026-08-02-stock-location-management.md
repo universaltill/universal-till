@@ -1,7 +1,7 @@
 # Code review: Stock-location management (create/rename/deactivate)
 
 **Date:** 2026-08-02
-**Scope:** `internal/db/migrations/028_stock_location_active.sql`,
+**Scope:** `internal/db/migrations/029_stock_location_active.sql`,
 `internal/data/pos_repo.go`, `internal/data/pos_repo_stock_location_test.go`,
 `internal/pages/locations_page.go`, `internal/pages/locations_page_test.go`,
 `internal/pages/init.go`, `internal/pages/menu_page.go`,
@@ -21,8 +21,10 @@ Back-office CRUD for `stock_locations`, manager/admin-gated, mirroring
 `internal/pages/users_page.go`'s `requireManager` + soft-disable-with-guard
 pattern:
 
-- Migration 028 adds `is_active` to `stock_locations` (027 was latest;
-  append-only respected, 001-027 untouched).
+- Migration 029 adds `is_active` to `stock_locations` (028 was latest by
+  the time this landed on `main` — a sibling PR claimed 028 for an
+  unrelated `items.lead_time_days` column first; renumbered post-review
+  during the stale-PR merge sweep, append-only respected throughout).
 - `POSRepo`: `CreateStockLocation`, `RenameStockLocation`,
   `SetStockLocationActive`, `StockLocationInUse` (refuses deactivating a
   location referenced by `inventory`/`stock_movements`/`registers`),
@@ -147,7 +149,7 @@ Findings:
   none found); `StockLocationInUse`'s three `EXISTS` clauses are the
   complete, correct set of FKs to `stock_locations` (verified by grepping
   every migration for `location_id`); no SQL injection (every new method
-  read individually, all parameterized); migration 028's `DEFAULT 1`
+  read individually, all parameterized); migration 029's `DEFAULT 1`
   correctly backfills existing rows; the two recurring bug classes this
   pipeline watches for (missing `os.MkdirAll`, cwd-relative path instead
   of `paths.Data`) don't apply — this change does no file I/O at all; no

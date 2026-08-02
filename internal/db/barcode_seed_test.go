@@ -114,7 +114,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	// Rewinding the ledger doesn't undo migration 024's, 025's, 026's or 027's
 	// physical DDL (ALTER TABLE ADD COLUMN isn't idempotent, unlike 023's
 	// UPDATE) -- without this, replaying them on reopen fails with
-	// "duplicate column"/"already exists". Drop all four so the simulated pre-023 state is
+	// "duplicate column"/"already exists". Drop all five so the simulated pre-023 state is
 	// physically accurate, same as a real till that never had them
 	// (ut-docs#72).
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN service_charge_amount`); err != nil {
@@ -131,7 +131,11 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE pending_pairings`); err != nil {
 		t.Fatalf("rewind pending_pairings table: %v", err)
 	}
-	// Migration 028 adds another column -- same problem again (ut-docs#49).
+	// Same for migration 028's lead_time_days column (universaltill/ut-docs#85).
+	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN lead_time_days`); err != nil {
+		t.Fatalf("rewind lead_time_days column: %v", err)
+	}
+	// Migration 029 adds another column -- same problem again (ut-docs#49).
 	if _, err := d.DB.Exec(`ALTER TABLE stock_locations DROP COLUMN is_active`); err != nil {
 		t.Fatalf("rewind stock_locations.is_active column: %v", err)
 	}

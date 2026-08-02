@@ -972,6 +972,8 @@
   "reports.wd_sat": "Saturday",
   "catalog.cost_price": "Cost price (what you pay)",
   "catalog.cost_price_hint": "Used for the margin report",
+  "catalog.lead_time_days": "Lead time (days)",
+  "catalog.lead_time_days_hint": "Days to receive a reorder — used to time the low-stock warning and suggested order quantity",
   "reports.margins": "Margins",
   "reports.margins_hint": "Revenue minus cost, for items with a cost price set in the catalog.",
   "reports.margins_none": "Set cost prices in the catalog to see margins.",
