@@ -454,6 +454,72 @@ func TestEndOfDay_AggregatesSalesReturnsAndMethods(t *testing.T) {
 	}
 }
 
+func TestEndOfDayRange_AggregatesAcrossMultipleDaysInclusive(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", "2026-01-01T10:00:00Z", 220, 20)
+	seedLifecycleSale(t, dbx, "sale2", "R002", "sale", "completed", "2026-01-02T14:00:00Z", 110, 10)
+	seedLifecycleSale(t, dbx, "return1", "R003", "return", "completed", "2026-01-03T15:00:00Z", 55, 5)
+	// Outside the requested range on both ends — must not be included.
+	seedLifecycleSale(t, dbx, "before", "R000", "sale", "completed", "2025-12-31T23:00:00Z", 9999, 0)
+	seedLifecycleSale(t, dbx, "after", "R004", "sale", "completed", "2026-01-04T00:00:00Z", 9999, 0)
+
+	rep, err := dbx.repo.EndOfDayRange(ctx, "2026-01-01", "2026-01-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.From != "2026-01-01" || rep.To != "2026-01-03" {
+		t.Fatalf("expected From/To echoed back, got %q..%q", rep.From, rep.To)
+	}
+	if rep.Day != "" {
+		t.Fatalf("expected Day empty for a range report, got %q", rep.Day)
+	}
+	if rep.SalesCount != 2 {
+		t.Fatalf("expected 2 sales (day 1 + day 2, excluding day-3 return and out-of-range rows), got %d", rep.SalesCount)
+	}
+	if rep.Gross != 330 {
+		t.Fatalf("expected gross 220+110=330, got %d", rep.Gross)
+	}
+	if rep.RefundCount != 1 || rep.RefundTotal != 55 {
+		t.Fatalf("expected the day-3 return (inclusive upper bound) counted: 1 refund totalling 55, got count=%d total=%d", rep.RefundCount, rep.RefundTotal)
+	}
+	if rep.FirstReceipt != "R001" || rep.LastReceipt != "R003" {
+		t.Fatalf("expected receipt range R001..R003 (inclusive both ends), got %q..%q", rep.FirstReceipt, rep.LastReceipt)
+	}
+}
+
+func TestEndOfDayRange_SingleDayMatchesEndOfDay(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", "2026-01-01T10:00:00Z", 220, 20)
+
+	fromEndOfDay, err := dbx.repo.EndOfDay(ctx, "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromRange, err := dbx.repo.EndOfDayRange(ctx, "2026-01-01", "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromRange.SalesCount != fromEndOfDay.SalesCount || fromRange.Gross != fromEndOfDay.Gross {
+		t.Fatalf("expected a from==to range to aggregate identically to EndOfDay, got range=%+v day=%+v", fromRange, fromEndOfDay)
+	}
+}
+
+func TestEndOfDayRange_NoSalesReturnsZeroedReportWithoutError(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	rep, err := dbx.repo.EndOfDayRange(ctx, "2026-06-01", "2026-06-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.SalesCount != 0 || rep.Gross != 0 || len(rep.Methods) != 0 {
+		t.Fatalf("expected a zeroed report for an empty range, got %+v", rep)
+	}
+}
+
 func TestAuditActionSummary(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()

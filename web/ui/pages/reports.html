@@ -58,6 +58,17 @@
     </tbody>
   </table>
   {{ end }}
+  <h3 style="margin:1rem 0 .3rem">{{ T "reports.eod.range_title" }}</h3>
+  <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
+    <label>{{ T "reports.eod.range_from" }}
+      <input type="date" id="eod-range-from">
+    </label>
+    <label>{{ T "reports.eod.range_to" }}
+      <input type="date" id="eod-range-to">
+    </label>
+    <button class="btn secondary" id="eod-range-run-btn">{{ T "reports.eod.range_run" }}</button>
+    <span id="eod-range-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+  </div>
 </div>
 {{ end }}
 
@@ -255,4 +266,39 @@
     </div>
   </div>
 </div>
+<script>
+(function () {
+  var btn = document.getElementById('eod-range-run-btn');
+  if (!btn) return;
+  var msg = document.getElementById('eod-range-msg');
+  var from = document.getElementById('eod-range-from');
+  var to = document.getElementById('eod-range-to');
+  btn.addEventListener('click', function () {
+    if (!from.value || !to.value) { msg.textContent = '✗ ' + "{{ T "reports.eod.range_pick_dates" }}"; return; }
+    btn.disabled = true; msg.textContent = '⏳ ' + "{{ T "reports.eod.range_loading" }}";
+    fetch('/api/reports/eod/range', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ from: from.value, to: to.value }).toString()
+    }).then(function (r) {
+      var cd = r.headers.get('Content-Disposition') || '';
+      if (cd.indexOf('attachment') !== -1) {
+        var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
+        var filename = m ? m[1] : 'z-report.json';
+        return r.blob().then(function (blob) {
+          btn.disabled = false; msg.textContent = '✓ ' + "{{ T "reports.eod.range_downloaded" }}" + ' ' + filename;
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url; a.download = filename;
+          document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(url);
+        });
+      }
+      return r.text().then(function (t) {
+        btn.disabled = false; msg.textContent = '✗ ' + t;
+      });
+    }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+  });
+})();
+</script>
 {{ end }}
