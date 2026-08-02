@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -192,6 +193,74 @@ func TestPostEODPrint_NoPrinterConfiguredFailsGracefully(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 with no printer configured, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostEODRange_RequiresManager(t *testing.T) {
+	mux, _ := newEODAPITestMux(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/range", strings.NewReader("from=2026-01-01&to=2026-01-31"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+func TestPostEODRange_ValidatesFromTo(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newEODAPITestMux(t)
+
+	cases := []struct {
+		name, body string
+	}{
+		{"missing from", "to=2026-01-31"},
+		{"missing to", "from=2026-01-01"},
+		{"from after to", "from=2026-02-01&to=2026-01-01"},
+		// Malformed dates must be rejected outright, not silently reach the
+		// SQL BETWEEN as raw text (2026-08-02 review finding): an un-padded
+		// date matches nothing (silently reports zero sales for real days),
+		// and non-date garbage in `to` sorts after every real date and
+		// silently widens the range with no error.
+		{"unpadded from", "from=2026-1-1&to=2026-01-31"},
+		{"garbage to", "from=2026-01-01&to=not-a-date"},
+		{"garbage from", "from=not-a-date&to=2026-01-31"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/range", strings.NewReader(c.body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d: %s", c.name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestPostEODRange_DownloadsJSONReport(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newEODAPITestMux(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/range", strings.NewReader("from=2026-01-01&to=2026-01-31"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") || !strings.Contains(cd, "z-report-2026-01-01-to-2026-01-31.json") {
+		t.Fatalf("expected an attachment Content-Disposition naming the range, got %q", cd)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected application/json content type, got %q", ct)
+	}
+	var rep data.EODReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
+		t.Fatalf("expected valid JSON body: %v (%s)", err, rec.Body.String())
+	}
+	if rep.From != "2026-01-01" || rep.To != "2026-01-31" {
+		t.Fatalf("expected From/To echoed in the body, got %+v", rep)
 	}
 }
 
