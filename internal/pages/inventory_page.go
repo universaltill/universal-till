@@ -32,11 +32,11 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 	// days at the current rate". Best-effort — no history, no column.
 	rates, _ := posRepo.ItemDailySellRates(ctx, 28)
 
-	const warnDays = 7
-	// coverDays is the stock target the suggestion refills to: two weeks
-	// of sales at the current rate (a sensible default until per-item
-	// lead times exist).
-	const coverDays = 14
+	// coverBufferDays is the safety-stock buffer added on top of the
+	// effective warn window (LowStockItem.EffectiveWarnDays — the item's
+	// own lead time once set) to get the reorder-suggestion target — with
+	// no lead time set this reproduces today's exact 7+7=14-day default.
+	const coverBufferDays = 7
 	runningOut := 0
 	levels := make([]stockRow, 0, len(rawLevels))
 	for _, l := range rawLevels {
@@ -45,15 +45,17 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 			Low:          l.ReorderLevel > 0 && l.CurrentQty < float64(l.ReorderLevel),
 			DaysLeft:     -1,
 		}
+		effectiveWarnDays := l.EffectiveWarnDays()
+		effectiveCoverDays := effectiveWarnDays + coverBufferDays
 		if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty > 0 {
 			row.DaysLeft = int(l.CurrentQty / rate)
-			row.RunsOut = row.DaysLeft <= warnDays
+			row.RunsOut = row.DaysLeft <= effectiveWarnDays
 		} else if rate > 0 && l.CurrentQty <= 0 {
 			row.DaysLeft = 0
 			row.RunsOut = true
 		}
 		if rate := rates[l.ItemID]; row.RunsOut && rate > 0 {
-			if need := rate*coverDays - l.CurrentQty; need > 0 {
+			if need := rate*float64(effectiveCoverDays) - l.CurrentQty; need > 0 {
 				row.OrderQty = int(math.Ceil(need))
 			}
 		}

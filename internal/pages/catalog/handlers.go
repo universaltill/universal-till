@@ -104,6 +104,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					decimals := httpx.CurrencyByCode(d.CurrentState().Currency).Decimals
 					costMajor = strconv.FormatFloat(float64(cost)/math.Pow(10, float64(decimals)), 'f', decimals, 64)
 				}
+				leadTimeDays, _ := repo.ItemLeadTimeDays(r.Context(), itemID)
 				// ADR-0020: shows deactivated groups/options too (unlike the
 				// sale-time ListGroupsForItem) so a manager can reactivate one.
 				modGroups, _ := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
@@ -113,6 +114,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					"Variants":       variants,
 					"ItemBarcodes":   itemBCs,
 					"CostMajor":      costMajor,
+					"LeadTimeDays":   leadTimeDays,
 					"ModifierGroups": modGroups,
 				}
 			}
@@ -182,6 +184,33 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			minor = int64(math.Round(f * math.Pow(10, float64(decimals))))
 		}
 		if err := repo.SetItemCostPrice(r.Context(), itemID, minor); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
+
+	// Lead time (days to receive a reorder) — feeds the inventory page's
+	// per-item warn/reorder-suggestion thresholds (universaltill/ut-docs#85).
+	// Plain integer, no currency conversion (unlike cost price above).
+	mux.HandleFunc("POST /api/catalog/item-lead-time", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
+		raw := strings.TrimSpace(r.Form.Get("leadTimeDays"))
+		if itemID == "" {
+			http.Error(w, "item required", http.StatusBadRequest)
+			return
+		}
+		var days int
+		if raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 0 {
+				http.Error(w, "invalid lead time", http.StatusBadRequest)
+				return
+			}
+			days = n
+		}
+		if err := repo.SetItemLeadTimeDays(r.Context(), itemID, days); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -604,6 +604,28 @@ func (r *CatalogRepo) SetItemCostPrice(ctx context.Context, itemID string, costM
 	return err
 }
 
+// ItemLeadTimeDays returns the item's configured reorder lead time in days
+// (0 = unset) — the inventory page's warn/reorder-suggestion thresholds
+// fall back to their flat defaults when this is 0.
+func (r *CatalogRepo) ItemLeadTimeDays(ctx context.Context, itemID string) (int, error) {
+	var days int
+	err := r.db.QueryRowContext(ctx, `SELECT lead_time_days FROM items WHERE id = ?`, itemID).Scan(&days)
+	if err != nil {
+		return 0, err
+	}
+	return days, nil
+}
+
+// SetItemLeadTimeDays records how many days it takes to receive a reorder
+// for this item (universaltill/ut-docs#85).
+func (r *CatalogRepo) SetItemLeadTimeDays(ctx context.Context, itemID string, days int) error {
+	if itemID == "" {
+		return errors.New("id required")
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE items SET lead_time_days = ?, updated_at = datetime('now') WHERE id = ?`, days, itemID)
+	return err
+}
+
 func (r *CatalogRepo) UpdateItem(ctx context.Context, in catalogtypes.ItemInput) error {
 	if in.ID == "" {
 		return errors.New("id required")

@@ -296,6 +296,51 @@ func TestReportsPage_SeasonalCardRendersLunarBadgeAndCategoryRollup(t *testing.T
 	}
 }
 
+// The reports header's low-stock chip links straight to /inventory, so it
+// must never disagree with what that page itself warns about
+// (universaltill/ut-docs#85 — this duplicated flat-7-day check was found
+// still un-updated by an independent review after inventory_page.go and
+// alerts.go had already been made lead-time-aware). Same fixture shape as
+// inventory_prediction_test.go's TestInventoryLeadTimeAwareWarnAndReorder:
+// rate 2/day, 16 on hand → DaysLeft=8, a 10-day lead time — the flat
+// "<=7" check misses this (8 > 7); the shared EffectiveWarnDays doesn't
+// (8 <= 10).
+func TestReportsPage_LowStockChipMatchesInventoryPageLeadTime(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active,lead_time_days) VALUES('it-slow','SKU-ship','Slow Ship',100,1,10)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO stock_locations(id,name) VALUES('loc-1','Shop floor')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO inventory(id,item_id,location_id,quantity,updated_at) VALUES('inv-1','it-slow','loc-1',16,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 14; i++ {
+		saleID := fmt.Sprintf("s-%d", i)
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES(?,?,'completed','sale','GBP',400,0,0,400,datetime('now',?))`,
+			saleID, "R-"+saleID, fmt.Sprintf("-%d days", i%9)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES(?,?,1,'it-slow','Slow Ship',4,100,0,0,0,400,400)`,
+			saleID+"-l1", saleID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `⚠ 1 `) || !strings.Contains(body, "chip-warn") {
+		t.Fatalf("expected the reports header's low-stock chip to warn on exactly 1 item (DaysLeft=8 within its own 10-day lead time), got: %s", body)
+	}
+}
+
 func TestReportsPage_SeasonalCategoryRollupHiddenWhenOnlyUncategorized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)
