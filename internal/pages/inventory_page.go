@@ -32,12 +32,10 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 	// days at the current rate". Best-effort — no history, no column.
 	rates, _ := posRepo.ItemDailySellRates(ctx, 28)
 
-	// warnDays is the default warning window for an item with no lead time
-	// set. coverBufferDays is the safety-stock buffer added on top of the
-	// effective warn window (== the item's own lead time, once set) to get
-	// the reorder-suggestion target — with no lead time set this reproduces
-	// today's exact 7+7=14-day default.
-	const warnDays = 7
+	// coverBufferDays is the safety-stock buffer added on top of the
+	// effective warn window (LowStockItem.EffectiveWarnDays — the item's
+	// own lead time once set) to get the reorder-suggestion target — with
+	// no lead time set this reproduces today's exact 7+7=14-day default.
 	const coverBufferDays = 7
 	runningOut := 0
 	levels := make([]stockRow, 0, len(rawLevels))
@@ -47,14 +45,7 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 			Low:          l.ReorderLevel > 0 && l.CurrentQty < float64(l.ReorderLevel),
 			DaysLeft:     -1,
 		}
-		// A flat warn window regardless of how long restocking actually
-		// takes is a real bug: an item with a 10-day lead time warned at
-		// only 7 days out would still stock out before a reorder could
-		// arrive. Once a lead time is set, it replaces the flat default.
-		effectiveWarnDays := warnDays
-		if l.LeadTimeDays > 0 {
-			effectiveWarnDays = l.LeadTimeDays
-		}
+		effectiveWarnDays := l.EffectiveWarnDays()
 		effectiveCoverDays := effectiveWarnDays + coverBufferDays
 		if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty > 0 {
 			row.DaysLeft = int(l.CurrentQty / rate)

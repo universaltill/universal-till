@@ -45,7 +45,6 @@ func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) 
 // on-hand stock covers ≤ their effective warn window (their own lead time,
 // once set — otherwise the flat 7-day default) at the 28-day selling rate.
 func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
-	const warnDays = 7
 	repo := data.NewPOSRepo(db)
 	rates, err := repo.ItemDailySellRates(ctx, 28)
 	if err != nil || len(rates) == 0 {
@@ -57,11 +56,7 @@ func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
 	}
 	n := 0
 	for _, l := range levels {
-		effectiveWarnDays := warnDays
-		if l.LeadTimeDays > 0 {
-			effectiveWarnDays = l.LeadTimeDays
-		}
-		if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty/rate <= float64(effectiveWarnDays) {
+		if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty/rate <= float64(l.EffectiveWarnDays()) {
 			n++
 		}
 	}

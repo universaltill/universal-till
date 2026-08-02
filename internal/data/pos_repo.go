@@ -125,6 +125,23 @@ type LowStockItem struct {
 	LeadTimeDays int // days to receive a reorder; 0 = unset
 }
 
+// defaultWarnDays is the running-out threshold for an item with no lead
+// time configured.
+const defaultWarnDays = 7
+
+// EffectiveWarnDays is the days-of-stock-left threshold below which this
+// item counts as running out: its own lead time once set, otherwise
+// defaultWarnDays. The single source of truth for this threshold — the
+// inventory page, the reports header chip, and the daily low-stock digest
+// all call this rather than each keeping their own copy (universaltill/ut-docs#85
+// found two of the three had drifted out of sync before this existed).
+func (l LowStockItem) EffectiveWarnDays() int {
+	if l.LeadTimeDays > 0 {
+		return l.LeadTimeDays
+	}
+	return defaultWarnDays
+}
+
 // SearchActiveItems finds active items matching name/sku/barcode with optional pagination.
 func (r *POSRepo) SearchActiveItems(ctx context.Context, q string, offset, limit int) ([]catalogtypes.ItemInput, error) {
 	var err error
