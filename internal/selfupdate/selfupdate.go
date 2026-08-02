@@ -1,9 +1,12 @@
-// Package selfupdate applies an in-place update for archive (tar.gz) installs:
-// it downloads the latest release for this OS/arch, verifies its SHA-256
-// against the release checksums, swaps the binary + web/ assets (keeping a
-// backup for rollback), and re-execs. It is always triggered explicitly (never
-// silently) and refuses to run for packaged installs (.deb → apt) or Windows
-// (→ run the installer), where a native updater is the right path.
+// Package selfupdate applies an in-place update for any install whose tree is
+// writable by the running user: it downloads the latest release for this
+// OS/arch, verifies its SHA-256 against the release checksums, swaps the
+// binary + web/ assets (keeping a backup for rollback), and re-execs. It is
+// always triggered explicitly (never silently) and refuses to run on Windows
+// (→ run the installer) or for a non-writable install — e.g. a .deb install
+// whose postinstall left the tree root-owned — where a reinstall is the right
+// path instead. A .deb install IS self-updatable once its tree is
+// service-user-owned (ut-docs#151's `chown -R pos:pos /opt/unitill`).
 //
 // Data lives in the stable data dir (internal/paths), separate from the install
 // dir, so a swap never touches the shop's database.
@@ -52,7 +55,7 @@ var (
 )
 
 // ErrUnsupported means this install type updates via a native mechanism.
-var ErrUnsupported = errors.New("in-app update is only for archive (.tar.gz) installs; use the installer (Windows) or apt (.deb)")
+var ErrUnsupported = errors.New("in-app update isn't available for this install; use the installer (Windows) or reinstall (this install's directory isn't self-update-writable)")
 
 // Supported reports whether Apply can run for this build/install.
 func Supported() bool {

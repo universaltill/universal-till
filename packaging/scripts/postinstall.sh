@@ -23,10 +23,18 @@ if [ -d "$ITEMS" ] && [ ! -L "$ITEMS" ]; then
 fi
 ln -sfn /var/lib/unitill/items "$ITEMS"
 
-chown -R pos:pos /opt/unitill/data /var/lib/unitill
-# The till writes AI reference photos next to items too; keep the whole
-# assets dir writable for the service user.
-chown -R pos:pos /opt/unitill/web/public/assets 2>/dev/null || true
+chown -R pos:pos /var/lib/unitill
+
+# Own the WHOLE install tree as the pos service user, not just data/assets.
+# selfupdate.Supported() requires both /opt/unitill/bin (the binary's dir)
+# and /opt/unitill (unitill-pos.service's WorkingDirectory, where Apply()
+# swaps web/) writable by pos, or a fresh .deb install has no in-app update
+# path at all (ut-docs#151) — the retired deploy/raspberry-pi/install.sh
+# covered this with the same chown; do it here too. Runs on every
+# invocation (fresh install AND upgrade): dpkg re-extracts package files as
+# root-owned on every upgrade, so this must reassert every time, not just
+# once.
+chown -R pos:pos /opt/unitill
 
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload

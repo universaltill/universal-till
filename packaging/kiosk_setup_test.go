@@ -124,6 +124,79 @@ func TestKioskServiceCarriesTheProvenTrixieFixes(t *testing.T) {
 	}
 }
 
+// TestPostinstallOwnsWholeInstallTreeForSelfUpdate guards ut-docs#151: a
+// fresh .deb install must be self-updatable like every other install shape.
+// selfupdate.Supported() requires BOTH /opt/unitill/bin (the binary's dir)
+// and /opt/unitill (the server's cwd, per unitill-pos.service's
+// WorkingDirectory) writable by the pos service user — narrower chowns of
+// just data/items/assets leave both root-owned. The retired
+// deploy/raspberry-pi/install.sh covered this with `chown -R pos:pos $DEST`;
+// this asserts postinstall.sh carries the same fix, unconditionally (every
+// invocation, not just fresh installs — a .deb upgrade re-extracts package
+// files as root-owned, so it must reassert every time), for ANY .deb Linux
+// install, not gated behind Pi detection.
+// chownDepthAt scans script top-to-bottom (skipping comments, blank lines and
+// heredoc bodies) tracking shell block nesting depth (if/for/while ... fi/
+// done), and reports the depth at which the given exact, standalone code line
+// first appears, plus whether it was found at all. Depth 0 means unindented
+// AND not nested inside any conditional/loop — a raw substring/byte-offset
+// check can't tell "inside an if with no leading whitespace" from genuinely
+// unconditional, which is exactly how a prior version of this test passed
+// against a fresh-install-only-gated chown (independent review, 2026-08-02).
+func chownDepthAt(script, target string) (depth int, found bool) {
+	inHeredoc := false
+	for _, raw := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(raw)
+		if inHeredoc {
+			if trimmed == "EOF" {
+				inHeredoc = false
+			}
+			continue
+		}
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(trimmed, "<<") {
+			inHeredoc = true
+			continue
+		}
+		if trimmed == target {
+			return depth, true
+		}
+		for _, f := range strings.Fields(trimmed) {
+			switch strings.TrimSuffix(f, ";") {
+			case "if", "for", "while":
+				depth++
+			case "fi", "done":
+				depth--
+			}
+		}
+	}
+	return 0, false
+}
+
+func TestPostinstallOwnsWholeInstallTreeForSelfUpdate(t *testing.T) {
+	post := readScript(t, "packaging/scripts/postinstall.sh")
+
+	const chownLine = "chown -R pos:pos /opt/unitill"
+	depth, found := chownDepthAt(post, chownLine)
+	if !found {
+		t.Fatal("postinstall.sh: no exact, standalone `chown -R pos:pos /opt/unitill` code line — a fresh .deb install stays root-owned at /opt/unitill/bin and /opt/unitill, so selfupdate.Supported() is false and Settings→Update has no in-app path (ut-docs#151). (A narrower /opt/unitill/data chown, or the line only inside a comment, does not satisfy this.)")
+	}
+	if depth != 0 {
+		t.Errorf("postinstall.sh: `chown -R pos:pos /opt/unitill` is nested %d level(s) deep inside a conditional/loop — it must run unconditionally, at the top level, on every install AND upgrade, or a .deb upgrade re-roots the tree and self-update breaks again", depth)
+	}
+
+	if !strings.Contains(post, `if is_pi_appliance "${1:-}" "${2:-}"; then`) {
+		t.Fatal("postinstall.sh: is_pi_appliance gate is gone — test needs updating")
+	}
+	chownRawIdx := strings.Index(post, "\n"+chownLine+"\n")
+	piGateRawIdx := strings.Index(post, `if is_pi_appliance "${1:-}" "${2:-}"; then`)
+	if chownRawIdx < 0 || chownRawIdx > piGateRawIdx {
+		t.Error("postinstall.sh: chown -R pos:pos /opt/unitill does not precede the is_pi_appliance (fresh-install-only) gate — it must run before any conditional, on every invocation")
+	}
+}
+
 func TestPostinstallStagesKioskFirstBootOnPiAppliancesOnly(t *testing.T) {
 	post := readScript(t, "packaging/scripts/postinstall.sh")
 	code := codeLines(post)
