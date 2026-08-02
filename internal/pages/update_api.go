@@ -39,7 +39,10 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 
 // registerUpdateAPI exposes the manager-gated in-app updater. It downloads the
 // latest release, verifies its checksum, swaps the binary + web assets, and
-// re-execs (archive installs only; the .deb/Windows use their native updaters).
+// re-execs for any install whose tree is writable by the running user
+// (archive installs, and .deb installs whose postinstall chowns the tree to
+// the service user — ut-docs#151); Windows always uses its native installer,
+// and a non-writable install falls back to a plain reinstall.
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
