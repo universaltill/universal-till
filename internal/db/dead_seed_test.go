@@ -59,7 +59,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	// Rewinding the ledger doesn't undo migration 024's, 025's, 026's or
 	// 027's physical DDL (ALTER TABLE ADD COLUMN / CREATE TABLE aren't
 	// idempotent) -- without this, replaying them on reopen fails with
-	// "duplicate column"/"already exists". Drop all four so the
+	// "duplicate column"/"already exists". Drop all five so the
 	// simulated pre-upgrade state is physically accurate (ut-docs#72).
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN service_charge_amount`); err != nil {
 		t.Fatalf("rewind service_charge_amount column: %v", err)
@@ -74,6 +74,10 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	// replay problem, drop it too (ut-docs#184).
 	if _, err := d.DB.Exec(`DROP TABLE pending_pairings`); err != nil {
 		t.Fatalf("rewind pending_pairings table: %v", err)
+	}
+	// Same for migration 028's lead_time_days column (universaltill/ut-docs#85).
+	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN lead_time_days`); err != nil {
+		t.Fatalf("rewind lead_time_days column: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)

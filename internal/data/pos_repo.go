@@ -122,6 +122,24 @@ type LowStockItem struct {
 	LocationName string
 	CurrentQty   float64
 	ReorderLevel int
+	LeadTimeDays int // days to receive a reorder; 0 = unset
+}
+
+// defaultWarnDays is the running-out threshold for an item with no lead
+// time configured.
+const defaultWarnDays = 7
+
+// EffectiveWarnDays is the days-of-stock-left threshold below which this
+// item counts as running out: its own lead time once set, otherwise
+// defaultWarnDays. The single source of truth for this threshold — the
+// inventory page, the reports header chip, and the daily low-stock digest
+// all call this rather than each keeping their own copy (universaltill/ut-docs#85
+// found two of the three had drifted out of sync before this existed).
+func (l LowStockItem) EffectiveWarnDays() int {
+	if l.LeadTimeDays > 0 {
+		return l.LeadTimeDays
+	}
+	return defaultWarnDays
 }
 
 // SearchActiveItems finds active items matching name/sku/barcode with optional pagination.
@@ -1734,7 +1752,7 @@ func (r *POSRepo) ListStockLocations(ctx context.Context) ([]StockLocation, erro
 func (r *POSRepo) ListStockLevels(ctx context.Context) ([]LowStockItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.id, i.name, COALESCE(i.sku, ''), inv.location_id, COALESCE(sl.name, ''),
-       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0)
+       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0)
 FROM inventory inv
 JOIN items i ON i.id = inv.item_id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
@@ -1747,7 +1765,7 @@ ORDER BY i.name, sl.name`)
 	var items []LowStockItem
 	for rows.Next() {
 		var item LowStockItem
-		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays); err != nil {
 			return nil, fmt.Errorf("scan stock level: %w", err)
 		}
 		items = append(items, item)
