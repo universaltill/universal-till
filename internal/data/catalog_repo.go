@@ -16,6 +16,8 @@ type CatalogRepo struct {
 	db *sql.DB
 }
 
+var ErrInvalidEAN13 = errors.New("invalid EAN-13 barcode")
+
 func NewCatalogRepo(db *sql.DB) *CatalogRepo {
 	return &CatalogRepo{db: db}
 }
@@ -723,8 +725,22 @@ func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInp
 	if (in.ItemID == "" && in.VariantID == "") || (in.ItemID != "" && in.VariantID != "") {
 		return errors.New("provide exactly one of item_id or variant_id")
 	}
+	in.BarcodeType = strings.TrimSpace(in.BarcodeType)
 	if in.BarcodeType == "" {
+		// The catalog accepts arbitrary scanner and internal PLU values (ADR-0021).
+		// Treat a 13-digit value as the retail EAN-13 it appears to be, while
+		// retaining CODE128 as the permissive default for other shapes.
+		if len(in.Barcode) == 13 {
+			in.BarcodeType = "EAN13"
+		} else {
+			in.BarcodeType = "CODE128"
+		}
+	}
+	if strings.EqualFold(in.BarcodeType, "EAN13") {
 		in.BarcodeType = "EAN13"
+		if !validEAN13(in.Barcode) {
+			return fmt.Errorf("%w %q: expected 13 digits with a valid check digit", ErrInvalidEAN13, in.Barcode)
+		}
 	}
 	if in.VariantID != "" {
 		if err := ensureBarcodeAvailable(ctx, r.db, in.Barcode, "variant", in.VariantID); err != nil {
@@ -767,6 +783,29 @@ VALUES (?, ?, ?, ?)
 ON CONFLICT(barcode) DO UPDATE SET item_id=excluded.item_id, barcode_type=excluded.barcode_type, is_primary=excluded.is_primary
 `, in.Barcode, in.ItemID, in.BarcodeType, boolToInt(in.IsPrimary))
 	return err
+}
+
+func validEAN13(barcode string) bool {
+	if len(barcode) != 13 {
+		return false
+	}
+	sum := 0
+	for i := 0; i < 12; i++ {
+		digit := barcode[i] - '0'
+		if digit > 9 {
+			return false
+		}
+		if i%2 == 0 {
+			sum += int(digit)
+		} else {
+			sum += 3 * int(digit)
+		}
+	}
+	checkDigit := barcode[12] - '0'
+	if checkDigit > 9 {
+		return false
+	}
+	return int(checkDigit) == (10-sum%10)%10
 }
 
 func nullable(s *string) any {
