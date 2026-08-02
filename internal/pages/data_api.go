@@ -219,16 +219,46 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		posRepo := data.NewPOSRepo(d.Db)
-		sales, err := posRepo.SalesForExport(r.Context(), from, to)
+
+		// The export payload carries two distinct ledgers (ut-docs#228); each
+		// is gated on its own permission rather than one flat check, so a
+		// plugin that only declared sales:read never also receives the full
+		// stock ledger it never asked for, and vice versa. A plugin missing
+		// one or both permissions still gets a real response (never a 4xx
+		// here) — omitting a ledger it can't see is not the same thing as
+		// the request itself being invalid. CheckPermissionGranted (not
+		// CheckPermission) is used deliberately: it separates a genuine
+		// infrastructure failure (err != nil, must 500 — silently shipping
+		// an empty ledger on a DB fault would look like a real "no data"
+		// export) from a legitimate not-declared/not-granted denial
+		// (granted=false, err=nil, omit and continue); it still audits the
+		// denial the same way CheckPermission does.
+		hasSales, err := plugins.CheckPermissionGranted(r.Context(), d.Db, entry.PluginID, "sales:read")
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
 		}
+		var sales []data.ExportSaleRow
+		if hasSales {
+			sales, err = posRepo.SalesForExport(r.Context(), from, to)
+			if err != nil {
+				respond(w, http.StatusInternalServerError, false, err.Error())
+				return
+			}
+		}
 
-		stock, err := posRepo.StockForExport(r.Context())
+		hasStock, err := plugins.CheckPermissionGranted(r.Context(), d.Db, entry.PluginID, "inventory:read")
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
+		}
+		var stock []data.ExportStockRow
+		if hasStock {
+			stock, err = posRepo.StockForExport(r.Context())
+			if err != nil {
+				respond(w, http.StatusInternalServerError, false, err.Error())
+				return
+			}
 		}
 
 		// AskPlugin, not Ask: entry was resolved to a specific owning

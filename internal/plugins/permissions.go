@@ -33,6 +33,35 @@ func CheckPermission(ctx context.Context, db *sql.DB, pluginID, permission strin
 	return nil
 }
 
+// CheckPermissionGranted reports whether a plugin's permission is granted,
+// as a plain boolean rather than CheckPermission's single collapsed error —
+// for callers that need to tell a genuine infrastructure failure (err != nil,
+// caller should fail loudly) apart from a legitimate not-declared/not-granted
+// denial (granted=false, err=nil, caller may have a non-fatal fallback, e.g.
+// simply omitting data the plugin isn't scoped to see). CheckPermission's
+// single error return can't make that distinction without parsing the error
+// string. Audits a denial exactly like CheckPermission does.
+func CheckPermissionGranted(ctx context.Context, db *sql.DB, pluginID, permission string) (bool, error) {
+	repo := data.NewPluginRepo(db)
+	granted, exists, err := repo.CheckPermission(ctx, pluginID, permission)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		if err := auditPermissionDenial(ctx, db, pluginID, permission, "permission not declared"); err != nil {
+			fmt.Printf("warning: failed to audit permission denial: %v\n", err)
+		}
+		return false, nil
+	}
+	if !granted {
+		if err := auditPermissionDenial(ctx, db, pluginID, permission, "permission not granted"); err != nil {
+			fmt.Printf("warning: failed to audit permission denial: %v\n", err)
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
 // GrantPermission grants a permission to a plugin
 func GrantPermission(ctx context.Context, db *sql.DB, pluginID, permission string) error {
 	repo := data.NewPluginRepo(db)
