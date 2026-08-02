@@ -74,6 +74,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			feeRows = append(feeRows, fr)
 		}
+		autoUpdateEnabled, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateEnabled)
+		autoUpdateTime, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateTime)
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -83,20 +85,22 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			logging.L().Errorf("list export entries: %v", exportEntriesErr)
 		}
 		data := map[string]any{
-			"title":         "Settings",
-			"theme":         st.Theme,
-			"themes":        availableThemes(r.Context(), d),
-			"settings":      st,
-			"settingsMap":   all,
-			"menuItems":     d.Menu,
-			"uiScale":       strconv.FormatFloat(scale, 'f', -1, 64),
-			"isManager":     isManagerOrAuthOff(r),
-			"printer":       printerConfig(r.Context(), d),
-			"backups":       listBackupsForUI(d),
-			"payMethods":    payMethods,
-			"payDefault":    payDefault,
-			"payFees":       feeRows,
-			"exportEntries": exportEntries,
+			"title":             "Settings",
+			"theme":             st.Theme,
+			"themes":            availableThemes(r.Context(), d),
+			"settings":          st,
+			"settingsMap":       all,
+			"menuItems":         d.Menu,
+			"uiScale":           strconv.FormatFloat(scale, 'f', -1, 64),
+			"isManager":         isManagerOrAuthOff(r),
+			"printer":           printerConfig(r.Context(), d),
+			"backups":           listBackupsForUI(d),
+			"payMethods":        payMethods,
+			"payDefault":        payDefault,
+			"payFees":           feeRows,
+			"exportEntries":     exportEntries,
+			"autoUpdateEnabled": autoUpdateEnabled == "true",
+			"autoUpdateTime":    autoUpdateTime,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
