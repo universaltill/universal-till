@@ -7,6 +7,8 @@
             onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
       {{ T "kiosk.checkout_start" }}</button>
     <a class="btn secondary" data-testid="kiosk-inventory-link" href="/inventory">{{ T "kiosk.inventory" }}</a>
+    <button class="btn secondary" type="button" data-testid="kiosk-pfand-open"
+            onclick="document.getElementById('pfand-result').textContent=''; document.getElementById('pfand-modal').showModal()">{{ T "pfand.action" }}</button>
     <div class="status-pill" data-testid="status-indicator">{{ T "status.online" }}</div>
   </div>
 </div>
@@ -30,6 +32,38 @@
                 onclick="document.getElementById('hold-modal').close(); document.getElementById('hold-label-input').value='';">
           {{ T "common.cancel" }}</button>
         <button type="submit" class="btn primary">{{ T "hold.action" }}</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Pfandrückgabe (ut-docs#248): a manager-gated cash payout unrelated to
+       any specific earlier sale — a customer can walk in with only empty
+       bottles. Static (no server round-trip to open), same pattern as
+       #hold-modal. Recorded via the existing cash-adjustment machinery
+       (POST /api/shifts/pfandrueckgabe) with a fixed reason so it's
+       reportable distinctly from other adjustments. -->
+  <dialog id="pfand-modal" class="modifier-modal" aria-labelledby="pfand-modal-title">
+    <form hx-post="/api/shifts/pfandrueckgabe" hx-target="#pfand-result" hx-swap="innerHTML"
+          hx-on::before-swap="if (event.detail.target && event.detail.target.id === 'pfand-result') { event.detail.shouldSwap = true; event.detail.isError = false; }"
+          hx-on::after-request="if (event.detail.xhr && event.detail.xhr.status >= 200 && event.detail.xhr.status < 300) { var m = document.getElementById('pfand-modal'); m.close(); this.reset(); }">
+      <h3 id="pfand-modal-title">{{ T "pfand.modal.title" }}</h3>
+      <input type="hidden" name="amount" id="pfand-amount-minor">
+      <label>{{ T "pfand.modal.amount" }} ({{ currency.Display }})
+        <input type="number" id="pfand-amount"
+               step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}"
+               min="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}"
+               required placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}"
+               onchange="document.getElementById('pfand-amount-minor').value = window.utCurrency.toMinor(this.value)">
+      </label>
+      <label>{{ T "pfand.modal.manager_pin" }}
+        <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
+      </label>
+      <div id="pfand-result" class="muted" style="min-height:1.3rem"></div>
+      <div class="modifier-actions">
+        <button type="button" class="btn secondary"
+                onclick="document.getElementById('pfand-modal').close(); this.form && this.form.reset(); document.getElementById('pfand-result').textContent='';">
+          {{ T "pfand.modal.cancel" }}</button>
+        <button type="submit" class="btn primary">{{ T "pfand.modal.confirm" }}</button>
       </div>
     </form>
   </dialog>
