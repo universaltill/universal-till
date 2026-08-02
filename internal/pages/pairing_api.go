@@ -232,6 +232,12 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_approved",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
+		// Additive for the approve/deny UI (ut-docs#185): htmx does a full
+		// page reload on this header regardless of body content, refreshing
+		// both the pending-request list and the Enrolled Tills table. The
+		// JSON body/status contract below is unchanged — #184's own tests
+		// still pass as-is.
+		w.Header().Set("HX-Refresh", "true")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"status": "approved"}, "error": nil})
 	})
@@ -250,6 +256,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_denied",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
+		w.Header().Set("HX-Refresh", "true")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"status": "denied"}, "error": nil})
 	})
