@@ -11,14 +11,19 @@ package app
 
 import (
 	"context"
+	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/universaltill/universal-till/internal/alerts"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages"
@@ -138,6 +143,19 @@ func Run(ctx context.Context) error {
 	updates.Start(bgCtx, &wg)
 	alerts.Start(bgCtx, cfg, database.DB, &wg)
 
+	// LAN till discovery (ADR-0033 part 1, ut-docs#264): advertise this
+	// till over mDNS while — and only while — it's a primary. The role
+	// check duplicates Deps.SyncPrimaryURL's one-line lookup rather than
+	// waiting for pages.Init's *common.Deps to exist (Init runs after this
+	// and needs mux routes registered before returning); both read the
+	// exact same "sync.primary_url" setting.
+	discoverySettings := data.NewSettingsRepo(database.DB)
+	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, func(c context.Context) bool {
+		v, _, _ := discoverySettings.Get(c, "sync.primary_url")
+		return strings.TrimSpace(v) == ""
+	}, listenPort(cfg.ListenAddr))
+	discoveryAdvertiser.Start(bgCtx, &wg)
+
 	mux := pages.Init(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
 
 	supervisor := plugins.NewSupervisor(database.DB)
@@ -174,6 +192,24 @@ func drainBackgroundServices(wg *sync.WaitGroup, log *logging.Logger, timeout ti
 	case <-time.After(timeout):
 		log.Errorf("shutdown: background services still running %s after cancel — closing database anyway", timeout)
 	}
+}
+
+// listenPort extracts the numeric port from cfg.ListenAddr (":8080" or
+// "0.0.0.0:8080") for the mDNS advertiser's SRV record — best-effort only,
+// falling back to config.Init's own default (8080) on any parse failure.
+// Nothing built by ut-docs#264 actually consumes this port yet (selecting a
+// discovered primary to join is #185's job); the TXT record's name/id/v
+// fields are what matters for this card.
+func listenPort(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 8080
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 {
+		return 8080
+	}
+	return port
 }
 
 // bootstrapPluginDirectories creates required plugin cache directories
