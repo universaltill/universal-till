@@ -176,12 +176,17 @@ nfpms:
         dst: /usr/share/applications/universal-till.desktop
       - src: packaging/linux/universal-till.png
         dst: /usr/share/icons/hicolor/512x512/apps/universal-till.png
-      # Kiosk mode (Pi OS Lite): run unitill-kiosk-setup once, reboot.
+      # Kiosk mode (Pi OS Lite): run unitill-kiosk-setup once, reboot. Root-
+      # owned, outside /opt/unitill (postinstall.sh chowns that whole tree to
+      # pos for self-update, ut-docs#151) — both scripts are root-executed
+      # (unitill-kiosk-firstboot.service has no User=, and the manual `sudo`
+      # flow is root too), so they must not sit somewhere pos can rewrite
+      # (ut-docs#255).
       - src: packaging/linux/unitill-kiosk-setup.sh
-        dst: /opt/unitill/bin/unitill-kiosk-setup
+        dst: /usr/lib/unitill/unitill-kiosk-setup
         file_info: { mode: 0o755 }
       - src: packaging/linux/unitill-kiosk-launch.sh
-        dst: /opt/unitill/bin/unitill-kiosk-launch.sh
+        dst: /usr/lib/unitill/unitill-kiosk-launch.sh
         file_info: { mode: 0o755 }
     scripts:
       postinstall: packaging/scripts/postinstall.sh
@@ -215,6 +220,6 @@ release:
     reboot — a fresh install sets the fullscreen kiosk up automatically on
     first boot (opt out first with `sudo touch /etc/unitill/no-kiosk` if you
     don't want that). On upgrades, desktop images, or other Debian boxes,
-    run `sudo /opt/unitill/bin/unitill-kiosk-setup` once and reboot.
+    run `sudo /usr/lib/unitill/unitill-kiosk-setup` once and reboot.
 
     Every download opens the setup wizard at http://localhost:8080.

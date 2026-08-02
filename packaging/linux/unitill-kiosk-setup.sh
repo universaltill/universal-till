@@ -92,7 +92,10 @@ if systemctl is-enabled display-manager.service >/dev/null 2>&1 || systemctl is-
 fi
 
 echo "==> Installing the kiosk launcher…"
-install -D -m 0755 "$(dirname "$0")/unitill-kiosk-launch.sh" /opt/unitill/bin/unitill-kiosk-launch
+# Root-owned, outside /opt/unitill (postinstall.sh chowns that whole tree to
+# pos for self-update, ut-docs#151) — this is root-executed via cage below,
+# so it must not sit somewhere pos can rewrite (ut-docs#255).
+install -D -m 0755 "$(dirname "$0")/unitill-kiosk-launch.sh" /usr/lib/unitill/unitill-kiosk-launch
 
 echo "==> Kiosk service (cage on tty1, restarts if it ever dies)…"
 cat > /etc/systemd/system/unitill-kiosk.service << EOF
@@ -118,7 +121,7 @@ ExecStartPre=+/usr/bin/chvt 1
 # PAMName=login gives cage a logind session — make libseat use it even if a
 # stray seatd is installed (else: "Could not poll connection: Broken pipe").
 Environment=LIBSEAT_BACKEND=logind
-ExecStart=/usr/bin/cage -d -- /opt/unitill/bin/unitill-kiosk-launch
+ExecStart=/usr/bin/cage -d -- /usr/lib/unitill/unitill-kiosk-launch
 Restart=always
 RestartSec=3
 

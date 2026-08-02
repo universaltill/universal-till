@@ -103,7 +103,7 @@ fullscreen kiosk automatically: the first boot after installing sets up
 cage + Chromium and boots straight into the till. To keep a Pi kiosk-free
 (dev box), `sudo touch /etc/unitill/no-kiosk` before rebooting. Desktop
 images and upgrades are never auto-converted — run
-`sudo /opt/unitill/bin/unitill-kiosk-setup` there yourself if you want the
+`sudo /usr/lib/unitill/unitill-kiosk-setup` there yourself if you want the
 kiosk.
 
 **Windows**: download the `windows_amd64.zip`, extract anywhere,
