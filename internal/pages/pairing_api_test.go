@@ -13,7 +13,9 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -175,6 +177,58 @@ func TestListPairRequests_ManagerSeesVerificationCode(t *testing.T) {
 		if c < '0' || c > '9' {
 			t.Fatalf("expected all-decimal-digit verification code, got %q", code)
 		}
+	}
+}
+
+// TestListPairRequests_VerificationCodeUsesDiscoveryTillID is the actual
+// point of ut-docs#264's "close the loop" step: the verification code this
+// endpoint returns must be derived from discovery.TillID — the SAME
+// settings-backed id the mDNS Advertiser publishes in its TXT record — not
+// the unrelated marketplace device id. A replica that reads a primary's id
+// off mDNS (discovery.Browse) and independently computes
+// derivedVerificationCode(commitment, thatID) must land on the exact code
+// this endpoint shows the manager.
+func TestListPairRequests_VerificationCodeUsesDiscoveryTillID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+
+	commitment := commitOf("secret-close-the-loop")
+	postPairRequest(t, mux, "Replica Till", commitment, "10.0.0.7:1234")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			Pending []struct {
+				VerificationCode string `json:"verification_code"`
+			} `json:"pending"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Data.Pending) != 1 {
+		t.Fatalf("expected one pending request, got %+v", out.Data.Pending)
+	}
+
+	// Independently compute the id the SAME way discovery.Browse would hand
+	// a replica (a fresh discovery.TillID call against this primary's own
+	// settings — get-or-create is idempotent, so this is exactly the value
+	// already persisted, not a new one).
+	wantTillID, err := discovery.TillID(req.Context(), data.NewSettingsRepo(dp.Db))
+	if err != nil {
+		t.Fatalf("discovery.TillID: %v", err)
+	}
+	wantCode := derivedVerificationCode(commitment, wantTillID)
+
+	if got := out.Data.Pending[0].VerificationCode; got != wantCode {
+		t.Fatalf("verification_code = %q, want %q (derived from discovery.TillID %q) — "+
+			"the primary and a replica computing this independently off mDNS must agree",
+			got, wantCode, wantTillID)
 	}
 }
 
