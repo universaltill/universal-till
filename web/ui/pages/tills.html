@@ -19,6 +19,12 @@
       <button class="btn" type="submit">{{ T "tills.join_btn" }}</button>
       <div id="join-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
     </form>
+    <hr style="margin:1rem 0; border:none; border-top:1px dashed #d1d5db">
+    <h3>{{ T "tills.discovery.title" }}</h3>
+    <p class="muted">{{ T "tills.discovery.help" }}</p>
+    <button id="discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
+    <div id="discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-inline-start:0"></div>
+    <div id="discover-results"></div>
   </div>
 
   {{ if .SyncPrimary }}
@@ -57,4 +63,44 @@
     {{ end }}
   </div>
 </div>
+
+<script>
+(function () {
+  // LAN till discovery (ADR-0033 part 1, ut-docs#264): read-only results —
+  // no click/select wiring. Choosing a discovered primary to join is a
+  // separate future card (#185).
+  var btn = document.getElementById('discover-btn');
+  if (!btn) return;
+  var msg = document.getElementById('discover-msg');
+  var out = document.getElementById('discover-results');
+  var i18n = {
+    searching: "{{ T "tills.discovery.searching" }}",
+    noneFound: "{{ T "tills.discovery.none_found" }}",
+    resultName: "{{ T "tills.discovery.result_name" }}",
+    error: "{{ T "tills.discovery.error" }}"
+  };
+  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    msg.textContent = i18n.searching;
+    out.innerHTML = '';
+    fetch('/api/sync/discover-primaries')
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        btn.disabled = false;
+        var list = (j.data && j.data.primaries) || [];
+        if (!list.length) { msg.textContent = i18n.noneFound; return; }
+        msg.textContent = '';
+        out.innerHTML = '<ul style="list-style:none; padding-inline-start:0; margin:.4rem 0">' + list.map(function (p) {
+          return '<li style="padding:.3rem 0">' + esc(p.name)
+            + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + '</span></li>';
+        }).join('') + '</ul>';
+      })
+      .catch(function () {
+        btn.disabled = false;
+        msg.textContent = i18n.error;
+      });
+  });
+})();
+</script>
 {{ end }}

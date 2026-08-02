@@ -401,7 +401,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Self-hosted AI assistant plugin (camera item ID, "Ask your till")
 - [x] Webhook connector plugin (`ut-plugin-integration-webhook`) — reference/template for real ERP connectors, not itself a finished SAP/Dynamics integration (ADR-0014)
 - [x] Cloud sync service (optional, self-hostable)
-- [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011)
+- [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011); the Tills page can also auto-discover primaries already on the network over mDNS (ADR-0033 part 1) as a read-only "Find a primary" aid — joining is still done via the QR/manual code, selecting a discovered result to join directly is not yet wired up
 - [x] Universal Till ID — self-hosted Zitadel (ADR-0012)
 - [x] Self-order kiosk + item modifiers (ADR-0020) — **in-store, network-attached device; not the same as remote online ordering or per-table ordering below**
 - [x] Android app, live-verified (ADR-0023)

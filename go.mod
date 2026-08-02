@@ -9,6 +9,7 @@ require (
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.57.0
+	github.com/hashicorp/mdns v1.0.5
 	github.com/joho/godotenv v1.5.1
 	github.com/pact-foundation/pact-go/v2 v2.4.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
@@ -29,6 +30,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/miekg/dns v1.1.41 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

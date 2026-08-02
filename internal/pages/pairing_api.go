@@ -17,8 +17,8 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/pages/common"
-	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 // Approve-to-pair (ADR-0033 part 2/3, universaltill/ut-docs#184): the
@@ -106,19 +106,15 @@ func sourceOf(r *http.Request) string {
 // (ADR-0033 §4): first6digits(SHA-256(commitment ‖ primary_till_id)) — six
 // DECIMAL digits (the ADR's wording and the manager-facing display are
 // both digit-based, like a TOTP code), not the first 6 hex characters of
-// the hash. The replica side (#183/#185) must derive this the same way or
-// the two screens will never visually match.
+// the hash. The replica side (#185) must derive this the same way or the
+// two screens will never visually match.
 //
-// primaryTillID stand-in: LAN discovery (#183) — which was meant to carry
-// this over the mDNS TXT record — was never actually implemented despite
-// being marked done on the tracker, so there is currently no channel by
-// which a replica learns this primary's id at all. This reuses the
-// existing marketplace device id as the best available stable per-install
-// identifier; ADR-0033 §8's outbound (impersonation) mitigation is
-// therefore NOT YET actually in effect end-to-end — it only becomes real
-// once #183 lands for real and the replica can compute the same code
-// independently. Tracked as universaltill/ut-docs#264, not silently left
-// undocumented.
+// primaryTillID now comes from discovery.TillID — the same settings-backed,
+// get-or-create id LAN discovery's Advertiser publishes in its mDNS TXT
+// record (ADR-0033 part 1, ut-docs#264). A replica that learns this
+// primary's id off mDNS and this handler computing the code server-side
+// now agree on the identical value, so ADR-0033 §8's outbound
+// (impersonation) mitigation is actually in effect end-to-end.
 func derivedVerificationCode(commitment, primaryTillID string) string {
 	sum := sha256.Sum256([]byte(commitment + primaryTillID))
 	code := binary.BigEndian.Uint32(sum[:4]) % 1000000
@@ -176,7 +172,11 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		primaryTillID := marketplace.DeviceIDFromConfig(&d.Cfg.Marketplace)
+		primaryTillID, err := discovery.TillID(r.Context(), data.NewSettingsRepo(d.Db))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		type pendingOut struct {
 			ID               string `json:"id"`
 			DeviceName       string `json:"device_name"`
