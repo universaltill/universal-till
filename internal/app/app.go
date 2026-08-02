@@ -97,8 +97,11 @@ func Run(ctx context.Context) error {
 	// "Run returned" didn't mean "nothing is still writing to the data dir"
 	// (found 2026-07-30 via a mobile-shutdown CI flake). NOT yet covered —
 	// the drain is NOT complete: pages.Init's StartSyncPush/StartSyncPull/
-	// StartEODScheduler loops still run unjoined on ctx and do DB work
-	// (ut-docs#153); internal/plugins.Supervisor's monitorProcess goroutines
+	// StartEODScheduler/StartAutoUpdateScheduler loops still run unjoined on
+	// ctx and do DB work (ut-docs#153) — StartAutoUpdateScheduler additionally
+	// does binary/web-asset renames (internal/selfupdate.Apply), so a shutdown
+	// landing mid-swap has a narrow window to leave the install half-swapped;
+	// internal/plugins.Supervisor's monitorProcess goroutines
 	// (native plugin processes — separate, larger fix) and the wasm runtime's
 	// per-plugin event-channel drainer (internal/plugins/wasm_runtime.go —
 	// its channel is only closed on the next Sync/reload, never on shutdown,

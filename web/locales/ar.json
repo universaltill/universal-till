@@ -692,6 +692,7 @@
   "settings.tills.open": "إدارة الصناديق / إقران صندوق جديد",
   "settings.update": "تحديث",
   "settings.update.apply_confirm": "هل تريد تنزيل التحديث وتثبيته الآن؟ سيُعاد تشغيل الصندوق عند الانتهاء.",
+  "settings.update.auto_enable": "التحديث تلقائياً",
   "settings.update.check_btn": "التحقق من التحديثات",
   "settings.update.check_failed": "تعذّر الوصول إلى خادم التحديث — حاول لاحقاً",
   "settings.update.download": "تنزيل",
