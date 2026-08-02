@@ -137,4 +137,10 @@ func TestMenuPage_ManagerOnlyTilesGatedByRole(t *testing.T) {
 	if !strings.Contains(body, `href="/report-issue"`) || !strings.Contains(body, "🐞") {
 		t.Fatalf("expected the report-issue tile with its icon, reachable from the menu with UT_AUTH=off, got: %s", body)
 	}
+	if !strings.Contains(body, `href="/locations"`) || !strings.Contains(body, "📍") {
+		t.Fatalf("expected the locations tile with its icon, reachable from the menu with UT_AUTH=off, got: %s", body)
+	}
+	if strings.Contains(rec.Body.String(), `href="/locations"`) {
+		t.Fatalf("expected no /locations tile for a non-manager request, got: %s", rec.Body.String())
+	}
 }

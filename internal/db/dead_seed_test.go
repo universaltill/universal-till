@@ -75,6 +75,10 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE pending_pairings`); err != nil {
 		t.Fatalf("rewind pending_pairings table: %v", err)
 	}
+	// Migration 028 adds another column -- same problem again (ut-docs#49).
+	if _, err := d.DB.Exec(`ALTER TABLE stock_locations DROP COLUMN is_active`); err != nil {
+		t.Fatalf("rewind stock_locations.is_active column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
