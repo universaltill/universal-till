@@ -209,13 +209,19 @@ func TestAdvertiser_StartJoinsWaitGroupAndShutsDownOnCancel(t *testing.T) {
 
 	// Start's first tick runs synchronously-ish inside the goroutine; give
 	// it a moment to have started advertising before we assert on it.
+	// Every read of a.server must hold a.mu — Start's goroutine writes it
+	// under that lock, so polling it unsynchronized is a genuine data race
+	// (caught by `go test -race`), not merely untidy.
+	currentServer := func() mdnsServer {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.server
+	}
 	deadline := time.Now().Add(2 * time.Second)
-	for a.server == nil && time.Now().Before(deadline) {
+	for currentServer() == nil && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	a.mu.Lock()
-	srv, _ := a.server.(*fakeServer)
-	a.mu.Unlock()
+	srv, _ := currentServer().(*fakeServer)
 	if srv == nil {
 		t.Fatal("expected Advertiser to be advertising shortly after Start")
 	}

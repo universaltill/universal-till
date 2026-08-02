@@ -2,6 +2,8 @@ package discovery
 
 import (
 	"context"
+	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -66,5 +68,84 @@ func TestBrowse_RespectsAlreadyCancelledContext(t *testing.T) {
 	}
 	if elapsed > 500*time.Millisecond {
 		t.Fatalf("expected Browse to return promptly on a cancelled context, took %s", elapsed)
+	}
+}
+
+// TestBrowse_DoesNotLeakCollectorGoroutineWhenCancelledMidScan covers the
+// case TestBrowse_RespectsAlreadyCancelledContext does NOT: a ctx that is
+// cancelled *during* an in-flight scan, which reaches Browse's select
+// rather than its early ctx.Err() return.
+//
+// Browse fans out two goroutines — the mdns query and a collector ranging
+// over the entries channel. If the cancellation path returns without ever
+// closing entries, that collector blocks on `range entries` forever: a
+// permanent, per-request goroutine leak on a long-running POS process,
+// triggered by something as ordinary as a manager closing the Tills tab
+// mid-scan.
+func TestBrowse_DoesNotLeakCollectorGoroutineWhenCancelledMidScan(t *testing.T) {
+	queryReturned := make(chan struct{})
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		// A real scan keeps running for its full timeout even after the
+		// caller has given up; emulate that, then return as Query does.
+		time.Sleep(100 * time.Millisecond)
+		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=late-answer", "name=Late"}}
+		close(queryReturned)
+		return nil
+	}
+
+	before := runtime.NumGoroutine()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := Browse(ctx, 3*time.Second); err == nil {
+		t.Fatal("expected a cancellation error")
+	}
+
+	<-queryReturned // the scan itself is now finished; nothing legitimate is still running
+
+	// Give the collector a generous window to wind down, then assert it did.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= before {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("goroutine leak after cancelled Browse: %d goroutines before, %d still running after "+
+		"the scan finished — the entries channel is never closed on the cancellation path, "+
+		"so the collector goroutine blocks on `range entries` forever",
+		before, runtime.NumGoroutine())
+}
+
+// TestBrowse_CapsCandidatesFromAFloodingResponder — discovery is a
+// LAN-open surface: any host on the network can answer, and nothing
+// authenticates a responder. An unbounded append means one rogue or
+// malfunctioning host can grow this slice (and the JSON response built
+// from it) for the whole scan window. Results must be capped.
+func TestBrowse_CapsCandidatesFromAFloodingResponder(t *testing.T) {
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		for i := 0; i < maxCandidates*10; i++ {
+			p.Entries <- &mdns.ServiceEntry{
+				InfoFields: []string{"id=flood-" + strconv.Itoa(i), "name=Flood"},
+			}
+		}
+		return nil
+	}
+
+	got, err := Browse(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("Browse: %v", err)
+	}
+	if len(got) > maxCandidates {
+		t.Fatalf("Browse returned %d candidates from a flooding responder, want at most %d — "+
+			"an unauthenticated LAN peer must not be able to grow this without bound",
+			len(got), maxCandidates)
 	}
 }
