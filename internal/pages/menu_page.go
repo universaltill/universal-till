@@ -28,6 +28,7 @@ var iconFor = map[string]string{
 	"/catalog":      "🏷️",
 	"/help":         "❓",
 	"/users":        "👤",
+	"/locations":    "📍",
 	"/translations": "🌐",
 	"/tills":        "🖥️",
 	"/report-issue": "🐞",
@@ -50,6 +51,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		// Manager-only destinations (mirrors the session chip).
 		if isManagerOrAuthOff(r) {
 			add("/users", "users.title")
+			add("/locations", "locations.title")
 			add("/translations", "translations.title")
 			add("/report-issue", "issuereport.title")
 		}

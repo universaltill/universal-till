@@ -2585,6 +2585,134 @@ func (r *POSRepo) EnsureStockLocation(ctx context.Context) (string, error) {
 	return id, nil
 }
 
+// CreateStockLocation adds a new, active stock location. The schema's
+// UNIQUE constraint on name rejects duplicates.
+func (r *POSRepo) CreateStockLocation(ctx context.Context, name string) (string, error) {
+	id := uuid.NewString()
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO stock_locations (id, name, is_active) VALUES (?, ?, 1)`, id, name); err != nil {
+		return "", fmt.Errorf("create stock location: %w", err)
+	}
+	return id, nil
+}
+
+// RenameStockLocation changes a location's display name; the id (and every
+// inventory/movement row keyed by it) is unaffected.
+func (r *POSRepo) RenameStockLocation(ctx context.Context, id, newName string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE stock_locations SET name = ? WHERE id = ?`, newName, id)
+	if err != nil {
+		return fmt.Errorf("rename stock location: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("rename stock location: %s not found", id)
+	}
+	return nil
+}
+
+// SetStockLocationActive soft-disables/re-enables a location, mirroring
+// SetUserActive's pattern.
+func (r *POSRepo) SetStockLocationActive(ctx context.Context, id string, active bool) error {
+	v := 0
+	if active {
+		v = 1
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE stock_locations SET is_active = ? WHERE id = ?`, v, id)
+	if err != nil {
+		return fmt.Errorf("set stock location active: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("set stock location active: %s not found", id)
+	}
+	return nil
+}
+
+// StockLocationInUse reports whether any inventory, stock movement, or
+// register still references this location — deactivating it would silently
+// orphan that history.
+func (r *POSRepo) StockLocationInUse(ctx context.Context, id string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `
+SELECT 1 WHERE EXISTS (SELECT 1 FROM inventory WHERE location_id = ?)
+   OR EXISTS (SELECT 1 FROM stock_movements WHERE location_id = ?)
+   OR EXISTS (SELECT 1 FROM registers WHERE location_id = ?)`,
+		id, id, id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check stock location in use: %w", err)
+	}
+	return exists == 1, nil
+}
+
+// ListActiveStockLocations returns only active locations, for pickers that
+// must not offer a deactivated location as a destination (stock receive/
+// adjust/return). ListStockLocations itself stays unfiltered — other
+// existing callers may rely on seeing every location regardless of state.
+func (r *POSRepo) ListActiveStockLocations(ctx context.Context) ([]StockLocation, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM stock_locations WHERE is_active = 1 ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list active stock locations: %w", err)
+	}
+	defer rows.Close()
+	var out []StockLocation
+	for rows.Next() {
+		var l StockLocation
+		if err := rows.Scan(&l.ID, &l.Name); err != nil {
+			return nil, fmt.Errorf("scan active stock location: %w", err)
+		}
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active stock locations: %w", err)
+	}
+	return out, nil
+}
+
+// CountActiveStockLocations counts active locations — guards "cannot
+// deactivate the last location" (mirrors CountOtherActiveAdminsWithPIN's
+// last-admin guard in internal/data/auth_repo.go).
+func (r *POSRepo) CountActiveStockLocations(ctx context.Context) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM stock_locations WHERE is_active = 1`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count active stock locations: %w", err)
+	}
+	return n, nil
+}
+
+// StockLocationAdmin is a stock location as the locations admin page needs
+// it (includes the soft-disable state the plain picker list doesn't).
+type StockLocationAdmin struct {
+	ID       string
+	Name     string
+	IsActive bool
+}
+
+// ListStockLocationsForAdmin returns every location (active and inactive)
+// for the locations management page. ListStockLocations stays unfiltered
+// and IsActive-agnostic for existing pickers/callers.
+func (r *POSRepo) ListStockLocationsForAdmin(ctx context.Context) ([]StockLocationAdmin, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, is_active FROM stock_locations ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list stock locations for admin: %w", err)
+	}
+	defer rows.Close()
+	var out []StockLocationAdmin
+	for rows.Next() {
+		var l StockLocationAdmin
+		var active int
+		if err := rows.Scan(&l.ID, &l.Name, &active); err != nil {
+			return nil, fmt.Errorf("scan stock location admin: %w", err)
+		}
+		l.IsActive = active == 1
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stock locations for admin: %w", err)
+	}
+	return out, nil
+}
+
 // EnsurePaymentMethod upserts a minimal payment method to satisfy FK.
 func (r *POSRepo) EnsurePaymentMethod(ctx context.Context, id string) error {
 	var exists int
