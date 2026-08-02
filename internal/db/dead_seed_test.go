@@ -75,6 +75,10 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE pending_pairings`); err != nil {
 		t.Fatalf("rewind pending_pairings table: %v", err)
 	}
+	// Same for migration 028's lead_time_days column (universaltill/ut-docs#85).
+	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN lead_time_days`); err != nil {
+		t.Fatalf("rewind lead_time_days column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

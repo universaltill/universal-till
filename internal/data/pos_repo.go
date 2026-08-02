@@ -122,6 +122,7 @@ type LowStockItem struct {
 	LocationName string
 	CurrentQty   float64
 	ReorderLevel int
+	LeadTimeDays int // days to receive a reorder; 0 = unset
 }
 
 // SearchActiveItems finds active items matching name/sku/barcode with optional pagination.
@@ -1734,7 +1735,7 @@ func (r *POSRepo) ListStockLocations(ctx context.Context) ([]StockLocation, erro
 func (r *POSRepo) ListStockLevels(ctx context.Context) ([]LowStockItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.id, i.name, COALESCE(i.sku, ''), inv.location_id, COALESCE(sl.name, ''),
-       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0)
+       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0)
 FROM inventory inv
 JOIN items i ON i.id = inv.item_id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
@@ -1747,7 +1748,7 @@ ORDER BY i.name, sl.name`)
 	var items []LowStockItem
 	for rows.Next() {
 		var item LowStockItem
-		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays); err != nil {
 			return nil, fmt.Errorf("scan stock level: %w", err)
 		}
 		items = append(items, item)

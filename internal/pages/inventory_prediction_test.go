@@ -98,3 +98,68 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 		t.Fatal("only the fast seller should warn")
 	}
 }
+
+// A flat 7-day warning window is wrong once an item's real reorder lead
+// time is longer than that: warning only 7 days out for an item that takes
+// 10 days to restock guarantees a stockout. lead_time_days makes the warn
+// window (and the reorder-suggestion target) track the item's own lead
+// time instead of the flat default.
+func TestInventoryLeadTimeAwareWarnAndReorder(t *testing.T) {
+	chdirRoot(t)
+	f := filepath.Join(t.TempDir(), "inv.db")
+	database, err := db.Open(f)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	d := database.DB
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v (%s)", err, q)
+		}
+	}
+	// "Slow Ship" sells 2/day (same rate shape as the cola fixture above) with
+	// 16 in stock → DaysLeft=8, and a 10-day lead time: the old flat
+	// warnDays=7 would NOT warn (8 > 7), but it must warn now (8 <= 10) —
+	// otherwise reordering happens too late to avoid a stockout given how
+	// long restocking actually takes.
+	mustExec(`INSERT INTO items (id, name, sku, base_price, is_active, lead_time_days) VALUES ('it-slow','Slow Ship','SHIP',100,1,10)`)
+	mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-1','Shop floor')`)
+	mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-1','it-slow','loc-1',16)`)
+	for i := 0; i < 14; i++ {
+		saleID := "s-" + string(rune('a'+i))
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+		          VALUES (?, ?, 'completed', 'sale', 400, 0, 400, datetime('now', ?))`,
+			saleID, "R-"+saleID, "-"+string(rune('0'+i%9))+" days")
+		mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		          VALUES (?, ?, 1, 'it-slow', 'Slow Ship', 4, 100, 0, 0, 0, 400, 400)`, "l-"+saleID, saleID)
+	}
+
+	state := common.LoadState(context.Background(), settings.NewStore(d), &config.Config{Theme: "default"})
+	dp := &common.Deps{Cfg: &config.Config{Theme: "default"}, Db: d, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(d)}
+	mux := http.NewServeMux()
+	registerInventoryPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /inventory: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "days-warn") {
+		t.Fatal("item with DaysLeft(8) <= its own 10-day lead time must warn, even though 8 > the flat 7-day default")
+	}
+	// Reorder target: rate(2/day) × (leadTime(10)+bufferDays(7)) − onHand(16) = 18.
+	if !strings.Contains(body, "order ~ 18") {
+		t.Fatalf("expected the reorder suggestion to target the item's own lead time + buffer, not the flat 14-day default; body: %s", body)
+	}
+}
