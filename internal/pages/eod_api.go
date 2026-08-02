@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"regexp"
 	"strings"
@@ -23,6 +24,16 @@ const (
 )
 
 var eodTimeRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
+
+// eodDateRe guards /api/reports/eod/range's from/to params. Without this, a
+// non-YYYY-MM-DD value (e.g. an un-padded "2026-1-1", or garbage) still
+// passes the `from > to` string check — SQLite's BETWEEN then compares that
+// raw text against date(created_at) and either silently matches nothing or
+// silently widens the range, handing back a financially wrong Z-report with
+// a 200 and no error (2026-08-02 review finding). It also keeps the
+// downloaded filename, which embeds from/to verbatim, free of path
+// separators.
+var eodDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 // buildEODDoc renders the Z-report for the receipt printer.
 func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
@@ -217,6 +228,43 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		http.Error(w, "report not found", http.StatusNotFound)
+	})
+
+	// Date-ranged Z-report (ut-docs#57), summary granularity, ad hoc — not
+	// archived or auto-printed, unlike the scheduled single-day flow above.
+	// Downloaded directly as a JSON file (Content-Disposition: attachment),
+	// same precedent as GET /api/backup/download/{name}.
+	mux.HandleFunc("POST /api/reports/eod/range", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		from := strings.TrimSpace(r.Form.Get("from"))
+		to := strings.TrimSpace(r.Form.Get("to"))
+		if !eodDateRe.MatchString(from) || !eodDateRe.MatchString(to) {
+			http.Error(w, "from and to must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if from > to {
+			http.Error(w, "from must not be after to", http.StatusBadRequest)
+			return
+		}
+		rep, err := repo.EndOfDayRange(r.Context(), from, to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		raw, err := json.Marshal(rep)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		filename := fmt.Sprintf("z-report-%s-to-%s.json", from, to)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(raw)
 	})
 
 	// Schedule settings (manager): enable + local time.
