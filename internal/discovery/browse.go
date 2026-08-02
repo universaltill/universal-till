@@ -17,6 +17,20 @@ type Candidate struct {
 	TillID string `json:"till_id"`
 }
 
+// maxCandidates caps how many primaries one scan will collect. Discovery
+// is a LAN-open surface — any host can answer and no responder is
+// authenticated — so a rogue or malfunctioning peer must not be able to
+// grow the result slice (and the JSON response built from it) without
+// bound. A real shop LAN has a handful of tills; 64 is far above any
+// legitimate deployment while still being a hard ceiling.
+const maxCandidates = 64
+
+// mdnsQuery is a seam over mdns.Query so tests can drive Browse's full
+// lifecycle (including the mid-scan cancellation path) deterministically,
+// without needing a real responder answering on real UDP multicast — the
+// same package-var seam style as internal/pages's discoveryBrowse.
+var mdnsQuery = mdns.Query
+
 // Browse queries the LAN for tills advertising ServiceName and returns
 // whatever answers within timeout. Bounded and synchronous — meant to be
 // invoked per explicit user action (the Tills page "Find a primary"
@@ -40,7 +54,12 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 				continue
 			}
 			mu.Lock()
-			candidates = append(candidates, c)
+			// Keep draining past the cap (so the query goroutine is never
+			// blocked on a full channel and can finish and close it) but
+			// stop accumulating — see maxCandidates.
+			if len(candidates) < maxCandidates {
+				candidates = append(candidates, c)
+			}
 			mu.Unlock()
 		}
 	}()
@@ -50,11 +69,29 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 	params.Entries = entries
 
 	queryErr := make(chan error, 1)
-	go func() { queryErr <- mdns.Query(params) }()
+	go func() {
+		err := mdnsQuery(params)
+		// Close entries HERE — in the query goroutine, unconditionally —
+		// rather than on the caller's success path only. Two reasons:
+		//
+		//  1. Correctness of the close itself: mdns.Query's sends to
+		//     params.Entries all happen inside its own receive loop, which
+		//     has returned by the time Query returns, so nothing can send
+		//     on the closed channel afterwards.
+		//  2. It is the only way the collector goroutine below is
+		//     guaranteed to terminate. Closing on the success path only
+		//     leaked it permanently whenever the caller bailed out via
+		//     ctx.Done() (manager closes the Tills tab mid-scan): the
+		//     collector stayed blocked on `range entries` forever, one
+		//     stuck goroutine per abandoned request, for the life of the
+		//     process. Covered by
+		//     TestBrowse_DoesNotLeakCollectorGoroutineWhenCancelledMidScan.
+		close(entries)
+		queryErr <- err
+	}()
 
 	select {
 	case err := <-queryErr:
-		close(entries)
 		<-collected
 		if err != nil {
 			return nil, err
@@ -62,10 +99,9 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 	case <-ctx.Done():
 		// mdns.Query has no cancellation hook of its own; its query
 		// goroutine keeps running until `timeout` elapses on its own and
-		// then exits by itself (harmless — it only writes to a channel
-		// nothing reads from after this point). Deliberately not blocking
-		// the caller on that: timeout is bounded (~3-4s per the design),
-		// so the leaked goroutine's lifetime is bounded too.
+		// then exits by itself. We deliberately don't block the caller on
+		// that — timeout is bounded (~3-4s by design) — and both
+		// goroutines now unwind on their own once it returns.
 		return nil, ctx.Err()
 	}
 
