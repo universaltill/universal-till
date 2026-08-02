@@ -1236,9 +1236,12 @@ type EODMethod struct {
 	Out    int64  `json:"out"`
 }
 
-// EODReport is the classic Z-report for one business day.
+// EODReport is the classic Z-report for one business day, or — when From/To
+// are set instead of Day — a date-ranged summary spanning multiple days.
 type EODReport struct {
-	Day          string      `json:"day"`
+	Day          string      `json:"day,omitempty"`
+	From         string      `json:"from,omitempty"`
+	To           string      `json:"to,omitempty"`
 	SalesCount   int         `json:"sales_count"`
 	Gross        int64       `json:"gross"`
 	RefundCount  int         `json:"refund_count"`
@@ -1255,7 +1258,27 @@ type EODReport struct {
 
 // EndOfDay aggregates one day's completed sales and returns.
 func (r *POSRepo) EndOfDay(ctx context.Context, day string) (EODReport, error) {
-	rep := EODReport{Day: day, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
+	rep, err := r.dateRangeSummary(ctx, day, day)
+	rep.Day = day
+	return rep, err
+}
+
+// EndOfDayRange aggregates completed sales over [from, to] inclusive of both
+// ends (ut-docs#57) — the ad-hoc, on-demand counterpart to EndOfDay's
+// single-day scheduled/archived report. Unlike EndOfDay this is never
+// archived or auto-printed; a caller downloads the result directly.
+func (r *POSRepo) EndOfDayRange(ctx context.Context, from, to string) (EODReport, error) {
+	rep, err := r.dateRangeSummary(ctx, from, to)
+	rep.From, rep.To = from, to
+	return rep, err
+}
+
+// dateRangeSummary is the shared aggregation body behind EndOfDay and
+// EndOfDayRange. date(created_at) BETWEEN ? AND ? is equivalent to
+// date(created_at) = ? when from == to, so EndOfDay's behavior (and its
+// existing tests) are unaffected by sharing this with the range query.
+func (r *POSRepo) dateRangeSummary(ctx context.Context, from, to string) (EODReport, error) {
+	rep := EODReport{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
 	err := r.db.QueryRowContext(ctx, `
 SELECT
   COALESCE(SUM(CASE WHEN sale_type = 'sale'   THEN 1 END), 0),
@@ -1265,8 +1288,8 @@ SELECT
   COALESCE(SUM(CASE WHEN sale_type = 'sale' THEN tax_total ELSE -tax_total END), 0),
   COALESCE(MIN(receipt_no), ''), COALESCE(MAX(receipt_no), '')
 FROM sales
-WHERE status = 'completed' AND date(created_at) = ?`,
-		day).Scan(&rep.SalesCount, &rep.Gross, &rep.RefundCount, &rep.RefundTotal,
+WHERE status = 'completed' AND date(created_at) BETWEEN ? AND ?`,
+		from, to).Scan(&rep.SalesCount, &rep.Gross, &rep.RefundCount, &rep.RefundTotal,
 		&rep.TaxNet, &rep.FirstReceipt, &rep.LastReceipt)
 	if err != nil {
 		return rep, fmt.Errorf("eod totals: %w", err)
@@ -1279,8 +1302,8 @@ SELECT p.method_id,
   COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND date(s.created_at) = ?
-GROUP BY p.method_id ORDER BY 2 DESC`, day)
+WHERE s.status = 'completed' AND date(s.created_at) BETWEEN ? AND ?
+GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 	if err != nil {
 		return rep, fmt.Errorf("eod methods: %w", err)
 	}
@@ -1296,19 +1319,33 @@ GROUP BY p.method_id ORDER BY 2 DESC`, day)
 		return rep, err
 	}
 
-	// Department breakdown for the day (E1b — enterprise/department stores).
-	if depts, err := r.DepartmentsForDay(ctx, day); err == nil {
-		rep.Departments = depts
+	// Department and per-till breakdowns are single-day only for now, both
+	// gated on the same from==to check — DepartmentsForDay is a day-scoped
+	// helper (generalizing it to a range is out of this cycle's scope), and
+	// tills is kept consistent with it rather than silently populating one
+	// breakdown but not the other on a range report (2026-08-02 review
+	// finding: an asymmetric partial breakdown reads as "no data" for
+	// whichever one is empty, indistinguishable from a genuine zero).
+	if from == to {
+		if depts, err := r.DepartmentsForDay(ctx, from); err == nil {
+			rep.Departments = depts
+		}
 	}
 
-	// Per-till (register) breakdown for the day — only meaningful with >1 till,
-	// so it's left empty for single-register shops.
-	tillRows, err := r.db.QueryContext(ctx, `
+	// Per-till (register) breakdown — only meaningful with >1 till, so it's
+	// left empty for single-register shops (and, per the comment above, for
+	// any multi-day range).
+	var tillRows *sql.Rows
+	if from == to {
+		tillRows, err = r.db.QueryContext(ctx, `
 SELECT s.till_id, COALESCE(t.name, ''), COUNT(*), COALESCE(SUM(s.total), 0)
 FROM sales s
 LEFT JOIN tills t ON t.id = s.till_id
 WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at) = ?
-GROUP BY s.till_id ORDER BY 4 DESC`, day)
+GROUP BY s.till_id ORDER BY 4 DESC`, from)
+	} else {
+		return rep, nil
+	}
 	if err != nil {
 		return rep, fmt.Errorf("eod tills: %w", err)
 	}
