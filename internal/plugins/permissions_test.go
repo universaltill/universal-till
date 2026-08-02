@@ -78,6 +78,62 @@ func TestCheckPermission_NotGranted(t *testing.T) {
 	}
 }
 
+// TestCheckPermissionGranted_DistinguishesErrorFromDenial is the ut-docs#228
+// regression: a caller that wants to treat "not granted" as a non-fatal
+// fallback (e.g. omit optional data) must NOT also treat a genuine
+// infrastructure failure that way -- CheckPermission's single collapsed
+// error can't tell the two apart without parsing the error string;
+// CheckPermissionGranted returns them as distinct return values instead.
+func TestCheckPermissionGranted_DistinguishesErrorFromDenial(t *testing.T) {
+	db := setupTestDB(t)
+	setupAuditLog(t, db)
+	ctx := context.Background()
+
+	manifest := &Manifest{
+		ID:          "com.test.granted",
+		Name:        "Granted Test",
+		Version:     "1.0.0",
+		Entrypoint:  "./test",
+		Permissions: []string{"sales:read", "sales:write"},
+	}
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("persist manifest: %v", err)
+	}
+	if err := GrantPermission(ctx, db, manifest.ID, "sales:read"); err != nil {
+		t.Fatalf("grant permission: %v", err)
+	}
+
+	granted, err := CheckPermissionGranted(ctx, db, manifest.ID, "sales:read")
+	if err != nil || !granted {
+		t.Fatalf("expected granted=true, err=nil for a real grant; got granted=%v err=%v", granted, err)
+	}
+
+	granted, err = CheckPermissionGranted(ctx, db, manifest.ID, "sales:write")
+	if err != nil {
+		t.Fatalf("expected err=nil for a legitimate not-granted denial (not an infra failure), got %v", err)
+	}
+	if granted {
+		t.Fatal("expected granted=false for an ungranted-but-declared permission")
+	}
+
+	granted, err = CheckPermissionGranted(ctx, db, manifest.ID, "customers:read")
+	if err != nil {
+		t.Fatalf("expected err=nil for a not-declared permission (still a legitimate denial, not an infra failure), got %v", err)
+	}
+	if granted {
+		t.Fatal("expected granted=false for a never-declared permission")
+	}
+
+	// Genuine infrastructure failure: closing the DB makes the underlying
+	// query fail with sql.ErrConnDone, not sql.ErrNoRows -- this must come
+	// back as a real error, not be silently folded into granted=false the
+	// way a caller doing "if CheckPermission(...) == nil" would.
+	db.Close()
+	if _, err := CheckPermissionGranted(ctx, db, manifest.ID, "sales:read"); err == nil {
+		t.Fatal("expected a real error from a closed DB, got nil (infra failure silently treated as a denial)")
+	}
+}
+
 func TestCheckPermission_NotDeclared(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

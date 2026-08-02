@@ -18,9 +18,17 @@ import (
 // seedExportPlugin installs an active plugin with one 'export'-type entry
 // (key/label), an active "export.requested.ask" hook (required before the
 // event bus will accept a subscription for it — see EventBus.subscribe),
-// and events:receive granted (required before Ask will invoke a handler —
-// see EventBus.Ask's CheckPermission call).
+// and events:receive/sales:read/inventory:read all granted (required before
+// Ask will invoke a handler — see EventBus.Ask's CheckPermission call — and
+// before the export.requested.ask payload will carry sales/stock data —
+// see ut-docs#228). Most tests in this file want the full happy path; use
+// seedExportPluginWithPermissions directly for the permission-gating tests.
 func seedExportPlugin(t *testing.T, db *sql.DB, pluginID, key, label string) {
+	t.Helper()
+	seedExportPluginWithPermissions(t, db, pluginID, key, label, true, true)
+}
+
+func seedExportPluginWithPermissions(t *testing.T, db *sql.DB, pluginID, key, label string, salesRead, inventoryRead bool) {
 	t.Helper()
 	mustExec := func(q string, args ...any) {
 		t.Helper()
@@ -33,6 +41,12 @@ func seedExportPlugin(t *testing.T, db *sql.DB, pluginID, key, label string) {
 	          VALUES (?, ?, ?, ?, 'export', 1, 0)`, pluginID+"-e", pluginID, key, label)
 	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'events:receive', 1)`, pluginID+"-p", pluginID)
 	mustExec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES (?, ?, 'export.requested.ask', 'export', 1)`, pluginID+"-h", pluginID)
+	if salesRead {
+		mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'sales:read', 1)`, pluginID+"-p-sales", pluginID)
+	}
+	if inventoryRead {
+		mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'inventory:read', 1)`, pluginID+"-p-inv", pluginID)
+	}
 }
 
 // subscribeExportAsk resets the shared bus's subscribers (the bus is a
@@ -392,6 +406,172 @@ func TestExportDispatch_PayloadIncludesStockData(t *testing.T) {
 	}
 	if got.CurrentQty != 7.5 || got.ReorderLevel != 3 {
 		t.Fatalf("unexpected qty/reorder: %+v", got)
+	}
+}
+
+// TestExportDispatch_OmitsSalesWithoutSalesReadPermission is the ut-docs#228
+// regression: a plugin that has NOT been granted sales:read must not receive
+// the sales ledger, even though it has events:receive (so AskPlugin itself
+// still invokes it) and inventory:read (so this isn't just "no permissions
+// at all" — the two ledgers must gate independently, per the review finding
+// that a flat single check would leak one ledger to a plugin that only
+// asked for the other).
+func TestExportDispatch_OmitsSalesWithoutSalesReadPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithPermissions(t, dp.Db, "com.t.exp1", "csv", "CSV Export", false, true)
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+	          VALUES('sale1','R900','completed','sale','GBP',1000,0,200,1200,'2026-01-15T10:00:00Z')`)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp1", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (missing a data permission must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Sales json.RawMessage `json:"sales"`
+		Stock []struct {
+			ItemID string `json:"item_id"`
+		} `json:"stock"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.Sales != nil && string(payload.Sales) != "null" {
+		t.Fatalf("expected sales omitted (null) without sales:read, got %s", payload.Sales)
+	}
+	// The granted side must still be populated -- proves this is genuine
+	// independent per-ledger gating, not an accidental blanket omission.
+	// seedForPages seeds one baseline inventory row regardless of this test.
+	if len(payload.Stock) == 0 {
+		t.Fatalf("expected stock still populated (inventory:read granted), got none")
+	}
+}
+
+// TestExportDispatch_OmitsBothWithoutEitherPermission is the ut-docs#228
+// third case: a plugin granted neither sales:read nor inventory:read (but
+// still events:receive, so AskPlugin invokes it at all -- e.g. a plugin like
+// ut-plugin-tax-de's dsfinvk-export-de entry that triggers an external
+// export with no local ledger data) must still get a real response, not a
+// 4xx -- "no data permissions" is not the same thing as "invalid request".
+func TestExportDispatch_OmitsBothWithoutEitherPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithPermissions(t, dp.Db, "com.t.exp1", "fiskaly", "Fiskaly DSFinV-K", false, false)
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+	          VALUES('sale1','R900','completed','sale','GBP',1000,0,200,1200,'2026-01-15T10:00:00Z')`)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "triggered"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp1", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (a plugin needing neither ledger must still be invoked), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Sales json.RawMessage `json:"sales"`
+		Stock json.RawMessage `json:"stock"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.Sales != nil && string(payload.Sales) != "null" {
+		t.Fatalf("expected sales omitted (null) with neither permission, got %s", payload.Sales)
+	}
+	if payload.Stock != nil && string(payload.Stock) != "null" {
+		t.Fatalf("expected stock omitted (null) with neither permission, got %s", payload.Stock)
+	}
+}
+
+// TestExportDispatch_OmitsStockWithoutInventoryReadPermission is the
+// ut-docs#228 counterpart: a plugin granted sales:read but not
+// inventory:read must still get its sales data, but not the stock ledger.
+func TestExportDispatch_OmitsStockWithoutInventoryReadPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithPermissions(t, dp.Db, "com.t.exp1", "csv", "CSV Export", true, false)
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+	          VALUES('sale1','R900','completed','sale','GBP',1000,0,200,1200,'2026-01-15T10:00:00Z')`)
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-stk','SKU-STK','Stock Widget',500,3,1)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv-stk','itm-stk',NULL,'loc_main',7.5,datetime('now'))`)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp1", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Sales []struct {
+			ReceiptNo string `json:"receipt_no"`
+		} `json:"sales"`
+		Stock json.RawMessage `json:"stock"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if len(payload.Sales) != 1 {
+		t.Fatalf("expected sales still populated (sales:read granted), got %+v", payload.Sales)
+	}
+	if payload.Stock != nil && string(payload.Stock) != "null" {
+		t.Fatalf("expected stock omitted (null) without inventory:read, got %s", payload.Stock)
 	}
 }
 
