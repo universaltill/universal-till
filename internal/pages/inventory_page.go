@@ -73,7 +73,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		catRepo := data.NewCatalogRepo(d.Db)
 
 		levels, runningOut := stockLevelsForDisplay(ctx, d)
-		locations, _ := data.NewPOSRepo(d.Db).ListStockLocations(ctx)
+		locations, _ := data.NewPOSRepo(d.Db).ListActiveStockLocations(ctx)
 		items, _ := catRepo.ListItems(ctx)
 
 		// Compact id/name/sku list for the item picker.

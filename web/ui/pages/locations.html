@@ -1,0 +1,49 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "locations.title" }}</h1>
+</div>
+
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+<div class="users-layout">
+  <div class="card users-list">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "locations.col.name" }}</th>
+          <th>{{ T "locations.col.status" }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .locations }}
+        <tr>
+          <td>{{ .Name }}</td>
+          <td>{{ if .IsActive }}{{ T "locations.active" }}{{ else }}<span class="muted">{{ T "locations.inactive" }}</span>{{ end }}</td>
+          <td class="users-actions">
+            <form method="post" action="/api/locations/{{ .ID }}" class="users-inline">
+              <input type="text" name="name" value="{{ .Name }}" required />
+              <button type="submit" class="btn secondary">{{ T "locations.rename" }}</button>
+            </form>
+            <form method="post" action="/api/locations/{{ .ID }}/active" class="users-inline">
+              <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
+              <button type="submit" class="btn secondary">
+                {{ if .IsActive }}{{ T "locations.deactivate" }}{{ else }}{{ T "locations.activate" }}{{ end }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card users-form">
+    <h3>{{ T "locations.new.title" }}</h3>
+    <form method="post" action="/api/locations" autocomplete="off">
+      <label>{{ T "locations.col.name" }} <input type="text" name="name" required /></label>
+      <button type="submit" class="btn primary" style="width:100%">{{ T "locations.new.submit" }}</button>
+    </form>
+  </div>
+</div>
+{{ end }}
