@@ -60,6 +60,25 @@ func TestDrainBackgroundServices_TimesOutAndLogsWhenWgNeverCompletes(t *testing.
 	}
 }
 
+// listenPort feeds the mDNS advertiser's SRV record (ut-docs#264) — it must
+// parse a normal ":8080"-style UT_LISTEN_ADDR and fall back sanely rather
+// than ever return 0 (mdns.NewMDNSService rejects a zero port outright).
+func TestListenPort_ParsesConfiguredPort(t *testing.T) {
+	cases := map[string]int{
+		":8080":          8080,
+		"0.0.0.0:9090":   9090,
+		"127.0.0.1:3000": 3000,
+		"not-an-address": 8080, // fallback
+		"":               8080, // fallback
+		":0":             8080, // fallback — a literal 0 is as useless as unparseable
+	}
+	for addr, want := range cases {
+		if got := listenPort(addr); got != want {
+			t.Errorf("listenPort(%q) = %d, want %d", addr, got, want)
+		}
+	}
+}
+
 // Run must join its background goroutines on EVERY return path, not just a
 // caller-driven ctx cancel. This drives a real boot all the way through
 // enroll.Init (config.Init's default marketplace endpoint means a fresh,
