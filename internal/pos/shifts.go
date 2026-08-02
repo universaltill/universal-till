@@ -28,6 +28,11 @@ type ShiftCloseInput struct {
 	Note        string
 }
 
+// CashAdjustmentReasonPfandrueckgabe is the fixed reason recorded for
+// bottle-deposit cash payouts, so they're distinguishable in reports from
+// any other free-text cash adjustment.
+const CashAdjustmentReasonPfandrueckgabe = "Pfandrückgabe"
+
 // CashAdjustmentInput captures payouts or adjustments affecting expected cash
 type CashAdjustmentInput struct {
 	ShiftID string

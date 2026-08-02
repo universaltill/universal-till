@@ -2,11 +2,14 @@ package pages
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -268,6 +271,96 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 	}
 }
 
+// PfandRueckgabeRequest models input for a bottle-deposit cash payout.
+type PfandRueckgabeRequest struct {
+	Amount     int64  `json:"amount"` // minor units, must be > 0 (the amount paid out)
+	ManagerPIN string `json:"manager_pin"`
+}
+
+// PfandRueckgabe handles POST /api/shifts/pfandrueckgabe — a first-class,
+// manager-gated bottle-deposit cash payout. Recorded via the same
+// cash-adjustment machinery as any other payout (internal/pos.
+// RecordCashAdjustment), with a fixed reason so it's reportable distinctly
+// from free-text adjustments (pos.CashAdjustmentReasonPfandrueckgabe).
+func PfandRueckgabe(dp *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		var req PfandRueckgabeRequest
+
+		contentType := r.Header.Get("Content-Type")
+		if strings.Contains(contentType, "application/json") {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				respondAdjustmentError(w, r, http.StatusBadRequest, "invalid JSON")
+				return
+			}
+		} else {
+			if err := r.ParseForm(); err != nil {
+				respondAdjustmentError(w, r, http.StatusBadRequest, "invalid form data")
+				return
+			}
+			req.ManagerPIN = r.FormValue("manager_pin")
+			if amtStr := r.FormValue("amount"); amtStr != "" {
+				if amt, err := strconv.ParseInt(amtStr, 10, 64); err == nil {
+					req.Amount = amt
+				}
+			}
+		}
+
+		if req.Amount <= 0 {
+			respondAdjustmentError(w, r, http.StatusBadRequest, "amount must be greater than zero")
+			return
+		}
+
+		actorID := getSessionUserID(r)
+		if actorID == "" {
+			respondAdjustmentError(w, r, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
+		// Manager approval; the PIN owner is the audit actor (pos-auth),
+		// mirroring refund_page.go's gate — paying cash out is at least as
+		// sensitive as a refund.
+		authOff := auth.Disabled(os.Getenv("UT_AUTH"))
+		if !authOff {
+			approver, err := dp.AuthSvc.AuthorizeManager(ctx, strings.TrimSpace(req.ManagerPIN))
+			if err != nil {
+				status := http.StatusForbidden
+				if errors.Is(err, auth.ErrLockedOut) {
+					status = http.StatusTooManyRequests
+				}
+				respondAdjustmentError(w, r, status, "manager PIN required")
+				return
+			}
+			actorID = approver.ID
+		}
+
+		current, hasOpen, err := data.NewPOSRepo(dp.Db).CurrentOpenShift(ctx)
+		if err != nil {
+			respondAdjustmentError(w, r, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !hasOpen {
+			respondAdjustmentError(w, r, http.StatusNotFound, "shift not found or already closed")
+			return
+		}
+
+		adjustmentID, err := pos.RecordCashAdjustment(ctx, dp.Db, pos.CashAdjustmentInput{
+			ShiftID: current.ID,
+			Type:    "payout",
+			Amount:  -money.FromMinor(req.Amount),
+			Reason:  pos.CashAdjustmentReasonPfandrueckgabe,
+			ActorID: actorID,
+		})
+		if err != nil {
+			respondAdjustmentError(w, r, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		respondAdjustmentSuccess(w, r, CashAdjustmentResponse{AdjustmentID: adjustmentID, Success: true})
+	}
+}
+
 // Helper response functions for shifts
 func respondShiftError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
@@ -324,4 +417,5 @@ func registerShiftsAPI(mux *http.ServeMux, dp *common.Deps) {
 	mux.HandleFunc("POST /api/shifts/open", OpenShift(dp))
 	mux.HandleFunc("POST /api/shifts/close", CloseShift(dp))
 	mux.HandleFunc("POST /api/shifts/adjustment", RecordCashAdjustment(dp))
+	mux.HandleFunc("POST /api/shifts/pfandrueckgabe", PfandRueckgabe(dp))
 }
