@@ -74,7 +74,7 @@ func TestDiscoverPrimariesAPI_ReturnsCandidatesFound(t *testing.T) {
 	mux := http.NewServeMux()
 	registerDiscoveryAPI(mux, dp)
 	stubBrowse(t, []discovery.Candidate{
-		{Name: "Task Runner", TillID: "till-abc123"},
+		{Name: "Task Runner", TillID: "till-abc123", BaseURL: "http://192.168.1.50:8080"},
 	}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/sync/discover-primaries", nil)
@@ -87,8 +87,9 @@ func TestDiscoverPrimariesAPI_ReturnsCandidatesFound(t *testing.T) {
 	var out struct {
 		Data struct {
 			Primaries []struct {
-				Name   string `json:"name"`
-				TillID string `json:"till_id"`
+				Name    string `json:"name"`
+				TillID  string `json:"till_id"`
+				BaseURL string `json:"base_url"`
 			} `json:"primaries"`
 		} `json:"data"`
 		Error any `json:"error"`
@@ -99,7 +100,8 @@ func TestDiscoverPrimariesAPI_ReturnsCandidatesFound(t *testing.T) {
 	if out.Error != nil {
 		t.Fatalf("expected error: null, got %v", out.Error)
 	}
-	if len(out.Data.Primaries) != 1 || out.Data.Primaries[0].Name != "Task Runner" || out.Data.Primaries[0].TillID != "till-abc123" {
+	if len(out.Data.Primaries) != 1 || out.Data.Primaries[0].Name != "Task Runner" ||
+		out.Data.Primaries[0].TillID != "till-abc123" || out.Data.Primaries[0].BaseURL != "http://192.168.1.50:8080" {
 		t.Fatalf("unexpected primaries payload: %+v", out.Data.Primaries)
 	}
 }
