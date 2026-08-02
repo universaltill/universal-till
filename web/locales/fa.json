@@ -989,6 +989,8 @@
   "reports.wd_sat": "شنبه",
   "catalog.cost_price": "قیمت تمام‌شده (آنچه می‌پردازید)",
   "catalog.cost_price_hint": "در گزارش حاشیه سود استفاده می‌شود",
+  "catalog.error.invalid_ean13": "بارکد EAN-13 نامعتبر است — هر ۱۳ رقم را بررسی کنید.",
+  "catalog.error.item_created_invalid_ean13": "کالا ایجاد شد، اما بارکد یک EAN-13 معتبر نیست.",
   "catalog.lead_time_days": "زمان تحویل (روز)",
   "catalog.lead_time_days_hint": "تعداد روزهای لازم برای دریافت سفارش مجدد — برای زمان‌بندی هشدار کمبود موجودی و مقدار سفارش پیشنهادی استفاده می‌شود",
   "reports.margins": "حاشیه سود",

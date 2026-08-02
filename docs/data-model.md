@@ -35,6 +35,11 @@ and subsequent migrations.
 - `item_variants`
 - `variant_barcodes`
 
+Barcode type is validated at the catalog repository boundary. An explicit
+`EAN13` value must contain exactly 13 digits and a valid EAN-13 check digit;
+an omitted type is inferred as `EAN13` for 13-digit values and otherwise stored
+as `CODE128` so internal PLU/keypad codes remain supported.
+
 ### 3. Inventory & pricing
 
 - `inventory`
@@ -758,4 +763,3 @@ data/plugins/
 - Unit tests: Download resume, version comparison, revocation logic
 - Integration tests: End-to-end install, update with rollback, manual import
 - Edge cases: Network interruption, signature failure, disk full, concurrent updates
-

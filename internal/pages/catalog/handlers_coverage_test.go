@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
@@ -223,7 +225,7 @@ func TestItemCreate_InputValidation(t *testing.T) {
 // split outcome honestly: item created, attach failed, 400.
 func TestItemCreate_BarcodeAttachFailureIsReported(t *testing.T) {
 	mux, db := newCatalogMux(t)
-	rec := postForm(t, mux, "/api/catalog/item", "name=Ghost&price=100&isActive=0&barcode=5000000000001")
+	rec := postForm(t, mux, "/api/catalog/item", "name=Ghost&price=100&isActive=0&barcode=5000000000005")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -456,13 +458,34 @@ func TestBarcodeAttach_VariantWinsOverItem(t *testing.T) {
 }
 
 func TestBarcodeAttach_Validation(t *testing.T) {
-	mux, _ := newCatalogMux(t)
+	mux, db := newCatalogMux(t)
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(i18n, "en")
 	if rec := postForm(t, mux, "/api/catalog/barcode", "itemId=itm1"); rec.Code != http.StatusBadRequest {
 		t.Errorf("missing barcode: want 400, got %d", rec.Code)
 	}
 	// Unknown target item: the repo refuses, handler maps to 400.
 	if rec := postForm(t, mux, "/api/catalog/barcode", "barcode=5000001&itemId=ghost"); rec.Code != http.StatusBadRequest {
 		t.Errorf("unknown item: want 400, got %d", rec.Code)
+	}
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
+	rec := postForm(t, mux, "/api/catalog/barcode?lang=fa", "barcode=5449000000995&itemId=itm1")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid EAN-13: want 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "بارکد EAN-13 نامعتبر است") {
+		t.Fatalf("invalid EAN-13: want localized validation reason, got %s", rec.Body.String())
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE barcode = ?`, "5449000000995").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("invalid EAN-13 was persisted through the handler: count=%d", count)
 	}
 }
 
