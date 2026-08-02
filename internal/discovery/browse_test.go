@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"net"
 	"runtime"
 	"strconv"
 	"testing"
@@ -14,6 +15,8 @@ func TestCandidateFromEntry_ParsesNameAndID(t *testing.T) {
 	e := &mdns.ServiceEntry{
 		Name:       "till-abc123._unitill-sync._tcp.local.",
 		InfoFields: []string{"v=1", "name=Task Runner", "id=till-abc123"},
+		AddrV4:     net.IPv4(192, 168, 1, 50),
+		Port:       8080,
 	}
 	c, ok := candidateFromEntry(e)
 	if !ok {
@@ -28,6 +31,8 @@ func TestCandidateFromEntry_RejectsEntryWithoutID(t *testing.T) {
 	e := &mdns.ServiceEntry{
 		Name:       "mystery._unitill-sync._tcp.local.",
 		InfoFields: []string{"v=1", "name=Task Runner"},
+		AddrV4:     net.IPv4(192, 168, 1, 50),
+		Port:       8080,
 	}
 	if _, ok := candidateFromEntry(e); ok {
 		t.Fatal("expected an entry with no id= field to be rejected — a candidate with no till id is useless downstream")
@@ -38,6 +43,8 @@ func TestCandidateFromEntry_DefaultsNameWhenMissing(t *testing.T) {
 	e := &mdns.ServiceEntry{
 		Name:       "till-xyz._unitill-sync._tcp.local.",
 		InfoFields: []string{"v=1", "id=till-xyz"},
+		AddrV4:     net.IPv4(192, 168, 1, 50),
+		Port:       8080,
 	}
 	c, ok := candidateFromEntry(e)
 	if !ok {
@@ -48,6 +55,68 @@ func TestCandidateFromEntry_DefaultsNameWhenMissing(t *testing.T) {
 	}
 	if c.TillID != "till-xyz" {
 		t.Fatalf("got TillID=%q, want %q", c.TillID, "till-xyz")
+	}
+}
+
+// TestCandidateFromEntry_BuildsBaseURLFromV4AddrAndPort — a replica needs an
+// address to actually send POST /api/sync/pair-request to, per ADR-0033
+// point 2 (universaltill/ut-docs#185). Without this, discovery only ever
+// produced a name + id, useless for the pairing flow this card wires up.
+func TestCandidateFromEntry_BuildsBaseURLFromV4AddrAndPort(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		InfoFields: []string{"id=till-abc123", "name=Task Runner"},
+		AddrV4:     net.IPv4(192, 168, 1, 50),
+		Port:       8080,
+	}
+	c, ok := candidateFromEntry(e)
+	if !ok {
+		t.Fatal("expected a candidate to be extracted")
+	}
+	if want := "http://192.168.1.50:8080"; c.BaseURL != want {
+		t.Fatalf("got BaseURL=%q, want %q", c.BaseURL, want)
+	}
+}
+
+// TestCandidateFromEntry_FallsBackToV6Addr covers a responder answering only
+// on IPv6 — AddrV4 is nil but AddrV6 is usable.
+func TestCandidateFromEntry_FallsBackToV6Addr(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		InfoFields: []string{"id=till-abc123", "name=Task Runner"},
+		AddrV6:     net.ParseIP("fe80::1"),
+		Port:       8080,
+	}
+	c, ok := candidateFromEntry(e)
+	if !ok {
+		t.Fatal("expected a candidate to be extracted")
+	}
+	if want := "http://[fe80::1]:8080"; c.BaseURL != want {
+		t.Fatalf("got BaseURL=%q, want %q", c.BaseURL, want)
+	}
+}
+
+// TestCandidateFromEntry_RejectsEntryWithoutUsableAddress — a candidate with
+// no address is exactly as useless to the pairing flow as one with no id
+// (see TestCandidateFromEntry_RejectsEntryWithoutID above): there is nothing
+// to send a pair-request to.
+func TestCandidateFromEntry_RejectsEntryWithoutUsableAddress(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		InfoFields: []string{"id=till-abc123", "name=Task Runner"},
+		Port:       8080,
+	}
+	if _, ok := candidateFromEntry(e); ok {
+		t.Fatal("expected an entry with neither AddrV4 nor AddrV6 to be rejected")
+	}
+}
+
+// TestCandidateFromEntry_RejectsEntryWithoutPort — an address alone (port 0)
+// can't be dialed either.
+func TestCandidateFromEntry_RejectsEntryWithoutPort(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		InfoFields: []string{"id=till-abc123", "name=Task Runner"},
+		AddrV4:     net.IPv4(192, 168, 1, 50),
+	}
+	if _, ok := candidateFromEntry(e); ok {
+		t.Fatal("expected an entry with port 0 to be rejected")
 	}
 }
 
@@ -90,7 +159,7 @@ func TestBrowse_DoesNotLeakCollectorGoroutineWhenCancelledMidScan(t *testing.T) 
 		// A real scan keeps running for its full timeout even after the
 		// caller has given up; emulate that, then return as Query does.
 		time.Sleep(100 * time.Millisecond)
-		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=late-answer", "name=Late"}}
+		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=late-answer", "name=Late"}, AddrV4: net.IPv4(192, 168, 1, 51), Port: 8080}
 		close(queryReturned)
 		return nil
 	}
@@ -134,6 +203,8 @@ func TestBrowse_CapsCandidatesFromAFloodingResponder(t *testing.T) {
 		for i := 0; i < maxCandidates*10; i++ {
 			p.Entries <- &mdns.ServiceEntry{
 				InfoFields: []string{"id=flood-" + strconv.Itoa(i), "name=Flood"},
+				AddrV4:     net.IPv4(192, 168, 1, 52),
+				Port:       8080,
 			}
 		}
 		return nil

@@ -1,0 +1,16 @@
+<div id="pairing-status"
+     {{ if .polling }}hx-get="/api/sync/pair-status" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
+{{ if eq .status "waiting" }}
+  <p>{{ T "tills.pairing.waiting_title" }}</p>
+  <p class="pairing-code" style="font-size:1.5rem; letter-spacing:.2em; font-weight:bold">{{ .code }}</p>
+  <p class="muted">{{ T "tills.pairing.waiting_help" }}</p>
+{{ else if eq .status "joined" }}
+  <p>✓ {{ T "tills.joined" }}: {{ .shopName }} — {{ T "tills.restart_to_finish" }}</p>
+{{ else if eq .status "expired" }}
+  <p class="muted">{{ T "tills.pairing.no_response" }}</p>
+{{ else if eq .status "error" }}
+  <p class="muted">{{ T "tills.pairing.error" }}: {{ .errMsg }}</p>
+{{ else }}
+  <p class="muted">{{ T "tills.pairing.no_active_request" }}</p>
+{{ end }}
+</div>

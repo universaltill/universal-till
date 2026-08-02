@@ -1,0 +1,30 @@
+<div id="pending-pairings" hx-get="/ui/tills/pending-pairings" hx-trigger="every 30s" hx-target="this" hx-swap="outerHTML">
+{{ if .Pending }}
+<table class="table">
+  <thead><tr><th>{{ T "tills.pairing.device_label" }}</th><th>{{ T "tills.pairing.code_label" }}</th><th></th></tr></thead>
+  <tbody>
+    {{ range .Pending }}
+    <tr>
+      <td>{{ .DeviceName }}</td>
+      <td style="font-weight:bold; letter-spacing:.15em">{{ .VerificationCode }}</td>
+      <td>
+        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-swap="none"
+              hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
+          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "tills.pairing.manager_pin" }}">
+          <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
+        </form>
+        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-swap="none"
+              hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
+          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "tills.pairing.manager_pin" }}">
+          <button class="btn secondary" type="submit">{{ T "tills.pairing.deny_btn" }}</button>
+        </form>
+        <p id="pin-error-{{ .ID }}" class="muted" role="alert" hidden>{{ T "tills.pairing.pin_error" }}</p>
+      </td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">{{ T "tills.pairing.none" }}</p>
+{{ end }}
+</div>
