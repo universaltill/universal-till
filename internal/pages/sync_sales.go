@@ -70,6 +70,7 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		TaxInclusive:           saleIsTaxInclusive(j.Sale),
 		CashierID:              j.Sale.CashierID,
 		ActorID:                j.Sale.CashierID,
+		OrderType:              j.Sale.OrderType,
 		OriginalSaleID:         j.OriginalSaleID,
 		AllowNegativeInventory: true, // the remote sale already happened
 	}

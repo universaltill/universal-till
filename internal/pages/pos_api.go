@@ -592,6 +592,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			TaxInclusive:           d.CurrentState().TaxInclusive,
 			SaleDiscount:           discount,
 			ServiceCharge:          serviceCharge,
+			OrderType:              d.Engine.OrderType(),
 			Lines:                  saleLines,
 			Payments:               payments,
 			Note:                   in.Note,

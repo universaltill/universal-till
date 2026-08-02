@@ -322,6 +322,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// signed-in-operator CashierID.
 			CashierID:              "kiosk",
 			CustomerID:             d.Engine.CustomerID(),
+			OrderType:              d.Engine.OrderType(),
 			AllowNegativeInventory: d.CurrentState().AllowNegativeInventory,
 			ActorID:                "kiosk",
 		}
