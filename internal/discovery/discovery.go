@@ -40,6 +40,21 @@ func TillID(ctx context.Context, settings *data.SettingsRepo) (string, error) {
 	return id, nil
 }
 
+// RoleCheckFromSettings builds a RoleCheck (see advertiser.go) backed by a
+// real *data.SettingsRepo: empty "sync.primary_url" means primary/
+// standalone (advertise), non-empty means replica (don't) — the same rule
+// as pages.Deps.SyncPrimaryURL. internal/app.Run wires this straight into
+// discovery.NewAdvertiser rather than hand-rolling the same settings.Get +
+// strings.TrimSpace inline, so the actual production role-check logic has
+// its own direct test coverage instead of only Advertiser's tick logic
+// being tested against a synthetic injected bool.
+func RoleCheckFromSettings(settings *data.SettingsRepo) RoleCheck {
+	return func(ctx context.Context) bool {
+		v, _, _ := settings.Get(ctx, "sync.primary_url")
+		return strings.TrimSpace(v) == ""
+	}
+}
+
 // storeNameOrDefault duplicates internal/pages's storeNameOrDefault
 // (same setting key "store.name", same "this shop" fallback) rather than
 // importing internal/pages — internal/pages will need to import
