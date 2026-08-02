@@ -284,6 +284,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
 				Barcode: barcode, ItemID: itemID, IsPrimary: true,
 			}); err != nil {
+				if errors.Is(err, data.ErrInvalidEAN13) {
+					http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "catalog.error.item_created_invalid_ean13"), http.StatusBadRequest)
+					return
+				}
 				http.Error(w, "item created, but barcode attach failed: "+err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -647,6 +651,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			VariantID: variantID,
 			IsPrimary: isPrimary,
 		}); err != nil {
+			if errors.Is(err, data.ErrInvalidEAN13) {
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "catalog.error.invalid_ean13"), http.StatusBadRequest)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

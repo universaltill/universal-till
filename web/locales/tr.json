@@ -989,6 +989,8 @@
   "reports.wd_sat": "Cumartesi",
   "catalog.cost_price": "Maliyet fiyatı (ödediğiniz)",
   "catalog.cost_price_hint": "Kâr marjı raporunda kullanılır",
+  "catalog.error.invalid_ean13": "Geçersiz EAN-13 barkodu — 13 hanenin tümünü kontrol edin.",
+  "catalog.error.item_created_invalid_ean13": "Ürün oluşturuldu ancak barkod geçerli bir EAN-13 değil.",
   "catalog.lead_time_days": "Tedarik süresi (gün)",
   "catalog.lead_time_days_hint": "Yeniden sipariş almak için geçen gün sayısı — düşük stok uyarısının ve önerilen sipariş miktarının zamanlamasında kullanılır",
   "reports.margins": "Kâr marjları",

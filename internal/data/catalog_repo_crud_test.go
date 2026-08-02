@@ -714,6 +714,86 @@ func TestAddBarcode_ItemAndVariant(t *testing.T) {
 	}
 }
 
+func TestAddBarcode_ValidatesExplicitEAN13AndPreservesArbitraryCodes(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-V", Name: "Variant", Price: 150, IsActive: true})
+
+	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+		Barcode: "5449000000995", ItemID: "i1",
+	}); err == nil {
+		t.Fatal("expected an untyped 13-digit barcode with an invalid EAN-13 check digit to be rejected")
+	} else if !strings.Contains(err.Error(), "invalid EAN-13") {
+		t.Fatalf("expected an EAN-13 validation error, got %v", err)
+	}
+	if exists, err := repo.BarcodeExists(ctx, "5449000000995"); err != nil || exists {
+		t.Fatalf("invalid EAN-13 was persisted: exists=%v err=%v", exists, err)
+	}
+	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+		Barcode: "4006381333932", ItemID: "i1", BarcodeType: "EAN13",
+	}); err == nil {
+		t.Fatal("expected an explicitly typed EAN-13 with an invalid check digit to be rejected")
+	}
+	for _, malformed := range []string{"123", "400638133393x"} {
+		if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+			Barcode: malformed, ItemID: "i1", BarcodeType: "EAN13",
+		}); err == nil {
+			t.Errorf("expected malformed EAN-13 %q to be rejected", malformed)
+		}
+	}
+
+	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+		Barcode: "5449000000996", ItemID: "i1", BarcodeType: "ean13",
+	}); err != nil {
+		t.Fatalf("valid item EAN-13 rejected: %v", err)
+	}
+	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+		Barcode: "9780306406157", ItemID: "i1",
+	}); err != nil {
+		t.Fatalf("valid untyped EAN-13 rejected: %v", err)
+	}
+	var inferredType string
+	if err := db.QueryRow(`SELECT barcode_type FROM item_barcodes WHERE barcode = ?`, "9780306406157").Scan(&inferredType); err != nil {
+		t.Fatal(err)
+	}
+	if inferredType != "EAN13" {
+		t.Fatalf("untyped 13-digit barcode_type = %q, want EAN13", inferredType)
+	}
+	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+		Barcode: "4006381333931", VariantID: "v1", BarcodeType: "EAN13",
+	}); err != nil {
+		t.Fatalf("valid variant EAN-13 rejected: %v", err)
+	}
+
+	// An omitted type is the catalog/keypad path from ADR-0021. It must stay
+	// permissive for internal PLU and scanner codes, but must not falsely label
+	// those arbitrary values as EAN-13.
+	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+		Barcode: "123", ItemID: "i1",
+	}); err != nil {
+		t.Fatalf("arbitrary internal barcode rejected: %v", err)
+	}
+	var barcodeType string
+	if err := db.QueryRow(`SELECT barcode_type FROM item_barcodes WHERE barcode = ?`, "123").Scan(&barcodeType); err != nil {
+		t.Fatal(err)
+	}
+	if barcodeType != "CODE128" {
+		t.Fatalf("unspecified barcode_type = %q, want CODE128", barcodeType)
+	}
+
+	// A 13-digit internal code can still be intentionally stored under a
+	// symbology that does not carry an EAN-13 check digit.
+	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
+		Barcode: "5449000000995", ItemID: "i1", BarcodeType: "CODE128",
+	}); err != nil {
+		t.Fatalf("explicit CODE128 rejected: %v", err)
+	}
+}
+
 func TestAddBarcode_RejectsCrossTargetReassignment(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
