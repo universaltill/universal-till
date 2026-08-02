@@ -36,7 +36,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT);`,
 		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, base_price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, service_charge_amount INTEGER NOT NULL DEFAULT 0, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
+		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', order_type TEXT NOT NULL DEFAULT '', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, service_charge_amount INTEGER NOT NULL DEFAULT 0, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_line_modifiers (id TEXT PRIMARY KEY, sale_line_id TEXT NOT NULL, group_id TEXT, option_id TEXT, group_name_snapshot TEXT NOT NULL, option_name_snapshot TEXT NOT NULL, price_delta_minor INTEGER NOT NULL, FOREIGN KEY (sale_line_id) REFERENCES sale_lines(id));`,
 		`CREATE TABLE sale_discounts (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_id TEXT, type TEXT NOT NULL, value INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT);`,
@@ -867,5 +867,62 @@ VALUES ('existing', '000000001', 'completed', 'sale', 'GBP', 500, 0, 0, 500, 0, 
 	}
 	if receipts[0] != "000000001" || receipts[1] != "000000002" {
 		t.Fatalf("unexpected receipts: %v", receipts)
+	}
+}
+
+// TestCompleteSale_ClampsUnknownOrderTypeToDineIn covers the independent
+// review finding on ut-docs#181: internal/pages/sync_sales.go's journal
+// replay passes a remote peer's OrderType straight through, unvalidated,
+// unlike the live checkout's own form-parsing which only ever produces ""
+// or OrderTypeTakeaway. CompleteSale is the one choke point every caller
+// (cashier, kiosk, sync replay) goes through, so it must clamp there.
+func TestCompleteSale_ClampsUnknownOrderTypeToDineIn(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	line := SaleLineInput{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"}
+	payment := PaymentInput{MethodID: "cash", Amount: 500}
+
+	saleID, err := CompleteSale(ctx, db, SaleInput{
+		SaleType:  "sale",
+		Currency:  "GBP",
+		OrderType: "'; DROP TABLE sales; --",
+		Lines:     []SaleLineInput{line},
+		Payments:  []PaymentInput{payment},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSale (garbage order type): %v", err)
+	}
+	repo := data.NewPOSRepo(db)
+	detail, ok, err := repo.GetSaleDetailByID(ctx, saleID)
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetailByID: ok=%v err=%v", ok, err)
+	}
+	if detail.OrderType != "" {
+		t.Fatalf("unrecognized OrderType was NOT clamped to dine-in: got %q", detail.OrderType)
+	}
+
+	saleID2, err := CompleteSale(ctx, db, SaleInput{
+		SaleType:  "sale",
+		Currency:  "GBP",
+		OrderType: OrderTypeTakeaway,
+		Lines:     []SaleLineInput{line},
+		Payments:  []PaymentInput{payment},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSale (takeaway): %v", err)
+	}
+	detail2, ok, err := repo.GetSaleDetailByID(ctx, saleID2)
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetailByID: ok=%v err=%v", ok, err)
+	}
+	if detail2.OrderType != OrderTypeTakeaway {
+		t.Fatalf("legitimate OrderTypeTakeaway was clamped away: got %q", detail2.OrderType)
 	}
 }
