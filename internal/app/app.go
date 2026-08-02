@@ -14,7 +14,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -148,12 +147,11 @@ func Run(ctx context.Context) error {
 	// check duplicates Deps.SyncPrimaryURL's one-line lookup rather than
 	// waiting for pages.Init's *common.Deps to exist (Init runs after this
 	// and needs mux routes registered before returning); both read the
-	// exact same "sync.primary_url" setting.
+	// exact same "sync.primary_url" setting. RoleCheckFromSettings (not an
+	// inline closure here) so the rule itself has direct test coverage —
+	// see internal/discovery's TestRoleCheckFromSettings_* tests.
 	discoverySettings := data.NewSettingsRepo(database.DB)
-	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, func(c context.Context) bool {
-		v, _, _ := discoverySettings.Get(c, "sync.primary_url")
-		return strings.TrimSpace(v) == ""
-	}, listenPort(cfg.ListenAddr))
+	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discovery.RoleCheckFromSettings(discoverySettings), listenPort(cfg.ListenAddr))
 	discoveryAdvertiser.Start(bgCtx, &wg)
 
 	mux := pages.Init(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)

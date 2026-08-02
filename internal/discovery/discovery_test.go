@@ -98,3 +98,47 @@ func TestStoreNameOrDefault_FallsBackWhenUnset(t *testing.T) {
 		t.Fatalf("expected the configured store name, got %q", got)
 	}
 }
+
+// TestRoleCheckFromSettings_* covers the ACTUAL role-check logic wired into
+// production (internal/app.Run passes this to discovery.NewAdvertiser) —
+// not just Advertiser's tick logic against a synthetic injected bool
+// (that's advertiser_test.go's job). Before this, the "empty
+// sync.primary_url means primary" rule was duplicated as an inline closure
+// in app.go with zero test coverage of its own: nothing would fail if that
+// closure's condition were accidentally inverted. This exercises the real
+// settings-backed rule directly, against a real *data.SettingsRepo, the
+// same way app.go wires it.
+func TestRoleCheckFromSettings_TrueWhenPrimaryURLUnset(t *testing.T) {
+	settings := openTestSettings(t)
+	check := RoleCheckFromSettings(settings)
+
+	if !check(context.Background()) {
+		t.Fatal("expected primary role (true) when sync.primary_url is unset")
+	}
+}
+
+func TestRoleCheckFromSettings_FalseWhenPrimaryURLSet(t *testing.T) {
+	settings := openTestSettings(t)
+	ctx := context.Background()
+	if err := settings.Set(ctx, "sync.primary_url", "https://primary.example"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	check := RoleCheckFromSettings(settings)
+
+	if check(ctx) {
+		t.Fatal("expected replica role (false) when sync.primary_url is set")
+	}
+}
+
+func TestRoleCheckFromSettings_TrueWhenPrimaryURLWhitespaceOnly(t *testing.T) {
+	settings := openTestSettings(t)
+	ctx := context.Background()
+	if err := settings.Set(ctx, "sync.primary_url", "   "); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	check := RoleCheckFromSettings(settings)
+
+	if !check(ctx) {
+		t.Fatal("expected primary role (true) when sync.primary_url is whitespace-only")
+	}
+}
