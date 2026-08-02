@@ -114,7 +114,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	// Rewinding the ledger doesn't undo migration 024's, 025's, 026's or 027's
 	// physical DDL (ALTER TABLE ADD COLUMN isn't idempotent, unlike 023's
 	// UPDATE) -- without this, replaying them on reopen fails with
-	// "duplicate column"/"already exists". Drop all four so the simulated pre-023 state is
+	// "duplicate column"/"already exists". Drop all five so the simulated pre-023 state is
 	// physically accurate, same as a real till that never had them
 	// (ut-docs#72).
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN service_charge_amount`); err != nil {

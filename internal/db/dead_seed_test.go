@@ -59,7 +59,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	// Rewinding the ledger doesn't undo migration 024's, 025's, 026's or
 	// 027's physical DDL (ALTER TABLE ADD COLUMN / CREATE TABLE aren't
 	// idempotent) -- without this, replaying them on reopen fails with
-	// "duplicate column"/"already exists". Drop all four so the
+	// "duplicate column"/"already exists". Drop all five so the
 	// simulated pre-upgrade state is physically accurate (ut-docs#72).
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN service_charge_amount`); err != nil {
 		t.Fatalf("rewind service_charge_amount column: %v", err)
