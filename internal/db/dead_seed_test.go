@@ -56,11 +56,11 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 22`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
-	// Rewinding the ledger doesn't undo migration 024's, 025's or 026's
-	// physical DDL (ALTER TABLE ADD COLUMN isn't idempotent) -- without
-	// this, replaying them on reopen fails with "duplicate column". Drop
-	// all three so the simulated pre-upgrade state is physically accurate
-	// (ut-docs#72).
+	// Rewinding the ledger doesn't undo migration 024's, 025's, 026's or
+	// 027's physical DDL (ALTER TABLE ADD COLUMN / CREATE TABLE aren't
+	// idempotent) -- without this, replaying them on reopen fails with
+	// "duplicate column"/"already exists". Drop all four so the
+	// simulated pre-upgrade state is physically accurate (ut-docs#72).
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN service_charge_amount`); err != nil {
 		t.Fatalf("rewind service_charge_amount column: %v", err)
 	}
@@ -69,6 +69,11 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	}
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN order_type`); err != nil {
 		t.Fatalf("rewind order_type column: %v", err)
+	}
+	// Migration 027 creates a table, not a column -- same non-idempotent-
+	// replay problem, drop it too (ut-docs#184).
+	if _, err := d.DB.Exec(`DROP TABLE pending_pairings`); err != nil {
+		t.Fatalf("rewind pending_pairings table: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
