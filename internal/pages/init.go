@@ -190,7 +190,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerImport(mux, dp)
 	registerReceiptDesigner(mux, dp)
 	registerPluginSettings(mux, dp)
-	registerSyncAPI(mux, dp)
+	enrolTokens := registerSyncAPI(mux, dp)
+	registerPairingAPI(mux, dp, authSvc, enrolTokens) // ADR-0033 part 2/3
 	registerSyncSales(mux, dp)
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)

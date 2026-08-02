@@ -100,7 +100,11 @@ func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 	return t, true
 }
 
-func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
+// registerSyncAPI returns the enrolTokens store it wires up so callers
+// that issue their own tokens (e.g. registerPairingAPI's approve handler,
+// ADR-0033 part 2/3) burn/validate against the SAME one-time store as the
+// QR flow's /api/sync/enroll, rather than a second, disconnected one.
+func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	repo := data.NewTillsRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 	tokens := &enrolTokens{tokens: map[string]time.Time{}}
@@ -335,6 +339,8 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) {
 		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
 			shopName, httpx.T(locale, "tills.restart_to_finish"))
 	})
+
+	return tokens
 }
 
 // joinPrimary runs the whole replica-side join: enrol with the one-time
