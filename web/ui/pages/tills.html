@@ -22,9 +22,18 @@
     <hr style="margin:1rem 0; border:none; border-top:1px dashed #d1d5db">
     <h3>{{ T "tills.discovery.title" }}</h3>
     <p class="muted">{{ T "tills.discovery.help" }}</p>
+    <label>{{ T "tills.pairing.your_till_name" }}
+      <input type="text" id="pairing-till-name" name="name" placeholder="Till 2"></label>
     <button id="discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
     <div id="discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-inline-start:0"></div>
     <div id="discover-results"></div>
+    <div id="pairing-status-host"></div>
+  </div>
+
+  <div class="card">
+    <h3>{{ T "tills.pairing.title" }}</h3>
+    <p class="muted">{{ T "tills.pairing.help" }}</p>
+    <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
   </div>
 
   {{ if .SyncPrimary }}
@@ -66,9 +75,14 @@
 
 <script>
 (function () {
-  // LAN till discovery (ADR-0033 part 1, ut-docs#264): read-only results —
-  // no click/select wiring. Choosing a discovered primary to join is a
-  // separate future card (#185).
+  // LAN till discovery (ADR-0033 part 1, ut-docs#264) + approve-to-pair
+  // (ADR-0033 part 3/3, ut-docs#185): the search itself stays a plain
+  // fetch() (unchanged, already working); each result now also renders a
+  // "Request to pair" button wired with htmx attributes. The vendored htmx
+  // here is 1.9.12 — no MutationObserver auto-processing (that's a 2.x
+  // thing) — so content inserted outside htmx's own swap machinery is
+  // otherwise never scanned for hx- attributes; htmx.process() below is
+  // required, same as catalog.html's own image-upload table refresh does.
   var btn = document.getElementById('discover-btn');
   if (!btn) return;
   var msg = document.getElementById('discover-msg');
@@ -77,9 +91,11 @@
     searching: "{{ T "tills.discovery.searching" }}",
     noneFound: "{{ T "tills.discovery.none_found" }}",
     resultName: "{{ T "tills.discovery.result_name" }}",
-    error: "{{ T "tills.discovery.error" }}"
+    error: "{{ T "tills.discovery.error" }}",
+    requestBtn: "{{ T "tills.pairing.request_btn" }}"
   };
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
   btn.addEventListener('click', function () {
     btn.disabled = true;
     msg.textContent = i18n.searching;
@@ -92,10 +108,14 @@
         if (!list.length) { msg.textContent = i18n.noneFound; return; }
         msg.textContent = '';
         out.innerHTML = '<ul style="list-style:none; padding-inline-start:0; margin:.4rem 0">' + list.map(function (p) {
+          var vals = JSON.stringify({ base_url: p.base_url, till_id: p.till_id });
           return '<li style="padding:.3rem 0">' + esc(p.name)
-            + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + '</span></li>';
+            + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + '</span> '
+            + '<button type="button" class="btn secondary" hx-post="/api/sync/pair-start" '
+            + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name" '
+            + 'hx-target="#pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
         }).join('') + '</ul>';
-      })
+        htmx.process(out);
       .catch(function () {
         btn.disabled = false;
         msg.textContent = i18n.error;

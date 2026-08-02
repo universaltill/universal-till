@@ -1,0 +1,356 @@
+package pages
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
+	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/discovery"
+)
+
+// --- registerPairingJoinAPI: the replica-side "select a discovered primary
+// -> pair" flow (ADR-0033 part 3/3, ut-docs#185). ---
+
+func postPairStart(t *testing.T, mux *http.ServeMux, baseURL, tillID, name string) *httptest.ResponseRecorder {
+	t.Helper()
+	form := url.Values{"base_url": {baseURL}, "till_id": {tillID}, "name": {name}}
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/pair-start", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func getPairStatus(t *testing.T, mux *http.ServeMux) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/pair-status", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestPairStart_RequiresManager(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := postPairStart(t, rmux, "http://example.invalid", "primary-till-1", "Till 2")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without a manager session, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPairStart_SendsRequestAndShowsIndependentlyDerivedCode(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	// Real primary serving the pairing backend (#184).
+	primary, _ := newSyncDepsWithPath(t, "primary.db")
+	psvc := auth.NewService(primary.Db)
+	pmux := http.NewServeMux()
+	ptokens := registerSyncAPI(pmux, primary)
+	registerPairingAPI(pmux, primary, psvc, ptokens)
+	srv := httptest.NewServer(pmux)
+	t.Cleanup(srv.Close)
+
+	primaryTillID, err := discovery.TillID(t.Context(), data.NewSettingsRepo(primary.Db))
+	if err != nil {
+		t.Fatalf("discovery.TillID: %v", err)
+	}
+
+	// Replica driving POST /api/sync/pair-start against the real primary.
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := postPairStart(t, rmux, srv.URL, primaryTillID, "Bar Till")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 starting a pair request, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// The primary must actually have a pending request now.
+	preq := httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests", nil)
+	prec := httptest.NewRecorder()
+	pmux.ServeHTTP(prec, preq)
+	var pout struct {
+		Data struct {
+			Pending []struct {
+				VerificationCode string `json:"verification_code"`
+			} `json:"pending"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(prec.Body.Bytes(), &pout); err != nil {
+		t.Fatal(err)
+	}
+	if len(pout.Data.Pending) != 1 {
+		t.Fatalf("expected exactly one pending request on the primary, got %+v", pout.Data.Pending)
+	}
+
+	// The replica's own rendered waiting screen must show the SAME code,
+	// independently computed — not echoed by the primary (the primary's
+	// pair-request response never even carries the primary's derivation).
+	wantCode := pout.Data.Pending[0].VerificationCode
+	if !strings.Contains(body, wantCode) {
+		t.Fatalf("expected the replica's waiting screen to show verification code %q, got body: %s", wantCode, body)
+	}
+}
+
+func TestPairStart_SurfacesUnreachablePrimary(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := postPairStart(t, rmux, "http://127.0.0.1:1", "some-till-id", "Bar Till")
+	// Always 200 — htmx (vendored 1.9.12 here) does not swap non-2xx
+	// responses by default, so a non-200 render would be invisible to the
+	// manager. The failure is encoded in the body as the "error" state
+	// instead (no self-polling hx-trigger, so it doesn't loop forever).
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (error encoded in the body, not the status) when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cannot reach that primary") {
+		t.Fatalf("expected the rendered error state naming the failure, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "hx-trigger") {
+		t.Fatal("error state must not keep polling")
+	}
+}
+
+// TestPairStart_RejectsInvalidBaseURL guards the base_url validation added
+// after independent review flagged it as unvalidated external input
+// (base_url originates from an untrusted LAN mDNS responder — CLAUDE.md:
+// "validate all external input").
+func TestPairStart_RejectsInvalidBaseURL(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	for _, bad := range []string{"javascript:alert(1)", "not a url", "ftp://example.com"} {
+		rec := postPairStart(t, rmux, bad, "some-till-id", "Bar Till")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("base_url=%q: expected 200 (error encoded in body), got %d", bad, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "not a valid primary address") {
+			t.Fatalf("base_url=%q: expected the rendered validation-error state, got: %s", bad, rec.Body.String())
+		}
+	}
+}
+
+func TestPairStatus_NoActiveAttemptRendersSafely(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := getPairStatus(t, rmux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 even with no active pairing attempt, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Checking only the status code can't tell "safely renders nothing" apart
+	// from "renders a bogus waiting state that polls forever" — both are 200.
+	// A no-active-attempt render must not carry the self-polling trigger.
+	if strings.Contains(rec.Body.String(), "hx-trigger") {
+		t.Fatal("no active attempt must not render a polling state")
+	}
+}
+
+// TestPairStatus_FullFlow_CompletesJoinAndStagesRestore is the actual
+// end-to-end path this card exists to build: discover -> pair-start ->
+// primary manager approves -> replica polls pair-status -> completeJoin
+// stages a restore + identity, exactly like the QR flow already does.
+func TestPairStatus_FullFlow_CompletesJoinAndStagesRestore(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	primary, _ := newSyncDepsWithPath(t, "primary.db")
+	if err := primary.Settings.Set(t.Context(), "store.name", "Corner Shop"); err != nil {
+		t.Fatalf("set store name: %v", err)
+	}
+	psvc := auth.NewService(primary.Db)
+	pmux := http.NewServeMux()
+	ptokens := registerSyncAPI(pmux, primary)
+	registerPairingAPI(pmux, primary, psvc, ptokens)
+	srv := httptest.NewServer(pmux)
+	t.Cleanup(srv.Close)
+
+	primaryTillID, err := discovery.TillID(t.Context(), data.NewSettingsRepo(primary.Db))
+	if err != nil {
+		t.Fatalf("discovery.TillID: %v", err)
+	}
+
+	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := postPairStart(t, rmux, srv.URL, primaryTillID, "Bar Till")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pair-start: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Still waiting: the primary hasn't approved yet.
+	rec = getPairStatus(t, rmux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pair-status (waiting): expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if appdb.PendingRestore(replicaPath) {
+		t.Fatal("must not stage a restore before the primary approves")
+	}
+
+	// The manager approves on the primary.
+	preq := httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests", nil)
+	prec := httptest.NewRecorder()
+	pmux.ServeHTTP(prec, preq)
+	var pout struct {
+		Data struct {
+			Pending []struct {
+				ID string `json:"id"`
+			} `json:"pending"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(prec.Body.Bytes(), &pout); err != nil {
+		t.Fatal(err)
+	}
+	if len(pout.Data.Pending) != 1 {
+		t.Fatalf("expected one pending request, got %+v", pout.Data.Pending)
+	}
+	arec := httptest.NewRecorder()
+	areq := httptest.NewRequest(http.MethodPost, "/api/sync/pair-requests/"+pout.Data.Pending[0].ID+"/approve", nil)
+	pmux.ServeHTTP(arec, areq)
+	if arec.Code != http.StatusOK {
+		t.Fatalf("approve: expected 200, got %d: %s", arec.Code, arec.Body.String())
+	}
+
+	// Now the replica's poll must retrieve the token and complete the join.
+	rec = getPairStatus(t, rmux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pair-status (joined): expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Corner Shop") {
+		t.Fatalf("expected the primary's shop name in the joined state, got body: %s", rec.Body.String())
+	}
+	if !appdb.PendingRestore(replicaPath) {
+		t.Fatal("expected a staged restore-pending.db after the replica completes the join")
+	}
+
+	// Idempotent: a subsequent poll doesn't error or re-attempt the join.
+	rec = getPairStatus(t, rmux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pair-status (re-poll after joined): expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPairStatus_TreatsPrimary404AsStillWaiting(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	stub := http.NewServeMux()
+	stub.HandleFunc("POST /api/sync/pair-request", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"pending-1"},"error":null}`))
+	})
+	stub.HandleFunc("GET /api/sync/pair-requests/pending-1", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	srv := httptest.NewServer(stub)
+	t.Cleanup(srv.Close)
+
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := postPairStart(t, rmux, srv.URL, "stub-till-id", "Bar Till")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pair-start: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = getPairStatus(t, rmux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 404-from-primary to render as a normal 200 'still waiting' state, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Both the "waiting" and "error" states return 200 (see pairWaitView) —
+	// checking only the status code can't tell them apart, so a regression
+	// that mis-routed 404 into the error branch would slip past. The
+	// self-polling hx-trigger only appears in the "waiting" render.
+	if !strings.Contains(rec.Body.String(), `hx-trigger="every 15s"`) {
+		t.Fatalf("expected the 'waiting' state (with its polling trigger), got a different state: %s", rec.Body.String())
+	}
+}
+
+func TestPairStatus_TreatsPrimary429AsStillWaiting(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	stub := http.NewServeMux()
+	stub.HandleFunc("POST /api/sync/pair-request", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"pending-1"},"error":null}`))
+	})
+	stub.HandleFunc("GET /api/sync/pair-requests/pending-1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	srv := httptest.NewServer(stub)
+	t.Cleanup(srv.Close)
+
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := postPairStart(t, rmux, srv.URL, "stub-till-id", "Bar Till")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pair-start: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = getPairStatus(t, rmux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 429-from-primary to render as a normal 200 'still waiting' state (shared rate limiter, not fatal), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `hx-trigger="every 15s"`) {
+		t.Fatalf("expected the 'waiting' state (with its polling trigger), got a different state: %s", rec.Body.String())
+	}
+}
+
+// TestPairStatus_ExpiresAfterTTL confirms the replica gives up client-side
+// after the same TTL the primary's own pending row uses, rather than
+// polling forever on a request that will never resolve (denied and expired
+// are indistinguishable from this endpoint alone, per ADR-0033 §4).
+// pairingJoinNow is overridden (same seam style as discoveryBrowse/mdnsQuery
+// elsewhere in this codebase) so the test doesn't have to sleep 10 minutes.
+func TestPairStatus_ExpiresAfterTTL(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	stub := http.NewServeMux()
+	stub.HandleFunc("POST /api/sync/pair-request", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"pending-1"},"error":null}`))
+	})
+	stub.HandleFunc("GET /api/sync/pair-requests/pending-1", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	srv := httptest.NewServer(stub)
+	t.Cleanup(srv.Close)
+
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := postPairStart(t, rmux, srv.URL, "stub-till-id", "Bar Till")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pair-start: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	orig := pairingJoinNow
+	pairingJoinNow = func() time.Time { return time.Now().Add(11 * time.Minute) }
+	t.Cleanup(func() { pairingJoinNow = orig })
+
+	rec = getPairStatus(t, rmux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on an expired attempt, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `hx-trigger`) {
+		t.Fatal("expired state must not keep polling (no hx-trigger in the terminal fragment)")
+	}
+}

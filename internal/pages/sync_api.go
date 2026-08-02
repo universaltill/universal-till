@@ -350,6 +350,14 @@ func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("paste the full code shown on the other till")
 	}
+	return completeJoin(r, d, primaryURL, token, name)
+}
+
+// completeJoin is joinPrimary's tail, extracted so the approve-to-pair flow
+// (ut-docs#185) can drive it directly with a (primaryURL, token) pair it
+// already holds — that flow never has an encodeEnrollCode-packed code to
+// decode, just the two values decodeEnrollCode would have produced.
+func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name string) (string, error) {
 	base := strings.TrimSuffix(primaryURL, "/")
 	client := &http.Client{Timeout: 60 * time.Second}
 

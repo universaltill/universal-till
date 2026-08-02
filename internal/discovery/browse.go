@@ -2,6 +2,8 @@ package discovery
 
 import (
 	"context"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +17,11 @@ import (
 type Candidate struct {
 	Name   string `json:"name"`
 	TillID string `json:"till_id"`
+	// BaseURL is where a replica sends POST /api/sync/pair-request
+	// (universaltill/ut-docs#185) — http, LAN-only, same no-TLS posture as
+	// the existing QR flow's own "http://"+r.Host default in sync_api.go's
+	// enrol-token handler; this isn't a new assumption, just matching it.
+	BaseURL string `json:"base_url"`
 }
 
 // maxCandidates caps how many primaries one scan will collect. Discovery
@@ -113,7 +120,9 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 // candidateFromEntry extracts a Candidate from an mDNS answer's TXT
 // fields. An entry with no "id=" field is rejected outright — a candidate
 // with no till id is useless to a replica trying to independently compute
-// the pairing verification code (ADR-0033 §4).
+// the pairing verification code (ADR-0033 §4). Likewise an entry with no
+// usable address is rejected — equally useless, since a replica has nothing
+// to send POST /api/sync/pair-request to (ut-docs#185).
 func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 	var name, id string
 	for _, field := range e.InfoFields {
@@ -134,5 +143,13 @@ func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 	if name == "" {
 		name = "this shop" // same fallback as storeNameOrDefault, for a malformed/older advertiser
 	}
-	return Candidate{Name: name, TillID: id}, true
+	ip := e.AddrV4
+	if ip == nil {
+		ip = e.AddrV6
+	}
+	if ip == nil || e.Port == 0 {
+		return Candidate{}, false
+	}
+	baseURL := "http://" + net.JoinHostPort(ip.String(), strconv.Itoa(e.Port))
+	return Candidate{Name: name, TillID: id, BaseURL: baseURL}, true
 }

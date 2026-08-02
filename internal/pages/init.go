@@ -193,6 +193,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	enrolTokens := registerSyncAPI(mux, dp)
 	registerPairingAPI(mux, dp, authSvc, enrolTokens) // ADR-0033 part 2/3
 	registerDiscoveryAPI(mux, dp)                     // ADR-0033 part 1/3
+	registerPairingJoinAPI(mux, dp)                   // ADR-0033 part 3/3 (replica side)
+	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerSyncSales(mux, dp)
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
