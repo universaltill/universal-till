@@ -37,6 +37,14 @@
                placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}" title="{{ T "catalog.cost_price_hint" }}">
         <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
       </form>
+      <div class="muted catalog-detail-label">{{ T "catalog.lead_time_days" }}</div>
+      <form class="chip-add" hx-post="/api/catalog/item-lead-time" hx-target="#catalog-variants" hx-swap="outerHTML">
+        <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+        <input type="number" name="leadTimeDays" step="1" min="0" style="max-inline-size:7rem"
+               value="{{ if .LeadTimeDays }}{{ .LeadTimeDays }}{{ end }}"
+               placeholder="0" title="{{ T "catalog.lead_time_days_hint" }}">
+        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+      </form>
     </aside>
 
     <div class="catalog-detail-variants">

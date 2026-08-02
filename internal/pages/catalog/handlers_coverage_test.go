@@ -134,6 +134,48 @@ func TestItemCost_ValidationAndClear(t *testing.T) {
 	}
 }
 
+func TestItemLeadTime_ValidationAndClear(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Tea", BasePrice: 100, IsActive: true})
+
+	if rec := postForm(t, mux, "/api/catalog/item-lead-time", "leadTimeDays=5"); rec.Code != http.StatusBadRequest {
+		t.Errorf("missing item: want 400, got %d", rec.Code)
+	}
+	for _, bad := range []string{"abc", "-1"} {
+		if rec := postForm(t, mux, "/api/catalog/item-lead-time", "panelItem=itm1&leadTimeDays="+bad); rec.Code != http.StatusBadRequest {
+			t.Errorf("leadTimeDays=%q: want 400, got %d", bad, rec.Code)
+		}
+	}
+
+	// Set then clear: an empty value stores 0 (unset), and must succeed.
+	if rec := postForm(t, mux, "/api/catalog/item-lead-time", "panelItem=itm1&leadTimeDays=10"); rec.Code != http.StatusOK {
+		t.Fatalf("set: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := get(t, mux, "/api/catalog/item-variants?item_id=itm1"); !strings.Contains(rec.Body.String(), `value="10"`) {
+		t.Fatalf("expected the panel re-render to show the saved lead time, got %s", rec.Body.String())
+	}
+	if rec := postForm(t, mux, "/api/catalog/item-lead-time", "panelItem=itm1&leadTimeDays="); rec.Code != http.StatusOK {
+		t.Fatalf("clear: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var days int
+	if err := db.QueryRow(`SELECT lead_time_days FROM items WHERE id = 'itm1'`).Scan(&days); err != nil {
+		t.Fatal(err)
+	}
+	if days != 0 {
+		t.Fatalf("clearing the field must store 0, got %d", days)
+	}
+}
+
+func TestItemLeadTime_RepoErrorIs500(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	if _, err := db.Exec(`DROP TABLE items`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postForm(t, mux, "/api/catalog/item-lead-time", "panelItem=itm1&leadTimeDays=5"); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestItemCost_RepoErrorIs500(t *testing.T) {
 	mux, db := newCatalogMux(t)
 	if _, err := db.Exec(`DROP TABLE items`); err != nil {

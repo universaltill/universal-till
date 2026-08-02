@@ -949,6 +949,8 @@
   "reports.wd_sat": "Cumartesi",
   "catalog.cost_price": "Maliyet fiyatı (ödediğiniz)",
   "catalog.cost_price_hint": "Kâr marjı raporunda kullanılır",
+  "catalog.lead_time_days": "Tedarik süresi (gün)",
+  "catalog.lead_time_days_hint": "Yeniden sipariş almak için geçen gün sayısı — düşük stok uyarısının ve önerilen sipariş miktarının zamanlamasında kullanılır",
   "reports.margins": "Kâr marjları",
   "reports.margins_hint": "Katalogda maliyet fiyatı girilmiş ürünler için gelir eksi maliyet.",
   "reports.margins_none": "Marjları görmek için katalogda maliyet fiyatlarını girin.",
