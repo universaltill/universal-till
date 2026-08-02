@@ -20,8 +20,9 @@ import (
 const kitchenStation = "KITCHEN"
 
 // buildKitchenTicket assembles the kitchen ticket for a completed sale: item
-// names + quantities, order number and timestamp, no prices. Table/order type
-// are included when the sale model carries them (not yet — optional fields).
+// names + quantities, order number, order type and timestamp, no prices.
+// Table is included when the sale model carries one (not yet — optional
+// field, no source for it today).
 func buildKitchenTicket(ctx context.Context, d *common.Deps, receiptNo string) (print.KitchenTicket, error) {
 	detail, ok, err := data.NewPOSRepo(d.Db).GetSaleDetail(ctx, receiptNo)
 	if err != nil {
@@ -34,6 +35,7 @@ func buildKitchenTicket(ctx context.Context, d *common.Deps, receiptNo string) (
 	t := print.KitchenTicket{
 		Station:   kitchenStation,
 		OrderNo:   detail.ReceiptNo,
+		OrderType: detail.OrderType,
 		Timestamp: detail.CreatedAt,
 		Charset:   cfg.Charset,
 	}

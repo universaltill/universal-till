@@ -48,3 +48,37 @@ func TestBuildKitchenTicket_IncludesLineModifiers(t *testing.T) {
 		t.Fatalf("want kitchen ticket item to carry [Extra shot], got %+v", got)
 	}
 }
+
+// TestBuildKitchenTicket_IncludesOrderType covers ut-docs#181: order_type
+// is now persisted on the sales row (was tracked in-memory only and
+// discarded at completion), so a kitchen ticket built from a real
+// takeaway sale must show TAKEAWAY -- buildKitchenTicket's own comment
+// used to say "not yet — optional fields" because SaleDetail had nothing
+// to read it from.
+func TestBuildKitchenTicket_IncludesOrderType(t *testing.T) {
+	chdirRoot(t)
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-order-type.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbase.Close()
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbase.DB.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-bagel','BAGEL','Bagel',250,1)`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, order_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-2','R-0100','completed','sale','takeaway','GBP',250,0,0,250,datetime('now'))`)
+	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-2','sale-2',1,'itm-bagel','Bagel',1,250,0,0,0,250,250)`)
+
+	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+	ticket, err := buildKitchenTicket(context.Background(), dp, "R-0100")
+	if err != nil {
+		t.Fatalf("buildKitchenTicket: %v", err)
+	}
+	if ticket.OrderType != "takeaway" {
+		t.Fatalf("ticket.OrderType = %q, want %q", ticket.OrderType, "takeaway")
+	}
+}

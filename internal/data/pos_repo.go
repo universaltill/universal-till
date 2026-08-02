@@ -1802,15 +1802,15 @@ WHERE location_id = ?
 // till-set service-charge amount for this sale (distinct from a payment's
 // tip_amount) -- it already participates in total, so it is stored
 // separately only so it can be broken out on the receipt/journal.
-func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total, serviceCharge int64, note, createdAt, tenderType string, offline bool, syncStatus string, syncAttempts int, syncNextAttemptAt, syncLastError string) error {
+func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total, serviceCharge int64, note, createdAt, tenderType, orderType string, offline bool, syncStatus string, syncAttempts int, syncNextAttemptAt, syncLastError string) error {
 	offlineVal := 0
 	if offline {
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, rounding, note, created_at, completed_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, saleID, receiptNo, saleType, tenderType, offlineVal, syncStatus, syncAttempts, nullIfEmpty(syncNextAttemptAt), nullIfEmpty(syncLastError), nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, serviceCharge, nullIfEmpty(note), createdAt, createdAt)
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, rounding, note, created_at, completed_at)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+`, saleID, receiptNo, saleType, tenderType, orderType, offlineVal, syncStatus, syncAttempts, nullIfEmpty(syncNextAttemptAt), nullIfEmpty(syncLastError), nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, serviceCharge, nullIfEmpty(note), createdAt, createdAt)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
@@ -2629,6 +2629,7 @@ type SaleDetail struct {
 	Status        string
 	SaleType      string
 	TenderType    string
+	OrderType     string
 	Offline       bool
 	SyncStatus    string
 	Currency      string
@@ -2685,11 +2686,11 @@ func (r *POSRepo) GetSaleDetailByID(ctx context.Context, saleID string) (SaleDet
 func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDetail, bool, error) {
 	var d SaleDetail
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, receipt_no, status, sale_type, tender_type, offline, sync_status,
+SELECT id, receipt_no, status, sale_type, tender_type, order_type, offline, sync_status,
        currency, subtotal, discount_total, tax_total, total, service_charge_amount, created_at,
        COALESCE(cashier_id, '')
 FROM sales WHERE receipt_no = ?`, receiptNo).Scan(
-		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.Offline,
+		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.OrderType, &d.Offline,
 		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
 		&d.Total, &d.ServiceCharge, &d.CreatedAt, &d.CashierID)
 	if err == sql.ErrNoRows {
