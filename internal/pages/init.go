@@ -265,6 +265,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerAuth(mux, dp, authSvc)
 	registerRefund(mux, dp, authSvc)
 	registerUsers(mux, dp, authSvc)
+	registerLocations(mux, dp)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)
 	if authDisabled {

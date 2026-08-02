@@ -135,6 +135,10 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN lead_time_days`); err != nil {
 		t.Fatalf("rewind lead_time_days column: %v", err)
 	}
+	// Migration 029 adds another column -- same problem again (ut-docs#49).
+	if _, err := d.DB.Exec(`ALTER TABLE stock_locations DROP COLUMN is_active`); err != nil {
+		t.Fatalf("rewind stock_locations.is_active column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
