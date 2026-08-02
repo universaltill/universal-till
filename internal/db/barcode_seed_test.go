@@ -111,10 +111,10 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 23`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
-	// Rewinding the ledger doesn't undo migration 024's, 025's or 026's
+	// Rewinding the ledger doesn't undo migration 024's, 025's, 026's or 027's
 	// physical DDL (ALTER TABLE ADD COLUMN isn't idempotent, unlike 023's
 	// UPDATE) -- without this, replaying them on reopen fails with
-	// "duplicate column". Drop all three so the simulated pre-023 state is
+	// "duplicate column"/"already exists". Drop all four so the simulated pre-023 state is
 	// physically accurate, same as a real till that never had them
 	// (ut-docs#72).
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN service_charge_amount`); err != nil {
@@ -125,6 +125,11 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	}
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN order_type`); err != nil {
 		t.Fatalf("rewind order_type column: %v", err)
+	}
+	// Migration 027 creates a table, not a column -- same non-idempotent-
+	// replay problem, drop it too (ut-docs#184).
+	if _, err := d.DB.Exec(`DROP TABLE pending_pairings`); err != nil {
+		t.Fatalf("rewind pending_pairings table: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
