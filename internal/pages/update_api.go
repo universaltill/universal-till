@@ -1,18 +1,132 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 )
+
+// Unattended auto-update (ut-docs#79). The hard parts (release check, verify
+// + swap + re-exec) already exist below/in selfupdate; this adds a settings
+// toggle + time-of-day schedule so Apply can run without a human clicking
+// "Update now" — same enable+HH:MM shape as the EOD scheduler (eod_api.go).
+const (
+	keyAutoUpdateEnabled     = "update.auto_enabled"
+	keyAutoUpdateTime        = "update.auto_time"         // local "HH:MM"
+	keyAutoUpdateLastAttempt = "update.auto_last_attempt" // "YYYY-MM-DD"
+)
+
+// Seams so tests can fake the scheduler's decisions without hitting the real
+// GitHub API or calling the real selfupdate.Apply (which would try to re-exec
+// the test binary) — same hermetic-test convention as selfupdate's own seams.
+var (
+	autoUpdateCurrent   = updates.Current
+	autoUpdateCheckNow  = updates.CheckNow
+	autoUpdateSupported = selfupdate.Supported
+	autoUpdateApply     = selfupdate.Apply
+)
+
+// autoUpdateWindow bounds how late a catch-up can still fire. eodDue's
+// unbounded "any time >= hhmm today" is fine for a Z-report (generating one
+// late is harmless), but wrong here: an unbounded check means a till switched
+// off overnight and booted at opening time would auto-update — and restart
+// itself — minutes into trading, exactly what scheduling a time-of-day exists
+// to avoid (ut-docs#79 review, BLOCKING-1). Missing the window entirely means
+// waiting for tomorrow's, not "whenever the till next happens to be on."
+const autoUpdateWindow = 30 * time.Minute
+
+// autoUpdateDue is the pure schedule decision: enabled, a valid HH:MM whose
+// window [hhmm, hhmm+autoUpdateWindow) now falls in, and not already
+// attempted today (success or failure — at most once per day, mirrors
+// eodDue's alreadyDone gate).
+func autoUpdateDue(now time.Time, enabled bool, hhmm string, lastAttempt string) bool {
+	if !enabled || !eodTimeRe.MatchString(hhmm) {
+		return false
+	}
+	if lastAttempt == now.Format("2006-01-02") {
+		return false
+	}
+	sched, err := time.Parse("15:04", hhmm)
+	if err != nil {
+		return false
+	}
+	clock, err := time.Parse("15:04", now.Format("15:04"))
+	if err != nil {
+		return false
+	}
+	elapsed := clock.Sub(sched)
+	return elapsed >= 0 && elapsed < autoUpdateWindow
+}
+
+// autoUpdateTick runs one scheduler decision for the given wall-clock time.
+// It reads cached updates.Current() first (no network) so a disabled/not-
+// yet-available day is a free no-op on every 30s tick; only once due AND
+// cached-available does it check the basket (an unattended restart mid-sale
+// silently destroys the in-memory basket — ut-docs#79 review, BLOCKING-2 —
+// so it defers rather than fires, without spending today's window), then
+// record the day's attempt and re-check freshness (updates.CheckNow) before
+// actually calling Apply — the same staleness guard the manual "Update now"
+// button already uses (Current() can be up to 24h stale by design). Apply
+// itself refuses a second concurrent caller (selfupdate.applyMu), so this
+// never races the manual button.
+func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
+	get := func(key string) string {
+		v, _, _ := d.Settings.Get(ctx, key)
+		return strings.TrimSpace(v)
+	}
+	enabled := get(keyAutoUpdateEnabled) == "true"
+	hhmm := get(keyAutoUpdateTime)
+	lastAttempt := get(keyAutoUpdateLastAttempt)
+	if !autoUpdateDue(now, enabled, hhmm, lastAttempt) {
+		return
+	}
+	if !autoUpdateCurrent().Available || !autoUpdateSupported() {
+		return
+	}
+	if d.Engine.Basket().ItemCount() > 0 {
+		return
+	}
+	// Mark the attempt BEFORE calling Apply so a failure (or a stale-cache
+	// miss below) never retries twice in one day — repeated large downloads
+	// on failure would be wasteful/aggressive.
+	_ = d.Settings.Set(ctx, keyAutoUpdateLastAttempt, now.Format("2006-01-02"))
+	st := autoUpdateCheckNow(ctx)
+	if !st.Available {
+		return
+	}
+	if err := autoUpdateApply(ctx); err != nil {
+		logging.L().Errorf("auto-update: %v", err)
+	}
+}
+
+// StartAutoUpdateScheduler runs the background unattended-update loop (docs:
+// ut-docs#79). Same 30s-ticker shape as StartEODScheduler.
+func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps) {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				autoUpdateTick(ctx, d, time.Now())
+			}
+		}
+	}()
+}
 
 // updateUnavailableHTML renders the status line for "a newer version exists but
 // in-app apply can't run on this install". On Windows and macOS a download
@@ -120,5 +234,24 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		default:
 			fmt.Fprint(w, updateUnavailableHTML(locale, st.Latest, runtime.GOOS))
 		}
+	})
+
+	// Auto-update schedule settings (manager): enable + local time. Mirrors
+	// POST /api/settings/eod's shape exactly (eod_api.go).
+	mux.HandleFunc("POST /api/settings/update-schedule", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager only", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		hhmm := strings.TrimSpace(r.Form.Get("time"))
+		enabled := r.Form.Get("enabled") == "on" || r.Form.Get("enabled") == "1"
+		if enabled && !eodTimeRe.MatchString(hhmm) {
+			http.Error(w, "time must be HH:MM", http.StatusBadRequest)
+			return
+		}
+		_ = d.Settings.Set(r.Context(), keyAutoUpdateEnabled, fmt.Sprintf("%t", enabled))
+		_ = d.Settings.Set(r.Context(), keyAutoUpdateTime, hhmm)
+		w.WriteHeader(http.StatusNoContent)
 	})
 }

@@ -45,6 +45,13 @@
             hx-indicator="#update-check-msg">{{ T "settings.update.check_btn" }}</button>
     <span id="update-check-msg" aria-live="polite"></span>
   </div>
+  <form hx-post="/api/settings/update-schedule" hx-swap="none" class="set-gap">
+    <label class="set-row">
+      <input type="checkbox" name="enabled" {{ if .autoUpdateEnabled }}checked{{ end }}> {{ T "settings.update.auto_enable" }}
+    </label>
+    <input type="time" name="time" value="{{ .autoUpdateTime }}">
+    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+  </form>
   {{ end }}
 </div>
 <div class="card">

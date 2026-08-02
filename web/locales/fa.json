@@ -692,6 +692,7 @@
   "settings.tills.open": "مدیریت صندوق‌ها / افزودن صندوق جدید",
   "settings.update": "به‌روزرسانی",
   "settings.update.apply_confirm": "به‌روزرسانی همین حالا دانلود و نصب شود؟ پس از پایان، صندوق دوباره راه‌اندازی می‌شود.",
+  "settings.update.auto_enable": "به‌روزرسانی خودکار",
   "settings.update.check_btn": "بررسی به‌روزرسانی‌ها",
   "settings.update.check_failed": "دسترسی به سرور به‌روزرسانی ممکن نشد — بعداً دوباره تلاش کنید",
   "settings.update.download": "دانلود",

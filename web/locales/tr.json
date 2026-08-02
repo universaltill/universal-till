@@ -692,6 +692,7 @@
   "settings.tills.open": "Kasaları yönet / yeni kasa eşle",
   "settings.update": "Güncelle",
   "settings.update.apply_confirm": "Güncelleme şimdi indirilip kurulsun mu? Bittiğinde kasa yeniden başlar.",
+  "settings.update.auto_enable": "Otomatik güncelle",
   "settings.update.check_btn": "Güncellemeleri denetle",
   "settings.update.check_failed": "Güncelleme sunucusuna ulaşılamadı — daha sonra tekrar deneyin",
   "settings.update.download": "İndir",

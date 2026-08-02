@@ -1,15 +1,20 @@
 package pages
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/updates"
 )
 
 // When an update exists but in-app apply is unsupported, a Windows desktop
@@ -75,5 +80,268 @@ func TestUpdateAPI_ManagerGate(t *testing.T) {
 			t.Fatalf("POST %s without manager: code %d, want 403 (body %q)",
 				path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// --- autoUpdateDue (pure) ---
+
+func TestAutoUpdateDue(t *testing.T) {
+	now := time.Date(2026, 8, 2, 22, 30, 0, 0, time.UTC)
+	today := now.Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+
+	cases := []struct {
+		name        string
+		enabled     bool
+		hhmm        string
+		lastAttempt string
+		want        bool
+	}{
+		{"disabled", false, "22:00", "", false},
+		{"bad time format", true, "not-a-time", "", false},
+		{"already attempted today", true, "22:15", today, false},
+		{"time not yet reached", true, "23:00", "", false},
+		{"time reached, exact match", true, "22:30", "", true},
+		{"time reached, within window", true, "22:05", "", true}, // elapsed 25m, inside the window
+		// Regression (ut-docs#79 review): eodDue's unbounded catch-up
+		// ("any time >= hhmm today") is fine for a Z-report but wrong here —
+		// a till switched off overnight and booted at opening time must NOT
+		// auto-update minutes into trading just because it's technically
+		// "past" a 03:00 schedule. The window bounds how late a catch-up can
+		// still fire.
+		{"window expired — booted hours after the scheduled time must NOT trigger", true, "19:00", "", false},
+		{"attempted yesterday, due again today", true, "22:15", yesterday, true},
+	}
+	for _, c := range cases {
+		if got := autoUpdateDue(now, c.enabled, c.hhmm, c.lastAttempt); got != c.want {
+			t.Errorf("%s: autoUpdateDue() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// --- POST /api/settings/update-schedule ---
+
+func TestPostSettingsUpdateSchedule_RequiresManager(t *testing.T) {
+	dp := &common.Deps{}
+	mux := http.NewServeMux()
+	registerUpdateAPI(mux, dp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/update-schedule", strings.NewReader("enabled=on&time=22:00"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+func TestPostSettingsUpdateSchedule_ValidatesTimeFormat(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newEODTestDeps(t)
+	mux := http.NewServeMux()
+	registerUpdateAPI(mux, dp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/update-schedule", strings.NewReader("enabled=on&time=not-a-time"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a malformed time when enabled, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/update-schedule", strings.NewReader("enabled=on&time=03:30"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for a valid time, got %d: %s", rec.Code, rec.Body.String())
+	}
+	val, _, err := dp.Settings.Get(t.Context(), keyAutoUpdateTime)
+	if err != nil || val != "03:30" {
+		t.Fatalf("expected the time setting persisted, got %q err=%v", val, err)
+	}
+	enabledVal, _, err := dp.Settings.Get(t.Context(), keyAutoUpdateEnabled)
+	if err != nil || enabledVal != "true" {
+		t.Fatalf("expected enabled=true persisted, got %q err=%v", enabledVal, err)
+	}
+
+	// Disabling doesn't require a valid time at all.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/update-schedule", strings.NewReader("enabled=off&time="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 disabling with no time, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- autoUpdateTick (the scheduler's per-tick decision + side effect) ---
+//
+// These swap the package-level seams (autoUpdateCurrent/autoUpdateCheckNow/
+// autoUpdateSupported/autoUpdateApply) for the duration of one test, restoring
+// the originals after — same hermetic-test convention as selfupdate's own
+// seams (osExecutable, reexecFn, etc.). Never hits the real GitHub API or the
+// real selfupdate.Apply (which would try to re-exec the test binary).
+//
+// autoUpdateTick takes `now` explicitly (not time.Now()) so these tests are
+// deterministic regardless of wall-clock time — tickNow/tickHHMM below put
+// every test inside the due window without depending on when the suite runs.
+
+var tickNow = time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+
+const tickHHMM = "10:00" // == tickNow's clock, so due with zero elapsed
+
+func stubAutoUpdateSeams(t *testing.T, current updates.Status, checkNow updates.Status, supported bool, applyErr error) *int {
+	t.Helper()
+	origCurrent, origCheckNow, origSupported, origApply :=
+		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply
+	t.Cleanup(func() {
+		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply =
+			origCurrent, origCheckNow, origSupported, origApply
+	})
+	applyCalls := 0
+	autoUpdateCurrent = func() updates.Status { return current }
+	autoUpdateCheckNow = func(context.Context) updates.Status { return checkNow }
+	autoUpdateSupported = func() bool { return supported }
+	autoUpdateApply = func(context.Context) error {
+		applyCalls++
+		return applyErr
+	}
+	return &applyCalls
+}
+
+// newAutoUpdateTestDeps is newEODTestDeps plus a real (empty-basket) pos
+// engine — autoUpdateTick reads d.Engine.Basket() to guard against
+// restarting mid-sale, so every tick test needs one, same as the pos-touching
+// handler tests elsewhere in this package (pos_scan_test.go et al.).
+func newAutoUpdateTestDeps(t *testing.T) *common.Deps {
+	t.Helper()
+	dp := newEODTestDeps(t)
+	dp.Engine = pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000}, nil)
+	return dp
+}
+
+func TestAutoUpdateTick_SkipsWhenNotDue(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	// enabled=false: never due regardless of cached/fresh status.
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "false")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, true, nil)
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+
+	if *applyCalls != 0 {
+		t.Fatalf("expected Apply not called when disabled, got %d calls", *applyCalls)
+	}
+	if v, _, _ := dp.Settings.Get(t.Context(), keyAutoUpdateLastAttempt); v != "" {
+		t.Fatalf("expected no attempt recorded when not due, got %q", v)
+	}
+}
+
+func TestAutoUpdateTick_SkipsWhenCachedStatusNotAvailable(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	// Cached Current() says nothing available — this must be a free/no-network
+	// no-op, and must NOT mark an attempt (so it can retry for free next tick
+	// once the existing background updates checker eventually flips this true).
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: false}, updates.Status{Available: true}, true, nil)
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+
+	if *applyCalls != 0 {
+		t.Fatalf("expected Apply not called when cached status is not available, got %d calls", *applyCalls)
+	}
+	if v, _, _ := dp.Settings.Get(t.Context(), keyAutoUpdateLastAttempt); v != "" {
+		t.Fatalf("expected no attempt recorded when cached status is not available, got %q", v)
+	}
+}
+
+func TestAutoUpdateTick_SkipsWhenUnsupported(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, false, nil)
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+
+	if *applyCalls != 0 {
+		t.Fatalf("expected Apply not called when unsupported, got %d calls", *applyCalls)
+	}
+}
+
+// Regression (ut-docs#79 review, BLOCKING-2): an unattended restart mid-sale
+// silently destroys the in-memory basket — there's no persistence and no
+// human confirming it, unlike the manual button's hx-confirm. autoUpdateTick
+// must refuse to fire while the basket has items, and must NOT mark the
+// attempt (so it retries — still bounded by the window — once the sale
+// clears rather than giving up on today's window entirely).
+func TestAutoUpdateTick_SkipsWhenBasketHasItems(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	dp.Engine.AddLineWithModifiers(pos.BasketLine{SKU: "sku-1", Name: "Coffee", Qty: 1, PriceCents: 250}, 1, nil)
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, true, nil)
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+
+	if *applyCalls != 0 {
+		t.Fatalf("expected Apply not called while a sale is in progress, got %d calls", *applyCalls)
+	}
+	if v, _, _ := dp.Settings.Get(t.Context(), keyAutoUpdateLastAttempt); v != "" {
+		t.Fatalf("expected no attempt recorded while a sale is in progress, got %q", v)
+	}
+}
+
+func TestAutoUpdateTick_AppliesOnceWhenDueAndAvailable(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, true, nil)
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+
+	if *applyCalls != 1 {
+		t.Fatalf("expected Apply called exactly once, got %d calls", *applyCalls)
+	}
+	want := tickNow.Format("2006-01-02")
+	if v, _, _ := dp.Settings.Get(t.Context(), keyAutoUpdateLastAttempt); v != want {
+		t.Fatalf("expected last-attempt date recorded as %s, got %q", want, v)
+	}
+}
+
+func TestAutoUpdateTick_FreshRecheckAvoidsStaleApply(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	// Cached Current() is stale-optimistic (still Available from before an
+	// earlier update), but a fresh CheckNow says already current — Apply must
+	// NOT fire (guards the same staleness class of bug as the manual button,
+	// ut-docs#79 comment: Current() can be up to 24h stale).
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: false}, true, nil)
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+
+	if *applyCalls != 0 {
+		t.Fatalf("expected Apply not called when the fresh recheck says not available, got %d calls", *applyCalls)
+	}
+	// The attempt is still recorded (a fresh check was made), so this doesn't
+	// spam the network again for the rest of the day.
+	want := tickNow.Format("2006-01-02")
+	if v, _, _ := dp.Settings.Get(t.Context(), keyAutoUpdateLastAttempt); v != want {
+		t.Fatalf("expected last-attempt date recorded even when the fresh check found nothing to apply, got %q", v)
+	}
+}
+
+func TestAutoUpdateTick_FailedApplyDoesNotRetrySameDay(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, true, errors.New("boom"))
+
+	autoUpdateTick(t.Context(), dp, tickNow) // first tick: attempts and fails
+	autoUpdateTick(t.Context(), dp, tickNow) // second tick, same day: must not retry
+
+	if *applyCalls != 1 {
+		t.Fatalf("expected Apply called exactly once despite two ticks the same day, got %d calls", *applyCalls)
 	}
 }

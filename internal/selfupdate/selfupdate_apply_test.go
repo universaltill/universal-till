@@ -300,6 +300,21 @@ func TestSupportedFalseWhenExecutableUnknown(t *testing.T) {
 	}
 }
 
+// Regression guard (ut-docs#79 review): before this, two Apply callers (the
+// manual "Update now" button and the unattended scheduler) could race inside
+// the unguarded binary-swap sequence — one's os.Remove(bak) deleting the
+// other's only backup mid-rename could leave the install with NO binary at
+// all. Apply must refuse a second concurrent run outright rather than let
+// two swaps interleave.
+func TestApplyRefusesConcurrentRun(t *testing.T) {
+	applyMu.Lock()
+	defer applyMu.Unlock()
+	err := Apply(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "already being applied") {
+		t.Fatalf("Apply while another is in progress = %v, want an already-in-progress error", err)
+	}
+}
+
 func TestApplyAlreadyLatest(t *testing.T) {
 	newInstallFixture(t)
 	newReleaseServer(t, "v0.1.0", map[string][]byte{}) // same as buildinfo.Version pinned by fixture

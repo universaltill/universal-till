@@ -27,11 +27,22 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
 )
+
+// applyMu serializes Apply: the swap sequence below (rename exe→.bak, remove
+// any stale .bak, move the new binary into place) has no atomicity across
+// steps, so two concurrent callers — the manual "Update now" button and the
+// unattended scheduler (ut-docs#79) now both call Apply — could interleave
+// and delete each other's only backup mid-rename, leaving the install with no
+// binary at all (ut-docs#79 review finding). A second caller fails fast
+// instead of queuing, since queuing would just download+verify+swap again
+// moments later for no benefit.
+var applyMu sync.Mutex
 
 // releasesLatest is a var (not const) purely as a test seam: tests point it at
 // a local httptest server so no test ever talks to the real GitHub API.
@@ -179,6 +190,11 @@ type ghRelease struct {
 // schedules a re-exec of the new binary. It returns after the swap is staged;
 // the process re-execs a moment later so the caller's HTTP response can flush.
 func Apply(ctx context.Context) error {
+	if !applyMu.TryLock() {
+		return errors.New("an update is already being applied")
+	}
+	defer applyMu.Unlock()
+
 	log := logging.L()
 	if !Supported() {
 		return ErrUnsupported
