@@ -78,3 +78,41 @@ func TestIndexScanRowKeyboardIsOnDemand(t *testing.T) {
 		t.Errorf("with OSK mode off the scan input must NOT force inputmode=\"none\"; got: %s", tag)
 	}
 }
+
+// The custom on-screen keyboard is appended to <body>. A native showModal()
+// dialog puts itself in the top layer and makes that keyboard inert, so the
+// payout dialog must use the keyboard-compatible non-modal show() pattern.
+func TestPfandDialogStaysKeyboardReachableAndUsesEnglishLabel(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `getElementById('pfand-modal').show()`) {
+		t.Fatal("Pfandrückgabe opener must use show() so the custom keyboard remains reachable")
+	}
+	if strings.Contains(body, `getElementById('pfand-modal').showModal()`) {
+		t.Fatal("Pfandrückgabe opener must not use showModal(), which makes the custom keyboard inert")
+	}
+	if !strings.Contains(body, "Deposit refund") {
+		t.Fatal("English Pfandrückgabe label must be translated as Deposit refund")
+	}
+}
