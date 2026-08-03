@@ -84,9 +84,20 @@ done
 # it grabs the console/seat first and cage silently never gets a display
 # (confirmed live, 2026-07-29: cage process ran with zero children, no
 # error logged anywhere -- lightdm had already won the seat). `display-manager`
-# is the systemd alias every DM (lightdm/gdm3/sddm) registers itself under,
-# so this doesn't need to special-case which one is installed.
-if systemctl is-enabled display-manager.service >/dev/null 2>&1 || systemctl is-active display-manager.service >/dev/null 2>&1; then
+# is the systemd alias every DM (lightdm/gdm3/sddm) registers itself under.
+# `is-enabled` also succeeds for a target alias, so require a loaded service
+# after resolving the alias before disabling anything.
+has_real_display_manager() {
+  display_manager_info=$(systemctl show --property=Id,LoadState --value display-manager.service 2>/dev/null || true)
+  display_manager_id=$(printf '%s\n' "$display_manager_info" | sed -n '1p')
+  display_manager_load_state=$(printf '%s\n' "$display_manager_info" | sed -n '2p')
+  [ "$display_manager_load_state" = "loaded" ] || return 1
+  case "$display_manager_id" in
+    *.service) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if has_real_display_manager; then
   echo "==> Disabling the desktop display manager (conflicts with the kiosk console)…"
   systemctl disable --now display-manager.service
 fi
