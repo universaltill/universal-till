@@ -86,13 +86,27 @@ fi
 #     desktop; kiosk-ifying it (which disables the DM) stays a deliberate
 #     manual `unitill-kiosk-setup` call;
 #   - opt out any time: sudo touch /etc/unitill/no-kiosk
+has_real_display_manager() {
+    # `is-enabled` reports success for an alias as well as a real display
+    # manager. On the field Pi, the alias resolved to graphical.target, so
+    # it must not make a headless appliance look like a desktop install.
+    display_manager_info=$(systemctl show --property=Id,LoadState --value display-manager.service 2>/dev/null || true)
+    display_manager_id=$(printf '%s\n' "$display_manager_info" | sed -n '1p')
+    display_manager_load_state=$(printf '%s\n' "$display_manager_info" | sed -n '2p')
+    [ "$display_manager_load_state" = "loaded" ] || return 1
+    case "$display_manager_id" in
+        *.service) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 is_pi_appliance() {
     [ "$1" = "configure" ] || return 1
     [ -z "$2" ] || return 1                 # upgrade → never auto-stage
     [ -d /run/systemd/system ] || return 1
     grep -qs "Raspberry Pi" /proc/device-tree/model || return 1
     grep -qsE '^ID=(debian|raspbian)' /etc/os-release || return 1
-    if systemctl is-enabled display-manager.service >/dev/null 2>&1; then
+    if has_real_display_manager; then
         return 1                            # desktop image → manual opt-in only
     fi
     return 0

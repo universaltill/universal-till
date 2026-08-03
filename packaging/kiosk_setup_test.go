@@ -57,6 +57,31 @@ func anyLineContains(lines []string, subs ...string) bool {
 	return false
 }
 
+func shellFunction(t *testing.T, script, name string) string {
+	t.Helper()
+	start := strings.Index(script, name+"() {")
+	if start < 0 {
+		t.Fatalf("%s function not found", name)
+	}
+	end := strings.Index(script[start:], "\n}\n")
+	if end < 0 {
+		t.Fatalf("%s function is not terminated", name)
+	}
+	return script[start : start+end+3]
+}
+
+func displayManagerGuardResult(t *testing.T, script, id, loadState string) bool {
+	t.Helper()
+	bin := t.TempDir()
+	systemctl := filepath.Join(bin, "systemctl")
+	if err := os.WriteFile(systemctl, []byte("#!/bin/sh\nprintf '%s\\n%s\\n' \"$UT_SYSTEMD_ID\" \"$UT_SYSTEMD_LOAD_STATE\"\n"), 0o755); err != nil {
+		t.Fatalf("write fake systemctl: %v", err)
+	}
+	cmd := exec.Command("sh", "-c", shellFunction(t, script, "has_real_display_manager")+"\nif has_real_display_manager; then exit 0; fi; exit 1")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "UT_SYSTEMD_ID="+id, "UT_SYSTEMD_LOAD_STATE="+loadState)
+	return cmd.Run() == nil
+}
+
 // heredocBlock extracts the body of the `cat > <path> << EOF ... EOF` (or
 // <<'EOF') block that writes the given file, comments stripped.
 func heredocBlock(t *testing.T, script, path string) []string {
@@ -218,8 +243,8 @@ func TestPostinstallStagesKioskFirstBootOnPiAppliancesOnly(t *testing.T) {
 	if !anyLineContains(code, "ID=(debian|raspbian)") {
 		t.Error("postinstall.sh: Debian-family os-release gate is gone — Ubuntu-on-Pi would get a snap chromium under cage")
 	}
-	if !anyLineContains(code, "is-enabled display-manager.service") {
-		t.Error("postinstall.sh: display-manager gate is gone — a desktop Pi would silently lose its desktop")
+	if !anyLineContains(code, "systemctl show", "--property=Id,LoadState", "display-manager.service") {
+		t.Error("postinstall.sh: resolved display-manager gate is gone — a desktop Pi would silently lose its desktop")
 	}
 	// Retry semantics: a failed first boot (offline shop) must retry rather
 	// than dead-ending at a console.
@@ -241,6 +266,37 @@ func TestPostinstallStagesKioskFirstBootOnPiAppliancesOnly(t *testing.T) {
 			!strings.Contains(l, ".service") && !strings.Contains(l, "ExecStart") &&
 			!strings.Contains(l, "ConditionPathExists") {
 			t.Errorf("postinstall.sh runs unitill-kiosk-setup inside the dpkg transaction: %q", l)
+		}
+	}
+}
+
+func TestKioskDisplayManagerGuardsResolveAliases(t *testing.T) {
+	// On the field Pi, display-manager.service was a symlink alias to a
+	// target. `systemctl is-enabled` returned success for that alias even
+	// though no display-manager service existed, which skipped automatic
+	// kiosk setup and made the manual helper fail while stopping it.
+	for _, rel := range []string{
+		"packaging/scripts/postinstall.sh",
+		"packaging/linux/unitill-kiosk-setup.sh",
+	} {
+		code := codeLines(readScript(t, rel))
+		if !anyLineContains(code, "systemctl show", "--property=Id,LoadState", "display-manager.service") {
+			t.Errorf("%s: display-manager guard must resolve the canonical systemd unit ID and load state before treating an alias as a desktop manager", rel)
+		}
+		if !anyLineContains(code, `"$display_manager_load_state"`, "loaded") {
+			t.Errorf("%s: display-manager guard must reject a non-loaded service name", rel)
+		}
+		if !anyLineContains(code, "*.service") {
+			t.Errorf("%s: display-manager guard must accept only a resolved service unit, not a target alias", rel)
+		}
+		if displayManagerGuardResult(t, readScript(t, rel), "graphical.target", "loaded") {
+			t.Errorf("%s: a display-manager alias to graphical.target must not be treated as a desktop manager", rel)
+		}
+		if !displayManagerGuardResult(t, readScript(t, rel), "lightdm.service", "loaded") {
+			t.Errorf("%s: a loaded lightdm.service must still be treated as a desktop manager", rel)
+		}
+		if displayManagerGuardResult(t, readScript(t, rel), "display-manager.service", "not-found") {
+			t.Errorf("%s: a non-loaded display-manager service name must not be treated as a desktop manager", rel)
 		}
 	}
 }
