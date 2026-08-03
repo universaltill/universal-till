@@ -505,6 +505,9 @@ a.btn, a.btn:hover { text-decoration: none; }
    while it's open. */
 #hold-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
 #hold-label-input { width: 100%; margin-block: .5rem .75rem; }
+/* Keep the payout dialog out of the native top layer: the custom on-screen
+   keyboard is appended to <body> and must remain clickable while it is open. */
+#pfand-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
 .modifier-group { border: 1px solid var(--border); border-radius: var(--radius);
                    padding: .6rem .75rem; margin-block-end: .75rem; }
 .modifier-group legend { font-weight: 600; padding-inline: .25rem; }
