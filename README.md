@@ -425,7 +425,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [ ] **Booking / calendar / reservation** — needed for both restaurant table bookings and appointment-based shops (barbers, salons); one underlying feature, not two
 - [ ] **Table-side ordering** (customer's own phone, QR-per-table) and **true remote/online ordering** — neither exists; don't confuse either with the self-order kiosk above
 - [ ] **Order-for-collection** as its own order type (dine-in/takeaway/delivery/phone exists; collection doesn't yet)
-- [ ] **Germany fiscal compliance** (TSE signing, DSFinV-K export) — a legal requirement to sell into Germany, zero code exists (see `docs/germany-pos-parity-backlog.md`)
+- [ ] **Germany fiscal compliance** (TSE signing, DSFinV-K export) — [ut-plugin-tax-de](https://github.com/universaltill/ut-plugin-tax-de) contains an incomplete skeleton only; it has not been verified with a real fiskaly account, is not legally validated, and must not be used by merchants until the unresolved cloud-versus-hardware TSE decision in [ut-docs#38](https://github.com/universaltill/ut-docs/issues/38) is approved
 - [ ] **Dine-in vs. takeaway VAT rate switching** — the per-line tax rate field exists, and an `OrderType` field exists for kitchen printing, but nothing connects the two yet
 - [ ] Setup wizard shop type + address capture, eager best-effort cloud registration (ADR-0026, drafted not built)
 
