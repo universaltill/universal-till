@@ -10,6 +10,6 @@ for template in \
   "$root/web/ui/pages/login.html" \
   "$root/web/ui/pages/setup.html" \
   "$root/web/ui/pages/self_order.html"; do
-  rg -q 'unitill-logo\.svg' "$template"
+  grep -Eq 'unitill-logo\.svg' "$template"
 done
-! rg -q 'ut-logo-name(?:-light)?\.svg' "$root/web/ui"
+! grep -REq 'ut-logo-name(-light)?\.svg' "$root/web/ui"
