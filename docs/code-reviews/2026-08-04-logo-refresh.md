@@ -23,6 +23,10 @@ An independent review found two medium issues in the first draft:
 
 Both fixes received a second independent review. No remaining findings.
 
+The first documentation CI run also showed that GitHub's runner does not
+provide `rg`; both brand guards now use portable `grep`, so the POS CI guard
+uses the same runner-compatible implementation.
+
 ## Verification
 
 - TDD evidence: the asset guards failed before the canonical assets and
