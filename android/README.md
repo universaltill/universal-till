@@ -101,7 +101,7 @@ independent review's 4 findings were fixed, not just before:
   declared: `adb shell am stopservice` against it was rejected by the
   OS itself ("Permission Denial: ... not exported") — confirms external
   processes genuinely cannot reach it, exactly as intended.
-- Real launcher icon (from `web/public/assets/logo/ut-logo.svg`) and a
+- Real launcher icon (from `web/public/assets/logo/unitill-logo.svg`) and a
   proper Android notification-permission flow (best-effort — the
   service runs regardless of whether it's granted).
 
