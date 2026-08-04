@@ -118,11 +118,11 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     assertClean();
   });
 
-  test('nav logo renders legibly large with the light asset', async ({ page }) => {
+  test('nav logo renders legibly large with the canonical asset', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/');
     const logo = page.locator('.nav .logo img');
-    await expect(logo).toHaveAttribute('src', /ut-logo-name-light\.svg/);
+    await expect(logo).toHaveAttribute('src', /unitill-logo\.svg/);
     const h = await logo.evaluate((el) => el.getBoundingClientRect().height);
     expect(h, 'logo must render at a legible size').toBeGreaterThanOrEqual(36);
     assertClean();

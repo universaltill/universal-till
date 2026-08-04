@@ -19,6 +19,15 @@ test.describe('POS UI MVP Uplift', () => {
     await expect(page.getByTestId('plugin-faq-entry')).toBeVisible();
   });
 
+  test('navigation uses the canonical accessible logo', async ({ page }) => {
+    await page.goto('/');
+
+    const logo = page.locator('.nav .logo img');
+    await expect(logo).toHaveAttribute('src', /unitill-logo\.svg/);
+    await expect(logo).toHaveAttribute('alt', 'Universal Till');
+    await expect(logo).toBeVisible();
+  });
+
   test('offline status indicator is present and non-blocking', async ({ page }) => {
     await page.goto('/');
 
