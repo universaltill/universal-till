@@ -54,8 +54,8 @@ ICONSET="$(mktemp -d)/AppIcon.iconset"
 mkdir -p "$ICONSET"
 BASE_PNG="$(mktemp -d)/icon.png"
 # Rasterize the vector logo to a 1024px master, then derive every icon size.
-if qlmanage -t -s 1024 -o "$(dirname "$BASE_PNG")" web/public/assets/logo/ut-logo.svg >/dev/null 2>&1; then
-  mv "$(dirname "$BASE_PNG")"/ut-logo.svg.png "$BASE_PNG"
+if qlmanage -t -s 1024 -o "$(dirname "$BASE_PNG")" web/public/assets/logo/unitill-logo.svg >/dev/null 2>&1; then
+  mv "$(dirname "$BASE_PNG")"/unitill-logo.svg.png "$BASE_PNG"
 fi
 if [ -f "$BASE_PNG" ]; then
   for s in 16 32 64 128 256 512 1024; do
