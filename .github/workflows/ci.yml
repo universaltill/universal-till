@@ -32,6 +32,8 @@ jobs:
         run: bash scripts/ci/guard-kiosk-launch-flags.sh
       - name: Emoji font guard
         run: bash scripts/ci/guard-emoji-font.sh
+      - name: Brand asset guard
+        run: bash scripts/ci/check-brand-assets.sh
       - name: Build
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache

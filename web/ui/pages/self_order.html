@@ -19,7 +19,7 @@
   <body class="selforder-screen{{ if kiosk }} kiosk{{ end }}" data-kiosk-idle-reset="{{ .idleResetSecs }}">
     <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
     <main>
-      <img class="selforder-logo" src="/public/assets/logo/ut-logo.svg" alt="" />
+      <img class="selforder-logo" src="/public/assets/logo/unitill-logo.svg" alt="" />
       {{ if .shopName }}<p class="selforder-shop">{{ .shopName }}</p>{{ end }}
       <h1>{{ T "selforder.welcome" }}</h1>
       <a class="btn primary selforder-start" href="/self-order/shop">
