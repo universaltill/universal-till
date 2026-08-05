@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, fieldGeometry, expectStacked } from './helpers';
 
 // Drives the AUTH project's server (playwright.config.ts) — a genuinely
 // fresh install with auth ON, separate from every other spec's
@@ -54,6 +54,24 @@ test.describe.serial('first-boot setup and PIN login', () => {
       page.waitForURL((u) => !u.pathname.includes('/setup')),
       page.locator('button[type=submit]', { hasText: 'Start selling' }).click(),
     ]);
+    await expect(page.locator('#basket')).toBeVisible();
+  });
+
+  // ut-docs#300, checked here because this is the only spec with a real
+  // authenticated operator: GET /pin bounces to /login without one, so the
+  // default (auth-off) project can never reach this surface. The change-PIN
+  // form had the same inline-label defect as the payout dialog -- three
+  // password fields in a plain .card that no scoped stylesheet rule covered.
+  test('the change-PIN form stacks each label above its own input', async () => {
+    await page.goto('/pin');
+    await page.waitForSelector('form[action="/api/pin/change"]');
+
+    const fields = await fieldGeometry(page, 'form[action="/api/pin/change"]');
+    expect(fields).toHaveLength(3);
+    expectStacked(fields, '/pin');
+
+    // Leave the session where the next serial test expects it.
+    await page.goto('/');
     await expect(page.locator('#basket')).toBeVisible();
   });
 
