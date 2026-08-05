@@ -473,19 +473,21 @@ func TestBarcodeAttach_Validation(t *testing.T) {
 	}
 
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
+	// This form never sets a barcode type (ut-docs#293 / ADR-0021): an
+	// untyped 13-digit value may be a legitimate internal/PLU code, not a
+	// retail EAN-13, so a bad check digit here must be accepted, not
+	// rejected — the explicit-EAN13 validation path (still exercised at the
+	// repository level) isn't reachable through this handler.
 	rec := postForm(t, mux, "/api/catalog/barcode?lang=fa", "barcode=5449000000995&itemId=itm1")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid EAN-13: want 400, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("untyped 13-digit code with a bad check digit: want 200 (accepted as internal/PLU), got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "بارکد EAN-13 نامعتبر است") {
-		t.Fatalf("invalid EAN-13: want localized validation reason, got %s", rec.Body.String())
+	var barcodeType string
+	if err := db.QueryRow(`SELECT barcode_type FROM item_barcodes WHERE barcode = ?`, "5449000000995").Scan(&barcodeType); err != nil {
+		t.Fatalf("untyped 13-digit code was not persisted through the handler: %v", err)
 	}
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE barcode = ?`, "5449000000995").Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("invalid EAN-13 was persisted through the handler: count=%d", count)
+	if barcodeType != "CODE128" {
+		t.Fatalf("untyped 13-digit code with a bad check digit barcode_type = %q, want CODE128 (must not be mislabelled EAN13)", barcodeType)
 	}
 }
 
