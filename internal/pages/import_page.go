@@ -142,6 +142,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		type rowView struct {
 			catimport.ImportItem
 			Status string // ok | skip reason
+			Warned bool   // true once a commit-time warning was appended to Status
 		}
 		var rows []rowView
 		importable := 0
@@ -166,7 +167,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			rows = append(rows, rowView{ImportItem: it, Status: status})
 		}
 
-		created, failed := 0, 0
+		created, warned, failed := 0, 0, 0
 		if commit {
 			// Opening stock from the source file lands as a "receive"
 			// movement at the default location (same path as the
@@ -214,40 +215,70 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					failed++
 					continue
 				}
+				// Row-level warnings accumulate rather than short-circuit the
+				// loop: a barcode attach failure must not also skip the
+				// stock-import step below it (ut-docs#293) — both the
+				// reason and the stock outcome need to survive into the
+				// row's status, so neither branch clobbers the other's
+				// message.
+				var warnings []string
 				if it.Barcode != "" {
 					if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
 						Barcode: it.Barcode, ItemID: itemID, IsPrimary: true,
 					}); err != nil {
-						rows[i].Status = "created; barcode attach failed"
-						created++
-						continue
+						warnings = append(warnings, "barcode attach failed: "+err.Error())
 					}
+				} else if it.BarcodeIssue != "" {
+					// The CSV carried a barcode value, but the importer's
+					// normalizeBarcode discarded it (unsupported shape, e.g.
+					// a 4-digit PLU) — the item still imports, but silently
+					// dropping the barcode with no trace is the same defect
+					// class this card exists to fix (ut-docs#293).
+					warnings = append(warnings, it.BarcodeIssue)
 				}
-				if it.HasStock && it.Stock > 0 && locErr == nil {
+				switch {
+				case it.HasStock && it.Stock < 0:
+					// catimport parses a negative quantity happily and it is
+					// then dropped by the `> 0` test below with no trace —
+					// warn instead of discarding it in silence.
+					warnings = append(warnings, fmt.Sprintf(
+						"stock not carried: negative quantity %g in source file", it.Stock))
+				case it.HasStock && it.Stock > 0 && locErr != nil:
+					// EnsureStockLocation ran once, outside the loop; when it
+					// failed, every row with stock would otherwise lose it
+					// silently while still reading "created" — the exact bug
+					// this card fixes, one branch over.
+					warnings = append(warnings, "stock not carried: "+locErr.Error())
+				case it.HasStock && it.Stock > 0:
 					if _, err := pos.RecordStockMovement(r.Context(), d.Db, pos.StockMovementInput{
 						ItemID: itemID, LocationID: locID, Type: "receive",
 						Quantity: it.Stock, Reason: "catalog import",
 						ActorID: getSessionUserID(r),
 					}); err != nil {
-						rows[i].Status = "created; stock not carried: " + err.Error()
-						created++
-						continue
+						warnings = append(warnings, "stock not carried: "+err.Error())
+					} else {
+						// Mirror imported stock to inventory connectors
+						// (best-effort, non-blocking).
+						publishStockAdjusted(r.Context(), d, plugins.StockAdjustedEvent{
+							ItemID:   itemID,
+							SKU:      it.SKU,
+							DeltaQty: it.Stock,
+							Reason:   "received",
+							Location: locID,
+						})
 					}
-					// Mirror imported stock to inventory connectors
-					// (best-effort, non-blocking).
-					publishStockAdjusted(r.Context(), d, plugins.StockAdjustedEvent{
-						ItemID:   itemID,
-						SKU:      it.SKU,
-						DeltaQty: it.Stock,
-						Reason:   "received",
-						Location: locID,
-					})
 				}
-				rows[i].Status = "created"
+				if len(warnings) > 0 {
+					rows[i].Status = "created; " + strings.Join(warnings, "; ")
+					rows[i].Warned = true
+					warned++
+				} else {
+					rows[i].Status = "created"
+				}
 				created++
 			}
 			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "import",
-				map[string]any{"format": res.Format, "created": created, "failed": failed, "rows": len(rows)},
+				map[string]any{"format": res.Format, "created": created, "warned": warned, "failed": failed, "rows": len(rows)},
 				time.Now().UTC().Format(time.RFC3339), "")
 		}
 
@@ -256,8 +287,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		T := funcs["T"].(func(string) string)
 		var b strings.Builder
 		if commit {
-			fmt.Fprintf(&b, `<p><strong>✓ %s: %d — %s: %d</strong></p>`,
-				T("import.created"), created, T("import.skipped"), len(rows)-created)
+			fmt.Fprintf(&b, `<p><strong>✓ %s: %d — %s: %d — %s: %d</strong></p>`,
+				T("import.created"), created, T("import.warned"), warned,
+				T("import.skipped"), len(rows)-created)
 		} else {
 			fmt.Fprintf(&b, `<p><strong>%s: %s · %d %s, %d %s</strong></p>`,
 				T("import.detected"), res.Format, importable, T("import.ready"), len(rows)-importable, T("import.with_issues"))
@@ -265,13 +297,21 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		b.WriteString(`<table class="table"><thead><tr><th>` + T("catalog.col.name") + `</th><th>` +
 			T("catalog.col.price") + `</th><th>` + T("catalog.barcode") + `</th><th>` +
 			T("catalog.category") + `</th><th>` + T("import.status") + `</th></tr></thead><tbody>`)
-		shown := 0
+		// Warned rows must survive the 200-row display cap — an operator who
+		// only gets to see the first 200 of a large import must not lose the
+		// rows that actually need their attention (ut-docs#293 review).
+		// Partition warned rows to the front, unconditionally rendered, and
+		// apply the cap only to the remaining (non-warned) rows so the
+		// "… N more" count stays accurate for what's actually still hidden.
+		var warnedRows, plainRows []rowView
 		for _, row := range rows {
-			if shown >= 200 {
-				fmt.Fprintf(&b, `<tr><td colspan="5" class="muted">… %d more</td></tr>`, len(rows)-shown)
-				break
+			if row.Warned {
+				warnedRows = append(warnedRows, row)
+			} else {
+				plainRows = append(plainRows, row)
 			}
-			shown++
+		}
+		writeRow := func(row rowView) {
 			cls := ""
 			if row.Status != "ok" && row.Status != "created" {
 				cls = ` class="muted"`
@@ -279,6 +319,20 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 				cls, htmlEscape(row.Name), httpx.FormatMoney(row.PriceMinor, locale),
 				htmlEscape(row.Barcode), htmlEscape(row.Category), htmlEscape(row.Status))
+		}
+		for _, row := range warnedRows {
+			writeRow(row)
+		}
+		plainShown := 0
+		for _, row := range plainRows {
+			if plainShown >= 200 {
+				break
+			}
+			writeRow(row)
+			plainShown++
+		}
+		if plainShown < len(plainRows) {
+			fmt.Fprintf(&b, `<tr><td colspan="5" class="muted">… %d more</td></tr>`, len(plainRows)-plainShown)
 		}
 		b.WriteString(`</tbody></table>`)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
