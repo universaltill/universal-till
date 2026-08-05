@@ -26,6 +26,20 @@ test.describe('POS UI MVP Uplift', () => {
     await expect(logo).toHaveAttribute('src', /unitill-logo\.svg/);
     await expect(logo).toHaveAttribute('alt', 'Universal Till');
     await expect(logo).toBeVisible();
+
+    // ut-docs#290 shipped the previous logo renamed to unitill-logo.svg, and
+    // every check of the day passed because they all matched on the filename.
+    // Assert the artwork instead: it has to decode, and it has to be the
+    // portrait mark (aspect ~0.73) rather than the landscape one (~1.12).
+    const box = await logo.evaluate((el: HTMLImageElement) => ({
+      naturalWidth: el.naturalWidth,
+      naturalHeight: el.naturalHeight,
+    }));
+    expect(box.naturalWidth, 'logo must actually decode').toBeGreaterThan(0);
+    expect(
+      box.naturalWidth / box.naturalHeight,
+      'canonical mark is portrait; a landscape ratio means the old logo is back',
+    ).toBeLessThan(1);
   });
 
   test('offline status indicator is present and non-blocking', async ({ page }) => {
