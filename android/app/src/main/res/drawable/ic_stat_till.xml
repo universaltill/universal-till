@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Notification status-bar icon. Android requires these to be a flat
-     white silhouette on a transparent background (the OS tints it itself,
-     ignoring color) — the full-color launcher icon (unitill-logo.svg) would
-     render as a solid white blob, so this is a small, purpose-built glyph
-     instead, not a shrunk copy of the real logo. A simple till/register
-     shape: body + a coin slot, echoing the real logo's register icon. -->
+     silhouette on a transparent background (the OS tints it itself, ignoring
+     color), and legible at 24dp. This is a small, purpose-built glyph — a
+     till/register body plus a coin slot — not a shrunk copy of the brand
+     mark. The mark itself (unitill-logo.svg) is a tall, narrow silhouette
+     whose detail closes up at this size; using it here is possible now that
+     it is monochrome, but it needs a redraw in a 24dp viewport rather than a
+     straight scale, so it is deliberately left as a separate glyph. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"

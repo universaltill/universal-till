@@ -3,7 +3,8 @@ import { watchConsole } from './helpers';
 
 // ut-docs#213: the basket is a full-height first-class panel (>=4 line
 // items visible at 1280x800 with no scrolling), carries an always-visible
-// item-count badge, the nav logo is legible (rem-sized, light variant),
+// item-count badge, the nav logo is legible (rem-sized, on the .logo white
+// plate — the separate light-variant asset was retired in ut-docs#290),
 // and errors surface on the single .pos-notice surface, persisting until
 // dismissed.
 test.use({ viewport: { width: 1280, height: 800 } });

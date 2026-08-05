@@ -54,8 +54,18 @@ ICONSET="$(mktemp -d)/AppIcon.iconset"
 mkdir -p "$ICONSET"
 BASE_PNG="$(mktemp -d)/icon.png"
 # Rasterize the vector logo to a 1024px master, then derive every icon size.
-if qlmanage -t -s 1024 -o "$(dirname "$BASE_PNG")" web/public/assets/logo/unitill-logo.svg >/dev/null 2>&1; then
-  mv "$(dirname "$BASE_PNG")"/unitill-logo.svg.png "$BASE_PNG"
+# The mark is portrait (viewBox 14.262122 x 19.442995), and `sips -z s s`
+# below forces a square, so rasterizing it directly would stretch the app
+# icon. Re-wrap it in a square viewBox first — the artwork is centred with a
+# 6% margin, matching ut-docs/scripts/generate-brand-icons.py, which derives
+# the favicon .ico from the same canonical asset. The asset is pinned by hash
+# in scripts/ci/check-brand-assets.sh, so these constants stay valid until
+# the mark is deliberately replaced.
+SQUARE_SVG="$(mktemp -d)/unitill-logo-square.svg"
+sed 's|viewBox="0 0 14.262122 19.442995"|viewBox="-3.91609525 -1.32565875 22.0943125 22.0943125"|; s| width="14.262122mm"||; s| height="19.442995mm"||' \
+  web/public/assets/logo/unitill-logo.svg > "$SQUARE_SVG"
+if qlmanage -t -s 1024 -o "$(dirname "$BASE_PNG")" "$SQUARE_SVG" >/dev/null 2>&1; then
+  mv "$(dirname "$BASE_PNG")"/unitill-logo-square.svg.png "$BASE_PNG"
 fi
 if [ -f "$BASE_PNG" ]; then
   for s in 16 32 64 128 256 512 1024; do

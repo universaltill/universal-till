@@ -104,6 +104,9 @@ independent review's 4 findings were fixed, not just before:
 - Real launcher icon (from `web/public/assets/logo/unitill-logo.svg`) and a
   proper Android notification-permission flow (best-effort — the
   service runs regardless of whether it's granted).
+  The `mipmap-*/ic_launcher*.png` files are **generated, not authored** —
+  regenerate them with `./android/generate-launcher-icons.sh` whenever the
+  canonical mark changes, rather than editing the rasters by hand.
 
 ## Signing & release (done 2026-07-26)
 
