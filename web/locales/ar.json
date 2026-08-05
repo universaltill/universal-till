@@ -232,6 +232,7 @@
   "import.skipped": "متخطّى",
   "import.status": "الحالة",
   "import.title": "استيراد الكتالوج",
+  "import.warned": "تحذيرات",
   "import.with_issues": "سيُتخطّى",
   "inventory.authorize_override": "اعتماد التجاوز",
   "inventory.cost_optional": "التكلفة (£، اختياري)",

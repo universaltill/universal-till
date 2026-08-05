@@ -727,16 +727,20 @@ func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInp
 	}
 	in.BarcodeType = strings.TrimSpace(in.BarcodeType)
 	if in.BarcodeType == "" {
-		// The catalog accepts arbitrary scanner and internal PLU values (ADR-0021).
-		// Treat a 13-digit value as the retail EAN-13 it appears to be, while
-		// retaining CODE128 as the permissive default for other shapes.
-		if len(in.Barcode) == 13 {
+		// The catalog accepts arbitrary scanner and internal/PLU values with
+		// no assumption about the code's format or source (ADR-0021) — a
+		// 13-digit value here is just as likely a legitimate internal/PLU
+		// code as a retail EAN-13, so inference must never reject it. Only
+		// label it EAN13 when it also carries a valid EAN-13 check digit;
+		// otherwise it falls back to CODE128, the permissive default for
+		// every other shape. An explicit BarcodeType is the only path that
+		// validates (below) — inference never does.
+		if len(in.Barcode) == 13 && validEAN13(in.Barcode) {
 			in.BarcodeType = "EAN13"
 		} else {
 			in.BarcodeType = "CODE128"
 		}
-	}
-	if strings.EqualFold(in.BarcodeType, "EAN13") {
+	} else if strings.EqualFold(in.BarcodeType, "EAN13") {
 		in.BarcodeType = "EAN13"
 		if !validEAN13(in.Barcode) {
 			return fmt.Errorf("%w %q: expected 13 digits with a valid check digit", ErrInvalidEAN13, in.Barcode)

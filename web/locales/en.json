@@ -232,6 +232,7 @@
   "import.skipped": "Skipped",
   "import.status": "Status",
   "import.title": "Import catalog",
+  "import.warned": "Warnings",
   "import.with_issues": "will be skipped",
   "inventory.authorize_override": "Authorize Override",
   "inventory.cost_optional": "Cost (£, optional)",
