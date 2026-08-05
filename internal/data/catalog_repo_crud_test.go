@@ -723,15 +723,24 @@ func TestAddBarcode_ValidatesExplicitEAN13AndPreservesArbitraryCodes(t *testing.
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
 	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-V", Name: "Variant", Price: 150, IsActive: true})
 
+	// ADR-0021: an untyped 13-digit value may be a legitimate internal/PLU
+	// code, not a retail EAN-13 — the inferred path must never reject it on
+	// a bad check digit, only the explicit EAN13 path validates. It must
+	// still be labelled CODE128, not misclassified as EAN13.
 	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
 		Barcode: "5449000000995", ItemID: "i1",
-	}); err == nil {
-		t.Fatal("expected an untyped 13-digit barcode with an invalid EAN-13 check digit to be rejected")
-	} else if !strings.Contains(err.Error(), "invalid EAN-13") {
-		t.Fatalf("expected an EAN-13 validation error, got %v", err)
+	}); err != nil {
+		t.Fatalf("untyped 13-digit code with a bad check digit must be accepted as an internal/PLU code: %v", err)
 	}
-	if exists, err := repo.BarcodeExists(ctx, "5449000000995"); err != nil || exists {
-		t.Fatalf("invalid EAN-13 was persisted: exists=%v err=%v", exists, err)
+	if exists, err := repo.BarcodeExists(ctx, "5449000000995"); err != nil || !exists {
+		t.Fatalf("untyped 13-digit code was not persisted: exists=%v err=%v", exists, err)
+	}
+	var inferredTypeBadCheckDigit string
+	if err := db.QueryRow(`SELECT barcode_type FROM item_barcodes WHERE barcode = ?`, "5449000000995").Scan(&inferredTypeBadCheckDigit); err != nil {
+		t.Fatal(err)
+	}
+	if inferredTypeBadCheckDigit != "CODE128" {
+		t.Fatalf("untyped 13-digit code with a bad check digit barcode_type = %q, want CODE128 (must not be mislabelled EAN13)", inferredTypeBadCheckDigit)
 	}
 	if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
 		Barcode: "4006381333932", ItemID: "i1", BarcodeType: "EAN13",

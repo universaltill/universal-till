@@ -27,6 +27,15 @@ type ImportItem struct {
 	Stock       float64 // opening quantity from the source system
 	HasStock    bool    // the file carried a parseable stock value
 	Issue       string  // non-empty = row cannot be imported (reason)
+	// BarcodeIssue is non-empty when the CSV carried a non-empty barcode
+	// value that normalizeBarcode discarded (unsupported shape — e.g. a
+	// 4-digit produce PLU or an alphanumeric internal code). Unlike Issue,
+	// this never blocks the row: the item still imports, but the caller
+	// (pages) should surface this as a per-row warning so the operator
+	// knows the barcode was silently dropped, not just missing (ut-docs#293,
+	// same defect class as the AddBarcode fix — the symbology itself is
+	// ut-docs#295's job, not this field's).
+	BarcodeIssue string
 }
 
 // Result is a parsed file.
@@ -139,14 +148,18 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 		if err != nil {
 			return res, fmt.Errorf("row %d: %w", len(res.Items)+2, err)
 		}
+		rawBarcode := get(rec, "barcode")
 		item := ImportItem{
 			Name:        get(rec, "name"),
 			SKU:         get(rec, "sku"),
-			Barcode:     normalizeBarcode(get(rec, "barcode")),
+			Barcode:     normalizeBarcode(rawBarcode),
 			Category:    get(rec, "category"),
 			Department:  get(rec, "department"),
 			Description: get(rec, "description"),
 			IsWeighed:   isTruthy(get(rec, "weighed")),
+		}
+		if rawBarcode != "" && item.Barcode == "" {
+			item.BarcodeIssue = barcodeIssue(rawBarcode)
 		}
 		// Square: variation name qualifies the item name ("Coffee — Large").
 		if v := get(rec, "variation"); v != "" && !strings.EqualFold(v, "regular") && res.Format == "square" {
@@ -204,6 +217,23 @@ func normalizeBarcode(s string) string {
 		return ""
 	}
 	return s
+}
+
+// barcodeIssue explains why normalizeBarcode discarded a non-empty raw
+// barcode value, mirroring its checks exactly (never changes what shapes
+// are accepted — that's ut-docs#295's call). Called only when the raw value
+// was non-empty and normalizeBarcode returned "".
+func barcodeIssue(raw string) string {
+	s := strings.TrimSuffix(raw, ".0")
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return fmt.Sprintf("barcode %q not imported: unsupported format (not a plain digit string)", raw)
+		}
+	}
+	if len(s) < 6 {
+		return fmt.Sprintf("barcode %q not imported: too short (needs 6-14 digits)", raw)
+	}
+	return fmt.Sprintf("barcode %q not imported: too long (needs 6-14 digits)", raw)
 }
 
 func isTruthy(s string) bool {
