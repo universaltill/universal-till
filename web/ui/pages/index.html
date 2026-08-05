@@ -43,7 +43,7 @@
        (POST /api/shifts/pfandrueckgabe) with a fixed reason so it's
        reportable distinctly from other adjustments. -->
   <dialog id="pfand-modal" class="modifier-modal" aria-labelledby="pfand-modal-title">
-    <form hx-post="/api/shifts/pfandrueckgabe" hx-target="#pfand-result" hx-swap="innerHTML"
+    <form class="stacked-form" hx-post="/api/shifts/pfandrueckgabe" hx-target="#pfand-result" hx-swap="innerHTML"
           hx-on::before-swap="if (event.detail.target && event.detail.target.id === 'pfand-result') { event.detail.shouldSwap = true; event.detail.isError = false; }"
           hx-on::after-request="if (event.detail.xhr && event.detail.xhr.status >= 200 && event.detail.xhr.status < 300) { var m = document.getElementById('pfand-modal'); m.close(); this.reset(); }">
       <h3 id="pfand-modal-title">{{ T "pfand.modal.title" }}</h3>
