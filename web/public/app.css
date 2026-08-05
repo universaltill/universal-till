@@ -223,6 +223,11 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .modifier-admin-group-row, .modifier-admin-option-row {
   display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-block-end: .35rem;
 }
+/* Same reason as `.set-row` (ut-docs#300): the Min/Max labels here wrap a
+   number input, so the global stacking rule would make them two-line and leave
+   this compact wrap-row unevenly tall next to its one-line neighbours. */
+.modifier-admin-group-row label,
+.modifier-admin-option-row label { flex-direction: row; align-items: center; }
 .modifier-admin-group-row input[type="text"] { flex: 1 1 10rem; min-inline-size: 8rem; }
 .modifier-admin-option-row { padding-inline-start: 1rem; }
 .modifier-admin-option-row input[type="text"] { flex: 1 1 8rem; min-inline-size: 6rem; }
@@ -408,6 +413,54 @@ input:focus, select:focus, textarea:focus {
 }
 .form-row input { padding: .55rem; }
 label { font-size: .85rem; color: var(--text); }
+/* ut-docs#300: a <label> that wraps its own control stacks -- the control sits
+   on its own line below the label text, at full width. This used to be opt-in
+   per form (.catalog-form, .split-tender-form, .translations-controls and
+   .setup-card each declare it separately) and any form that never got such a
+   rule silently inherited the bare inline default above. That is how the
+   deposit-refund payout dialog shipped with "Manager PIN" sitting to the RIGHT
+   of the amount input and its own input wrapped onto the next line, and the
+   change-Manager-PIN form had it too. Making stacking the default means a new
+   form can no longer reintroduce the bug by forgetting an opt-in class.
+
+   checkbox/radio are excluded IN THE SELECTOR, deliberately, rather than left
+   to specificity: the ADR-0020 item-customization options are
+   `label.modifier-option` wrapping a checkbox/radio and must stay a horizontal
+   row, as must the ~12 plain toggle rows in catalog/settings/receipt-designer.
+   Excluding them structurally means no later rule ordering or specificity
+   change can flip them into a column.
+
+   The `:where()` is load-bearing, not decoration. `:has()` takes the
+   specificity of its most specific argument, so a bare
+   `label:has(> input:not([type=checkbox]):not([type=radio]))` would score
+   (0,2,2) -- each `:not([attr])` contributes (0,1,0) -- and would then OUTRANK
+   every scoped rule below (`.setup-card label`, `.translations-controls
+   label`, … all (0,1,1)), quietly changing forms that already looked right,
+   while the sibling `label:has(> select)` branch at (0,0,2) did not. `:where()`
+   contributes zero, so all three branches sit at (0,0,2), uniformly below the
+   scoped rules. Keep it.
+
+   Specificity does NOT rescue a container that sets `display:flex` and
+   `align-items` but never `flex-direction`: the cascade is per-property, so
+   this rule's `flex-direction: column` applies to such a label unopposed
+   whatever the container's selector weight. `.set-row` and the modifier-admin
+   rows below therefore declare `flex-direction: row` explicitly. That is the
+   same hazard ut-docs#300 flagged for `.modifier-option`, and the independent
+   review found it live on three manager-facing Settings rows.
+
+   `:has()` needs Chromium >= 105 / Safari >= 15.4 / Firefox >= 121. The
+   Chromium kiosk and current Android WebView are well past that; on anything
+   older the rule is dropped wholesale and the form degrades to the old inline
+   layout rather than to something worse. */
+label:has(> input:where(:not([type="checkbox"]):not([type="radio"]))),
+label:has(> select),
+label:has(> textarea) { display: flex; flex-direction: column; gap: .2rem; }
+/* Vertical rhythm for forms whose fields are direct children (the payout
+   dialog, change-PIN): stacked labels would otherwise butt straight together. */
+.stacked-form { display: flex; flex-direction: column; gap: .6rem; }
+/* A submit button that is a direct child stays content-width, as it was
+   before the form became a flex column (align-items defaults to stretch). */
+.stacked-form > button { align-self: start; }
 
 /* ---------- Buttons ---------- */
 .btn {
@@ -1016,7 +1069,13 @@ body.login-screen {
   padding: .35rem .4rem;
 }
 .fee-row .fee-msg { grid-column: 1 / -1; }
-.set-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+/* `flex-direction: row` is explicit and REQUIRED, not redundant (ut-docs#300):
+   three of these are `<label class="set-row">` wrapping a <select>, which the
+   global stacking rule above matches. Without an explicit direction here that
+   rule's `flex-direction: column` wins by default — the cascade is per-property
+   — and `align-items: center` then centres the label and its select on separate
+   lines, turning each one-line Settings row into a 134px centred stack. */
+.set-row { display: flex; flex-direction: row; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .set-tight { margin-block-start: .35rem; }
 .set-below { margin-block-end: .6rem; }
 .set-gap { margin-block-start: .8rem; }
