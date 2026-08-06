@@ -149,8 +149,18 @@ func ComputeSHA256(filePath string) (string, error) {
 // label — or an entry with an empty Label — previously installed cleanly
 // and then silently lost one entry at sync time with no error and no
 // warning, since neither case is a cross-plugin collision.
+//
+// Keys must also be unique WITHIN this manifest (ut-docs#363) — unlike the
+// label case, this was never a silent-data-loss bug (plugin_entries has a
+// real UNIQUE(plugin_id, key) constraint, so PersistManifest already failed
+// and rolled back the whole transaction), but the caller saw the raw SQLite
+// constraint message instead of a clean, actionable one naming the key like
+// every check above. Checked here so the message is consistent and the DB
+// round-trip is skipped for a mistake that's already fully knowable from
+// the manifest alone.
 func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
 	var paymentKeys, paymentNames []string
+	seenKeys := make(map[string]bool, len(entries))
 	seenLabels := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		if e.Type != "payment" {
@@ -165,6 +175,10 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 		if strings.Contains(e.Key, ":") {
 			return fmt.Errorf("payment entry key %q must not contain ':'", e.Key)
 		}
+		if seenKeys[e.Key] {
+			return fmt.Errorf("payment entry key %q is used by more than one entry in this manifest — pick distinct keys", e.Key)
+		}
+		seenKeys[e.Key] = true
 		if strings.TrimSpace(e.Label) == "" {
 			return fmt.Errorf("payment entry %q has an empty label", e.Key)
 		}
