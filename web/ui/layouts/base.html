@@ -4,6 +4,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- ut-docs#239: htmx defers binding listeners on freshly-swapped
+         content into its "settle" phase, run via setTimeout(fn, settleDelay)
+         when settleDelay > 0 (default 20ms) — a real click landing in that
+         window (e.g. tapping a basket line's ✕ right after a scan) is
+         silently dropped. Forcing 0 makes settle (including listener
+         binding) run synchronously right after swap, closing the window
+         entirely. No CSS in this codebase depends on .htmx-settling's timing.
+         htmx applies meta[name="htmx-config"] itself, before it processes
+         the body — no load-order dependency on script placement, and no
+         risk of a ReferenceError if htmx.min.js ever fails to load (unlike
+         a DOMContentLoaded listener referencing `htmx` directly). -->
+    <meta name="htmx-config" content='{"defaultSettleDelay":0}'>
     <title>{{ .title }}</title>
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />

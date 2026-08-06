@@ -80,17 +80,19 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     await scan(page, CODES[1]);
     await expect(badge).toHaveText('3');
 
-    // Remove the second line entirely. The ✕ lives INSIDE the re-swapped
-    // #basket: vendored htmx 1.9.12 binds listeners on fresh content a
-    // settle-tick after it appears, and a click landing in that window is
-    // silently dropped (reproduced 25/25 with a tight loop; exists on main
-    // too — pre-existing, not a #213 regression). Wait for the button to be
-    // htmx-bound before clicking.
-    await page.waitForFunction(() => {
-      const btns = document.querySelectorAll('.basket .btn-x');
-      const b = btns[btns.length - 1] as any;
-      return !!(b && b['htmx-internal-data']);
-    });
+    // Remove the second line entirely. A prior version of this test worked
+    // around ut-docs#239 (htmx defers listener binding on freshly-swapped
+    // content into its "settle" phase, so a click landing in that window
+    // was silently dropped) with a waitForFunction poll for
+    // 'htmx-internal-data' before clicking; that workaround is no longer
+    // needed now that the fix (web/ui/layouts/base.html,
+    // web/ui/pages/self_order_shop.html) sets defaultSettleDelay to 0. NOTE:
+    // this immediate click is NOT itself the #239 regression guard — a real
+    // Playwright click goes through a CDP round trip too slow to reliably
+    // land inside the original ~20ms window even pre-fix (confirmed: this
+    // exact assertion still passed with the fix reverted). The dedicated,
+    // deterministic guard is the next test below, which races a synthetic
+    // click against htmx's internal settle timer directly.
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/pos/remove')),
       page.locator('.basket .btn-x').last().click(),
@@ -99,6 +101,49 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
 
     await resetBasket(page);
     await expect(page.locator('[data-testid="basket-count"]')).toHaveText('0');
+    assertClean();
+  });
+
+  test('a click landing in the htmx settle window on freshly-swapped #basket is not dropped (ut-docs#239)', async ({ page }) => {
+    // Deterministic version of the race above: a real Playwright .click()
+    // goes through a CDP round trip slow enough that it usually lands
+    // AFTER htmx's settle timer even pre-fix, so it can't reliably prove
+    // this on its own. Instead race a synthetic click scheduled via
+    // setTimeout(fn, 0) directly against htmx's internal
+    // setTimeout(s, settleDelay) that binds listeners on the swapped-in
+    // content (see htmx.min.js's swap(): "htmx:afterSwap" fires, THEN
+    // settleDelay>0 schedules listener binding via setTimeout, or runs it
+    // synchronously when settleDelay is 0). Pre-fix (settleDelay=20), our
+    // 0ms timer is scheduled first and fires first — clicking a still-
+    // unbound button, so nothing happens. Post-fix (settleDelay=0), htmx
+    // binds listeners synchronously inside the swap call, before our timer
+    // even gets a turn on the event loop — so the click always lands bound.
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+    await scan(page, CODES[0]);
+    await expect(page.locator('[data-testid="basket-count"]')).toHaveText('1');
+
+    await page.evaluate(() => {
+      const onAfterSwap = (ev: Event) => {
+        const target = ev.target as HTMLElement;
+        if (!target || target.id !== 'basket') return;
+        document.body.removeEventListener('htmx:afterSwap', onAfterSwap);
+        setTimeout(() => {
+          (document.querySelector('.basket .btn-x') as HTMLElement | null)?.click();
+        }, 0);
+      };
+      document.body.addEventListener('htmx:afterSwap', onAfterSwap);
+    });
+    const removeRequestSeen = page
+      .waitForResponse((r) => r.url().includes('/api/pos/remove'), { timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    await scan(page, CODES[1]); // swaps #basket, firing the listener registered above
+
+    expect(await removeRequestSeen, 'a click racing the settle window must still reach the server, not be silently dropped').toBe(true);
+    await expect(page.locator('[data-testid="basket-count"]')).toHaveText('1'); // scanned 2 lines, one removed by the race
+
+    await resetBasket(page);
     assertClean();
   });
 
