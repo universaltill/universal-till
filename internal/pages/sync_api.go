@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"strings"
 	"sync"
@@ -311,7 +312,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, err.Error())
+			// Escaped: these errors embed the operator-pasted primary URL
+			// (`Post "http://…": dial tcp …`), so an unescaped write reflects
+			// attacker-chosen markup back into the page.
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}
 		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
@@ -333,7 +337,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, err.Error())
+			// Escaped: these errors embed the operator-pasted primary URL
+			// (`Post "http://…": dial tcp …`), so an unescaped write reflects
+			// attacker-chosen markup back into the page.
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}
 		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),

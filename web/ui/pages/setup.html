@@ -3,10 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- ut-docs#239: see web/ui/layouts/base.html for why. -->
+    <meta name="htmx-config" content='{"defaultSettleDelay":0}'>
     <title>{{ T "setup.title" }}</title>
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
     <!-- Vendored locally: the till must work fully offline. -->
+    <!-- ut-docs#344: htmx is REQUIRED here, not optional polish. The
+         join-an-existing-shop form below is driven entirely by hx-post and has
+         no action/method fallback, so without this the submit button silently
+         GETs the setup page again and multi-till enrolment (ADR-0011 D2) is
+         impossible on a fresh install. Confirmed in the field on a Pi-to-Pi
+         setup, 2026-08-06. scripts/ci/guard-htmx-loaded.sh enforces the rule. -->
+    <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
   </head>
@@ -99,7 +108,14 @@
       <section x-show="step === 99" x-cloak>
         <h1>{{ T "setup.join.title" }}</h1>
         <p class="muted">{{ T "setup.join.help" }}</p>
-        <form hx-post="/api/setup/join" hx-target="#setup-join-msg" hx-swap="innerHTML">
+        <!-- hx-indicator + hx-disabled-elt: completeJoin allows the primary a
+             60s timeout and then downloads a whole DB snapshot, so on a real
+             LAN join this button can sit inert for close to a minute. Without
+             feedback the operator presses it again, which burns the one-time
+             enrolment token — the retry then fails with "code used or
+             expired?" and they are worse off than when they started. -->
+        <form hx-post="/api/setup/join" hx-target="#setup-join-msg" hx-swap="innerHTML"
+              hx-indicator="#setup-join-msg" hx-disabled-elt="find button[type=submit]">
           <label>{{ T "tills.join_code" }}
             <input type="text" name="code" placeholder='{"token":"…","url":"http://…"}' required>
           </label>
@@ -114,5 +130,28 @@
         </div>
       </section>
     </main>
+
+    <!-- ut-docs#344: htmx's default is to silently DROP the response body on a
+         non-2xx status (1.9.12: shouldSwap = status>=200 && status<400 &&
+         status!==204), so without this the join's ENTIRE error path renders
+         nothing at all and the operator sees the same blank result the missing
+         htmx tag used to produce. That is not an edge case here — every
+         failure of POST /api/setup/join answers 502 (unreachable primary,
+         expired or reused code, malformed paste, snapshot download failure),
+         and those are the likeliest outcomes of a first join attempt.
+
+         Scoped to this one path deliberately. The equivalent listeners in
+         web/public/app.js and web/ui/pages/self_order_shop.html are scoped to
+         their own prefixes AND to 4xx, so neither would cover a 502 from here
+         even if this page loaded app.js (it doesn't). -->
+    <script>
+      document.body.addEventListener('htmx:beforeSwap', function (ev) {
+        var path = ev.detail.requestConfig && ev.detail.requestConfig.path;
+        if (path === '/api/setup/join' && ev.detail.xhr.status >= 400) {
+          ev.detail.shouldSwap = true;
+          ev.detail.isError = false;
+        }
+      });
+    </script>
   </body>
 </html>
