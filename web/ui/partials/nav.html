@@ -11,6 +11,11 @@
          to the manual's index when nothing claims the route yet. -->
     <a class="help-hint" href="{{ helpHref }}" title="{{ T "help.open" }}"
        aria-label="{{ T "help.open" }}" data-testid="help-hint">?</a>
+    <!-- 🐞 bug-report toggle (ut-docs#346). Same trick as the sync/session
+         chips: nav.html has no per-request data, so an htmx fragment loads
+         after render and the /ui/bugreport-chip route does the manager
+         gating — empty body when the operator can't report issues. -->
+    <span id="bugreport-chip" hx-get="/ui/bugreport-chip" hx-trigger="load"></span>
     <span id="sync-chip" hx-get="/ui/sync-chip" hx-trigger="load, every 30s"></span>
     <span id="session-chip" hx-get="/ui/session-chip" hx-trigger="load"></span>
   </div>
