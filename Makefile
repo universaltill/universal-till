@@ -2,7 +2,7 @@ BIN=unitill-pos
 VERSION?=0.1.0
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
-.PHONY: build run test e2e e2e-seed
+.PHONY: build run test e2e e2e-seed docs-shots
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -15,6 +15,14 @@ test:
 
 e2e-seed:
 	UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go
+
+# Regenerates the user manual's screenshots (web/help/img/<locale>/<id>.png,
+# one per routed help topic per shipped locale) against a real till, then
+# rewrites web/help/img/manifest.json — the freshness record
+# scripts/ci/guard-docs-shots.sh checks in CI. Run this and commit the result
+# whenever a screen or a routed topic changes.
+docs-shots:
+	cd e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test --config=playwright.docs.config.ts && node tests-docs/write-manifest.js
 
 e2e:
 	@set -e; \

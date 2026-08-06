@@ -292,6 +292,109 @@ func TestTopicMatchesRegionalLocaleTag(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Screenshots (ut-docs#327): a topic whose locale has a generated screenshot
+// under help/img/<locale>/<id>.png leads with it; one without renders exactly
+// as before. A separate FS so the shared testFS's assertions stay untouched.
+// ---------------------------------------------------------------------------
+
+// tinyPNG stands in for a generated screenshot — the injection only stats the
+// file, it never decodes it.
+var tinyPNG = &fstest.MapFile{Data: []byte("\x89PNG\r\n\x1a\nnot-a-real-png")}
+
+var shotFS = fstest.MapFS{
+	"help/en/sell.md": &fstest.MapFile{Data: []byte(`---
+id: sell
+title: Selling & "tender"
+routes: [/]
+---
+
+Tap a button.
+`)},
+	"help/en/catalog.md": &fstest.MapFile{Data: []byte(`---
+id: catalog
+title: Catalog
+routes: [/catalog]
+---
+
+Your products.
+`)},
+	"help/fa/sell.md": &fstest.MapFile{Data: []byte(`---
+id: sell
+title: فروش
+---
+
+روی دکمه بزنید.
+`)},
+	// en has screenshots for both topics; fa has none yet, and fa/catalog.md
+	// doesn't exist at all (falls back to en).
+	"help/img/en/sell.png":    tinyPNG,
+	"help/img/en/catalog.png": tinyPNG,
+}
+
+func TestTopicHTMLLeadsWithScreenshotWhenPresent(t *testing.T) {
+	lib, err := Load(shotFS, "help")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tp, ok := lib.Topic("en", "sell")
+	if !ok {
+		t.Fatal("en/sell not loaded")
+	}
+	html := string(tp.HTML)
+	if !strings.HasPrefix(html, "<figure") {
+		t.Errorf("screenshot should lead the topic, got: %s", html)
+	}
+	if !strings.Contains(html, `<img src="/help/img/en/sell.png"`) {
+		t.Errorf("screenshot img missing: %s", html)
+	}
+	// The alt text is the localized title, escaped — it carries a quote here.
+	if !strings.Contains(html, `alt="Selling &amp; &#34;tender&#34;"`) {
+		t.Errorf("alt text not the escaped title: %s", html)
+	}
+}
+
+func TestTopicWithoutScreenshotRendersAsBefore(t *testing.T) {
+	lib, err := Load(shotFS, "help")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// fa/sell is translated but has no fa screenshot yet — no image, no
+	// placeholder, no broken link.
+	tp, ok := lib.Topic("fa", "sell")
+	if !ok || tp.Locale != "fa" {
+		t.Fatalf("fa/sell should be native fa, got %+v", tp)
+	}
+	if strings.Contains(string(tp.HTML), "/help/img/") {
+		t.Errorf("untranslated-screenshot topic grew an img: %s", tp.HTML)
+	}
+}
+
+func TestFallbackTopicCarriesEnglishScreenshot(t *testing.T) {
+	lib, err := Load(shotFS, "help")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// fa/catalog falls back to the English topic — it must carry the English
+	// screenshot (tp.Locale is en), not a broken fa image link.
+	tp, ok := lib.Topic("fa", "catalog")
+	if !ok || tp.Locale != "en" {
+		t.Fatalf("fa/catalog should fall back to en, got %+v", tp)
+	}
+	if !strings.Contains(string(tp.HTML), `<img src="/help/img/en/catalog.png"`) {
+		t.Errorf("fallback topic lost the English screenshot: %s", tp.HTML)
+	}
+}
+
+// NOTE (found in review): a dedicated "img is not a locale" test was removed
+// here. help/img/ only ever contains .png files, and Load's per-entry loop
+// already skips anything not ending in ".md" — so even with the explicit
+// `if locale == "img" { continue }` guard in Load deleted, "img" can never
+// produce a topic or appear in Locales() with the current fixture (verified:
+// removing the guard leaves every existing test green). The guard is
+// documentation/a saved ReadDir call, not behavior a test can meaningfully
+// pin without fabricating a help/img/*.md file that doesn't reflect reality.
+
 // Snippets are shown to a shop owner, so they keep the prose's own casing —
 // the lower-cased copy exists for matching only. (First driven run showed
 // "catalog, variants & barcodes your products: names…" in flat lowercase.)
