@@ -144,3 +144,41 @@ func TestNormalizeBarcode(t *testing.T) {
 		}
 	}
 }
+
+// stripCSVDefuse is the reverse of pages.csvSafe (ut-docs#321): it only
+// strips a leading "'" when the byte right after it is itself one of
+// csvSafe's own trigger chars — the exact two-byte pattern csvSafe emits,
+// and one a genuine hand-typed value beginning with an apostrophe would
+// only produce by coincidence. That's what makes stripping safe: it can't
+// be fooled by an ordinary value that merely happens to start with "'".
+func TestStripCSVDefuse(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"plain text", "Sparkling Water 500ml", "Sparkling Water 500ml"},
+		// These also cover the accepted lossy collision (2026-08-06 review,
+		// see stripCSVDefuse's doc comment): csvSafe("'=X") == csvSafe("=X")
+		// == "'=X", so a pre-existing "'=X"-shaped value is indistinguishable
+		// from our own defuse marker and strips the same way. Pinned here
+		// deliberately, not just incidentally exercised.
+		{"defused equals formula (or a pre-existing '=-shaped value — indistinguishable, by design)", `'=cmd|'/c calc'!A1`, `=cmd|'/c calc'!A1`},
+		{"defused plus formula", "'+1+1", "+1+1"},
+		{"defused minus formula", "'-1+1", "-1+1"},
+		{"defused at formula", "'@SUM(A1:A2)", "@SUM(A1:A2)"},
+		{"defused leading tab", "'\tsneaky", "\tsneaky"},
+		{"defused leading CR", "'\rsneaky", "\rsneaky"},
+		{"genuine leading apostrophe, not our marker", "'Twas the night", "'Twas the night"},
+		{"lone apostrophe", "'", "'"},
+		{"lone hyphen sentinel — never defused, so never stripped", "-", "-"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := stripCSVDefuse(c.in); got != c.want {
+				t.Errorf("stripCSVDefuse(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

@@ -140,6 +140,49 @@ func hasColumn(headers []string, field string) bool {
 	return false
 }
 
+// csvFormulaTriggers mirrors internal/pages/csv_export.go's csvSafe —
+// duplicated here (not imported: pages already imports catimport, so the
+// reverse would cycle) because stripCSVDefuse needs the exact same set to
+// safely reverse it. If csvSafe's trigger set ever changes, this one must
+// change with it.
+const csvFormulaTriggers = "=+-@\t\r"
+
+// stripCSVDefuse reverses pages.csvSafe's leading-apostrophe formula
+// defusing (ut-docs#321) so catalog export → import round-trips losslessly
+// through our own importer, a documented migration path (G22b) — unlike
+// the invoice/audit exports csvSafe was first written for, which are never
+// re-imported, so a permanent leading "'" there is harmless.
+//
+// This only strips a leading "'" when the byte immediately after it is
+// itself one of csvSafe's trigger chars — the exact two-byte shape csvSafe
+// emits (it only ever adds "'" right before a trigger char). A value that
+// merely happens to start with a genuine apostrophe not followed by a
+// trigger char (e.g. "'Twas the night") is left completely alone: there is
+// no way csvSafe could have produced it, so it was never ours to strip.
+//
+// Known, accepted lossy edge case (2026-08-06 review): csvSafe is NOT
+// injective for values that already start with "'" immediately followed by
+// a trigger char — csvSafe("'=X") == "'=X" (untouched: an apostrophe isn't
+// itself a trigger char), which is byte-identical to csvSafe("=X") == "'=X". This
+// function can't tell those two apart, so a pre-existing "'=X"-shaped value
+// (vanishingly rare in real product data) loses its leading apostrophe on
+// one export→import cycle, then stays stable ("=X" round-trips clean
+// forever after). The spreadsheet stays safe either way — every export
+// re-defuses whatever is currently stored — so this is data drift on an
+// edge case, not a reopened injection hole. See ut-docs#321's review record
+// for the full analysis; a fully lossless fix would need csvSafe itself
+// (shared with invoice/audit) to double a pre-existing leading "'" before a
+// trigger char, tracked as its own follow-up card rather than done here.
+func stripCSVDefuse(field string) string {
+	if len(field) < 2 || field[0] != '\'' {
+		return field
+	}
+	if strings.IndexByte(csvFormulaTriggers, field[1]) >= 0 {
+		return field[1:]
+	}
+	return field
+}
+
 // Parse reads a CSV export into neutral items. currencyDecimals drives
 // price parsing (e.g. 2 for GBP: "1.40" → 140; 0 for IRT: "12000" → 12000).
 func Parse(r io.Reader, currencyDecimals int) (Result, error) {
@@ -175,14 +218,14 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 		if err != nil {
 			return res, fmt.Errorf("row %d: %w", len(res.Items)+2, err)
 		}
-		rawBarcode := get(rec, "barcode")
+		rawBarcode := stripCSVDefuse(get(rec, "barcode"))
 		item := ImportItem{
-			Name:        get(rec, "name"),
-			SKU:         get(rec, "sku"),
+			Name:        stripCSVDefuse(get(rec, "name")),
+			SKU:         stripCSVDefuse(get(rec, "sku")),
 			Barcode:     normalizeBarcode(rawBarcode),
-			Category:    get(rec, "category"),
+			Category:    stripCSVDefuse(get(rec, "category")),
 			Department:  get(rec, "department"),
-			Description: get(rec, "description"),
+			Description: stripCSVDefuse(get(rec, "description")),
 			IsWeighed:   isTruthy(get(rec, "weighed")),
 		}
 		if rawBarcode != "" && item.Barcode == "" {

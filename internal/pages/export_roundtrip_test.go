@@ -1,8 +1,6 @@
 package pages
 
 import (
-	"encoding/csv"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -11,7 +9,11 @@ import (
 )
 
 // The export exists to round-trip: the CSV we write must come back through
-// our own importer with nothing lost (G22b anti-lock-in).
+// our own importer with nothing lost (G22b anti-lock-in). Calls the real
+// writeCatalogCSV rather than re-implementing the writer inline, so this
+// test also exercises the csvSafe defusing wired into it (ut-docs#321) —
+// a duplicated-logic version of this test could pass while the real
+// exporter silently diverged.
 func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
 	rows := []data.ExportRow{
 		{Name: "Cola Can 330ml", SKU: "SKU-1", Barcode: "5000112637922",
@@ -21,21 +23,7 @@ func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
 	}
 
 	var b strings.Builder
-	cw := csv.NewWriter(&b)
-	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
-		"Description", "Sold by weight", "In stock", "Active"})
-	for _, e := range rows {
-		yn := func(v bool) string {
-			if v {
-				return "Y"
-			}
-			return "N"
-		}
-		_ = cw.Write([]string{e.Name, e.SKU, e.Barcode, minorToDecimal(e.PriceMinor, 2),
-			e.Category, e.Description, yn(e.IsWeighed),
-			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive)})
-	}
-	cw.Flush()
+	writeCatalogCSV(&b, rows, 2)
 
 	res, err := catimport.Parse(strings.NewReader(b.String()), 2)
 	if err != nil {
@@ -58,6 +46,65 @@ func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
 	}
 	if cola.Issue != "" || res.Items[1].Issue != "" {
 		t.Fatalf("round-trip rows carry issues: %q %q", cola.Issue, res.Items[1].Issue)
+	}
+}
+
+// Catalog CSV/formula injection (ut-docs#321 — same defect class as
+// ut-docs#195, but harder: this export round-trips through our own
+// importer as a documented migration path, so the leading-apostrophe
+// mitigation must come back OFF on re-import, not just go on). Proves
+// both halves at once: the malicious value is defused for Excel/
+// LibreOffice on export, AND reimporting the till's own export recovers
+// the original value byte-for-byte rather than being permanently
+// polluted with a stray apostrophe.
+func TestExportCatalogCSV_FormulaShapedValuesDefusedAndRoundTrip(t *testing.T) {
+	rows := []data.ExportRow{
+		{Name: `=cmd|'/c calc'!A1`, SKU: "-DANGER", Barcode: "5000112637922",
+			PriceMinor: 120, Category: "@evil", Description: "+1+1", Stock: 1},
+		// A genuine leading apostrophe — NOT our defuse marker, since the
+		// next byte isn't a formula-trigger char — must survive untouched.
+		{Name: "'Twas the night", SKU: "SKU-3", PriceMinor: 50, Category: "Seasonal", Stock: 2},
+	}
+
+	var b strings.Builder
+	writeCatalogCSV(&b, rows, 2)
+
+	raw := b.String()
+	if !strings.Contains(raw, `'=cmd|'/c calc'!A1`) {
+		t.Fatalf("formula-shaped Name was not defused in raw CSV:\n%s", raw)
+	}
+	if !strings.Contains(raw, "5000112637922") || strings.Contains(raw, "'5000112637922") {
+		t.Fatalf("plain numeric Barcode should be untouched:\n%s", raw)
+	}
+
+	res, err := catimport.Parse(strings.NewReader(raw), 2)
+	if err != nil {
+		t.Fatalf("parse exported CSV: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("expected 2 items back, got %d", len(res.Items))
+	}
+
+	danger := res.Items[0]
+	if danger.Name != `=cmd|'/c calc'!A1` {
+		t.Errorf("Name did not round-trip clean: got %q", danger.Name)
+	}
+	if danger.SKU != "-DANGER" {
+		t.Errorf("SKU did not round-trip clean: got %q", danger.SKU)
+	}
+	if danger.Category != "@evil" {
+		t.Errorf("Category did not round-trip clean: got %q", danger.Category)
+	}
+	if danger.Description != "+1+1" {
+		t.Errorf("Description did not round-trip clean: got %q", danger.Description)
+	}
+	if danger.Barcode != "5000112637922" {
+		t.Errorf("Barcode did not round-trip clean: got %q", danger.Barcode)
+	}
+
+	seasonal := res.Items[1]
+	if seasonal.Name != "'Twas the night" {
+		t.Errorf("genuine leading apostrophe was stripped: got %q", seasonal.Name)
 	}
 }
 
