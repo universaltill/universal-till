@@ -374,8 +374,13 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			if it.Kind == "credit_note" {
 				sign = -1
 			}
-			_ = cw.Write([]string{it.DisplayNo, it.Kind, it.IssuedAt, it.CustomerName,
-				it.CustomerVATNo, it.ReceiptNo,
+			// Only the two free-typed fields (whoever issues an invoice types
+			// these) need csvSafe — DisplayNo/Kind/IssuedAt/ReceiptNo are
+			// system-generated, and the amounts are legitimately signed
+			// (a credit note's gross is negative) so blanket-sanitizing the
+			// whole row would corrupt them into text instead of numbers.
+			_ = cw.Write([]string{it.DisplayNo, it.Kind, it.IssuedAt, csvSafe(it.CustomerName),
+				csvSafe(it.CustomerVATNo), it.ReceiptNo,
 				minorToDecimal(sign*it.NetTotal, decimals),
 				minorToDecimal(sign*it.TaxTotal, decimals),
 				minorToDecimal(sign*it.GrossTotal, decimals)})

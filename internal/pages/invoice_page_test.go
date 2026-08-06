@@ -400,6 +400,55 @@ func TestGetInvoicesExport_CSVHasCreditNoteAsNegative(t *testing.T) {
 	}
 }
 
+// ut-docs#195: CustomerName/CustomerVATNo are free-typed by whoever issues
+// an invoice, so a crafted formula-shaped value must come out defused
+// (leading apostrophe) rather than reaching Excel/LibreOffice as a live
+// formula — while the invoice's own signed amounts (a credit note is
+// legitimately negative, per the test above) must NOT be touched by the
+// same mitigation.
+func TestGetInvoicesExport_CustomerFieldsAreCSVFormulaSafe(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newInvoiceTestDeps(t)
+	setSeller(t, dp)
+	ctx := context.Background()
+	seedInvoiceableSale(t, dp, "sale1", "R001", 120, 20)
+	repo := data.NewPOSRepo(dp.Db)
+	sale, _, err := repo.GetSaleDetail(ctx, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const malicious = `=cmd|'/c calc'!A1`
+	if _, err := issueInvoice(ctx, dp, sale, "invoice", "", malicious, "", malicious, "user1"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/invoices/export", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("expected valid CSV, got parse error: %v\nbody:\n%s", err, rec.Body.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected header + 1 data row, got %d: %v", len(rows), rows)
+	}
+	const customerCol, vatNoCol, grossCol = 3, 4, 8
+	data := rows[1]
+	if got := data[customerCol]; got != "'"+malicious {
+		t.Fatalf("CustomerName not defused: got %q, want %q", got, "'"+malicious)
+	}
+	if got := data[vatNoCol]; got != "'"+malicious {
+		t.Fatalf("CustomerVATNo not defused: got %q, want %q", got, "'"+malicious)
+	}
+	if got := data[grossCol]; got != "1.20" {
+		t.Fatalf("Gross must be untouched by the sanitizer, got %q", got)
+	}
+}
+
 func TestGetInvoiceByDisplayNo_NotFound(t *testing.T) {
 	mux, _ := newInvoiceTestDeps(t)
 	rec := httptest.NewRecorder()
