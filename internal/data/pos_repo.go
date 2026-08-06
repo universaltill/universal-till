@@ -615,22 +615,22 @@ WHERE i.reorder_level > 0
 // ---- Reports ----
 
 type DailySales struct {
-	Day      string
-	Count    int
-	Total    int64
-	TaxTotal int64
+	Day      string `json:"day"`
+	Count    int    `json:"count"`
+	Total    int64  `json:"total"`
+	TaxTotal int64  `json:"tax_total"`
 }
 
 type TopItem struct {
-	Name    string
-	Qty     float64
-	Revenue int64
+	Name    string  `json:"name"`
+	Qty     float64 `json:"qty"`
+	Revenue int64   `json:"revenue"`
 }
 
 type MethodTotal struct {
-	Method string
-	Count  int
-	Amount int64
+	Method string `json:"method"`
+	Count  int    `json:"count"`
+	Amount int64  `json:"amount"`
 }
 
 // DeptSales is one department's revenue for a reporting window. A department is

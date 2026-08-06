@@ -207,6 +207,71 @@ func TestStockLevelsToolReturnsSnakeCaseJSON(t *testing.T) {
 	}
 }
 
+// TestReportsAITools_ReturnSnakeCaseJSON guards ut-docs#322 (same defect
+// class as ut-docs#277, fixed above for stock_levels): data.DailySales,
+// data.TopItem and data.MethodTotal had no json tags, so the sales_by_day,
+// top_items and payment_breakdown AI tools serialized Go's default
+// PascalCase field names, against this repo's snake_case wire convention
+// (universal-till/CLAUDE.md).
+func TestReportsAITools_ReturnSnakeCaseJSON(t *testing.T) {
+	_, _, db := newAskAPITestDeps(t)
+	ctx := t.Context()
+	if _, err := db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,20,120,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,name_snapshot,quantity,unit_price,tax_rate_bp,tax_amount,total_before_tax,total_after_tax,item_id) VALUES('l1','s1',1,'Apple',1,100,2000,20,100,120,'itm1')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO payments(id,sale_id,method_id,amount,currency,paid_at) VALUES('p1','s1','cash',120,'GBP',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := data.NewPOSRepo(db)
+	tools := map[string]ai.AskTool{}
+	for _, tool := range askTools(repo) {
+		tools[tool.Name] = tool
+	}
+
+	cases := []struct {
+		tool       string
+		wantKeys   []string
+		pascalKeys []string
+	}{
+		{"sales_by_day", []string{"day", "count", "total", "tax_total"}, []string{"Day", "Count", "Total", "TaxTotal"}},
+		{"top_items", []string{"name", "qty", "revenue"}, []string{"Name", "Qty", "Revenue"}},
+		{"payment_breakdown", []string{"method", "count", "amount"}, []string{"Method", "Count", "Amount"}},
+	}
+	for _, c := range cases {
+		t.Run(c.tool, func(t *testing.T) {
+			result, err := tools[c.tool].Run(ctx, map[string]any{})
+			if err != nil {
+				t.Fatalf("%s: %v", c.tool, err)
+			}
+			raw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal %s result: %v", c.tool, err)
+			}
+			var decoded []map[string]any
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatalf("unmarshal %s JSON: %v", c.tool, err)
+			}
+			if len(decoded) != 1 {
+				t.Fatalf("expected 1 %s row, got %d: %s", c.tool, len(decoded), raw)
+			}
+			for _, key := range c.wantKeys {
+				if _, ok := decoded[0][key]; !ok {
+					t.Errorf("expected snake_case key %q in %s JSON, got %s", key, c.tool, raw)
+				}
+			}
+			for _, key := range c.pascalKeys {
+				if _, ok := decoded[0][key]; ok {
+					t.Errorf("%s JSON leaked PascalCase key %q against this repo's snake_case convention: %s", c.tool, key, raw)
+				}
+			}
+		})
+	}
+}
+
 func TestAskAPI_NotConfiguredReturns404(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _, _ := newAskAPITestDeps(t)
