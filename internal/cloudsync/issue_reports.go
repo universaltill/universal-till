@@ -19,8 +19,8 @@ import (
 // bug-report bundles (ADR-0022) to the cloud. Best-effort: a bundle that
 // fails to upload stays in the local pending queue and is retried on the
 // next tick — the same "never blocks, always retries" contract as the rest
-// of this file. The cloud-side receiving endpoint is spec 012 Phase 2; until
-// it exists, uploads fail harmlessly and bundles simply wait.
+// of this file. Uploads go to the live cloud endpoint
+// (POST /v1/stores/issue-reports, see uploadIssueReport below).
 func uploadPendingIssueReports(ctx context.Context, cfg *config.Config) {
 	bundles, err := issuereport.Pending()
 	if err != nil {

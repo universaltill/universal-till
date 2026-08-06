@@ -253,6 +253,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "layouts", "base.html"),
 			filepath.Join("web", "ui", "pages", "catalog.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
+			filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
 			filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),

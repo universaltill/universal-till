@@ -72,6 +72,85 @@ func TestReportIssuePage_ManagerOnly(t *testing.T) {
 	}
 }
 
+// The 🐞 nav chip mirrors the session-chip convention (TestSessionChip):
+// an empty 200 when the operator isn't allowed to report issues — so
+// nothing appears in the nav — and real button markup when they are.
+func TestBugReportChip(t *testing.T) {
+	mux := newIssueReportTestMux(t)
+
+	get := func(u *auth.User) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/ui/bugreport-chip", nil)
+		if u != nil {
+			req = auth.WithUser(req, *u)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := get(nil); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "" {
+		t.Fatalf("no-session chip: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if rec := get(&auth.User{ID: "c1", Role: "cashier"}); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "" {
+		t.Fatalf("cashier chip: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	rec := get(&auth.User{ID: "m1", Role: "manager"})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `data-testid="bugreport-toggle"`) {
+		t.Fatalf("manager chip: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// /report-issue keeps working as a route (it's the /menu tile's target) but
+// no longer carries its own copy of the capture UI: it renders the shared
+// panel already open (server-side class, no dependency on client JS).
+func TestReportIssuePage_RendersPanelOpen(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/report-issue", nil)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /report-issue = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="bugreport-panel"`) {
+		t.Fatal("expected the shared bug-report panel in the page")
+	}
+	if !strings.Contains(body, `class="bugreport-panel open"`) {
+		t.Fatal("expected the panel to render already open on /report-issue")
+	}
+	// The capture UI lives in the panel now — the page must not duplicate it.
+	if n := strings.Count(body, `id="ir-note"`); n != 1 {
+		t.Fatalf("capture textarea appears %d times, want exactly 1 (panel only)", n)
+	}
+}
+
+// Ordinary pages render the panel too, but closed: the "open" class is only
+// stamped server-side when the handler passes openBugReportPanel (i.e. on
+// /report-issue). Rendered through the real layout with the flag unset.
+func TestBugReportPanel_ClosedByDefault(t *testing.T) {
+	mux := newIssueReportTestMux(t) // initializes i18n + chdir to repo root
+	_ = mux
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	httpx.Render("ui/pages/report_issue.html", map[string]any{
+		"title": "x", "theme": "default",
+	})(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("render = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="bugreport-panel"`) {
+		t.Fatal("expected the panel markup on every staff page")
+	}
+	if strings.Contains(body, `class="bugreport-panel open"`) {
+		t.Fatal("panel must render closed when openBugReportPanel isn't set")
+	}
+}
+
 func multipartIssueReport(t *testing.T, note string, includeAudio, includeVideo bool) (*bytes.Buffer, string) {
 	t.Helper()
 	body := &bytes.Buffer{}

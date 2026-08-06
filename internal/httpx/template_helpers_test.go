@@ -136,6 +136,7 @@ func TestRenderWithRendersAndReports500OnBadFile(t *testing.T) {
 		filepath.Join("web", "ui", "layouts", "base.html"),
 		filepath.Join("web", "ui", "pages", "pin.html"),
 		filepath.Join("web", "ui", "partials", "nav.html"),
+		filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
 	}
 	h := RenderWith(files, FuncsFor("en"))("base", map[string]any{
 		"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": "",

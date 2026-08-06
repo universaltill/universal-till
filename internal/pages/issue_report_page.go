@@ -50,7 +50,25 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 			"title":     "Report an issue",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.Menu,
+			// The capture UI lives in the shared bug-report panel now
+			// (ut-docs#346); this route stays as the /menu tile's target and
+			// simply lands with the panel already expanded — stamped
+			// server-side so it doesn't depend on client JS having run.
+			"openBugReportPanel": true,
 		})(w, r)
+	})
+
+	// 🐞 chip in the nav (ut-docs#346). nav.html has no per-request data of
+	// its own, so — same pattern as /ui/session-chip and /ui/sync-chip — the
+	// nav carries an htmx placeholder that loads this after render. Empty
+	// 200 when the operator isn't allowed to report issues, so nothing
+	// appears in the nav at all.
+	mux.HandleFunc("GET /ui/bugreport-chip", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		httpx.RenderPartial("ui/partials/bugreport_chip.html", nil)(w, r)
 	})
 
 	mux.HandleFunc("POST /api/issue-reports", func(w http.ResponseWriter, r *http.Request) {
