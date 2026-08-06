@@ -1,55 +1,99 @@
 package pages
 
 import (
+	"log"
 	"net/http"
+	"strings"
+	"sync"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/manual"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	uiassets "github.com/universaltill/universal-till/web"
 )
+
+// The manual is read-only content baked into the binary, so it is parsed once
+// on first use rather than per request — rendering ~16 Markdown topics × 4
+// locales on every page view would be pointless work on a Pi.
+var (
+	libOnce sync.Once
+	lib     *manual.Library
+	libErr  error
+)
+
+// Library returns the loaded user manual. Other pages use it for the "?"
+// links (route → topic).
+func Library() (*manual.Library, error) {
+	libOnce.Do(func() {
+		lib, libErr = manual.Load(uiassets.HelpFS, "help")
+		if libErr != nil {
+			log.Printf("help: loading manual: %v", libErr)
+		}
+	})
+	return lib, libErr
+}
 
 func registerHelp(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/help", func(w http.ResponseWriter, r *http.Request) {
-		renderHelpPage(w, r, d)
+		renderHelpPage(w, r, d, "")
+	})
+	mux.HandleFunc("GET /help/search", func(w http.ResponseWriter, r *http.Request) {
+		l, err := Library()
+		if err != nil {
+			http.Error(w, "manual unavailable", http.StatusInternalServerError)
+			return
+		}
+		locale := httpx.ResolveLocale(w, r)
+		q := r.URL.Query().Get("q")
+		httpx.RenderPartial("ui/partials/help_results.html", map[string]any{
+			"results": l.Search(locale, q),
+			"query":   q,
+		})(w, r)
+	})
+	mux.HandleFunc("GET /help/{topic}", func(w http.ResponseWriter, r *http.Request) {
+		renderHelpPage(w, r, d, r.PathValue("topic"))
 	})
 }
 
-// helpFeatureIDs orders the expandable feature guide on the Help page. Each id
-// has locale keys help.feat.<id>.title / .what plus the steps listed in
-// helpFeatureSteps — add all of them to every file under web/locales/ when
-// adding a feature here.
-var helpFeatureIDs = []string{
-	"sell", "catalog", "inventory", "alerts", "reports", "invoices", "printing",
-	"designer", "payments", "multitill", "plugins", "claim", "users",
-	"backups", "updates", "display",
-}
+// renderHelpPage serves the manual. A plain request renders the whole
+// two-pane page so a topic URL is shareable and works on a cold load; an htmx
+// request renders just the reading panel so navigating the tree doesn't
+// re-render the shell.
+func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topicID string) {
+	l, err := Library()
+	if err != nil {
+		http.Error(w, "manual unavailable", http.StatusInternalServerError)
+		return
+	}
+	locale := httpx.ResolveLocale(w, r)
 
-// helpFeatureSteps maps each feature to its usage-step locale keys.
-var helpFeatureSteps = map[string][]string{
-	"sell":      {"help.feat.sell.s1", "help.feat.sell.s2", "help.feat.sell.s3"},
-	"catalog":   {"help.feat.catalog.s1", "help.feat.catalog.s2", "help.feat.catalog.s3"},
-	"inventory": {"help.feat.inventory.s1", "help.feat.inventory.s2", "help.feat.inventory.s3"},
-	"alerts":    {"help.feat.alerts.s1", "help.feat.alerts.s2", "help.feat.alerts.s3"},
-	"reports":   {"help.feat.reports.s1", "help.feat.reports.s2"},
-	"invoices":  {"help.feat.invoices.s1", "help.feat.invoices.s2"},
-	"printing":  {"help.feat.printing.s1", "help.feat.printing.s2", "help.feat.printing.s3"},
-	"designer":  {"help.feat.designer.s1", "help.feat.designer.s2"},
-	"payments":  {"help.feat.payments.s1", "help.feat.payments.s2", "help.feat.payments.s3"},
-	"multitill": {"help.feat.multitill.s1", "help.feat.multitill.s2", "help.feat.multitill.s3"},
-	"plugins":   {"help.feat.plugins.s1", "help.feat.plugins.s2", "help.feat.plugins.s3"},
-	"claim":     {"help.feat.claim.s1", "help.feat.claim.s2", "help.feat.claim.s3"},
-	"users":     {"help.feat.users.s1", "help.feat.users.s2", "help.feat.users.s3"},
-	"backups":   {"help.feat.backups.s1", "help.feat.backups.s2"},
-	"updates":   {"help.feat.updates.s1", "help.feat.updates.s2"},
-	"display":   {"help.feat.display.s1", "help.feat.display.s2", "help.feat.display.s3"},
-}
+	var topic *manual.Topic
+	if topicID != "" {
+		t, ok := l.Topic(locale, topicID)
+		if !ok {
+			// An unknown topic is a 404, not a silent redirect to the index —
+			// a stale "?" link should be visible, not swallowed.
+			http.NotFound(w, r)
+			return
+		}
+		topic = t
+	}
 
-func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps) {
 	data := map[string]any{
-		"title":        "Help",
-		"theme":        d.CurrentState().Theme,
-		"menuItems":    d.Menu,
-		"featureIDs":   helpFeatureIDs,
-		"featureSteps": helpFeatureSteps,
+		"title":     "Help",
+		"theme":     d.CurrentState().Theme,
+		"menuItems": d.Menu,
+		"sections":  l.Tree(locale),
+		"topic":     topic,
+	}
+	if topic != nil {
+		data["title"] = topic.Title
+		data["currentID"] = topic.ID
+	}
+
+	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
+		httpx.RenderPartial("ui/partials/help_topic.html", data)(w, r)
+		return
 	}
 	httpx.Render("ui/pages/help.html", data)(w, r)
 }

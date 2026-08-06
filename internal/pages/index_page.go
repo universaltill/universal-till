@@ -15,7 +15,7 @@ import (
 func registerIndex(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/help" {
-			renderHelpPage(w, r, d)
+			renderHelpPage(w, r, d, "")
 			return
 		}
 		// The "/" pattern catches every otherwise-unrouted path. Plugin page
