@@ -17,10 +17,21 @@ on:
   push:
     branches: [main]
   workflow_dispatch: {}
+# Least-privilege (independent review, ut-docs#299): this job executes an
+# unpinned shell script fetched from each pack repo's own `main` branch --
+# a repo this pipeline doesn't control write access to. `contents: read`
+# plus persist-credentials:false below means a compromised pack script has
+# no push-capable GITHUB_TOKEN sitting in the workspace to steal or abuse;
+# worst case is a wasted CI run, not a path back into this repo.
+permissions:
+  contents: read
 jobs:
   lang-pack-drift:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Language-pack drift guard against core base locale (ut-docs#299)
         run: bash scripts/ci/check-lang-pack-drift.sh
