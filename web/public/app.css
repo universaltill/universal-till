@@ -1163,3 +1163,59 @@ body.login-screen {
 .selforder-screen .selforder-exit { position: fixed; inset-block-start: .75rem;
   inset-inline-start: .75rem; z-index: 10; }
 @media (max-width: 40rem) { .settings-grid { columns: 1; } }
+
+/* ---------- Bug-report panel (ut-docs#346) ---------- */
+/* NON-modal floating capture panel: no backdrop element exists, no focus
+   trap, no inert — the page underneath keeps every click/key/scroll it
+   gets today. Anchored just below the sticky nav at the inline END so it
+   overlays the sale screen's products region only: the basket is the full-
+   height start column and the tender sits at the bottom of the end column,
+   and the bounded max-block-size stops the panel ever growing down into
+   the tender on short viewports. Logical properties only (inset-inline-end,
+   not right) so RTL locales mirror it with no extra CSS. z-index below the
+   nav's 100 keeps the nav chips clickable above it. */
+.bugreport-panel {
+  display: none;
+  position: fixed;
+  inset-block-start: 4.6rem;
+  inset-inline-end: 1rem;
+  inline-size: min(26rem, calc(100vw - 2rem));
+  /* The sale screen's tender panel is content-sized and bottom-anchored in
+     the end column (~25-30rem tall at 1x scale on short viewports), so a
+     plain "under 100vh" cap still landed the panel on top of the barcode
+     input and pay buttons at 1280x720 (driven by
+     e2e/tests/bugreport-panel.spec.ts). Reserve a 32rem band above the
+     viewport bottom instead: on short screens the panel shrinks (its own
+     overflow-y takes over), on tall ones 55vh wins. The 12rem floor keeps
+     it usable on extreme viewports at the cost of some overlap there. */
+  max-block-size: max(12rem, min(55vh, calc(100vh - 33rem)));
+  overflow-y: auto;
+  z-index: 90;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: .6rem;
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  padding: .85rem;
+  text-align: start;
+}
+.bugreport-panel.open { display: block; }
+.bugreport-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.bugreport-head h2 { margin: 0; font-size: 1rem; }
+.bugreport-close { background: none; border: 0; cursor: pointer; font-size: 1.1rem;
+  color: var(--muted, #64748b); padding: .25rem .5rem; border-radius: .4rem; }
+.bugreport-close:hover, .bugreport-close:focus-visible { background: var(--surface-2, #f8fafc); color: inherit; }
+.bugreport-nav-note { font-weight: 600; }
+/* Send row: the note field and its Send button share one line. Measured,
+   not guessed (independent review, 2026-08-06) — clearing both the basket
+   column and the tender panel leaves ~13rem of band on a 1280x720 /
+   1024x600 till, and stacking these two blocks put Send below the panel's
+   own scroll line on every till-sized viewport. */
+.bugreport-send { display: flex; align-items: flex-start; gap: .6rem; }
+.bugreport-send textarea { flex: 1 1 auto; min-inline-size: 0; }
+.bugreport-send .btn { flex: 0 0 auto; }
+/* The two optional recorders share a row instead of stacking, halving what
+   the operator has to scroll past to reach them. Collapses to one column
+   where the panel itself is near its narrow floor. */
+.bugreport-capture { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; align-items: start; }
+.bugreport-capture p { margin: 0 0 .35rem; }
+@media (max-width: 30rem) { .bugreport-capture { grid-template-columns: 1fr; } }

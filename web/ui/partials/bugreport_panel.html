@@ -1,0 +1,294 @@
+{{ define "bugreport_panel" }}
+<!-- Bug-report capture panel (ut-docs#346). NON-modal by design: no
+     backdrop, no focus trap, no document-level key handling — the page
+     underneath (including the sale screen's basket and tender) stays fully
+     clickable, typeable and scrollable while this is open, so staff can
+     reproduce the problem while describing it. Opened by the 🐞 nav chip
+     (/ui/bugreport-chip); rendered already open by /report-issue via the
+     openBugReportPanel flag. Positioned/styled with logical properties only
+     (app.css .bugreport-panel) so RTL locales mirror it for free. -->
+<section id="bugreport-panel" data-testid="bugreport-panel"
+         class="bugreport-panel{{ if .openBugReportPanel }} open{{ end }}"
+         role="region" aria-label="{{ T "issuereport.panel_title" }}">
+  <div class="bugreport-head">
+    <h2>{{ T "issuereport.panel_title" }}</h2>
+    <button type="button" class="bugreport-close" id="bugreport-close"
+            data-testid="bugreport-close"
+            title="{{ T "issuereport.panel_close" }}"
+            aria-label="{{ T "issuereport.panel_close" }}">✕</button>
+  </div>
+
+  <!-- Order matters, and it is measured, not guessed (independent review,
+       2026-08-06). The panel must clear the sale screen's basket column AND
+       its tender panel, which on a 1280x720 / 1024x600 till leaves only
+       ~13rem of vertical band — less than the whole capture form needs. So
+       the ONE-PRESS path the card is about (type a note, press Save) is put
+       first and fits that band whole; the optional recorders and the fine
+       print sit below it, one short scroll inside the panel away. Built the
+       other way round (prose first) the operator opened the bug reporter and
+       saw two paragraphs and no input at all. -->
+  <div class="set-gap-s">
+    <label class="set-row" for="ir-note">{{ T "issuereport.note_label" }}</label>
+    <!-- Textarea and Send share one row rather than stacking: two blocks
+         cost ~4rem more than the band has, and stacking them is what pushed
+         Send off the visible area entirely. -->
+    <div class="bugreport-send">
+      <textarea id="ir-note" rows="2"
+        placeholder="{{ T "issuereport.note_placeholder" }}"></textarea>
+      <button type="button" class="btn" id="ir-save-btn">{{ T "issuereport.save" }}</button>
+    </div>
+    <!-- Empty inline span costs no line box until a message lands in it. -->
+    <div><span id="ir-status" aria-live="polite" class="muted"></span></div>
+  </div>
+
+  <!-- Optional extras: two columns so the pair costs one block of height
+       rather than two, keeping the scroll to reach them short. -->
+  <div class="set-gap bugreport-capture">
+    <div>
+      <p><strong>{{ T "issuereport.voice_label" }}</strong></p>
+      <button type="button" class="btn secondary" id="ir-voice-btn">{{ T "issuereport.voice_record" }}</button>
+      <audio id="ir-voice-preview" controls style="display:none; margin-top:.5rem; width:100%"></audio>
+    </div>
+    <div>
+      <p><strong>{{ T "issuereport.screen_label" }}</strong></p>
+      <button type="button" class="btn secondary" id="ir-screen-btn">{{ T "issuereport.screen_record" }}</button>
+      <video id="ir-screen-preview" controls style="display:none; margin-top:.5rem; width:100%; max-height:240px"></video>
+    </div>
+  </div>
+
+  <!-- Recording ending on navigation is EXPECTED behaviour for this card
+       (keeping it alive across navigation is ut-docs#349) — say so, and keep
+       it next to the recorders it actually applies to. -->
+  <p class="set-gap muted bugreport-nav-note">{{ T "issuereport.nav_ends_recording" }}</p>
+  <p class="muted">{{ T "issuereport.logs_note" }}</p>
+</section>
+
+<script>
+(function () {
+  var panel = document.getElementById('bugreport-panel');
+  if (!panel) return;
+
+  var T = {
+    voiceRecord: "{{ T "issuereport.voice_record" }}",
+    voiceStop: "{{ T "issuereport.voice_stop" }}",
+    descriptionRequired: "{{ T "issuereport.description_required" }}",
+    voiceUnsupported: "{{ T "issuereport.voice_unsupported" }}",
+    micError: "{{ T "issuereport.mic_error" }}",
+    screenRecord: "{{ T "issuereport.screen_record" }}",
+    screenStop: "{{ T "issuereport.screen_stop" }}",
+    screenUnsupported: "{{ T "issuereport.screen_unsupported" }}",
+    screenError: "{{ T "issuereport.screen_error" }}",
+    saving: "{{ T "issuereport.saving" }}",
+    saved: "{{ T "issuereport.saved" }}",
+    saveError: "{{ T "issuereport.save_error" }}"
+  };
+
+  // Lazy init (ut-docs#346): the MediaRecorder wiring below runs once, the
+  // first time the panel is actually opened — no page pays for the capture
+  // machinery until somebody uses it.
+  var initialized = false;
+  function initCapture() {
+    if (initialized) return;
+    initialized = true;
+
+    var noteEl = document.getElementById('ir-note');
+    var statusEl = document.getElementById('ir-status');
+
+    var VOICE_MAX_MS = 120000; // 2 min, matches spec 012's client-side cap
+    var SCREEN_MAX_MS = 60000; // 60s
+
+    var voiceBtn = document.getElementById('ir-voice-btn');
+    var voicePreview = document.getElementById('ir-voice-preview');
+    var voiceRecorder = null, voiceChunks = [], voiceBlob = null, voiceRecording = false, voiceStarting = false, voiceTimer = null;
+
+    var screenBtn = document.getElementById('ir-screen-btn');
+    var screenPreview = document.getElementById('ir-screen-preview');
+    var screenRecorder = null, screenChunks = [], screenBlob = null, screenRecording = false, screenStarting = false, screenStream = null, screenTimer = null;
+
+    var saveBtn = document.getElementById('ir-save-btn');
+
+    function pickMimeType(candidates) {
+      if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return candidates[0];
+      for (var i = 0; i < candidates.length; i++) {
+        if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+      }
+      return candidates[0];
+    }
+
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      voiceBtn.disabled = true;
+      voiceBtn.textContent = T.voiceUnsupported;
+    } else {
+      voiceBtn.addEventListener('click', function () {
+        if (voiceRecording) {
+          voiceRecorder.stop();
+          return;
+        }
+        if (voiceStarting) return; // guard the async gap below against a double-click
+        voiceStarting = true;
+        voiceBtn.disabled = true;
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+          voiceStarting = false;
+          var mime = pickMimeType(['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']);
+          try {
+            voiceRecorder = new MediaRecorder(stream, { mimeType: mime });
+          } catch (e) {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            voiceBtn.disabled = false;
+            statusEl.textContent = T.micError;
+            return;
+          }
+          voiceChunks = [];
+          voiceRecorder.addEventListener('dataavailable', function (e) {
+            if (e.data && e.data.size > 0) voiceChunks.push(e.data);
+          });
+          voiceRecorder.addEventListener('stop', function () {
+            clearTimeout(voiceTimer);
+            voiceBlob = new Blob(voiceChunks, { type: mime });
+            voicePreview.src = URL.createObjectURL(voiceBlob);
+            voicePreview.style.display = '';
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            voiceRecording = false;
+            voiceBtn.disabled = false;
+            voiceBtn.textContent = T.voiceRecord;
+          });
+          voiceRecorder.start();
+          voiceRecording = true;
+          voiceBtn.disabled = false;
+          voiceBtn.textContent = T.voiceStop;
+          voiceTimer = setTimeout(function () {
+            if (voiceRecording) voiceRecorder.stop();
+          }, VOICE_MAX_MS);
+        }).catch(function () {
+          voiceStarting = false;
+          voiceBtn.disabled = false;
+          statusEl.textContent = T.micError;
+        });
+      });
+    }
+
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      screenBtn.disabled = true;
+      screenBtn.textContent = T.screenUnsupported;
+    } else {
+      screenBtn.addEventListener('click', function () {
+        if (screenRecording) {
+          screenRecorder.stop();
+          return;
+        }
+        if (screenStarting) return; // guard the async gap below against a double-click
+        screenStarting = true;
+        screenBtn.disabled = true;
+        navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (stream) {
+          screenStarting = false;
+          screenStream = stream;
+          var mime = pickMimeType(['video/webm;codecs=vp9', 'video/webm']);
+          try {
+            screenRecorder = new MediaRecorder(stream, { mimeType: mime });
+          } catch (e) {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            screenBtn.disabled = false;
+            statusEl.textContent = T.screenError;
+            return;
+          }
+          screenChunks = [];
+          screenRecorder.addEventListener('dataavailable', function (e) {
+            if (e.data && e.data.size > 0) screenChunks.push(e.data);
+          });
+          screenRecorder.addEventListener('stop', function () {
+            clearTimeout(screenTimer);
+            screenBlob = new Blob(screenChunks, { type: mime });
+            screenPreview.src = URL.createObjectURL(screenBlob);
+            screenPreview.style.display = '';
+            screenStream.getTracks().forEach(function (t) { t.stop(); });
+            screenRecording = false;
+            screenBtn.disabled = false;
+            screenBtn.textContent = T.screenRecord;
+          });
+          // The user can also stop by using the browser's own "Stop sharing"
+          // control, not just this button — that tears the stream down without
+          // calling recorder.stop() itself, so drive it from here too, and
+          // guard with the recording flag so our own stop() doesn't recurse.
+          stream.getVideoTracks()[0].addEventListener('ended', function () {
+            if (screenRecording) screenRecorder.stop();
+          });
+          screenRecorder.start();
+          screenRecording = true;
+          screenBtn.disabled = false;
+          screenBtn.textContent = T.screenStop;
+          screenTimer = setTimeout(function () {
+            if (screenRecording) screenRecorder.stop();
+          }, SCREEN_MAX_MS);
+        }).catch(function () {
+          screenStarting = false;
+          screenBtn.disabled = false;
+          statusEl.textContent = T.screenError;
+        });
+      });
+    }
+
+    // One press: POST the same FormData shape the standalone page used to
+    // send, report the outcome inline — no navigation.
+    saveBtn.addEventListener('click', function () {
+      var note = noteEl.value.trim();
+      if (!note && !voiceBlob) {
+        statusEl.textContent = T.descriptionRequired;
+        return;
+      }
+      saveBtn.disabled = true;
+      statusEl.textContent = T.saving;
+      var fd = new FormData();
+      fd.append('note', note);
+      if (voiceBlob) fd.append('audio', voiceBlob, 'audio.webm');
+      if (screenBlob) fd.append('video', screenBlob, 'video.webm');
+      fetch('/api/issue-reports', { method: 'POST', body: fd })
+        .then(function (r) { if (!r.ok) throw new Error('save failed'); return r.json(); })
+        .then(function () {
+          statusEl.textContent = T.saved;
+          saveBtn.disabled = false;
+        })
+        .catch(function () {
+          statusEl.textContent = T.saveError;
+          saveBtn.disabled = false;
+        });
+    });
+  }
+
+  function syncToggle(open) {
+    // Looked up at call time, not init time: the 🐞 button arrives via the
+    // nav's htmx placeholder (hx-get="/ui/bugreport-chip" hx-trigger="load")
+    // AFTER this inline script has already run.
+    var toggle = document.getElementById('bugreport-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function openPanel() {
+    initCapture();
+    panel.classList.add('open');
+    syncToggle(true);
+  }
+
+  function closePanel() {
+    panel.classList.remove('open');
+    syncToggle(false);
+  }
+
+  // Delegated click handler rather than a listener on the button itself,
+  // for the same htmx-timing reason as syncToggle above: the toggle isn't
+  // in the DOM yet when this runs (and it re-renders whenever the chip
+  // fragment reloads). Delegation never captures or cancels anything else,
+  // so the page underneath keeps every event it gets today.
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('#bugreport-toggle') : null;
+    if (!t) return;
+    if (panel.classList.contains('open')) closePanel(); else openPanel();
+  });
+
+  document.getElementById('bugreport-close').addEventListener('click', closePanel);
+
+  // /report-issue renders the panel already open (server-side class):
+  // bring the capture wiring up to match.
+  if (panel.classList.contains('open')) initCapture();
+})();
+</script>
+{{ end }}

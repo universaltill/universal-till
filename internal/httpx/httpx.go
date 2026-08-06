@@ -67,7 +67,11 @@ func stripWebPrefixes(paths []string) []string {
 }
 
 func NewRenderer(layout string, page string, funcs template.FuncMap, partials ...string) (*Renderer, error) {
-	files := []string{layout, page, filepath.Join("web", "ui", "partials", "nav.html")}
+	// nav.html and bugreport_panel.html ride along automatically: base.html
+	// references both on every page.
+	files := []string{layout, page,
+		filepath.Join("web", "ui", "partials", "nav.html"),
+		filepath.Join("web", "ui", "partials", "bugreport_panel.html")}
 	files = append(files, partials...)
 	t, err := template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS, stripWebPrefixes(files)...)
 	if err != nil {
@@ -424,6 +428,7 @@ func Render(tplPath string, data any) http.HandlerFunc {
 			"ui/partials/plugin_install_modal.html",
 			"ui/partials/plugin_manual_import.html",
 			"ui/partials/help_topic.html",
+			"ui/partials/bugreport_panel.html",
 		))
 		if err := t.ExecuteTemplate(w, "base", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
