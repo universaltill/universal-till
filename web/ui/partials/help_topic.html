@@ -1,0 +1,19 @@
+{{/*
+  One topic of the manual. Rendered on its own for an htmx swap, and included
+  by the full page. Bare (no define wrapper), matching the other partials
+  served through RenderPartial.
+*/}}
+{{ if .topic }}
+<article class="manual-topic" id="manual-topic" data-topic="{{ .topic.ID }}">
+  {{ if not .topic.Translated }}
+  <p class="manual-untranslated" role="note">{{ T "help.untranslated" }}</p>
+  {{ end }}
+  {{ .topic.HTML }}
+</article>
+{{ else }}
+<article class="manual-topic manual-intro" id="manual-topic">
+  <h1>{{ T "help.guide.title" }}</h1>
+  <p>{{ T "help.guide.intro" }}</p>
+  <p class="muted">{{ T "help.pick.topic" }}</p>
+</article>
+{{ end }}

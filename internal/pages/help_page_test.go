@@ -13,13 +13,11 @@ import (
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
-// The Help page renders the expandable feature guide: one <details> per
-// feature, each with its explanation and usage steps, fully translated
-// (a raw locale key in the output means a missing translation).
-func TestHelpPageRendersFeatureGuide(t *testing.T) {
+func helpMux(t *testing.T) *http.ServeMux {
+	t.Helper()
 	chdirRoot(t)
 	db := openPagesTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
@@ -37,30 +35,165 @@ func TestHelpPageRendersFeatureGuide(t *testing.T) {
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Settings: settings.NewStore(db),
 	}
-
 	mux := http.NewServeMux()
 	registerHelp(mux, dp)
+	return mux
+}
 
+func get(t *testing.T, mux *http.ServeMux, path string, hdr ...string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	for i := 0; i+1 < len(hdr); i += 2 {
+		req.Header.Set(hdr[i], hdr[i+1])
+	}
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/help", nil))
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// The manual's index renders the topic tree and the search box — the two
+// halves of the reading experience the product owner asked for.
+func TestHelpIndexRendersTreeAndSearch(t *testing.T) {
+	rec := get(t, helpMux(t), "/help")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /help: code %d body %s", rec.Code, rec.Body.String())
+		t.Fatalf("GET /help: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-
-	if got := strings.Count(body, "<details class=\"feature\">"); got != len(helpFeatureIDs) {
-		t.Fatalf("feature accordions = %d, want %d", got, len(helpFeatureIDs))
-	}
-	// A few translated strings prove the keys resolve end-to-end (en default).
-	for _, want := range []string{"Selling &amp; checkout", "Plugin store", "Claim this store", "Backups"} {
+	for _, want := range []string{`id="manual"`, `class="manual-nav"`, `id="manual-q"`, `id="manual-panel"`} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("help page missing %q", want)
+			t.Errorf("index missing %q", want)
 		}
 	}
-	// Every feature key must resolve — the translator falls back to the raw
-	// key when a locale entry is missing, which would leak into the page.
-	if strings.Contains(body, "help.feat.") {
-		i := strings.Index(body, "help.feat.")
-		t.Fatalf("unresolved locale key on the help page near: %s", body[i:i+40])
+	// Sections from the topic front matter, not a hardcoded Go list.
+	for _, want := range []string{"Everyday selling", "Setting up your shop", "Running the business"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index missing section %q", want)
+		}
+	}
+	if !strings.Contains(body, `href="/help/sell"`) {
+		t.Error("index has no link to the selling topic")
+	}
+	if strings.Contains(body, "help.") && strings.Contains(body, "help.search") {
+		t.Error("an unresolved locale key leaked into the page")
+	}
+}
+
+func TestHelpTopicRendersMarkdown(t *testing.T) {
+	rec := get(t, helpMux(t), "/help/sell")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /help/sell: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-topic="sell"`) {
+		t.Error("topic article missing")
+	}
+	if !strings.Contains(body, "<h1>") || !strings.Contains(body, "<ol>") {
+		t.Errorf("markdown not rendered as HTML: %s", body)
+	}
+	// A directly-loaded topic still renders the whole two-pane page, so the
+	// URL is shareable and survives a cold load.
+	if !strings.Contains(body, `class="manual-nav"`) {
+		t.Error("direct topic load did not render the shell")
+	}
+}
+
+func TestHelpTopicHTMXReturnsFragmentOnly(t *testing.T) {
+	rec := get(t, helpMux(t), "/help/catalog", "HX-Request", "true")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-topic="catalog"`) {
+		t.Error("fragment missing the topic")
+	}
+	if strings.Contains(body, `class="manual-nav"`) || strings.Contains(body, "<html") {
+		t.Error("htmx request re-rendered the whole shell")
+	}
+}
+
+// A stale "?" link must be visible as a 404, not silently swallowed into the
+// index — otherwise a broken help link looks like a working one.
+func TestHelpUnknownTopicIs404(t *testing.T) {
+	if rec := get(t, helpMux(t), "/help/no-such-topic"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown topic: %d, want 404", rec.Code)
+	}
+}
+
+func TestHelpSearchFindsTopics(t *testing.T) {
+	rec := get(t, helpMux(t), "/help/search?q=barcode")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/help/catalog") {
+		t.Errorf("search for 'barcode' did not surface the catalog topic: %s", body)
+	}
+	if strings.Contains(body, `class="manual-nav"`) {
+		t.Error("search returned the whole shell instead of a fragment")
+	}
+}
+
+func TestHelpSearchNoResultsIsFriendly(t *testing.T) {
+	rec := get(t, helpMux(t), "/help/search?q=zzzznotathing")
+	body := rec.Body.String()
+	if !strings.Contains(body, "manual-noresults") {
+		t.Errorf("no-results state missing: %s", body)
+	}
+	if strings.Contains(body, "help.search.none") {
+		t.Error("unresolved locale key in the no-results message")
+	}
+}
+
+// Every topic the tree lists must actually resolve — this is the cheap
+// version of the route guard, catching a topic that got renamed but stayed
+// linked.
+func TestEveryTopicResolves(t *testing.T) {
+	mux := helpMux(t)
+	l, err := Library()
+	if err != nil {
+		t.Fatalf("library: %v", err)
+	}
+	for _, id := range l.IDs() {
+		if rec := get(t, mux, "/help/"+id); rec.Code != http.StatusOK {
+			t.Errorf("/help/%s: %d", id, rec.Code)
+		}
+	}
+}
+
+// The manual has to be complete in every locale the till ships, per the
+// product's multilingual rule. When it isn't, the page says so rather than
+// showing a blank — but for the migrated set it should be complete.
+func TestManualIsTranslatedInEveryShippedLocale(t *testing.T) {
+	chdirRoot(t)
+	l, err := Library()
+	if err != nil {
+		t.Fatalf("library: %v", err)
+	}
+	for _, loc := range []string{"fa", "ar", "tr"} {
+		if missing := l.MissingTranslations(loc); len(missing) > 0 {
+			t.Errorf("locale %s is missing manual topics: %v", loc, missing)
+		}
+	}
+}
+
+// Routes declared in front matter are what the contextual "?" resolves
+// through, so the mapping has to hold for the pages that have one today.
+func TestRouteRegistryResolvesKnownPages(t *testing.T) {
+	l, err := Library()
+	if err != nil {
+		t.Fatalf("library: %v", err)
+	}
+	for route, want := range map[string]string{
+		"/":          "sell",
+		"/catalog":   "catalog",
+		"/inventory": "inventory",
+		"/reports":   "reports",
+		"/plugins":   "plugins",
+		"/users":     "users",
+	} {
+		got, ok := l.TopicForRoute(route)
+		if !ok || got != want {
+			t.Errorf("TopicForRoute(%q) = %q,%v; want %q", route, got, ok, want)
+		}
 	}
 }
