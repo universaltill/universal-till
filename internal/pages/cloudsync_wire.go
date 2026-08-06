@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -303,6 +304,22 @@ func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMino
 		if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
 			ItemID: id, Barcode: barcode, IsPrimary: true,
 		}); err != nil {
+			var conflict *data.BarcodeConflictError
+			if errors.As(err, &conflict) {
+				// Same fix as the catalog/import UUID leak (ut-docs#303):
+				// name the conflicting item/variant instead of its raw
+				// internal ID in this directive-result text (reported
+				// back to the cloud dashboard). "en" — this whole hooks
+				// struct's result strings are operational/audit text, not
+				// shop-floor UI, so unlike import_page.go they're
+				// deliberately not routed through the shop's own locale.
+				return "created " + name + " (barcode not attached: " + common.FriendlyBarcodeConflict(ctx, repo, "en", err) + ")", nil
+			}
+			// Not a conflict — unlike import_page.go's operator-facing
+			// text, this string's only reader is a developer/admin on the
+			// cloud dashboard, so the real error stays (ut-docs#303
+			// review: genericizing this too made non-conflict failures
+			// undiagnosable from the cloud side, a real regression).
 			return "created " + name + " (barcode not attached: " + err.Error() + ")", nil
 		}
 	}
