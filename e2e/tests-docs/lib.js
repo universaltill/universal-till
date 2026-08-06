@@ -10,9 +10,15 @@
 //
 //   sha256 of a file      = lowercase hex sha256 of its raw bytes.
 //   surface fileset       = every regular file under web/ui/ (recursive)
+//                           PLUS every regular file under web/public/
+//                           (recursive) — the CSS/JS that actually paints
+//                           the templates, e.g. app.css's statusbar colors,
+//                           which docs-shots.spec.ts's mask relies on
 //                           PLUS every *.go under internal/pages/ (recursive)
 //                           excluding *_test.go — the app surface that could
 //                           change what a screenshot shows.
+//                           web/locales/**/*.json is deliberately excluded —
+//                           see the matching note in guard-docs-shots.sh.
 //   surface_sha256        = sha256 of the UTF-8 concatenation of one line per
 //                           fileset file, sorted lexicographically by its
 //                           repo-relative POSIX path (paths are ASCII, so JS
@@ -80,11 +86,12 @@ function walkFiles(dir) {
 
 function surfaceFiles() {
   const ui = walkFiles(path.join(repoRoot, 'web', 'ui'));
+  const publicAssets = walkFiles(path.join(repoRoot, 'web', 'public'));
   const pages = walkFiles(path.join(repoRoot, 'internal', 'pages')).filter(
     (p) => p.endsWith('.go') && !p.endsWith('_test.go'),
   );
   return ui
-    .concat(pages)
+    .concat(publicAssets, pages)
     .map((p) => path.relative(repoRoot, p).split(path.sep).join('/'))
     .sort();
 }

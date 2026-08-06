@@ -14,9 +14,16 @@
 #   surface_sha256 = sha256 of the concatenation of
 #       "<sha256(file)>  <relpath>\n"   (two spaces, sha256sum format)
 #   over the sorted (lexicographic, ASCII paths) repo-relative fileset:
-#   every regular file under web/ui/ + every non-_test.go *.go under
+#   every regular file under web/ui/ + web/public/ (templates AND the CSS/JS
+#   that actually paints them — a theme/app.css change is exactly as visible
+#   in a screenshot as a template change) + every non-_test.go *.go under
 #   internal/pages/. Topic hash = sha256 of web/help/<locale>/<id>.md,
 #   falling back to web/help/en/<id>.md.
+#
+#   web/locales/**/*.json is DELIBERATELY excluded: every i18n key touches
+#   every locale file, which would force a 40-screenshot regen on almost any
+#   string change. Accepted gap — a copy change can go stale in a screenshot
+#   without tripping this guard.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -68,7 +75,7 @@ def routed_topics():
 # --- surface hash ----------------------------------------------------------
 def surface_files():
     files = []
-    for base, want_go in (("web/ui", False), ("internal/pages", True)):
+    for base, want_go in (("web/ui", False), ("web/public", False), ("internal/pages", True)):
         for root, _, names in os.walk(base):
             for n in names:
                 p = os.path.join(root, n).replace(os.sep, "/")
