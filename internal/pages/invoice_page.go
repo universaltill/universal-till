@@ -374,13 +374,18 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			if it.Kind == "credit_note" {
 				sign = -1
 			}
-			// Only the two free-typed fields (whoever issues an invoice types
-			// these) need csvSafe — DisplayNo/Kind/IssuedAt/ReceiptNo are
-			// system-generated, and the amounts are legitimately signed
-			// (a credit note's gross is negative) so blanket-sanitizing the
-			// whole row would corrupt them into text instead of numbers.
-			_ = cw.Write([]string{it.DisplayNo, it.Kind, it.IssuedAt, csvSafe(it.CustomerName),
-				csvSafe(it.CustomerVATNo), it.ReceiptNo,
+			// CustomerName/CustomerVATNo are free-typed by whoever issues an
+			// invoice. DisplayNo/ReceiptNo LOOK system-generated but aren't
+			// fully: both embed sync.receipt_prefix (data/invoice_repo.go,
+			// pos_repo.go's nextReceiptNo), a setting writable as free text
+			// via the generic /api/settings/upsert with no allowlist — so
+			// they need csvSafe too (ut-docs#195 review). Kind/IssuedAt are
+			// genuine Go literals/RFC3339 timestamps; the amounts are
+			// legitimately signed (a credit note's gross is negative), so
+			// blanket-sanitizing the whole row would corrupt them into text
+			// instead of numbers — csvSafe stays field-scoped, not row-wide.
+			_ = cw.Write([]string{csvSafe(it.DisplayNo), it.Kind, it.IssuedAt, csvSafe(it.CustomerName),
+				csvSafe(it.CustomerVATNo), csvSafe(it.ReceiptNo),
 				minorToDecimal(sign*it.NetTotal, decimals),
 				minorToDecimal(sign*it.TaxTotal, decimals),
 				minorToDecimal(sign*it.GrossTotal, decimals)})
