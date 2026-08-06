@@ -1108,5 +1108,13 @@
   "import.status.item_failed": "ایجاد کالا ممکن نشد",
   "import.error.no_name_column": "ستون «نام» شناسایی نشد — آیا این یک خروجی کاتالوگ است؟",
   "import.error.invalid_file": "این فایل به‌عنوان خروجی کاتالوگ خوانده نشد.",
-  "import.status.unknown_issue": "مشکل"
+  "import.status.unknown_issue": "مشکل",
+  "help.nav.label": "موضوعات راهنما",
+  "help.search.label": "جست‌وجو در راهنما",
+  "help.search.placeholder": "جست‌وجو…",
+  "help.search.results": "نتایج جست‌وجو",
+  "help.search.none": "چیزی پیدا نشد. واژه کوتاه‌تری را امتحان کنید یا موضوعی را از فهرست انتخاب کنید.",
+  "help.pick.topic": "یک موضوع را انتخاب کنید یا آنچه را لازم دارید جست‌وجو کنید.",
+  "help.untranslated": "این موضوع هنوز ترجمه نشده است — نسخهٔ انگلیسی نمایش داده می‌شود.",
+  "help.open": "راهنمای این صفحه"
 }

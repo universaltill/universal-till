@@ -6,6 +6,11 @@
   <a href="/" class="nav-toggle" data-testid="nav-till">🧾 {{ T "nav.till" }}</a>
   <a href="/menu" class="nav-toggle" data-testid="nav-menu">☰ {{ T "nav.menu" }}</a>
   <div class="nav-right">
+    <!-- Contextual help: resolves to the manual topic documenting THIS page
+         (route → topic comes from the topics' own front matter), falling back
+         to the manual's index when nothing claims the route yet. -->
+    <a class="help-hint" href="{{ helpHref }}" title="{{ T "help.open" }}"
+       aria-label="{{ T "help.open" }}" data-testid="help-hint">?</a>
     <span id="sync-chip" hx-get="/ui/sync-chip" hx-trigger="load, every 30s"></span>
     <span id="session-chip" hx-get="/ui/session-chip" hx-trigger="load"></span>
   </div>

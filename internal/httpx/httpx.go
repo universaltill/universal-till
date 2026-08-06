@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/manual"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/selfupdate"
@@ -33,6 +35,12 @@ var baseFuncs = template.FuncMap{
 	"enrolstore":      func() string { return enroll.CurrentStatus().StoreID },
 	"enroldevice":     func() string { return enroll.CurrentStatus().DeviceID },
 	"jsonVals":        jsonVals,
+	// Default target for the nav's contextual "?" — the manual's index.
+	// Render() overrides this per request with the topic documenting the page
+	// actually being rendered; fragment renderers that also parse nav.html
+	// (internal/ui, RenderWith) keep this fallback rather than failing to
+	// parse, which is why it lives in the base map at all.
+	"helpHref": func() string { return "/help" },
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.
@@ -72,11 +80,25 @@ func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
 	return r.t.ExecuteTemplate(w, name, data)
 }
 
+// withHelpHref binds the nav's contextual "?" to the page being rendered.
+//
+// It has to be applied at every whole-page render path, not just Render() —
+// most pages go through RenderWith with funcs built by FuncsFor, and binding
+// it in only one of the two is how the "?" on /catalog silently degraded to
+// the manual's index while the one on / worked. Copies the map rather than
+// mutating the caller's, which may be shared across requests.
+func withHelpHref(funcs template.FuncMap, r *http.Request) template.FuncMap {
+	out := make(template.FuncMap, len(funcs)+1)
+	maps.Copy(out, funcs)
+	out["helpHref"] = func() string { return manual.HelpHref(r.URL.Path) }
+	return out
+}
+
 // RenderWith builds a one-off renderer from explicit files and funcs.
 func RenderWith(files []string, funcs template.FuncMap) func(name string, data any) http.HandlerFunc {
 	return func(name string, data any) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			t, err := template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS, stripWebPrefixes(files)...)
+			t, err := template.New("base.html").Funcs(withHelpHref(funcs, r)).ParseFS(uiassets.FS, stripWebPrefixes(files)...)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -392,7 +414,7 @@ func Render(tplPath string, data any) http.HandlerFunc {
 		page := stripWebPrefix(tplPath)
 
 		locale := ResolveLocale(w, r)
-		t := template.Must(template.New("base.html").Funcs(FuncsFor(locale)).ParseFS(uiassets.FS,
+		t := template.Must(template.New("base.html").Funcs(withHelpHref(FuncsFor(locale), r)).ParseFS(uiassets.FS,
 			layout,
 			page,
 			"ui/partials/nav.html",
@@ -401,6 +423,7 @@ func Render(tplPath string, data any) http.HandlerFunc {
 			"ui/partials/basket.html",
 			"ui/partials/plugin_install_modal.html",
 			"ui/partials/plugin_manual_import.html",
+			"ui/partials/help_topic.html",
 		))
 		if err := t.ExecuteTemplate(w, "base", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
