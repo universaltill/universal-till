@@ -86,3 +86,37 @@ kept for matching only).
 Safe to merge. It is a strict improvement on what `/help` was, no existing
 content was lost, and the two defects the driven run surfaced are fixed with
 regression tests rather than noted for later.
+
+## Addendum (post-merge CI, same day)
+
+CI's separate `e2e` job (`tests/e2e/`, a different Playwright suite from
+`e2e/` — not run during the review above, which is the actual gap here)
+failed on two pre-existing specs neither `e2e/manual.spec.ts` nor this
+review's own driven pass exercised:
+`plugin_install_flow.spec.ts › FAQ plugin entrypoint is visible in POS UI`
+and `pos_ui_mvp.spec.ts › plugin entrypoints are accessible from navigation`.
+
+Cause: the old flat `/help` page hardcoded a
+`data-testid="plugin-faq-entry"` link to `/plugins` (`help.faq_entry`) in
+its Plugins section, always visible on load. The rebuild dropped it along
+with the rest of that page's markup — nothing regressed functionally, but
+the shop-owner-facing "jump from Help straight to the plugin store" entry
+point silently disappeared.
+
+Fix: `web/ui/partials/help_topic.html` — the same link, same testid, same
+`help.faq_entry` key (already present in all four locales, untouched by
+this PR), restored on the manual's landing view (`/help`, no topic
+picked) where these specs land. Topic Markdown renders through goldmark
+without `html.WithUnsafe`, so this couldn't live in `web/help/*/plugins.md`
+content — it has to be template-side.
+
+Verified: both specs pass; the full `tests/e2e` suite re-run clean (12
+passed, 4 skipped — the docs-hub/plugin-lifecycle specs skip without
+`DOCS_READ_TOKEN`, same as CI without the secret); `e2e/` suite unaffected
+(all 51 tests, including `manual.spec.ts`); `go build`, `go vet`,
+`go test ./...`, `guard-data-access.sh`, `guard-i18n.sh` all green. One
+unrelated local-only failure (`internal/issuereport`,
+`TestSaveCleansUpDirectoryOnWriteFailure`) is a root-in-container artifact
+— a read-only-directory permission test that can't fail under root — not
+a regression; the PR's own CI `build` job (non-root runner) already passed
+this test.

@@ -15,5 +15,12 @@
   <h1>{{ T "help.guide.title" }}</h1>
   <p>{{ T "help.guide.intro" }}</p>
   <p class="muted">{{ T "help.pick.topic" }}</p>
+  {{/* The old flat help page's direct link into the plugin store, always
+       visible on the Help landing view — the redesign dropped it along with
+       the rest of that page's markup, which silently broke the two E2E
+       specs asserting a shop owner can jump straight from Help to Plugins
+       (they land on plain /help, pick no topic, and expect this immediately
+       visible; they never navigate into the plugins topic itself). */}}
+  <p><a class="btn" data-testid="plugin-faq-entry" href="/plugins">{{ T "help.faq_entry" }}</a></p>
 </article>
 {{ end }}
