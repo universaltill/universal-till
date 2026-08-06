@@ -21,19 +21,29 @@
 # 60 days quiet. This script does not reimplement the drift-check logic --
 # it fetches each pack's OWN scripts/check-key-drift.sh (plus its locale
 # JSON and baseline/allowlist files) straight from GitHub over an
-# unauthenticated raw.githubusercontent.com read (same trust model the
-# pack's own script already uses to fetch core's en.json: public repo,
-# no token, hard-fail if unreachable) and runs that unmodified script
-# against CORE'S OWN LOCAL en.json via UT_CORE_EN_JSON. One canonical
-# check, exercised from two places. (Actually de-duplicating the *pack-side*
-# copies of check-key-drift.sh into one shared implementation is a separate,
-# larger concern -- ut-docs#312 -- and is out of scope here.)
+# unauthenticated raw.githubusercontent.com read and runs that unmodified
+# script against CORE'S OWN LOCAL en.json via UT_CORE_EN_JSON. One
+# canonical check, exercised from two places. (Actually de-duplicating the
+# *pack-side* copies of check-key-drift.sh into one shared implementation
+# is a separate, larger concern -- ut-docs#312 -- and is out of scope here.)
+#
+# NOTE ON TRUST (independent review, ut-docs#299): fetching a pack's
+# en.json and *parsing* it as data is not the same trust boundary as
+# fetching a pack's shell script and *executing* it -- an untrusted repo's
+# main branch could ship a malicious check-key-drift.sh. The calling
+# workflow (.github/workflows/lang-pack-drift.yml) is the actual mitigation
+# for that: no `permissions:` beyond `contents: read` and
+# `persist-credentials: false` on checkout, so there is no push-capable
+# credential sitting in the workspace for a compromised pack script to
+# steal or abuse. Least-privilege, not "same trust model as data fetch".
 #
 # A pack going unreachable (deleted, renamed, network blip) is a HARD
 # failure, never a silent skip -- same rule the pack scripts themselves
 # follow, for the same reason: a guard that quietly exits 0 when it can't
 # fetch its own input is the exact silent-gap failure mode this exists to
-# close.
+# close. A single pack's fetch failing does not stop the OTHER pack from
+# still being checked -- every pack always gets a real answer, never one
+# skipped just because an earlier one broke.
 #
 # Adding a third pack later is a one-line edit to PACKS below.
 #
@@ -44,7 +54,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CORE_EN_JSON="${ROOT_DIR}/web/locales/en.json"
 [ -f "$CORE_EN_JSON" ] || { echo "check-lang-pack-drift: $CORE_EN_JSON missing" >&2; exit 1; }
 
+# Provenance for the log -- so a run failing weeks from now can be
+# reproduced instead of guessed at. Core's SHA is always available (we're
+# running inside its own checkout); a pack's SHA is best-effort only
+# (network, unauthenticated GitHub API, low rate limit on shared runner
+# egress IPs) -- never worth failing the actual drift check over.
+CORE_SHA="${GITHUB_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)}"
+echo "check-lang-pack-drift: core commit: ${CORE_SHA}"
+
 RAW_BASE="${UT_RAW_BASE:-https://raw.githubusercontent.com/universaltill}"
+API_BASE="${UT_API_BASE:-https://api.github.com/repos/universaltill}"
 
 # repo:locale-code, one per known external language-pack plugin.
 PACKS=(
@@ -56,15 +75,24 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT INT TERM
 
+# --retry/--max-time: a transient raw.githubusercontent.com blip or a
+# shared-runner-IP rate limit must not red-X main as if it were real
+# drift -- that trains humans to ignore this exactly the way the decaying
+# schedule this replaces already did. -f still hard-fails on a genuine,
+# persistent unreachable/404 after retries are exhausted.
+CURL_OPTS=(--fail --silent --show-error --location
+    --retry 3 --retry-all-errors --retry-delay 2
+    --connect-timeout 10 --max-time 60)
+
 fetch() {
     # $1 = repo, $2 = path in repo, $3 = local destination
     local repo="$1" path="$2" dest="$3"
     local url="${RAW_BASE}/${repo}/main/${path}"
     mkdir -p "$(dirname "$dest")"
-    if ! curl -fsSL "$url" -o "$dest"; then
+    if ! curl "${CURL_OPTS[@]}" "$url" -o "$dest"; then
         echo "check-lang-pack-drift: FAILED to fetch ${url}" >&2
         echo "check-lang-pack-drift: cannot verify ${repo}'s key parity -- refusing to pass silently." >&2
-        exit 1
+        return 1
     fi
 }
 
@@ -75,12 +103,20 @@ for entry in "${PACKS[@]}"; do
     code="${entry##*:}"
     pack_dir="${WORKDIR}/${repo}"
 
-    echo "check-lang-pack-drift: checking ${repo} (locale: ${code})"
+    # Best-effort only (see CORE_SHA note above) -- never gates the check.
+    pack_sha="$(curl --fail --silent --max-time 10 "${API_BASE}/${repo}/commits/main" 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha","unknown"))' 2>/dev/null \
+        || echo unknown)"
+    echo "check-lang-pack-drift: checking ${repo}@${pack_sha} (locale: ${code})"
 
-    fetch "$repo" "scripts/check-key-drift.sh" "${pack_dir}/scripts/check-key-drift.sh"
-    fetch "$repo" "locales/${code}.json" "${pack_dir}/locales/${code}.json"
-    fetch "$repo" "i18n-baseline/${code}.untranslated.txt" "${pack_dir}/i18n-baseline/${code}.untranslated.txt"
-    fetch "$repo" "i18n-baseline/${code}.same-as-en.txt" "${pack_dir}/i18n-baseline/${code}.same-as-en.txt"
+    if ! fetch "$repo" "scripts/check-key-drift.sh" "${pack_dir}/scripts/check-key-drift.sh" \
+        || ! fetch "$repo" "locales/${code}.json" "${pack_dir}/locales/${code}.json" \
+        || ! fetch "$repo" "i18n-baseline/${code}.untranslated.txt" "${pack_dir}/i18n-baseline/${code}.untranslated.txt" \
+        || ! fetch "$repo" "i18n-baseline/${code}.same-as-en.txt" "${pack_dir}/i18n-baseline/${code}.same-as-en.txt"; then
+        overall_fail=1
+        echo
+        continue
+    fi
 
     if ! UT_CORE_EN_JSON="$CORE_EN_JSON" bash "${pack_dir}/scripts/check-key-drift.sh"; then
         echo "check-lang-pack-drift: ${repo} FAILED (see above)" >&2
