@@ -143,9 +143,15 @@ func ComputeSHA256(filePath string) (string, error) {
 // residual: without this, two tenders wanting the same label hard-failed
 // the sync at every startup instead of getting a clear install-time error.
 // The plugin's own keys/labels never self-conflict, so reinstall/upgrade
-// pass.
+// pass. Labels must also be non-empty and unique WITHIN this manifest
+// (ut-docs#168): FindPaymentNameConflicts only ever compares a candidate
+// label against OTHER plugins' rows, so two sibling entries sharing one
+// label — or an entry with an empty Label — previously installed cleanly
+// and then silently lost one entry at sync time with no error and no
+// warning, since neither case is a cross-plugin collision.
 func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
 	var paymentKeys, paymentNames []string
+	seenLabels := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		if e.Type != "payment" {
 			continue
@@ -159,6 +165,13 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 		if strings.Contains(e.Key, ":") {
 			return fmt.Errorf("payment entry key %q must not contain ':'", e.Key)
 		}
+		if strings.TrimSpace(e.Label) == "" {
+			return fmt.Errorf("payment entry %q has an empty label", e.Key)
+		}
+		if seenLabels[e.Label] {
+			return fmt.Errorf("payment entry label %q is used by more than one entry in this manifest — pick distinct labels", e.Label)
+		}
+		seenLabels[e.Label] = true
 		paymentKeys = append(paymentKeys, e.Key)
 		paymentNames = append(paymentNames, e.Label)
 	}

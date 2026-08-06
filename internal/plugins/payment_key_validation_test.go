@@ -221,6 +221,72 @@ func TestPersistManifest_RejectsPaymentNameOwnedByAnotherPlugin(t *testing.T) {
 	}
 }
 
+// ut-docs#168: FindPaymentNameConflicts only ever compares a candidate
+// label against OTHER plugins' rows — two payment entries sharing one
+// label within the SAME manifest were never checked against each other.
+// Confirmed pre-fix: such a manifest installed cleanly and only one entry
+// materialized into payment_methods at sync time; the other silently
+// vanished with no error at install and no warning at sync (an
+// intra-plugin collision, not the cross-plugin one the sync's warning
+// path detects).
+func TestPersistManifest_RejectsDuplicateLabelsWithinSameManifest(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	m := &Manifest{
+		ID:         "com.dup.pay",
+		Name:       "Dup Pay",
+		Version:    "1.0.0",
+		Entrypoint: "./main.wasm",
+		Entries: []ManifestEntry{
+			{Type: "payment", Key: "keyone", Label: "Same Label"},
+			{Type: "payment", Key: "keytwo", Label: "Same Label"},
+		},
+	}
+	err := PersistManifest(ctx, d.DB, m, InstallOptions{})
+	if err == nil {
+		t.Fatal("PersistManifest accepted a manifest with two payment entries sharing one label")
+	}
+	if !strings.Contains(err.Error(), "Same Label") {
+		t.Fatalf("collision error should name the duplicate label, got: %v", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugins WHERE id = 'com.dup.pay'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("rejected plugin left %d plugins row(s), want 0 (transaction must roll back)", n)
+	}
+}
+
+// ut-docs#168: Key gets non-empty/whitespace/':' checks; Label got none —
+// an entry with Label:"" installed and synced to a blank-named tender
+// (payment_methods.name = ""), and a second plugin doing the same then
+// silently lost one entry to the empty-label collision.
+func TestPersistManifest_RejectsEmptyPaymentLabel(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	m := paymentManifest("com.blank.pay", "blankkey")
+	m.Entries[0].Label = ""
+	err := PersistManifest(ctx, d.DB, m, InstallOptions{})
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("empty payment label must be rejected with a clear message, got: %v", err)
+	}
+}
+
+func TestPersistManifest_RejectsWhitespaceOnlyPaymentLabel(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	m := paymentManifest("com.blank2.pay", "blankkey2")
+	m.Entries[0].Label = "   "
+	err := PersistManifest(ctx, d.DB, m, InstallOptions{})
+	if err == nil {
+		t.Fatal("whitespace-only payment label must be rejected")
+	}
+}
+
 // Reinstall/upgrade of the SAME plugin with the same label is not a
 // collision — its own earlier entry must not block it.
 func TestPersistManifest_PaymentNameSelfUpgradeNotAConflict(t *testing.T) {
