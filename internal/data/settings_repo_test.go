@@ -133,8 +133,8 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 }
 
 func TestSettingsRepo_GetOrCreate_SeedsOnFirstCall(t *testing.T) {
-	db := newSettingsTestDB(t)
-	repo := NewSettingsRepo(db)
+	sqlDB := newSettingsTestDB(t)
+	repo := NewSettingsRepo(sqlDB)
 	ctx := context.Background()
 
 	got, err := repo.GetOrCreate(ctx, "till.id", "seed-value")
@@ -155,8 +155,8 @@ func TestSettingsRepo_GetOrCreate_SeedsOnFirstCall(t *testing.T) {
 }
 
 func TestSettingsRepo_GetOrCreate_ReturnsExistingWithoutOverwriting(t *testing.T) {
-	db := newSettingsTestDB(t)
-	repo := NewSettingsRepo(db)
+	sqlDB := newSettingsTestDB(t)
+	repo := NewSettingsRepo(sqlDB)
 	ctx := context.Background()
 
 	if err := repo.Set(ctx, "till.id", "already-here"); err != nil {
