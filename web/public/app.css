@@ -90,13 +90,32 @@ body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex
   position: sticky; top: 0; z-index: 100;
   box-shadow: 0 1px 4px rgba(0,0,0,.25);
 }
-/* Wider inline padding than block: the mark is portrait, so it sits narrow
-   in the plate and would otherwise look cramped against the edges. */
-.logo { display: flex; align-items: center; padding: .15rem .35rem; background: #fff; border-radius: .3rem; }
+.logo { display: flex; align-items: center; }
+/* Theme-aware brand mark (ut-docs#298). unitill-logo.svg is a solid-black
+   portrait silhouette on a transparent background; rather than an <img> that
+   brings its own fixed color (and used to need a hardcoded white plate to
+   stay visible on dark chrome — the plate itself was the reported defect,
+   a pasted-on light tile on the till's dark header), every embed point uses
+   this ONE asset as a CSS mask and fills it with currentColor. That means
+   the mark automatically follows whatever color the surrounding surface's
+   text already resolves to — the nav sets color:#fff so the header mark is
+   white, a light card leaves it dark, and a dark-surface theme (e.g. the
+   ut-plugin-theme-midnight plugin) needs no separate asset, just the same
+   --text cascade every other themed element already follows. Width is
+   derived from the mark's true aspect (14.262122 / 19.442995 ≈ 0.7336,
+   portrait) so callers only set height — fixing both dimensions distorts it
+   (ut-docs#290). Templates: <span class="brand-mark ..." role="img"
+   aria-label="…"></span> in place of the old <img src="unitill-logo.svg">. */
+.brand-mark {
+  display: block;
+  background-color: currentColor;
+  -webkit-mask: url(/public/assets/logo/unitill-logo.svg) no-repeat center / contain;
+          mask: url(/public/assets/logo/unitill-logo.svg) no-repeat center / contain;
+}
 /* rem, not px: the logo must follow --ui-scale / the fluid baseline like
    everything else (ut-docs#213 — it was the nav's last fixed-px sizing,
    illegibly small on a 10-inch high-density till). */
-.logo img { height: 2.4rem; display: block; }
+.logo .brand-mark { height: 2.4rem; width: calc(2.4rem * 0.7336); }
 .nav-right { display: flex; align-items: center; gap: .5rem; margin-inline-start: .5rem; }
 /* The shared touch header: EVERY page shows the same ☰ Menu button (a proper
    touch target) that opens the /menu launcher of big tiles — no page has its
@@ -801,17 +820,13 @@ body.login-screen {
   border-radius: 12px; padding: 2rem 2.4rem; width: min(24rem, 92vw);
   text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,.12);
 }
-/* Brand mark on themed surfaces. unitill-logo.svg is a solid-black portrait
-   silhouette on a transparent background, so on a dark theme it would vanish
-   (Midnight puts --surface at #1e293b and --bg at #0f172a). Give it the same
-   white plate the nav .logo already uses, and constrain height only: the mark
-   is portrait (aspect ~0.73) and fixing both dimensions would distort it. */
-.login-logo, .selforder-logo {
-  display: block; margin-inline: auto; background: #fff;
-  padding: .4rem .6rem; border-radius: .5rem; box-sizing: content-box;
-}
-.login-logo { height: 5rem; margin-bottom: .5rem; }
-.selforder-logo { height: 6rem; margin-bottom: 1rem; }
+/* Brand mark on the login/self-order surfaces — see the .brand-mark rule
+   above (ut-docs#298) for the shared mask mechanics. These two classes are
+   just per-surface sizing/positioning; color comes from the surface's own
+   --text so a dark-surface theme needs nothing extra here. */
+.login-logo, .selforder-logo { margin-inline: auto; color: var(--text); }
+.login-logo { height: 5rem; width: calc(5rem * 0.7336); margin-bottom: .5rem; }
+.selforder-logo { height: 6rem; width: calc(6rem * 0.7336); margin-bottom: 1rem; }
 .login-tagline { margin: 0 0 1.4rem; color: var(--muted, #64748b); font-size: .85rem; }
 .login-card h1 { font-size: 1.2rem; margin: 0 0 1rem; }
 .login-footer {

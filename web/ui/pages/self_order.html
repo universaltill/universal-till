@@ -9,7 +9,9 @@
     <style>
       .selforder-screen { display:flex; flex-direction:column; align-items:center; justify-content:center;
         min-height:100vh; text-align:center; padding:2rem; gap:1.5rem; }
-      .selforder-logo { width:96px; height:96px; }
+      /* height only — the mark is portrait (~0.7336), fixing both dimensions
+         to a square distorts it (ut-docs#290/#298). */
+      .selforder-logo { height:96px; width:calc(96px * 0.7336); }
       .selforder-shop { font-size:1.4rem; font-weight:700; margin:0; }
       .selforder-hint { color:var(--muted, #6b7280); max-width:32rem; }
       .selforder-start { min-height:64px; padding-inline:2.5rem; font-size:1.15rem; }
@@ -19,7 +21,7 @@
   <body class="selforder-screen{{ if kiosk }} kiosk{{ end }}" data-kiosk-idle-reset="{{ .idleResetSecs }}">
     <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
     <main>
-      <img class="selforder-logo" src="/public/assets/logo/unitill-logo.svg" alt="" />
+      <span class="brand-mark selforder-logo" aria-hidden="true"></span>
       {{ if .shopName }}<p class="selforder-shop">{{ .shopName }}</p>{{ end }}
       <h1>{{ T "selforder.welcome" }}</h1>
       <a class="btn primary selforder-start" href="/self-order/shop">

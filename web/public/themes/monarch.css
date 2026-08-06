@@ -3,5 +3,5 @@
 .nav a { color:#fff; margin-left:.8rem }
 .btn { background:var(--accent) }
 .basket .total { color:var(--accent) }
-.logo img { height: 2.55rem; }
+.logo .brand-mark { height: 2.55rem; width: calc(2.55rem * 0.7336); }
 
