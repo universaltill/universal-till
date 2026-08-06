@@ -386,17 +386,14 @@ func TestFallbackTopicCarriesEnglishScreenshot(t *testing.T) {
 	}
 }
 
-func TestImgDirIsNotALocale(t *testing.T) {
-	lib, err := Load(shotFS, "help")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	for _, loc := range lib.Locales() {
-		if loc == "img" {
-			t.Error("help/img/ leaked into the locale list")
-		}
-	}
-}
+// NOTE (found in review): a dedicated "img is not a locale" test was removed
+// here. help/img/ only ever contains .png files, and Load's per-entry loop
+// already skips anything not ending in ".md" — so even with the explicit
+// `if locale == "img" { continue }` guard in Load deleted, "img" can never
+// produce a topic or appear in Locales() with the current fixture (verified:
+// removing the guard leaves every existing test green). The guard is
+// documentation/a saved ReadDir call, not behavior a test can meaningfully
+// pin without fabricating a help/img/*.md file that doesn't reflect reality.
 
 // Snippets are shown to a shop owner, so they keep the prose's own casing —
 // the lower-cased copy exists for matching only. (First driven run showed

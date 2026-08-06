@@ -46,6 +46,15 @@ func TestHelpImgTraversalRejected(t *testing.T) {
 		"/help/img/en/%2e%2e%2f%2e%2e%2flocales%2fen.json",
 		"/help/img/%2e%2e/en/sell.png",
 		"/help/img/en/..%2fsell.png",
+		// This one is what actually distinguishes "the guard rejected it"
+		// from "it 404'd for an unrelated reason": every case above resolves
+		// to a path that doesn't exist even without the guard. This one
+		// walks right back to a real file — en/sell.png exists — so
+		// path.Join's own cleaning would happily serve it were the
+		// ContainsAny/Contains checks removed (confirmed locally by
+		// temporarily deleting them: this one 200s with a real PNG body,
+		// the others still 404 on their own).
+		"/help/img/en/%2e%2e%2fen%2fsell.png",
 	} {
 		rec := get(t, mux, p)
 		if rec.Code == http.StatusOK {

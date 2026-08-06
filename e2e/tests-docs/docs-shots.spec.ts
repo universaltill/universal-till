@@ -72,12 +72,22 @@ async function capture(page: Page, id: string, locale: string, route: string) {
 
   const out = path.join(imgRoot, locale, `${id}.png`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  // Masked: the status bar's update-available chip (.sb-update) only appears
-  // when the till's background update check reaches the marketplace — a
-  // network-dependent element that would make otherwise-identical captures
-  // differ between machines/runs. maskColor = the statusbar's own background
-  // (app.css .statusbar), so the mask reads as empty bar, not a magenta box.
-  await page.screenshot({ path: out, mask: [page.locator('.sb-update')], maskColor: '#0f172a' }); // viewport-sized, per config
+  // Masked, both for the same reason: driven by real machine/runtime state
+  // rather than the seeded till itself, so leaving them unmasked would make
+  // otherwise-identical captures differ between machines/runs.
+  //  - .sb-update: the update-available chip, only appears when the
+  //    background update check actually reaches the marketplace.
+  //  - .sb-conn: online/offline, driven client-side by navigator.onLine —
+  //    genuinely differs on a network-isolated capture box.
+  // maskColor = the statusbar's own background (web/public app.css
+  // .statusbar), so a mask reads as empty bar, not a magenta box. That color
+  // is itself part of the guarded "surface" fileset now, so a theme change
+  // that moves it fails the freshness guard instead of silently mismatching.
+  await page.screenshot({
+    path: out,
+    mask: [page.locator('.sb-update'), page.locator('.sb-conn')],
+    maskColor: '#0f172a',
+  }); // viewport-sized, per config
 
   // A broken/blank capture must fail loudly, not ship silently.
   expect(fs.existsSync(out), `${out} was not written`).toBe(true);

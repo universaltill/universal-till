@@ -27,13 +27,19 @@ export default defineConfig({
       command: 'bash ./run-till.sh',
       url: 'http://127.0.0.1:8091/healthz',
       timeout: 120_000,
-      reuseExistingServer: !process.env.CI,
+      // Unlike playwright.config.ts's own servers, this one is ALWAYS fresh
+      // — reused here on purpose would mean whatever a developer's prior
+      // local run left behind (completed sales, flipped settings, an
+      // installed plugin) silently bakes into "reproducible" documentation
+      // screenshots. make docs-shots is a deliberate, occasional run, not
+      // the tight edit/test loop reuseExistingServer optimizes for.
+      reuseExistingServer: false,
     },
     {
       command: 'bash ./run-till-auth.sh',
       url: 'http://127.0.0.1:8092/healthz',
       timeout: 120_000,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
     },
   ],
   projects: [
