@@ -197,3 +197,18 @@ func TestRouteRegistryResolvesKnownPages(t *testing.T) {
 		}
 	}
 }
+
+// Help has always been a route through to the plugin store (an installed
+// plugin can contribute help content). Replacing the old accordion page
+// dropped that link, which two specs in tests/e2e/ — a suite separate from
+// e2e/ — assert is reachable from Menu → Help. CI caught it; this keeps the
+// Go suite honest about it too.
+func TestHelpIndexKeepsPluginEntryPoint(t *testing.T) {
+	body := get(t, helpMux(t), "/help").Body.String()
+	if !strings.Contains(body, `data-testid="plugin-faq-entry"`) {
+		t.Error("manual index lost the plugin entry point")
+	}
+	if !strings.Contains(body, `href="/plugins"`) {
+		t.Error("plugin entry point does not link to /plugins")
+	}
+}
