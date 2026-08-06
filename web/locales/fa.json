@@ -1108,5 +1108,9 @@
   "import.status.item_failed": "ایجاد کالا ممکن نشد",
   "import.error.no_name_column": "ستون «نام» شناسایی نشد — آیا این یک خروجی کاتالوگ است؟",
   "import.error.invalid_file": "این فایل به‌عنوان خروجی کاتالوگ خوانده نشد.",
-  "import.status.unknown_issue": "مشکل"
+  "import.status.unknown_issue": "مشکل",
+  "help.search.placeholder": "جستجو در راهنما…",
+  "help.search.no_results": "موضوعی مطابق جستجوی شما یافت نشد.",
+  "help.topic.untranslated": "این موضوع هنوز ترجمه نشده است — نسخهٔ انگلیسی نمایش داده می‌شود.",
+  "help.welcome": "برای شروع، موضوعی را از فهرست انتخاب کنید."
 }

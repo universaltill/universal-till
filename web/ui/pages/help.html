@@ -1,107 +1,30 @@
 {{ define "content" }}
-<h1>{{ T "help.guide.title" }}</h1>
-<p class="help-intro">{{ T "help.guide.intro" }}</p>
-
-<h2 class="help-section-title">{{ T "help.features.title" }}</h2>
-<p class="help-intro">{{ T "help.features.intro" }}</p>
-<div class="feature-list">
-  {{ range $id := .featureIDs }}
-  <details class="feature">
-    <summary>{{ T (printf "help.feat.%s.title" $id) }}</summary>
-    <div class="feature-body">
-      <p>{{ T (printf "help.feat.%s.what" $id) }}</p>
-      <ol class="help-steps">
-        {{ range $step := index $.featureSteps $id }}
-        <li>{{ T $step }}</li>
-        {{ end }}
-      </ol>
-    </div>
-  </details>
-  {{ end }}
-</div>
-
-<h2 class="help-section-title">{{ T "help.guide.quicksteps" }}</h2>
-<div class="help-guide">
-  <div class="card">
-    <h2>{{ T "help.guide.login.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.login.s1" }}</li>
-      <li>{{ T "help.guide.login.s2" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.guide.sell.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.sell.s1" }}</li>
-      <li>{{ T "help.guide.sell.s2" }}</li>
-      <li>{{ T "help.guide.sell.s3" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.guide.pay.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.pay.s1" }}</li>
-      <li>{{ T "help.guide.pay.s2" }}</li>
-      <li>{{ T "help.guide.pay.s3" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.guide.receipt.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.receipt.s1" }}</li>
-      <li>{{ T "help.guide.receipt.s2" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.guide.hold.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.hold.s1" }}</li>
-      <li>{{ T "help.guide.hold.s2" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.guide.noscan.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.noscan.s1" }}</li>
-      <li>{{ T "help.guide.noscan.s2" }}</li>
-      <li>{{ T "help.guide.noscan.s3" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.guide.shift.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.shift.s1" }}</li>
-      <li>{{ T "help.guide.shift.s2" }}</li>
-      <li>{{ T "help.guide.shift.s3" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.guide.language.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.language.s1" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.guide.trouble.title" }}</h2>
-    <ol class="help-steps">
-      <li>{{ T "help.guide.trouble.s1" }}</li>
-      <li>{{ T "help.guide.trouble.s2" }}</li>
-      <li>{{ T "help.guide.trouble.s3" }}</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>{{ T "help.plugins" }}</h2>
-    <p>{{ T "help.plugins_description" }}</p>
-    <a class="btn" data-testid="plugin-faq-entry" href="/plugins">{{ T "help.faq_entry" }}</a>
-  </div>
+<h1>{{ T "help.title" }}</h1>
+<div class="help-shell">
+  <aside class="help-nav">
+    <input
+      type="search"
+      id="help-search"
+      name="q"
+      class="help-search"
+      placeholder="{{ T "help.search.placeholder" }}"
+      aria-label="{{ T "help.search.placeholder" }}"
+      hx-get="/help/search"
+      hx-trigger="keyup changed delay:300ms, search"
+      hx-target="#help-tree"
+      autocomplete="off"
+    />
+    <nav id="help-tree" class="help-tree" aria-label="{{ T "help.title" }}">
+      {{ template "help_topics.html" . }}
+    </nav>
+    <!-- Quick hop to the installed plugins' entrypoints. Carried over from
+         the old accordion Help page verbatim (same testid/href/label): it is
+         a real affordance, and tests/e2e/tests/{pos_ui_mvp,plugin_install_flow}
+         .spec.ts assert it is reachable from /help. -->
+    <p class="help-nav-plugins">
+      <a class="btn" data-testid="plugin-faq-entry" href="/plugins">{{ T "help.faq_entry" }}</a>
+    </p>
+  </aside>
+  {{ template "help_topic.html" . }}
 </div>
 {{ end }}

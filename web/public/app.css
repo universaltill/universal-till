@@ -918,22 +918,42 @@ body.login-screen {
 .ai-identify-status { min-block-size: 1.2rem; color: var(--muted, #667); }
 .ai-identify-controls { display: flex; gap: 0.5rem; justify-content: flex-end; }
 
-/* Beginner guide (/help) — large readable steps, two-column on wide screens */
+/* .help-intro is shared page-intro styling (still used by /translations). */
 .help-intro { color: var(--muted); font-size: 1.05rem; max-inline-size: 44rem; }
-.help-guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: .8rem; }
-.help-steps { margin: 0; padding-inline-start: 1.4rem; font-size: 1.05rem; }
-.help-steps li { margin-block-end: .5rem; line-height: 1.55; }
-.help-section-title { margin-block: 1.4rem .3rem; }
 
-/* Expandable feature guide (/help): one <details> per feature */
-.feature-list { display: flex; flex-direction: column; gap: .5rem; max-inline-size: 52rem; margin-block-end: 1.2rem; }
-.feature-list details { background: var(--panel, var(--card, #fff)); border: 1px solid var(--border); border-radius: .6rem; }
-.feature-list summary { cursor: pointer; padding: .8rem 1rem; font-weight: 600; font-size: 1.05rem;
-                        list-style-position: inside; min-block-size: 44px; display: flex; align-items: center; gap: .5rem; }
-.feature-list summary::marker { color: var(--muted); }
-.feature-list details[open] summary { border-block-end: 1px solid var(--border); }
-.feature-body { padding: .8rem 1rem 1rem; }
-.feature-body p { margin-block: 0 .6rem; line-height: 1.55; }
+/* User manual (/help, ut-docs#325): two-pane shell — topic tree + search on
+   the inline-start side, the selected topic panel on the other. The grid
+   columns follow the writing direction, and everything below uses logical
+   properties only, so RTL locales (dir="rtl") flip the panes correctly with
+   zero extra per-locale CSS. */
+.help-shell { display: grid; grid-template-columns: 17rem minmax(0, 1fr); gap: 1.2rem; align-items: start; }
+.help-nav { position: sticky; inset-block-start: .5rem; }
+.help-search { inline-size: 100%; padding: .5rem .7rem; margin-block-end: .8rem;
+               border: 1px solid var(--border); border-radius: .5rem; font-size: 1rem; }
+.help-tree-section + .help-tree-section { margin-block-start: .6rem; }
+.help-tree-heading { margin-block: .6rem .2rem; font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; color: var(--muted); }
+.help-tree-topics { list-style: none; margin: 0; padding: 0; }
+.help-topic-link { display: block; padding: .35rem .6rem; border-radius: .4rem;
+                   text-decoration: none; color: inherit; min-block-size: 2rem; }
+.help-topic-link:hover { background: var(--surface-2); }
+.help-topic-link.is-active { background: var(--accent); color: var(--accent-contrast); font-weight: 600; }
+.help-topic-panel { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: var(--radius); padding: 1rem 1.4rem 1.4rem; max-inline-size: 52rem; }
+.help-topic-title { margin-block: .2rem .6rem; }
+.help-topic-body { line-height: 1.55; }
+.help-topic-body ol, .help-topic-body ul { padding-inline-start: 1.4rem; }
+.help-topic-body li { margin-block-end: .4rem; }
+.help-untranslated { background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+                     border: 1px solid var(--warning); color: var(--text);
+                     border-radius: .5rem; padding: .5rem .8rem; margin-block: 0 .8rem; }
+.help-no-results, .help-welcome { color: var(--muted); padding-block: .5rem; }
+.help-nav-plugins { margin-block-start: 1rem; }
+/* Narrow tills: stack the tree above the topic. */
+@media (max-width: 50rem) {
+  .help-shell { grid-template-columns: 1fr; }
+  .help-nav { position: static; }
+}
 
 /* Translation editor (/translations) */
 .translations-controls { display: flex; gap: 1rem; align-items: end; margin-block-end: .8rem; flex-wrap: wrap; }

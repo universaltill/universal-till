@@ -15,8 +15,10 @@ require (
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
+	github.com/yuin/goldmark v1.8.5
 	golang.org/x/image v0.44.0
 	golang.org/x/text v0.40.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -52,7 +54,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250324211829-b45e905df463 // indirect
 	google.golang.org/grpc v1.73.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6 // indirect
 	modernc.org/libc v1.49.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect

@@ -1108,5 +1108,9 @@
   "import.status.item_failed": "تعذر إنشاء الصنف",
   "import.error.no_name_column": "لم يتم التعرف على عمود الاسم — هل هذا تصدير كتالوج؟",
   "import.error.invalid_file": "تعذرت قراءة هذا الملف كتصدير كتالوج.",
-  "import.status.unknown_issue": "مشكلة"
+  "import.status.unknown_issue": "مشكلة",
+  "help.search.placeholder": "ابحث في الدليل…",
+  "help.search.no_results": "لا توجد مواضيع مطابقة لبحثك.",
+  "help.topic.untranslated": "هذا الموضوع لم يُترجم بعد — يتم عرض النسخة الإنجليزية.",
+  "help.welcome": "اختر موضوعًا من القائمة للبدء."
 }

@@ -1108,5 +1108,9 @@
   "import.status.item_failed": "ürün oluşturulamadı",
   "import.error.no_name_column": "İsim sütunu tanınmadı — bu bir katalog dışa aktarımı mı?",
   "import.error.invalid_file": "Bu dosya katalog dışa aktarımı olarak okunamadı.",
-  "import.status.unknown_issue": "sorun"
+  "import.status.unknown_issue": "sorun",
+  "help.search.placeholder": "Kılavuzda ara…",
+  "help.search.no_results": "Aramanızla eşleşen konu yok.",
+  "help.topic.untranslated": "Bu konu henüz çevrilmedi — İngilizce sürümü gösteriliyor.",
+  "help.welcome": "Başlamak için listeden bir konu seçin."
 }

@@ -1,0 +1,16 @@
+<article id="help-topic" class="help-topic-panel">
+  {{ if .Topic }}
+    {{ if not .Translated }}
+    <p class="help-untranslated" role="note">{{ T "help.topic.untranslated" }}</p>
+    {{ end }}
+    {{/* The fallback body is English prose. Inside an RTL document it must
+         carry its own lang/dir, or bidi reordering throws sentence-final
+         punctuation and the ordered-list markers to the wrong side
+         (".Turn the till on .1"). Only the topic text flips back — the page,
+         nav and banner stay in the reader's direction. */}}
+    <h2 class="help-topic-title" lang="{{ .Topic.Lang }}"{{ if not .Translated }} dir="ltr"{{ end }}>{{ .Topic.Title }}</h2>
+    <div class="help-topic-body" lang="{{ .Topic.Lang }}"{{ if not .Translated }} dir="ltr"{{ end }}>{{ .Topic.HTML }}</div>
+  {{ else }}
+    <p class="help-welcome">{{ T "help.welcome" }}</p>
+  {{ end }}
+</article>

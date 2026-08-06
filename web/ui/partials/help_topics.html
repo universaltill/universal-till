@@ -1,0 +1,24 @@
+{{ if .NoResults }}
+<p class="help-no-results">{{ T "help.search.no_results" }}</p>
+{{ end }}
+{{ $current := .CurrentID }}
+{{ range .Sections }}
+<div class="help-tree-section">
+  <h2 class="help-tree-heading">{{ .Name }}</h2>
+  <ul class="help-tree-topics">
+    {{ range .Topics }}
+    <li>
+      <a
+        class="help-topic-link{{ if eq $current .ID }} is-active{{ end }}"
+        href="/help/{{ .ID }}"
+        hx-get="/help/{{ .ID }}"
+        hx-target="#help-topic"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+        {{ if eq $current .ID }}aria-current="page"{{ end }}
+      >{{ .Title }}</a>
+    </li>
+    {{ end }}
+  </ul>
+</div>
+{{ end }}

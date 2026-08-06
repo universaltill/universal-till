@@ -14,10 +14,9 @@ import (
 
 func registerIndex(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/help" {
-			renderHelpPage(w, r, d)
-			return
-		}
+		// NOTE: no /help special case here — registerHelp's "GET /help" and
+		// "GET /help/{topic}" patterns are more specific than "/", so the
+		// ServeMux routes them there (TestHelpRoutesWinOverIndexCatchAll).
 		// The "/" pattern catches every otherwise-unrouted path. Plugin page
 		// entries may register arbitrary routes (e.g. /faq), so dispatch those
 		// here; anything else unknown is a 404 rather than silently showing

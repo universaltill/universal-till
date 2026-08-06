@@ -11,5 +11,5 @@ package web
 
 import "embed"
 
-//go:embed ui public
+//go:embed ui public help
 var FS embed.FS

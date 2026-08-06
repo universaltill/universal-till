@@ -1108,5 +1108,9 @@
   "import.status.item_failed": "item could not be created",
   "import.error.no_name_column": "No name column recognised — is this a catalog export?",
   "import.error.invalid_file": "This file could not be read as a catalog export.",
-  "import.status.unknown_issue": "issue"
+  "import.status.unknown_issue": "issue",
+  "help.search.placeholder": "Search the manual…",
+  "help.search.no_results": "No topics match your search.",
+  "help.topic.untranslated": "This topic is not translated yet — showing the English version.",
+  "help.welcome": "Pick a topic from the list to get started."
 }
