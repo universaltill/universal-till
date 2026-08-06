@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // POSRepo centralizes DB access for POS handlers.
@@ -476,6 +477,56 @@ VALUES (?, ?, 'inventory', ?, ?, ?, ?)
 	}
 
 	return movementID, nil
+}
+
+// RecordStockMovementSavepoint runs RecordStockMovement inside a SAVEPOINT
+// on the caller's tx, so a failure partway through it (any of its four
+// statements — stock_movements insert, inventory update, the conditional
+// inventory insert, or the audit insert) never leaves a partial write
+// sitting in the caller's still-open transaction. Unlike RecordStockMovement
+// called with tx == nil, this always requires a caller-supplied tx: when
+// tx != nil, RecordStockMovement only rolls back on failure if it opened
+// the transaction itself (createdTx) — a caller-supplied tx is left exactly
+// as-is on error, by design, so the caller can decide whether that failure
+// should fail its own surrounding transaction. Use this method instead of
+// calling RecordStockMovement(ctx, tx, in) directly whenever the caller
+// wants the OPPOSITE of that: the movement to be atomic on its own, but its
+// failure to NOT force the surrounding transaction to roll back (ut-docs#310
+// — the catalog import row transaction treats a stock-recording failure as
+// warn-and-continue, not a row failure, so the row's item + inventory row
+// must still be committable after this returns an error).
+func (r *POSRepo) RecordStockMovementSavepoint(ctx context.Context, tx *sql.Tx, in StockMovementInput) (string, error) {
+	if tx == nil {
+		return "", errors.New("transaction required")
+	}
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT record_stock_movement`); err != nil {
+		return "", fmt.Errorf("savepoint: %w", err)
+	}
+	id, recErr := r.RecordStockMovement(ctx, tx, in)
+	if recErr != nil {
+		if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT record_stock_movement`); err != nil {
+			// The savepoint itself failed to roll back — the caller's tx is
+			// in an unknown state. Logged, not swallowed: this is exactly
+			// the operationally-interesting case that must not go silent.
+			logging.L().Warnf("pos: record stock movement: rollback to savepoint failed: %v", err)
+			return "", recErr
+		}
+		if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT record_stock_movement`); err != nil {
+			logging.L().Warnf("pos: record stock movement: release savepoint after rollback failed: %v", err)
+		}
+		return "", recErr
+	}
+	if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT record_stock_movement`); err != nil {
+		// The movement itself fully succeeded — all four statements are
+		// sitting in the caller's tx and an unreleased savepoint does not
+		// block tx.Commit() from landing them (SQLite pops any remaining
+		// savepoints on commit). Failing this call would tell the caller
+		// the movement didn't happen when it did: same defect class as the
+		// one this whole method exists to close, just on the success path.
+		// Logged, not swallowed, same as the rollback-failure branch above.
+		logging.L().Warnf("pos: record stock movement: release savepoint after success failed: %v", err)
+	}
+	return id, nil
 }
 
 // RecordNegativeInventoryOverride writes an audit entry noting the override.

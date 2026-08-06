@@ -205,19 +205,88 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				} else if deptID != "" {
 					catID = &deptID
 				}
-				itemID, err := pos.CreateItem(r.Context(), d.Db, pos.ItemInput{
-					Name: it.Name, SKU: it.SKU, BasePrice: it.PriceMinor,
-					Description: it.Description, CategoryID: catID,
-					Unit: "each", IsWeighed: it.IsWeighed, IsActive: true,
-				})
+				// The item, its inventory row, and its opening-stock movement
+				// land together in one transaction (ut-docs#310): the only
+				// new failure path this introduces is tx.Commit() itself
+				// erroring below — a genuine unexpected DB-level failure —
+				// which rolls the whole row back instead of leaving a
+				// partially-built item, exactly like a mid-row crash always
+				// implicitly would have. Barcode attach deliberately stays
+				// OUTSIDE this transaction, attempted only after it commits:
+				// AddBarcode owns its own #304 BEGIN IMMEDIATE transaction on
+				// a separate connection, which can't see this transaction's
+				// writes until they're committed, and folding it in would
+				// mean re-implementing #304's race protection here (see the
+				// card's own discussion of why that's out of scope).
+				tx, err := d.Db.BeginTx(r.Context(), nil)
 				if err != nil {
 					rows[i].Status = "failed: " + err.Error()
 					failed++
 					continue
 				}
-				// Row-level warnings accumulate rather than short-circuit the
-				// loop: a barcode attach failure must not also skip the
-				// stock-import step below it (ut-docs#293) — both the
+				itemID, err := repo.CreateItemTx(r.Context(), tx, pos.ItemInput{
+					Name: it.Name, SKU: it.SKU, BasePrice: it.PriceMinor,
+					Description: it.Description, CategoryID: catID,
+					Unit: "each", IsWeighed: it.IsWeighed, IsActive: true,
+				})
+				if err != nil {
+					_ = tx.Rollback()
+					rows[i].Status = "failed: " + err.Error()
+					failed++
+					continue
+				}
+				// stockWarning/stockRecorded are decided now (inside the
+				// transaction) but only turned into row status / a published
+				// event once tx.Commit() below actually lands them — same
+				// warn-and-continue outcome as before this card for every
+				// case already covered by TestImport_LocationLookupFailure-
+				// WarnsStockNotCarried, TestImport_NegativeStockQuantityWarns
+				// and TestImport_StockRecordingFailureWarnsAndDoesNotPublish:
+				// a stock-recording failure — DB-level or not — still just
+				// warns on an otherwise-committed row, never fails it.
+				var stockWarning string
+				stockRecorded := false
+				switch {
+				case it.HasStock && it.Stock < 0:
+					// catimport parses a negative quantity happily and it is
+					// then dropped by the `> 0` test below with no trace —
+					// warn instead of discarding it in silence.
+					stockWarning = fmt.Sprintf(
+						"stock not carried: negative quantity %g in source file", it.Stock)
+				case it.HasStock && it.Stock > 0 && locErr != nil:
+					// EnsureStockLocation ran once, outside the loop; when it
+					// failed, every row with stock would otherwise lose it
+					// silently while still reading "created" — the exact bug
+					// this card fixes, one branch over.
+					stockWarning = "stock not carried: " + locErr.Error()
+				case it.HasStock && it.Stock > 0:
+					// Savepoint-scoped, not the plain tx-accepting
+					// RecordStockMovement: a failure on any of its four
+					// statements must only discard the stock movement
+					// itself, never the item + inventory row already
+					// written earlier in this same transaction (a stock-
+					// recording failure is warn-and-continue here, same as
+					// every other case in this switch — see
+					// TestImport_StockRecordingFailureWarnsAndDoesNotPublish
+					// — not a reason to fail the whole row).
+					if _, err := posRepo.RecordStockMovementSavepoint(r.Context(), tx, pos.StockMovementInput{
+						ItemID: itemID, LocationID: locID, Type: "receive",
+						Quantity: it.Stock, Reason: "catalog import",
+						ActorID: getSessionUserID(r),
+					}); err != nil {
+						stockWarning = "stock not carried: " + err.Error()
+					} else {
+						stockRecorded = true
+					}
+				}
+				if err := tx.Commit(); err != nil {
+					rows[i].Status = "failed: " + err.Error()
+					failed++
+					continue
+				}
+				// Row-level warnings accumulate rather than short-circuit —
+				// a barcode attach failure must not also skip the
+				// stock-import outcome below it (ut-docs#293) — both the
 				// reason and the stock outcome need to survive into the
 				// row's status, so neither branch clobbers the other's
 				// message.
@@ -236,37 +305,20 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					// class this card exists to fix (ut-docs#293).
 					warnings = append(warnings, it.BarcodeIssue)
 				}
-				switch {
-				case it.HasStock && it.Stock < 0:
-					// catimport parses a negative quantity happily and it is
-					// then dropped by the `> 0` test below with no trace —
-					// warn instead of discarding it in silence.
-					warnings = append(warnings, fmt.Sprintf(
-						"stock not carried: negative quantity %g in source file", it.Stock))
-				case it.HasStock && it.Stock > 0 && locErr != nil:
-					// EnsureStockLocation ran once, outside the loop; when it
-					// failed, every row with stock would otherwise lose it
-					// silently while still reading "created" — the exact bug
-					// this card fixes, one branch over.
-					warnings = append(warnings, "stock not carried: "+locErr.Error())
-				case it.HasStock && it.Stock > 0:
-					if _, err := pos.RecordStockMovement(r.Context(), d.Db, pos.StockMovementInput{
-						ItemID: itemID, LocationID: locID, Type: "receive",
-						Quantity: it.Stock, Reason: "catalog import",
-						ActorID: getSessionUserID(r),
-					}); err != nil {
-						warnings = append(warnings, "stock not carried: "+err.Error())
-					} else {
-						// Mirror imported stock to inventory connectors
-						// (best-effort, non-blocking).
-						publishStockAdjusted(r.Context(), d, plugins.StockAdjustedEvent{
-							ItemID:   itemID,
-							SKU:      it.SKU,
-							DeltaQty: it.Stock,
-							Reason:   "received",
-							Location: locID,
-						})
-					}
+				if stockWarning != "" {
+					warnings = append(warnings, stockWarning)
+				}
+				if stockRecorded {
+					// Mirror imported stock to inventory connectors
+					// (best-effort, non-blocking) — only once the movement
+					// actually committed, not merely once it was attempted.
+					publishStockAdjusted(r.Context(), d, plugins.StockAdjustedEvent{
+						ItemID:   itemID,
+						SKU:      it.SKU,
+						DeltaQty: it.Stock,
+						Reason:   "received",
+						Location: locID,
+					})
 				}
 				if len(warnings) > 0 {
 					rows[i].Status = "created; " + strings.Join(warnings, "; ")

@@ -630,3 +630,148 @@ func TestImport_UnsupportedBarcodeShapeWarnsButStillImports(t *testing.T) {
 		t.Fatalf("row should warn that the 4011 barcode was not imported, got: %s", resp)
 	}
 }
+
+// TestImport_UnexpectedItemInsertFailureRollsBackWholeRow covers ut-docs#310:
+// a genuine unexpected DB-level failure in the item insert itself must fail
+// the row and must never reach the barcode/stock-movement steps for it.
+//
+// Note on what this test does and doesn't prove: an item-insert failure
+// already produced this exact outcome before #310 (pos.CreateItem's own
+// autocommit insert failing meant nothing was ever created, so there was
+// nothing to roll back) — this is a same-observable-behavior regression
+// test for that path under the new transaction-based code, not evidence
+// that the transaction itself changed anything here. See
+// TestImport_StockRecordingFailureLaterInTheMovementRollsBackJustTheMovement
+// below for a failure the transaction genuinely newly protects against.
+func TestImport_UnexpectedItemInsertFailureRollsBackWholeRow(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	// Force the item insert itself to fail deterministically for one
+	// specific SKU, simulating a genuine unexpected DB-level error (a
+	// constraint, a full disk) rather than any of the expected business
+	// cases (barcode conflict, unsupported shape, no stock location).
+	if _, err := dp.Db.Exec(`
+CREATE TRIGGER import_test_item_fail BEFORE INSERT ON items
+WHEN NEW.sku = 'FORCE-FAIL'
+BEGIN SELECT RAISE(ABORT, 'simulated item insert failure'); END;`); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Barcode,Price,Category,In stock\n" +
+		"Widget,FORCE-FAIL,5012345678900,1.50,Snacks,7\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = 'FORCE-FAIL'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("item must not exist after an unexpected DB-level failure (n=%d err=%v)", n, err)
+	}
+	if !strings.Contains(resp, "failed:") {
+		t.Fatalf("row should report as failed, not created/warned, got: %s", resp)
+	}
+	// The barcode and stock-movement steps run after the transaction
+	// commits — a rolled-back item must mean neither was ever attempted.
+	var barcodeCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE barcode = '5012345678900'`).Scan(&barcodeCount); err != nil {
+		t.Fatalf("count barcodes: %v", err)
+	}
+	if barcodeCount != 0 {
+		t.Fatalf("barcode must not be attached when the item it belongs to was rolled back, got %d rows", barcodeCount)
+	}
+	var movementCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM stock_movements WHERE type = 'receive' AND quantity = 7`).Scan(&movementCount); err != nil {
+		t.Fatalf("count stock movements: %v", err)
+	}
+	if movementCount != 0 {
+		t.Fatalf("stock movement must not have been attempted for a rolled-back row, got %d rows", movementCount)
+	}
+}
+
+// TestImport_StockRecordingFailureLaterInTheMovementRollsBackJustTheMovement
+// covers the actual gap ut-docs#310's review found: RecordStockMovement
+// writes FOUR statements (stock_movements insert, inventory update, a
+// conditional inventory insert, then an audit insert), and — unlike the
+// pre-#310 code path, which gave RecordStockMovement its own tx to fully
+// roll back on any failure — this row's stock-movement call now runs
+// against the row's OWN shared *sql.Tx. If that call still failed on a
+// statement AFTER the first without its own compensating rollback, whatever
+// already landed (e.g. the stock_movements row) would ride along into the
+// row's tx.Commit() as an orphan: the row would read "stock not carried"
+// while a stock_movements row silently existed with no matching inventory
+// change. TestImport_StockRecordingFailureWarnsAndDoesNotPublish only
+// forces failure on the FIRST statement (the stock_movements insert
+// itself), so it can't catch this — nothing has been written yet at that
+// point, orphan or not.
+//
+// This test forces the SECOND statement (the inventory UPDATE) to fail
+// instead, via a trigger keyed to the exact post-update quantity this row
+// produces (a fresh item's inventory row starts at 0, so "In stock" = 13
+// updates it to exactly 13) — deterministic without needing to know the
+// item's generated id ahead of time.
+//
+// If RecordStockMovementSavepoint's SAVEPOINT/ROLLBACK TO were removed
+// (reverting the import loop to calling RecordStockMovement directly on the
+// shared tx), this test would fail: the stock_movements row would survive
+// into the committed row, orphaned, and the count assertion below would be 1
+// instead of 0.
+func TestImport_StockRecordingFailureLaterInTheMovementRollsBackJustTheMovement(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	if _, err := dp.Db.Exec(`
+CREATE TRIGGER import_test_inventory_update_fail BEFORE UPDATE ON inventory
+WHEN NEW.quantity = 13
+BEGIN SELECT RAISE(ABORT, 'simulated inventory update failure'); END;`); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Barcode,Price,Category,In stock\n" +
+		"Widget,W-SAVEPOINT,,1.50,Snacks,13\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	// The item itself must still be created (this is a warn-and-continue
+	// case, same as every other stock-recording failure) — with its
+	// inventory row present but untouched (quantity 0, not 13 and not some
+	// other partial value).
+	var itemID string
+	if err := dp.Db.QueryRow(`SELECT id FROM items WHERE sku = 'W-SAVEPOINT'`).Scan(&itemID); err != nil {
+		t.Fatalf("item should still be created despite the forced inventory-update failure: %v", err)
+	}
+	if !strings.Contains(resp, "stock not carried") {
+		t.Fatalf("row should warn that stock was not carried, got: %s", resp)
+	}
+	var qty float64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(quantity,0) FROM inventory WHERE item_id = ?`, itemID).Scan(&qty); err != nil {
+		t.Fatalf("read inventory: %v", err)
+	}
+	if qty != 0 {
+		t.Fatalf("inventory quantity must be untouched (0), got %v — a partial update survived", qty)
+	}
+	// The whole point: the stock_movements row from the failed attempt
+	// must NOT have survived into the committed transaction as an orphan.
+	var movementCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM stock_movements WHERE item_id = ?`, itemID).Scan(&movementCount); err != nil {
+		t.Fatalf("count stock movements: %v", err)
+	}
+	if movementCount != 0 {
+		t.Fatalf("stock_movements must not retain an orphaned row when the update after it failed, got %d rows", movementCount)
+	}
+}
