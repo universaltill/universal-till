@@ -63,6 +63,15 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   HTMX UI, no SPA (ADR-0008).
 - Behaviour changes update the affected doc (`docs/reference/`, guides,
   `architecture/plugin-architecture.md`) in the same session.
+- **The user manual ships with the feature, not after it.** Anything a
+  shop owner sees or does that a change adds, removes or alters gets its
+  topic under `web/help/` updated in the *same branch* — the prose, the
+  steps, and a regenerated screenshot (`make docs-shots`) where the
+  screen itself changed. A new page needs a manual topic declaring its
+  `routes:` and a `?` link, enforced by
+  `scripts/ci/guard-help-topics.sh`. Standing instruction from the
+  product owner, 2026-08-06 (ut-docs#324) — the manual is only worth
+  having if it is never behind the product.
 - **`README.md` is kept up to date every time it goes stale** — any change
   that affects what the README claims (features, setup steps, badges,
   version floors, structure) gets a README edit in the same session, not a
