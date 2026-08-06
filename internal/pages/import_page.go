@@ -40,29 +40,6 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		})(w, r)
 	})
 
-	// G22b — catalog export. The CSV round-trips with our own importer
-	// (column names come from its synonym table), so "export → import on a
-	// fresh till" is a supported migration path, not an accident.
-	writeCatalogCSV := func(out io.Writer, rows []data.ExportRow, decimals int) {
-		cw := csv.NewWriter(out)
-		_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
-			"Description", "Sold by weight", "In stock", "Active"})
-		yn := func(b bool) string {
-			if b {
-				return "Y"
-			}
-			return "N"
-		}
-		for _, e := range rows {
-			_ = cw.Write([]string{
-				e.Name, e.SKU, e.Barcode, minorToDecimal(e.PriceMinor, decimals),
-				e.Category, e.Description, yn(e.IsWeighed),
-				strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
-			})
-		}
-		cw.Flush()
-	}
-
 	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
@@ -436,6 +413,40 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))
 	})
+}
+
+// writeCatalogCSV is G22b's catalog export writer. The CSV round-trips
+// with our own importer (column names come from its synonym table), so
+// "export → import on a fresh till" is a supported migration path, not an
+// accident — which is exactly why the free-typed columns below go through
+// csvSafe rather than being left raw: Name/SKU/Barcode/Category/
+// Description are reachable by an attacker via an uploaded catalog CSV
+// (POST /api/import) and would otherwise detonate as a live formula for
+// whoever next opens an export in Excel/LibreOffice (ut-docs#321, same
+// defect class as ut-docs#195's invoice/audit fix). Price/stock/weighed/
+// active are system-formatted, not free text, so they're left untouched —
+// blanket-sanitizing every column corrupted a legitimate negative amount
+// last time this was tried (see #195's review). csvSafe's defusing "'" is
+// stripped back off by catimport's stripCSVDefuse on re-import, so the
+// round trip stays lossless — see that function's doc comment.
+func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
+	cw := csv.NewWriter(out)
+	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
+		"Description", "Sold by weight", "In stock", "Active"})
+	yn := func(b bool) string {
+		if b {
+			return "Y"
+		}
+		return "N"
+	}
+	for _, e := range rows {
+		_ = cw.Write([]string{
+			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
+			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
+			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
+		})
+	}
+	cw.Flush()
 }
 
 // translateImportIssue turns a catimport row-level Issue reason code into
