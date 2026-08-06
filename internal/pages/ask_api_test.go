@@ -143,11 +143,67 @@ func TestAskTools_RunFunctionsCallRealRepoMethodsWithParsedArgs(t *testing.T) {
 		t.Fatalf("payment_breakdown: got %+v", pay)
 	}
 
-	if _, err := tools["stock_levels"].Run(ctx, map[string]any{}); err != nil {
+	stock, err := tools["stock_levels"].Run(ctx, map[string]any{})
+	if err != nil {
 		t.Fatalf("stock_levels: %v", err)
 	}
+	levels, ok := stock.([]data.LowStockItem)
+	if !ok || len(levels) != 1 || levels[0].ItemID != "itm1" {
+		t.Fatalf("stock_levels: got %+v", stock)
+	}
+
 	if _, err := tools["till_activity_summary"].Run(ctx, map[string]any{}); err != nil {
 		t.Fatalf("till_activity_summary: %v", err)
+	}
+}
+
+// TestStockLevelsToolReturnsSnakeCaseJSON guards ut-docs#277: the
+// stock_levels AI tool's []data.LowStockItem result is marshalled to JSON
+// (by the AI provider's tool-call plumbing) and must carry this repo's
+// snake_case wire convention (universal-till/CLAUDE.md), not Go's default
+// PascalCase field names.
+func TestStockLevelsToolReturnsSnakeCaseJSON(t *testing.T) {
+	_, _, db := newAskAPITestDeps(t)
+	repo := data.NewPOSRepo(db)
+	var stockLevels ai.AskTool
+	for _, tool := range askTools(repo) {
+		if tool.Name == "stock_levels" {
+			stockLevels = tool
+		}
+	}
+	if stockLevels.Run == nil {
+		t.Fatal("expected a stock_levels tool to be registered")
+	}
+
+	result, err := stockLevels.Run(t.Context(), map[string]any{})
+	if err != nil {
+		t.Fatalf("stock_levels: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal stock_levels result: %v", err)
+	}
+
+	var decoded []map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal stock_levels JSON: %v", err)
+	}
+	if len(decoded) != 1 {
+		t.Fatalf("expected 1 stock level row, got %d: %s", len(decoded), raw)
+	}
+
+	wantKeys := []string{"item_id", "name", "sku", "location_id", "location_name", "current_qty", "reorder_level", "lead_time_days"}
+	for _, key := range wantKeys {
+		if _, ok := decoded[0][key]; !ok {
+			t.Errorf("expected snake_case key %q in stock_levels JSON, got %s", key, raw)
+		}
+	}
+
+	pascalKeys := []string{"ItemID", "Name", "SKU", "LocationID", "LocationName", "CurrentQty", "ReorderLevel", "LeadTimeDays"}
+	for _, key := range pascalKeys {
+		if _, ok := decoded[0][key]; ok {
+			t.Errorf("stock_levels JSON leaked PascalCase key %q against this repo's snake_case convention: %s", key, raw)
+		}
 	}
 }
 
