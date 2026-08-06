@@ -1219,3 +1219,15 @@ body.login-screen {
 .bugreport-capture { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; align-items: start; }
 .bugreport-capture p { margin: 0 0 .35rem; }
 @media (max-width: 30rem) { .bugreport-capture { grid-template-columns: 1fr; } }
+/* Screenshot thumbnails (ut-docs#347): a wrapping strip so any number of
+   captures stays inside the panel's own scroll rather than growing the
+   fixed-position band. Own full-width row (see the comment on the markup
+   above) — not a third .bugreport-capture column — because the panel's
+   26rem inline-size leaves no room for a third column's label + button. */
+.bugreport-thumbs { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+.bugreport-thumb { position: relative; display: inline-block; inline-size: 4.5rem; block-size: 4.5rem; }
+.bugreport-thumb img { inline-size: 100%; block-size: 100%; object-fit: cover; border-radius: .3rem; border: 1px solid var(--border, #e2e8f0); }
+.bugreport-thumb-remove { position: absolute; inset-block-start: -.4rem; inset-inline-end: -.4rem;
+  inline-size: 1.3rem; block-size: 1.3rem; border-radius: 50%; border: 1px solid var(--border, #e2e8f0);
+  background: var(--surface, #fff); color: inherit; cursor: pointer; font-size: .7rem; line-height: 1; padding: 0; }
+.bugreport-thumb-remove:hover, .bugreport-thumb-remove:focus-visible { background: var(--surface-2, #f8fafc); }
