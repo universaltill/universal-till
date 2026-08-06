@@ -32,6 +32,48 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await expect(page.locator('body')).toContainText('Choose your language');
   });
 
+  // ut-docs#344. Two defects, one screen, and only a real browser catches
+  // either: the page never loaded htmx.min.js, so the hx-post was inert
+  // markup and the Join button did nothing at all; and htmx 1.9 DISCARDS the
+  // response body on a non-2xx status, while every failure of
+  // POST /api/setup/join answers 502. So even once htmx loaded, the entire
+  // error path still rendered nothing — an unreachable primary, an expired or
+  // reused code, or a mistyped paste all looked identical to a dead button.
+  //
+  // A Go render test cannot see either bug: the first needs a browser to
+  // execute the attribute, the second needs one to perform the swap. This
+  // drives the real form with a deliberately bad code and asserts the operator
+  // is actually told what went wrong. Runs before the wizard is completed,
+  // because /api/setup/join is first-boot-only.
+  // Deliberately drives a FAILING request, so it runs in its own page rather
+  // than the shared one: the 502 below emits a console error, and the shared
+  // watchConsole assertion is checked by every later test in this serial
+  // describe. Isolating it here keeps that guard strict for everyone else
+  // instead of exempting "502" globally. No session is needed — the join step
+  // is first-boot-only, before any login exists.
+  test('a bad pairing code reports the error instead of silently doing nothing', async ({ browser }) => {
+    const ctx = await browser.newContext();
+    const p = await ctx.newPage();
+    try {
+      await p.goto('/setup');
+      await p.locator('button:visible', { hasText: 'Join an existing shop' }).click();
+
+      const msg = p.locator('#setup-join-msg');
+      await expect(msg).toBeEmpty();
+
+      await p.locator('input[name="code"]:visible').fill('not-a-real-pairing-code');
+      await p.locator('button:visible', { hasText: 'Join' }).click();
+
+      // The operator must SEE a failure. Without the htmx script tag no
+      // request is made at all; without the htmx:beforeSwap handler the 502
+      // body is dropped. Either way this stays empty and the test fails.
+      await expect(msg).not.toBeEmpty({ timeout: 15_000 });
+      await expect(msg).toContainText('✗');
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test('completing the wizard creates the admin PIN and logs in', async () => {
     // Step 1 · language — just advance.
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
