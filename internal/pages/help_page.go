@@ -1,8 +1,10 @@
 package pages
 
 import (
+	"io/fs"
 	"log"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 
@@ -52,6 +54,30 @@ func registerHelp(mux *http.ServeMux, d *common.Deps) {
 	})
 	mux.HandleFunc("GET /help/{topic}", func(w http.ResponseWriter, r *http.Request) {
 		renderHelpPage(w, r, d, r.PathValue("topic"))
+	})
+	// Generated topic screenshots (make docs-shots → web/help/img/…),
+	// embedded alongside the topics so the manual's images work with the
+	// line down, same as its prose.
+	mux.HandleFunc("GET /help/img/{locale}/{file}", func(w http.ResponseWriter, r *http.Request) {
+		locale, file := r.PathValue("locale"), r.PathValue("file")
+		// Path values are single segments, but encoded dots/slashes decode
+		// INTO them — reject anything that isn't a bare "<slug>.png" lookup,
+		// same rule as manual.Topic's id check. Only PNGs are ever generated,
+		// so only PNGs are served.
+		if strings.ContainsAny(locale, "/\\") || strings.Contains(locale, "..") ||
+			strings.ContainsAny(file, "/\\") || strings.Contains(file, "..") ||
+			!strings.HasSuffix(file, ".png") {
+			http.NotFound(w, r)
+			return
+		}
+		b, err := fs.ReadFile(uiassets.HelpFS, path.Join("help", "img", locale, file))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		_, _ = w.Write(b)
 	})
 }
 
