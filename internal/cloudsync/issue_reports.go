@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -59,6 +60,15 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 	}
 	if b.VideoPath != "" {
 		if err := attachFile(w, "video", "video.webm", b.VideoPath); err != nil {
+			return err
+		}
+	}
+	// Screenshots (ut-docs#347): one repeated "image" field per captured
+	// screenshot, in capture order (ImagePaths is already sorted by
+	// issuereport.Pending()). A repeated field name is valid multipart and
+	// is how the cloud side reads them back as a slice.
+	for _, p := range b.ImagePaths {
+		if err := attachFile(w, "image", filepath.Base(p), p); err != nil {
 			return err
 		}
 	}

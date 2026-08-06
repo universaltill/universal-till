@@ -114,7 +114,32 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		id, err := issuereport.Save(note, audio, video)
+		// Screenshots (ut-docs#347) are a repeatable field — unlike the
+		// single-file audio/video fields above, so they come from
+		// r.MultipartForm.File directly rather than r.FormFile, which only
+		// ever returns the first match. Same cap-or-reject treatment as
+		// audio/video: a truncated/oversized screenshot must be a 400, not a
+		// silently corrupt saved file, and any failure here must not leave a
+		// partial bundle behind — so nothing is saved yet at this point.
+		var images [][]byte
+		if r.MultipartForm != nil {
+			for _, fh := range r.MultipartForm.File["image"] {
+				f, err := fh.Open()
+				if err != nil {
+					http.Error(w, "screenshot unreadable", http.StatusBadRequest)
+					return
+				}
+				img, err := readCappedOrReject(f, issueReportMaxBytes)
+				f.Close()
+				if err != nil {
+					http.Error(w, "screenshot too large", http.StatusBadRequest)
+					return
+				}
+				images = append(images, img)
+			}
+		}
+
+		id, err := issuereport.Save(note, audio, video, images)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
