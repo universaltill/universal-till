@@ -19,6 +19,19 @@ type CatalogRepo struct {
 
 var ErrInvalidEAN13 = errors.New("invalid EAN-13 barcode")
 
+// BarcodeConflictError reports that a barcode is already assigned to a
+// different item/variant. It carries the conflicting target as structured
+// data (not just prose) so a caller can resolve it to a name/SKU for the
+// operator instead of exposing the raw internal ID (ut-docs#303).
+type BarcodeConflictError struct {
+	TargetType string // "item" or "variant"
+	TargetID   string
+}
+
+func (e *BarcodeConflictError) Error() string {
+	return fmt.Sprintf("barcode already assigned to %s %s", e.TargetType, e.TargetID)
+}
+
 func NewCatalogRepo(db *sql.DB) *CatalogRepo {
 	return &CatalogRepo{db: db}
 }
@@ -997,26 +1010,26 @@ func ensureBarcodeAvailable(ctx context.Context, db *sql.Conn, barcode, targetTy
 	case "item":
 		if err := db.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
 			if existing != targetID {
-				return fmt.Errorf("barcode already assigned to item %s", existing)
+				return &BarcodeConflictError{TargetType: "item", TargetID: existing}
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err := db.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
-			return fmt.Errorf("barcode already assigned to variant %s", existing)
+			return &BarcodeConflictError{TargetType: "variant", TargetID: existing}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 	case "variant":
 		if err := db.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
 			if existing != targetID {
-				return fmt.Errorf("barcode already assigned to variant %s", existing)
+				return &BarcodeConflictError{TargetType: "variant", TargetID: existing}
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err := db.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
-			return fmt.Errorf("barcode already assigned to item %s", existing)
+			return &BarcodeConflictError{TargetType: "item", TargetID: existing}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
