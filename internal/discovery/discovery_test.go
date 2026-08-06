@@ -152,6 +152,14 @@ func TestTillID_ConcurrentCallersOnFreshDBConverge(t *testing.T) {
 				t.Fatalf("round %d: caller %d got id %q, caller 0 got %q — concurrent boot callers disagree on this till's id", round, i, got, want)
 			}
 		}
+
+		stored, ok, err := settings.Get(ctx, TillIDSettingKey)
+		if err != nil {
+			t.Fatalf("round %d: Get: %v", round, err)
+		}
+		if !ok || stored != want {
+			t.Fatalf("round %d: persisted till id %q (ok=%v) doesn't match what every caller agreed on (%q)", round, stored, ok, want)
+		}
 	}
 }
 

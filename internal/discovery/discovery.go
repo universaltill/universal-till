@@ -28,13 +28,25 @@ const TillIDSettingKey = "lan_discovery.till_id"
 // which is why this is the one function anything needing this id should
 // call rather than each generating its own.
 //
-// Uses SettingsRepo.GetOrCreate rather than a Get-then-Set here: on a fresh
-// DB, two concurrent callers doing read-then-write can each miss the Get,
-// each generate a different uuid, and last-Set-wins — the caller holding the
-// losing uuid then returns an id nothing else agrees on (ut-docs#271).
-// GetOrCreate resolves that atomically in the data layer so every caller,
-// racing or not, converges on the same persisted value.
+// Falls back to SettingsRepo.GetOrCreate, not a Get-then-Set of its own,
+// once the id doesn't exist yet: on a fresh DB, two concurrent callers doing
+// read-then-write can each miss the Get, each generate a different uuid,
+// and last-Set-wins — the caller holding the losing uuid then returns an id
+// nothing else agrees on (ut-docs#271). GetOrCreate resolves that atomically
+// in the data layer so every caller, racing or not, converges on the same
+// persisted value. The steady-state case (id already exists, true on every
+// call after the first) is checked with a plain Get first — GetOrCreate
+// takes a database-wide write lock even when nothing needs writing, and
+// this id changes at most once per install, so paying that cost on every
+// call (this is polled every 30s by the manager's pending-pairings view)
+// would be pure waste; the race this whole function exists to close only
+// happens on the absent path anyway.
 func TillID(ctx context.Context, settings *data.SettingsRepo) (string, error) {
+	if v, ok, err := settings.Get(ctx, TillIDSettingKey); err != nil {
+		return "", err
+	} else if ok {
+		return v, nil
+	}
 	v, err := settings.GetOrCreate(ctx, TillIDSettingKey, uuid.NewString())
 	if err != nil {
 		return "", err

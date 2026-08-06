@@ -61,6 +61,17 @@ ON CONFLICT(key) DO UPDATE SET
 // INSERT actually lands is the value every caller's SELECT then sees — never
 // two different generated values with "last Set wins" silently discarding
 // one (ut-docs#271).
+//
+// The INSERT must come before the SELECT, not after — this DSN opens a plain
+// deferred transaction (no `_txlock`), and a deferred tx that reads first
+// takes only a SHARED lock; a later writer among concurrent callers then
+// can't upgrade SHARED→RESERVED, which SQLite treats as a locking conflict
+// its busy handler does NOT retry (unlike an ordinary "someone else holds
+// the lock" wait). Write-then-read here means the transaction takes RESERVED
+// immediately at the INSERT, so a losing connection just waits on
+// busy_timeout like normal instead of failing outright. Don't reorder this
+// to "read first to skip the pointless write" — it looks like a harmless
+// tidy-up and reintroduces the deadlock-class failure instead.
 func (r *SettingsRepo) GetOrCreate(ctx context.Context, key, ifAbsent string) (string, error) {
 	var err error
 	done := settingsObs.trace("get_or_create")
