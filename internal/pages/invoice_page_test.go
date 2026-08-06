@@ -400,6 +400,110 @@ func TestGetInvoicesExport_CSVHasCreditNoteAsNegative(t *testing.T) {
 	}
 }
 
+// ut-docs#195: CustomerName/CustomerVATNo are free-typed by whoever issues
+// an invoice, so a crafted formula-shaped value must come out defused
+// (leading apostrophe) rather than reaching Excel/LibreOffice as a live
+// formula — while the invoice's own signed amounts (a credit note is
+// legitimately negative, per the test above) must NOT be touched by the
+// same mitigation.
+func TestGetInvoicesExport_CustomerFieldsAreCSVFormulaSafe(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newInvoiceTestDeps(t)
+	setSeller(t, dp)
+	ctx := context.Background()
+	seedInvoiceableSale(t, dp, "sale1", "R001", 120, 20)
+	repo := data.NewPOSRepo(dp.Db)
+	sale, _, err := repo.GetSaleDetail(ctx, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const malicious = `=cmd|'/c calc'!A1`
+	if _, err := issueInvoice(ctx, dp, sale, "invoice", "", malicious, "", malicious, "user1"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/invoices/export", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("expected valid CSV, got parse error: %v\nbody:\n%s", err, rec.Body.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected header + 1 data row, got %d: %v", len(rows), rows)
+	}
+	const customerCol, vatNoCol, grossCol = 3, 4, 8
+	data := rows[1]
+	if got := data[customerCol]; got != "'"+malicious {
+		t.Fatalf("CustomerName not defused: got %q, want %q", got, "'"+malicious)
+	}
+	if got := data[vatNoCol]; got != "'"+malicious {
+		t.Fatalf("CustomerVATNo not defused: got %q, want %q", got, "'"+malicious)
+	}
+	if got := data[grossCol]; got != "1.20" {
+		t.Fatalf("Gross must be untouched by the sanitizer, got %q", got)
+	}
+}
+
+// ut-docs#195 review: DisplayNo and ReceiptNo look system-generated but
+// aren't fully — DisplayNo embeds sync.receipt_prefix (a setting writable as
+// free text via the generic /api/settings/upsert, no allowlist) and
+// ReceiptNo is the sale's own receipt number, generated from that same
+// prefix in production. Both must come out defused too, or the ticket's own
+// acceptance criterion ("a crafted value in ANY exported field") isn't met.
+func TestGetInvoicesExport_DisplayNoAndReceiptNoAreCSVFormulaSafe(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newInvoiceTestDeps(t)
+	setSeller(t, dp)
+	ctx := context.Background()
+	const malicious = `=cmd|'/c calc'!A1`
+	// A manager can set this via POST /api/settings/upsert with no
+	// validation (settings_page.go's generic upsert) — issueInvoice reads
+	// it straight into the new invoice's Series/DisplayNo.
+	if err := dp.Settings.Set(ctx, "sync.receipt_prefix", malicious); err != nil {
+		t.Fatal(err)
+	}
+	// The sale's own receipt_no, in production also derived from the same
+	// prefix (pos_repo.go's nextReceiptNo) — seeded directly here to
+	// exercise the export's defusing independent of that generation path.
+	seedInvoiceableSale(t, dp, "sale1", malicious, 120, 20)
+	repo := data.NewPOSRepo(dp.Db)
+	sale, _, err := repo.GetSaleDetail(ctx, malicious)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := issueInvoice(ctx, dp, sale, "invoice", "", "Jane Doe", "", "", "user1"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/invoices/export", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("expected valid CSV, got parse error: %v\nbody:\n%s", err, rec.Body.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected header + 1 data row, got %d: %v", len(rows), rows)
+	}
+	const invoiceCol, receiptCol = 0, 5
+	data := rows[1]
+	if got := data[invoiceCol]; !strings.HasPrefix(got, "'"+malicious) {
+		t.Fatalf("DisplayNo not defused: got %q, want prefix %q", got, "'"+malicious)
+	}
+	if got := data[receiptCol]; got != "'"+malicious {
+		t.Fatalf("ReceiptNo not defused: got %q, want %q", got, "'"+malicious)
+	}
+}
+
 func TestGetInvoiceByDisplayNo_NotFound(t *testing.T) {
 	mux, _ := newInvoiceTestDeps(t)
 	rec := httptest.NewRecorder()
