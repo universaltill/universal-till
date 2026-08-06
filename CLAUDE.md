@@ -68,10 +68,14 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   topic under `web/help/` updated in the *same branch* — the prose, the
   steps, and a regenerated screenshot (`make docs-shots`) where the
   screen itself changed. A new page needs a manual topic declaring its
-  `routes:` and a `?` link, enforced by
-  `scripts/ci/guard-help-topics.sh`. Standing instruction from the
-  product owner, 2026-08-06 (ut-docs#324) — the manual is only worth
-  having if it is never behind the product.
+  `routes:` and a `?` link. `scripts/ci/guard-help-topics.sh` enforces the
+  manual's own internal consistency (no two topics claim the same route,
+  every topic's front matter parses, no locale is missing topics `en`
+  has) — it does NOT yet check that every registered app route has a
+  claiming topic in the first place; that page-route coverage check is
+  still a manual review step, tracked as a follow-up (ut-docs#365).
+  Standing instruction from the product owner, 2026-08-06 (ut-docs#324) —
+  the manual is only worth having if it is never behind the product.
 - **`README.md` is kept up to date every time it goes stale** — any change
   that affects what the README claims (features, setup steps, badges,
   version floors, structure) gets a README edit in the same session, not a

@@ -28,6 +28,11 @@ jobs:
         run: bash scripts/ci/guard-i18n.sh
       - name: Manual screenshot freshness guard
         run: bash scripts/ci/guard-docs-shots.sh
+      - name: Help-topic registry guard
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: bash scripts/ci/guard-help-topics.sh
       - name: Linux desktop webkit2gtk version guard
         run: bash scripts/ci/guard-webkit-version.sh
       - name: Kiosk launch flags guard
