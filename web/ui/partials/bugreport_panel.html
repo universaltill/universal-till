@@ -56,6 +56,19 @@
     </div>
   </div>
 
+  <!-- Screenshots (ut-docs#347) get their own full-width row below the two-
+       column grid rather than a third column in it: the panel's own
+       inline-size is capped at 26rem (app.css .bugreport-panel), so a third
+       column there would squeeze "Take screenshot" + a thumbnail strip into
+       ~8rem — exactly the kind of measured-band overflow an earlier review
+       already caught on this file (see the comment above). A new row costs
+       one more block of height, same as the voice/screen row above it. -->
+  <div class="set-gap">
+    <p><strong>{{ T "issuereport.screenshot_label" }}</strong></p>
+    <button type="button" class="btn secondary" id="ir-screenshot-btn">{{ T "issuereport.screenshot_capture" }}</button>
+    <div id="ir-screenshot-thumbs" class="bugreport-thumbs"></div>
+  </div>
+
   <!-- Recording ending on navigation is EXPECTED behaviour for this card
        (keeping it alive across navigation is ut-docs#349) — say so, and keep
        it next to the recorders it actually applies to. -->
@@ -78,6 +91,10 @@
     screenStop: "{{ T "issuereport.screen_stop" }}",
     screenUnsupported: "{{ T "issuereport.screen_unsupported" }}",
     screenError: "{{ T "issuereport.screen_error" }}",
+    screenshotCapture: "{{ T "issuereport.screenshot_capture" }}",
+    screenshotUnsupported: "{{ T "issuereport.screenshot_unsupported" }}",
+    screenshotError: "{{ T "issuereport.screenshot_error" }}",
+    screenshotRemove: "{{ T "issuereport.screenshot_remove" }}",
     saving: "{{ T "issuereport.saving" }}",
     saved: "{{ T "issuereport.saved" }}",
     saveError: "{{ T "issuereport.save_error" }}"
@@ -227,6 +244,100 @@
       });
     }
 
+    // Screenshots (ut-docs#347): a single still frame, not a recording — the
+    // display-media stream is torn down immediately after one frame is
+    // grabbed so the browser's screen-share indicator never stays lit for
+    // what the operator experiences as "take a screenshot". Each capture is
+    // appended to the array below (blob + its own thumbnail element) so
+    // several screenshots can ride along with one report.
+    var screenshotBtn = document.getElementById('ir-screenshot-btn');
+    var screenshotThumbs = document.getElementById('ir-screenshot-thumbs');
+    var screenshots = []; // { blob, thumbnailEl }
+
+    function addScreenshotThumb(blob) {
+      var wrap = document.createElement('span');
+      wrap.className = 'bugreport-thumb';
+      var img = document.createElement('img');
+      var objectURL = URL.createObjectURL(blob);
+      img.src = objectURL;
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'bugreport-thumb-remove';
+      remove.title = T.screenshotRemove;
+      remove.setAttribute('aria-label', T.screenshotRemove);
+      remove.textContent = '✕';
+      wrap.appendChild(img);
+      wrap.appendChild(remove);
+      screenshotThumbs.appendChild(wrap);
+      var entry = { blob: blob, thumbnailEl: wrap };
+      screenshots.push(entry);
+      remove.addEventListener('click', function () {
+        var i = screenshots.indexOf(entry);
+        if (i !== -1) screenshots.splice(i, 1);
+        wrap.remove();
+        // Revoke, or the discarded full-resolution PNG stays pinned in memory
+        // for the life of the document. Unlike the voice/screen previews —
+        // one each, overwritten on re-record — screenshots are explicitly
+        // add-and-remove, so a manager retaking a shot several times over a
+        // long till session accumulates every rejected capture.
+        URL.revokeObjectURL(objectURL);
+      });
+    }
+
+    function grabFrameFromStream(stream, done) {
+      var track = stream.getVideoTracks()[0];
+      if (typeof ImageCapture !== 'undefined') {
+        new ImageCapture(track).grabFrame().then(function (bitmap) {
+          var canvas = document.createElement('canvas');
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          canvas.getContext('2d').drawImage(bitmap, 0, 0);
+          canvas.toBlob(done, 'image/png');
+        }).catch(function () { done(null); });
+        return;
+      }
+      // Fallback for browsers without ImageCapture: play the stream into a
+      // hidden <video>, grab a frame once it has dimensions to draw.
+      var videoEl = document.createElement('video');
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      videoEl.srcObject = stream;
+      videoEl.addEventListener('loadedmetadata', function () {
+        videoEl.play().then(function () {
+          var canvas = document.createElement('canvas');
+          canvas.width = videoEl.videoWidth;
+          canvas.height = videoEl.videoHeight;
+          canvas.getContext('2d').drawImage(videoEl, 0, 0);
+          canvas.toBlob(done, 'image/png');
+        }).catch(function () { done(null); });
+      });
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      screenshotBtn.disabled = true;
+      screenshotBtn.textContent = T.screenshotUnsupported;
+    } else {
+      screenshotBtn.addEventListener('click', function () {
+        screenshotBtn.disabled = true;
+        navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (stream) {
+          grabFrameFromStream(stream, function (blob) {
+            // A still, not a recording: stop every track the instant the
+            // frame is captured rather than leaving the share indicator lit.
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            screenshotBtn.disabled = false;
+            if (!blob) {
+              statusEl.textContent = T.screenshotError;
+              return;
+            }
+            addScreenshotThumb(blob);
+          });
+        }).catch(function () {
+          screenshotBtn.disabled = false;
+          statusEl.textContent = T.screenshotError;
+        });
+      });
+    }
+
     // One press: POST the same FormData shape the standalone page used to
     // send, report the outcome inline — no navigation.
     saveBtn.addEventListener('click', function () {
@@ -241,6 +352,9 @@
       fd.append('note', note);
       if (voiceBlob) fd.append('audio', voiceBlob, 'audio.webm');
       if (screenBlob) fd.append('video', screenBlob, 'video.webm');
+      screenshots.forEach(function (s, i) {
+        fd.append('image', s.blob, 'image-' + i + '.png');
+      });
       fetch('/api/issue-reports', { method: 'POST', body: fd })
         .then(function (r) { if (!r.ok) throw new Error('save failed'); return r.json(); })
         .then(function () {

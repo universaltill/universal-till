@@ -2,6 +2,7 @@ package cloudsync
 
 import (
 	"context"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -124,11 +125,69 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 	}
 }
 
+// A bundle with screenshots must send each as its own "image" multipart
+// part (repeated field name), in ImagePaths order — the cloud side reads
+// them back as a slice.
+func TestUploadIssueReportSendsMultipleImageParts(t *testing.T) {
+	dir := t.TempDir()
+	var imagePaths []string
+	imageContents := []string{"fake-png-0", "fake-png-1", "fake-png-2"}
+	for i, content := range imageContents {
+		p := filepath.Join(dir, fmt.Sprintf("image-%d.png", i))
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write image fixture: %v", err)
+		}
+		imagePaths = append(imagePaths, p)
+	}
+	b := issuereport.Bundle{
+		Meta: issuereport.Meta{
+			ID:        "report-with-images",
+			Note:      "screenshots attached",
+			CreatedAt: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
+		},
+		Dir:        dir,
+		ImagePaths: imagePaths,
+	}
+
+	var gotImages [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Errorf("server: parse multipart: %v", err)
+			return
+		}
+		for _, fh := range r.MultipartForm.File["image"] {
+			f, err := fh.Open()
+			if err != nil {
+				t.Errorf("server: open image part: %v", err)
+				continue
+			}
+			data := make([]byte, fh.Size)
+			_, _ = f.Read(data)
+			f.Close()
+			gotImages = append(gotImages, data)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := uploadIssueReport(context.Background(), registeredCfg(srv.URL), b); err != nil {
+		t.Fatalf("uploadIssueReport: %v", err)
+	}
+	if len(gotImages) != len(imageContents) {
+		t.Fatalf("got %d image parts, want %d", len(gotImages), len(imageContents))
+	}
+	for i, want := range imageContents {
+		if string(gotImages[i]) != want {
+			t.Errorf("image part %d = %q, want %q", i, gotImages[i], want)
+		}
+	}
+}
+
 // A bundle with no video must omit the video part entirely rather than send
 // an empty one — attachFile's "only if VideoPath != ”" guard.
 func TestUploadIssueReportOmitsVideoWhenAbsent(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("no video", []byte("fake-audio"), nil); err != nil {
+	if _, err := issuereport.Save("no video", []byte("fake-audio"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, err := issuereport.Pending()
@@ -159,7 +218,7 @@ func TestUploadIssueReportOmitsVideoWhenAbsent(t *testing.T) {
 // rather than send an empty one — mirrors the existing video-absent case.
 func TestUploadIssueReportOmitsAudioWhenAbsent(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("typed only, no voice note", nil, nil); err != nil {
+	if _, err := issuereport.Save("typed only, no voice note", nil, nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, err := issuereport.Pending()
@@ -193,7 +252,7 @@ func TestUploadIssueReportOmitsAudioWhenAbsent(t *testing.T) {
 
 func TestUploadIssueReportUnregistered(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("note", []byte("a"), nil); err != nil {
+	if _, err := issuereport.Save("note", []byte("a"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, _ := issuereport.Pending()
@@ -205,7 +264,7 @@ func TestUploadIssueReportUnregistered(t *testing.T) {
 
 func TestUploadIssueReportNon200Fails(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("note", []byte("a"), nil); err != nil {
+	if _, err := issuereport.Save("note", []byte("a"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, _ := issuereport.Pending()
@@ -222,7 +281,7 @@ func TestUploadIssueReportNon200Fails(t *testing.T) {
 // disk between Pending() listing it and upload actually being attempted.
 func TestUploadIssueReportMissingAudioFileErrors(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("note", []byte("a"), nil); err != nil {
+	if _, err := issuereport.Save("note", []byte("a"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, _ := issuereport.Pending()
@@ -242,11 +301,11 @@ func TestUploadIssueReportMissingAudioFileErrors(t *testing.T) {
 // the cloud rejects must stay pending for the next tick to retry.
 func TestUploadPendingIssueReportsFullCycle(t *testing.T) {
 	withTempPendingDir(t)
-	okID, err := issuereport.Save("this one uploads", []byte("audio-ok"), nil)
+	okID, err := issuereport.Save("this one uploads", []byte("audio-ok"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save ok bundle: %v", err)
 	}
-	failID, err := issuereport.Save("this one fails", []byte("audio-fail"), nil)
+	failID, err := issuereport.Save("this one fails", []byte("audio-fail"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save failing bundle: %v", err)
 	}
@@ -299,7 +358,7 @@ func TestUploadPendingIssueReportsPendingListError(t *testing.T) {
 
 func TestAttachFileMultipartFormWritesRealBytes(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("note", []byte("hello-bytes"), nil); err != nil {
+	if _, err := issuereport.Save("note", []byte("hello-bytes"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, _ := issuereport.Pending()
