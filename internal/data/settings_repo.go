@@ -53,6 +53,55 @@ ON CONFLICT(key) DO UPDATE SET
 	return nil
 }
 
+// GetOrCreate atomically returns the current value for key, seeding it with
+// ifAbsent first if no row exists yet. Unlike a caller doing Get-then-Set
+// itself, two concurrent callers racing on the same not-yet-created key
+// converge on the SAME value: the INSERT...ON CONFLICT DO NOTHING and the
+// SELECT that reads it back run inside one transaction, so whichever caller's
+// INSERT actually lands is the value every caller's SELECT then sees — never
+// two different generated values with "last Set wins" silently discarding
+// one (ut-docs#271).
+//
+// The INSERT must come before the SELECT, not after — this DSN opens a plain
+// deferred transaction (no `_txlock`), and a deferred tx that reads first
+// takes only a SHARED lock; a later writer among concurrent callers then
+// can't upgrade SHARED→RESERVED, which SQLite treats as a locking conflict
+// its busy handler does NOT retry (unlike an ordinary "someone else holds
+// the lock" wait). Write-then-read here means the transaction takes RESERVED
+// immediately at the INSERT, so a losing connection just waits on
+// busy_timeout like normal instead of failing outright. Don't reorder this
+// to "read first to skip the pointless write" — it looks like a harmless
+// tidy-up and reintroduces the deadlock-class failure instead.
+func (r *SettingsRepo) GetOrCreate(ctx context.Context, key, ifAbsent string) (string, error) {
+	var err error
+	done := settingsObs.trace("get_or_create")
+	defer func() { done(err) }()
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", settingsObs.wrapf("get_or_create", "get-or-create setting %s", err, key)
+	}
+	defer tx.Rollback()
+
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO NOTHING
+`, key, ifAbsent, time.Now().UTC()); err != nil {
+		return "", settingsObs.wrapf("get_or_create", "get-or-create setting %s", err, key)
+	}
+
+	var val string
+	if err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&val); err != nil {
+		return "", settingsObs.wrapf("get_or_create", "get-or-create setting %s", err, key)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return "", settingsObs.wrapf("get_or_create", "get-or-create setting %s", err, key)
+	}
+	return val, nil
+}
+
 // SetMany upserts every key/value pair in one transaction — all or nothing.
 // Keys are written in sorted order so failures are deterministic.
 func (r *SettingsRepo) SetMany(ctx context.Context, kv map[string]string) error {
