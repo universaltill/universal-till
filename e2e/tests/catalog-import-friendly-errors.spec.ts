@@ -12,7 +12,25 @@ import { watchConsole } from './helpers';
 // warned row carries a real, geometrically-distinct visual treatment (not
 // just a class name — same standard as sale-screen-213.spec.ts) rather than
 // blending in with the clean rows around it.
+const ITEM_NAMES = ['Import Widget One', 'Import Widget Two', 'Import Widget Three', 'Import Widget Four'];
+
 test.describe('catalog import: friendly errors + translated statuses (ut-docs#303)', () => {
+  // The commit below creates REAL catalog rows (not a preview) with no
+  // thumbnail image. Left active, they pollute the shared demo till for
+  // every other spec on this server (e2e/README.md's rule) — specifically
+  // pages.spec.ts's /catalog console-error check, which then fails on the
+  // 404s a missing web/public/assets/items/<id>/thumb.png triggers for
+  // each one. Deactivate them here regardless of whether the test passed.
+  test.afterEach(async ({ page }) => {
+    await page.goto('/catalog');
+    for (const name of ITEM_NAMES) {
+      const row = page.locator(`.catalog-row[data-name="${name}"]`);
+      if ((await row.count()) === 0) continue;
+      const id = await row.first().getAttribute('data-id');
+      if (id) await page.request.post('/api/catalog/item/deactivate', { form: { id } });
+    }
+  });
+
   test('barcode-conflict row names the item, stays UUID-free, and is visually + textually distinct', async ({ page }) => {
     const assertClean = watchConsole(page);
 
