@@ -96,7 +96,7 @@ export function expectStacked(fields: FieldGeometry[], where: string) {
 // catalog row renders an unconditional `<img src=".../thumb.png">` with
 // `onerror="this.style.visibility='hidden'"` (web/ui/partials/catalog_table.html)
 // for items that never had a photo uploaded — a real, pre-existing, already
-// gracefully-handled miss, not a JS bug (see universaltill/ut-docs#317, filed
+// gracefully-handled miss, not a JS bug (see universaltill/ut-docs#319, filed
 // when this went from latent to visible: the seeded demo items all ship real
 // thumb.png files, but any item created afterwards — by hand or by import —
 // won't, and the shared e2e till server carries that state across every spec
@@ -122,5 +122,7 @@ export async function setOskMode(page: Page, mode: string) {
   await osk.selectOption(mode);
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/settings/osk')),
+    osk.locator('..').locator('button[type=submit]').click(),
   ]);
+  await page.waitForEvent('load');
 }
