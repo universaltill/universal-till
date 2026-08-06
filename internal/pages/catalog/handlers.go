@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	_ "image/jpeg"
 	"image/png"
@@ -284,11 +285,15 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
 				Barcode: barcode, ItemID: itemID, IsPrimary: true,
 			}); err != nil {
+				locale := httpx.ResolveLocale(w, r)
 				if errors.Is(err, data.ErrInvalidEAN13) {
-					http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "catalog.error.item_created_invalid_ean13"), http.StatusBadRequest)
+					http.Error(w, httpx.T(locale, "catalog.error.item_created_invalid_ean13"), http.StatusBadRequest)
 					return
 				}
-				http.Error(w, "item created, but barcode attach failed: "+err.Error(), http.StatusBadRequest)
+				// Name the conflicting item/variant for the operator instead
+				// of the raw internal ID that used to leak here (ut-docs#303).
+				reason := common.FriendlyBarcodeConflict(r.Context(), repo, locale, err)
+				http.Error(w, fmt.Sprintf(httpx.T(locale, "catalog.error.item_created_barcode_failed"), reason), http.StatusBadRequest)
 				return
 			}
 		}
@@ -651,11 +656,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			VariantID: variantID,
 			IsPrimary: isPrimary,
 		}); err != nil {
+			locale := httpx.ResolveLocale(w, r)
 			if errors.Is(err, data.ErrInvalidEAN13) {
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "catalog.error.invalid_ean13"), http.StatusBadRequest)
+				http.Error(w, httpx.T(locale, "catalog.error.invalid_ean13"), http.StatusBadRequest)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			// Same fix as the auto-fill flow above (ut-docs#303): name the
+			// conflicting item/variant instead of leaking its raw ID.
+			http.Error(w, common.FriendlyBarcodeConflict(r.Context(), repo, locale, err), http.StatusBadRequest)
 			return
 		}
 		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
