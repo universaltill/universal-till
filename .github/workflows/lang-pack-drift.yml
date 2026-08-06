@@ -1,0 +1,37 @@
+name: lang-pack-drift
+on:
+  # Deliberately NOT on pull_request: an external ut-plugin-language-*
+  # repo lagging behind core is a real, worth-surfacing gap, but it must
+  # never block an unrelated core feature PR from merging just because a
+  # separately-maintained plugin repo hasn't caught up yet (ut-docs#299).
+  #
+  # push: branches: [main] is the actual fix this workflow exists for:
+  # universal-till gets pushed to constantly, so this trigger can never go
+  # 60 days idle the way a `schedule:` cron in a quiet plugin repo can
+  # (GitHub auto-disables scheduled workflows in public repos after 60
+  # days with no activity in THAT repo -- see the per-pack repos' own
+  # ci.yml for the limitation this supersedes). The push that adds a core
+  # locale key is the same push that now learns, within minutes, whether
+  # an external pack has fallen behind -- not up to a week later on a
+  # cron that might not even still be enabled.
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+# Least-privilege (independent review, ut-docs#299): this job executes an
+# unpinned shell script fetched from each pack repo's own `main` branch --
+# a repo this pipeline doesn't control write access to. `contents: read`
+# plus persist-credentials:false below means a compromised pack script has
+# no push-capable GITHUB_TOKEN sitting in the workspace to steal or abuse;
+# worst case is a wasted CI run, not a path back into this repo.
+permissions:
+  contents: read
+jobs:
+  lang-pack-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Language-pack drift guard against core base locale (ut-docs#299)
+        run: bash scripts/ci/check-lang-pack-drift.sh
