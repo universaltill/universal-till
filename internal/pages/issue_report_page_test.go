@@ -2,6 +2,7 @@ package pages
 
 import (
 	"bytes"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -153,6 +154,14 @@ func TestBugReportPanel_ClosedByDefault(t *testing.T) {
 
 func multipartIssueReport(t *testing.T, note string, includeAudio, includeVideo bool) (*bytes.Buffer, string) {
 	t.Helper()
+	return multipartIssueReportWithImages(t, note, includeAudio, includeVideo, nil)
+}
+
+// multipartIssueReportWithImages is multipartIssueReport plus repeated
+// "image" file parts — one per entry in images, matching how the browser
+// sends multiple captured screenshots under the same field name.
+func multipartIssueReportWithImages(t *testing.T, note string, includeAudio, includeVideo bool, images [][]byte) (*bytes.Buffer, string) {
+	t.Helper()
 	body := &bytes.Buffer{}
 	w := multipart.NewWriter(body)
 	if note != "" {
@@ -171,6 +180,13 @@ func multipartIssueReport(t *testing.T, note string, includeAudio, includeVideo 
 			t.Fatalf("create video field: %v", err)
 		}
 		_, _ = fw.Write([]byte("fake-video-bytes"))
+	}
+	for i, img := range images {
+		fw, err := w.CreateFormFile("image", fmt.Sprintf("image-%d.png", i))
+		if err != nil {
+			t.Fatalf("create image field: %v", err)
+		}
+		_, _ = fw.Write(img)
 	}
 	if err := w.Close(); err != nil {
 		t.Fatalf("close multipart writer: %v", err)
@@ -321,5 +337,99 @@ func TestIssueReportAPI_SavesBundleLocally(t *testing.T) {
 	}
 	if bundles[0].VideoPath == "" {
 		t.Error("expected VideoPath to be set — a screen recording was included")
+	}
+}
+
+// Multiple captured screenshots (ut-docs#347) must all be saved, in order,
+// on the resulting bundle.
+func TestIssueReportAPI_SavesMultipleImages(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	images := [][]byte{[]byte("fake-png-0"), []byte("fake-png-1"), []byte("fake-png-2")}
+	body, ctype := multipartIssueReportWithImages(t, "till froze on tender", false, false, images)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 saved bundle, got %d", len(bundles))
+	}
+	if len(bundles[0].ImagePaths) != 3 {
+		t.Fatalf("expected 3 ImagePaths, got %d: %v", len(bundles[0].ImagePaths), bundles[0].ImagePaths)
+	}
+}
+
+// A report with no screenshots at all (note-only, exactly today's behaviour)
+// must be entirely unaffected by the new image handling.
+func TestIssueReportAPI_ZeroImagesUnaffected(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	body, ctype := multipartIssueReportWithImages(t, "note only, no images", false, false, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 saved bundle, got %d", len(bundles))
+	}
+	if len(bundles[0].ImagePaths) != 0 {
+		t.Errorf("ImagePaths = %v, want empty", bundles[0].ImagePaths)
+	}
+}
+
+// One oversized screenshot among otherwise-valid ones must reject the whole
+// request with 400 and must not leave a partial bundle behind.
+//
+// Be precise about what this actually exercises: the 400 comes from
+// http.MaxBytesReader tripping inside ParseMultipartForm, NOT from the
+// per-image readCappedOrReject check — the body cap and the per-part cap are
+// both issueReportMaxBytes, so no single part can ever exceed the cap without
+// the whole body having exceeded it first. The per-image check is therefore
+// unreachable defensive code (exactly as the pre-existing audio/video checks
+// are), and this test would pass even with the image handling removed. It is
+// a guard on the outcome the operator sees — reject, save nothing — not on
+// the image code path.
+func TestIssueReportAPI_OversizedImageRejectsAndSavesNothing(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	oversized := bytes.Repeat([]byte("x"), issueReportMaxBytes+1)
+	images := [][]byte{[]byte("fake-png-0"), oversized}
+	body, ctype := multipartIssueReportWithImages(t, "till froze on tender", false, false, images)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized image = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 0 {
+		t.Fatalf("expected 0 saved bundles after a rejected oversized image, got %d", len(bundles))
 	}
 }

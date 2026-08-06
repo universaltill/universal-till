@@ -15,7 +15,7 @@ Something wrong with the till? Send a report — typed, spoken, or with a screen
 ## How to use it
 
 1. Click the 🐞 button in the top bar (managers and admins only). A small panel opens in the corner — the till underneath keeps working, so you can reproduce the problem while you describe it.
-2. Type what went wrong, or record a voice note; you can also record your screen. The till's recent warning and error logs are attached automatically.
+2. Type what went wrong, or record a voice note; you can also record your screen, or take a screenshot — press 📷 Take screenshot to attach a still image of what's on screen right now (you can add more than one). The till's recent warning and error logs are attached automatically.
 3. Press Save report. The report is stored on the till straight away — even offline — and uploads to the cloud automatically once the shop is online.
 4. Note: a recording stops if you move to another page, so send your report before navigating away.
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -17,14 +18,14 @@ func withTempPendingDir(t *testing.T) {
 
 func TestSaveRequiresNoteOrAudio(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := Save("", nil, nil); err == nil {
+	if _, err := Save("", nil, nil, nil); err == nil {
 		t.Fatal("expected error when both note and audio are empty")
 	}
 }
 
 func TestSaveAcceptsNoteOnly(t *testing.T) {
 	withTempPendingDir(t)
-	id, err := Save("printer jammed, no voice note", nil, nil)
+	id, err := Save("printer jammed, no voice note", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Save with note only: %v", err)
 	}
@@ -45,14 +46,14 @@ func TestSaveAcceptsNoteOnly(t *testing.T) {
 
 func TestSaveAcceptsAudioOnly(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := Save("", []byte("fake-audio"), nil); err != nil {
+	if _, err := Save("", []byte("fake-audio"), nil, nil); err != nil {
 		t.Fatalf("Save with audio only: %v", err)
 	}
 }
 
 func TestSaveThenPendingRoundTrip(t *testing.T) {
 	withTempPendingDir(t)
-	id, err := Save("printer jammed", []byte("fake-audio"), []byte("fake-video"))
+	id, err := Save("printer jammed", []byte("fake-audio"), []byte("fake-video"), nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -84,7 +85,7 @@ func TestSaveThenPendingRoundTrip(t *testing.T) {
 
 func TestSaveWithoutVideoLeavesVideoPathEmpty(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := Save("", []byte("fake-audio"), nil); err != nil {
+	if _, err := Save("", []byte("fake-audio"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, err := Pending()
@@ -101,14 +102,14 @@ func TestSaveWithoutVideoLeavesVideoPathEmpty(t *testing.T) {
 
 func TestPendingOrdersOldestFirst(t *testing.T) {
 	withTempPendingDir(t)
-	first, err := Save("first", []byte("a"), nil)
+	first, err := Save("first", []byte("a"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	// Force a distinguishable timestamp — two Saves in the same test can
 	// land in the same nanosecond-resolution instant on a fast machine.
 	time.Sleep(2 * time.Millisecond)
-	second, err := Save("second", []byte("a"), nil)
+	second, err := Save("second", []byte("a"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -128,7 +129,7 @@ func TestPendingOrdersOldestFirst(t *testing.T) {
 
 func TestDiscardRemovesBundle(t *testing.T) {
 	withTempPendingDir(t)
-	id, err := Save("note", []byte("a"), nil)
+	id, err := Save("note", []byte("a"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -166,12 +167,114 @@ func TestSaveCleansUpDirectoryOnWriteFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	if _, err := Save("note", []byte("audio"), nil); err == nil {
+	if _, err := Save("note", []byte("audio"), nil, nil); err == nil {
 		t.Fatal("expected Save to fail on a read-only bundle directory")
 	}
 
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("expected the failed bundle directory to be cleaned up, stat err = %v", err)
+	}
+}
+
+func TestSaveWithImagesRoundTrip(t *testing.T) {
+	withTempPendingDir(t)
+	images := [][]byte{[]byte("fake-png-0"), []byte("fake-png-1"), []byte("fake-png-2")}
+	id, err := Save("printer jammed", nil, nil, images)
+	if err != nil {
+		t.Fatalf("Save with images: %v", err)
+	}
+
+	bundles, err := Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 pending bundle, got %d", len(bundles))
+	}
+	b := bundles[0]
+	if b.Meta.ID != id {
+		t.Errorf("Meta.ID = %q, want %q", b.Meta.ID, id)
+	}
+	if len(b.ImagePaths) != 3 {
+		t.Fatalf("expected 3 ImagePaths, got %d: %v", len(b.ImagePaths), b.ImagePaths)
+	}
+	// Order must be deterministic and match capture order. NOTE: with only
+	// three images numeric and lexicographic order coincide, so this case
+	// cannot tell the two apart — TestPendingOrdersImagesNumericallyNotLexically
+	// below is what actually pins the ordering rule down.
+	for i, p := range b.ImagePaths {
+		want := filepath.Join(b.Dir, "image-"+strconv.Itoa(i)+".png")
+		if p != want {
+			t.Errorf("ImagePaths[%d] = %q, want %q", i, p, want)
+		}
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		if string(got) != string(images[i]) {
+			t.Errorf("image-%d content = %q, want %q", i, got, images[i])
+		}
+	}
+}
+
+// The whole reason Pending() sorts on the parsed index rather than taking
+// filepath.Glob's own order: Glob returns lexicographic order, which puts
+// image-10 before image-2. Capture order is what a reader of the report needs
+// ("then I clicked here, then this happened"), so it must survive double
+// digits. Twelve images is the smallest count that tells the two orders apart
+// — with three of them (TestSaveWithImagesRoundTrip) they are identical, so
+// that case passes with the sort removed entirely.
+func TestPendingOrdersImagesNumericallyNotLexically(t *testing.T) {
+	withTempPendingDir(t)
+	const n = 12
+	images := make([][]byte, n)
+	for i := range images {
+		images[i] = []byte("fake-png-" + strconv.Itoa(i))
+	}
+	if _, err := Save("twelve screenshots", nil, nil, images); err != nil {
+		t.Fatalf("Save with %d images: %v", n, err)
+	}
+
+	bundles, err := Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 pending bundle, got %d", len(bundles))
+	}
+	b := bundles[0]
+	if len(b.ImagePaths) != n {
+		t.Fatalf("expected %d ImagePaths, got %d: %v", n, len(b.ImagePaths), b.ImagePaths)
+	}
+	for i, p := range b.ImagePaths {
+		want := filepath.Join(b.Dir, "image-"+strconv.Itoa(i)+".png")
+		if p != want {
+			t.Fatalf("ImagePaths[%d] = %q, want %q — images are in lexicographic, not capture, order", i, p, want)
+		}
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		if string(got) != "fake-png-"+strconv.Itoa(i) {
+			t.Errorf("ImagePaths[%d] content = %q, want %q — path order and content order disagree", i, got, "fake-png-"+strconv.Itoa(i))
+		}
+	}
+}
+
+func TestSaveWithoutImagesLeavesImagePathsEmpty(t *testing.T) {
+	withTempPendingDir(t)
+	if _, err := Save("printer jammed", nil, nil, nil); err != nil {
+		t.Fatalf("Save without images: %v", err)
+	}
+	bundles, err := Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 pending bundle, got %d", len(bundles))
+	}
+	if len(bundles[0].ImagePaths) != 0 {
+		t.Errorf("ImagePaths = %v, want empty", bundles[0].ImagePaths)
 	}
 }
 

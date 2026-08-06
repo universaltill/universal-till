@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,16 +44,18 @@ type Meta struct {
 
 // Bundle is one saved, not-yet-uploaded capture on disk.
 type Bundle struct {
-	Meta      Meta
-	Dir       string
-	AudioPath string // "" when no voice note was captured
-	VideoPath string // "" when no screen recording was captured
+	Meta       Meta
+	Dir        string
+	AudioPath  string   // "" when no voice note was captured
+	VideoPath  string   // "" when no screen recording was captured
+	ImagePaths []string // empty when no screenshots were captured, else sorted capture order
 }
 
 // Save writes a new bundle to the pending queue. A description is required —
-// either typed (note) or spoken (audio) — but not both; video is always
-// optional.
-func Save(note string, audio, video []byte) (string, error) {
+// either typed (note) or spoken (audio) — but not both; video and images are
+// always optional. images is written as image-0.png, image-1.png, … in call
+// order (screenshot capture order, ut-docs#347).
+func Save(note string, audio, video []byte, images [][]byte) (string, error) {
 	if strings.TrimSpace(note) == "" && len(audio) == 0 {
 		return "", fmt.Errorf("issuereport: a description (typed note or voice recording) is required")
 	}
@@ -64,14 +67,14 @@ func Save(note string, audio, video []byte) (string, error) {
 	// Any failure past this point leaves a directory with no meta.json —
 	// invisible to Pending() and so never reachable by Discard() either.
 	// Clean it up here instead of leaking it permanently.
-	if err := saveBundleFiles(dir, id, note, audio, video); err != nil {
+	if err := saveBundleFiles(dir, id, note, audio, video, images); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	return id, nil
 }
 
-func saveBundleFiles(dir, id, note string, audio, video []byte) error {
+func saveBundleFiles(dir, id, note string, audio, video []byte, images [][]byte) error {
 	if len(audio) > 0 {
 		if err := os.WriteFile(filepath.Join(dir, "audio.webm"), audio, 0o644); err != nil {
 			return fmt.Errorf("issuereport: write audio: %w", err)
@@ -80,6 +83,12 @@ func saveBundleFiles(dir, id, note string, audio, video []byte) error {
 	if len(video) > 0 {
 		if err := os.WriteFile(filepath.Join(dir, "video.webm"), video, 0o644); err != nil {
 			return fmt.Errorf("issuereport: write video: %w", err)
+		}
+	}
+	for i, img := range images {
+		name := fmt.Sprintf("image-%d.png", i)
+		if err := os.WriteFile(filepath.Join(dir, name), img, 0o644); err != nil {
+			return fmt.Errorf("issuereport: write %s: %w", name, err)
 		}
 	}
 	meta := Meta{ID: id, Note: note, CreatedAt: time.Now().UTC(), Logs: logging.Recent()}
@@ -126,12 +135,33 @@ func Pending() ([]Bundle, error) {
 		if _, err := os.Stat(filepath.Join(dir, "video.webm")); err == nil {
 			b.VideoPath = filepath.Join(dir, "video.webm")
 		}
+		if paths, err := filepath.Glob(filepath.Join(dir, "image-*.png")); err == nil && len(paths) > 0 {
+			sort.Slice(paths, func(i, j int) bool { return imageIndex(paths[i]) < imageIndex(paths[j]) })
+			b.ImagePaths = paths
+		}
 		bundles = append(bundles, b)
 	}
 	sort.Slice(bundles, func(i, j int) bool {
 		return bundles[i].Meta.CreatedAt.Before(bundles[j].Meta.CreatedAt)
 	})
 	return bundles, nil
+}
+
+// imageIndex extracts the numeric N out of a ".../image-N.png" path, for
+// sorting screenshots back into capture order. filepath.Glob's own result
+// order is lexicographic (image-1.png, image-10.png, image-2.png, …), which
+// misorders any bundle with 10+ screenshots — sort on the parsed integer
+// instead. A path that doesn't parse (shouldn't happen — Save is the only
+// writer of these files) sorts last rather than panicking.
+func imageIndex(path string) int {
+	base := filepath.Base(path)
+	base = strings.TrimSuffix(base, ".png")
+	base = strings.TrimPrefix(base, "image-")
+	n, err := strconv.Atoi(base)
+	if err != nil {
+		return 1<<31 - 1
+	}
+	return n
 }
 
 // Discard removes a bundle from the pending queue — called once the cloud
