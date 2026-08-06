@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -595,6 +596,67 @@ func TestDecodeEnrollCode_Rejects(t *testing.T) {
 	for _, bad := range []string{"", "   ", "not-a-code", "eyJ4IjoxfQ", `{"url":"","token":""}`, `{"url":"x"}`} {
 		if _, _, err := decodeEnrollCode(bad); err == nil {
 			t.Fatalf("expected error for %q", bad)
+		}
+	}
+}
+
+// ut-docs#362. A till's kiosk browser runs against http://127.0.0.1:8080, so
+// the pairing code minted from the main till's OWN touchscreen used to embed
+// 127.0.0.1 — and the joining till then dialled itself. It failed in about a
+// millisecond with "primary refused the enrolment (code used or expired?)",
+// which blames the code, so the shop owner regenerates it and fails
+// identically, forever. Reported from the field exactly that way.
+func TestAdvertisableHostNeverReturnsLoopback(t *testing.T) {
+	// Whatever this machine's real LAN address is, it must not be loopback —
+	// that is the whole point. Skip only if the box genuinely has no network.
+	lan, err := lanIPv4()
+	if err != nil {
+		t.Skipf("no non-loopback interface available: %v", err)
+	}
+	if net.ParseIP(lan) == nil || net.ParseIP(lan).IsLoopback() {
+		t.Fatalf("lanIPv4() = %q, want a real non-loopback IPv4", lan)
+	}
+
+	for _, host := range []string{
+		"127.0.0.1:8080", // the kiosk browser's own URL — the reported case
+		"localhost:8080",
+		"[::1]:8080",
+		"127.0.0.1",
+	} {
+		got, err := advertisableHost(host)
+		if err != nil {
+			t.Fatalf("advertisableHost(%q): %v", host, err)
+		}
+		h, _, splitErr := net.SplitHostPort(got)
+		if splitErr != nil {
+			h = got
+		}
+		ip := net.ParseIP(h)
+		if ip == nil {
+			t.Fatalf("advertisableHost(%q) = %q, not an IP", host, got)
+		}
+		if ip.IsLoopback() {
+			t.Errorf("advertisableHost(%q) = %q — a pairing code carrying this "+
+				"tells the joining till to dial ITSELF (ut-docs#362)", host, got)
+		}
+		// The port must survive, or the code points at the wrong port.
+		if strings.Contains(host, ":8080") && !strings.HasSuffix(got, ":8080") {
+			t.Errorf("advertisableHost(%q) = %q, lost the port", host, got)
+		}
+	}
+}
+
+// A host a peer can already dial must be passed through untouched — rewriting
+// it would break the normal case (a manager pairing from their phone/laptop,
+// where r.Host is already the till's LAN address or a hostname).
+func TestAdvertisableHostLeavesReachableHostsAlone(t *testing.T) {
+	for _, host := range []string{"192.168.1.167:8080", "till-1.local:8080", "10.0.0.5"} {
+		got, err := advertisableHost(host)
+		if err != nil {
+			t.Fatalf("advertisableHost(%q): %v", host, err)
+		}
+		if got != host {
+			t.Errorf("advertisableHost(%q) = %q, want it unchanged", host, got)
 		}
 	}
 }
