@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -181,5 +182,96 @@ func TestSetupWizardPINValidation(t *testing.T) {
 	// Nothing was created.
 	if fb, _ := svc.NeedsFirstBoot(t.Context()); !fb {
 		t.Fatal("rejected wizard submits must leave the till in first-boot state")
+	}
+}
+
+// The join-an-existing-shop step is driven entirely by htmx (hx-post, with no
+// action/method fallback), so the setup page MUST load htmx.min.js. It didn't:
+// the page loaded only alpine.min.js and cursor.js, which made the hx-*
+// attributes inert markup and turned the Join button into a plain GET back to
+// /setup. No request ever reached POST /api/setup/join, and #setup-join-msg
+// never filled — from the shop owner's side the button simply did nothing, so
+// a second till could not be enrolled at all (ADR-0011 D2).
+//
+// Found in the field on a real Pi-to-Pi setup (ut-docs#344, 2026-08-06), not
+// by any test — hence this one. scripts/ci/guard-htmx-loaded.sh enforces the
+// same invariant across every standalone template; this test covers the
+// rendered output of the page the bug was actually reported against.
+func TestSetupPageLoadsHTMXForTheJoinForm(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// Guard the premise: if the join form ever stops being htmx-driven, this
+	// test should be re-thought rather than silently passing on a page that no
+	// longer needs htmx at all.
+	if !strings.Contains(body, `hx-post="/api/setup/join"`) {
+		t.Fatal("setup page no longer has the htmx-driven join form; " +
+			"re-evaluate this test and scripts/ci/guard-htmx-loaded.sh")
+	}
+	// Assert a real <script src=...>, not a bare mention: this file's own
+	// explanatory comment names the guard script, so a substring check on
+	// "htmx.min.js" alone could go vacuous on an innocent comment edit.
+	if !regexp.MustCompile(`<script[^>]*src="[^"]*htmx\.min\.js`).MatchString(body) {
+		t.Error("setup page uses hx-post for the join form but never loads htmx.min.js — " +
+			"the Join button will silently do nothing (ut-docs#344)")
+	}
+	// htmx 1.9 discards the response body on a non-2xx status, and every
+	// failure of /api/setup/join answers 502, so without this listener the
+	// whole error path renders nothing at all. e2e/tests/login.spec.ts proves
+	// the behaviour in a real browser; this just pins the wiring in place.
+	if !strings.Contains(body, "htmx:beforeSwap") {
+		t.Error("setup page has no htmx:beforeSwap handler — a failed join (502) " +
+			"would render nothing at all (ut-docs#344)")
+	}
+	// The live region the swap targets must exist, or a working htmx post
+	// would still show the operator nothing.
+	if !strings.Contains(body, `id="setup-join-msg"`) {
+		t.Error("setup page is missing the #setup-join-msg target the join form swaps into")
+	}
+}
+
+// POST /api/setup/join is middleware-exempt (internal/auth/middleware.go), so
+// the ONLY thing stopping an unauthenticated stranger from re-enrolling a
+// live till — wiping it and pulling another shop's whole database over the
+// top — is its NeedsFirstBoot gate. That gate had no test at all; the sibling
+// /api/sync/join is well covered, but it is a different handler with a
+// different guard (manager-or-admin), so it proves nothing about this one.
+func TestSetupJoinRefusedOnceAnOperatorExists(t *testing.T) {
+	mux, svc, d := newFullAuthDeps(t)
+	// The shared harness mounts auth/setup/settings only; the join endpoint
+	// lives with the sync routes. Mount them here rather than widening the
+	// harness, so no other test's route table changes.
+	registerSyncAPI(mux, d)
+
+	// While it is genuinely first boot, the endpoint is reachable: a garbage
+	// code gets past the gate and fails on its own merits (502), rather than
+	// being redirected away.
+	rec := postForm(mux, "/api/setup/join", url.Values{"code": {"nonsense"}}, nil)
+	if rec.Code == http.StatusSeeOther {
+		t.Fatalf("join was redirected during first boot; the wizard's join step is unreachable")
+	}
+
+	// Complete first boot: an operator with a PIN is what closes the window.
+	id, err := svc.Repo().CreateUser(t.Context(), "boss", "Boss", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := auth.HashPIN("2468")
+	if err := svc.Repo().SetUserPIN(t.Context(), id, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now it must refuse — no enrolment, just a redirect to the login screen.
+	rec = postForm(mux, "/api/setup/join", url.Values{"code": {"nonsense"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("join after first boot: code=%d loc=%q, want 303 -> /login (an unauthenticated "+
+			"caller must not be able to re-enrol a configured till)",
+			rec.Code, rec.Header().Get("Location"))
 	}
 }
