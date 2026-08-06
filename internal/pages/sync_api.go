@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -55,6 +56,76 @@ func (e *enrolTokens) consume(tok string) bool {
 func hashBearer(b string) string {
 	sum := sha256.Sum256([]byte(b))
 	return hex.EncodeToString(sum[:])
+}
+
+// advertisableHost turns the Host a browser happened to use into one ANOTHER
+// device can dial. A till's kiosk browser is launched against
+// http://127.0.0.1:8080, so a pairing code minted from the main till's own
+// touchscreen — the obvious way to do it, and the way the manual describes —
+// used to embed 127.0.0.1. The joining till then dialled itself, failed in
+// about a millisecond, and reported "primary refused the enrolment (code used
+// or expired?)", which sent the shop owner into an endless
+// regenerate-and-retry loop against an address that could never work
+// (ut-docs#362, found on real hardware).
+//
+// Returns an error rather than a loopback address: minting a code that cannot
+// possibly work is worse than refusing to mint one, because the failure
+// surfaces on the OTHER device, minutes later, blaming the code.
+func advertisableHost(host string) (string, error) {
+	hostOnly, port, err := net.SplitHostPort(host)
+	if err != nil {
+		hostOnly, port = host, ""
+	}
+	if ip := net.ParseIP(hostOnly); ip == nil || !ip.IsLoopback() {
+		if !strings.EqualFold(hostOnly, "localhost") {
+			return host, nil // already something a peer can dial
+		}
+	}
+	lan, err := lanIPv4()
+	if err != nil {
+		return "", err
+	}
+	if port == "" {
+		return lan, nil
+	}
+	return net.JoinHostPort(lan, port), nil
+}
+
+// lanIPv4 picks this host's first up, non-loopback IPv4 address. Deliberately
+// enumerates interfaces rather than dialling out: the till is offline-first
+// (ADR-0003) and must be able to pair two boxes on an isolated shop LAN with
+// no gateway, no DNS and no internet at all.
+func lanIPv4() (string, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", fmt.Errorf("cannot list network interfaces: %w", err)
+	}
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			if v4 := ip.To4(); v4 != nil {
+				return v4.String(), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("this till has no network address other than loopback — " +
+		"connect it to the shop network before pairing another till")
 }
 
 // encodeEnrollCode packs the primary's URL + one-time token into ONE opaque,
@@ -147,7 +218,13 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			if r.TLS != nil {
 				scheme = "https"
 			}
-			primaryURL = scheme + "://" + r.Host
+			// NOT r.Host directly — see advertisableHost (ut-docs#362).
+			advHost, err := advertisableHost(r.Host)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			primaryURL = scheme + "://" + advHost
 		}
 		code := encodeEnrollCode(primaryURL, tok)
 		png, err := qrcode.Encode(code, qrcode.Medium, 220)
@@ -387,6 +464,13 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 			ShopName string `json:"shop_name"`
 			TillNo   int    `json:"till_no"`
 		} `json:"data"`
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		// Something answered, but it is not a till's enrolment endpoint —
+		// usually the code points at the wrong machine. Saying "code used or
+		// expired" here is what made ut-docs#362 undiagnosable from the shop
+		// floor: it blames the code, so the owner regenerates it forever.
+		return "", fmt.Errorf("reached %s but it is not a Universal Till — check the address in the code", base)
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Bearer == "" {
 		return "", fmt.Errorf("primary refused the enrolment (code used or expired?)")
