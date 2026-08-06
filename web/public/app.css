@@ -766,6 +766,22 @@ table.table td, .card table td {
 }
 table.table tr:last-child td, .card table tr:last-child td { border-bottom: none; }
 
+/* Catalog import: a warned row (created, but with something the operator
+   should check — a dropped barcode, stock not carried, …) must read as
+   visually distinct from BOTH a clean row and a skipped/failed one, not
+   just readable in its own status text (ut-docs#303 — three warnings sat
+   unnoticed among 209 rows that all rendered identically). Tint + icon,
+   not colour alone, so it doesn't rely on colour perception. The icon uses
+   the --warning var directly; the tint is the same hardcoded rgba
+   .status-pill.offline already uses above (not var(--warning) itself —
+   a future --warning change won't move it, same as that precedent).
+   Legible on every theme's light --surface (ut-docs#303 review: no theme
+   here is actually dark — see the themes/*.css files — so "every theme"
+   IS "every background this can render on"). Logical margin, not
+   left/right, for RTL. */
+tr.row-warn td { background: rgba(217, 119, 6, .12); }
+.row-warn-icon { color: var(--warning); margin-inline-end: .3em; }
+
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
    Touch-first: bigger targets, no text selection or tap highlights, no
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);

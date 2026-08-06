@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -18,6 +19,11 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 )
+
+// uuidPattern matches a canonical UUID (the shape internal item/variant IDs
+// use) — ut-docs#303 tests assert this never appears in operator-facing
+// import/catalog response text.
+var uuidPattern = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 
 func TestHTMLEscape(t *testing.T) {
 	cases := map[string]string{
@@ -228,9 +234,17 @@ func TestImport_BarcodeAttachFailureStillImportsStock(t *testing.T) {
 	}
 
 	// The failure reason must be visible in the rendered per-row status,
-	// not discarded — the card requires an operator-visible warning.
-	if resp := rec.Body.String(); !strings.Contains(resp, "barcode attach failed") || !strings.Contains(resp, "already assigned") {
-		t.Fatalf("barcode attach failure reason not surfaced in row status, got: %s", resp)
+	// not discarded — the card requires an operator-visible warning. Since
+	// ut-docs#303, that reason names the CONFLICTING item ("Widget", the
+	// row that actually holds the barcode) instead of leaking its raw
+	// internal ID — assert both halves of that fix: the name is present,
+	// and no raw UUID (36 hex-and-dashes chars) leaked into the response.
+	resp := rec.Body.String()
+	if !strings.Contains(resp, "already in use by Widget") {
+		t.Fatalf("barcode conflict must name the conflicting item (Widget), got: %s", resp)
+	}
+	if uuidPattern.MatchString(resp) {
+		t.Fatalf("raw internal ID leaked into the operator-facing response: %s", resp)
 	}
 
 	// Gadget's opening stock must still be imported — the barcode failure
@@ -442,8 +456,15 @@ func TestImport_WarnedRowsSurvive200RowCap(t *testing.T) {
 	if !strings.Contains(resp, "WarnedDup") {
 		t.Fatalf("the warned row (207th in the file) must still be rendered despite the 200-row cap, got table without it: %s", resp)
 	}
-	if !strings.Contains(resp, "barcode attach failed") {
+	// WarnedDup's barcode clashes with "Warned" (the row above it, which
+	// actually holds it) — since ut-docs#303 the reason names that item.
+	if !strings.Contains(resp, "already in use by Warned<") {
 		t.Fatalf("warned row's reason must be visible, got: %s", resp)
+	}
+	// The visual treatment (ut-docs#303 review) — a warned row must carry
+	// its own CSS class and icon, distinct from a clean or failed row.
+	if !strings.Contains(resp, `class="row-warn"`) || !strings.Contains(resp, `row-warn-icon`) {
+		t.Fatalf("warned row must carry the row-warn visual treatment, got: %s", resp)
 	}
 	// The "… N more" note must only be counting the still-hidden plain rows
 	// (207 total - 1 rendered warned row - 200 rendered plain rows = 6).

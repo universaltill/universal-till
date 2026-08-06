@@ -2,8 +2,10 @@ package pages
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -132,39 +134,59 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		defer file.Close()
 		commit := r.FormValue("commit") == "1"
 
+		// Resolved up front (ut-docs#303): every row status below is a
+		// locale key, not English prose, so T needs to be live before the
+		// preview loop builds the first one, and before the Parse error
+		// below (the first thing an operator sees on a wrong-format file).
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
+		T := funcs["T"].(func(string) string)
+
 		res, err := catimport.Parse(file, httpx.ActiveCurrency().Decimals)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			if errors.Is(err, catimport.ErrNoNameColumn) {
+				http.Error(w, T("import.error.no_name_column"), http.StatusBadRequest)
+				return
+			}
+			// A rarer, lower-level parse failure (malformed CSV row,
+			// unreadable header) — same rule as everywhere else in this
+			// handler: log the real detail, never put raw Go/csv error
+			// text on the operator's screen (ut-docs#303).
+			log.Printf("[import] parse: %v", err)
+			http.Error(w, T("import.error.invalid_file"), http.StatusBadRequest)
 			return
 		}
 
 		// Annotate duplicates (server truth) for both preview and commit.
 		type rowView struct {
 			catimport.ImportItem
-			Status string // ok | skip reason
-			Warned bool   // true once a commit-time warning was appended to Status
+			Status  string // translated display text
+			Skipped bool   // preview-time issue/duplicate — never entered the commit loop as importable
+			Warned  bool   // created, but with a warning
+			Failed  bool   // commit-time failure (category/department/item creation)
 		}
 		var rows []rowView
 		importable := 0
 		for _, it := range res.Items {
-			status := "ok"
+			status := T("import.status.ok")
+			skipped := false
 			switch {
 			case it.Issue != "":
-				status = it.Issue
+				status, skipped = translateImportIssue(T, it), true
 			case it.Barcode != "":
 				if exists, _ := repo.BarcodeExists(r.Context(), it.Barcode); exists {
-					status = "barcode already in catalog"
+					status, skipped = T("import.status.barcode_already_in_catalog"), true
 				}
 			}
-			if status == "ok" && it.SKU != "" {
+			if !skipped && it.SKU != "" {
 				if exists, _ := repo.SKUExists(r.Context(), it.SKU); exists {
-					status = "SKU already in catalog"
+					status, skipped = T("import.status.sku_already_in_catalog"), true
 				}
 			}
-			if status == "ok" {
+			if !skipped {
 				importable++
 			}
-			rows = append(rows, rowView{ImportItem: it, Status: status})
+			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped})
 		}
 
 		created, warned, failed := 0, 0, 0
@@ -174,7 +196,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// inventory page), so the migration carries quantities too.
 			locID, locErr := posRepo.EnsureStockLocation(r.Context())
 			for i := range rows {
-				if rows[i].Status != "ok" {
+				if rows[i].Skipped {
 					continue
 				}
 				it := rows[i].ImportItem
@@ -188,7 +210,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if it.Department != "" {
 					id, err := repo.EnsureCategoryUnder(r.Context(), it.Department, "")
 					if err != nil {
-						rows[i].Status = "failed: department: " + err.Error()
+						// Raw DB error text (table/constraint names) must
+						// never reach the operator's screen — log it, show
+						// a generic translated reason (ut-docs#303).
+						log.Printf("[import] ensure department %q: %v", it.Department, err)
+						rows[i].Status = T("import.status.department_failed")
+						rows[i].Failed = true
 						failed++
 						continue
 					}
@@ -197,7 +224,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if it.Category != "" {
 					id, err := repo.EnsureCategoryUnder(r.Context(), it.Category, deptID)
 					if err != nil {
-						rows[i].Status = "failed: category: " + err.Error()
+						log.Printf("[import] ensure category %q: %v", it.Category, err)
+						rows[i].Status = T("import.status.category_failed")
+						rows[i].Failed = true
 						failed++
 						continue
 					}
@@ -211,7 +240,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					Unit: "each", IsWeighed: it.IsWeighed, IsActive: true,
 				})
 				if err != nil {
-					rows[i].Status = "failed: " + err.Error()
+					log.Printf("[import] create item %q: %v", it.Name, err)
+					rows[i].Status = T("import.status.item_failed")
+					rows[i].Failed = true
 					failed++
 					continue
 				}
@@ -226,7 +257,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
 						Barcode: it.Barcode, ItemID: itemID, IsPrimary: true,
 					}); err != nil {
-						warnings = append(warnings, "barcode attach failed: "+err.Error())
+						// Names the conflicting item/variant instead of its
+						// raw ID; logs the ID either way (ut-docs#303).
+						warnings = append(warnings, common.FriendlyBarcodeConflict(r.Context(), repo, locale, err))
 					}
 				} else if it.BarcodeIssue != "" {
 					// The CSV carried a barcode value, but the importer's
@@ -234,28 +267,29 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					// a 4-digit PLU) — the item still imports, but silently
 					// dropping the barcode with no trace is the same defect
 					// class this card exists to fix (ut-docs#293).
-					warnings = append(warnings, it.BarcodeIssue)
+					warnings = append(warnings, translateBarcodeIssue(T, it))
 				}
 				switch {
 				case it.HasStock && it.Stock < 0:
 					// catimport parses a negative quantity happily and it is
 					// then dropped by the `> 0` test below with no trace —
 					// warn instead of discarding it in silence.
-					warnings = append(warnings, fmt.Sprintf(
-						"stock not carried: negative quantity %g in source file", it.Stock))
+					warnings = append(warnings, fmt.Sprintf(T("import.status.stock_negative_quantity"), it.Stock))
 				case it.HasStock && it.Stock > 0 && locErr != nil:
 					// EnsureStockLocation ran once, outside the loop; when it
 					// failed, every row with stock would otherwise lose it
 					// silently while still reading "created" — the exact bug
 					// this card fixes, one branch over.
-					warnings = append(warnings, "stock not carried: "+locErr.Error())
+					log.Printf("[import] ensure stock location: %v", locErr)
+					warnings = append(warnings, T("import.status.stock_location_failed"))
 				case it.HasStock && it.Stock > 0:
 					if _, err := pos.RecordStockMovement(r.Context(), d.Db, pos.StockMovementInput{
 						ItemID: itemID, LocationID: locID, Type: "receive",
 						Quantity: it.Stock, Reason: "catalog import",
 						ActorID: getSessionUserID(r),
 					}); err != nil {
-						warnings = append(warnings, "stock not carried: "+err.Error())
+						log.Printf("[import] record stock movement for item %s: %v", itemID, err)
+						warnings = append(warnings, T("import.status.stock_movement_failed"))
 					} else {
 						// Mirror imported stock to inventory connectors
 						// (best-effort, non-blocking).
@@ -269,11 +303,11 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 				if len(warnings) > 0 {
-					rows[i].Status = "created; " + strings.Join(warnings, "; ")
+					rows[i].Status = T("import.status.created") + "; " + strings.Join(warnings, "; ")
 					rows[i].Warned = true
 					warned++
 				} else {
-					rows[i].Status = "created"
+					rows[i].Status = T("import.status.created")
 				}
 				created++
 			}
@@ -282,9 +316,6 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				time.Now().UTC().Format(time.RFC3339), "")
 		}
 
-		locale := httpx.ResolveLocale(w, r)
-		funcs := httpx.FuncsFor(locale)
-		T := funcs["T"].(func(string) string)
 		var b strings.Builder
 		if commit {
 			fmt.Fprintf(&b, `<p><strong>✓ %s: %d — %s: %d — %s: %d</strong></p>`,
@@ -312,13 +343,24 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		writeRow := func(row rowView) {
-			cls := ""
-			if row.Status != "ok" && row.Status != "created" {
+			// A warned row must be visually distinct from BOTH a clean row
+			// and a failed/skipped one — a status pill/icon, not just the
+			// row's own text, so it doesn't rely on the operator reading
+			// every status cell to notice it (ut-docs#303 review: 3
+			// warnings sat unnoticed among 209 rows that all rendered
+			// identically). Colour is never the only signal (icon too),
+			// and both are CSS vars so it stays legible across themes.
+			cls, statusHTML := "", htmlEscape(row.Status)
+			switch {
+			case row.Warned:
+				cls = ` class="row-warn"`
+				statusHTML = `<span class="row-warn-icon" aria-hidden="true">⚠</span>` + statusHTML
+			case row.Skipped || row.Failed:
 				cls = ` class="muted"`
 			}
 			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 				cls, htmlEscape(row.Name), httpx.FormatMoney(row.PriceMinor, locale),
-				htmlEscape(row.Barcode), htmlEscape(row.Category), htmlEscape(row.Status))
+				htmlEscape(row.Barcode), htmlEscape(row.Category), statusHTML)
 		}
 		for _, row := range warnedRows {
 			writeRow(row)
@@ -338,6 +380,42 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))
 	})
+}
+
+// translateImportIssue turns a catimport row-level Issue reason code into
+// an operator-facing, translated message — catimport itself has no locale
+// to translate into (ut-docs#303), so this is where the reason code plus
+// its dynamic detail (e.g. the raw price string) becomes prose.
+func translateImportIssue(T func(string) string, it catimport.ImportItem) string {
+	switch it.Issue {
+	case catimport.IssueMissingName:
+		return T("import.status.missing_name")
+	case catimport.IssueBadPrice:
+		return fmt.Sprintf(T("import.status.bad_price"), it.IssueDetail)
+	default:
+		// A reason code with no case here (catimport grew one this
+		// switch doesn't know about yet) must never put machine text on
+		// the operator's screen — the exact regression this card exists
+		// to prevent (ut-docs#303 review).
+		log.Printf("[import] unrecognised Issue reason code %q", it.Issue)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// translateBarcodeIssue is translateImportIssue's counterpart for the
+// (non-blocking) BarcodeIssue reason code.
+func translateBarcodeIssue(T func(string) string, it catimport.ImportItem) string {
+	switch it.BarcodeIssue {
+	case catimport.BarcodeIssueUnsupportedFormat:
+		return fmt.Sprintf(T("import.status.barcode_unsupported_format"), it.BarcodeIssueRaw)
+	case catimport.BarcodeIssueTooShort:
+		return fmt.Sprintf(T("import.status.barcode_too_short"), it.BarcodeIssueRaw)
+	case catimport.BarcodeIssueTooLong:
+		return fmt.Sprintf(T("import.status.barcode_too_long"), it.BarcodeIssueRaw)
+	default:
+		log.Printf("[import] unrecognised BarcodeIssue reason code %q", it.BarcodeIssue)
+		return T("import.status.unknown_issue")
+	}
 }
 
 // minorToDecimal renders minor units as a plain decimal ("1.20") — the
