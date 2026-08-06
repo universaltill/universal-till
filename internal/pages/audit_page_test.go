@@ -208,6 +208,61 @@ func TestAuditExport_CSVHeadersFiltersAndAuditEntry(t *testing.T) {
 	}
 }
 
+// ut-docs#195: Actor (a manager's own free-typed display_name), Entity ID,
+// and Action (plugin code can supply an arbitrary string via
+// PluginRepo.InsertAuditRaw) must come out defused (leading apostrophe)
+// rather than reaching Excel/LibreOffice as a live formula.
+func TestAuditExport_FormulaShapedFieldsAreCSVSafe(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	const malicious = `=cmd|'/c calc'!A1`
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role, created_at) VALUES ('mgr-2','manager2',?,'x','manager','2026-01-01T00:00:00Z')`, malicious); err != nil {
+		t.Fatalf("seed manager user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES
+		('a3', 'mgr-2', 'plugin', ?, ?, NULL, '2026-01-03T10:00:00Z')`, malicious, malicious); err != nil {
+		t.Fatalf("seed audit entry: %v", err)
+	}
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerAuditPage(mux, dp)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/audit/export?entity_type=plugin&actor_id=mgr-2", nil),
+		auth.User{ID: "mgr-2", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("expected valid CSV, got parse error: %v\nbody:\n%s", err, rec.Body.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected header + 1 data row, got %d: %v", len(rows), rows)
+	}
+	const actorCol, entityIDCol, actionCol = 1, 3, 4
+	got := rows[1]
+	want := "'" + malicious
+	if got[actorCol] != want {
+		t.Fatalf("Actor not defused: got %q, want %q", got[actorCol], want)
+	}
+	if got[entityIDCol] != want {
+		t.Fatalf("Entity ID not defused: got %q, want %q", got[entityIDCol], want)
+	}
+	if got[actionCol] != want {
+		t.Fatalf("Action not defused: got %q, want %q", got[actionCol], want)
+	}
+}
+
 func TestAuditExportFilename_TruncationIsVisibleNotJustAHeader(t *testing.T) {
 	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 

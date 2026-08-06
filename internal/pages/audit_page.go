@@ -103,7 +103,13 @@ func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 			if actor == "" {
 				actor = "system"
 			}
-			_ = cw.Write([]string{e.CreatedAt, actor, e.EntityType, e.EntityID, e.Action, e.DataJSON})
+			// Actor (a manager's own free-typed display_name), Entity ID, and
+			// Action (plugin code can supply an arbitrary string via
+			// PluginRepo.InsertAuditRaw) are the reachable fields — CreatedAt
+			// is a timestamp, EntityType is always one of this codebase's own
+			// literal call-site strings, and Details/DataJSON always starts
+			// with '{' (ut-docs#195), so none of those three need csvSafe.
+			_ = cw.Write([]string{e.CreatedAt, csvSafe(actor), e.EntityType, csvSafe(e.EntityID), csvSafe(e.Action), e.DataJSON})
 		}
 		if truncated {
 			_ = cw.Write([]string{"", "", "", "", "TRUNCATED", "Only the newest " + strconv.Itoa(len(entries)) + " matching entries are included — narrow the date range to see older entries."})
