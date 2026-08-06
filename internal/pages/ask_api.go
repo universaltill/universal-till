@@ -69,7 +69,7 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 		},
 		{
 			Name:        "stock_levels",
-			Description: "Current stock levels per item and location, including reorder levels. Use for questions about stock, low stock and reordering.",
+			Description: "Current stock levels per item and location, including reorder levels and lead time (days to receive a reorder). Use for questions about stock, low stock and reordering.",
 			Params:      map[string]any{"type": "object", "properties": map[string]any{}},
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
 				return repo.ListStockLevels(ctx)

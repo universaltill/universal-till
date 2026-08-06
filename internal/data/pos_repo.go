@@ -116,14 +116,14 @@ type OverrideNegativeInventory struct {
 
 // LowStockItem represents an item with low stock.
 type LowStockItem struct {
-	ItemID       string
-	Name         string
-	SKU          string
-	LocationID   string
-	LocationName string
-	CurrentQty   float64
-	ReorderLevel int
-	LeadTimeDays int // days to receive a reorder; 0 = unset
+	ItemID       string  `json:"item_id"`
+	Name         string  `json:"name"`
+	SKU          string  `json:"sku"`
+	LocationID   string  `json:"location_id"`
+	LocationName string  `json:"location_name"`
+	CurrentQty   float64 `json:"current_qty"`
+	ReorderLevel int     `json:"reorder_level"`
+	LeadTimeDays int     `json:"lead_time_days"` // days to receive a reorder; 0 = unset
 }
 
 // defaultWarnDays is the running-out threshold for an item with no lead
