@@ -503,17 +503,26 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 // variant (exactly one of itemID/variantID set) at the default stock
 // location, if one doesn't already exist. See CreateItem/CreateVariant.
 func (r *CatalogRepo) ensureInventoryRow(ctx context.Context, itemID, variantID string) error {
+	return ensureInventoryRowExec(ctx, r.db, itemID, variantID)
+}
+
+// ensureInventoryRowExec is ensureInventoryRow's actual logic, generalized to
+// run against either the repo's *sql.DB (ensureInventoryRow's caller) or a
+// caller-supplied *sql.Tx (CreateItemTx) — both satisfy database/sql's
+// ExecContext/QueryRowContext, so a plain execer interface covers both
+// without duplicating the statements.
+func ensureInventoryRowExec(ctx context.Context, ex execer, itemID, variantID string) error {
 	var locationID string
-	err := r.db.QueryRowContext(ctx, `SELECT id FROM stock_locations WHERE name = 'Main' OR id = 'loc_main' ORDER BY id LIMIT 1`).Scan(&locationID)
+	err := ex.QueryRowContext(ctx, `SELECT id FROM stock_locations WHERE name = 'Main' OR id = 'loc_main' ORDER BY id LIMIT 1`).Scan(&locationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		locationID = "loc_main"
-		if _, err := r.db.ExecContext(ctx, `INSERT INTO stock_locations (id, name) VALUES (?, ?)`, locationID, "Main"); err != nil {
+		if _, err := ex.ExecContext(ctx, `INSERT INTO stock_locations (id, name) VALUES (?, ?)`, locationID, "Main"); err != nil {
 			return fmt.Errorf("create default location: %w", err)
 		}
 	} else if err != nil {
 		return fmt.Errorf("find default location: %w", err)
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = ex.ExecContext(ctx, `
 INSERT OR IGNORE INTO inventory (id, item_id, variant_id, location_id, quantity)
 VALUES (?, ?, ?, ?, 0)
 `, uuid.NewString(), nullIfEmpty(itemID), nullIfEmpty(variantID), locationID)
@@ -521,6 +530,60 @@ VALUES (?, ?, ?, ?, 0)
 		return fmt.Errorf("insert inventory row: %w", err)
 	}
 	return nil
+}
+
+// execer is satisfied by both *sql.DB and *sql.Tx — lets a single statement
+// helper run against whichever handle the caller already holds, without a
+// separate copy of the query text per handle type (guard-data-access.sh
+// still sees exactly one place these statements live).
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// CreateItemTx is CreateItem's item insert, run inside a caller-supplied
+// transaction instead of autocommitting on its own — additive alongside
+// CreateItem (ut-docs#310), which keeps its existing autocommit behavior
+// for its other callers unchanged. The inventory-row step stays exactly as
+// best-effort as CreateItem's own (logged, never fails item creation): a
+// stockless deployment — no stock_locations table at all — must still be
+// able to import a catalog, same as it can today (see
+// TestCreateItem_SucceedsWithoutStockLocationsTable and
+// TestImport_LocationLookupFailureWarnsStockNotCarried, both of which rely
+// on that). What the transaction actually buys is the item + inventory row
+// + a subsequent same-tx stock movement landing or rolling back together —
+// see the import commit loop in internal/pages/import_page.go.
+func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogtypes.ItemInput) (string, error) {
+	if in.Name == "" {
+		return "", errors.New("name required")
+	}
+	if in.Unit == "" {
+		in.Unit = "each"
+	}
+	if in.ID == "" {
+		in.ID = uuid.NewString()
+	}
+	if in.SKU == "" {
+		in.SKU = in.ID
+	}
+	active := 1
+	if !in.IsActive {
+		active = 0
+	}
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, in.SKU, in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
+	if err != nil {
+		return "", fmt.Errorf("insert item: %w", err)
+	}
+	// Same reasoning as CreateItem: the item is already valid and sellable
+	// without a stock row (stock tracking is opt-in), so this must never
+	// fail — or roll back — item creation, only get logged.
+	if err := ensureInventoryRowExec(ctx, tx, in.ID, ""); err != nil {
+		logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+	}
+	return in.ID, nil
 }
 
 // ItemCostPrice returns the item's cost price in minor units (0 = unset).
