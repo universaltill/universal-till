@@ -1,0 +1,17 @@
+{{/* Search results, swapped into the reading panel. */}}
+<article class="manual-topic manual-results" id="manual-topic">
+  {{ if not .results }}
+  <p class="manual-noresults">{{ T "help.search.none" }}</p>
+  {{ else }}
+  <h1 class="manual-results-title">{{ T "help.search.results" }}</h1>
+  <ul class="manual-result-list">
+    {{ range .results }}
+    <li>
+      <a class="manual-link" href="/help/{{ .Topic.ID }}"
+         hx-get="/help/{{ .Topic.ID }}" hx-target="#manual-panel" hx-push-url="true">{{ .Topic.Title }}</a>
+      <p class="manual-snippet">{{ .Snippet }}</p>
+    </li>
+    {{ end }}
+  </ul>
+  {{ end }}
+</article>
