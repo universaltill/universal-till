@@ -7,11 +7,35 @@ package catimport
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"strconv"
 	"strings"
+)
+
+// ErrNoNameColumn is Parse's own reason code (ut-docs#303) for the single
+// most common whole-file failure — a wrong-format upload — so the pages
+// layer can show a translated message instead of this package's English
+// text. Other Parse failures (a malformed CSV row, an unparseable header
+// read) are rarer, lower-level io/csv-shaped errors not worth the same
+// treatment yet; the caller still must not put THEIR raw text on screen
+// either, see import_page.go's generic fallback + log.
+var ErrNoNameColumn = errors.New("no name column recognised — is this a catalog export?")
+
+// Issue/BarcodeIssue reason codes (ut-docs#303). catimport has no locale to
+// translate into — it's a pure parser (package doc above) — so it reports a
+// stable, machine-readable code plus whatever dynamic value the code needs,
+// and the pages layer (which DOES have a locale) composes the operator-
+// facing, translated message from them.
+const (
+	IssueMissingName = "missing_name"
+	IssueBadPrice    = "bad_price"
+
+	BarcodeIssueUnsupportedFormat = "unsupported_format"
+	BarcodeIssueTooShort          = "too_short"
+	BarcodeIssueTooLong           = "too_long"
 )
 
 // ImportItem is one parsed catalog row, prices in minor units.
@@ -26,7 +50,8 @@ type ImportItem struct {
 	IsWeighed   bool
 	Stock       float64 // opening quantity from the source system
 	HasStock    bool    // the file carried a parseable stock value
-	Issue       string  // non-empty = row cannot be imported (reason)
+	Issue       string  // one of the Issue* consts, non-empty = row cannot be imported
+	IssueDetail string  // the row's dynamic value for reason codes that need one (e.g. the raw price string for IssueBadPrice)
 	// BarcodeIssue is non-empty when the CSV carried a non-empty barcode
 	// value that normalizeBarcode discarded (unsupported shape — e.g. a
 	// 4-digit produce PLU or an alphanumeric internal code). Unlike Issue,
@@ -34,8 +59,10 @@ type ImportItem struct {
 	// (pages) should surface this as a per-row warning so the operator
 	// knows the barcode was silently dropped, not just missing (ut-docs#293,
 	// same defect class as the AddBarcode fix — the symbology itself is
-	// ut-docs#295's job, not this field's).
-	BarcodeIssue string
+	// ut-docs#295's job, not this field's). One of the BarcodeIssue* consts;
+	// BarcodeIssueRaw is the raw value the reason applies to.
+	BarcodeIssue    string
+	BarcodeIssueRaw string
 }
 
 // Result is a parsed file.
@@ -129,7 +156,7 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 	res := Result{Format: DetectFormat(headers)}
 	idx := headerIndex(headers)
 	if _, ok := idx["name"]; !ok {
-		return Result{}, fmt.Errorf("no name column recognised — is this a catalog export?")
+		return Result{}, ErrNoNameColumn
 	}
 
 	get := func(rec []string, field string) string {
@@ -159,7 +186,8 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 			IsWeighed:   isTruthy(get(rec, "weighed")),
 		}
 		if rawBarcode != "" && item.Barcode == "" {
-			item.BarcodeIssue = barcodeIssue(rawBarcode)
+			item.BarcodeIssue = barcodeIssueReason(rawBarcode)
+			item.BarcodeIssueRaw = rawBarcode
 		}
 		// Square: variation name qualifies the item name ("Coffee — Large").
 		if v := get(rec, "variation"); v != "" && !strings.EqualFold(v, "regular") && res.Format == "square" {
@@ -176,9 +204,10 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 		}
 		switch {
 		case item.Name == "":
-			item.Issue = "missing name"
+			item.Issue = IssueMissingName
 		case perr != nil:
-			item.Issue = "bad price: " + get(rec, "price")
+			item.Issue = IssueBadPrice
+			item.IssueDetail = get(rec, "price")
 		}
 		res.Items = append(res.Items, item)
 	}
@@ -219,21 +248,22 @@ func normalizeBarcode(s string) string {
 	return s
 }
 
-// barcodeIssue explains why normalizeBarcode discarded a non-empty raw
-// barcode value, mirroring its checks exactly (never changes what shapes
-// are accepted — that's ut-docs#295's call). Called only when the raw value
-// was non-empty and normalizeBarcode returned "".
-func barcodeIssue(raw string) string {
+// barcodeIssueReason explains WHY normalizeBarcode discarded a non-empty
+// raw barcode value, mirroring its checks exactly (never changes what
+// shapes are accepted — that's ut-docs#295's call). Called only when the
+// raw value was non-empty and normalizeBarcode returned "". Returns a
+// reason code (see the BarcodeIssue* consts), not prose — ut-docs#303.
+func barcodeIssueReason(raw string) string {
 	s := strings.TrimSuffix(raw, ".0")
 	for _, r := range s {
 		if r < '0' || r > '9' {
-			return fmt.Sprintf("barcode %q not imported: unsupported format (not a plain digit string)", raw)
+			return BarcodeIssueUnsupportedFormat
 		}
 	}
 	if len(s) < 6 {
-		return fmt.Sprintf("barcode %q not imported: too short (needs 6-14 digits)", raw)
+		return BarcodeIssueTooShort
 	}
-	return fmt.Sprintf("barcode %q not imported: too long (needs 6-14 digits)", raw)
+	return BarcodeIssueTooLong
 }
 
 func isTruthy(s string) bool {

@@ -225,6 +225,15 @@ func TestItemCreate_InputValidation(t *testing.T) {
 // split outcome honestly: item created, attach failed, 400.
 func TestItemCreate_BarcodeAttachFailureIsReported(t *testing.T) {
 	mux, db := newCatalogMux(t)
+	// The split-outcome message is now composed through T() (ut-docs#303),
+	// so it needs real i18n wired — same setup TestBarcodeAttach_Validation
+	// uses, done here too rather than relying on that other test running
+	// first and leaving the package-level translator initialized.
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(i18n, "en")
 	rec := postForm(t, mux, "/api/catalog/item", "name=Ghost&price=100&isActive=0&barcode=5000000000005")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
