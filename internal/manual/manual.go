@@ -102,6 +102,11 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 			continue
 		}
 		locale := ld.Name()
+		if locale == "img" {
+			// Generated screenshots (help/img/<locale>/<id>.png, written by
+			// `make docs-shots`) live beside the locale dirs — not a locale.
+			continue
+		}
 		dir := path.Join(root, locale)
 		entries, err := fs.ReadDir(fsys, dir)
 		if err != nil {
@@ -122,6 +127,21 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 			}
 			tp.Locale = locale
 			tp.Translated = true
+			// A generated screenshot (make docs-shots) leads the topic when
+			// one exists for this locale. Checked against the same fsys the
+			// topics come from — the embedded manual stays self-contained —
+			// and injected here, at load time, so a topic served as an
+			// English fallback carries the English screenshot along with the
+			// English text rather than a broken locale-specific link. A
+			// topic without one renders exactly as before: no placeholder,
+			// no broken image.
+			if _, statErr := fs.Stat(fsys, path.Join(root, "img", locale, tp.ID+".png")); statErr == nil {
+				fig := fmt.Sprintf(
+					`<figure class="manual-shot"><img src="/help/img/%s/%s.png" alt="%s" loading="lazy"></figure>`,
+					locale, tp.ID, template.HTMLEscapeString(tp.Title),
+				)
+				tp.HTML = template.HTML(fig) + tp.HTML //nolint:gosec // locale/id are repo filenames, title is escaped
+			}
 			if want := strings.TrimSuffix(e.Name(), ".md"); tp.ID != want {
 				return nil, fmt.Errorf("manual: %s: id %q does not match the filename", name, tp.ID)
 			}
