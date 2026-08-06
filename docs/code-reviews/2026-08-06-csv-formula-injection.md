@@ -79,9 +79,66 @@ function rather than a row-wrapping one.
 - Regression test proving round-trip through `encoding/csv` + the
   sanitizer — `TestCSVSafeRoundTripsThroughRealCSVWriter`.
 
+## Independent review (Opus, fresh context)
+
+Ran build/vet/guards/the affected test suite itself, and re-verified the
+TDD claim by temporarily reducing `csvSafe` to a no-op, confirming both
+new regression tests failed with the crafted payload undefused, then
+restoring the real implementation and confirming they passed again
+(repo left byte-identical throughout — verified by SHA).
+
+**2 MEDIUM findings, both fixed and re-verified:**
+
+- **`invoice_page.go`'s own comment claimed `DisplayNo`/`ReceiptNo` are
+  "system-generated" — factually wrong.** Both embed
+  `sync.receipt_prefix`, a setting writable as free text via the generic
+  `/api/settings/upsert` with no allowlist (`settings_page.go`'s generic
+  upsert only `TrimSpace`s key/value). A manager can set that prefix to a
+  formula-shaped value and every subsequent invoice's `Invoice`/`Receipt`
+  columns go out undefused — the exact same privilege level as the
+  `display_name` vector this ticket already treats as in scope, and the
+  audit export already defuses this identical string when it shows up as
+  `Entity ID`. Fixed: `csvSafe(it.DisplayNo)` / `csvSafe(it.ReceiptNo)`
+  alongside the customer fields; comment corrected. New regression test
+  `TestGetInvoicesExport_DisplayNoAndReceiptNoAreCSVFormulaSafe` sets a
+  malicious `sync.receipt_prefix`, issues a real invoice through it, and
+  asserts both columns come back defused.
+- **The audit export's ubiquitous `"-"` "no entity ID" sentinel (used at
+  roughly a dozen `InsertAudit` call sites) started coming out as `"'-"`.**
+  `csvSafe("-")` doesn't distinguish a lone system sentinel from a
+  formula-shaped value — a real behavioural regression on the majority of
+  rows in a fiscal/compliance export, and not caught by the original test
+  suite (it only ever seeded non-`"-"` entity IDs). Fixed: `csvSafe` now
+  exempts the literal `"-"` explicitly (a lone hyphen also isn't a live
+  formula to Excel/LibreOffice on its own, independent of the sentinel
+  reasoning). New table cases in `TestCSVSafe` cover both the exempted
+  sentinel and a longer dash-prefixed value that must still be defused.
+
+**1 LOW finding, fixed:** `csvSafe`'s doc comment claimed the mitigation
+is "invisible to any consumer reading the CSV as plain data" — directly
+contradicted by the very next sentence (and by
+`TestCSVSafeRoundTripsThroughRealCSVWriter`'s own assertion) that
+`encoding/csv` round-trips the leading apostrophe as a literal rune.
+Reworded so a future maintainer doesn't assume it's a no-op to anything
+but Excel/LibreOffice — the invoice export is an accountant handoff, and
+a downstream system exact-matching a customer name or VAT number would
+see the added `'`.
+
+**1 MEDIUM finding, deferred (filed as universaltill/ut-docs#321):**
+`/api/catalog/export` (and `-save`) writes `Name`/`SKU`/`Barcode`/
+`Category`/`Description` verbatim — all free-typed, and reachable via an
+*uploaded CSV* through `/api/import`, arguably a stronger vector than
+either field this ticket named since it doesn't require manager-level
+typing at all. Out of scope for this ticket (which named exactly the
+invoice and audit exports) and genuinely harder than a drop-in `csvSafe`
+call: the catalog CSV is a documented round-trip format with the
+importer (`TestExportCSVRoundTripsThroughImporter`), so defusing on
+export without teaching the importer to strip the same prefix back off
+would silently corrupt re-imported names/SKUs/barcodes on every round
+trip. Needs its own design, not a same-session bolt-on.
+
 ## Safe-to-merge verdict
 
-Pending — an independent review (Opus, fresh context, per this card's
-`complexity:medium` label) is running against this branch. This record
-will be updated with its findings (fixed vs. accepted) before the PR
-opens; nothing here merges until that pass completes.
+Yes. Independent review found 2 MEDIUM + 1 LOW issue in-scope, all fixed
+and re-verified; 1 MEDIUM found out-of-scope, deferred to
+universaltill/ut-docs#321 rather than silently left unmentioned.

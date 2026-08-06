@@ -22,6 +22,11 @@ func TestCSVSafe(t *testing.T) {
 		{"leading CR", "\rsneaky", "'\rsneaky"},
 		{"minus in the middle is untouched", "well-known", "well-known"},
 		{"equals in the middle is untouched", "a=b", "a=b"},
+		// "-" alone is this codebase's own "no entity ID" sentinel (a
+		// dozen-odd InsertAudit call sites), not a formula — must survive
+		// unchanged or most audit-export rows get a spurious "'-" (ut-docs#195 review).
+		{"lone hyphen sentinel is untouched", "-", "-"},
+		{"a longer dash-prefixed value is still defused", "--", "'--"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
