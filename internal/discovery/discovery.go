@@ -27,17 +27,19 @@ const TillIDSettingKey = "lan_discovery.till_id"
 // across the whole process and across restarts, must see the same value,
 // which is why this is the one function anything needing this id should
 // call rather than each generating its own.
+//
+// Uses SettingsRepo.GetOrCreate rather than a Get-then-Set here: on a fresh
+// DB, two concurrent callers doing read-then-write can each miss the Get,
+// each generate a different uuid, and last-Set-wins — the caller holding the
+// losing uuid then returns an id nothing else agrees on (ut-docs#271).
+// GetOrCreate resolves that atomically in the data layer so every caller,
+// racing or not, converges on the same persisted value.
 func TillID(ctx context.Context, settings *data.SettingsRepo) (string, error) {
-	if v, ok, err := settings.Get(ctx, TillIDSettingKey); err != nil {
-		return "", err
-	} else if ok && strings.TrimSpace(v) != "" {
-		return v, nil
-	}
-	id := uuid.NewString()
-	if err := settings.Set(ctx, TillIDSettingKey, id); err != nil {
+	v, err := settings.GetOrCreate(ctx, TillIDSettingKey, uuid.NewString())
+	if err != nil {
 		return "", err
 	}
-	return id, nil
+	return v, nil
 }
 
 // RoleCheckFromSettings builds a RoleCheck (see advertiser.go) backed by a

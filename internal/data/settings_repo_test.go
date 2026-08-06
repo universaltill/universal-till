@@ -3,9 +3,14 @@ package data
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/universaltill/universal-till/internal/db"
 )
 
 func TestSettingsRepo_SetAndGet(t *testing.T) {
@@ -124,5 +129,110 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 	}
 	if n != 0 {
 		t.Fatalf("settings has %d rows after failed SetMany, want 0 (partial write not rolled back)", n)
+	}
+}
+
+func TestSettingsRepo_GetOrCreate_SeedsOnFirstCall(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewSettingsRepo(db)
+	ctx := context.Background()
+
+	got, err := repo.GetOrCreate(ctx, "till.id", "seed-value")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	if got != "seed-value" {
+		t.Fatalf("got %q, want the seed value on first call", got)
+	}
+
+	stored, ok, err := repo.Get(ctx, "till.id")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !ok || stored != "seed-value" {
+		t.Fatalf("expected the seed persisted, got %q ok=%v", stored, ok)
+	}
+}
+
+func TestSettingsRepo_GetOrCreate_ReturnsExistingWithoutOverwriting(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewSettingsRepo(db)
+	ctx := context.Background()
+
+	if err := repo.Set(ctx, "till.id", "already-here"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := repo.GetOrCreate(ctx, "till.id", "would-be-a-different-value")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	if got != "already-here" {
+		t.Fatalf("got %q, want the pre-existing value preserved", got)
+	}
+}
+
+// ut-docs#271: a plain Get-then-Set get-or-create lets two concurrent
+// callers on a fresh key each miss the Get, each pass a different ifAbsent
+// value, and last-Set-wins — some callers then hold a value nobody else
+// agrees on. GetOrCreate must make every concurrent caller converge on the
+// SAME persisted value regardless of interleaving.
+//
+// Deliberately a REAL migrated file-backed database via db.Open, not
+// newSettingsTestDB's ":memory:" DSN — a ":memory:" DB gives every pooled
+// connection its OWN isolated database (see
+// TestAddBarcodeConcurrentRace's comment, ut-docs#304), so it can't
+// exercise real multi-connection contention at all.
+func TestSettingsRepo_GetOrCreate_ConcurrentCallersConverge(t *testing.T) {
+	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer dbh.Close()
+	repo := NewSettingsRepo(dbh.DB)
+	ctx := context.Background()
+
+	// A single round can miss the race window by chance (goroutines can
+	// serialize through pure luck) — run it repeatedly on a fresh key each
+	// time and assert the invariant every round, same approach as
+	// TestAddBarcodeConcurrentRace.
+	const rounds = 30
+	const callersPerRound = 8
+	for round := 0; round < rounds; round++ {
+		key := fmt.Sprintf("race.key.%d", round)
+		results := make([]string, callersPerRound)
+		errs := make([]error, callersPerRound)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(callersPerRound)
+		for i := 0; i < callersPerRound; i++ {
+			go func(i int) {
+				defer wg.Done()
+				<-start // released together to maximise the race window
+				results[i], errs[i] = repo.GetOrCreate(ctx, key, fmt.Sprintf("candidate-%d", i))
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: GetOrCreate[%d]: %v", round, i, err)
+			}
+		}
+		want := results[0]
+		for i, got := range results {
+			if got != want {
+				t.Fatalf("round %d: caller %d got %q, caller 0 got %q — concurrent callers disagree on the winning value", round, i, got, want)
+			}
+		}
+
+		stored, ok, err := repo.Get(ctx, key)
+		if err != nil {
+			t.Fatalf("round %d: Get: %v", round, err)
+		}
+		if !ok || stored != want {
+			t.Fatalf("round %d: persisted value %q (ok=%v) doesn't match what every caller agreed on (%q)", round, stored, ok, want)
+		}
 	}
 }

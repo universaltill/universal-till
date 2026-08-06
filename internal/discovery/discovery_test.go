@@ -3,11 +3,14 @@ package discovery
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/db"
 )
 
 // openTestSettings mirrors internal/data/settings_repo_test.go's minimal
@@ -16,15 +19,30 @@ import (
 // rest of the DB is unnecessary here.
 func openTestSettings(t *testing.T) *data.SettingsRepo {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
-	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
+	t.Cleanup(func() { sqlDB.Close() })
+	if _, err := sqlDB.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
 		t.Fatalf("create settings: %v", err)
 	}
-	return data.NewSettingsRepo(db)
+	return data.NewSettingsRepo(sqlDB)
+}
+
+// openFileBackedTestSettings is openTestSettings's real-multi-connection
+// counterpart: a ":memory:" DSN gives every pooled connection its OWN
+// isolated database (see internal/data's TestAddBarcodeConcurrentRace
+// comment, ut-docs#304), so it can't exercise real cross-connection locking
+// at all. Needed specifically for the concurrency test below.
+func openFileBackedTestSettings(t *testing.T) *data.SettingsRepo {
+	t.Helper()
+	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { dbh.Close() })
+	return data.NewSettingsRepo(dbh.DB)
 }
 
 func TestTillID_CreatesAndPersistsOnFirstCall(t *testing.T) {
@@ -80,6 +98,60 @@ func TestTillID_ReturnsExistingValueWithoutOverwriting(t *testing.T) {
 	}
 	if got != preSeeded {
 		t.Fatalf("expected the pre-existing id %q preserved, got %q", preSeeded, got)
+	}
+}
+
+// ut-docs#271: on a genuinely fresh DB, two concurrent first callers (e.g.
+// the advertiser's tick and an incoming pairing request racing at boot) must
+// converge on the same till id, not each mint and persist their own with
+// last-write-wins silently stranding one of them.
+func TestTillID_ConcurrentCallersOnFreshDBConverge(t *testing.T) {
+	ctx := context.Background()
+	settings := openFileBackedTestSettings(t)
+
+	// TillID always keys off the one constant TillIDSettingKey, so unlike a
+	// parameterized get-or-create there's no fresh-key-per-round trick
+	// available — clear that one row between rounds instead (reopening the
+	// whole DB per round, migrations and all, drowned out the race window
+	// entirely: 15 rounds of that never reproduced it once). A single round
+	// can still miss the race window by chance, so repeat and assert every
+	// time, same approach as TestAddBarcodeConcurrentRace /
+	// TestSettingsRepo_GetOrCreate_ConcurrentCallersConverge.
+	const rounds = 30
+	const callersPerRound = 8
+	for round := 0; round < rounds; round++ {
+		if err := settings.Delete(ctx, TillIDSettingKey); err != nil {
+			t.Fatalf("round %d: Delete: %v", round, err)
+		}
+		ids := make([]string, callersPerRound)
+		errs := make([]error, callersPerRound)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(callersPerRound)
+		for i := 0; i < callersPerRound; i++ {
+			go func(i int) {
+				defer wg.Done()
+				<-start // released together to maximise the race window
+				ids[i], errs[i] = TillID(ctx, settings)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: TillID[%d]: %v", round, i, err)
+			}
+		}
+		want := ids[0]
+		if want == "" {
+			t.Fatalf("round %d: expected a non-empty generated till id", round)
+		}
+		for i, got := range ids {
+			if got != want {
+				t.Fatalf("round %d: caller %d got id %q, caller 0 got %q — concurrent boot callers disagree on this till's id", round, i, got, want)
+			}
+		}
 	}
 }
 
