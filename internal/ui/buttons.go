@@ -352,6 +352,9 @@ func NewRenderer(layout, page, partial string, funcs template.FuncMap) (*Rendere
 		stripWebPrefix(layout),
 		stripWebPrefix(page),
 		"ui/partials/nav.html",
+		// base.html references it on every page; must be parsed alongside
+		// the layout or executing "base" fails.
+		"ui/partials/bugreport_panel.html",
 		stripWebPrefix(partial),
 	)
 	if err != nil {

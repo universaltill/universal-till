@@ -36,6 +36,11 @@
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
     {{ template "nav" . }}
     <main class="container">{{ template "content" . }}</main>
+    <!-- Floating, NON-modal bug-report capture panel (ut-docs#346) — a
+         sibling of <main>, not inside it, so it's independent of whatever
+         the current page renders. Closed by default; opened by the 🐞 nav
+         chip, or pre-opened server-side by /report-issue. -->
+    {{ template "bugreport_panel" . }}
     <footer class="statusbar" aria-label="Status">
       <!-- data-conn-*, not data-online: html/template strips "data-" and
            treats on*-named attributes as JS context, JSON-quoting the value. -->
