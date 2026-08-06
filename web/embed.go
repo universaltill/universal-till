@@ -13,3 +13,11 @@ import "embed"
 
 //go:embed ui public
 var FS embed.FS
+
+// HelpFS carries the built-in user manual (web/help/<locale>/<id>.md, plus
+// its screenshots). Embedded for the same reason as the UI, and one more: the
+// manual has to be readable when the line is down, which is exactly when
+// somebody goes looking for it.
+//
+//go:embed help
+var HelpFS embed.FS

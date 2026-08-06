@@ -925,15 +925,51 @@ body.login-screen {
 .help-steps li { margin-block-end: .5rem; line-height: 1.55; }
 .help-section-title { margin-block: 1.4rem .3rem; }
 
-/* Expandable feature guide (/help): one <details> per feature */
-.feature-list { display: flex; flex-direction: column; gap: .5rem; max-inline-size: 52rem; margin-block-end: 1.2rem; }
-.feature-list details { background: var(--panel, var(--card, #fff)); border: 1px solid var(--border); border-radius: .6rem; }
-.feature-list summary { cursor: pointer; padding: .8rem 1rem; font-weight: 600; font-size: 1.05rem;
-                        list-style-position: inside; min-block-size: 44px; display: flex; align-items: center; gap: .5rem; }
-.feature-list summary::marker { color: var(--muted); }
-.feature-list details[open] summary { border-block-end: 1px solid var(--border); }
-.feature-body { padding: .8rem 1rem 1rem; }
-.feature-body p { margin-block: 0 .6rem; line-height: 1.55; }
+/* The manual (/help): topic tree + search on the inline-start side, the topic
+   on the other. Logical properties only, so RTL locales mirror for free.
+   On a narrow screen (a 1024×600 Pi in portrait, a phone) the two panes
+   stack — the tree first, since that is how you find anything. */
+.manual { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+          gap: 1.2rem; align-items: start; }
+@media (max-width: 52rem) { .manual { grid-template-columns: 1fr; } }
+
+.manual-nav { position: sticky; inset-block-start: .5rem; max-block-size: calc(100vh - 5rem);
+              overflow-y: auto; padding-inline-end: .4rem; }
+.manual-search input { inline-size: 100%; padding: .55rem .7rem; font-size: 1rem;
+                       min-block-size: 44px; border: 1px solid var(--border); border-radius: .5rem;
+                       background: var(--panel, #fff); color: inherit; }
+.manual-tree ul { list-style: none; margin: 0 0 .9rem; padding: 0; }
+.manual-tree li { margin-block-end: .15rem; }
+.manual-section { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em;
+                  color: var(--muted); margin-block: 1rem .35rem; }
+.manual-link { display: block; padding: .5rem .6rem; border-radius: .45rem;
+               text-decoration: none; color: inherit; line-height: 1.35; min-block-size: 44px; }
+.manual-link:hover { background: var(--panel, rgba(127,127,127,.12)); }
+.manual-link.is-current { background: var(--accent, #2b6cb0); color: #fff; font-weight: 600; }
+
+.manual-panel { min-inline-size: 0; }
+.manual-topic { max-inline-size: 48rem; line-height: 1.6; }
+.manual-topic h1 { margin-block: 0 .6rem; }
+.manual-topic h2 { margin-block: 1.6rem .4rem; font-size: 1.2rem; }
+.manual-topic ol, .manual-topic ul { padding-inline-start: 1.4rem; }
+.manual-topic li { margin-block-end: .45rem; }
+/* Screenshots: full width of the reading column, never overflowing it. */
+.manual-topic img { max-inline-size: 100%; height: auto; border: 1px solid var(--border);
+                    border-radius: .5rem; margin-block: .6rem; display: block; }
+.manual-untranslated { background: var(--panel, rgba(127,127,127,.12)); border-inline-start: 3px solid var(--accent, #2b6cb0);
+                       padding: .5rem .7rem; border-radius: .3rem; color: var(--muted); }
+.manual-result-list { list-style: none; margin: 0; padding: 0; }
+.manual-result-list li { margin-block-end: 1rem; }
+.manual-snippet { color: var(--muted); margin-block: .2rem 0; }
+
+/* Contextual "?" — sits next to a page heading and opens that page's topic.
+   Deliberately small and low-contrast: it must be findable when wanted and
+   invisible when not, and never a mis-tap target during a sale. */
+.help-hint { display: inline-flex; align-items: center; justify-content: center;
+             inline-size: 1.6rem; block-size: 1.6rem; margin-inline-start: .4rem;
+             border: 1px solid var(--border); border-radius: 50%; text-decoration: none;
+             color: var(--muted); font-size: .95rem; line-height: 1; vertical-align: middle; }
+.help-hint:hover, .help-hint:focus { color: inherit; border-color: var(--accent, #2b6cb0); }
 
 /* Translation editor (/translations) */
 .translations-controls { display: flex; gap: 1rem; align-items: end; margin-block-end: .8rem; flex-wrap: wrap; }

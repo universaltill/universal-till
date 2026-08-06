@@ -1,0 +1,34 @@
+{{/*
+  One topic of the manual. Rendered on its own for an htmx swap, and included
+  by the full page. Bare (no define wrapper), matching the other partials
+  served through RenderPartial.
+*/}}
+{{ if .topic }}
+<article class="manual-topic" id="manual-topic" data-topic="{{ .topic.ID }}">
+  {{ if not .topic.Translated }}
+  <p class="manual-untranslated" role="note">{{ T "help.untranslated" }}</p>
+  {{ end }}
+  {{ .topic.HTML }}
+</article>
+{{ else }}
+<article class="manual-topic manual-intro" id="manual-topic">
+  <h1>{{ T "help.guide.title" }}</h1>
+  <p>{{ T "help.guide.intro" }}</p>
+  <p class="muted">{{ T "help.pick.topic" }}</p>
+
+  {{/* The old flat help page's direct route into the plugin store — an
+       installed plugin (the FAQ one) contributes its own help content there,
+       so this is a real entry point, not decoration. The rebuild dropped it
+       along with the rest of that page's markup, silently breaking the two
+       tests/e2e specs that assert a shop owner can jump straight from Help to
+       Plugins: they land on plain /help, pick no topic, and expect it
+       immediately visible — so it belongs on the landing view, not inside the
+       plugins topic. It also can't live in a locale's own plugins.md topic,
+       since topic Markdown renders through goldmark without html.WithUnsafe. */}}
+  <div class="card manual-plugins">
+    <h2>{{ T "help.plugins" }}</h2>
+    <p>{{ T "help.plugins_description" }}</p>
+    <a class="btn" data-testid="plugin-faq-entry" href="/plugins">{{ T "help.faq_entry" }}</a>
+  </div>
+</article>
+{{ end }}
