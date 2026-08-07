@@ -7,7 +7,20 @@ import { test, expect } from '@playwright/test';
 test('manual lists topics and opens one without a full page load', async ({ page }) => {
   await page.goto('/help');
   await expect(page.locator('.manual-nav')).toBeVisible();
+  await expect(page.locator('.manual-panel')).toBeVisible();
   await expect(page.locator('.manual-link').first()).toBeVisible();
+  // ut-docs#389: `.manual-nav`/`.manual-panel` both being present in the DOM
+  // (the assertions above) does NOT prove the two-pane layout actually
+  // rendered — Playwright's toBeVisible() only checks display/visibility,
+  // not whether app.css loaded at all. A CSS-load failure leaves both
+  // elements individually "visible" but stacked in one unstyled column, the
+  // exact regression reported live. Assert real side-by-side geometry too:
+  // the nav's box must end (its inline-end edge) at or before the panel's
+  // inline-start edge, which only holds under the `.manual { display: grid;
+  // grid-template-columns: ... }` rule from app.css.
+  const nav = await page.locator('.manual-nav').boundingBox();
+  const panel = await page.locator('.manual-panel').boundingBox();
+  expect(nav!.x + nav!.width).toBeLessThanOrEqual(panel!.x + 1); // +1: sub-pixel rounding
 
   // htmx swaps only the panel, and pushes the URL so the topic is linkable.
   await page.getByRole('link', { name: 'Catalog, variants & barcodes' }).click();
