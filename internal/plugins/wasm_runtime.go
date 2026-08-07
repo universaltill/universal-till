@@ -166,8 +166,12 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		// verdict (docs: wasm-runtime.md payment authorization). ".ask"
 		// events are the generic value-returning hook (EventBus.Ask) — also
 		// blocking, since the caller is waiting on the plugin's answer.
+		// ".refund" events block the same way: a refund's payment leg
+		// (blockingPaymentEventWithResponse in internal/pages/refund_page.go)
+		// waits on the plugin's decline/approve answer before letting the
+		// refund proceed (ut-docs#434).
 		for _, evName := range events {
-			if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") {
+			if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") {
 				bus.SetEventMode(evName, Blocking)
 			}
 		}
