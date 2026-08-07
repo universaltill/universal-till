@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -359,8 +360,31 @@ func TestGetLowStock_JSONAndHTML(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"count"`) {
-		t.Fatalf("expected a JSON count field, got %s", rec.Body.String())
+	// The whole product wraps JSON API responses as { "data": …, "error": null }
+	// (universal-till/CLAUDE.md, "API, formats, i18n") -- this endpoint must
+	// follow the same envelope every other JSON handler in this package uses,
+	// not return its payload bare at the top level.
+	var envelope struct {
+		Data *struct {
+			Items json.RawMessage `json:"items"`
+			Count int             `json:"count"`
+		} `json:"data"`
+		Error *string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("response is not the {data,error} JSON envelope: %v (%s)", err, rec.Body.String())
+	}
+	if envelope.Error != nil {
+		t.Fatalf("expected error:null on success, got %q", *envelope.Error)
+	}
+	if envelope.Data == nil {
+		t.Fatalf("expected a data field wrapping items/count, got %s", rec.Body.String())
+	}
+	if envelope.Data.Count != 1 {
+		t.Fatalf("expected data.count == 1, got %d (%s)", envelope.Data.Count, rec.Body.String())
+	}
+	if !strings.Contains(string(envelope.Data.Items), "itm1") {
+		t.Fatalf("expected data.items to contain the low-stock item, got %s", envelope.Data.Items)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/inventory/low-stock", nil)
@@ -371,6 +395,41 @@ func TestGetLowStock_JSONAndHTML(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "<table") {
 		t.Fatalf("expected an HTML table for low-stock items, got %s", rec.Body.String())
+	}
+}
+
+// TestGetLowStock_JSONError_UsesDataErrorEnvelope covers the error branch of
+// the same handler: a query failure must still respond as { "data": null,
+// "error": "…" }, not a bare { "error": "…" } object.
+func TestGetLowStock_JSONError_UsesDataErrorEnvelope(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	dp.Db.Close() // closed *sql.DB forces GetLowStockItems's query to fail deterministically
+
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/low-stock", nil)
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("response is not a JSON object: %v (%s)", err, rec.Body.String())
+	}
+	// Assert the "data" key is actually present (and null), not merely
+	// absent -- a response with no "data" key at all would also decode as
+	// a nil field into a Go struct, silently passing a weaker check.
+	dataVal, hasData := raw["data"]
+	if !hasData {
+		t.Fatalf("expected an explicit \"data\" key (null) in the error envelope, got %s", rec.Body.String())
+	}
+	if string(dataVal) != "null" {
+		t.Fatalf("expected data:null on error, got %s", dataVal)
+	}
+	errVal, hasError := raw["error"]
+	if !hasError || string(errVal) == "null" || string(errVal) == `""` {
+		t.Fatalf("expected a non-empty \"error\" value, got %s", rec.Body.String())
 	}
 }
 
