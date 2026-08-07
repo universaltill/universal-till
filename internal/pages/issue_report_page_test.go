@@ -340,6 +340,101 @@ func TestIssueReportAPI_SavesBundleLocally(t *testing.T) {
 	}
 }
 
+// The operator's UI locale at capture time (ut-docs#397) must land on the
+// saved bundle, resolved exactly the way every page render resolves it
+// (httpx.ResolveLocale: ?lang= query, then the ut_lang cookie, then the
+// configured default) — here via the ut_lang cookie, the steady-state an
+// operator who picked a language is actually in.
+func TestIssueReportAPI_CapturesOperatorLocale(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	body, ctype := multipartIssueReport(t, "", true, false)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 saved bundle, got %d", len(bundles))
+	}
+	if bundles[0].Meta.Locale != "fa" {
+		t.Errorf("Meta.Locale = %q, want %q (from the ut_lang cookie)", bundles[0].Meta.Locale, "fa")
+	}
+}
+
+// A locale outside the shipped set (a hand-edited cookie, a stale value from
+// a locale this build no longer ships) must not reach the saved bundle
+// as-is — it goes on to Whisper's language param downstream (ut-docs#397),
+// and an unrecognized code there risks a permanently-failing transcription
+// rather than a harmless template-lookup miss. Falls back to "" (the same
+// "unknown, auto-detect" value an unset locale already carries), not to the
+// raw unchecked string.
+func TestIssueReportAPI_UnknownLocaleFallsBackToEmpty(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	body, ctype := multipartIssueReport(t, "", true, false)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: "klingon"})
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 saved bundle, got %d", len(bundles))
+	}
+	if bundles[0].Meta.Locale != "" {
+		t.Errorf("Meta.Locale = %q, want %q (unrecognized locale must fall back to auto-detect, not pass through)", bundles[0].Meta.Locale, "")
+	}
+}
+
+// With no lang query and no ut_lang cookie the handler still saves — the
+// bundle just carries the resolved default ("en", set by newIssueReportTestMux's
+// httpx.InitI18n), never an error.
+func TestIssueReportAPI_LocaleDefaultsWhenUnset(t *testing.T) {
+	withTempIssueReportDir(t)
+	mux := newIssueReportTestMux(t)
+
+	body, ctype := multipartIssueReport(t, "typed note, default locale", false, false)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 saved bundle, got %d", len(bundles))
+	}
+	if bundles[0].Meta.Locale != "en" {
+		t.Errorf("Meta.Locale = %q, want %q (the configured default)", bundles[0].Meta.Locale, "en")
+	}
+}
+
 // Multiple captured screenshots (ut-docs#347) must all be saved, in order,
 // on the resulting bundle.
 func TestIssueReportAPI_SavesMultipleImages(t *testing.T) {

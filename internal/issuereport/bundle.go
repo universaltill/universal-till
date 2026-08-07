@@ -36,8 +36,13 @@ var newBundleID = uuid.NewString
 // Meta is the non-blob part of a captured bundle, persisted as meta.json
 // alongside the recording files.
 type Meta struct {
-	ID        string            `json:"id"`
-	Note      string            `json:"note"`
+	ID   string `json:"id"`
+	Note string `json:"note"`
+	// Locale is the till's UI locale (e.g. "fa") at capture time, so
+	// cloud-side transcription can request it from Whisper (ut-docs#397).
+	// Empty when it was never captured (bundles saved before this field
+	// existed, or the JS-less path) — the cloud treats that as auto-detect.
+	Locale    string            `json:"locale"`
 	CreatedAt time.Time         `json:"created_at"`
 	Logs      []logging.Problem `json:"logs"`
 }
@@ -53,9 +58,11 @@ type Bundle struct {
 
 // Save writes a new bundle to the pending queue. A description is required —
 // either typed (note) or spoken (audio) — but not both; video and images are
-// always optional. images is written as image-0.png, image-1.png, … in call
-// order (screenshot capture order, ut-docs#347).
-func Save(note string, audio, video []byte, images [][]byte) (string, error) {
+// always optional. locale is the operator's UI locale at capture time
+// (ut-docs#397) — empty is valid (never captured / JS-less path). images is
+// written as image-0.png, image-1.png, … in call order (screenshot capture
+// order, ut-docs#347).
+func Save(note, locale string, audio, video []byte, images [][]byte) (string, error) {
 	if strings.TrimSpace(note) == "" && len(audio) == 0 {
 		return "", fmt.Errorf("issuereport: a description (typed note or voice recording) is required")
 	}
@@ -67,14 +74,14 @@ func Save(note string, audio, video []byte, images [][]byte) (string, error) {
 	// Any failure past this point leaves a directory with no meta.json —
 	// invisible to Pending() and so never reachable by Discard() either.
 	// Clean it up here instead of leaking it permanently.
-	if err := saveBundleFiles(dir, id, note, audio, video, images); err != nil {
+	if err := saveBundleFiles(dir, id, note, locale, audio, video, images); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	return id, nil
 }
 
-func saveBundleFiles(dir, id, note string, audio, video []byte, images [][]byte) error {
+func saveBundleFiles(dir, id, note, locale string, audio, video []byte, images [][]byte) error {
 	if len(audio) > 0 {
 		if err := os.WriteFile(filepath.Join(dir, "audio.webm"), audio, 0o644); err != nil {
 			return fmt.Errorf("issuereport: write audio: %w", err)
@@ -91,7 +98,7 @@ func saveBundleFiles(dir, id, note string, audio, video []byte, images [][]byte)
 			return fmt.Errorf("issuereport: write %s: %w", name, err)
 		}
 	}
-	meta := Meta{ID: id, Note: note, CreatedAt: time.Now().UTC(), Logs: logging.Recent()}
+	meta := Meta{ID: id, Note: note, Locale: locale, CreatedAt: time.Now().UTC(), Logs: logging.Recent()}
 	mb, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("issuereport: encode meta: %w", err)

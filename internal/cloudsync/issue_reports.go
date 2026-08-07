@@ -52,6 +52,10 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 	_ = w.WriteField("device_id", enroll.CurrentStatus().DeviceID)
 	_ = w.WriteField("report_id", b.Meta.ID)
 	_ = w.WriteField("note", b.Meta.Note)
+	// Capture-time UI locale (ut-docs#397) so cloud-side transcription can
+	// hand it to Whisper. Always sent — an empty string means "no locale
+	// known, auto-detect" on the cloud side, so don't skip the field.
+	_ = w.WriteField("locale", b.Meta.Locale)
 	_ = w.WriteField("created_at", b.Meta.CreatedAt.Format("2006-01-02T15:04:05.000000000Z07:00"))
 	if b.AudioPath != "" {
 		if err := attachFile(w, "audio", "audio.webm", b.AudioPath); err != nil {
