@@ -212,6 +212,9 @@ func TestClip(t *testing.T) {
 			want: strings.Repeat("a", 41) + "ä",
 		},
 		{"non-ASCII text shorter than max returned unchanged", "فروشگاه", 42, "فروشگاه"},
+		{"max zero clips to empty, not a panic", "hello", 0, ""},
+		{"max negative clips to empty, not a panic", "hello", -1, ""},
+		{"empty string with positive max returned unchanged", "", 5, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -227,12 +230,14 @@ func TestClip(t *testing.T) {
 }
 
 func TestRenderMultiByteNameAtColumnBoundary_NoInvalidUTF8(t *testing.T) {
-	// invoice.bill_to (internal/pages/invoice_page.go) is the concrete
-	// reachable call site: a translated label + customer name whose combined
-	// byte length crosses the Width boundary inside a multi-byte character.
-	name := strings.Repeat("a", Width-1) + "ü" + "trailing text past the cut"
+	// invoice.bill_to (internal/pages/invoice_page.go:202) is the concrete
+	// reachable call site: it appends "<label>: <CustomerName>" onto
+	// Doc.Header, clipped at Width in Render (escpos.go). Mirror that shape
+	// here so the boundary-crossing multi-byte character lands in the same
+	// field the real bug was found in, not just a same-function stand-in.
+	line := strings.Repeat("a", Width-1) + "ü" + "trailing text past the cut"
 	d := sampleDoc()
-	d.Footer = []string{name}
+	d.Header = []string{line}
 	out := Render(d)
 	if !utf8.Valid(out) {
 		t.Error("render output contains invalid UTF-8 after clipping a name whose cut point lands mid multi-byte character")

@@ -193,8 +193,13 @@ func kvRow(label, amount string) string {
 // clip truncates s to at most max runes (characters), never bytes — Width
 // tracks visible columns, and a byte-based cut can split a multi-byte UTF-8
 // character (any non-ASCII locale string: ä/ö/ü/ß, ar/fa/tr text) mid-char,
-// producing invalid UTF-8 on the printer.
+// producing invalid UTF-8 on the printer. max <= 0 clips to empty rather
+// than panicking — a caller computing max from column arithmetic (kvRow's
+// re-clip when a row overflows) can legitimately land at or below zero.
 func clip(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
 	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
