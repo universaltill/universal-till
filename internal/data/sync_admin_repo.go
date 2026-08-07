@@ -31,7 +31,18 @@ type adminTable struct {
 	// primary's row upserts into a UNIQUE violation and the whole apply
 	// rolls back — on every pull, forever.
 	skipCols []string // till-LOCAL columns that must never travel: excluded
-	// from the dump and ignored on apply even if an older primary sends them.
+	// from the dump and ignored on apply even if an older primary sends them
+	// — an existing local value (e.g. payment_methods.plugin_id) is left
+	// exactly as-is, never overwritten either way.
+	redactCols []string // SECRET columns that must never travel, stronger
+	// than skipCols: excluded from the dump like skipCols, but also forced
+	// to NULL on every apply, on every row, even one that already existed
+	// locally. Required for anything a replica could otherwise end up
+	// holding through a path OTHER than this table's own incremental sync
+	// (ut-docs#405: a replica enrolled via a full-DB-snapshot join already
+	// has the primary's real tills rows, bearer_hash included, baked in
+	// from day one — skipCols's "leave it alone" would let that real
+	// secret sit there forever; redactCols actively scrubs it every pull).
 }
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
@@ -64,6 +75,31 @@ var adminTables = []adminTable{
 	// UNIQUE index includes scope_id, which is NULL on global rows, and
 	// SQLite treats NULLs as distinct — ON CONFLICT on it would never fire.
 	{name: "plugin_settings", pk: []string{"id"}},
+	// The shop's till roster (ut-docs#405) — so a replica's sync chip / the
+	// /tills page has something real to show instead of an always-empty
+	// local table (this table used to be primary-only: only InsertTill,
+	// called from the enrolment handler on the primary, ever wrote to it).
+	// Both redacted columns share the same reason redactCols exists at all
+	// (see that field's comment): a replica can already hold a REAL value
+	// for either one through a path other than this table's own sync (the
+	// enrolment snapshot is a full-DB copy, ut-docs#368) — skipCols's
+	// "leave whatever's there alone" would let a stale-or-secret value sit
+	// forever; redactCols actively clears it on every single apply.
+	//   - bearer_hash: EVERY till's sync-auth secret, must never leave the
+	//     primary at all. See migration 030 for why the column had to
+	//     become nullable to support force-NULLing it.
+	//   - last_seen_at: not secret, just would-be-stale — a snapshot-joined
+	//     replica starts with the primary's real timestamps baked in, and
+	//     they'd never update again (nothing but the primary ever writes
+	//     this column). Redacting it means a replica honestly shows "—"
+	//     for a sibling's last-seen time instead of a timestamp that can
+	//     be arbitrarily old. It's also NEVER put in skipCols instead:
+	//     TillByBearerHash touches it on every single authenticated sync
+	//     call, so including it in the dump at all would move the whole
+	//     bundle's fingerprint on every pull, permanently defeating the
+	//     ?have= unchanged-poll check for the ENTIRE bundle, not just this
+	//     table — pinned by TestAdminDumpFingerprint_StableAcrossTillAuthTouch.
+	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at"}},
 }
 
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
@@ -126,6 +162,11 @@ func (r *SyncAdminRepo) DumpAdmin(ctx context.Context) (AdminBundle, error) {
 			recs = kept
 		}
 		for _, c := range t.skipCols {
+			for _, rec := range recs {
+				delete(rec, c)
+			}
+		}
+		for _, c := range t.redactCols {
 			for _, rec := range recs {
 				delete(rec, c)
 			}
@@ -327,12 +368,29 @@ func upsertRow(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, rec
 	for _, c := range t.skipCols {
 		skip[c] = true
 	}
+	redact := map[string]bool{}
+	for _, c := range t.redactCols {
+		redact[c] = true
+	}
 	var names []string
 	var args []any
 	var sets []string
 	for _, c := range cols {
 		if skip[c] {
 			continue // till-local column; ignore even if an older primary sends it
+		}
+		if redact[c] {
+			// ut-docs#405: unlike skipCols, a redacted column is force-set
+			// to NULL on every apply — never taken from rec (which never
+			// has it anyway, DumpAdmin already stripped it) and never left
+			// untouched on a row that already existed locally with a real
+			// value (e.g. from a full-DB-snapshot enrolment).
+			names = append(names, c)
+			args = append(args, nil)
+			if !isPK[c] {
+				sets = append(sets, c+" = NULL")
+			}
+			continue
 		}
 		v, ok := rec[c]
 		if !ok {

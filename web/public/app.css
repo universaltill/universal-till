@@ -1089,13 +1089,29 @@ body.login-screen {
 .login-setup { display: flex; flex-direction: column; gap: .8rem; text-align: start; }
 .login-setup input { width: 100%; }
 
-/* Multi-till sync chip in the nav (ADR-0011 D4) */
+/* Multi-till sync chip in the nav (ADR-0011 D4). ut-docs#405: .ok/.warn
+   used to hardcode literal hex pairs instead of the --success/--warning
+   tokens :root already defines, AND the opaque background clashed with
+   whatever a shipped theme (e.g. "monarch") painted underneath — both
+   contributed to the reported "text and background are some colours I
+   cannot see the till name" bug. .status-pill.online/.offline (this file,
+   "Operator chip" section below) already gets the rgba-tint + var(...)
+   shape right, reused here — but .status-pill is plain text, never a
+   link, so it never hits the problem below.
+   Every shipped theme (web/public/themes/*.css) sets its own `.nav a {
+   color: … }`, loaded in base.html AFTER this file — at equal specificity
+   to a bare `.sync-chip a`, the theme's rule would win and silently
+   override `color: inherit` back to the theme's plain nav-link color,
+   making --success/--warning never actually reach the chip's text despite
+   being set on the parent. `.nav .sync-chip a` outranks `.nav a` on
+   specificity alone (independent of load order), so `inherit` — and
+   therefore the ok/warn color — actually wins here. */
 .sync-chip { display: inline-flex; align-items: center; margin-inline-start: .6rem;
   padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
-.sync-chip.ok { background: #dcfce7; color: #166534; }
-.sync-chip.warn { background: #fef3c7; color: #92400e; }
-.sync-chip a { color: inherit; }
-.sync-banner { background: #fef3c7; color: #92400e; border-radius: .5rem;
+.sync-chip.ok { background: rgba(22, 163, 74, .12); color: var(--success); }
+.sync-chip.warn { background: rgba(217, 119, 6, .12); color: var(--warning); }
+.nav .sync-chip a { color: inherit; }
+.sync-banner { background: rgba(217, 119, 6, .12); color: var(--warning); border-radius: .5rem;
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
 

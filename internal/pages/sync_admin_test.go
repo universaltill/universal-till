@@ -161,6 +161,10 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	if !strings.Contains(body, "Front Till") {
 		t.Fatalf("expected the configured till_name label, got %q", body)
 	}
+	// ut-docs#405: was a bare <span>, not clickable at all.
+	if !strings.Contains(body, `<a href="/tills"`) {
+		t.Fatalf("expected the replica chip to be a clickable link to the local /tills page, got %q", body)
+	}
 
 	if err := dp.Settings.Set(ctx, "sync.last_contact_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatalf("set last_contact_at: %v", err)
@@ -192,6 +196,9 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	initPagesI18n(t)
 	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "till.name", "Front Counter"); err != nil {
+		t.Fatalf("set till.name: %v", err)
+	}
 	tills := data.NewTillsRepo(dp.Db)
 	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
 		t.Fatalf("enrol till: %v", err)
@@ -218,6 +225,14 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), `sync-chip ok`) {
 		t.Fatalf("expected a just-seen enrolled till to render class=ok, got %q", rec.Body.String())
+	}
+	// ut-docs#405: used to render only a bare count ("1 tills"), with no
+	// way to read the primary's own name at all.
+	if !strings.Contains(rec.Body.String(), "Front Counter") {
+		t.Fatalf("expected the primary's own name in the chip label, got %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `<a href="/tills"`) {
+		t.Fatalf("expected the primary chip to stay a clickable link to /tills, got %q", rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "1") {
 		t.Fatalf("expected the till count in the chip, got %q", rec.Body.String())

@@ -588,9 +588,12 @@ func TestTillsPage_ShowsPrimaryTillWhenThisDeviceIsThePrimary(t *testing.T) {
 	}
 }
 
-// A replica (non-empty SyncPrimaryURL) must NOT fabricate a primary row —
-// that card is only about the primary showing itself, out of scope here.
-func TestTillsPage_NoFabricatedPrimaryRowWhenViewingFromAReplica(t *testing.T) {
+// ut-docs#405: on a replica, till.name is NOT a fabrication — it's synced
+// down verbatim from the primary (till.name isn't in
+// PerTillSettingPrefixes), so it genuinely IS the primary's own name. The
+// row must render, but tagged "(the primary)" rather than "(this till)" —
+// the replica is not that till.
+func TestTillsPage_ShowsPrimaryRowTaggedAsPrimaryWhenViewingFromAReplica(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
@@ -607,8 +610,169 @@ func TestTillsPage_NoFabricatedPrimaryRowWhenViewingFromAReplica(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "Front Counter") {
-		t.Fatalf("a replica must not show a fabricated primary row for its own till.name: %s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "Front Counter") {
+		t.Fatalf("expected a replica to show the synced primary name, got body without it: %s", body)
+	}
+	if !strings.Contains(body, "the primary") {
+		t.Fatalf("expected the primary row tagged as \"the primary\" (not \"this till\") on a replica, got: %s", body)
+	}
+}
+
+// ut-docs#405: the shop's till roster now syncs to every replica
+// (adminTables), so a replica's own row appears in .Tills too (the
+// primary enrols it there at join time) — it must be tagged "(this
+// till)" by matching sync.till_id, same idea TestTillsPage_
+// ShowsPrimaryRowTaggedAsPrimaryWhenViewingFromAReplica applies to the
+// primary's own row.
+func TestTillsPage_TagsThisTillWithinSyncedRosterOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	selfID, err := tillsRepo.InsertTill(ctx, "Back Counter", hashBearer("tok-self"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling")); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.till_id", selfID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Back Counter") || !strings.Contains(body, "Till 3") {
+		t.Fatalf("expected both the shop's tills listed on the replica, got: %s", body)
+	}
+	if !strings.Contains(body, "Back Counter <span class=\"muted\">(this till)</span>") {
+		t.Fatalf("expected the replica's own row tagged (this till), got: %s", body)
+	}
+	if strings.Contains(body, "Till 3 <span class=\"muted\">(this till)</span>") {
+		t.Fatalf("a sibling till must not be tagged (this till): %s", body)
+	}
+}
+
+// ut-docs#405: revoke is primary-authoritative — a replica's own local
+// DELETE would look like it worked (row disappears, HX-Refresh) but
+// silently reverts on the next admin-bundle pull, since the shop-wide
+// roster only really changes on the primary. The button must not even
+// render on a replica.
+func TestTillsPage_HidesRevokeButtonOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	if _, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling")); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	mux.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "/revoke") {
+		t.Fatalf("a replica must not offer a revoke action: %s", rec.Body.String())
+	}
+}
+
+// Backend enforcement independent of the UI hiding the button above —
+// never trust the template alone for a primary-authoritative write.
+func TestRevokeTill_RejectedOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	id, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 rejecting a revoke attempted on a replica, got %d: %s", rec.Code, rec.Body.String())
+	}
+	list, err := tillsRepo.ListTills(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected the till to survive a rejected revoke, got %d rows", len(list))
+	}
+}
+
+// ut-docs#405 (independent review finding): enrolling is the other half of
+// the revoke guard — a code minted on a replica would enrol the new till
+// against this replica's own local, non-authoritative tills table instead
+// of the shop's real primary, and it would silently lose access on the
+// next admin-bundle pull. The QR/code card must not even render there.
+func TestTillsPage_HidesAddTillCardOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if strings.Contains(body, "/api/sync/enroll-token") {
+		t.Fatalf("a replica must not offer to enrol a new till against itself: %s", body)
+	}
+	// The "join another shop" / LAN-discovery cards are a different flow
+	// (this device joining someone ELSE, not someone joining this device)
+	// and must still render.
+	if !strings.Contains(body, "/api/sync/join") {
+		t.Fatalf("expected the join-an-existing-shop form to still render on a replica: %s", body)
+	}
+}
+
+// Backend enforcement independent of the UI hiding the card above.
+func TestEnrolTokenAndEnroll_RejectedOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 rejecting enroll-token issued on a replica, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(`{"token":"whatever","name":"New Till"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("expected 409 rejecting enroll attempted on a replica, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	list, err := tillsRepo.ListTills(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected no till to have been enrolled against the replica, got %d rows", len(list))
 	}
 }
 
