@@ -21,3 +21,4 @@ Run several tills on the same shop network: one is the main till, the others joi
 5. If it fails, the reason appears under the button. The most common causes are the two tills not being on the same network, and only part of the code having been pasted.
 6. Sales made on any till flow back to the main till, and catalog changes spread to all tills within about half a minute.
 7. On a joined till, Catalog and Inventory are read-only — a banner at the top says so and points you to the main till. On Windows and Mac that banner is a clickable link; on the kiosk app it's plain text instead, since the kiosk has no way back if a link took it to another till's screen.
+8. On the **main till's** own Tills page, the Enrolled list also shows the main till itself (labelled "this till") alongside any joined tills, using the name set in Settings — so a single-till shop still sees its till listed, not just an empty table.

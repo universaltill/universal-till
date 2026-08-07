@@ -70,6 +70,9 @@
         <section x-show="step === 3" x-cloak>
           <h1>{{ T "setup.store.title" }}</h1>
           <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}">
+          <label>{{ T "setup.till_name.title" }}
+            <input type="text" name="till_name" maxlength="60" value="{{ T "setup.till_name.default" }}">
+          </label>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = 2">{{ T "setup.back" }}</button>
             <button type="button" class="btn primary" @click="step = 4">{{ T "setup.next" }}</button>

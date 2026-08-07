@@ -121,6 +121,55 @@ func TestSetupWizardHappyPath(t *testing.T) {
 	}
 }
 
+// The wizard's shop-name step also carries the primary till's own name
+// (ut-docs#396, distinct from a replica's sync.till_name) — submitting it
+// persists till.name, and omitting/blanking it leaves the name resolvable
+// via tillNameOrDefault's default, exactly like store_name's own handling.
+func TestSetupWizardTillName(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin":          {"2468"},
+		"pin_confirm":  {"2468"},
+		"country":      {"GB"},
+		"currency":     {"GBP"},
+		"tax_rate_pct": {"20"},
+		"store_name":   {"Corner Shop"},
+		"till_name":    {"Front Register"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("wizard setup with till_name: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	if name, ok, _ := d.Settings.Get(t.Context(), "till.name"); !ok || name != "Front Register" {
+		t.Fatalf("till.name = %q ok=%v, want %q", name, ok, "Front Register")
+	}
+}
+
+// Omitting till_name (blank submit) must not error and must leave the name
+// resolvable via the default — same skip-on-blank behaviour as store_name.
+func TestSetupWizardBlankTillNameDoesNotErrorAndDefaultsOnRead(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin":          {"2468"},
+		"pin_confirm":  {"2468"},
+		"country":      {"GB"},
+		"currency":     {"GBP"},
+		"tax_rate_pct": {"20"},
+		"store_name":   {"Corner Shop"},
+		// till_name intentionally omitted.
+	}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("wizard setup without till_name: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	if _, ok, _ := d.Settings.Get(t.Context(), "till.name"); ok {
+		t.Fatalf("till.name should be unset when the wizard field was blank")
+	}
+	if got := tillNameOrDefault(t.Context(), d, "en"); got != "Till 1" {
+		t.Fatalf("tillNameOrDefault after blank submit = %q, want default %q", got, "Till 1")
+	}
+}
+
 // GET /setup and POST /api/setup both refuse to run once an operator with a PIN
 // exists — the wizard window is exactly first boot.
 func TestSetupWizardRefusesAfterFirstBoot(t *testing.T) {
