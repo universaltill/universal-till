@@ -856,6 +856,7 @@
   "tills.revoke": "Revoke",
   "tills.revoke_confirm": "Revoke this till? It will stop syncing until paired again.",
   "tills.show_qr": "Show pairing code",
+  "tills.the_primary": "the primary",
   "tills.this_till": "this till",
   "tills.title": "Tills",
   "translations.col.key": "Key",

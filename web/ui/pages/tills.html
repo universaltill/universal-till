@@ -6,11 +6,20 @@
 
 <div class="catalog-layout">
   <div class="card">
+  {{/* ut-docs#405: a code minted here would encode THIS device's own
+       address — on a replica that's not the shop's real primary, so the
+       new till would enrol against this replica's local (non-
+       authoritative) tills table instead. It looks like it worked right
+       up until the next admin-bundle pull prunes that row and the new
+       till's access silently vanishes. The backend rejects it too
+       (defense in depth); this just doesn't offer the dead-end action. */}}
+  {{ if not .SyncPrimary }}
     <h3>{{ T "tills.add" }}</h3>
     <p class="muted">{{ T "tills.add_help" }}</p>
     <button class="btn primary" hx-post="/api/sync/enroll-token" hx-target="#till-qr" hx-swap="innerHTML">{{ T "tills.show_qr" }}</button>
     <div id="till-qr" style="margin-top:.6rem"></div>
     <hr style="margin:1rem 0; border:none; border-top:1px dashed #d1d5db">
+  {{ end }}
     <h3>{{ T "tills.join" }}</h3>
     <p class="muted">{{ T "tills.join_help" }}</p>
     <form hx-post="/api/sync/join" hx-target="#join-msg" hx-swap="innerHTML">
@@ -58,7 +67,15 @@
       <tbody>
         {{ if .PrimaryTillName }}
         <tr>
+          {{/* ut-docs#405: PrimaryTillName is now always populated (till.name
+               syncs down like any other setting), so this row renders on a
+               replica too — there it's the PRIMARY's row, not "this till",
+               so the tag must not claim it is one. */}}
+          {{ if .SyncPrimary }}
+          <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.the_primary" }})</span></td>
+          {{ else }}
           <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.this_till" }})</span></td>
+          {{ end }}
           <td>—</td>
           <td>—</td>
           <td></td>
@@ -66,11 +83,27 @@
         {{ end }}
         {{ range .Tills }}
         <tr>
+          {{ if eq .ID $.ThisTillID }}
+          <td>{{ .Name }} <span class="muted">({{ T "tills.this_till" }})</span></td>
+          {{ else }}
           <td>{{ .Name }}</td>
+          {{ end }}
           <td>{{ .EnrolledAt }}</td>
           <td>{{ if .LastSeenAt }}{{ .LastSeenAt }}{{ else }}—{{ end }}</td>
-          <td><button class="btn secondary" hx-post="/api/sync/tills/{{ .ID }}/revoke"
-                      hx-confirm="{{ T "tills.revoke_confirm" }}">{{ T "tills.revoke" }}</button></td>
+          <td>
+          {{/* ut-docs#405: revoke is a primary-authoritative write (same
+               rule as catalog/settings, ADR-0011 §2) — .Tills now syncs to
+               every replica too, so this button must not render there: a
+               replica's own local DELETE looks like it worked but reverts
+               on the next admin-bundle pull, since the shop-wide roster
+               only really changes on the primary. The handler enforces
+               this independently; hiding it here is just not offering an
+               action that would silently no-op. */}}
+          {{ if not $.SyncPrimary }}
+          <button class="btn secondary" hx-post="/api/sync/tills/{{ .ID }}/revoke"
+                      hx-confirm="{{ T "tills.revoke_confirm" }}">{{ T "tills.revoke" }}</button>
+          {{ end }}
+          </td>
         </tr>
         {{ end }}
       </tbody>
