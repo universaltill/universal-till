@@ -4,7 +4,7 @@ title: Faturalar ve vergili fatura
 section: İşi yürütme
 order: 220
 summary: Bir satış için gerçek (vergili) fatura düzenleyin — kurumsal müşteriler veya başlıklı fatura gereken her yer için.
-routes: [/invoices]
+routes: [/invoices, /invoice/{display_no}]
 ---
 
 # Faturalar ve vergili fatura

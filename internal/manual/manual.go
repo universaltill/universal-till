@@ -75,6 +75,9 @@ type Library struct {
 	byLocale map[string]map[string]*Topic
 	// route → topic id (locale-independent; routes are declared once, in en)
 	routes map[string]string
+	// declared routes containing a {name} segment, sorted, so the pattern
+	// fallback in TopicForRoute is deterministic across calls
+	patterns []string
 	// every known topic id, in en's order
 	ids []string
 }
@@ -182,6 +185,12 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 	if len(base) == 0 {
 		return nil, fmt.Errorf("manual: no %s topics found under %s", FallbackLocale, root)
 	}
+	for r := range lib.routes {
+		if strings.Contains(r, "{") {
+			lib.patterns = append(lib.patterns, r)
+		}
+	}
+	sort.Strings(lib.patterns)
 	for id := range base {
 		lib.ids = append(lib.ids, id)
 	}
@@ -270,9 +279,92 @@ func (l *Library) Tree(locale string) []Section {
 
 // TopicForRoute backs the contextual "?" — given the page the operator is
 // looking at, which topic documents it.
+//
+// An exact declared route wins (the overwhelming majority of topics, and the
+// fast path). When nothing matches exactly, declared routes containing a
+// {name} segment are tried segment-wise, so a topic declaring
+// /invoice/{display_no} resolves for a live request to /invoice/12345 — the
+// live path never equals the literal pattern string. If more than one pattern
+// would match the same path (the same general routing-ambiguity hazard Go's
+// own http.ServeMux has), the first in sorted pattern order wins,
+// deterministically; solving ambiguity better than that is out of scope here.
 func (l *Library) TopicForRoute(route string) (string, bool) {
-	id, ok := l.routes[route]
-	return id, ok
+	if id, ok := l.routes[route]; ok {
+		return id, true
+	}
+	for _, p := range l.patterns {
+		if RouteMatches(p, route) {
+			return l.routes[p], true
+		}
+	}
+	return "", false
+}
+
+// RouteMatches reports whether a declared route pattern covers a path,
+// segment-wise: same segment count, and each pair of segments either equal
+// literally, or the PATTERN side has a {name} placeholder standing for any
+// single non-empty segment on the path side.
+//
+// This is deliberately directional — pattern first, path second — not
+// symmetric. It's shared by two callers with different-shaped second
+// arguments: TopicForRoute passes a concrete request path (never contains
+// "{", so directionality is moot there), but the CI coverage guard's
+// RouteCovered passes a *registered mux pattern* as the second argument,
+// which can itself contain "{param}" segments. A declared literal (e.g.
+// "/plugins/store") must NOT be treated as covering a registered
+// "/plugins/{id}" just because one side of that segment pair happens to look
+// like a placeholder — a fixed literal path documents exactly one URL, not a
+// family of them. Only a placeholder on the PATTERN (declared) side is
+// generic; a placeholder on the path/registered side needs a placeholder on
+// the pattern side too, which "pattern segment == path segment" already
+// covers when both are the literal string "{same-name}". This was a real gap
+// found in review (ut-docs#326): the original symmetric version let
+// RouteCovered report a future GET /plugins/{id} as "covered" by the
+// existing literal /plugins/store, while TopicForRoute would still 404 the
+// "?" on every live request to it.
+//
+// Known limitation, no live effect today: Go 1.22 mux's other wildcard forms
+// — "{name...}" (multi-segment) and the "{$}" end-of-path marker — aren't
+// specially recognized; they're treated as ordinary single-segment {name}
+// placeholders. The one route using "{file...}" (/plugin-icons/.../{file...})
+// is denylisted in the CI guard, not declared by any topic, so this doesn't
+// currently produce a wrong answer — but a future topic declaring a
+// multi-segment pattern would need this extended first.
+func RouteMatches(pattern, path string) bool {
+	ps := strings.Split(pattern, "/")
+	xs := strings.Split(path, "/")
+	if len(ps) != len(xs) {
+		return false
+	}
+	for i := range ps {
+		if ps[i] == xs[i] {
+			continue
+		}
+		if isParamSegment(ps[i]) && xs[i] != "" {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isParamSegment(s string) bool {
+	return len(s) > 2 && s[0] == '{' && s[len(s)-1] == '}'
+}
+
+// RouteCovered reports whether a registered page route is claimed by some
+// topic — exactly, or by a parameter-compatible declared pattern. The CI
+// page-route coverage guard (scripts/ci/checkhelptopics) is its caller.
+func (l *Library) RouteCovered(pattern string) bool {
+	if _, ok := l.routes[pattern]; ok {
+		return true
+	}
+	for r := range l.routes {
+		if RouteMatches(r, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // IDs lists every topic id (English is the authoritative set).
