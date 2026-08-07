@@ -1,0 +1,26 @@
+{{/*
+  The manual's topic tree (the inline-start nav). Included directly by the
+  full-page render (ui/pages/help.html) as the single source of this markup,
+  and sent again as an out-of-band swap on every htmx /help/{topic} response
+  (ut-docs#351) — clicking a topic swaps only #manual-panel, so without this
+  the tree's `is-current`/`aria-current="page"` stay pinned to whichever
+  topic was active on the last full page load. `id="manual-tree"` is what
+  hx-swap-oob="true" matches against the copy already in the DOM.
+*/}}
+{{ define "help_nav" }}
+<nav class="manual-tree" id="manual-tree" {{ if .OOB }}hx-swap-oob="true"{{ end }}>
+  {{ range .sections }}
+  <h2 class="manual-section">{{ .Title }}</h2>
+  <ul>
+    {{ range .Topics }}
+    <li>
+      <a href="/help/{{ .ID }}"
+         class="manual-link{{ if eq .ID $.currentID }} is-current{{ end }}"
+         hx-get="/help/{{ .ID }}" hx-target="#manual-panel" hx-push-url="true"
+         {{ if eq .ID $.currentID }}aria-current="page"{{ end }}>{{ .Title }}</a>
+    </li>
+    {{ end }}
+  </ul>
+  {{ end }}
+</nav>
+{{ end }}
