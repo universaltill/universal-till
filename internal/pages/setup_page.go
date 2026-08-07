@@ -123,6 +123,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				return
 			}
 		}
+		if name := strings.TrimSpace(r.Form.Get("till_name")); name != "" {
+			if err := d.Settings.Set(r.Context(), "till.name", name); err != nil {
+				http.Error(w, "setup failed", http.StatusInternalServerError)
+				return
+			}
+		}
 		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
 			return

@@ -192,12 +192,21 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// This device's own row (ut-docs#396): only when THIS device is
+		// itself the primary — a replica showing its primary is a separate,
+		// out-of-scope concern.
+		primaryURL := d.SyncPrimaryURL(r.Context())
+		var primaryName string
+		if primaryURL == "" {
+			primaryName = tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
+		}
 		httpx.Render("ui/pages/tills.html", map[string]any{
-			"title":       "Tills",
-			"theme":       d.CurrentState().Theme,
-			"menuItems":   d.Menu,
-			"Tills":       list,
-			"SyncPrimary": d.SyncPrimaryURL(r.Context()),
+			"title":           "Tills",
+			"theme":           d.CurrentState().Theme,
+			"menuItems":       d.Menu,
+			"Tills":           list,
+			"PrimaryTillName": primaryName,
+			"SyncPrimary":     primaryURL,
 		})(w, r)
 	})
 

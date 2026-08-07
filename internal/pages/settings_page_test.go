@@ -197,6 +197,54 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	}
 }
 
+// The Settings page's dedicated till-name field (ut-docs#396) persists under
+// till.name — distinct from a replica's own sync.till_name — and is
+// manager-gated the same way as /api/settings/display-mode.
+func TestTillNameEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"Front Register"}}, &cashUser); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier till-name = %d, want 403", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"Front Register"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("manager till-name = %d, want 204", rec.Code)
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), "till.name"); !ok || v != "Front Register" {
+		t.Fatalf("till.name = %q ok=%v, want %q", v, ok, "Front Register")
+	}
+}
+
+// The Settings page's till-name field only makes sense on the primary —
+// till.name isn't read anywhere on a replica (its own identity is
+// sync.till_name, set at join time), so showing an editable field there
+// would be a dead control: a manager could save a name that changes
+// nothing anywhere in the product (independent review, ut-docs#396).
+func TestSettingsPage_TillNameFieldOnlyOnPrimary(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	if body := get(); !strings.Contains(body, `/api/settings/till-name`) {
+		t.Fatalf("primary till: expected the till-name field, got:\n%s", body)
+	}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "https://primary.local"); err != nil {
+		t.Fatalf("set sync.primary_url: %v", err)
+	}
+	if body := get(); strings.Contains(body, `/api/settings/till-name`) {
+		t.Fatalf("replica: till-name field should be hidden, got:\n%s", body)
+	}
+}
+
 // A cashier (and an unauthenticated/no-session request) is refused on both
 // mutating settings endpoints, matching every other mutating settings
 // endpoint's isManagerOrAuthOff gate in this file (ut-docs#179 — /save and

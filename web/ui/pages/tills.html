@@ -52,10 +52,18 @@
 
   <div class="card">
     <h3>{{ T "tills.enrolled" }}</h3>
-    {{ if .Tills }}
+    {{ if or .PrimaryTillName .Tills }}
     <table class="table">
       <thead><tr><th>{{ T "tills.col_name" }}</th><th>{{ T "tills.col_enrolled" }}</th><th>{{ T "tills.col_seen" }}</th><th></th></tr></thead>
       <tbody>
+        {{ if .PrimaryTillName }}
+        <tr>
+          <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.this_till" }})</span></td>
+          <td>—</td>
+          <td>—</td>
+          <td></td>
+        </tr>
+        {{ end }}
         {{ range .Tills }}
         <tr>
           <td>{{ .Name }}</td>
