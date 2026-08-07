@@ -324,6 +324,20 @@ func T(locale, key string) string {
 	return key
 }
 
+// AvailableLocales returns the locales the base translation files define
+// (config.I18n.Available() — the same set the UI's own language switcher is
+// built from), or nil if no translator is wired (e.g. a test that never
+// called InitI18n). For validating a locale value before trusting it for
+// something beyond template rendering — e.g. ut-docs#397's issue-report
+// capture, which forwards it to a downstream transcription service, so an
+// untrusted `?lang=`/cookie value shouldn't reach it unchecked.
+func AvailableLocales() []string {
+	if t := translator(); t != nil {
+		return t.Available()
+	}
+	return nil
+}
+
 // ResolveLocale determines the locale from query, cookie, then default.
 func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 	// query param takes precedence and sets cookie
