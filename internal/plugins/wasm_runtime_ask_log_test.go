@@ -54,6 +54,23 @@ func TestWasmResultLogLine_GatesOnAuthorizeSuffix(t *testing.T) {
 	}
 }
 
+// TestWasmResultLogLine_GatesOnRefundSuffix proves ".refund" events (the
+// payment leg blockingPaymentEventWithResponse publishes for a refund, see
+// refund_page.go) get the same redaction treatment as ".ask"/".authorize"
+// events (ut-docs#385) — a refund plugin's response is just as likely to
+// carry a gateway transaction token as an authorize response.
+func TestWasmResultLogLine_GatesOnRefundSuffix(t *testing.T) {
+	bigToken := strings.Repeat("A", 5000)
+	refundOut := `{"approved":true,"auth_token":"` + bigToken + `"}`
+	got := wasmResultLogLine("com.test.plugin", "payment.demopay.refund", refundOut)
+	if strings.Contains(got, bigToken) {
+		t.Fatalf("wasmResultLogLine did not redact a large field on a .refund event")
+	}
+	if !strings.HasPrefix(got, "[wasm:com.test.plugin] result (payment.demopay.refund, ") {
+		t.Errorf("expected event type + byte count in the .refund log line, got: %s", got)
+	}
+}
+
 // TestSafeAskResultForLog_RedactsOversizedField proves a large content_b64
 // field on an ".ask" response never reaches the log verbatim (ut-docs#202,
 // found during independent review of ut-docs#189 — export.requested.ask's
