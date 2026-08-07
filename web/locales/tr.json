@@ -757,6 +757,8 @@
   "shifts.formula": "Beklenen = açılış nakiti + net nakit ödemeler + düzeltmeler. Fark = sayılan − beklenen.",
   "shifts.formula_title": "Beklenen nakit nasıl hesaplanır",
   "shifts.history": "Geçmiş",
+  "shifts.manager_pin": "Yönetici PIN",
+  "shifts.manager_pin_placeholder": "nakit çıkışında gereklidir",
   "shifts.no_history": "Henüz vardiya yok",
   "shifts.none_open": "Açık vardiya yok",
   "shifts.note": "Not",

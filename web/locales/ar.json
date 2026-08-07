@@ -757,6 +757,8 @@
   "shifts.formula": "المتوقع = النقد الافتتاحي + صافي المدفوعات النقدية + التعديلات. الفرق = المعدود − المتوقع.",
   "shifts.formula_title": "كيف يُحسب النقد المتوقع",
   "shifts.history": "السجل",
+  "shifts.manager_pin": "الرمز السري للمدير",
+  "shifts.manager_pin_placeholder": "مطلوب عند سحب النقد",
   "shifts.no_history": "لا ورديات بعد",
   "shifts.none_open": "لا توجد وردية مفتوحة",
   "shifts.note": "ملاحظة",

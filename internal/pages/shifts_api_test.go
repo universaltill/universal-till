@@ -203,6 +203,11 @@ func TestCloseShift_ValidationErrors(t *testing.T) {
 }
 
 func TestRecordCashAdjustment(t *testing.T) {
+	// Auth is exercised separately below (TestRecordCashAdjustment_
+	// RequiresManagerPINWhenAmountRemovesCash and friends); this test is
+	// about the accounting effect of a payout, same pattern as
+	// TestPfandRueckgabe_RecordsPayoutAndReducesExpectedCash.
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newShiftsAPITestDeps(t)
 	ctx := context.Background()
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
@@ -259,6 +264,144 @@ func TestRecordCashAdjustment(t *testing.T) {
 	// zero variance is dropped from the JSON entirely, not printed as 0.
 	if strings.Contains(string(closeData), `"variance"`) {
 		t.Fatalf("expected the zero-variance field omitted (omitempty), got %s", closeData)
+	}
+}
+
+func TestRecordCashAdjustment_RequiresManagerPINWhenAmountRemovesCash(t *testing.T) {
+	// UT_AUTH is unset in this test process, so auth.Disabled(...) is
+	// false — a negative amount must require a manager PIN, same gate as
+	// PfandRueckgabe/refund (ut-docs#266: the generic endpoint used to let
+	// any cashier record an unapproved payout).
+	t.Setenv("UT_AUTH", "")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	openReq := httptest.NewRequest(http.MethodPost, "/api/shifts/open", strings.NewReader(`{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`))
+	openReq.Header.Set("Content-Type", "application/json")
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", openRec.Code, openRec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
+		strings.NewReader(`shift_id=`+shiftID+`&type=payout&amount=-500&reason=till+float+to+safe`))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without a manager PIN, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The "type" field is a client-supplied label, not an authoritative
+	// signal — a cashier relabeling the same negative amount as
+	// type=adjustment must be gated identically, or the fix is a no-op
+	// bypassable by just picking the other option in the form.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
+		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=-500&reason=till+count+correction`))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2 = auth.WithUser(req2, auth.User{ID: "user1"})
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for type=adjustment with a negative amount and no manager PIN, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestRecordCashAdjustment_PositiveAmountNeedsNoManagerPIN(t *testing.T) {
+	// UT_AUTH unset (auth enabled), no manager_pin supplied — a positive
+	// adjustment (cash going IN, e.g. a float top-up correction) is not
+	// the risk this gate exists for, so it must succeed same as before.
+	t.Setenv("UT_AUTH", "")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	openReq := httptest.NewRequest(http.MethodPost, "/api/shifts/open", strings.NewReader(`{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`))
+	openReq.Header.Set("Content-Type", "application/json")
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", openRec.Code, openRec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
+		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a positive adjustment with no manager PIN, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRecordCashAdjustment_WrongManagerPINForbiddenCorrectPINRecordsManagerAsActor(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	openReq := httptest.NewRequest(http.MethodPost, "/api/shifts/open", strings.NewReader(`{"register_id":"reg1","cashier_id":"cashier1","opening_cash":5000}`))
+	openReq.Header.Set("Content-Type", "application/json")
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", openRec.Code, openRec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx,
+		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	makeReq := func(form string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = auth.WithUser(req, auth.User{ID: "cashier1", Role: "cashier"})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Wrong PIN: forbidden.
+	if rec := makeReq("shift_id=" + shiftID + "&type=payout&amount=-500&reason=x&manager_pin=000000"); rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 with a wrong PIN, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Correct PIN: succeeds, and the MANAGER (not the cashier who submitted
+	// the request) becomes the audit actor — same as PfandRueckgabe/refund.
+	rec2 := makeReq("shift_id=" + shiftID + "&type=payout&amount=-500&reason=x&manager_pin=482913")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 with a correct manager PIN, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT actor_id FROM audit_log WHERE action='cash_adjustment'`).Scan(&actorID); err != nil {
+		t.Fatal(err)
+	}
+	if actorID != "mgr1" {
+		t.Fatalf("expected the manager as audit actor, got %q", actorID)
 	}
 }
 
