@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"strconv"
@@ -255,6 +256,17 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 			respondAdjustmentError(w, r, http.StatusBadRequest, "reason required")
 			return
 		}
+		// type=payout is, by definition, cash LEAVING the till — a positive
+		// amount there would record a payout that actually adds cash, an
+		// audit row lying about its own direction (the same class of gap
+		// this change closes for the type/sign mismatch below). Doesn't
+		// affect expected-cash math (that's sign-only, see
+		// pos.RecordCashAdjustment/SumShiftAdjustments) but the audit trail
+		// itself must stay honest about what happened.
+		if req.Type == "payout" && req.Amount > 0 {
+			respondAdjustmentError(w, r, http.StatusBadRequest, "a payout amount must be negative")
+			return
+		}
 
 		// Manager approval whenever cash actually LEAVES the till (a
 		// negative amount) — gated on the sign, not the declared "type",
@@ -269,6 +281,18 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 		if req.Amount < 0 {
 			authOff := auth.Disabled(os.Getenv("UT_AUTH"))
 			if !authOff {
+				// An empty PIN can never authorize anything — reject it
+				// before AuthorizeManager, which would otherwise burn a
+				// failed-attempt count shared with keypad login
+				// (internal/auth.Service: 5 failures device-wide locks out
+				// for 30s). A blank manager_pin is the natural first
+				// mistake here since, unlike refund.html's field, this one
+				// can't be HTML-`required` — positive adjustments must be
+				// allowed to submit it blank.
+				if strings.TrimSpace(req.ManagerPIN) == "" {
+					respondAdjustmentError(w, r, http.StatusForbidden, "manager PIN required")
+					return
+				}
 				approver, err := dp.AuthSvc.AuthorizeManager(ctx, strings.TrimSpace(req.ManagerPIN))
 				if err != nil {
 					status := http.StatusForbidden
@@ -351,6 +375,15 @@ func PfandRueckgabe(dp *common.Deps) http.HandlerFunc {
 		// sensitive as a refund.
 		authOff := auth.Disabled(os.Getenv("UT_AUTH"))
 		if !authOff {
+			// Same adjacent fix as RecordCashAdjustment's own gate
+			// (ut-docs#266 review finding): this field also isn't
+			// HTML-`required` (index.html), so a blank submission is a
+			// real, easy first mistake — reject it before it burns a
+			// failed-attempt count shared device-wide with keypad login.
+			if strings.TrimSpace(req.ManagerPIN) == "" {
+				respondAdjustmentError(w, r, http.StatusForbidden, "manager PIN required")
+				return
+			}
 			approver, err := dp.AuthSvc.AuthorizeManager(ctx, strings.TrimSpace(req.ManagerPIN))
 			if err != nil {
 				status := http.StatusForbidden
@@ -396,7 +429,7 @@ func respondShiftError(w http.ResponseWriter, r *http.Request, status int, messa
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", html.EscapeString(message)))
 	}
 }
 
@@ -412,7 +445,7 @@ func respondCloseError(w http.ResponseWriter, r *http.Request, status int, messa
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", html.EscapeString(message)))
 	}
 }
 
@@ -430,7 +463,7 @@ func respondAdjustmentError(w http.ResponseWriter, r *http.Request, status int, 
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", html.EscapeString(message)))
 	}
 }
 
