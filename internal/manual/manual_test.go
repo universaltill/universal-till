@@ -395,6 +395,158 @@ func TestFallbackTopicCarriesEnglishScreenshot(t *testing.T) {
 // documentation/a saved ReadDir call, not behavior a test can meaningfully
 // pin without fabricating a help/img/*.md file that doesn't reflect reality.
 
+// ---------------------------------------------------------------------------
+// Parameterized routes (ut-docs#326): a topic may declare /invoice/{display_no}
+// and the "?" on a real /invoice/12345 request must still resolve to it. Exact
+// declared routes keep priority, and the guard's pattern-vs-pattern coverage
+// check reuses the same matcher, so both are pinned here.
+// ---------------------------------------------------------------------------
+
+var patternFS = fstest.MapFS{
+	"help/en/invoices.md": &fstest.MapFile{Data: []byte(`---
+id: invoices
+title: Invoices
+routes: [/invoices, /invoice/{display_no}]
+---
+
+Invoices.
+`)},
+	"help/en/reports.md": &fstest.MapFile{Data: []byte(`---
+id: reports
+title: Reports
+routes: [/journal, /journal/{receipt}]
+---
+
+Reports.
+`)},
+	// Claims the literal path /invoice/new — an exact route must beat the
+	// invoices topic's {display_no} pattern for that same path.
+	"help/en/newinvoice.md": &fstest.MapFile{Data: []byte(`---
+id: newinvoice
+title: New invoice
+routes: [/invoice/new]
+---
+
+New invoice.
+`)},
+	// A LITERAL route with no sibling pattern of the same shape — isolates
+	// the directional bug review found: /plugins/store must not be treated
+	// as covering a registered /plugins/{id}, unlike /invoice/{display_no}
+	// above, which already IS a pattern and so would (correctly) cover a
+	// same-shaped registered pattern regardless of directionality.
+	"help/en/plugins.md": &fstest.MapFile{Data: []byte(`---
+id: plugins
+title: Plugins
+routes: [/plugins/store]
+---
+
+Plugins.
+`)},
+}
+
+func loadPatterns(t *testing.T) *Library {
+	t.Helper()
+	lib, err := Load(patternFS, "help")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return lib
+}
+
+func TestTopicForRouteMatchesParameterizedPattern(t *testing.T) {
+	lib := loadPatterns(t)
+	if id, ok := lib.TopicForRoute("/invoice/12345"); !ok || id != "invoices" {
+		t.Errorf("TopicForRoute(/invoice/12345) = %q,%v; want invoices,true", id, ok)
+	}
+	if id, ok := lib.TopicForRoute("/journal/R-0001"); !ok || id != "reports" {
+		t.Errorf("TopicForRoute(/journal/R-0001) = %q,%v; want reports,true", id, ok)
+	}
+}
+
+func TestTopicForRouteExactMatchBeatsPattern(t *testing.T) {
+	lib := loadPatterns(t)
+	// /invoice/new matches BOTH the exact route and the {display_no} pattern;
+	// the exact declaration must win, deterministically.
+	if id, ok := lib.TopicForRoute("/invoice/new"); !ok || id != "newinvoice" {
+		t.Errorf("TopicForRoute(/invoice/new) = %q,%v; want newinvoice,true", id, ok)
+	}
+	// The plain exact route still fast-paths.
+	if id, ok := lib.TopicForRoute("/invoices"); !ok || id != "invoices" {
+		t.Errorf("TopicForRoute(/invoices) = %q,%v; want invoices,true", id, ok)
+	}
+}
+
+func TestTopicForRoutePatternSegmentRules(t *testing.T) {
+	lib := loadPatterns(t)
+	for _, path := range []string{
+		"/invoice",          // too few segments
+		"/invoice/12/extra", // too many segments
+		"/order/12345",      // differing literal segment
+		"/invoice/",         // a {name} placeholder must not match an empty segment
+		"/nowhere",          // totally unmatched (unchanged behavior)
+	} {
+		if id, ok := lib.TopicForRoute(path); ok {
+			t.Errorf("TopicForRoute(%q) = %q,true; want no match", path, id)
+		}
+	}
+}
+
+// RouteMatches is shared with the CI coverage guard, which compares a
+// registered mux pattern against declared routes — so a {param} on either
+// side has to match, and the param names don't have to agree.
+func TestRouteMatches(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, path string
+		want          bool
+	}{
+		{"/invoice/{display_no}", "/invoice/12345", true},
+		{"/invoice/{display_no}", "/invoice/{id}", true}, // pattern vs pattern, names differ
+		{"/invoice/{display_no}", "/invoice", false},
+		{"/invoice/{display_no}", "/invoice/1/2", false},
+		{"/invoice/{display_no}", "/order/1", false},
+		{"/invoice/{display_no}", "/invoice/", false},
+		{"/invoices", "/invoices", true},
+		{"/", "/", true},
+		{"/", "/x", false},
+		// Directional (ut-docs#326 review finding): a declared LITERAL must
+		// not be treated as covering a registered pattern just because the
+		// registered side has a {param} segment — only a {param} on the
+		// declared (pattern/first-argument) side is generic.
+		{"/plugins/store", "/plugins/{id}", false},
+	} {
+		if got := RouteMatches(tc.pattern, tc.path); got != tc.want {
+			t.Errorf("RouteMatches(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}
+
+// RouteCovered backs the guard's page-route coverage check: a registered mux
+// pattern counts as covered when a topic claims it exactly or via a
+// parameter-compatible pattern.
+func TestRouteCovered(t *testing.T) {
+	lib := loadPatterns(t)
+	for _, tc := range []struct {
+		pattern string
+		want    bool
+	}{
+		{"/invoices", true},
+		{"/invoice/{display_no}", true},
+		{"/invoice/{id}", true}, // same shape, different param name — covered
+		{"/journal/{receipt}", true},
+		{"/backoffice-nope", false},
+		{"/invoice/{id}/settings", false},
+		// The exact bug review found: /plugins/store is a real declared
+		// literal, but it must not "cover" a hypothetical registered
+		// /plugins/{id} — that would let the guard go green while
+		// TopicForRoute still 404s the "?" on every real request to it.
+		{"/plugins/{id}", false},
+	} {
+		if got := lib.RouteCovered(tc.pattern); got != tc.want {
+			t.Errorf("RouteCovered(%q) = %v, want %v", tc.pattern, got, tc.want)
+		}
+	}
+}
+
 // Snippets are shown to a shop owner, so they keep the prose's own casing —
 // the lower-cased copy exists for matching only. (First driven run showed
 // "catalog, variants & barcodes your products: names…" in flat lowercase.)
