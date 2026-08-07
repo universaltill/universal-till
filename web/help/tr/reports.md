@@ -4,7 +4,7 @@ title: Raporlar ve gün sonu
 section: İşi yürütme
 order: 210
 summary: Gün, reyon ve ödeme türüne göre satış toplamları; en çok/yavaş satanlar; ölü stok; en yoğun gün ve saatler; kâr marjları; vergi özeti; geçen yıla göre karşılaştırma — ve kasa kapanışı için gün sonu (Z) raporu.
-routes: [/reports, /journal, /shifts, /audit]
+routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
 ---
 
 # Raporlar ve gün sonu

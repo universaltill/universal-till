@@ -47,6 +47,31 @@ var baseFuncs = template.FuncMap{
 	// (internal/ui, RenderWith) keep this fallback rather than failing to
 	// parse, which is why it lives in the base map at all.
 	"helpHref": func() string { return "/help" },
+	// Explicit contextual "?" for a SECTION of a page whose route is already
+	// claimed by another topic (the settings cards). Locale-less fallback for
+	// the same reason as helpHref above; FuncsFor overrides it locale-bound.
+	"helpLink": func(id string) template.HTML { return helpLinkHTML(id, DefaultLocale()) },
+}
+
+// helpLinkHTML renders the same .help-hint markup nav.html's automatic "?"
+// carries (visual + a11y parity: translated title/aria-label via help.open,
+// the shared data-testid), pointing at an explicitly named manual topic —
+// {{ helpLink "backups" }} next to the backups card inside /settings, which
+// display.md owns. This is deliberately NOT a competing routes: claim (the
+// manual's duplicate-route guard forbids two topics on one route). An unknown
+// id degrades to the manual's index rather than rendering a dead link, the
+// same rule manual.HelpHref applies.
+func helpLinkHTML(id, locale string) template.HTML {
+	href := "/help"
+	if lib := manual.Builtin(); lib != nil {
+		if _, ok := lib.Topic(manual.FallbackLocale, id); ok {
+			href = "/help/" + id
+		}
+	}
+	label := template.HTMLEscapeString(T(locale, "help.open"))
+	return template.HTML(fmt.Sprintf( //nolint:gosec // id is a repo topic slug (validated against the embedded manual above), label is escaped
+		`<a class="help-hint" href="%s" title="%s" aria-label="%s" data-testid="help-hint">?</a>`,
+		href, label, label))
 }
 
 // NewRenderer renders a layout + page (and optional partial) with funcs.
@@ -412,6 +437,9 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return key
 	}
+	// Locale-bound override of the baseFuncs fallback: the section "?" label
+	// translates with the page it sits on.
+	funcs["helpLink"] = func(id string) template.HTML { return helpLinkHTML(id, locale) }
 	return funcs
 }
 

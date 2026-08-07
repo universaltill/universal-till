@@ -184,12 +184,30 @@ func TestRouteRegistryResolvesKnownPages(t *testing.T) {
 		t.Fatalf("library: %v", err)
 	}
 	for route, want := range map[string]string{
-		"/":          "sell",
-		"/catalog":   "catalog",
-		"/inventory": "inventory",
-		"/reports":   "reports",
-		"/plugins":   "plugins",
-		"/users":     "users",
+		"/":             "sell",
+		"/catalog":      "catalog",
+		"/inventory":    "inventory",
+		"/reports":      "reports",
+		"/plugins":      "plugins",
+		"/users":        "users",
+		"/backoffice":   "alerts",
+		"/menu":         "menu",
+		"/translations": "translations",
+		// /self-order and /self-order/shop are deliberately NOT claimed here
+		// (ut-docs#326 review): those pages render via RenderPartial with no
+		// base layout/nav, so they carry no "?" to resolve in the first
+		// place — a routes: claim would make the guard green while
+		// documenting a link that can never appear on screen. The
+		// self-order topic still exists (reachable via manual search), just
+		// routeless, same as quickstart.
+		//
+		// Parameterized pages: the front matter declares /invoice/{display_no}
+		// etc., and a real concrete path must resolve through the segment-wise
+		// matcher, not just the literal pattern string.
+		"/invoice/INV-2026-0001":  "invoices",
+		"/journal/R-0001":         "reports",
+		"/refund/R-0001":          "sell",
+		"/plugins/faq-1/settings": "plugins",
 	} {
 		got, ok := l.TopicForRoute(route)
 		if !ok || got != want {

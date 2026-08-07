@@ -4,7 +4,7 @@ title: فروشگاه افزونه
 section: اتصال و افزونه‌ها
 order: 330
 summary: "بدون تغییر هسته برنامه قابلیت اضافه کنید: پرداخت، پوسته، بسته زبان، اتصال‌ها، ابزارهای هوش مصنوعی و بیشتر."
-routes: [/plugins, /plugins/store]
+routes: [/plugins, /plugins/store, /plugins/{id}/settings]
 ---
 
 # فروشگاه افزونه
