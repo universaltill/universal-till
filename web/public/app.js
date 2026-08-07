@@ -32,14 +32,51 @@ window.utCurrency = (function(){
   var buf = "";
   var last = 0;
   var timeout = null;
-  function submit(code){
+  function scanCodeInput(){
     var form = document.querySelector('form[action="/api/pos/scan"], form[hx-post="/api/pos/scan"]');
-    if(!form) return;
-    var codeInput = form.querySelector('input[name="code"]');
-    if(!codeInput) return;
+    return form ? form.querySelector('input[name="code"]') : null;
+  }
+  function submit(code, codeInput){
+    var form = codeInput && codeInput.form;
+    if(!form || !codeInput) return;
     codeInput.value = code;
     if (window.htmx) { window.htmx.trigger(form, 'submit'); } else { form.submit(); }
     setTimeout(function(){ codeInput.value = ""; }, 0);
+  }
+  // A wedge scanner "types" its scan as fast keystrokes into whatever has
+  // focus (ut-docs#423) — e.g. the sale screen's products-search box, which
+  // has no scan handling of its own. The buffer above already recognizes
+  // and submits the scan regardless of focus; this only cleans up the
+  // stray characters the scanner left behind in a non-scan field, so they
+  // don't survive as a corrupted filter query (search box) or a corrupted
+  // quantity (the scan row's own qty input — "1" plus a 13-digit barcode
+  // rang up as twelve trillion units).
+  //
+  // It strips the scanned code as a SUFFIX rather than blanking the field,
+  // so whatever the cashier had already typed there survives. If the code
+  // isn't the field's trailing text (caret was mid-string, a number input
+  // rejected the value, focus is on a checkbox, …) nothing is touched at
+  // all. Never touches the real scan input.
+  //
+  // MIN_SCAN_CLEANUP guards the cleanup — NOT the submit — against the
+  // buffer's false positives: one fast keystroke followed by Enter within
+  // 100ms is enough for `buf` to look like a scan, which is exactly what a
+  // human typing a query into the search box and hitting Enter produces.
+  // Submitting that as a bogus barcode is pre-existing behaviour and harmless
+  // (the item is simply not found); silently eating the last character of
+  // what they typed would not be. Every real scan — EAN-8/13, UPC, Code-128
+  // SKUs, 4-5 digit PLUs — clears this floor comfortably. Deliberately does
+  // not gate the submit itself: that would risk breaking a till already
+  // scanning short internal codes today.
+  var MIN_SCAN_CLEANUP = 4;
+  function clearStrayScanTarget(target, code, codeInput){
+    if (!target || target === codeInput || !code) return;
+    if (code.length < MIN_SCAN_CLEANUP) return;
+    if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') return;
+    var v = target.value;
+    if (typeof v !== 'string' || v.slice(-code.length) !== code) return;
+    target.value = v.slice(0, v.length - code.length);
+    target.dispatchEvent(new Event('input', { bubbles: true }));
   }
   window.addEventListener('keydown', function(e){
     if (e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -47,19 +84,15 @@ window.utCurrency = (function(){
     if (now - last > 100) { buf = ""; }
     last = now;
     if (e.key === 'Enter') {
+      var codeInput = scanCodeInput();
       var code = buf;
-      if (!code) {
-        var form = document.querySelector('form[action="/api/pos/scan"], form[hx-post="/api/pos/scan"]');
-        if (form) {
-          var codeInput = form.querySelector('input[name="code"]');
-          if (codeInput && document.activeElement === codeInput) {
-            code = (codeInput.value || '').trim();
-          }
-        }
+      if (!code && codeInput && document.activeElement === codeInput) {
+        code = (codeInput.value || '').trim();
       }
-      if (code) {
+      if (code && codeInput) {
         e.preventDefault();
-        submit(code);
+        clearStrayScanTarget(document.activeElement, code, codeInput);
+        submit(code, codeInput);
       }
       buf = "";
       return;
