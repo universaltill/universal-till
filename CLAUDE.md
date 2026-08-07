@@ -68,10 +68,21 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   topic under `web/help/` updated in the *same branch* — the prose, the
   steps, and a regenerated screenshot (`make docs-shots`) where the
   screen itself changed. A new page needs a manual topic declaring its
-  `routes:` and a `?` link, enforced by
-  `scripts/ci/guard-help-topics.sh`. Standing instruction from the
-  product owner, 2026-08-06 (ut-docs#324) — the manual is only worth
-  having if it is never behind the product.
+  `routes:` and a `?` link. `scripts/ci/guard-help-topics.sh` enforces the
+  manual's own internal consistency (no two topics claim the same route,
+  every topic's front matter parses, no locale is missing topics `en`
+  has) **and page-route coverage**: every user-facing GET page route
+  registered under `internal/pages/**` must be claimed by some topic's
+  `routes:` — exactly or via a `{param}` pattern, matched with the same
+  segment-wise matcher the runtime "?" resolves through. Non-page
+  namespaces (`/api/`, `/ui/` fragments, static assets, …) are denylisted
+  by prefix in `scripts/ci/checkhelptopics/routecoverage.go`, each with its
+  reason. (The coverage check was the follow-up tracked as ut-docs#365,
+  closed by ut-docs#326.) A section INSIDE an already-claimed page gets an
+  explicit `{{ helpLink "topic-id" }}` hint (see settings.html), not a
+  competing `routes:` claim.
+  Standing instruction from the product owner, 2026-08-06 (ut-docs#324) —
+  the manual is only worth having if it is never behind the product.
 - **`README.md` is kept up to date every time it goes stale** — any change
   that affects what the README claims (features, setup steps, badges,
   version floors, structure) gets a README edit in the same session, not a

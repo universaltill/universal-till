@@ -37,6 +37,22 @@ func TestWasmResultLogLine_GatesOnAskSuffix(t *testing.T) {
 	}
 }
 
+// TestWasmResultLogLine_GatesOnAuthorizeSuffix proves ".authorize" events
+// (payment-authorization plugins, PublishAuthorize/Blocking hooks) get the
+// same redaction treatment as ".ask" events (ut-docs#245) — their responses
+// are arguably the most credential-adjacent plugin output in the system.
+func TestWasmResultLogLine_GatesOnAuthorizeSuffix(t *testing.T) {
+	bigToken := strings.Repeat("A", 5000)
+	authorizeOut := `{"approved":true,"auth_token":"` + bigToken + `"}`
+	got := wasmResultLogLine("com.test.plugin", "payment.demopay.authorize", authorizeOut)
+	if strings.Contains(got, bigToken) {
+		t.Fatalf("wasmResultLogLine did not redact a large field on an .authorize event")
+	}
+	if !strings.HasPrefix(got, "[wasm:com.test.plugin] result (payment.demopay.authorize, ") {
+		t.Errorf("expected event type + byte count in the .authorize log line, got: %s", got)
+	}
+}
+
 // TestSafeAskResultForLog_RedactsOversizedField proves a large content_b64
 // field on an ".ask" response never reaches the log verbatim (ut-docs#202,
 // found during independent review of ut-docs#189 — export.requested.ask's
@@ -82,6 +98,112 @@ func TestSafeAskResultForLog_RedactsBlobFieldByNameEvenWhenSmall(t *testing.T) {
 	}
 	if !strings.Contains(got, `"ok":true`) {
 		t.Errorf("logged line should still show the small ok field, got: %s", got)
+	}
+}
+
+// TestSafeAskResultForLog_RedactsTokenOrSecretFieldByNameEvenWhenSmall
+// proves a small auth token/secret field is redacted by name, the same way
+// a small content_b64 already is (ut-docs#245): a payment-authorize
+// response's token is exactly as much of a credential when it's short as
+// when it's long, so size alone can't be the only redaction trigger.
+func TestSafeAskResultForLog_RedactsTokenOrSecretFieldByNameEvenWhenSmall(t *testing.T) {
+	for _, field := range []string{"auth_token", "client_secret"} {
+		out := `{"approved":true,"` + field + `":"tok_live_abc123"}`
+		got := safeAskResultForLog(out)
+		if strings.Contains(got, "tok_live_abc123") {
+			t.Fatalf("a small %s field was logged verbatim: %s", field, got)
+		}
+		if !strings.Contains(got, `"approved":true`) {
+			t.Errorf("logged line should still show the small approved field, got: %s", got)
+		}
+	}
+}
+
+// TestSafeAskResultForLog_RedactsNestedTokenFieldByName proves a credential
+// nested under another key -- e.g. a payment-gateway response shaped like
+// {"approved":true,"provider":{"auth_token":"…"}} -- is redacted the same
+// way a top-level auth_token is (ut-docs#384). Before this fix,
+// safeAskResultForLog only inspected top-level keys: "provider" itself
+// doesn't match looksLikeSensitiveFieldName and its raw JSON value can stay
+// under maxAskFieldBytes, so the nested token reached the log verbatim.
+func TestSafeAskResultForLog_RedactsNestedTokenFieldByName(t *testing.T) {
+	out := `{"approved":true,"provider":{"auth_token":"tok_live_abc123"}}`
+
+	got := safeAskResultForLog(out)
+
+	if strings.Contains(got, "tok_live_abc123") {
+		t.Fatalf("a nested auth_token field was logged verbatim: %s", got)
+	}
+	if !strings.Contains(got, `"approved":true`) {
+		t.Errorf("logged line should still show the small top-level approved field, got: %s", got)
+	}
+	if !strings.Contains(got, "omitted") {
+		t.Errorf("expected a size placeholder for the redacted nested field, got: %s", got)
+	}
+}
+
+// TestSafeAskResultForLog_RedactsParentWhoseNestedContentIsOversized proves
+// a nested object containing an oversized field still can't reach the log
+// verbatim. NOTE (found by independent review of ut-docs#384): a child's
+// raw JSON is always a subset of its parent's, so if a nested field alone
+// is large enough to push its PARENT's raw JSON over maxAskFieldBytes, the
+// parent gets redacted wholesale by the pre-existing top-level/per-field
+// size check before recursion ever reaches the child -- redactField's own
+// size check at depth>=1 is therefore only ever reachable for a nested
+// field that's oversized on its OWN while its ancestors all stay under the
+// cap (a much narrower case than this test's payload). This test still
+// documents and guards real, correct behavior (the payload never leaks
+// either way); it just doesn't isolate the recursive-size branch the way
+// its previous name implied.
+func TestSafeAskResultForLog_RedactsParentWhoseNestedContentIsOversized(t *testing.T) {
+	bigPayload := strings.Repeat("A", 5000)
+	out := `{"approved":true,"provider":{"raw_response":"` + bigPayload + `"}}`
+
+	got := safeAskResultForLog(out)
+
+	if strings.Contains(got, bigPayload) {
+		t.Fatalf("a large nested field was logged verbatim: %s", got)
+	}
+	if !strings.Contains(got, `"approved":true`) {
+		t.Errorf("logged line should still show the small top-level approved field, got: %s", got)
+	}
+}
+
+// TestSafeAskResultForLog_RedactsTokenInArrayOfObjects proves an
+// array-of-objects field is walked the same way a nested object is -- a
+// report/export-shaped response can return a list of per-row objects, any
+// of which could carry a sensitive field.
+func TestSafeAskResultForLog_RedactsTokenInArrayOfObjects(t *testing.T) {
+	out := `{"ok":true,"charges":[{"id":"ch_1","client_secret":"cs_live_abc123"},{"id":"ch_2"}]}`
+
+	got := safeAskResultForLog(out)
+
+	if strings.Contains(got, "cs_live_abc123") {
+		t.Fatalf("a client_secret nested inside an array element was logged verbatim: %s", got)
+	}
+	for _, want := range []string{`"ok":true`, `"id":"ch_1"`, `"id":"ch_2"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("logged line missing %s, still needed for debugging: %s", want, got)
+		}
+	}
+}
+
+// TestSafeAskResultForLog_FlatShapeRedactionUnchanged is a direct
+// before/after guard for the flat-shape behavior safeAskResultForLog had
+// prior to ut-docs#384's recursive rewrite -- proves the existing top-level
+// redaction rules (oversized field, sensitively-named field, small
+// response left untouched) still hold byte-for-byte.
+func TestSafeAskResultForLog_FlatShapeRedactionUnchanged(t *testing.T) {
+	if got, want := safeAskResultForLog(`{"rate_bp":2000}`), `{"rate_bp":2000}`; got != want {
+		t.Errorf("flat small response changed: got %q want %q", got, want)
+	}
+	out := `{"approved":true,"auth_token":"tok_live_abc123"}`
+	got := safeAskResultForLog(out)
+	if strings.Contains(got, "tok_live_abc123") {
+		t.Fatalf("flat top-level auth_token no longer redacted: %s", got)
+	}
+	if !strings.Contains(got, `"approved":true`) {
+		t.Errorf("flat top-level approved field should survive redaction, got: %s", got)
 	}
 }
 

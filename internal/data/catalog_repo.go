@@ -3,7 +3,6 @@ package data
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
@@ -827,73 +826,44 @@ func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInp
 	// without a transaction two concurrent callers can both pass the check,
 	// and the second ON CONFLICT DO UPDATE silently reassigns the barcode to
 	// a different item/variant — it then scans to the wrong product at the
-	// till. A deferred BEGIN does NOT close the race (SQLite only takes the
-	// write lock at the first write statement, after both SELECT checks have
-	// run) — so reserve a dedicated connection and issue BEGIN IMMEDIATE as a
-	// raw statement (modernc.org/sqlite *does* support a DSN-wide
-	// "_txlock=immediate" that would make every BeginTx do this, but that
-	// would apply to every write transaction in the app, not just this one —
-	// deliberately scoped to this single connection instead so the change
-	// stays contained to the operation that actually needs it).
-	conn, err := r.db.Conn(ctx)
+	// till. The DSN's _txlock=immediate (ut-docs#311) makes this BeginTx run
+	// BEGIN IMMEDIATE, taking the write lock at BEGIN — before the SELECT
+	// checks — which is what closes the race (a deferred BEGIN would only
+	// take the write lock at the first write statement, after both checks
+	// have run). That DSN guarantee is why this can be the repo's standard
+	// BeginTx idiom rather than the dedicated-connection raw BEGIN
+	// IMMEDIATE dance this method used to hand-roll: sql.Tx's own
+	// Rollback/Commit bookkeeping also handles a cancelled request ctx
+	// without leaking a mid-transaction pooled connection, which the raw
+	// statement approach had to guard against by hand.
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("add barcode: acquire connection: %w", err)
+		return fmt.Errorf("add barcode: begin: %w", err)
 	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
-		return fmt.Errorf("add barcode: begin immediate: %w", err)
-	}
-	committed := false
-	defer func() {
-		if committed {
-			return
-		}
-		// Rollback/commit run on a ctx stripped of cancellation, not the
-		// caller's ctx: an HTTP request context (the common caller here) is
-		// cancelled on client disconnect, and ExecContext on an
-		// already-cancelled ctx never reaches SQLite — the ROLLBACK would be
-		// silently skipped, conn.Close() would return the connection to the
-		// pool (it does not close a healthy driver conn), and it would sit
-		// there mid-transaction forever: modernc.org/sqlite implements
-		// neither driver.SessionResetter nor driver.Validator, so
-		// database/sql has no way to detect or clean the leak. The next
-		// caller to draw that pooled connection either wedges on "cannot
-		// start a transaction within a transaction" or, worse, silently
-		// reads/writes inside the stale transaction — and any *other*
-		// writer blocks on its RESERVED lock, which is exactly the
-		// "checkout must never be blocked" failure this product treats as
-		// non-negotiable.
-		if _, err := conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`); err != nil {
-			logging.L().Warnf("catalog: add barcode %s: rollback failed, discarding connection: %v", in.Barcode, err)
-			// Rollback itself failed (not just skipped) — don't trust this
-			// connection's transaction state well enough to pool it back.
-			// Raw + returning driver.ErrBadConn tells database/sql to close
-			// the underlying connection instead of reusing it.
-			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
-		}
-	}()
-	if err := addBarcodeInTx(ctx, conn, in); err != nil {
+	// No-op after a successful Commit (sql.ErrTxDone).
+	defer func() { _ = tx.Rollback() }()
+	if err := addBarcodeInTx(ctx, tx, in); err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(context.WithoutCancel(ctx), `COMMIT`); err != nil {
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("add barcode: commit: %w", err)
 	}
-	committed = true
 	return nil
 }
 
-// addBarcodeInTx runs AddBarcode's check-then-insert inside the BEGIN
-// IMMEDIATE transaction already open on conn. The WHERE guard on each
-// DO UPDATE is defence-in-depth on top of that lock: even called outside
-// this locking path, the upsert can only ever refresh a barcode that
-// already belongs to the SAME target — never steal it from another owner.
-func addBarcodeInTx(ctx context.Context, conn *sql.Conn, in catalogtypes.BarcodeInput) error {
+// addBarcodeInTx runs AddBarcode's check-then-insert inside the caller's
+// transaction (IMMEDIATE by DSN, so the write lock is already held before
+// the checks run — see AddBarcode). The WHERE guard on each DO UPDATE is
+// defence-in-depth on top of that lock: even called outside this locking
+// path, the upsert can only ever refresh a barcode that already belongs to
+// the SAME target — never steal it from another owner.
+func addBarcodeInTx(ctx context.Context, tx *sql.Tx, in catalogtypes.BarcodeInput) error {
 	if in.VariantID != "" {
-		if err := ensureBarcodeAvailable(ctx, conn, in.Barcode, "variant", in.VariantID); err != nil {
+		if err := ensureBarcodeAvailable(ctx, tx, in.Barcode, "variant", in.VariantID); err != nil {
 			return err
 		}
 		var active int
-		if err := conn.QueryRowContext(ctx, `SELECT is_active FROM item_variants WHERE id = ?`, in.VariantID).Scan(&active); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT is_active FROM item_variants WHERE id = ?`, in.VariantID).Scan(&active); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("variant not found: %s", in.VariantID)
 			}
@@ -902,7 +872,7 @@ func addBarcodeInTx(ctx context.Context, conn *sql.Conn, in catalogtypes.Barcode
 		if active == 0 {
 			return fmt.Errorf("variant %s inactive", in.VariantID)
 		}
-		res, err := conn.ExecContext(ctx, `
+		res, err := tx.ExecContext(ctx, `
 INSERT INTO variant_barcodes (barcode, variant_id, barcode_type, is_primary)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(barcode) DO UPDATE SET barcode_type=excluded.barcode_type, is_primary=excluded.is_primary
@@ -919,11 +889,11 @@ WHERE variant_barcodes.variant_id = excluded.variant_id
 		return nil
 	}
 	// item barcode
-	if err := ensureBarcodeAvailable(ctx, conn, in.Barcode, "item", in.ItemID); err != nil {
+	if err := ensureBarcodeAvailable(ctx, tx, in.Barcode, "item", in.ItemID); err != nil {
 		return err
 	}
 	var active int
-	if err := conn.QueryRowContext(ctx, `SELECT is_active FROM items WHERE id = ?`, in.ItemID).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT is_active FROM items WHERE id = ?`, in.ItemID).Scan(&active); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("item not found: %s", in.ItemID)
 		}
@@ -932,7 +902,7 @@ WHERE variant_barcodes.variant_id = excluded.variant_id
 	if active == 0 {
 		return fmt.Errorf("item %s inactive", in.ItemID)
 	}
-	res, err := conn.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 INSERT INTO item_barcodes (barcode, item_id, barcode_type, is_primary)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(barcode) DO UPDATE SET barcode_type=excluded.barcode_type, is_primary=excluded.is_primary
@@ -1002,33 +972,34 @@ func boolToInt(b bool) int {
 
 // ensureBarcodeAvailable enforces the (item_id XOR variant_id) rule across barcode tables.
 // It permits re-inserting the same barcode for the same target, but blocks cross-target moves.
-// It runs on AddBarcode's dedicated BEGIN IMMEDIATE connection so the check
-// and the subsequent insert are atomic (see AddBarcode).
-func ensureBarcodeAvailable(ctx context.Context, db *sql.Conn, barcode, targetType, targetID string) error {
+// It runs inside AddBarcode's transaction — IMMEDIATE by DSN
+// (_txlock=immediate, ut-docs#311), so the write lock is held before this
+// check runs and the check and the subsequent insert are atomic.
+func ensureBarcodeAvailable(ctx context.Context, tx *sql.Tx, barcode, targetType, targetID string) error {
 	var existing string
 	switch targetType {
 	case "item":
-		if err := db.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
+		if err := tx.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
 			if existing != targetID {
 				return &BarcodeConflictError{TargetType: "item", TargetID: existing}
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err := db.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
+		if err := tx.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
 			return &BarcodeConflictError{TargetType: "variant", TargetID: existing}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 	case "variant":
-		if err := db.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
+		if err := tx.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
 			if existing != targetID {
 				return &BarcodeConflictError{TargetType: "variant", TargetID: existing}
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err := db.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
+		if err := tx.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&existing); err == nil {
 			return &BarcodeConflictError{TargetType: "item", TargetID: existing}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err

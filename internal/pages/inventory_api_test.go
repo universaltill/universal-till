@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,16 +70,40 @@ func postInvJSON(t *testing.T, mux *http.ServeMux, path, body string) *httptest.
 	return rec
 }
 
+// envelopeOf decodes body as the { "data": …, "error": … } shape
+// universal-till/CLAUDE.md mandates for every JSON API response, returning
+// the raw "data"/"error" values plus whether each key was actually present
+// (present-and-null must be distinguishable from absent — a struct-field
+// decode alone can't tell the two apart, ut-docs#378).
+func envelopeOf(t *testing.T, body []byte) (data json.RawMessage, hasData bool, errVal json.RawMessage, hasError bool) {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("response is not a JSON object: %v (%s)", err, body)
+	}
+	data, hasData = raw["data"]
+	errVal, hasError = raw["error"]
+	return
+}
+
 func TestCreateStockReceipt_JSONAndHTML(t *testing.T) {
 	mux, _ := newInventoryAPITestDeps(t)
 
-	// Positive: JSON accept returns a JSON body with success=true.
+	// Positive: JSON accept returns the { "data": …, "error": null } envelope
+	// (ut-docs#378), with success=true nested under "data".
 	rec := postInvJSON(t, mux, "/api/inventory/receipt", `{"type":"receive","item_id":"itm1","location_id":"loc_main","quantity":5,"reason":"delivery"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"success":true`) {
-		t.Fatalf("expected JSON success response, got %s", rec.Body.String())
+	data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec.Body.String())
+	}
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s", errVal)
+	}
+	if !strings.Contains(string(data), `"success":true`) {
+		t.Fatalf("expected data.success=true, got %s", data)
 	}
 
 	// Positive: form + HTML accept, HX-Trigger set for the table refresh.
@@ -96,6 +121,15 @@ func TestCreateStockReceipt_InvalidJSON(t *testing.T) {
 	rec := postInvJSON(t, mux, "/api/inventory/receipt", `{not valid json`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid JSON, got %d", rec.Code)
+	}
+	// Error branch must still use the envelope: an explicit "data":null, not
+	// merely an absent data key, plus a non-empty "error" (ut-docs#378).
+	data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || string(data) != "null" {
+		t.Fatalf(`expected an explicit "data":null, got %s`, rec.Body.String())
+	}
+	if !hasError || string(errVal) == "null" || string(errVal) == `""` {
+		t.Fatalf("expected a non-empty error value, got %s", rec.Body.String())
 	}
 }
 
@@ -218,6 +252,54 @@ func TestCreateNegativeInventoryOverride_CashierRequiresManagerPIN(t *testing.T)
 	}
 }
 
+// TestCreateNegativeInventoryOverride_JSONEnvelope covers the JSON-Accept
+// branch specifically -- the other override tests all exercise the
+// HTML/HTMX form path, so this is the only coverage of respondOverrideError/
+// respondOverrideSuccess's { "data": …, "error": … } envelope (ut-docs#378).
+func TestCreateNegativeInventoryOverride_JSONEnvelope(t *testing.T) {
+	mux, _ := newInventoryAPITestDeps(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/inventory/override",
+		strings.NewReader("reason=stock+count+correction&item_id=itm1&location_id=loc_main&qty_before=50"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec.Body.String())
+	}
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s", errVal)
+	}
+	if !strings.Contains(string(data), `"success":true`) {
+		t.Fatalf("expected data.success=true, got %s", data)
+	}
+
+	// Error branch: missing reason, same Accept header.
+	req = httptest.NewRequest(http.MethodPost, "/api/inventory/override",
+		strings.NewReader("item_id=itm1&location_id=loc_main&qty_before=50"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a missing reason, got %d: %s", rec.Code, rec.Body.String())
+	}
+	data, hasData, errVal, hasError = envelopeOf(t, rec.Body.Bytes())
+	if !hasData || string(data) != "null" {
+		t.Fatalf(`expected an explicit "data":null, got %s`, rec.Body.String())
+	}
+	if !hasError || string(errVal) == "null" || string(errVal) == `""` {
+		t.Fatalf("expected a non-empty error value, got %s", rec.Body.String())
+	}
+}
+
 func TestCreateNegativeInventoryOverride_ValidationErrors(t *testing.T) {
 	mux, _ := newInventoryAPITestDeps(t)
 	makeReq := func(form string) *httptest.ResponseRecorder {
@@ -290,8 +372,17 @@ func TestCreateReturn_ByOriginalSaleID(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"success":true`) {
-		t.Fatalf("expected a successful return, got %s", rec.Body.String())
+	// { "data": …, "error": null } envelope (ut-docs#378), success nested
+	// under "data" rather than the old bare top-level shape.
+	data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec.Body.String())
+	}
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s", errVal)
+	}
+	if !strings.Contains(string(data), `"success":true`) {
+		t.Fatalf("expected a successful return, got %s", data)
 	}
 }
 
@@ -312,6 +403,8 @@ func TestCreateReturn_ValidationErrors(t *testing.T) {
 
 	if rec := postInvJSON(t, mux, "/api/inventory/return", `{not valid`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid JSON, got %d", rec.Code)
+	} else if data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes()); !hasData || string(data) != "null" || !hasError || string(errVal) == "null" {
+		t.Fatalf(`expected { "data": null, "error": "…" } for invalid JSON, got %s`, rec.Body.String())
 	}
 	if rec := postInvJSON(t, mux, "/api/inventory/return", `{"reason":"x","lines":[{"line_id":"`+lineID+`","quantity":1}]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing original_sale_id/receipt_no, got %d: %s", rec.Code, rec.Body.String())
@@ -359,8 +452,31 @@ func TestGetLowStock_JSONAndHTML(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"count"`) {
-		t.Fatalf("expected a JSON count field, got %s", rec.Body.String())
+	// The whole product wraps JSON API responses as { "data": …, "error": null }
+	// (universal-till/CLAUDE.md, "API, formats, i18n") -- this endpoint must
+	// follow the same envelope every other JSON handler in this package uses,
+	// not return its payload bare at the top level.
+	var envelope struct {
+		Data *struct {
+			Items json.RawMessage `json:"items"`
+			Count int             `json:"count"`
+		} `json:"data"`
+		Error *string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("response is not the {data,error} JSON envelope: %v (%s)", err, rec.Body.String())
+	}
+	if envelope.Error != nil {
+		t.Fatalf("expected error:null on success, got %q", *envelope.Error)
+	}
+	if envelope.Data == nil {
+		t.Fatalf("expected a data field wrapping items/count, got %s", rec.Body.String())
+	}
+	if envelope.Data.Count != 1 {
+		t.Fatalf("expected data.count == 1, got %d (%s)", envelope.Data.Count, rec.Body.String())
+	}
+	if !strings.Contains(string(envelope.Data.Items), "itm1") {
+		t.Fatalf("expected data.items to contain the low-stock item, got %s", envelope.Data.Items)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/inventory/low-stock", nil)
@@ -371,6 +487,41 @@ func TestGetLowStock_JSONAndHTML(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "<table") {
 		t.Fatalf("expected an HTML table for low-stock items, got %s", rec.Body.String())
+	}
+}
+
+// TestGetLowStock_JSONError_UsesDataErrorEnvelope covers the error branch of
+// the same handler: a query failure must still respond as { "data": null,
+// "error": "…" }, not a bare { "error": "…" } object.
+func TestGetLowStock_JSONError_UsesDataErrorEnvelope(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	dp.Db.Close() // closed *sql.DB forces GetLowStockItems's query to fail deterministically
+
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/low-stock", nil)
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("response is not a JSON object: %v (%s)", err, rec.Body.String())
+	}
+	// Assert the "data" key is actually present (and null), not merely
+	// absent -- a response with no "data" key at all would also decode as
+	// a nil field into a Go struct, silently passing a weaker check.
+	dataVal, hasData := raw["data"]
+	if !hasData {
+		t.Fatalf("expected an explicit \"data\" key (null) in the error envelope, got %s", rec.Body.String())
+	}
+	if string(dataVal) != "null" {
+		t.Fatalf("expected data:null on error, got %s", dataVal)
+	}
+	errVal, hasError := raw["error"]
+	if !hasError || string(errVal) == "null" || string(errVal) == `""` {
+		t.Fatalf("expected a non-empty \"error\" value, got %s", rec.Body.String())
 	}
 }
 

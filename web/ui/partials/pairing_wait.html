@@ -1,5 +1,9 @@
+<!-- statusURL: which pair-status route to poll — the manager flavour polls
+     /api/sync/pair-status, the first-boot wizard /api/setup/pair-status (the
+     sync route is not middleware-exempt, so a first-boot till polling it
+     would only ever see 401s). Set by pairWaitView (pairing_join.go). -->
 <div id="pairing-status"
-     {{ if .polling }}hx-get="/api/sync/pair-status" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
+     {{ if .polling }}hx-get="{{ .statusURL }}" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
 {{ if eq .status "waiting" }}
   <p>{{ T "tills.pairing.waiting_title" }}</p>
   <p class="pairing-code" style="font-size:1.5rem; letter-spacing:.2em; font-weight:bold">{{ .code }}</p>

@@ -1,9 +1,12 @@
 package db
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // A fresh install extracts to a folder with no data/ directory. Opening the
@@ -22,6 +25,116 @@ func TestOpenCreatesMissingDataDir(t *testing.T) {
 
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("database file was not created: %v", err)
+	}
+}
+
+// ut-docs#311: the DSN must put a real file-backed database in WAL journal
+// mode on every pooled connection — WAL's MVCC is the cushion that keeps a
+// concurrent reader/writer pair from tripping over rollback-journal lock
+// promotion. (":memory:" DBs report journal_mode=memory instead; that's fine
+// and deliberately not special-cased in Open.)
+func TestOpenUsesWALJournalMode(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "wal.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	var mode string
+	if err := d.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		t.Fatalf("journal_mode = %q, want wal", mode)
+	}
+}
+
+// ut-docs#311 regression test for the actual lock-contention bug: with the
+// old deferred-BEGIN DSN, a transaction that read first (taking SHARED) and
+// then wrote — the check-then-insert shape almost every write path in this
+// repo uses — failed INSTANTLY with SQLITE_BUSY (~20µs) on the
+// SHARED→RESERVED promotion while another connection held RESERVED:
+// SQLite's deadlock-avoidance skips the busy handler on exactly that
+// promotion, so the configured 5s busy_timeout never applied. (Verified
+// while writing this test: a write-first transaction DOES wait via the busy
+// handler even pre-fix — only the read-then-write shape hit the instant
+// failure, so B below must read before it writes to reproduce the bug.)
+// With _txlock=immediate every BeginTx runs BEGIN IMMEDIATE, which acquires
+// the write lock at BEGIN through the busy handler like a normal wait.
+//
+// So: while connection A holds an open write transaction, connection B's
+// BeginTx+read+write must (1) genuinely WAIT on A (not return in
+// microseconds) and (2) ultimately SUCCEED once A commits. Fast-and-error
+// was the bug; fast-and-no-error would mean the lock isn't real;
+// slow-and-error would mean busy_timeout expired. Only slow-and-success is
+// right.
+//
+// A real file-backed DB is required — ":memory:" gives each pooled
+// connection its own isolated database and cannot exercise multi-connection
+// locking (same reasoning as TestAddBarcodeConcurrentRace in internal/data).
+func TestConcurrentWriterWaitsInsteadOfInstantBusy(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "locking.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	ctx := context.Background()
+	// Throwaway table, migration-free: this test is about locking, not schema.
+	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS lock_probe (n INTEGER)`); err != nil {
+		t.Fatalf("create probe table: %v", err)
+	}
+
+	const holdFor = 200 * time.Millisecond
+	held := make(chan struct{})
+	aDone := make(chan error, 1)
+
+	// Connection A: open a write transaction, do one write, hold it open for
+	// a deliberate delay, then commit.
+	go func() {
+		txA, err := d.BeginTx(ctx, nil)
+		if err != nil {
+			aDone <- err
+			close(held)
+			return
+		}
+		if _, err := txA.ExecContext(ctx, `INSERT INTO lock_probe (n) VALUES (1)`); err != nil {
+			_ = txA.Rollback()
+			aDone <- err
+			close(held)
+			return
+		}
+		close(held) // A now holds the write lock
+		time.Sleep(holdFor)
+		aDone <- txA.Commit()
+	}()
+
+	<-held
+	// Connection B: while A is still holding, begin + read + write, and time
+	// how long the calls themselves take — pre-fix, the deferred BEGIN and
+	// the SELECT both succeed instantly and the INSERT's SHARED→RESERVED
+	// promotion returned SQLITE_BUSY in ~20µs.
+	start := time.Now()
+	txB, err := d.BeginTx(ctx, nil)
+	if err == nil {
+		var n int
+		err = txB.QueryRowContext(ctx, `SELECT COUNT(*) FROM lock_probe`).Scan(&n)
+	}
+	if err == nil {
+		_, err = txB.ExecContext(ctx, `INSERT INTO lock_probe (n) VALUES (2)`)
+	}
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("concurrent write failed after %v (want a wait then success; instant SQLITE_BUSY is the pre-fix bug, a slow error means busy_timeout expired): %v", elapsed, err)
+	}
+	if elapsed < 100*time.Millisecond {
+		t.Fatalf("concurrent write returned in %v — it did not wait for the holding transaction (lock not actually held at BEGIN?)", elapsed)
+	}
+	if err := txB.Commit(); err != nil {
+		t.Fatalf("commit B: %v", err)
+	}
+	if err := <-aDone; err != nil {
+		t.Fatalf("connection A: %v", err)
 	}
 }
 

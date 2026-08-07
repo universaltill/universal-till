@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -246,6 +247,42 @@ func TestSyncSalesAPI_AppliesBatchAndReportsAppliedSkipped(t *testing.T) {
 }
 
 // --- syncPushTick ---
+
+// StartSyncPush must register its goroutine on the caller's wg (ut-docs#153)
+// so app.Run's shutdown drain can prove it actually exited before
+// database.Close() runs, the same join shape as cloudsync.Start. A cancelled
+// ctx must let the goroutine finish and call wg.Done() promptly, not leave a
+// leaked goroutine that only stops on the next 30s tick.
+func TestStartSyncPush_JoinsWaitGroupAndExitsOnCtxCancel(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	StartSyncPush(ctx, dp, &wg)
+
+	// wg.Wait() on a zero counter returns immediately, so without this
+	// pre-cancel check the test would pass even if StartSyncPush never
+	// called wg.Add at all — proving nothing about registration, only that
+	// *something* eventually returns. Confirm the counter is genuinely
+	// non-zero (the loop is parked on its 30s ticker, not yet cancelled)
+	// before cancelling and checking it drains.
+	registered := make(chan struct{})
+	go func() { wg.Wait(); close(registered) }()
+	select {
+	case <-registered:
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — StartSyncPush never called wg.Add, so this test cannot prove the join")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartSyncPush's goroutine did not call wg.Done() within 2s of ctx cancel — not joined to the shutdown drain")
+	}
+}
 
 func TestSyncPushTick_NoPrimaryConfigured_NoOp(t *testing.T) {
 	_, dp := newSyncSalesTestDeps(t)
