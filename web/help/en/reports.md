@@ -14,5 +14,6 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 
 ## How to use it
 
-1. Open Reports and choose the period or department view you need.
-2. Run End of day when you close: it totals the day and can print for your records.
+1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, tax, refunds, net, last year) and a low-stock warning.
+2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, or Day-end (EOD) — and that report loads when you open it.
+3. Run End of day (in the Day-end tab) when you close: it totals the day and can print for your records.

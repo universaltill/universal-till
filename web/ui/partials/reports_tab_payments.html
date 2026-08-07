@@ -1,0 +1,36 @@
+<div class="card">
+  <h2>{{ T "reports.by_method" }}</h2>
+  <table class="table">
+    <tbody>
+      {{ range .Methods }}
+      <tr><td><strong>{{ .Method }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Amount }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.by_department" }}</h2>
+  <table class="table">
+    <tbody>
+      {{ range .Departments }}
+      <tr><td><strong>{{ if .Department }}{{ .Department }}{{ else }}{{ T "reports.uncategorized" }}{{ end }}</strong></td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ if .Tills }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.by_till" }}</h2>
+  <table class="table">
+    <tbody>
+      {{ range .Tills }}
+      <tr><td><strong>{{ if .Name }}{{ .Name }}{{ else }}{{ T "reports.this_till" }}{{ end }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ end }}
