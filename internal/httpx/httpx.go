@@ -37,10 +37,21 @@ var baseFuncs = template.FuncMap{
 	// internal/pages/update_api.go's updateUnavailableHTML via the shared
 	// selfupdate.DownloadLinkActionable predicate.
 	"updatedownloadlink": func() bool { return selfupdate.DownloadLinkActionableNow() },
-	"enrolled":           func() bool { return enroll.CurrentStatus().Registered },
-	"enrolstore":         func() string { return enroll.CurrentStatus().StoreID },
-	"enroldevice":        func() string { return enroll.CurrentStatus().DeviceID },
-	"jsonVals":           jsonVals,
+	// crossdevicelinkactionable: whether a link to ANOTHER device (a replica
+	// linking to its primary till's own UI, ut-docs#390) is safe to make
+	// clickable — false on a unix kiosk (fullscreen, no chrome, no way back
+	// once followed) or a desktop shell with no window-escape handling. Same
+	// underlying platform signal as updatedownloadlink above (deliberately
+	// not the same template-func name — that one reads as update-specific at
+	// a call site that has nothing to do with updates); both wrap the one
+	// shared selfupdate.DownloadLinkActionable predicate so there is still
+	// only one place that decides "does this install have real, recoverable
+	// browser chrome."
+	"crossdevicelinkactionable": func() bool { return selfupdate.DownloadLinkActionableNow() },
+	"enrolled":                  func() bool { return enroll.CurrentStatus().Registered },
+	"enrolstore":                func() string { return enroll.CurrentStatus().StoreID },
+	"enroldevice":               func() string { return enroll.CurrentStatus().DeviceID },
+	"jsonVals":                  jsonVals,
 	// Default target for the nav's contextual "?" — the manual's index.
 	// Render() overrides this per request with the topic documenting the page
 	// actually being rendered; fragment renderers that also parse nav.html

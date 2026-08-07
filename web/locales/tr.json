@@ -770,6 +770,7 @@
   "suggest.add": "Sepete ekle",
   "suggest.title": "Müşteriler ayrıca alıyor",
   "sync.banner_open_primary": "Birincilde düzenle",
+  "sync.banner_open_primary_unavailable": "Bunu birincil kasada düzenleyin",
   "sync.banner_replica": "Bu kasa birincil kasayı takip eder: burada yapılan katalog değişiklikleri dükkân kataloğuyla üzerine yazılır.",
   "sync.chip_following": "Birincil kasaya bağlı",
   "sync.chip_offline": "Birincil kasaya ulaşılamıyor — satışlar kuyruğa alınır ve kasa döndüğünde eşitlenir",
