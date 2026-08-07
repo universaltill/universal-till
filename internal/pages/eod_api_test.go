@@ -55,6 +55,19 @@ func TestStartEODScheduler_JoinsWaitGroupAndExitsOnCtxCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	StartEODScheduler(ctx, dp, &wg)
+
+	// wg.Wait() on a zero counter returns immediately, so without this
+	// pre-cancel check the test would pass even if StartEODScheduler never
+	// called wg.Add at all. Confirm the counter is genuinely non-zero
+	// before cancelling.
+	registered := make(chan struct{})
+	go func() { wg.Wait(); close(registered) }()
+	select {
+	case <-registered:
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — StartEODScheduler never called wg.Add, so this test cannot prove the join")
+	case <-time.After(100 * time.Millisecond):
+	}
+
 	cancel()
 
 	done := make(chan struct{})
