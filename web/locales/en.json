@@ -413,6 +413,7 @@
   "plugins.install.modal.title": "Installing Plugin",
   "plugins.install.success": "Plugin installed successfully.",
   "plugins.manage.action.disable": "Disable",
+  "plugins.manage.action.docs": "Docs",
   "plugins.manage.action.enable": "Enable",
   "plugins.manage.action.export": "Export",
   "plugins.manage.action.uninstall": "Uninstall",
