@@ -186,3 +186,188 @@ test('closing the panel sticks across a navigation, even back to /report-issue',
   await expect(page.locator('#ir-status')).toContainText('Saved');
   assertClean();
 });
+
+// ut-docs#395: the panel must be movable off whatever it's covering — the
+// operator has to keep seeing the screen underneath while reproducing a
+// problem. Dragged from the head bar, not the ✕ (which must keep closing).
+test('the panel can be dragged to a different position by its head bar', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await page.goto('/');
+  await page.getByTestId('bugreport-toggle').click();
+
+  const panel = page.getByTestId('bugreport-panel');
+  const before = (await panel.boundingBox())!;
+  const head = page.locator('.bugreport-head h2');
+  const handle = (await head.boundingBox())!;
+  const startX = handle.x + handle.width / 2;
+  const startY = handle.y + handle.height / 2;
+
+  // Horizontal-only: dragging left keeps the panel's vertical band exactly
+  // where it started (measured clear of the scan row by the ut-docs#346
+  // review — see app.css's own comment on .bugreport-panel), so this proves
+  // the drag mechanism without also having to re-derive a safe drop zone
+  // for every viewport this suite runs at.
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX - 250, startY, { steps: 8 });
+  await page.mouse.up();
+
+  const after = (await panel.boundingBox())!;
+  expect(after.x).toBeLessThan(before.x - 150);
+  expect(Math.abs(after.y - before.y)).toBeLessThan(5);
+
+  // Dragging never closes it, and the till underneath stays operable — same
+  // non-modal guarantee the rest of this suite already locks in.
+  await expect(panel).toBeVisible();
+  const barcode = page.locator('.scan-row input[name=code]');
+  await barcode.click();
+  await barcode.fill('DRAG-DID-NOT-TRAP-FOCUS');
+  await expect(barcode).toHaveValue('DRAG-DID-NOT-TRAP-FOCUS');
+  assertClean();
+});
+
+test('dragging the head does not trigger the ✕ close control', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('bugreport-toggle').click();
+  const panel = page.getByTestId('bugreport-panel');
+  await expect(panel).toBeVisible();
+
+  const close = page.getByTestId('bugreport-close');
+  const closeBox = (await close.boundingBox())!;
+  // A drag that passes over the close button mid-motion must not register
+  // as a click on it — only a pointerdown that STARTS there should close.
+  const head = page.locator('.bugreport-head h2');
+  const handle = (await head.boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(closeBox.x + closeBox.width / 2, closeBox.y + closeBox.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(panel).toBeVisible();
+});
+
+// The kiosk this panel exists for is a TOUCHSCREEN, and page.mouse only ever
+// simulates a mouse — the drag tests above never reach the touch code path.
+// Drive real touch through CDP instead (Chromium-only, which this suite
+// already is). Two things only touch can reach, both found by the
+// independent review of ut-docs#395:
+//  - pointercancel: the browser/OS takes a gesture over for palm rejection,
+//    an extra touch point or a system swipe. Unhandled, the drag never ended
+//    — the document pointermove listener stayed attached for the life of the
+//    page and the panel then followed the pointer with nothing pressed,
+//    wandering back over the screen the operator had just dragged it off.
+//  - a foreign pointer's release: with a second finger on the glass (holding
+//    the panel while tapping the till is the workflow this panel is for) the
+//    other finger's pointerup ended the drag AND threw an uncaught
+//    NotFoundError out of releasePointerCapture.
+async function touchDriver(page: import('@playwright/test').Page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  return (type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', pts: { x: number; y: number }[]) =>
+    cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts as never });
+}
+
+// Nudges the pointer with nothing pressed. If the drag is still live this
+// drags the panel — which is exactly the stuck state being guarded against.
+const strayPointerMove = (page: import('@playwright/test').Page) =>
+  page.evaluate(() =>
+    document.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, pointerId: 991, clientX: 120, clientY: 520, buttons: 0,
+    })));
+
+test('touch: the panel drags, and a cancelled gesture does not leave it stuck to the pointer', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await page.goto('/');
+  await page.getByTestId('bugreport-toggle').click();
+  const panel = page.getByTestId('bugreport-panel');
+  await expect(panel).toBeVisible();
+  const touch = await touchDriver(page);
+
+  const grab = async () => {
+    const h = (await page.locator('.bugreport-head h2').boundingBox())!;
+    return { x: h.x + h.width / 2, y: h.y + h.height / 2 };
+  };
+
+  // 1. A plain one-finger drag moves it, same as the mouse.
+  const before = (await panel.boundingBox())!;
+  let p = await grab();
+  await touch('touchStart', [p]);
+  for (let i = 1; i <= 5; i++) await touch('touchMove', [{ x: p.x - i * 40, y: p.y }]);
+  await touch('touchEnd', []);
+  const dragged = (await panel.boundingBox())!;
+  expect(dragged.x).toBeLessThan(before.x - 150);
+
+  // 2. A gesture the browser cancels mid-drag must end the drag cleanly.
+  p = await grab();
+  await touch('touchStart', [p]);
+  await touch('touchMove', [{ x: p.x - 50, y: p.y + 20 }]);
+  await touch('touchCancel', []);
+  const parked = (await panel.boundingBox())!;
+  await strayPointerMove(page);
+  const still = (await panel.boundingBox())!;
+  expect(still.x).toBeCloseTo(parked.x, 0);
+  expect(still.y).toBeCloseTo(parked.y, 0);
+
+  // 3. …and the panel is still draggable afterwards, not wedged.
+  p = await grab();
+  await touch('touchStart', [p]);
+  for (let i = 1; i <= 4; i++) await touch('touchMove', [{ x: p.x + i * 30, y: p.y }]);
+  await touch('touchEnd', []);
+  expect((await panel.boundingBox())!.x).toBeGreaterThan(parked.x + 60);
+  assertClean();
+});
+
+test('touch: another pointer releasing mid-drag neither ends the drag nor throws', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await page.goto('/');
+  await page.getByTestId('bugreport-toggle').click();
+  const panel = page.getByTestId('bugreport-panel');
+  await expect(panel).toBeVisible();
+  const touch = await touchDriver(page);
+
+  const h = (await page.locator('.bugreport-head h2').boundingBox())!;
+  const x = h.x + h.width / 2, y = h.y + h.height / 2;
+  await touch('touchStart', [{ x, y }]);
+  await touch('touchMove', [{ x: x - 40, y }]);
+  const mid = (await panel.boundingBox())!;
+
+  // A different pointer lifts somewhere else on the page (second finger).
+  await page.evaluate(() =>
+    document.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true, pointerId: 4242, pointerType: 'touch', clientX: 200, clientY: 600, button: 0, buttons: 0,
+    })));
+
+  // The finger that owns the drag keeps going and must still be steering.
+  await touch('touchMove', [{ x: x - 240, y }]);
+  const end = (await panel.boundingBox())!;
+  await touch('touchEnd', []);
+  expect(end.x).toBeLessThan(mid.x - 100);
+  assertClean(); // no uncaught NotFoundError from releasePointerCapture
+});
+
+test('a dragged panel is pulled back on-screen when the viewport shrinks', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/');
+  await page.getByTestId('bugreport-toggle').click();
+  const panel = page.getByTestId('bugreport-panel');
+  const h = (await page.locator('.bugreport-head h2').boundingBox())!;
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(h.x + h.width / 2 - 100, h.y + h.height / 2 + 300, { steps: 8 });
+  await page.mouse.up();
+  // This is also the only DOWNWARD drag in the suite, and it earns its keep
+  // twice: dragging down crosses the till's own .btn anchors, which started
+  // a native link drag-and-drop and cancelled the pointer one frame in. The
+  // horizontal-only drags above never reached that.
+  expect((await panel.boundingBox())!.y).toBeGreaterThan(300);
+
+  // A desktop window resize / a tablet till rotating must not strand the
+  // panel outside the viewport, where there is no head bar left to grab.
+  await page.setViewportSize({ width: 1024, height: 400 });
+  const after = (await panel.boundingBox())!;
+  expect(after.y + after.height).toBeLessThanOrEqual(400 + 1);
+  expect(after.x + after.width).toBeLessThanOrEqual(1024 + 1);
+  expect(after.x).toBeGreaterThanOrEqual(-1);
+  expect(after.y).toBeGreaterThanOrEqual(-1);
+  assertClean();
+});

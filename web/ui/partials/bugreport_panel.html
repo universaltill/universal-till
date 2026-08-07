@@ -398,6 +398,7 @@
     panel.classList.add('open');
     syncToggle(true);
     dismissed(false);
+    reclampIfDragged(); // ut-docs#395: never re-open a dragged panel off-screen
   }
 
   function closePanel() {
@@ -418,6 +419,121 @@
   });
 
   document.getElementById('bugreport-close').addEventListener('click', closePanel);
+
+  // Draggable (ut-docs#395): the operator has to be able to shift the panel
+  // off whatever it's covering while reproducing a problem. Pointer Events
+  // (not separate mouse/touch handlers) so one code path covers the kiosk's
+  // touchscreen and a desktop mouse alike. Dragging is inherently a
+  // physical/screen-space operation, so this switches the panel to explicit
+  // top/left pixel offsets — deliberately not the logical inset-* properties
+  // app.css positions it with by default, which only make sense for the
+  // fixed, RTL-mirrored resting position.
+  var head = panel.querySelector('.bugreport-head');
+  var dragPointerId = null, dragStartX = 0, dragStartY = 0, panelStartX = 0, panelStartY = 0;
+  var resizeGuarded = false;
+
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+  // Keeping the whole panel inside the viewport is the drag's one hard rule,
+  // so it lives in one place: the drag uses it, and so does the resize guard
+  // below. On a viewport narrower/shorter than the panel the upper bound goes
+  // negative and Math.max pins it to 0 — flush with the start/top edge, which
+  // is the most of it that can be shown at all.
+  function clampIntoViewport(x, y) {
+    var rect = panel.getBoundingClientRect();
+    return [
+      clamp(x, 0, window.innerWidth - rect.width),
+      clamp(y, 0, window.innerHeight - rect.height)
+    ];
+  }
+
+  function moveTo(x, y) {
+    var xy = clampIntoViewport(x, y);
+    panel.style.insetInlineEnd = 'auto';
+    panel.style.left = xy[0] + 'px';
+    panel.style.top = xy[1] + 'px';
+  }
+
+  // Only ever re-positions a panel that was actually dragged — an untouched
+  // one keeps app.css's logical, RTL-mirroring resting position. Runs on
+  // resize and on re-open (a resize while it was closed measures 0×0, so the
+  // clamp has to be redone once it has a box again).
+  function reclampIfDragged() {
+    if (!panel.style.left) return;
+    moveTo(parseFloat(panel.style.left) || 0, parseFloat(panel.style.top) || 0);
+  }
+
+  function onDragMove(e) {
+    // Only the pointer that started this drag steers it. Without the id
+    // check a second finger on the kiosk touchscreen — the operator holding
+    // the panel with one hand and tapping the till with the other, which is
+    // exactly the workflow this panel exists for — hijacks the drag.
+    if (e.pointerId !== dragPointerId) return;
+    moveTo(panelStartX + (e.clientX - dragStartX), panelStartY + (e.clientY - dragStartY));
+  }
+
+  function endDrag(e) {
+    // Same id check: a foreign pointer's release must not end this drag, and
+    // releasePointerCapture with an id we never captured throws NotFoundError
+    // (an uncaught page error, confirmed against a real multi-touch sequence).
+    if (dragPointerId === null || (e && e.pointerId !== dragPointerId)) return;
+    if (head.hasPointerCapture(dragPointerId)) head.releasePointerCapture(dragPointerId);
+    dragPointerId = null;
+    document.removeEventListener('pointermove', onDragMove);
+    document.removeEventListener('pointerup', endDrag);
+    document.removeEventListener('pointercancel', endDrag);
+  }
+
+  head.addEventListener('pointerdown', function (e) {
+    // Only the head bar itself starts a drag — a pointerdown that starts on
+    // the ✕ must keep closing the panel, not move it (a drag that later
+    // passes OVER the ✕ mid-motion is already safe: browsers only fire
+    // 'click' for a press-and-release at the same target with no
+    // intervening pointer capture elsewhere, which the capture on `head`
+    // guarantees here).
+    if (e.target.closest('#bugreport-close')) return;
+    if (dragPointerId !== null) return;   // one drag at a time
+    if (e.button !== 0) return;           // primary press only; a right-click drag isn't one
+    // Suppress the browser's OWN drag gesture before it starts. Without this
+    // the compatibility mousedown still fires, and as soon as the pointer
+    // crosses a link on the page underneath (the sale screen is full of
+    // .btn anchors) Chromium begins a native link drag-and-drop and cancels
+    // our pointer — reproduced: dragging the panel downward over the till
+    // fired dragstart on an <a class="btn"> and then pointercancel, stopping
+    // the panel dead after one frame. Cancelling pointerdown also removes
+    // any reliance on user-select for the text-selection case.
+    e.preventDefault();
+    var rect = panel.getBoundingClientRect();
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    panelStartX = rect.left;
+    panelStartY = rect.top;
+    head.setPointerCapture(e.pointerId);
+    dragPointerId = e.pointerId;          // set only once the capture succeeded
+    document.addEventListener('pointermove', onDragMove);
+    document.addEventListener('pointerup', endDrag);
+    // pointercancel is NOT optional on a touchscreen: the browser/OS yanks a
+    // gesture away for palm rejection, an extra touch point, a system swipe.
+    // Without this the drag never ends — the document pointermove listener
+    // stays attached for the life of the page and the panel then follows the
+    // pointer around with nothing pressed, wandering over the very screen the
+    // operator dragged it off. Reproduced with a real touchCancel sequence.
+    document.addEventListener('pointercancel', endDrag);
+    // The browser can also revoke the capture on its own (element detached,
+    // gesture stolen) without ever sending pointerup/pointercancel.
+    head.addEventListener('lostpointercapture', endDrag, { once: true });
+
+    if (!resizeGuarded) {
+      resizeGuarded = true;
+      // A dragged panel holds fixed pixel offsets, so shrinking the window
+      // (desktop shell) or rotating a tablet till can strand it entirely
+      // off-screen — and the position survives close/reopen, so there'd be no
+      // head bar left to grab it back by. Re-clamp instead. Attached on the
+      // first drag only: a till that never drags pays nothing, same as the
+      // capture machinery's lazy init above.
+      window.addEventListener('resize', reclampIfDragged);
+    }
+  });
 
   // /report-issue renders the panel already open (server-side class, so it
   // doesn't depend on this script having run first) — but an earlier

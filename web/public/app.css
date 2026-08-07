@@ -1203,10 +1203,17 @@ body.login-screen {
   text-align: start;
 }
 .bugreport-panel.open { display: block; }
-.bugreport-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+/* ut-docs#395: draggable so the operator can shift the panel off whatever
+   it's covering. touch-action: none stops the kiosk touchscreen's own
+   scroll/pan gesture from competing with the drag; user-select: none stops
+   the title text highlighting mid-drag. The ✕ opts back into normal touch/
+   selection behaviour — it's a tap target, not part of the drag surface. */
+.bugreport-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  cursor: move; touch-action: none; user-select: none; }
 .bugreport-head h2 { margin: 0; font-size: 1rem; }
 .bugreport-close { background: none; border: 0; cursor: pointer; font-size: 1.1rem;
-  color: var(--muted, #64748b); padding: .25rem .5rem; border-radius: .4rem; }
+  color: var(--muted, #64748b); padding: .25rem .5rem; border-radius: .4rem;
+  touch-action: auto; user-select: auto; }
 .bugreport-close:hover, .bugreport-close:focus-visible { background: var(--surface-2, #f8fafc); color: inherit; }
 .bugreport-nav-note { font-weight: 600; }
 /* Send row: the note field and its Send button share one line. Measured,
