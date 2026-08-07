@@ -68,6 +68,14 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    // ut-docs#412: BuildConfig generation is opt-in as of AGP 8.0 — without
+    // this, MainActivity's BuildConfig.DEBUG check (gating the debug-only
+    // status bar) fails to compile with "unresolved reference: BuildConfig"
+    // in every build, debug and release alike (caught by independent
+    // review before merge, 2026-08-07).
+    buildFeatures {
+        buildConfig = true
+    }
 }
 
 // Regenerates libs/unitill-mobile.aar from the Go source (../mobile) on every
