@@ -526,16 +526,22 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 		items, err := pos.GetLowStockItems(ctx, dp.Db, locationID)
 		if err != nil {
 			if strings.Contains(r.Header.Get("Accept"), "application/json") {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
 			} else {
 				writeHTML(w, http.StatusInternalServerError, fmt.Sprintf("<div class='error'>%s</div>", err.Error()))
 			}
 			return
 		}
 
-		// Check if JSON response requested
+		// Check if JSON response requested. Wrapped as { "data": …, "error":
+		// null } -- the envelope universal-till/CLAUDE.md mandates for every
+		// JSON API response, matching every other JSON handler in this
+		// package (ut-docs#323: this endpoint used to respond bare).
 		if strings.Contains(r.Header.Get("Accept"), "application/json") {
-			writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"data":  map[string]any{"items": items, "count": len(items)},
+				"error": nil,
+			})
 			return
 		}
 
