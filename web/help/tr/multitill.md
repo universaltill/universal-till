@@ -19,3 +19,4 @@ Aynı dükkân ağında birden çok kasa çalıştırın: biri ana kasadır, di�
 4. Bitmesini bekleyin. Dükkânın tamamı — katalog, fiyatlar, ayarlar, stok ve kullanıcılar — kopyalanır; yoğun bir ağda bu bir dakikayı bulabilir. Katıl'a iki kez basmayın: jeton tek kullanımlıktır ve ikinci basış "kod kullanılmış veya süresi dolmuş" hatasıyla başarısız olur.
 5. Başarısız olursa nedeni düğmenin altında görünür. En sık nedenler: iki kasanın aynı ağda olmaması ve kodun yalnızca bir kısmının yapıştırılması.
 6. Her kasadaki satış ana kasaya akar; katalog değişiklikleri yaklaşık yarım dakika içinde tüm kasalara yayılır.
+7. Katılmış bir kasada Katalog ve Envanter salt okunurdur — üstteki bir şerit bunu belirtir ve sizi ana kasaya yönlendirir. Windows ve Mac'te bu şerit tıklanabilir bir bağlantıdır; kiosk uygulamasında ise düz metin olarak kalır, çünkü kiosk cihazının bir bağlantı onu başka bir kasanın ekranına götürürse geri dönecek bir yolu yoktur.

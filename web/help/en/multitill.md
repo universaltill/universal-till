@@ -20,3 +20,4 @@ Run several tills on the same shop network: one is the main till, the others joi
 4. Wait for it to finish. It copies the whole shop across — catalog, prices, settings, stock and operators — so on a busy shop network this can take up to a minute. Do not press Join twice: the token is single-use, and a second press fails with "code used or expired".
 5. If it fails, the reason appears under the button. The most common causes are the two tills not being on the same network, and only part of the code having been pasted.
 6. Sales made on any till flow back to the main till, and catalog changes spread to all tills within about half a minute.
+7. On a joined till, Catalog and Inventory are read-only — a banner at the top says so and points you to the main till. On Windows and Mac that banner is a clickable link; on the kiosk app it's plain text instead, since the kiosk has no way back if a link took it to another till's screen.
