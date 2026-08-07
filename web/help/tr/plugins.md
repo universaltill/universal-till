@@ -4,7 +4,7 @@ title: Eklenti mağazası
 section: Bağlantı ve eklentiler
 order: 330
 summary: "Çekirdek uygulamayı değiştirmeden özellik ekleyin: ödemeler, temalar, dil paketleri, entegrasyonlar, yapay zekâ araçları ve daha fazlası."
-routes: [/plugins, /plugins/store]
+routes: [/plugins, /plugins/store, /plugins/{id}/settings]
 ---
 
 # Eklenti mağazası

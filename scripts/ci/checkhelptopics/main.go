@@ -4,7 +4,9 @@
 // Builtin() would instead swallow into a log line and silently degrade
 // from — a duplicate/conflicting route across topics, or a topic whose
 // front matter doesn't parse — plus checks that every shipped locale has
-// translated every topic english has.
+// translated every topic english has, and (ut-docs#326, closing ut-docs#365)
+// that every user-facing GET page route registered under internal/pages/**
+// is claimed by some topic's routes: front matter (see routecoverage.go).
 //
 // This deliberately calls the real internal/manual package rather than
 // re-parsing front matter in bash/python the way guard-i18n.sh parses
@@ -62,10 +64,22 @@ func main() {
 		}
 	}
 
+	// Page-route coverage: every user-facing page must have a claiming topic
+	// (exact or {param}-pattern — the same matcher the runtime "?" uses).
+	routes, err := pageRoutes(filepath.Join("internal", "pages"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "guard-help-topics: scanning internal/pages: %v\n", err)
+		os.Exit(1)
+	}
+	if uncovered := uncoveredRoutes(routes, lib.RouteCovered); len(uncovered) > 0 {
+		fail = true
+		fmt.Fprintf(os.Stderr, "guard-help-topics: page routes with no claiming manual topic (add the route to a topic's routes: front matter under web/help/en/, or a minimal stub topic in every locale): %v\n", uncovered)
+	}
+
 	if fail {
 		os.Exit(1)
 	}
-	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, all shipped locales complete")
+	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, all shipped locales complete, every page route has a claiming topic")
 }
 
 // shippedLocales lists the product's shipped locales from web/locales/*.json

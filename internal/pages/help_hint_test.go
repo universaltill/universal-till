@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -74,10 +75,61 @@ func TestHelpHrefMapping(t *testing.T) {
 		"/reports":              "/help/reports",
 		"/plugins":              "/help/plugins",
 		"/users":                "/help/users",
+		"/backoffice":           "/help/alerts",
+		"/menu":                 "/help/menu",
+		"/invoice/12345":        "/help/invoices",
+		"/journal/R-0001":       "/help/reports",
 		"/some/unclaimed/route": "/help",
 	} {
 		if got := manual.HelpHref(route); got != want {
 			t.Errorf("HelpHref(%q) = %q, want %q", route, got, want)
+		}
+	}
+}
+
+// /settings is one route claimed by one topic (display), but five other
+// topics with real content — backups, claim, payments, printing, updates —
+// document SECTIONS of that same page. Those can't claim the route (the
+// duplicate-route guard exists precisely to forbid that), so the page carries
+// explicit {{ helpLink "…" }} hints next to its section headings instead.
+// This pins that each renders and points at the right topic.
+func TestSettingsSectionsCarryExplicitHelpLinks(t *testing.T) {
+	chdirRoot(t)
+	// The payments/backups/printer cards are manager-gated; auth-off (the same
+	// mode the e2e till runs in) renders them without building a session.
+	t.Setenv("UT_AUTH", "off")
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{
+		Cfg:      cfg,
+		Db:       db,
+		State:    state,
+		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+		Settings: settings.NewStore(db),
+	}
+
+	mux := http.NewServeMux()
+	registerSettings(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, id := range []string{"claim", "updates", "payments", "backups", "printing"} {
+		if !strings.Contains(body, `href="/help/`+id+`"`) {
+			t.Errorf("settings page is missing the explicit help link for the %q topic", id)
 		}
 	}
 }
