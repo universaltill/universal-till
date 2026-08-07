@@ -333,6 +333,7 @@ test('touch: the panel drags, and a cancelled gesture does not leave it stuck to
 
 test('touch: another pointer releasing mid-drag neither ends the drag nor throws', async ({ page }) => {
   const assertClean = watchConsole(page);
+  page.on('console', (m) => console.log('[BROWSER]', m.text()));
   await page.goto('/');
   await page.getByTestId('bugreport-toggle').click();
   const panel = page.getByTestId('bugreport-panel');
