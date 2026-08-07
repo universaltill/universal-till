@@ -305,6 +305,11 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		allowNegative := d.CurrentState().AllowNegativeInventory
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			allowNegative = true // a replica never gates on stock it doesn't own (ut-docs#404, ADR-0036) — same bypass as the cashier tender path
+		}
+
 		saleInput := pos.SaleInput{
 			SaleType:     "sale",
 			Currency:     d.CurrentState().Currency,
@@ -323,7 +328,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			CashierID:              "kiosk",
 			CustomerID:             d.Engine.CustomerID(),
 			OrderType:              d.Engine.OrderType(),
-			AllowNegativeInventory: d.CurrentState().AllowNegativeInventory,
+			AllowNegativeInventory: allowNegative,
 			ActorID:                "kiosk",
 		}
 		saleID, err := completeTender(r.Context(), d, repo, saleInput, saleInput.Payments, "kiosk")
