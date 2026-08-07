@@ -29,9 +29,19 @@ func exempt(path string) bool {
 	// plus the first-boot discovery/pairing trio, ut-docs#289) all refuse
 	// once an operator exists — a brand-new till has no operators, so no
 	// session can exist and these could never be reached otherwise.
+	//
+	// KEEP IN SYNC with what the replica's pull/push loop actually calls: a
+	// machine-to-machine path missing from this list is rejected 401 by THIS
+	// middleware before its handler's bearer check ever runs, so the till
+	// authenticates perfectly and is still refused. /api/sync/stock was
+	// missing, which meant inventory silently never reached any replica —
+	// found in the field on a real two-till shop, where till 2 showed "no
+	// inventory" forever while the only symptom was a log line
+	// ("stock sync pull rejected: 401 Unauthorized") no shop owner ever sees.
+	// TestSyncPullPathsAreExempt pins the list against the client.
 	switch path {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
-		"/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
+		"/api/sync/stock", "/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status":
 		return true
 	}
