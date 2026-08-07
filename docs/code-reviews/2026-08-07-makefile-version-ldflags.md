@@ -65,10 +65,38 @@ manual button is unaffected. Implemented and tested above.
   `stubAutoUpdateSeams` helper so every test defaults to a real version,
   keeping the change in one place instead of six call sites.
 
+## Independent review (fresh-context Sonnet, complexity:easy)
+
+Verdict: **safe to merge, 0 blocking findings.** Independently re-ran the
+full gate and re-drove both TDD claims (reverted the `Makefile` fix and the
+`autoUpdateTick` guard in turn, confirmed each fails with the claimed
+error, restored, confirmed green) — matches what's recorded above. Also
+independently confirmed the pre-existing `internal/issuereport` failure is
+unrelated, via a separate `git worktree` at the pre-diff parent commit.
+
+One minor, non-blocking finding: `guard-makefile-version.sh`'s first branch
+(`grep -qx "dev"` → "still reports the dev fallback") is effectively dead
+code — Go's linker packs short string constants without null separators,
+so a bare `"dev"` never surfaces as an isolated `strings` line, in any of
+the three build variants the reviewer tried. The guard still works
+correctly: its second branch (does the binary contain the *expected*
+version) is what actually fires and catches the regression, verified by
+the same revert-and-confirm-red process above. Not a defect introduced
+here — `release.yml`'s own pre-existing version check
+(lines 524-550) has the identical two-branch shape, so this guard
+faithfully mirrors established precedent rather than inventing a new flaw.
+Left as-is per the reviewer's own read (optional future cleanup, not this
+card's scope) — simplifying both scripts to the one check that actually
+fires is real but separate work.
+
 ## Explicitly deferred
 
-None — the card's three acceptance criteria (fix the stamp, make it
-detectable, record the auto-update decision) are all addressed.
+- Simplify `guard-makefile-version.sh` (and, while at it, `release.yml`'s
+  analogous check) to drop the dead "dev"-fallback string-match branch —
+  cosmetic, not a correctness gap, flagged by the independent review.
+- The card's three acceptance criteria (fix the stamp, make it detectable,
+  record the auto-update decision) are all addressed — nothing else
+  deferred.
 
 ## Safe to merge
 
