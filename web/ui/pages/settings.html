@@ -421,6 +421,19 @@
 </div>
 <div class="card">
   <h2>🔗 {{ T "tills.title" }}</h2>
+  {{ if .IsPrimaryTill }}
+  <!-- Only the primary has its own name to edit here (ut-docs#396 review):
+       a replica's identity is sync.till_name, set at join time — a separate,
+       out-of-scope concern (see the card's non-goals) — so this field would
+       be a dead control on a replica with nothing reading till.name back. -->
+  <form hx-post="/api/settings/till-name" hx-swap="none"
+        hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+    <label>{{ T "settings.tills.name_label" }}
+      <input type="text" name="name" maxlength="60" value="{{ .TillName }}">
+    </label>
+    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+  </form>
+  {{ end }}
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
 </div>
