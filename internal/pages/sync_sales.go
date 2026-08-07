@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -153,10 +154,13 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 
 // StartSyncPush runs the replica-side journal loop: every 30s push local
 // sales past the cursor to the primary. Failures just wait for the next
-// tick — checkout never depends on it (ADR-0003).
-func StartSyncPush(ctx context.Context, d *common.Deps) {
+// tick — checkout never depends on it (ADR-0003). wg registers the loop with
+// app.Run's shutdown drain (ut-docs#153) — the caller must pass bgCtx (not
+// ctx), the same requirement StartCloudSync already has, so an early
+// startup error still signals this loop to stop.
+func StartSyncPush(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	runSyncLoop(ctx, func() { syncPushTick(ctx, d, client) })
+	runSyncLoop(ctx, wg, func() { syncPushTick(ctx, d, client) })
 }
 
 // syncPushTick is one tick of the replica-side journal loop, extracted from

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -234,6 +235,41 @@ func newAutoUpdateTestDeps(t *testing.T) *common.Deps {
 	dp := newEODTestDeps(t)
 	dp.Engine = pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000}, nil)
 	return dp
+}
+
+// StartAutoUpdateScheduler must register its goroutine on the caller's wg
+// (ut-docs#153), same join shape as cloudsync.Start, so app.Run's shutdown
+// drain can prove it exited before database.Close() runs — this loop also
+// does binary/web-asset renames (internal/selfupdate.Apply), so an unjoined
+// shutdown mid-swap has a real (if narrow) window to leave the install
+// half-applied.
+func TestStartAutoUpdateScheduler_JoinsWaitGroupAndExitsOnCtxCancel(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	StartAutoUpdateScheduler(ctx, dp, &wg)
+
+	// wg.Wait() on a zero counter returns immediately, so without this
+	// pre-cancel check the test would pass even if StartAutoUpdateScheduler
+	// never called wg.Add at all. Confirm the counter is genuinely non-zero
+	// before cancelling.
+	registered := make(chan struct{})
+	go func() { wg.Wait(); close(registered) }()
+	select {
+	case <-registered:
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — StartAutoUpdateScheduler never called wg.Add, so this test cannot prove the join")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartAutoUpdateScheduler's goroutine did not call wg.Done() within 2s of ctx cancel — not joined to the shutdown drain")
+	}
 }
 
 func TestAutoUpdateTick_SkipsWhenNotDue(t *testing.T) {

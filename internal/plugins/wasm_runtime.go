@@ -288,15 +288,21 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 }
 
 // wasmResultLogLine builds the exact line logged for a handler's stdout
-// result. Non-".ask" events (e.g. sale.completed) keep the original,
-// unredacted format — out of scope for ut-docs#202. ".ask" events (the
-// generic value-returning hook, EventBus.Ask) go through
+// result. Non-".ask"/".authorize" events (e.g. sale.completed) keep the
+// original, unredacted format — out of scope for ut-docs#202. ".ask"
+// events (the generic value-returning hook, EventBus.Ask) go through
 // safeAskResultForLog: export.requested.ask can answer with a full
 // exported dataset (base64 in content_b64), and that must never reach the
 // log verbatim ("no secrets in logs", GDPR-adjacent given the
 // customer-erasure endpoint sits right next to the export one).
+// ".authorize" events (ut-docs#245) get the same treatment: payment
+// authorization plugins answer these (PublishAuthorize/Blocking hooks —
+// see Sync's ".authorize"/".ask" branch above), and their responses are
+// arguably the most credential-adjacent plugin output in the system —
+// transaction/auth tokens, card-present metadata, depending on the
+// integration.
 func wasmResultLogLine(pluginID, eventType, out string) string {
-	if !strings.HasSuffix(eventType, ".ask") {
+	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") {
 		return fmt.Sprintf("[wasm:%s] result: %s", pluginID, out)
 	}
 	return fmt.Sprintf("[wasm:%s] result (%s, %d bytes): %s", pluginID, eventType, len(out), safeAskResultForLog(out))
@@ -315,23 +321,37 @@ const maxAskFieldBytes = 200
 // fields, or one very long key).
 const maxAskLogBytes = 500
 
-// looksLikeBlobFieldName reports whether key is conventionally a
-// base64-encoded blob field (export.requested.ask's content_b64, and any
-// future hook following the same naming) — redacted regardless of size.
+// looksLikeSensitiveFieldName reports whether key conventionally names a
+// base64-encoded blob or a credential-shaped value — export.requested.ask's
+// content_b64, or a payment-authorize response's auth token/secret, and any
+// future field following the same naming — redacted regardless of size.
 // Byte-size alone doesn't catch every risk here: a SMALL export can still
-// carry real customer PII (e.g. a name/email on one receipt line), so a
-// small content_b64 must be redacted too, not just an oversized one.
-func looksLikeBlobFieldName(key string) bool {
-	return strings.Contains(strings.ToLower(key), "b64")
+// carry real customer PII (e.g. a name/email on one receipt line), and a
+// SMALL token is exactly as much of a credential as a long one, so both are
+// name-matched rather than relying on the size cap alone (ut-docs#202,
+// widened for ".authorize" responses by ut-docs#245).
+func looksLikeSensitiveFieldName(key string) bool {
+	lower := strings.ToLower(key)
+	for _, marker := range [...]string{"b64", "token", "secret"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // safeAskResultForLog returns out unchanged when it's already small and
 // every field is safe to log as-is; otherwise any field whose raw JSON
-// value exceeds maxAskFieldBytes, or whose name looks like a base64 blob,
-// is replaced with an "<omitted: N bytes>" placeholder — the event's shape
-// and small fields (ok/error/message) stay visible without ever logging
-// the risky value itself. Non-object output, or an object that's still too
-// large after redaction, falls back to hard (rune-safe) truncation.
+// value exceeds maxAskFieldBytes, or whose name looks sensitive (a base64
+// blob or a token/secret — looksLikeSensitiveFieldName), is replaced with
+// an "<omitted: N bytes>" placeholder — the event's shape and small fields
+// (ok/error/message) stay visible without ever logging the risky value
+// itself. Non-object output, or an object that's still too large after
+// redaction, falls back to hard (rune-safe) truncation. Despite the name,
+// this is also wasmResultLogLine's redaction path for ".authorize"
+// responses (ut-docs#245) — kept as one shared function rather than a
+// second near-duplicate, since both are the same "blocking, value-
+// returning hook" shape.
 func safeAskResultForLog(out string) string {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(out), &fields); err != nil {
@@ -340,7 +360,7 @@ func safeAskResultForLog(out string) string {
 
 	redacted := false
 	for k, v := range fields {
-		if len(v) > maxAskFieldBytes || looksLikeBlobFieldName(k) {
+		if len(v) > maxAskFieldBytes || looksLikeSensitiveFieldName(k) {
 			placeholder, _ := json.Marshal(fmt.Sprintf("<omitted: %d bytes>", len(v)))
 			fields[k] = placeholder
 			redacted = true

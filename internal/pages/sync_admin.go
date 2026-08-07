@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -141,9 +142,15 @@ func withinLast(ts string, d time.Duration) bool {
 }
 
 // runSyncLoop drives a sync tick every 30s until ctx ends — the shared
-// harness of the journal push and the admin pull.
-func runSyncLoop(ctx context.Context, tick func()) {
+// harness of the journal push and the admin pull. wg registers the goroutine
+// with app.Run's shutdown drain (ut-docs#153), same join shape as
+// cloudsync.Start: wg.Add before the goroutine starts, wg.Done on every exit
+// path, so a caller waiting on wg can prove this loop actually stopped
+// before database.Close() runs.
+func runSyncLoop(ctx context.Context, wg *sync.WaitGroup, tick func()) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -159,10 +166,12 @@ func runSyncLoop(ctx context.Context, tick func()) {
 
 // StartSyncPull runs the replica-side drift loop: every 30s fetch the
 // primary's admin bundle and apply it when the fingerprint moved. refresh
-// re-derives in-memory state (theme, tax engine, i18n) after an apply.
-func StartSyncPull(ctx context.Context, d *common.Deps, refresh func(context.Context)) {
+// re-derives in-memory state (theme, tax engine, i18n) after an apply. wg
+// registers the loop with app.Run's shutdown drain (ut-docs#153) — the
+// caller must pass bgCtx (not ctx), same requirement as StartCloudSync.
+func StartSyncPull(ctx context.Context, d *common.Deps, refresh func(context.Context), wg *sync.WaitGroup) {
 	client := &http.Client{Timeout: 60 * time.Second}
-	runSyncLoop(ctx, func() { syncPullTick(ctx, d, client, refresh) })
+	runSyncLoop(ctx, wg, func() { syncPullTick(ctx, d, client, refresh) })
 }
 
 // syncPullTick is one tick of the replica-side drift loop, extracted from

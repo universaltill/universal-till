@@ -1,10 +1,12 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +44,38 @@ func TestBuildEODDoc_NoReceiptsOmitsFooterLine(t *testing.T) {
 		if strings.Contains(line, "Receipts") {
 			t.Fatalf("expected no receipt-range footer line for a day with no sales, got %+v", doc.Footer)
 		}
+	}
+}
+
+// StartEODScheduler must register its goroutine on the caller's wg
+// (ut-docs#153), same join shape as cloudsync.Start, so app.Run's shutdown
+// drain can prove it exited before database.Close() runs.
+func TestStartEODScheduler_JoinsWaitGroupAndExitsOnCtxCancel(t *testing.T) {
+	dp := newEODTestDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	StartEODScheduler(ctx, dp, &wg)
+
+	// wg.Wait() on a zero counter returns immediately, so without this
+	// pre-cancel check the test would pass even if StartEODScheduler never
+	// called wg.Add at all. Confirm the counter is genuinely non-zero
+	// before cancelling.
+	registered := make(chan struct{})
+	go func() { wg.Wait(); close(registered) }()
+	select {
+	case <-registered:
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — StartEODScheduler never called wg.Add, so this test cannot prove the join")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartEODScheduler's goroutine did not call wg.Done() within 2s of ctx cancel — not joined to the shutdown drain")
 	}
 }
 
