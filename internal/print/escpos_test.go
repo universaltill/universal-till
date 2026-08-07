@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func sampleDoc() Doc {
@@ -188,6 +189,53 @@ func TestNetworkTransportUnreachableFailsFast(t *testing.T) {
 	}
 	if time.Since(start) > 6*time.Second {
 		t.Error("failure took too long — would stall the print goroutine")
+	}
+}
+
+func TestClip(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		max  int
+		want string
+	}{
+		{"under max returned unchanged", "hello", 10, "hello"},
+		{"exact max returned unchanged", "hello", 5, "hello"},
+		{"ascii over max truncates by rune count", "hello world", 5, "hello"},
+		{
+			// A byte-based clip(s, 42) would cut mid-"ä" here: 41 ASCII
+			// bytes + the first of ä's 2 UTF-8 bytes == 42 bytes, leaving a
+			// lone lead byte. Rune-based clipping must keep ä whole instead.
+			name: "multi-byte rune sitting on the cut point is kept whole, not split",
+			s:    strings.Repeat("a", 41) + "ä" + "extra",
+			max:  42,
+			want: strings.Repeat("a", 41) + "ä",
+		},
+		{"non-ASCII text shorter than max returned unchanged", "فروشگاه", 42, "فروشگاه"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := clip(tt.s, tt.max)
+			if got != tt.want {
+				t.Errorf("clip(%q, %d) = %q, want %q", tt.s, tt.max, got, tt.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("clip(%q, %d) = %q: invalid UTF-8", tt.s, tt.max, got)
+			}
+		})
+	}
+}
+
+func TestRenderMultiByteNameAtColumnBoundary_NoInvalidUTF8(t *testing.T) {
+	// invoice.bill_to (internal/pages/invoice_page.go) is the concrete
+	// reachable call site: a translated label + customer name whose combined
+	// byte length crosses the Width boundary inside a multi-byte character.
+	name := strings.Repeat("a", Width-1) + "ü" + "trailing text past the cut"
+	d := sampleDoc()
+	d.Footer = []string{name}
+	out := Render(d)
+	if !utf8.Valid(out) {
+		t.Error("render output contains invalid UTF-8 after clipping a name whose cut point lands mid multi-byte character")
 	}
 }
 
