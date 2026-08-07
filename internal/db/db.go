@@ -33,7 +33,28 @@ func Open(path string) (*DB, error) {
 	// ignored, so FK enforcement was missing on pooled connections). The
 	// busy timeout keeps a concurrent writer (e.g. the sync pull's apply
 	// transaction) from surfacing SQLITE_BUSY to a sale mid-checkout.
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", path)
+	//
+	// _txlock=immediate closes a lock-contention gap (ut-docs#311): in the
+	// default rollback-journal mode with deferred BEGINs, a transaction
+	// that reads first and then writes (the check-then-insert shape most
+	// write paths here use) fails INSTANTLY with SQLITE_BUSY when another
+	// connection already holds the write lock — SQLite's deadlock-avoidance
+	// skips the busy handler on the SHARED→RESERVED promotion, so
+	// busy_timeout never applies. _txlock=immediate makes every
+	// database/sql Begin/BeginTx run BEGIN IMMEDIATE, taking the write lock
+	// at BEGIN — a code path where the busy handler DOES run — so a
+	// concurrent writer now waits up to busy_timeout instead of failing
+	// instantly. This alone is the fix; it's not WAL-dependent (in WAL mode
+	// the same read-then-write upgrade fails as SQLITE_BUSY_SNAPSHOT
+	// instead, which the busy handler equally doesn't retry). (Every
+	// BeginTx in internal/data is a write transaction, so applying
+	// _txlock=immediate DSN-wide costs no read concurrency.)
+	//
+	// journal_mode(WAL) is a separate, complementary win added alongside
+	// it: WAL's MVCC means readers no longer block on the writer at all.
+	// Requesting WAL is safe for the ":memory:" DSNs tests use — SQLite
+	// reports journal_mode=memory there instead of erroring.
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate", path)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
