@@ -1,7 +1,14 @@
 <span class="sync-chip {{ .class }}">
   {{ if .isReplica -}}
-  <span title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}">⇅ {{ .label }}{{ if .offline }} ⚠{{ end }}{{ if .queued }} · {{ .queued }} {{ T "sync.chip_queued" }}{{ end }}</span>
+  {{/* ut-docs#405: was a plain (unclickable) <span> — /tills is a LOCAL
+       route (relative href, this till's own server), never the primary's
+       origin, so this can't strand an operator the way linking straight to
+       primaryURL would (ut-docs#390). */}}
+  <a href="/tills" title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}">⇅ {{ .label }}{{ if .offline }} ⚠{{ end }}{{ if .queued }} · {{ .queued }} {{ T "sync.chip_queued" }}{{ end }}</a>
   {{- else -}}
-  <a href="/tills" title="{{ T "sync.chip_tills_title" }}">⇅ {{ .count }} {{ T "sync.chip_tills" }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
+  {{/* ut-docs#405: was a bare replica count with no name at all — this
+       till's own name (tillNameOrDefault, same source Settings/​/tills
+       already use) now leads, the count stays as a secondary detail. */}}
+  <a href="/tills" title="{{ T "sync.chip_tills_title" }}">⇅ {{ .label }} · {{ .count }} {{ T "sync.chip_tills" }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
   {{- end }}
 </span>

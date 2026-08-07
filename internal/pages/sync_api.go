@@ -192,13 +192,24 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// This device's own row (ut-docs#396): only when THIS device is
-		// itself the primary — a replica showing its primary is a separate,
-		// out-of-scope concern.
+		// The primary's own name (ut-docs#396's till.name setting): shown
+		// on this page regardless of role. till.name is NOT in
+		// PerTillSettingPrefixes, so on a replica it's already the value
+		// synced down from the primary via the admin bundle (ut-docs#405 —
+		// this used to be primary-only: "a replica showing its primary is
+		// a separate, out-of-scope concern," which is exactly the gap this
+		// card closes; tillNameOrDefault needs no replica-specific branch
+		// because that setting key means "the primary's name" everywhere
+		// it's read, on any till).
 		primaryURL := d.SyncPrimaryURL(r.Context())
-		var primaryName string
-		if primaryURL == "" {
-			primaryName = tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
+		primaryName := tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
+		// This device's own till id, when it's itself a replica — used
+		// below only to tag its own row in .Tills (now populated on a
+		// replica too, ut-docs#405's adminTables addition) as "(this
+		// till)" rather than just another sibling.
+		var thisTillID string
+		if primaryURL != "" {
+			thisTillID, _, _ = d.Settings.Get(r.Context(), "sync.till_id")
 		}
 		httpx.Render("ui/pages/tills.html", map[string]any{
 			"title":           "Tills",
@@ -207,6 +218,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			"Tills":           list,
 			"PrimaryTillName": primaryName,
 			"SyncPrimary":     primaryURL,
+			"ThisTillID":      thisTillID,
 		})(w, r)
 	})
 
@@ -215,6 +227,19 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	mux.HandleFunc("POST /api/sync/enroll-token", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		// ut-docs#405 (independent review finding): enrolling is the other
+		// half of the revoke guard above — a code minted on a REPLICA would
+		// encode the replica's own address, so the new till would enrol
+		// against the replica's local (non-authoritative) tills table
+		// instead of the shop's real primary. It looks like it worked
+		// (QR shown, till joins, gets a real bearer) right up until the
+		// next admin-bundle pull prunes that row — the primary never knew
+		// about it — and the new till's access silently vanishes ~30s
+		// later with no explanation. Fail here, before ever showing a QR.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
 			return
 		}
 		_ = r.ParseForm()
@@ -256,6 +281,15 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// Replica enrolment — token IS the auth (one-time, 10-min), so this
 	// path is middleware-exempt like the login flow.
 	mux.HandleFunc("POST /api/sync/enroll", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#405: defense in depth alongside the enroll-token guard
+		// above — a stale QR/code minted before this fix (or copy-pasted
+		// to the wrong device by hand) must still not be honoured by a
+		// replica. See that guard's comment for the failure mode this
+		// prevents.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
+			return
+		}
 		var in struct {
 			Token string `json:"token"`
 			Name  string `json:"name"`
@@ -335,10 +369,23 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		})
 	})
 
-	// Revoke a replica (manager).
+	// Revoke a replica (manager, primary only).
 	mux.HandleFunc("POST /api/sync/tills/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		// ut-docs#405: the shop's till roster now syncs to every replica
+		// (adminTables), so .Tills on a replica's own /tills page is no
+		// longer always empty — without this check a replica could revoke
+		// a sibling row in its OWN local copy (a real DELETE, so it looks
+		// like it worked, HX-Refresh and all), while the shop-wide roster
+		// on the primary is untouched: the row just reappears on the next
+		// ~30s admin-bundle pull. Revocation is a primary-authoritative
+		// write, same rule ADR-0011 §2 already states for catalog/settings
+		// ("replicas never write ... directly").
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "revoke must be done on the primary till", http.StatusConflict)
 			return
 		}
 		id := r.PathValue("id")

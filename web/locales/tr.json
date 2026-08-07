@@ -858,6 +858,7 @@
   "tills.revoke": "İptal et",
   "tills.revoke_confirm": "Bu kasa iptal edilsin mi? Yeniden eşleştirilene kadar eşitlemeyi durdurur.",
   "tills.show_qr": "Eşleştirme kodunu göster",
+  "tills.the_primary": "birincil",
   "tills.this_till": "bu kasa",
   "tills.title": "Kasalar",
   "translations.col.key": "Anahtar",
