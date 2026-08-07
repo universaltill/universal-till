@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -49,6 +50,59 @@ func TestCatalogPage_FiltersInactive(t *testing.T) {
 	}
 	if strings.Contains(body, "Inactive Item") {
 		t.Fatalf("expected inactive item to be filtered out")
+	}
+}
+
+// TestCatalogReplicaBannerNeverLinksAcrossDevices guards ut-docs#390: same
+// bug, same fix, as TestInventoryReplicaBannerNeverLinksAcrossDevices in
+// internal/pages — this is /catalog's own copy of the sync-banner block.
+// See that test's comment for the full field-report context.
+func TestCatalogReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	// NewCatalogTestDB's schema deliberately omits tables this specific
+	// handler group doesn't otherwise need — settings included. Real schema
+	// mirrored from internal/db/migrations/001_init.sql.
+	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("create settings table: %v", err)
+	}
+
+	store := settings.NewStore(db)
+	if err := store.Set(t.Context(), "sync.primary_url", "http://primary.till.local:8080"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	dp := &common.Deps{
+		Db:       db,
+		Settings: store,
+		State:    common.RuntimeState{Theme: "default"},
+		Menu:     []common.MenuItem{},
+	}
+	Register(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/catalog", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /catalog = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "sync-banner") {
+		t.Fatal("expected the replica sync-banner to render at all — did the {{ if .SyncPrimary }} block regress?")
+	}
+	// crossdevicelinkactionable is false on this (Linux) test runtime — the
+	// same platform this bug was field-reported on. The banner must not
+	// link the kiosk's own browser to the primary's origin under that
+	// condition, and must fall back to inert text instead.
+	if strings.Contains(body, `href="http://primary.till.local:8080/catalog"`) {
+		t.Fatal("ut-docs#390: replica catalog banner still links the kiosk's own browser to the primary till's origin — this strands the operator on a kiosk with no way back")
+	}
+	if !strings.Contains(body, "Edit this on the primary till") {
+		t.Fatal("ut-docs#390: replica banner should fall back to inert text (sync.banner_open_primary_unavailable) when crossdevicelinkactionable is false")
 	}
 }
 

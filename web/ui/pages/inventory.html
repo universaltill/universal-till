@@ -6,7 +6,12 @@
 
 {{ if .SyncPrimary }}
 <div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
-  <a href="{{ .SyncPrimary }}/inventory" target="_blank" rel="noopener">{{ T "sync.banner_open_primary" }}</a></div>
+  {{ if crossdevicelinkactionable }}
+  <a href="{{ .SyncPrimary }}/inventory" target="_blank" rel="noopener">{{ T "sync.banner_open_primary" }}</a>
+  {{ else }}
+  <span>{{ T "sync.banner_open_primary_unavailable" }}</span>
+  {{ end }}
+</div>
 {{ end }}
 
 <div class="catalog-layout">

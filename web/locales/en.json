@@ -770,6 +770,7 @@
   "suggest.add": "Add to basket",
   "suggest.title": "Customers also buy",
   "sync.banner_open_primary": "Edit on the primary",
+  "sync.banner_open_primary_unavailable": "Edit this on the primary till",
   "sync.banner_replica": "This till follows the primary till: catalog changes made here are overwritten by the shop catalog.",
   "sync.chip_following": "Connected to the primary till",
   "sync.chip_offline": "Primary till unreachable — sales are queued and will sync when it is back",
