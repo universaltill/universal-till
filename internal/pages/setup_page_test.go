@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -47,6 +48,8 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL,
 		 entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL)`,
 		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`,
+		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, location_id TEXT,
+		 is_active INTEGER NOT NULL DEFAULT 1)`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatalf("setup schema: %v", err)
@@ -118,6 +121,38 @@ func TestSetupWizardHappyPath(t *testing.T) {
 	// The admin PIN works at the keypad.
 	if _, _, err := svc.Login(t.Context(), "2468"); err != nil {
 		t.Fatalf("admin cannot log in after wizard: %v", err)
+	}
+}
+
+// ut-docs#429: a genuinely fresh till, taken through the guided wizard with
+// no other setup, must be able to open a shift immediately afterward. The
+// wizard provisions an admin + PIN as real usable state; it must provision a
+// register the same way. web/ui/pages/shifts.html's register <select> is
+// driven entirely from POSRepo.ListRegisters — before this fix the wizard
+// never inserted a row there, so the template fell back to a hardcoded
+// <option value="reg-default"> that didn't exist in the DB, and submitting
+// Open Shift 500'd on a FOREIGN KEY constraint failure.
+func TestSetupWizardCreatesDefaultRegister(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin":          {"2468"},
+		"pin_confirm":  {"2468"},
+		"country":      {"GB"},
+		"currency":     {"GBP"},
+		"tax_rate_pct": {"20"},
+		"store_name":   {"Corner Shop"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("wizard setup: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+
+	regs, err := data.NewPOSRepo(d.Db).ListRegisters(t.Context())
+	if err != nil {
+		t.Fatalf("ListRegisters: %v", err)
+	}
+	if len(regs) != 1 {
+		t.Fatalf("ListRegisters after wizard = %+v, want exactly one register", regs)
 	}
 }
 
