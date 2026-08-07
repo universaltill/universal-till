@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
@@ -189,11 +190,21 @@ func kvRow(label, amount string) string {
 	return label + strings.Repeat(" ", space) + amount
 }
 
+// clip truncates s to at most max runes (characters), never bytes — Width
+// tracks visible columns, and a byte-based cut can split a multi-byte UTF-8
+// character (any non-ASCII locale string: ä/ö/ü/ß, ar/fa/tr text) mid-char,
+// producing invalid UTF-8 on the printer. max <= 0 clips to empty rather
+// than panicking — a caller computing max from column arithmetic (kvRow's
+// re-clip when a row overflows) can legitimately land at or below zero.
 func clip(s string, max int) string {
-	if len(s) <= max {
+	if max <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	return s[:max]
+	r := []rune(s)
+	return string(r[:max])
 }
 
 // encodeText prepares a string for the printer. utf8 passes through (many
