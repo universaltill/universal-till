@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,6 +221,25 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "1") {
 		t.Fatalf("expected the till count in the chip, got %q", rec.Body.String())
+	}
+}
+
+// StartSyncPull must register its goroutine on the caller's wg (ut-docs#153),
+// same join shape as cloudsync.Start, so app.Run's shutdown drain can prove
+// it exited before database.Close() runs.
+func TestStartSyncPull_JoinsWaitGroupAndExitsOnCtxCancel(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "replica-join.db")
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	StartSyncPull(ctx, dp, func(context.Context) {}, &wg)
+	cancel()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartSyncPull's goroutine did not call wg.Done() within 2s of ctx cancel — not joined to the shutdown drain")
 	}
 }
 

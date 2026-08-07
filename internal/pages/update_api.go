@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
@@ -124,9 +125,16 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 }
 
 // StartAutoUpdateScheduler runs the background unattended-update loop (docs:
-// ut-docs#79). Same 30s-ticker shape as StartEODScheduler.
-func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps) {
+// ut-docs#79). Same 30s-ticker shape as StartEODScheduler. wg registers the
+// loop with app.Run's shutdown drain (ut-docs#153) — the caller must pass
+// bgCtx (not ctx), same requirement as StartCloudSync. Joining this one
+// matters more than most: autoUpdateTick can call selfupdate.Apply, which
+// renames the binary/web assets, so an unjoined shutdown mid-swap has a
+// narrow window to leave the install half-applied.
+func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
