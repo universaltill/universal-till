@@ -33,6 +33,14 @@ type Deps struct {
 	CatalogRepo *marketplace.CatalogRepository
 	AuthSvc     *auth.Service
 	AI          *ai.Service
+
+	// SyncPushNow, when non-nil, nudges the replica journal-push loop
+	// (pages.StartSyncPush) to run one push attempt immediately instead of
+	// waiting for its next 30s tick (ut-docs#404, ADR-0036). Set once by
+	// StartSyncPush at boot, before the server accepts requests; nil in
+	// tests/paths that never start the loop. Capacity-1: one pending nudge
+	// already covers any number of sales completed before the loop drains it.
+	SyncPushNow chan struct{}
 }
 
 // RuntimeState mirrors fields needed from pages.state (theme, tax, currency).
@@ -92,4 +100,20 @@ func (d *Deps) SyncPrimaryURL(ctx context.Context) string {
 	}
 	v, _, _ := d.Settings.Get(ctx, "sync.primary_url")
 	return strings.TrimSpace(v)
+}
+
+// RequestSyncPush asks the replica journal-push loop for one immediate push
+// attempt — called after a locally completed sale (ut-docs#404, ADR-0036) so
+// the primary hears about it in seconds rather than at the next 30s tick.
+// Non-blocking and best-effort by design: checkout must never wait on the
+// network (ADR-0003). With no loop running (primary/single till, tests) it
+// is a no-op, and a full buffer means a push is already pending.
+func (d *Deps) RequestSyncPush() {
+	if d.SyncPushNow == nil {
+		return
+	}
+	select {
+	case d.SyncPushNow <- struct{}{}:
+	default:
+	}
 }

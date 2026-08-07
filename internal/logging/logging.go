@@ -123,6 +123,20 @@ func Recent() []Problem {
 	return out
 }
 
+// ResetRecent clears the Problems ring. Test-only: recentBuf is a single
+// process-global buffer, so a package test asserting "exactly N Problems"
+// (ut-docs#404) is otherwise at the mercy of whatever every other test in
+// the same binary — run before it, or still finishing a background loop
+// concurrently — happened to log, right up to silently wrapping the
+// 50-entry cap and making an exact count meaningless. There is no
+// production caller: nothing should ever want to discard the shop's
+// problem history outside a test process.
+func ResetRecent() {
+	recentMu.Lock()
+	defer recentMu.Unlock()
+	recentBuf = nil
+}
+
 func remember(level Level, msg string) {
 	if level < Warn {
 		return
