@@ -125,6 +125,29 @@
           <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
           <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
         </form>
+        <!-- ut-docs#289: LAN discovery + approve-to-pair, first-boot flavour.
+             Same mechanism the Tills page uses (ADR-0033 parts 1+3), pointed
+             at the middleware-exempt, NeedsFirstBoot-gated /api/setup/*
+             routes — a first-boot till has no session, so the /api/sync/*
+             flavour is unreachable from here by design. Discovery only LISTS
+             candidates; enrolment still requires pressing "Request to pair"
+             here and the primary manager approving after comparing the
+             6-digit code. The manual-code form above stays as the
+             documented fallback. -->
+        <hr style="margin:1rem 0; border:none; border-top:1px dashed #d1d5db">
+        <!-- ut-docs#289 review (F4): tills.html disambiguates its own two
+             identically-labelled "till name" inputs with a heading per
+             section; this step had none, so add one here too rather than
+             leaning on the <hr> alone. -->
+        <h3>{{ T "tills.discovery.title" }}</h3>
+        <p class="muted">{{ T "setup.join.discover_help" }}</p>
+        <label>{{ T "tills.pairing.your_till_name" }}
+          <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2">
+        </label>
+        <button id="setup-discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
+        <div id="setup-discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+        <div id="setup-discover-results"></div>
+        <div id="setup-pairing-status-host" aria-live="polite"></div>
         <div class="setup-nav">
           <button type="button" class="btn secondary" @click="step = 1">{{ T "setup.back" }}</button>
         </div>
@@ -152,6 +175,61 @@
           ev.detail.isError = false;
         }
       });
+    </script>
+
+    <!-- ut-docs#289: first-boot LAN discovery for the join step. Modeled on
+         tills.html's discover flow but written against the /api/setup/*
+         routes (the /api/sync ones require a manager session this till
+         cannot have yet). The search stays a plain fetch(); each result gets
+         a "Request to pair" button wired with hx- attributes. The vendored
+         htmx is 1.9.12 — no MutationObserver auto-processing — so
+         htmx.process() on the injected list is required, same as tills.html
+         and catalog.html. pair-start's response (the waiting fragment) then
+         polls /api/setup/pair-status by itself; no error-status listener is
+         needed for it because pair-start/pair-status always answer 200 with
+         the outcome encoded in the body (see pairStartHandler). -->
+    <script>
+      (function () {
+        var btn = document.getElementById('setup-discover-btn');
+        if (!btn) return;
+        var msg = document.getElementById('setup-discover-msg');
+        var out = document.getElementById('setup-discover-results');
+        var i18n = {
+          searching: "{{ T "tills.discovery.searching" }}",
+          noneFound: "{{ T "tills.discovery.none_found" }}",
+          resultName: "{{ T "tills.discovery.result_name" }}",
+          error: "{{ T "tills.discovery.error" }}",
+          requestBtn: "{{ T "tills.pairing.request_btn" }}"
+        };
+        function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+        function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          msg.textContent = i18n.searching;
+          out.innerHTML = '';
+          fetch('/api/setup/discover-primaries')
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              btn.disabled = false;
+              var list = (j.data && j.data.primaries) || [];
+              if (!list.length) { msg.textContent = i18n.noneFound; return; }
+              msg.textContent = '';
+              out.innerHTML = '<ul style="list-style:none; padding-inline-start:0; margin:.4rem 0">' + list.map(function (p) {
+                var vals = JSON.stringify({ base_url: p.base_url, till_id: p.till_id });
+                return '<li style="padding:.3rem 0">' + esc(p.name)
+                  + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + '</span> '
+                  + '<button type="button" class="btn secondary" hx-post="/api/setup/pair-start" '
+                  + 'hx-vals="' + escAttr(vals) + '" hx-include="#setup-pairing-till-name" '
+                  + 'hx-target="#setup-pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
+              }).join('') + '</ul>';
+              htmx.process(out);
+            })
+            .catch(function () {
+              btn.disabled = false;
+              msg.textContent = i18n.error;
+            });
+        });
+      })();
     </script>
   </body>
 </html>

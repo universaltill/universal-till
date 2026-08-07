@@ -23,14 +23,30 @@ const discoverBrowseTimeout = 4 * time.Second
 // multi-second network scan on every run.
 var discoveryBrowse = discovery.Browse
 
-// registerDiscoveryAPI wires GET /api/sync/discover-primaries. Gated the
-// same way as the rest of the Tills page's API surface (isManagerOrAuthOff,
-// see sync_api.go's /api/sync/enroll-token and pairing endpoints) — not a
-// stricter or laxer check than its neighbours.
+// registerDiscoveryAPI wires the two flavours of the same scan
+// (ut-docs#289): GET /api/sync/discover-primaries for a manager on the
+// Tills page (isManagerOrAuthOff, same as sync_api.go's /api/sync/enroll-
+// token and pairing endpoints — not a stricter or laxer check than its
+// neighbours), and GET /api/setup/discover-primaries for the first-boot
+// wizard's "Join an existing shop" step, gated by NeedsFirstBoot instead
+// (middleware-exempt; see firstBootGate).
 func registerDiscoveryAPI(mux *http.ServeMux, d *common.Deps) {
-	mux.HandleFunc("GET /api/sync/discover-primaries", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+	mux.HandleFunc("GET /api/sync/discover-primaries", discoverPrimariesHandler(managerGate))
+	// Rate-limited (ut-docs#289 review): unlike its manager-gated sibling
+	// above, this flavour needs no session at all — any LAN host can trigger
+	// a 4s mDNS multicast scan per request during the first-boot window.
+	setupDiscoverLimiter := newPairRateLimiter(time.Minute, 5)
+	mux.HandleFunc("GET /api/setup/discover-primaries", discoverPrimariesHandler(rateLimited(setupDiscoverLimiter, firstBootGate(d))))
+}
+
+// discoverPrimariesHandler runs the bounded LAN scan and reports the
+// candidates found — the shared logic behind both routes above. Discovery
+// only PRESENTS candidates; nothing here (or in either gate) enrols
+// anything, that always takes the explicit pair-start + primary-side
+// approval that follows.
+func discoverPrimariesHandler(gate apiGate) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !gate(w, r) {
 			return
 		}
 		candidates, err := discoveryBrowse(r.Context(), discoverBrowseTimeout)
@@ -46,5 +62,5 @@ func registerDiscoveryAPI(mux *http.ServeMux, d *common.Deps) {
 			"data":  map[string]any{"primaries": candidates},
 			"error": nil,
 		})
-	})
+	}
 }
