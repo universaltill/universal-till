@@ -146,8 +146,11 @@ func withinLast(ts string, d time.Duration) bool {
 // with app.Run's shutdown drain (ut-docs#153), same join shape as
 // cloudsync.Start: wg.Add before the goroutine starts, wg.Done on every exit
 // path, so a caller waiting on wg can prove this loop actually stopped
-// before database.Close() runs.
-func runSyncLoop(ctx context.Context, wg *sync.WaitGroup, tick func()) {
+// before database.Close() runs. kick, when non-nil, requests one extra tick
+// immediately (ut-docs#404: a replica pushes its journal right after a local
+// sale instead of waiting out the 30s tick); nil means schedule-only — a nil
+// channel never receives, so that select arm simply never fires.
+func runSyncLoop(ctx context.Context, wg *sync.WaitGroup, kick <-chan struct{}, tick func()) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -158,6 +161,8 @@ func runSyncLoop(ctx context.Context, wg *sync.WaitGroup, tick func()) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				tick()
+			case <-kick:
 				tick()
 			}
 		}
@@ -171,7 +176,7 @@ func runSyncLoop(ctx context.Context, wg *sync.WaitGroup, tick func()) {
 // caller must pass bgCtx (not ctx), same requirement as StartCloudSync.
 func StartSyncPull(ctx context.Context, d *common.Deps, refresh func(context.Context), wg *sync.WaitGroup) {
 	client := &http.Client{Timeout: 60 * time.Second}
-	runSyncLoop(ctx, wg, func() { syncPullTick(ctx, d, client, refresh) })
+	runSyncLoop(ctx, wg, nil, func() { syncPullTick(ctx, d, client, refresh) })
 }
 
 // syncPullTick is one tick of the replica-side drift loop, extracted from
