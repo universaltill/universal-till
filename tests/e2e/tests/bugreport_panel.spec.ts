@@ -159,8 +159,20 @@ test('dragging the head does not trigger the ✕ close control', async ({ page }
 async function touchDriver(page: import('@playwright/test').Page) {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  // CDP's Input.TouchPoint.id is optional, and without it a Chromium build is
+  // free to assign touch identity however it likes across separate
+  // dispatchTouchEvent calls — confirmed to differ between this sandbox's
+  // pinned browser and CI's real `playwright install`ed one (see
+  // e2e/tests/bugreport-panel.spec.ts's own touchDriver for the full story).
+  // An explicit, constant id makes every touchMove/touchEnd/touchCancel in
+  // one gesture identifiably the same contact regardless of Chromium
+  // version — matching real touch hardware, where one finger keeps one
+  // pointerId for the life of its contact.
   return (type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', pts: { x: number; y: number }[]) =>
-    cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts as never });
+    cdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: pts.map((p) => ({ ...p, id: 0 })) as never,
+    });
 }
 
 test('touch: the panel drags, and a cancelled gesture does not leave it stuck to the pointer', async ({ page }) => {

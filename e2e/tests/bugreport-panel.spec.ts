@@ -262,8 +262,23 @@ test('dragging the head does not trigger the ✕ close control', async ({ page }
 async function touchDriver(page: import('@playwright/test').Page) {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  // CDP's Input.TouchPoint.id is optional, and without it a Chromium build is
+  // free to assign touch identity however it likes across separate
+  // dispatchTouchEvent calls — confirmed to differ from this sandbox's pinned
+  // browser to CI's real `playwright install`ed one: the SAME continuing
+  // contact came back with a different pointerId on the second touchMove in
+  // CI, which the app then (correctly, per its own ownership check) treated
+  // as a foreign pointer and ignored, freezing the drag. An explicit,
+  // constant id makes every touchMove/touchEnd/touchCancel in one gesture
+  // identifiably the same contact regardless of Chromium version — this is
+  // the actual production contract too (a real finger keeps one pointerId
+  // for the life of its contact), so pinning it here is fixing the test
+  // double's fidelity, not working around an app bug.
   return (type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', pts: { x: number; y: number }[]) =>
-    cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts as never });
+    cdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: pts.map((p) => ({ ...p, id: 0 })) as never,
+    });
 }
 
 // Nudges the pointer with nothing pressed. If the drag is still live this
