@@ -187,10 +187,11 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 
 // CashAdjustmentRequest models input for cash adjustments/payouts
 type CashAdjustmentRequest struct {
-	ShiftID string `json:"shift_id"`
-	Type    string `json:"type"`   // payout|adjustment
-	Amount  int64  `json:"amount"` // minor units, negative for payout
-	Reason  string `json:"reason"`
+	ShiftID    string `json:"shift_id"`
+	Type       string `json:"type"`   // payout|adjustment
+	Amount     int64  `json:"amount"` // minor units, negative for payout
+	Reason     string `json:"reason"`
+	ManagerPIN string `json:"manager_pin"`
 }
 
 // CashAdjustmentResponse models response for cash adjustment
@@ -222,6 +223,7 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 			req.ShiftID = r.FormValue("shift_id")
 			req.Type = r.FormValue("type")
 			req.Reason = r.FormValue("reason")
+			req.ManagerPIN = r.FormValue("manager_pin")
 			if amtStr := r.FormValue("amount"); amtStr != "" {
 				if amt, err := strconv.ParseInt(amtStr, 10, 64); err == nil {
 					req.Amount = amt
@@ -252,6 +254,32 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 		if req.Reason == "" {
 			respondAdjustmentError(w, r, http.StatusBadRequest, "reason required")
 			return
+		}
+
+		// Manager approval whenever cash actually LEAVES the till (a
+		// negative amount) — gated on the sign, not the declared "type",
+		// because "type" is a client-supplied label with no sign
+		// enforcement: a cashier could otherwise pick "adjustment" instead
+		// of "payout" for the same negative amount and bypass a
+		// type-only gate entirely (ut-docs#266). Positive adjustments
+		// (cash going in, e.g. a float top-up correction) are unaffected,
+		// same as the existing refund/PfandRueckgabe gates only ever
+		// covering cash leaving the till. The PIN owner becomes the audit
+		// actor, mirroring PfandRueckgabe/refund.
+		if req.Amount < 0 {
+			authOff := auth.Disabled(os.Getenv("UT_AUTH"))
+			if !authOff {
+				approver, err := dp.AuthSvc.AuthorizeManager(ctx, strings.TrimSpace(req.ManagerPIN))
+				if err != nil {
+					status := http.StatusForbidden
+					if errors.Is(err, auth.ErrLockedOut) {
+						status = http.StatusTooManyRequests
+					}
+					respondAdjustmentError(w, r, status, "manager PIN required")
+					return
+				}
+				actorID = approver.ID
+			}
 		}
 
 		// Record adjustment
