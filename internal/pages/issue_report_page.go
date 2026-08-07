@@ -19,6 +19,24 @@ import (
 // disk use per report.
 const issueReportMaxBytes = 32 << 20
 
+// isAvailableLocale reports whether locale is one of the shipped translation
+// locales (httpx.AvailableLocales) — the same set the UI's own language
+// switcher offers. Empty is never "available" here (it already means
+// "unknown/auto-detect" to every downstream consumer of this value), and an
+// unwired translator (e.g. a test that never called httpx.InitI18n) makes
+// everything unavailable rather than trusting an unchecked value through.
+func isAvailableLocale(locale string) bool {
+	if locale == "" {
+		return false
+	}
+	for _, l := range httpx.AvailableLocales() {
+		if l == locale {
+			return true
+		}
+	}
+	return false
+}
+
 // readCappedOrReject reads at most limit bytes and errors if the source had
 // more: io.LimitReader alone would silently truncate an oversized recording
 // into a corrupted, unplayable file while the till still reports "Saved" —
@@ -139,7 +157,21 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		id, err := issuereport.Save(note, audio, video, images)
+		// Capture the operator's UI locale (ut-docs#397) exactly the way
+		// every page render resolves it, so the cloud side can hand it to
+		// Whisper instead of defaulting the transcript to English. Clamped
+		// to the shipped locale set: ResolveLocale trusts a raw `?lang=` or
+		// cookie value for template rendering (an unrecognized value there
+		// just misses translations, harmless), but this value goes on to a
+		// downstream service call — a hand-edited or stale value shouldn't
+		// reach Whisper's language param unchecked, so fall back to ""
+		// (auto-detect) for anything not in the switcher's own list.
+		locale := httpx.ResolveLocale(w, r)
+		if !isAvailableLocale(locale) {
+			locale = ""
+		}
+
+		id, err := issuereport.Save(note, locale, audio, video, images)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
