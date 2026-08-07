@@ -90,7 +90,13 @@ class TillService : Service() {
             try {
                 val addr = Mobile.start(filesDir.absolutePath)
                 address = addr
-                updateNotification(getString(R.string.status_running, addr))
+                // ut-docs#412: the notification text never carries the raw
+                // loopback address (real Android requirement to convey
+                // "still running" — but not a place to leak an internal
+                // bind detail to the end user). The listener callback still
+                // gets the real addr — MainActivity's debug-only status bar
+                // and the WebView's loadUrl() both need it.
+                updateNotification(getString(R.string.notification_running))
                 synchronized(listeners) { listeners.toList() }.forEach { it(addr, null) }
             } catch (e: Exception) {
                 val message = e.message ?: e.toString()
