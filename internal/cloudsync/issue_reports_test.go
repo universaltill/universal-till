@@ -57,6 +57,7 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 		Meta: issuereport.Meta{
 			ID:        "report-123",
 			Note:      "printer jammed",
+			Locale:    "fa",
 			CreatedAt: createdAt,
 			Logs: []logging.Problem{
 				{At: createdAt, Level: "WARN", Msg: "printer offline"},
@@ -68,7 +69,7 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 		VideoPath: videoPath,
 	}
 
-	var gotStoreID, gotReportID, gotNote, gotAuth, gotCreatedAt string
+	var gotStoreID, gotReportID, gotNote, gotAuth, gotCreatedAt, gotLocale string
 	var gotAudio, gotVideo []byte
 	var gotLogs []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +81,7 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 		gotStoreID = r.FormValue("store_id")
 		gotReportID = r.FormValue("report_id")
 		gotNote = r.FormValue("note")
+		gotLocale = r.FormValue("locale")
 		gotCreatedAt = r.FormValue("created_at")
 		gotLogs = append([]string(nil), r.MultipartForm.Value["logs"]...)
 		if fh := r.MultipartForm.File["audio"]; len(fh) == 1 {
@@ -106,6 +108,9 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 	}
 	if gotStoreID != "store-1" || gotReportID != "report-123" || gotNote != "printer jammed" {
 		t.Fatalf("fields: store=%q report=%q note=%q", gotStoreID, gotReportID, gotNote)
+	}
+	if gotLocale != "fa" {
+		t.Fatalf("locale = %q, want %q (ut-docs#397 — Whisper needs the capture-time UI locale)", gotLocale, "fa")
 	}
 	if gotCreatedAt != createdAt.Format("2006-01-02T15:04:05.000000000Z07:00") {
 		t.Fatalf("created_at = %q", gotCreatedAt)
@@ -183,11 +188,46 @@ func TestUploadIssueReportSendsMultipleImageParts(t *testing.T) {
 	}
 }
 
+// A bundle that never captured a locale (older bundle on disk from before
+// ut-docs#397, or the JS-less path) must still SEND the locale field — as an
+// empty string, which the cloud side reads as "no locale known, auto-detect".
+// Skipping the field entirely is not the same contract, so the assertion is
+// on the part's presence, not just FormValue (which can't tell empty from
+// absent).
+func TestUploadIssueReportSendsEmptyLocaleWhenUnknown(t *testing.T) {
+	withTempPendingDir(t)
+	if _, err := issuereport.Save("no locale captured", "", []byte("fake-audio"), nil, nil); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	bundles, err := issuereport.Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.Locale != "" {
+		t.Fatalf("Meta.Locale = %q, want empty", bundles[0].Meta.Locale)
+	}
+
+	var gotLocaleValues []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(10 << 20)
+		gotLocaleValues = append([]string(nil), r.MultipartForm.Value["locale"]...)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := uploadIssueReport(context.Background(), registeredCfg(srv.URL), bundles[0]); err != nil {
+		t.Fatalf("uploadIssueReport: %v", err)
+	}
+	if len(gotLocaleValues) != 1 || gotLocaleValues[0] != "" {
+		t.Fatalf("locale field values = %q, want exactly one empty string", gotLocaleValues)
+	}
+}
+
 // A bundle with no video must omit the video part entirely rather than send
 // an empty one — attachFile's "only if VideoPath != ”" guard.
 func TestUploadIssueReportOmitsVideoWhenAbsent(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("no video", []byte("fake-audio"), nil, nil); err != nil {
+	if _, err := issuereport.Save("no video", "", []byte("fake-audio"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, err := issuereport.Pending()
@@ -218,7 +258,7 @@ func TestUploadIssueReportOmitsVideoWhenAbsent(t *testing.T) {
 // rather than send an empty one — mirrors the existing video-absent case.
 func TestUploadIssueReportOmitsAudioWhenAbsent(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("typed only, no voice note", nil, nil, nil); err != nil {
+	if _, err := issuereport.Save("typed only, no voice note", "", nil, nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, err := issuereport.Pending()
@@ -252,7 +292,7 @@ func TestUploadIssueReportOmitsAudioWhenAbsent(t *testing.T) {
 
 func TestUploadIssueReportUnregistered(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("note", []byte("a"), nil, nil); err != nil {
+	if _, err := issuereport.Save("note", "", []byte("a"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, _ := issuereport.Pending()
@@ -264,7 +304,7 @@ func TestUploadIssueReportUnregistered(t *testing.T) {
 
 func TestUploadIssueReportNon200Fails(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("note", []byte("a"), nil, nil); err != nil {
+	if _, err := issuereport.Save("note", "", []byte("a"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, _ := issuereport.Pending()
@@ -281,7 +321,7 @@ func TestUploadIssueReportNon200Fails(t *testing.T) {
 // disk between Pending() listing it and upload actually being attempted.
 func TestUploadIssueReportMissingAudioFileErrors(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("note", []byte("a"), nil, nil); err != nil {
+	if _, err := issuereport.Save("note", "", []byte("a"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, _ := issuereport.Pending()
@@ -301,11 +341,11 @@ func TestUploadIssueReportMissingAudioFileErrors(t *testing.T) {
 // the cloud rejects must stay pending for the next tick to retry.
 func TestUploadPendingIssueReportsFullCycle(t *testing.T) {
 	withTempPendingDir(t)
-	okID, err := issuereport.Save("this one uploads", []byte("audio-ok"), nil, nil)
+	okID, err := issuereport.Save("this one uploads", "", []byte("audio-ok"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save ok bundle: %v", err)
 	}
-	failID, err := issuereport.Save("this one fails", []byte("audio-fail"), nil, nil)
+	failID, err := issuereport.Save("this one fails", "", []byte("audio-fail"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save failing bundle: %v", err)
 	}
@@ -358,7 +398,7 @@ func TestUploadPendingIssueReportsPendingListError(t *testing.T) {
 
 func TestAttachFileMultipartFormWritesRealBytes(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := issuereport.Save("note", []byte("hello-bytes"), nil, nil); err != nil {
+	if _, err := issuereport.Save("note", "", []byte("hello-bytes"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, _ := issuereport.Pending()
