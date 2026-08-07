@@ -757,6 +757,8 @@
   "shifts.formula": "Expected = opening cash + net cash payments + adjustments. Variance = counted − expected.",
   "shifts.formula_title": "How expected cash is calculated",
   "shifts.history": "History",
+  "shifts.manager_pin": "Manager PIN",
+  "shifts.manager_pin_placeholder": "required when removing cash",
   "shifts.no_history": "No shifts yet",
   "shifts.none_open": "No open shift",
   "shifts.note": "Note",

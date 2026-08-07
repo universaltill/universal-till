@@ -757,6 +757,8 @@
   "shifts.formula": "مورد انتظار = وجه ابتدای شیفت + پرداخت‌های نقدی خالص + اصلاح‌ها. مغایرت = شمارش‌شده − مورد انتظار.",
   "shifts.formula_title": "نحوه محاسبه وجه مورد انتظار",
   "shifts.history": "تاریخچه",
+  "shifts.manager_pin": "پین مدیر",
+  "shifts.manager_pin_placeholder": "در صورت برداشت وجه الزامی است",
   "shifts.no_history": "شیفتی ثبت نشده",
   "shifts.none_open": "شیفت بازی نیست",
   "shifts.note": "یادداشت",
