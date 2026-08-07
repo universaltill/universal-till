@@ -478,6 +478,12 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(ctx, dp, returnInput)
+		// A replica's return is a journaled sale like any other (ADR-0011
+		// D3) — nudge the push loop the same way a tender does (ut-docs#404,
+		// ADR-0036). No-op on a primary/single till.
+		if dp.SyncPrimaryURL(ctx) != "" {
+			dp.RequestSyncPush()
+		}
 		// Fetch receipt_no
 		var receiptNo string
 		receiptNo, ok, err := repo.GetReceiptNo(ctx, returnSaleID)
