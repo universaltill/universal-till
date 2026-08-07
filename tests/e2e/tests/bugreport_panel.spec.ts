@@ -68,3 +68,35 @@ test('/report-issue still 200s with the panel already open', async ({ page }) =>
   await expect(page.getByTestId('bugreport-panel')).toBeVisible();
   await expect(page.locator('#ir-note')).toHaveCount(1); // no duplicated capture UI
 });
+
+// Same regression lock as e2e/tests/bugreport-panel.spec.ts, on the second
+// till setup: a dismissal must survive a full-page navigation (this app has
+// no hx-boost), including back to /report-issue itself, which otherwise
+// force-opens the panel on every single visit regardless of a prior close.
+test('closing the panel sticks across a navigation, even back to /report-issue', async ({ page }) => {
+  await page.goto('/');
+  const panel = page.getByTestId('bugreport-panel');
+
+  await page.getByTestId('bugreport-toggle').click();
+  await expect(panel).toBeVisible();
+  await page.getByTestId('bugreport-close').click();
+  await expect(panel).toBeHidden();
+
+  const resp = await page.goto('/report-issue');
+  expect(resp!.status()).toBe(200);
+  await expect(panel).toBeHidden();
+
+  // Re-opening explicitly still works — and comes back wired, not just
+  // visible: the suppression branch skips the lazy initCapture() the
+  // forced-open path used to run, so a real save is driven here to prove
+  // the panel isn't re-opening with dead buttons.
+  await page.getByTestId('bugreport-toggle').click();
+  await expect(panel).toBeVisible();
+
+  await page.locator('#ir-note').fill('e2e(:8080): re-opened after a dismissal');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/issue-reports')),
+    page.locator('#ir-save-btn').click(),
+  ]);
+  await expect(page.locator('#ir-status')).toContainText('Saved');
+});

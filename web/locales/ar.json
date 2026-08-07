@@ -1087,7 +1087,7 @@
   "issuereport.panel_title": "الإبلاغ عن مشكلة",
   "issuereport.panel_close": "إغلاق",
   "issuereport.nav_ends_recording": "يتوقف التسجيل إذا غادرت هذه الصفحة — أرسل تقريرك أولًا.",
-  "issuereport.route_note": "لوحة الإبلاغ مفتوحة. يمكنك أيضًا فتحها من أي شاشة عبر زر 🐞 في الشريط العلوي.",
+  "issuereport.route_note": "يمكنك فتح لوحة الإبلاغ من أي شاشة عبر زر 🐞 في الشريط العلوي.",
   "osk.toggle": "لوحة المفاتيح",
   "basket.count_label": "عدد العناصر في السلة",
   "notice.dismiss": "إغلاق",

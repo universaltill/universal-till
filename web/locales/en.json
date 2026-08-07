@@ -1087,7 +1087,7 @@
   "issuereport.panel_title": "Report an issue",
   "issuereport.panel_close": "Close",
   "issuereport.nav_ends_recording": "Recording stops if you navigate to another page — send your report first.",
-  "issuereport.route_note": "The report panel is open. You can also open it from any screen with the 🐞 button in the top bar.",
+  "issuereport.route_note": "You can open the report panel from any screen with the 🐞 button in the top bar.",
   "osk.toggle": "Keyboard",
   "basket.count_label": "Items in basket",
   "notice.dismiss": "Dismiss",

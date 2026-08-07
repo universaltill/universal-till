@@ -19,4 +19,6 @@ Something wrong with the till? Send a report — typed, spoken, or with a screen
 3. Press Save report. The report is stored on the till straight away — even offline — and uploads to the cloud automatically once the shop is online.
 4. Note: a recording stops if you move to another page, so send your report before navigating away.
 
-You can also open the panel from the ☰ Menu via the 🐞 Report an issue tile.
+You can also reach it from the ☰ Menu via the 🐞 Report an issue tile.
+
+Closing the panel with ✕ keeps it closed until you ask for it again: it stays shut as you move between screens, and the Report an issue page no longer forces it back open. Press 🐞 in the top bar whenever you want it back.
