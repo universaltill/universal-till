@@ -56,9 +56,16 @@
         {{ if canselfupdate }}
         <button type="button" class="sb-item sb-update" id="sb-update-btn"
                 data-latest="{{ latestversion }}">⬆&nbsp;{{ T "status.update_now" }}&nbsp;v{{ latestversion }}</button>
-        {{ else }}
+        {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
-           rel="noopener">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
+           rel="noopener" target="_blank">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
+        {{ else }}
+        <!-- ut-docs#159: on a unix kiosk (fullscreen, no browser chrome) a
+             website link is a dead end with no way out — state it plainly
+             instead, same treatment internal/pages/update_api.go's
+             updateUnavailableHTML already gives the Settings page (reusing
+             the same settings.update.unavailable_here key for parity). -->
+        <span class="sb-item sb-update">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.unavailable_here" }}</span>
         {{ end }}
       {{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>

@@ -34,6 +34,12 @@ func TestUpdateFallbackHTML(t *testing.T) {
 	if !strings.Contains(win, `href="https://www.universaltill.com/download"`) {
 		t.Errorf("windows fallback should keep the download link, got %q", win)
 	}
+	// ut-docs#159: a plain same-window navigation is a dead end in the
+	// WebView2 desktop shell (no NewWindowRequested/back affordance), so the
+	// kept link must open in a new browsing context.
+	if !strings.Contains(win, `target="_blank"`) {
+		t.Errorf("windows fallback link should open in a new context (target=_blank), got %q", win)
+	}
 
 	kiosk := updateUnavailableHTML("en", "0.2.51", "linux")
 	if strings.Contains(kiosk, "universaltill.com/download") || strings.Contains(kiosk, "<a ") {
@@ -51,6 +57,9 @@ func TestUpdateFallbackHTML(t *testing.T) {
 	mac := updateUnavailableHTML("en", "0.2.51", "darwin")
 	if !strings.Contains(mac, `href="https://www.universaltill.com/download"`) {
 		t.Errorf("macOS fallback should keep the download link, got %q", mac)
+	}
+	if !strings.Contains(mac, `target="_blank"`) {
+		t.Errorf("macOS fallback link should open in a new context (target=_blank), got %q", mac)
 	}
 
 	// Both still surface the available version so the operator knows one exists.

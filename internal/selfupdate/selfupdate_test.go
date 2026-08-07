@@ -54,6 +54,32 @@ func TestSupportedFor(t *testing.T) {
 	}
 }
 
+// DownloadLinkActionable is the single source of truth for "can a user on
+// this OS get the new version themselves by clicking a website link", shared
+// by both the Settings-page fallback (internal/pages/update_api.go) and the
+// status-bar chip (web/ui/layouts/base.html, ut-docs#159) so the two never
+// drift into separately-maintained copies of the same windows||darwin check.
+// Windows and macOS are windowed desktop OSes with a browser — actionable.
+// A unix kiosk is fullscreen with no browser chrome — a website link there
+// is a dead end (ut-docs#147/#159), so it must report false.
+func TestDownloadLinkActionable(t *testing.T) {
+	cases := []struct {
+		goos string
+		want bool
+	}{
+		{"windows", true},
+		{"darwin", true},
+		{"linux", false},
+		{"android", false},
+		{"ios", false},
+	}
+	for _, c := range cases {
+		if got := DownloadLinkActionable(c.goos); got != c.want {
+			t.Errorf("DownloadLinkActionable(%q) = %v, want %v", c.goos, got, c.want)
+		}
+	}
+}
+
 // dirWritable is the real self-update precondition: the rename-based binary
 // swap (os.Rename within the binary's directory) only succeeds where that
 // directory is writable by the current process. A service-writable /opt/unitill
