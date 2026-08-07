@@ -45,7 +45,7 @@ func CreateStockReceipt(dp *common.Deps) http.HandlerFunc {
 		contentType := r.Header.Get("Content-Type")
 		if strings.Contains(contentType, "application/json") {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeJSON(w, http.StatusBadRequest, StockReceiptResponse{Success: false, Message: "invalid JSON"})
+				writeJSON(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "invalid JSON"})
 				return
 			}
 		} else {
@@ -160,19 +160,22 @@ func writeHTMLStockChanged(w http.ResponseWriter, status int, html string) {
 	writeHTML(w, status, html)
 }
 
-// respondError writes error response (JSON or HTML based on request)
+// respondError writes error response (JSON or HTML based on request). JSON
+// uses the { "data": null, "error": … } envelope universal-till/CLAUDE.md
+// mandates for every JSON API response (ut-docs#378).
 func respondError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, status, StockReceiptResponse{Success: false, Message: message})
+		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
 		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
 	}
 }
 
-// respondSuccess writes success response (JSON or HTML based on request)
+// respondSuccess writes success response (JSON or HTML based on request).
+// JSON uses the { "data": …, "error": null } envelope (ut-docs#378).
 func respondSuccess(w http.ResponseWriter, r *http.Request, data StockReceiptResponse) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, http.StatusOK, data)
+		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
 		writeHTMLStockChanged(w, http.StatusOK, fmt.Sprintf("<div class='success'>Stock movement created: %s</div>", data.MovementID))
 	}
@@ -209,7 +212,7 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 		contentType := r.Header.Get("Content-Type")
 		if strings.Contains(contentType, "application/json") {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeJSON(w, http.StatusBadRequest, OverrideResponse{Success: false, Message: "invalid JSON"})
+				writeJSON(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "invalid JSON"})
 				return
 			}
 		} else {
@@ -304,19 +307,21 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 	}
 }
 
-// respondOverrideError writes override error response
+// respondOverrideError writes override error response. JSON uses the
+// { "data": null, "error": … } envelope (ut-docs#378).
 func respondOverrideError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, status, OverrideResponse{Success: false, Message: message})
+		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
 		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
 	}
 }
 
-// respondOverrideSuccess writes override success response
+// respondOverrideSuccess writes override success response. JSON uses the
+// { "data": …, "error": null } envelope (ut-docs#378).
 func respondOverrideSuccess(w http.ResponseWriter, r *http.Request, data OverrideResponse) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, http.StatusOK, data)
+		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
 		writeHTMLStockChanged(w, http.StatusOK, fmt.Sprintf("<div class='success'>Override recorded: %s</div>", data.OverrideID))
 	}
@@ -355,7 +360,7 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		contentType := r.Header.Get("Content-Type")
 		if strings.Contains(contentType, "application/json") {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeJSON(w, http.StatusBadRequest, ReturnResponse{Success: false, Message: "invalid JSON"})
+				writeJSON(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "invalid JSON"})
 				return
 			}
 		} else {
@@ -491,19 +496,21 @@ func defaultLocation(loc string) string {
 	return loc
 }
 
-// respondReturnError writes return error response
+// respondReturnError writes return error response. JSON uses the
+// { "data": null, "error": … } envelope (ut-docs#378).
 func respondReturnError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, status, ReturnResponse{Success: false, Message: message})
+		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
 		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
 	}
 }
 
-// respondReturnSuccess writes return success response
+// respondReturnSuccess writes return success response. JSON uses the
+// { "data": …, "error": null } envelope (ut-docs#378).
 func respondReturnSuccess(w http.ResponseWriter, r *http.Request, data ReturnResponse) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, http.StatusOK, data)
+		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
 		writeHTMLStockChanged(w, http.StatusOK, fmt.Sprintf("<div class='success'>Return created: %s (Receipt: %s)</div>", data.ReturnSaleID, data.ReceiptNo))
 	}
@@ -526,16 +533,22 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 		items, err := pos.GetLowStockItems(ctx, dp.Db, locationID)
 		if err != nil {
 			if strings.Contains(r.Header.Get("Accept"), "application/json") {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
 			} else {
 				writeHTML(w, http.StatusInternalServerError, fmt.Sprintf("<div class='error'>%s</div>", err.Error()))
 			}
 			return
 		}
 
-		// Check if JSON response requested
+		// Check if JSON response requested. Wrapped as { "data": …, "error":
+		// null } -- the envelope universal-till/CLAUDE.md mandates for every
+		// JSON API response, matching every other JSON handler in this
+		// package (ut-docs#323: this endpoint used to respond bare).
 		if strings.Contains(r.Header.Get("Accept"), "application/json") {
-			writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"data":  map[string]any{"items": items, "count": len(items)},
+				"error": nil,
+			})
 			return
 		}
 

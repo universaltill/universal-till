@@ -723,6 +723,7 @@
   "setup.done.title": "Her şey hazır!",
   "setup.error.save_failed": "Ayarlarınız kaydedilemedi — lütfen tekrar deneyin.",
   "setup.finish": "Satışa başla",
+  "setup.join.discover_help": "Ya da ana kasayı otomatik bulun: açık ve bu ağa bağlı olduğundan emin olun, “Bu ağda bir birincil kasa bul” düğmesine basın, listeden seçin ve bu kasaya bir ad verin. Ardından iki ekran da aynı 6 haneli kodu gösterir — ana kasanın yöneticisi karşılaştırıp onaylar.",
   "setup.join.help": "Bu dükkânda zaten bir Universal Till var mı? O kasada Ayarlar → Kasalar → Eşleştirme kodunu göster'i açın, ardından kodu buraya tarayın veya yapıştırın. Bu kasa tüm dükkânı — ürünler, fiyatlar, personel PIN'leri — kopyalar ve yeniden başlar.",
   "setup.join.title": "Mevcut bir dükkâna katıl",
   "setup.language.title": "Dilinizi seçin",

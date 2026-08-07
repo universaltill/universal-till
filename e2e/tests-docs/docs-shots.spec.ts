@@ -151,9 +151,19 @@ async function ensureOperator(page: Page) {
   await expect(page.locator('#basket')).toBeVisible();
 }
 
+// Topics whose first route requires a real manager session — UT_AUTH=off has
+// no operator in the request context, so the default till 403s them. Each is
+// captured on the AUTH server (8092) instead, after the same wizard/PIN flow
+// login.spec.ts drives. Started as just "users" (ut-docs#327); "translations"
+// joined it here (ut-docs#326) — GET /translations has the same
+// requireManager gate (internal/pages/translations_page.go) and was failing
+// this harness with a blank `dir` attribute (a silent 403/redirect, not a
+// captured page) until it was routed to the auth till too.
+const AUTH_TILL_TOPICS = ['users', 'translations'];
+
 const topics = routedTopics() as { id: string; route: string }[];
 
-for (const topic of topics.filter((t) => t.id !== 'users')) {
+for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id))) {
   for (const locale of LOCALES as string[]) {
     test(`screenshot: ${topic.id} (${locale})`, async ({ page }) => {
       // The basket is server-side state shared across the run — staged once,
@@ -165,14 +175,16 @@ for (const topic of topics.filter((t) => t.id !== 'users')) {
   }
 }
 
-test.describe('users topic (auth till)', () => {
+test.describe('manager-gated topics (auth till)', () => {
   test.use({ baseURL: AUTH_BASE });
-  const users = topics.find((t) => t.id === 'users');
-  for (const locale of LOCALES as string[]) {
-    test(`screenshot: users (${locale})`, async ({ page }) => {
-      test.skip(!users, 'users topic no longer declares routes');
-      await ensureOperator(page); // fresh Playwright context per test → log in each time
-      await capture(page, users!.id, locale, users!.route);
-    });
+  for (const id of AUTH_TILL_TOPICS) {
+    const topic = topics.find((t) => t.id === id);
+    for (const locale of LOCALES as string[]) {
+      test(`screenshot: ${id} (${locale})`, async ({ page }) => {
+        test.skip(!topic, `${id} topic no longer declares routes`);
+        await ensureOperator(page); // fresh Playwright context per test → log in each time
+        await capture(page, topic!.id, locale, topic!.route);
+      });
+    }
   }
 });

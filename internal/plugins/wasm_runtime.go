@@ -288,15 +288,21 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 }
 
 // wasmResultLogLine builds the exact line logged for a handler's stdout
-// result. Non-".ask" events (e.g. sale.completed) keep the original,
-// unredacted format — out of scope for ut-docs#202. ".ask" events (the
-// generic value-returning hook, EventBus.Ask) go through
+// result. Non-".ask"/".authorize" events (e.g. sale.completed) keep the
+// original, unredacted format — out of scope for ut-docs#202. ".ask"
+// events (the generic value-returning hook, EventBus.Ask) go through
 // safeAskResultForLog: export.requested.ask can answer with a full
 // exported dataset (base64 in content_b64), and that must never reach the
 // log verbatim ("no secrets in logs", GDPR-adjacent given the
 // customer-erasure endpoint sits right next to the export one).
+// ".authorize" events (ut-docs#245) get the same treatment: payment
+// authorization plugins answer these (PublishAuthorize/Blocking hooks —
+// see Sync's ".authorize"/".ask" branch above), and their responses are
+// arguably the most credential-adjacent plugin output in the system —
+// transaction/auth tokens, card-present metadata, depending on the
+// integration.
 func wasmResultLogLine(pluginID, eventType, out string) string {
-	if !strings.HasSuffix(eventType, ".ask") {
+	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") {
 		return fmt.Sprintf("[wasm:%s] result: %s", pluginID, out)
 	}
 	return fmt.Sprintf("[wasm:%s] result (%s, %d bytes): %s", pluginID, eventType, len(out), safeAskResultForLog(out))
@@ -315,23 +321,49 @@ const maxAskFieldBytes = 200
 // fields, or one very long key).
 const maxAskLogBytes = 500
 
-// looksLikeBlobFieldName reports whether key is conventionally a
-// base64-encoded blob field (export.requested.ask's content_b64, and any
-// future hook following the same naming) — redacted regardless of size.
+// looksLikeSensitiveFieldName reports whether key conventionally names a
+// base64-encoded blob or a credential-shaped value — export.requested.ask's
+// content_b64, or a payment-authorize response's auth token/secret, and any
+// future field following the same naming — redacted regardless of size.
 // Byte-size alone doesn't catch every risk here: a SMALL export can still
-// carry real customer PII (e.g. a name/email on one receipt line), so a
-// small content_b64 must be redacted too, not just an oversized one.
-func looksLikeBlobFieldName(key string) bool {
-	return strings.Contains(strings.ToLower(key), "b64")
+// carry real customer PII (e.g. a name/email on one receipt line), and a
+// SMALL token is exactly as much of a credential as a long one, so both are
+// name-matched rather than relying on the size cap alone (ut-docs#202,
+// widened for ".authorize" responses by ut-docs#245).
+func looksLikeSensitiveFieldName(key string) bool {
+	lower := strings.ToLower(key)
+	for _, marker := range [...]string{"b64", "token", "secret"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
+
+// maxAskNestingDepth caps how many levels deep redactField recurses into a
+// field's own nested objects/arrays before it stops descending and falls
+// back to judging the field only by its own size/name. Payment-gateway SDKs
+// nest a couple of levels (e.g. answer.provider.auth_token); this is
+// generous headroom for that while still bounding recursion against a
+// pathological or malformed plugin response.
+const maxAskNestingDepth = 8
 
 // safeAskResultForLog returns out unchanged when it's already small and
 // every field is safe to log as-is; otherwise any field whose raw JSON
-// value exceeds maxAskFieldBytes, or whose name looks like a base64 blob,
-// is replaced with an "<omitted: N bytes>" placeholder — the event's shape
-// and small fields (ok/error/message) stay visible without ever logging
-// the risky value itself. Non-object output, or an object that's still too
-// large after redaction, falls back to hard (rune-safe) truncation.
+// value exceeds maxAskFieldBytes, or whose name looks sensitive (a base64
+// blob or a token/secret — looksLikeSensitiveFieldName), is replaced with
+// an "<omitted: N bytes>" placeholder — the event's shape and small fields
+// (ok/error/message) stay visible without ever logging the risky value
+// itself. This check applies recursively (ut-docs#384): a nested object or
+// array-of-objects is walked the same way, so a credential the top level
+// doesn't name directly — e.g. a payment-gateway response shaped like
+// {"approved":true,"provider":{"auth_token":"…"}} — is still caught, not
+// just a top-level field. Non-object output, or an object that's still too
+// large after redaction, falls back to hard (rune-safe) truncation. Despite
+// the name, this is also wasmResultLogLine's redaction path for
+// ".authorize" responses (ut-docs#245) — kept as one shared function rather
+// than a second near-duplicate, since both are the same "blocking, value-
+// returning hook" shape.
 func safeAskResultForLog(out string) string {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(out), &fields); err != nil {
@@ -340,9 +372,8 @@ func safeAskResultForLog(out string) string {
 
 	redacted := false
 	for k, v := range fields {
-		if len(v) > maxAskFieldBytes || looksLikeBlobFieldName(k) {
-			placeholder, _ := json.Marshal(fmt.Sprintf("<omitted: %d bytes>", len(v)))
-			fields[k] = placeholder
+		if red, changed := redactField(k, v, 0); changed {
+			fields[k] = red
 			redacted = true
 		}
 	}
@@ -354,6 +385,71 @@ func safeAskResultForLog(out string) string {
 		return fmt.Sprintf("(redaction failed, %d bytes)", len(out))
 	}
 	return truncateForLog(string(b))
+}
+
+// redactField judges a single field the same way safeAskResultForLog's
+// original top-level loop did — oversized or sensitively-named by key — and
+// additionally recurses into a nested JSON object or array-of-objects
+// (up to maxAskNestingDepth) so a credential doesn't have to sit at the top
+// level to be caught. key is "" for an array element, which
+// looksLikeSensitiveFieldName never matches — array elements are still
+// covered by the size check and by recursing into their own fields.
+// Returns the (possibly unchanged) value and whether anything was redacted.
+func redactField(key string, v json.RawMessage, depth int) (json.RawMessage, bool) {
+	if len(v) > maxAskFieldBytes || looksLikeSensitiveFieldName(key) {
+		placeholder, _ := json.Marshal(fmt.Sprintf("<omitted: %d bytes>", len(v)))
+		return placeholder, true
+	}
+	if depth >= maxAskNestingDepth {
+		// Fail closed, not open: a value still shaped like an object/array
+		// this deep can't be inspected further, so redact it wholesale by
+		// size rather than let it through un-redacted just because
+		// recursion stopped looking. A scalar this deep (already proven
+		// safe by the size/name check above) is left alone.
+		if len(v) > 0 && (v[0] == '{' || v[0] == '[') {
+			placeholder, _ := json.Marshal(fmt.Sprintf("<omitted: %d bytes>", len(v)))
+			return placeholder, true
+		}
+		return v, false
+	}
+
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(v, &obj) == nil && obj != nil {
+		changed := false
+		for k, nested := range obj {
+			if red, didChange := redactField(k, nested, depth+1); didChange {
+				obj[k] = red
+				changed = true
+			}
+		}
+		if !changed {
+			return v, false
+		}
+		if b, err := json.Marshal(obj); err == nil {
+			return b, true
+		}
+		return v, false
+	}
+
+	var arr []json.RawMessage
+	if json.Unmarshal(v, &arr) == nil && arr != nil {
+		changed := false
+		for i, elem := range arr {
+			if red, didChange := redactField("", elem, depth+1); didChange {
+				arr[i] = red
+				changed = true
+			}
+		}
+		if !changed {
+			return v, false
+		}
+		if b, err := json.Marshal(arr); err == nil {
+			return b, true
+		}
+		return v, false
+	}
+
+	return v, false
 }
 
 // truncateForLog hard-caps s at maxAskLogBytes, cutting at a valid UTF-8

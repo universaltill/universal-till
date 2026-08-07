@@ -264,6 +264,40 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
+// The first-boot pairing trio (ut-docs#289) must be middleware-exempt the
+// same way /api/setup/join is: a brand-new till has NO operators, so no
+// session can possibly exist — without the exemption the wizard's
+// discovery/pairing calls would all 401 before their own NeedsFirstBoot
+// gate (which is the real guard, tested in internal/pages) ever ran.
+func TestMiddlewareExemptsFirstBootPairingRoutes(t *testing.T) {
+	db := openAuthTestDB(t)
+	svc := NewService(db)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := Middleware(inner, svc)
+
+	for _, p := range []string{
+		"/api/setup/join",
+		"/api/setup/discover-primaries",
+		"/api/setup/pair-start",
+		"/api/setup/pair-status",
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("exempt %s = %d, want 200 (first-boot till can never hold a session)", p, rec.Code)
+		}
+	}
+	// The exemption is an exact-path list, not a prefix: an unlisted
+	// sibling under /api/setup/ stays behind the session wall.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/setup/anything-else", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("unlisted /api/setup/anything-else = %d, want 401 (exact paths only, no prefix match)", rec.Code)
+	}
+}
+
 func loginFor(t *testing.T, svc *Service, pin string) string {
 	t.Helper()
 	_, token, err := svc.Login(context.Background(), pin)

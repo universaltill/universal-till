@@ -4,7 +4,7 @@ title: Plugin store
 section: Connecting & extending
 order: 330
 summary: "Add features without changing the core app: payments, themes, language packs, integrations, AI tools and more."
-routes: [/plugins, /plugins/store]
+routes: [/plugins, /plugins/store, /plugins/{id}/settings]
 keywords: [plugin, marketplace, install, extension, theme]
 ---
 

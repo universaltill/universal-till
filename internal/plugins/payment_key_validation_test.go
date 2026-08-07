@@ -259,6 +259,47 @@ func TestPersistManifest_RejectsDuplicateLabelsWithinSameManifest(t *testing.T) 
 	}
 }
 
+// ut-docs#363: unlike the label case above, plugin_entries has a real
+// UNIQUE(plugin_id, key) constraint, so a duplicate Key within one manifest
+// was never a silent-data-loss bug — PersistManifest already fails and
+// rolls back. But the error the caller saw was the raw SQLite message
+// ("UNIQUE constraint failed: plugin_entries.plugin_id, plugin_entries.key")
+// instead of a clean, actionable one naming the key, unlike every other
+// check in validatePaymentEntryKeys. Confirmed pre-fix: this test's
+// Contains("keyone") assertion fails against the raw SQLite text.
+func TestPersistManifest_RejectsDuplicateKeysWithinSameManifest(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	m := &Manifest{
+		ID:         "com.dup.key",
+		Name:       "Dup Key",
+		Version:    "1.0.0",
+		Entrypoint: "./main.wasm",
+		Entries: []ManifestEntry{
+			{Type: "payment", Key: "keyone", Label: "First Label"},
+			{Type: "payment", Key: "keyone", Label: "Second Label"},
+		},
+	}
+	err := PersistManifest(ctx, d.DB, m, InstallOptions{})
+	if err == nil {
+		t.Fatal("PersistManifest accepted a manifest with two payment entries sharing one key")
+	}
+	if !strings.Contains(err.Error(), "keyone") {
+		t.Fatalf("collision error should name the duplicate key, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		t.Fatalf("collision error leaked the raw SQLite constraint message: %v", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugins WHERE id = 'com.dup.key'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("rejected plugin left %d plugins row(s), want 0 (transaction must roll back)", n)
+	}
+}
+
 // ut-docs#168: Key gets non-empty/whitespace/':' checks; Label got none —
 // an entry with Label:"" installed and synced to a blank-named tender
 // (payment_methods.name = ""), and a second plugin doing the same then
