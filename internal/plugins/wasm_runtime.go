@@ -288,9 +288,9 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 }
 
 // wasmResultLogLine builds the exact line logged for a handler's stdout
-// result. Non-".ask"/".authorize" events (e.g. sale.completed) keep the
-// original, unredacted format — out of scope for ut-docs#202. ".ask"
-// events (the generic value-returning hook, EventBus.Ask) go through
+// result. Non-".ask"/".authorize"/".refund" events (e.g. sale.completed)
+// keep the original, unredacted format — out of scope for ut-docs#202.
+// ".ask" events (the generic value-returning hook, EventBus.Ask) go through
 // safeAskResultForLog: export.requested.ask can answer with a full
 // exported dataset (base64 in content_b64), and that must never reach the
 // log verbatim ("no secrets in logs", GDPR-adjacent given the
@@ -300,9 +300,13 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 // see Sync's ".authorize"/".ask" branch above), and their responses are
 // arguably the most credential-adjacent plugin output in the system —
 // transaction/auth tokens, card-present metadata, depending on the
-// integration.
+// integration. ".refund" events (ut-docs#385) are the same blocking,
+// value-returning hook shape published by blockingPaymentEventWithResponse
+// (refund_page.go) for a refund's payment leg — a refund plugin's response
+// is just as likely to carry a gateway transaction token as an authorize
+// response, so it goes through the identical redaction path.
 func wasmResultLogLine(pluginID, eventType, out string) string {
-	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") {
+	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") && !strings.HasSuffix(eventType, ".refund") {
 		return fmt.Sprintf("[wasm:%s] result: %s", pluginID, out)
 	}
 	return fmt.Sprintf("[wasm:%s] result (%s, %d bytes): %s", pluginID, eventType, len(out), safeAskResultForLog(out))
