@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -126,9 +127,13 @@ func eodDue(now time.Time, enabled bool, hhmm string, alreadyDone bool) bool {
 }
 
 // StartEODScheduler runs the background end-of-day loop (docs: G30). Lives
-// in pages because the printer/settings plumbing is here.
-func StartEODScheduler(ctx context.Context, d *common.Deps) {
+// in pages because the printer/settings plumbing is here. wg registers the
+// loop with app.Run's shutdown drain (ut-docs#153) — the caller must pass
+// bgCtx (not ctx), same requirement as StartCloudSync.
+func StartEODScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		repo := data.NewPOSRepo(d.Db)
 		check := func() {
 			get := func(key string) string {

@@ -35,10 +35,12 @@ import (
 // still live (an early startup error, server.Start's own bind failure) and
 // the drain would eat its full 10s timeout on every shutdown —
 // app.TestRun_JoinsBackgroundGoroutinesOnEarlyServerError gates exactly this.
-// Today only StartCloudSync is wired this way; StartSyncPush, StartSyncPull
-// and StartEODScheduler below still run unjoined on ctx and can race
-// database.Close() the same way cloudsync used to (ut-docs#153 tracks them,
-// alongside #8's other scoped-out siblings).
+// StartCloudSync, StartSyncPush, StartSyncPull, StartEODScheduler and
+// StartAutoUpdateScheduler are all wired this way now (ut-docs#153).
+// internal/plugins.Supervisor's monitorProcess goroutines and the wasm
+// runtime's per-plugin event-channel drainer are NOT yet joined — both need
+// real design work before a join is even safe, tracked separately
+// (ut-docs#380).
 func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository, wg *sync.WaitGroup) http.Handler {
 	log := logging.L()
 	mux := http.NewServeMux()
@@ -198,7 +200,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncSales(mux, dp)
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
-	StartSyncPush(ctx, dp) // replica journal loop (ADR-0011 D3)
+	StartSyncPush(bgCtx, dp, wg) // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	// Re-derive everything Init computed from settings — same moves as the
 	// settings handlers make on a manual edit. Shared by the replica drift
 	// loop (ADR-0011 D2b) and cloud set_setting directives (ADR-0018).
@@ -235,10 +237,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// (ut-docs#222 review finding).
 		plugins.SharedBus(dp.Db).BumpGeneration()
 	}
-	StartSyncPull(ctx, dp, rederiveSettings)
+	StartSyncPull(bgCtx, dp, rederiveSettings, wg)  // joined by app.Run's drain
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
-	StartEODScheduler(ctx, dp)                      // background Z-report (docs: G30)
-	StartAutoUpdateScheduler(ctx, dp)               // background unattended update (ut-docs#79)
+	StartEODScheduler(bgCtx, dp, wg)                // background Z-report (docs: G30); joined by app.Run's drain
+	StartAutoUpdateScheduler(bgCtx, dp, wg)         // background unattended update (ut-docs#79); joined by app.Run's drain
 	registerInvoices(mux, dp)                       // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
