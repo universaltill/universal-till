@@ -41,13 +41,38 @@ type SaleInput struct {
 	// whatever the checkout's basket already carries (Service.OrderType);
 	// persisted so a completed sale's receipt/journal/kitchen ticket can
 	// show it after the fact.
-	OrderType              string
-	Lines                  []SaleLineInput
-	Payments               []PaymentInput
-	OriginalSaleID         string // for returns; creates sale_links entry when set
-	Note                   string
-	ReceiptNo              string
-	ActorID                string
+	OrderType      string
+	Lines          []SaleLineInput
+	Payments       []PaymentInput
+	OriginalSaleID string // for returns; creates sale_links entry when set
+	Note           string
+	ReceiptNo      string
+	ActorID        string
+	// AllowNegativeInventory, when false, makes CompleteSale reject any sale
+	// line that would take THIS till's local stock copy negative. It is a
+	// PRIMARY-only policy (ADR-0036, amending ADR-0011 §3 — ut-docs#404):
+	// stock has exactly one owner, the primary/back-office till, so the
+	// shop's pos.allow_negative_inventory setting governs only the primary's
+	// own direct sales. A replica's direct-sale paths ALWAYS pass true (its
+	// local figure is a cache the 30s sync tick cannot keep current, so the
+	// gate would pass/fail against legitimately stale data), and journal
+	// replay on the primary ALWAYS passes true (the remote sale already
+	// happened) — the till that owns stock then surfaces any resulting
+	// negative level as a back-office Problem instead of blocking a sale.
+	//
+	// ADR-0036's own consequences note says the replica-side gate "should
+	// be removed [on that path], not just skipped" so a future change
+	// can't accidentally restore a stale-data gate. This field stays and
+	// is force-true instead, deliberately: it is ALSO the primary's own
+	// policy switch (pos.allow_negative_inventory), so splitting "gate
+	// disabled by shop policy" from "gate bypassed because this till
+	// doesn't own the number" into two fields is a real field/callers
+	// refactor across every CompleteSale caller, not a one-line change —
+	// out of proportion to this fix. The callers that force it true
+	// (internal/pages/pos_api.go, self_order_shop.go on a replica;
+	// sync_sales.go's applyJournal always) each carry an explicit ADR-0036
+	// comment of their own, so the "why" is visible at every call site
+	// even though the field itself wasn't split.
 	AllowNegativeInventory bool
 	Offline                bool
 }
