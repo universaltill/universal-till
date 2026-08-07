@@ -141,6 +141,22 @@ package); `guard-data-access.sh`; `guard-i18n.sh` (856 keys, all locales
 match); `guard-help-topics.sh`; `gofmt -l` clean on every file this diff
 touches (4 unrelated pre-existing files flagged elsewhere, untouched here).
 
+**`guard-docs-shots.sh` caught locally-missed drift, real CI value.**
+This diff touches `internal/pages/help_page.go` and `web/ui/pages/help.html`
+— both inside the guard's hashed app surface (`web/ui/**` +
+`internal/pages/**.go`) — so the manual's screenshot freshness record went
+stale even though no topic's *rendered pixels* actually changed from this
+fix. Local pre-push verification only ran
+data-access/i18n/help-topics, not docs-shots, so CI (`build` job) caught it
+first: `make docs-shots` equivalent (`playwright.docs.config.ts` +
+`write-manifest.js`) regenerated all 56 screenshots (14 topics × 4
+locales); only `alerts` and `en/fa/ar/tr` `designer` actually differed in
+bytes — the same two topics ut-docs#423's PR (#226) also had to
+regenerate, so this is pre-existing render nondeterminism in those two
+specific screenshots, not something this diff introduced. Committed the
+regenerated PNGs + `manifest.json`; `guard-docs-shots.sh` now green
+locally and in CI.
+
 Playwright `manual.spec.ts` (both review passes): 15/15 passed. Full
 `--project=default` suite (pre-fix-round pass): 105/106 — the one failure is
 `catalog-image-to-till.spec.ts`, a PNG-decode timing issue specific to this
