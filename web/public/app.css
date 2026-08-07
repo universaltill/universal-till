@@ -1026,7 +1026,11 @@ body.login-screen {
   padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
   margin-inline-start: .5rem;
 }
-.statusbar .sb-update:hover { background: #22c55e; }
+/* Only the actionable pill (the <a>/<button> variants) hovers — the plain
+   <span> fallback shown when no self-update path is available (ut-docs#159,
+   a unix kiosk with no browser to send a link to) isn't clickable, and
+   shouldn't invite a click it can't act on. */
+.statusbar :is(a, button).sb-update:hover { background: #22c55e; }
 /* Quiet hint shown until the till is connected to the marketplace —
    registration is OPTIONAL (ADR-0015), so no alarm colors, no urgency. */
 .statusbar .sb-enrol {
