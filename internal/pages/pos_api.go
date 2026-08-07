@@ -127,6 +127,25 @@ func completeTender(ctx context.Context, d *common.Deps, repo *data.POSRepo, sal
 		receiptNo = saleID
 	}
 
+	// Stock ownership is primary-only (ut-docs#404, ADR-0036): on the
+	// primary — the till that owns stock — any resulting negative level
+	// surfaces as a Problem, unconditionally: even with the gate ON, two
+	// basket lines for the same item with different modifier signatures
+	// don't merge (ADR-0020) and are each checked against the SAME
+	// pre-sale figure, so a combination that individually passes the gate
+	// per line can still land the item negative. On a replica the local
+	// figure is only a cache — the primary re-derives the shop-wide level
+	// from the arriving journal and surfaces any negative there instead —
+	// so the completed sale nudges the journal-push loop for one
+	// immediate attempt so the primary hears about it in seconds, not at
+	// the next 30s tick. Non-blocking, best-effort: the tender never waits
+	// on either (ADR-0003).
+	if d.SyncPrimaryURL(ctx) == "" {
+		warnIfStockNegative(ctx, repo, saleInput, "sale "+receiptNo)
+	} else {
+		d.RequestSyncPush()
+	}
+
 	// Silent receipt print (docs: receipt-printing.md) — fired async,
 	// never blocks or fails the tender.
 	printReceiptAsync(d, receiptNo, actorID)
@@ -548,6 +567,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		allowNegative := d.CurrentState().AllowNegativeInventory
 		if in.AllowNegative != nil {
 			allowNegative = *in.AllowNegative
+		}
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			allowNegative = true // a replica never gates on stock it doesn't own (ut-docs#404, ADR-0036)
 		}
 
 		cashierID := in.CashierID

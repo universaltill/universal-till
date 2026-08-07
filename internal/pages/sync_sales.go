@@ -103,11 +103,63 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	if _, err := pos.CompleteSale(ctx, d.Db, in); err != nil {
 		return false, err
 	}
+	// A replay is force-allowed to go negative (the remote sale already
+	// happened), so the resulting level must surface as a visible Problem
+	// here, not stay silent (ut-docs#404, ADR-0036). Guarded by the
+	// SaleExists idempotency check above, so it fires at most once per sale.
+	warnIfStockNegative(ctx, repo, in, "journaled sale "+j.Sale.ReceiptNo+" from till "+tillID)
 	// This node's stock genuinely changed when replaying the remote sale, so
 	// mirror it to inventory connectors (best-effort, non-blocking). Guarded by
 	// the SaleExists idempotency check above, so it fires at most once per sale.
 	publishStockAdjustedForSale(ctx, d, in)
 	return true, repo.SetSaleProvenance(ctx, j.Sale.ID, tillID, j.Sale.CreatedAt)
+}
+
+// warnIfStockNegative surfaces negative stock as a back-office Problem
+// (ut-docs#404, ADR-0036 — whichever till's application of a movement takes
+// shop-wide stock negative surfaces it): after a sale that was allowed past
+// the stock gate, any line whose resulting level is negative gets one
+// Warn-level line naming the item and the level. logging.Recent() already
+// feeds the Problems panel (backoffice_page.go), so the Warnf IS the
+// surfacing — no extra plumbing. Best-effort: the sale already committed, so
+// a failed read only skips the warning, never the sale. Returns only add
+// stock back, so they are skipped outright.
+func warnIfStockNegative(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source string) {
+	if in.SaleType != "sale" {
+		return
+	}
+	for _, l := range in.Lines {
+		// post is a post-commit snapshot, not necessarily the exact delta
+		// THIS sale caused (it can race a concurrent sale/adjustment on the
+		// same item) — acceptable for a best-effort log line. pre is
+		// reconstructed rather than read a second time: this sale's own
+		// delta on a "sale" is always -l.Qty (internal/pos/sales.go's gate
+		// uses the identical formula), so pre = post + l.Qty exactly,
+		// with no second read to race against.
+		post, found, err := repo.CurrentQty(ctx, nil, l.LocationID, l.ItemID, l.VariantID)
+		if err != nil || !found || post >= 0 {
+			continue
+		}
+		pre := post + l.Qty
+		if pre < 0 {
+			// Already negative before this sale — already warned when it
+			// first crossed. Warning again on every later sale of the same
+			// chronically-negative item would flood the 50-entry Problems
+			// ring (internal/logging.recentCap) with repeats, evicting
+			// unrelated problems within ~50 sales. Only the transition
+			// itself is news.
+			continue
+		}
+		name := l.Name
+		if name == "" {
+			name = l.ItemID
+			if name == "" {
+				name = l.VariantID
+			}
+		}
+		logging.L().Warnf("negative stock: %q went to %.2f (location %s) after %s (ADR-0036)",
+			name, post, l.LocationID, source)
+	}
 }
 
 // registerSyncSales mounts the primary-side journal endpoint.
@@ -158,9 +210,20 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 // app.Run's shutdown drain (ut-docs#153) — the caller must pass bgCtx (not
 // ctx), the same requirement StartCloudSync already has, so an early
 // startup error still signals this loop to stop.
+//
+// The loop also listens on Deps.SyncPushNow (created here, fired by
+// Deps.RequestSyncPush after a local sale — ut-docs#404, ADR-0036) so a
+// completed sale reaches the primary immediately rather than up to 30s
+// later; the ticker remains the retry/catch-up path. Serving the nudge
+// inside this one loop (instead of a per-sale goroutine) keeps push
+// attempts serialized on the cursor, bounded by bgCtx, and joined by wg —
+// nothing can leak past the shutdown drain.
 func StartSyncPush(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	runSyncLoop(ctx, wg, func() { syncPushTick(ctx, d, client) })
+	if d.SyncPushNow == nil {
+		d.SyncPushNow = make(chan struct{}, 1)
+	}
+	runSyncLoop(ctx, wg, d.SyncPushNow, func() { syncPushTick(ctx, d, client) })
 }
 
 // syncPushTick is one tick of the replica-side journal loop, extracted from
