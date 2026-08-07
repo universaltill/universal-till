@@ -77,8 +77,17 @@ func TestOpenShift_JSONAndValidation(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"success":true`) {
-		t.Fatalf("expected success, got %s", rec.Body.String())
+	// { "data": …, "error": null } envelope (ut-docs#378), success nested
+	// under "data" rather than the old bare top-level shape.
+	data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec.Body.String())
+	}
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s", errVal)
+	}
+	if !strings.Contains(string(data), `"success":true`) {
+		t.Fatalf("expected success, got %s", data)
 	}
 
 	// A second shift on the SAME register while one is already open must
@@ -86,6 +95,9 @@ func TestOpenShift_JSONAndValidation(t *testing.T) {
 	rec = postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":1000}`)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected an error opening a second shift on the same register, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes()); !hasData || string(data) != "null" || !hasError || string(errVal) == "null" {
+		t.Fatalf(`expected { "data": null, "error": "…" } for a failed open, got %s`, rec.Body.String())
 	}
 
 	// Validation.
@@ -97,6 +109,8 @@ func TestOpenShift_JSONAndValidation(t *testing.T) {
 	}
 	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{not valid`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid JSON, got %d", rec.Code)
+	} else if data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes()); !hasData || string(data) != "null" || !hasError || string(errVal) == "null" {
+		t.Fatalf(`expected { "data": null, "error": "…" } for invalid JSON, got %s`, rec.Body.String())
 	}
 }
 
@@ -149,11 +163,19 @@ func TestCloseShift_ComputesExpectedCashAndVariance(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"expected_cash":5000`) {
-		t.Fatalf("expected expected_cash=5000, got %s", rec.Body.String())
+	// { "data": …, "error": null } envelope (ut-docs#378).
+	data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"variance":-100`) {
-		t.Fatalf("expected variance=-100, got %s", rec.Body.String())
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s", errVal)
+	}
+	if !strings.Contains(string(data), `"expected_cash":5000`) {
+		t.Fatalf("expected expected_cash=5000, got %s", data)
+	}
+	if !strings.Contains(string(data), `"variance":-100`) {
+		t.Fatalf("expected variance=-100, got %s", data)
 	}
 
 	// Closing an already-closed shift must fail (shift not found or already
@@ -161,6 +183,9 @@ func TestCloseShift_ComputesExpectedCashAndVariance(t *testing.T) {
 	rec = postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":4900}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 closing an already-closed shift, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes()); !hasData || string(data) != "null" || !hasError || string(errVal) == "null" {
+		t.Fatalf(`expected { "data": null, "error": "…" } closing an already-closed shift, got %s`, rec.Body.String())
 	}
 }
 
@@ -202,6 +227,17 @@ func TestRecordCashAdjustment(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
+	// { "data": …, "error": null } envelope (ut-docs#378).
+	adjData, hasData, errVal, hasError := envelopeOf(t, rec2.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec2.Body.String())
+	}
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s", errVal)
+	}
+	if !strings.Contains(string(adjData), `"success":true`) {
+		t.Fatalf("expected data.success=true, got %s", adjData)
+	}
 
 	// A subsequent close must reflect the adjustment in expected cash:
 	// 5000 (opening) - 500 (payout) = 4500.
@@ -209,13 +245,20 @@ func TestRecordCashAdjustment(t *testing.T) {
 	if rec3.Code != http.StatusOK {
 		t.Fatalf("close shift: %d: %s", rec3.Code, rec3.Body.String())
 	}
-	if !strings.Contains(rec3.Body.String(), `"expected_cash":4500`) {
-		t.Fatalf("expected expected_cash=4500 reflecting the payout, got %s", rec3.Body.String())
+	closeData, hasData, errVal, hasError := envelopeOf(t, rec3.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec3.Body.String())
+	}
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s", errVal)
+	}
+	if !strings.Contains(string(closeData), `"expected_cash":4500`) {
+		t.Fatalf("expected expected_cash=4500 reflecting the payout, got %s", closeData)
 	}
 	// ShiftCloseResponse.Variance is `json:"variance,omitempty"` — a true
 	// zero variance is dropped from the JSON entirely, not printed as 0.
-	if strings.Contains(rec3.Body.String(), `"variance"`) {
-		t.Fatalf("expected the zero-variance field omitted (omitempty), got %s", rec3.Body.String())
+	if strings.Contains(string(closeData), `"variance"`) {
+		t.Fatalf("expected the zero-variance field omitted (omitempty), got %s", closeData)
 	}
 }
 
@@ -401,6 +444,22 @@ func TestRecordCashAdjustment_ValidationErrors(t *testing.T) {
 	}
 	if rec := makeReq("shift_id=s1&type=payout&amount=-100"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for a missing reason, got %d", rec.Code)
+	}
+
+	// Same validation error, but with Accept: application/json -- covers
+	// respondAdjustmentError's JSON branch specifically: { "data": null,
+	// "error": "…" }, not the bare struct it used to write (ut-docs#378).
+	jsonReq := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment", strings.NewReader("shift_id=s1&type=payout&amount=-100"))
+	jsonReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	jsonReq.Header.Set("Accept", "application/json")
+	jsonReq = auth.WithUser(jsonReq, auth.User{ID: "user1"})
+	jsonRec := httptest.NewRecorder()
+	mux.ServeHTTP(jsonRec, jsonReq)
+	if jsonRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a missing reason, got %d: %s", jsonRec.Code, jsonRec.Body.String())
+	}
+	if data, hasData, errVal, hasError := envelopeOf(t, jsonRec.Body.Bytes()); !hasData || string(data) != "null" || !hasError || string(errVal) == "null" {
+		t.Fatalf(`expected { "data": null, "error": "…" }, got %s`, jsonRec.Body.String())
 	}
 
 	// Empty actor id: unauthorized.
