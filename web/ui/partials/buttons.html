@@ -17,6 +17,18 @@
          between" reasoning. Search applies in all three cases. */}}
     {{ $flat := and (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
     {{ $hasTabs := gt (len .Groups) 1 }}
+    {{/* .ID is interpolated raw into an Alpine JS string literal below
+         (x-data, :class, @click) — html/template auto-escapes this as a
+         plain HTML attribute (a literal ' survives as &#39;, which the
+         DOM decodes back to ' before Alpine parses it), NOT as a JS
+         string, since html/template doesn't recognize x-data/:class/
+         @click as JS-attribute contexts the way it does onclick=. Safe
+         ONLY because every CategoryGroup.ID this template ever receives
+         is a server-generated uuid.NewString() (CatalogRepo.
+         EnsureCategory / EnsureCategoryUnder) or one of the fixed
+         cat_* seed literals — never caller-supplied text. If a category
+         ID ever becomes user-editable, this needs SearchResult.AddVals()
+         's treatment (marshal server-side), not raw interpolation. */}}
     <div class="products-finder" x-data="{ tab: '{{ if $hasTabs }}{{ (index .Groups 0).ID }}{{ end }}', q: '' }">
       <input type="search" id="products-search" x-model="q"
              placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
@@ -26,10 +38,16 @@
            via search below, ut-docs#173's barcode-less-item gap is
            unaffected either way. Nested subcategories render as headed
            sub-sections inside their parent's tab panel (see
-           "category-group-body"), not as their own top-level tab. */}}
+           "category-group-body"), not as their own top-level tab.
+           --cat-color carries each category's color onto its own tab
+           (border-block-start always, the active underline when
+           selected) — pre-#418, every category's color was visible at
+           once via its stacked section header; tabs make that one-at-a-
+           time, so the tab itself is now what carries the color instead
+           of losing it. */}}
       <div class="tab-bar" role="tablist">
         {{ range .Groups }}
-        <button type="button" class="tab" role="tab" :class="tab === '{{ .ID }}' && 'active'" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+        <button type="button" class="tab" role="tab" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
         {{ end }}
       </div>
       {{ end }}
@@ -39,9 +57,13 @@
           {{ range (index .Groups 0).Buttons }}{{ template "product-tile" . }}{{ end }}
         </div>
         {{ else if $hasTabs }}
-        {{ range .Groups }}
-        <div class="tab-panel" x-show="tab === '{{ .ID }}'">
-          {{ template "category-group-body" . }}
+        {{ range $i, $g := .Groups }}
+        {{/* x-cloak only the non-default panels — cloaking the initially-
+             active one too would hide the till's main content until
+             Alpine hydrates, the same tradeoff index.html's own Pay/Split
+             tabs make (only "split", never "pay", is cloaked). */}}
+        <div class="products-tab-panel" x-show="tab === '{{ $g.ID }}'"{{ if ne $i 0 }} x-cloak{{ end }}>
+          {{ template "category-group-body" $g }}
         </div>
         {{ end }}
         {{ else }}

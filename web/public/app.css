@@ -506,6 +506,10 @@ a.btn, a.btn:hover { text-decoration: none; }
    combination has, ut-docs#419). */
 .products-finder { display: flex; flex-direction: column; gap: .6rem; }
 .products-finder input[type="search"] { width: 100%; }
+/* Unlike .tender's tab-panel (app.css, "Tender" section below), .products
+   itself already scrolls (.pos-container > .products has its own
+   overflow-y: auto) — no nested floor/scroll needed here, just layout. */
+.products-tab-panel { flex: 1; display: flex; flex-direction: column; gap: .5rem; }
 
 /* ---------- Category groups ----------
    Each section's --cat-color custom property is set inline per group (an
@@ -803,9 +807,14 @@ a.btn, a.btn:hover { text-decoration: none; }
 .tab-bar .tab {
   flex: 1; padding: .5rem .6rem; font: inherit; font-weight: 600; text-align: center;
   background: none; border: none; border-bottom: 3px solid transparent;
+  /* border-block-start: always-on color accent from --cat-color when a
+     tab carries one (sale-screen category tabs, ut-docs#418) — falls
+     back to transparent, so the tender's plain Pay/Split tabs (no
+     --cat-color set) render exactly as before. */
+  border-block-start: 3px solid var(--cat-color, transparent);
   color: var(--muted); cursor: pointer; margin-bottom: -2px;
 }
-.tab-bar .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-bar .tab.active { color: var(--cat-color, var(--accent)); border-bottom-color: var(--cat-color, var(--accent)); }
 /* min-height: 6rem (not 0) mirrors .basket-scroll's own floor above --
    the independent review of ut-docs#161 measured .tab-panel collapsing to
    a real, hit-testable 0 clientHeight (Cash/Card/Gift Card rendered

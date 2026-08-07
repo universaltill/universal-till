@@ -328,6 +328,41 @@ func TestButtonsHTTPList_NoTabBarWithOneCategory(t *testing.T) {
 	}
 }
 
+// TestButtonsHTTPList_TabsCarryColorWithMultipleCategories: independent
+// review of ut-docs#418 found that TestButtonsHTTPList_RendersNestedColorCodedGroups
+// (above) seeds only ONE root category, which renders via "category-group"
+// (unchanged since before this feature) — not the >=2-category tab-bar
+// branch real multi-category tills actually take. That left the tab bar's
+// own color handling completely untested: the first draft of this feature
+// dropped every category's --cat-color the moment a till had 2+ categories
+// (tabs carried no color at all), and this specific test would have kept
+// passing throughout since it never exercises that branch. Pins the fix in
+// the branch that matters instead.
+func TestButtonsHTTPList_TabsCarryColorWithMultipleCategories(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('drinks','Drinks',NULL,0,'#1D4ED8')`)
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('food','Food',NULL,1,'#AA0011')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm1','S1','Cola', 150, 1, 'drinks')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm2','S2','Burger', 650, 1, 'food')`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Cola','itm1',0)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B2','Burger','itm2',1)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, "ZgotmplZ") {
+		t.Fatalf("html/template mangled a color value: %s", body)
+	}
+	if !strings.Contains(body, "--cat-color: #1D4ED8") || !strings.Contains(body, "--cat-color: #AA0011") {
+		t.Fatalf("expected both explicit tab colors to survive verbatim on the tab bar, got: %s", body)
+	}
+}
+
 func TestNewRenderer_ErrorOnMissingTemplate(t *testing.T) {
 	_, err := NewRenderer(
 		filepath.Join("web", "ui", "layouts", "base.html"),
