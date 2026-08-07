@@ -92,21 +92,19 @@ func Run(ctx context.Context) error {
 
 	// wg tracks the background goroutines this boot sequence starts —
 	// directly (enroll/updates/alerts), via server.Start, or via pages.Init
-	// (cloudsync, since ut-docs#8) — so Run can wait for them to actually
-	// exit before its deferred database.Close() above runs. Without this,
-	// "Run returned" didn't mean "nothing is still writing to the data dir"
-	// (found 2026-07-30 via a mobile-shutdown CI flake). NOT yet covered —
-	// the drain is NOT complete: pages.Init's StartSyncPush/StartSyncPull/
-	// StartEODScheduler/StartAutoUpdateScheduler loops still run unjoined on
-	// ctx and do DB work (ut-docs#153) — StartAutoUpdateScheduler additionally
-	// does binary/web-asset renames (internal/selfupdate.Apply), so a shutdown
-	// landing mid-swap has a narrow window to leave the install half-swapped;
-	// internal/plugins.Supervisor's monitorProcess goroutines
-	// (native plugin processes — separate, larger fix) and the wasm runtime's
-	// per-plugin event-channel drainer (internal/plugins/wasm_runtime.go —
-	// its channel is only closed on the next Sync/reload, never on shutdown,
-	// so tracking it here would make every drain time out) are also logged
-	// on that same card.
+	// (cloudsync, and since ut-docs#153 also StartSyncPush/StartSyncPull/
+	// StartEODScheduler/StartAutoUpdateScheduler) — so Run can wait for them
+	// to actually exit before its deferred database.Close() above runs.
+	// Without this, "Run returned" didn't mean "nothing is still writing to
+	// the data dir" (found 2026-07-30 via a mobile-shutdown CI flake).
+	// STILL NOT covered — the drain is not complete:
+	// internal/plugins.Supervisor's monitorProcess goroutines (native plugin
+	// processes — dynamically spawned per start/restart, no bounded join
+	// point yet) and the wasm runtime's per-plugin event-channel drainer
+	// (internal/plugins/wasm_runtime.go — its channel is only closed on the
+	// next Sync/reload, never on shutdown, so tracking it here would make
+	// every drain time out) both need real design work before a join is even
+	// safe; tracked as ut-docs#380.
 	//
 	// bgCtx is independently cancellable from ctx: an early startup error
 	// below (plugins.Init, marketplace.NewCatalogRepository, server.Start's
