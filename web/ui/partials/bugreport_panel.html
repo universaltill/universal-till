@@ -468,7 +468,6 @@
     // check a second finger on the kiosk touchscreen — the operator holding
     // the panel with one hand and tapping the till with the other, which is
     // exactly the workflow this panel exists for — hijacks the drag.
-    console.log('[DBG] onDragMove type=' + e.type + ' id=' + e.pointerId + ' drag=' + dragPointerId + ' clientX=' + e.clientX);
     if (e.pointerId !== dragPointerId) return;
     moveTo(panelStartX + (e.clientX - dragStartX), panelStartY + (e.clientY - dragStartY));
   }
@@ -477,14 +476,12 @@
     // Same id check: a foreign pointer's release must not end this drag, and
     // releasePointerCapture with an id we never captured throws NotFoundError
     // (an uncaught page error, confirmed against a real multi-touch sequence).
-    console.log('[DBG] endDrag type=' + (e && e.type) + ' id=' + (e && e.pointerId) + ' drag=' + dragPointerId);
     if (dragPointerId === null || (e && e.pointerId !== dragPointerId)) return;
     if (head.hasPointerCapture(dragPointerId)) head.releasePointerCapture(dragPointerId);
     dragPointerId = null;
     document.removeEventListener('pointermove', onDragMove);
     document.removeEventListener('pointerup', endDrag);
     document.removeEventListener('pointercancel', endDrag);
-    console.log('[DBG] endDrag CLEANED UP');
   }
 
   head.addEventListener('pointerdown', function (e) {
