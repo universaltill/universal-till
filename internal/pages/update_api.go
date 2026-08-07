@@ -139,8 +139,11 @@ func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps) {
 // kiosk never reaches here: selfupdate.Supported() is true for a
 // service-writable install, so the inline Apply button is shown instead.
 func updateUnavailableHTML(locale, latest, goos string) string {
-	if goos == "windows" || goos == "darwin" {
-		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="https://www.universaltill.com/download" rel="noopener">%s</a></span>`,
+	if selfupdate.DownloadLinkActionable(goos) {
+		// target="_blank": a plain same-window navigation is a dead end in
+		// the WebView2 desktop shell (cmd/unitill-desktop/webview_fallback.go
+		// has no NewWindowRequested handler) — ut-docs#159.
+		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="https://www.universaltill.com/download" rel="noopener" target="_blank">%s</a></span>`,
 			html.EscapeString(httpx.T(locale, "status.update_available")),
 			html.EscapeString(latest),
 			html.EscapeString(httpx.T(locale, "settings.update.download")))

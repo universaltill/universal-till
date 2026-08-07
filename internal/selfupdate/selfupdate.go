@@ -104,6 +104,26 @@ func Supported() bool {
 	return true
 }
 
+// DownloadLinkActionable reports whether a user on this OS can get the new
+// version themselves by clicking a website download link — the single
+// source of truth shared by the Settings-page fallback
+// (internal/pages/update_api.go's updateUnavailableHTML) and the
+// status-bar chip (web/ui/layouts/base.html) so the two never drift into
+// separately-maintained copies of the same check (ut-docs#159). Windows and
+// macOS are windowed desktop OSes with a browser — actionable. A unix kiosk
+// is fullscreen with no browser chrome, so a website link there is a dead
+// end (ut-docs#147/#159): false.
+func DownloadLinkActionable(goos string) bool {
+	return goos == "windows" || goos == "darwin"
+}
+
+// DownloadLinkActionableNow is DownloadLinkActionable for the running
+// process's own GOOS — the zero-arg form template funcs need (mirrors
+// Supported()'s own zero-arg-wrapping-runtime.GOOS pattern below).
+func DownloadLinkActionableNow() bool {
+	return DownloadLinkActionable(runtime.GOOS)
+}
+
 // supportedFor is the OS/location POLICY gate (pure, no filesystem access):
 // which install shapes can *ever* self-update. The final writability
 // precondition is applied by Supported(), not here.

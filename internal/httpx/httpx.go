@@ -31,10 +31,16 @@ var baseFuncs = template.FuncMap{
 	"updateavailable": func() bool { return updates.Current().Available },
 	"latestversion":   func() string { return updates.Current().Latest },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
-	"enrolled":        func() bool { return enroll.CurrentStatus().Registered },
-	"enrolstore":      func() string { return enroll.CurrentStatus().StoreID },
-	"enroldevice":     func() string { return enroll.CurrentStatus().DeviceID },
-	"jsonVals":        jsonVals,
+	// updatedownloadlink: whether the status-bar chip's fallback (when
+	// canselfupdate is false) may show an actionable website link — false on
+	// a unix kiosk, where that link is a dead end (ut-docs#147/#159). Mirrors
+	// internal/pages/update_api.go's updateUnavailableHTML via the shared
+	// selfupdate.DownloadLinkActionable predicate.
+	"updatedownloadlink": func() bool { return selfupdate.DownloadLinkActionableNow() },
+	"enrolled":           func() bool { return enroll.CurrentStatus().Registered },
+	"enrolstore":         func() string { return enroll.CurrentStatus().StoreID },
+	"enroldevice":        func() string { return enroll.CurrentStatus().DeviceID },
+	"jsonVals":           jsonVals,
 	// Default target for the nav's contextual "?" — the manual's index.
 	// Render() overrides this per request with the topic documenting the page
 	// actually being rendered; fragment renderers that also parse nav.html
