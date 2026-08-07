@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
@@ -287,5 +289,33 @@ func TestManagerInit_ToleratesOrphanedPaymentMethod(t *testing.T) {
 
 	if _, err := Init(ctx, &config.Config{Env: "test"}, db); err != nil {
 		t.Fatalf("Init must tolerate an orphaned payment method (log-only warning), got: %v", err)
+	}
+}
+
+// ut-docs#170: the orphan warning's old wording told the operator to
+// "reassign/rename the tender" — no such affordance exists anywhere in
+// web/ui/ (confirmed by grep at grooming time), so that instruction was
+// never actionable. It also read as an alarm on every boot even for a
+// legitimately-uninstalled plugin, whose tender row ADR-0031 deliberately
+// retains for sales history. The message must stop pointing at the
+// nonexistent surface and say plainly that a deliberate uninstall is
+// expected, not an error.
+func TestOrphanPaymentMethodWarning_DoesNotClaimNonexistentRenameAffordance(t *testing.T) {
+	msg := orphanPaymentMethodWarning(data.OrphanedPaymentMethod{
+		ID:       "orphaned",
+		Name:     "Orphaned Tender",
+		PluginID: "com.gone.forever",
+	})
+
+	lowerMsg := strings.ToLower(msg)
+	for _, forbidden := range []string{"reassign", "rename"} {
+		if strings.Contains(lowerMsg, forbidden) {
+			t.Fatalf("warning still points at the nonexistent rename/reassign UI surface (contains %q): %s", forbidden, msg)
+		}
+	}
+	for _, want := range []string{"orphaned", "Orphaned Tender", "com.gone.forever", "reinstall", "expected"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("warning missing expected content %q: %s", want, msg)
+		}
 	}
 }
