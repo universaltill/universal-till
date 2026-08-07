@@ -60,9 +60,43 @@ apt-get -o DPkg::Lock::Timeout=600 update
 # with "Could not poll connection: Broken pipe" (proven on Pi5/trixie,
 # ut-docs#6).
 apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends cage curl kbd
+# xdg-desktop-portal + its wlroots backend: on Wayland, Chromium delegates
+# getDisplayMedia (screenshot / screen recording) to the portal's ScreenCast
+# interface. With no portal installed the picker opens with NOTHING to select,
+# so the bug-reporter's capture is unusable on a kiosk — confirmed on real
+# field hardware, ut-docs#395. cage is wlroots-based, hence the -wlr backend.
+apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends \
+  xdg-desktop-portal xdg-desktop-portal-wlr
 # Chromium's package name differs between Raspberry Pi OS and plain Debian.
 apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends chromium-browser 2>/dev/null ||
   apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends chromium
+
+echo "==> Configuring the Wayland screencast portal…"
+# Two pieces, both required (ut-docs#395):
+#   1. xdg-desktop-portal picks its backend by XDG_CURRENT_DESKTOP; wlr.portal
+#      declares UseIn=wlroots;sway;… so the session must say "wlroots" (the
+#      launch script exports it and pushes it into the D-Bus activation
+#      environment, since the portal is D-Bus-activated and does NOT inherit
+#      Chromium's environment).
+#   2. chooser_type=none makes xdg-desktop-portal-wlr auto-select the only
+#      output instead of trying to show a chooser the kiosk cannot display —
+#      which is also the behaviour the product owner asked for: pressing
+#      "screenshot" on a till should just capture the screen.
+install -d -m 0755 /etc/xdg-desktop-portal
+cat > /etc/xdg-desktop-portal/wlroots-portals.conf <<'PORTALCONF'
+[preferred]
+default=wlr;gtk
+org.freedesktop.impl.portal.ScreenCast=wlr
+org.freedesktop.impl.portal.Screenshot=wlr
+PORTALCONF
+
+install -d -m 0755 -o "$KIOSK_USER" -g "$KIOSK_USER" "/home/$KIOSK_USER/.config/xdg-desktop-portal-wlr"
+cat > "/home/$KIOSK_USER/.config/xdg-desktop-portal-wlr/config" <<'WLRCONF'
+[screencast]
+chooser_type=none
+max_fps=30
+WLRCONF
+chown "$KIOSK_USER:$KIOSK_USER" "/home/$KIOSK_USER/.config/xdg-desktop-portal-wlr/config"
 
 echo "==> Installing emoji font (menu icons, plugin/status glyphs)…"
 # The till UI's icons are plain Unicode emoji text, and a base Raspberry Pi
