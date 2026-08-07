@@ -376,15 +376,34 @@
     if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
+  // Dismissal persists across a full page navigation (ut-docs#394): this
+  // app does full page loads for every nav, not htmx boosting, and
+  // /report-issue force-opens the panel server-side on EVERY visit with no
+  // idea whether the operator already closed it. Same sessionStorage
+  // try/catch pattern as public/cursor.js's 'ut-cursor-mouse' flag — a
+  // storage-blocked browser just falls back to today's per-page behaviour,
+  // never throws. Written only by the two explicit user actions below
+  // (close / toggle-open); read-only everywhere else.
+  var DISMISS_KEY = 'ut-bugreport-dismissed';
+  function dismissed(v) {
+    try {
+      if (v === undefined) return sessionStorage.getItem(DISMISS_KEY) === '1';
+      if (v) sessionStorage.setItem(DISMISS_KEY, '1');
+      else sessionStorage.removeItem(DISMISS_KEY);
+    } catch (e) { return false; }
+  }
+
   function openPanel() {
     initCapture();
     panel.classList.add('open');
     syncToggle(true);
+    dismissed(false);
   }
 
   function closePanel() {
     panel.classList.remove('open');
     syncToggle(false);
+    dismissed(true);
   }
 
   // Delegated click handler rather than a listener on the button itself,
@@ -400,9 +419,21 @@
 
   document.getElementById('bugreport-close').addEventListener('click', closePanel);
 
-  // /report-issue renders the panel already open (server-side class):
-  // bring the capture wiring up to match.
-  if (panel.classList.contains('open')) initCapture();
+  // /report-issue renders the panel already open (server-side class, so it
+  // doesn't depend on this script having run first) — but an earlier
+  // explicit dismissal must still win, or re-landing here (a re-tapped
+  // /menu tile, a kiosk reload) pops it back open with no way to make it
+  // stay closed. Correcting client-side rather than server-side keeps the
+  // handler's no-JS first paint intact while still honoring the dismissal
+  // for everyone who does run JS.
+  if (panel.classList.contains('open')) {
+    if (dismissed()) {
+      panel.classList.remove('open');
+      syncToggle(false);
+    } else {
+      initCapture();
+    }
+  }
 })();
 </script>
 {{ end }}

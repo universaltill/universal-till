@@ -18,4 +18,6 @@ Kasada bir sorun mu var? Her ekrandan 🐞 düğmesiyle bir rapor gönderin — 
 3. "Raporu kaydet"e basın. Rapor anında bu kasaya kaydedilir — internet olmasa bile — ve mağaza bağlandığında otomatik olarak yüklenir.
 4. Not: Başka bir sayfaya geçerseniz kayıt durur; bu yüzden ayrılmadan önce raporunuzu gönderin.
 
-Paneli ☰ Menü'deki 🐞 "Sorun bildir" kutucuğundan da açabilirsiniz.
+Panele ☰ Menü'deki 🐞 "Sorun bildir" kutucuğundan da ulaşabilirsiniz.
+
+Paneli ✕ ile kapatmak, siz yeniden açana kadar kapalı kalmasını sağlar: ekranlar arasında gezinirken kapalı kalır, "Sorun bildir" sayfası da onu artık zorla yeniden açmaz. İstediğiniz zaman üst çubuktaki 🐞 düğmesine basın.
