@@ -449,6 +449,47 @@ func redactField(key string, v json.RawMessage, depth int) (json.RawMessage, boo
 		return v, false
 	}
 
+	// v isn't an object or array -- check whether it's a JSON *string* whose
+	// own content is itself JSON, one encoding layer removed from the
+	// object/array case above. Some payment/gateway SDKs proxy a raw
+	// upstream response by stashing it as an embedded JSON string (e.g.
+	// {"provider":"{\"auth_token\":\"…\"}"}) rather than a nested object,
+	// and json.Unmarshal(v, &obj) fails for that shape (a string isn't a
+	// map), so without this branch the recursion above never triggers and
+	// the embedded credential reaches the log verbatim (ut-docs#393, one
+	// encoding removed from ut-docs#384's nested-object fix).
+	//
+	// Deliberately recurse unconditionally here rather than pre-checking
+	// the decoded shape (object/array vs. scalar) before descending:
+	// review of an earlier draft found that gating on shape stops after
+	// exactly one unwrap, so a credential wrapped in TWO layers of
+	// JSON-string encoding (a string containing a string containing an
+	// object -- plausible if a payload passes through more than one layer
+	// of proxying/serialization) still leaked, well within maxAskFieldBytes
+	// at every layer. Recursing unconditionally lets each layer's own
+	// object/array/string/scalar branch decide what to do with its own
+	// content, cascading through however many layers actually exist; a
+	// scalar payload (a JSON string containing just "42" or "\"x\"") still
+	// self-terminates as a no-op two calls deeper, at negligible extra
+	// cost given the 200-byte field cap this only ever runs under.
+	// maxAskNestingDepth bounds the whole chain against a pathological or
+	// malformed plugin response, same as it already bounds object/array
+	// recursion.
+	var strVal string
+	if json.Unmarshal(v, &strVal) == nil {
+		inner := json.RawMessage(strVal)
+		if !json.Valid(inner) {
+			return v, false
+		}
+		if red, didChange := redactField(key, inner, depth+1); didChange {
+			// Re-encode the redacted content back into a JSON string so the
+			// field's outer type (string) is preserved for the caller.
+			if reencoded, err := json.Marshal(string(red)); err == nil {
+				return reencoded, true
+			}
+		}
+	}
+
 	return v, false
 }
 
