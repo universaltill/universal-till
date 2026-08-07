@@ -4,6 +4,37 @@ import { test, expect } from '@playwright/test';
 // you pick a topic, the debounced search, the RTL mirror, and the contextual
 // "?" actually resolving from a real page.
 
+// ut-docs#389: `.manual-nav`/`.manual-panel` both being present and
+// individually toBeVisible() (checked throughout this file already) does
+// NOT prove the two-pane layout actually rendered — an unstyled, stacked
+// div is still "visible" to Playwright. Pin a desktop-wide viewport
+// explicitly rather than inherit Playwright's default: app.css:934
+// intentionally collapses `.manual` to one column below 52rem/832px (a
+// narrow kiosk in portrait, a phone) — that collapse is correct behaviour,
+// not this regression, and this test must not depend on which width
+// happens to be the runner's unstated default. Assert two things a
+// CSS-load failure would break that a narrower-viewport collapse would
+// NOT: the grid itself applied (`.manual`'s computed `display`, true at
+// every width), and the two panes actually sit side by side at this
+// pinned width rather than stacked (LTR only — RTL's mirrored order is
+// covered separately below by "reads right-to-left in Persian").
+test('manual renders as a real two-pane grid, not stacked divs', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/help');
+  await expect(page.locator('.manual-panel')).toBeVisible();
+  await expect(page.locator('#manual'), 'ut-docs#389: .manual grid failed to apply').toHaveCSS(
+    'display',
+    'grid',
+  );
+  await expect
+    .poll(async () => {
+      const nav = await page.locator('.manual-nav').boundingBox();
+      const panel = await page.locator('.manual-panel').boundingBox();
+      return nav && panel ? nav.x + nav.width : null;
+    }, 'ut-docs#389: .manual-nav must sit beside .manual-panel, not stacked above it')
+    .toBeLessThanOrEqual((await page.locator('.manual-panel').boundingBox())!.x);
+});
+
 test('manual lists topics and opens one without a full page load', async ({ page }) => {
   await page.goto('/help');
   await expect(page.locator('.manual-nav')).toBeVisible();
