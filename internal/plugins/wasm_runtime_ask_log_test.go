@@ -37,6 +37,22 @@ func TestWasmResultLogLine_GatesOnAskSuffix(t *testing.T) {
 	}
 }
 
+// TestWasmResultLogLine_GatesOnAuthorizeSuffix proves ".authorize" events
+// (payment-authorization plugins, PublishAuthorize/Blocking hooks) get the
+// same redaction treatment as ".ask" events (ut-docs#245) — their responses
+// are arguably the most credential-adjacent plugin output in the system.
+func TestWasmResultLogLine_GatesOnAuthorizeSuffix(t *testing.T) {
+	bigToken := strings.Repeat("A", 5000)
+	authorizeOut := `{"approved":true,"auth_token":"` + bigToken + `"}`
+	got := wasmResultLogLine("com.test.plugin", "payment.demopay.authorize", authorizeOut)
+	if strings.Contains(got, bigToken) {
+		t.Fatalf("wasmResultLogLine did not redact a large field on an .authorize event")
+	}
+	if !strings.HasPrefix(got, "[wasm:com.test.plugin] result (payment.demopay.authorize, ") {
+		t.Errorf("expected event type + byte count in the .authorize log line, got: %s", got)
+	}
+}
+
 // TestSafeAskResultForLog_RedactsOversizedField proves a large content_b64
 // field on an ".ask" response never reaches the log verbatim (ut-docs#202,
 // found during independent review of ut-docs#189 — export.requested.ask's
@@ -82,6 +98,24 @@ func TestSafeAskResultForLog_RedactsBlobFieldByNameEvenWhenSmall(t *testing.T) {
 	}
 	if !strings.Contains(got, `"ok":true`) {
 		t.Errorf("logged line should still show the small ok field, got: %s", got)
+	}
+}
+
+// TestSafeAskResultForLog_RedactsTokenOrSecretFieldByNameEvenWhenSmall
+// proves a small auth token/secret field is redacted by name, the same way
+// a small content_b64 already is (ut-docs#245): a payment-authorize
+// response's token is exactly as much of a credential when it's short as
+// when it's long, so size alone can't be the only redaction trigger.
+func TestSafeAskResultForLog_RedactsTokenOrSecretFieldByNameEvenWhenSmall(t *testing.T) {
+	for _, field := range []string{"auth_token", "client_secret"} {
+		out := `{"approved":true,"` + field + `":"tok_live_abc123"}`
+		got := safeAskResultForLog(out)
+		if strings.Contains(got, "tok_live_abc123") {
+			t.Fatalf("a small %s field was logged verbatim: %s", field, got)
+		}
+		if !strings.Contains(got, `"approved":true`) {
+			t.Errorf("logged line should still show the small approved field, got: %s", got)
+		}
 	}
 }
 
