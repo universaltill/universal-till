@@ -142,11 +142,20 @@ func TestSafeAskResultForLog_RedactsNestedTokenFieldByName(t *testing.T) {
 	}
 }
 
-// TestSafeAskResultForLog_RedactsOversizedNestedField proves a nested field
-// that's too large (rather than sensitively-named) is also caught -- the
-// same maxAskFieldBytes rule top-level fields already get, applied one
-// level down.
-func TestSafeAskResultForLog_RedactsOversizedNestedField(t *testing.T) {
+// TestSafeAskResultForLog_RedactsParentWhoseNestedContentIsOversized proves
+// a nested object containing an oversized field still can't reach the log
+// verbatim. NOTE (found by independent review of ut-docs#384): a child's
+// raw JSON is always a subset of its parent's, so if a nested field alone
+// is large enough to push its PARENT's raw JSON over maxAskFieldBytes, the
+// parent gets redacted wholesale by the pre-existing top-level/per-field
+// size check before recursion ever reaches the child -- redactField's own
+// size check at depth>=1 is therefore only ever reachable for a nested
+// field that's oversized on its OWN while its ancestors all stay under the
+// cap (a much narrower case than this test's payload). This test still
+// documents and guards real, correct behavior (the payload never leaks
+// either way); it just doesn't isolate the recursive-size branch the way
+// its previous name implied.
+func TestSafeAskResultForLog_RedactsParentWhoseNestedContentIsOversized(t *testing.T) {
 	bigPayload := strings.Repeat("A", 5000)
 	out := `{"approved":true,"provider":{"raw_response":"` + bigPayload + `"}}`
 
