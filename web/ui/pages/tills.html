@@ -116,6 +116,7 @@
             + 'hx-target="#pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
         }).join('') + '</ul>';
         htmx.process(out);
+      })
       .catch(function () {
         btn.disabled = false;
         msg.textContent = i18n.error;
