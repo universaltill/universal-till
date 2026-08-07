@@ -41,6 +41,20 @@ func buildBigAuthorizeGuest(t *testing.T) string {
 	return out
 }
 
+// buildBigRefundGuest compiles the wasip1 test fixture that answers any
+// ".refund" event with a large auth_token field (ut-docs#385) — same
+// pattern as buildBigAuthorizeGuest.
+func buildBigRefundGuest(t *testing.T) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "bigrefund_guest.wasm")
+	cmd := exec.Command("go", "build", "-o", out, "./testdata/bigrefund_guest")
+	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build wasip1 guest: %v\n%s", err, raw)
+	}
+	return out
+}
+
 // buildBigNestedAuthorizeGuest compiles the wasip1 test fixture that
 // answers any ".authorize" event with a SMALL auth_token field NESTED under
 // "provider" (ut-docs#384) -- see the guest's own doc comment for why the
@@ -220,6 +234,61 @@ func TestHandleEvent_AuthorizeResultRedactedInRealLog(t *testing.T) {
 		t.Fatalf("the real process log still contains the full auth_token payload verbatim:\n%s", logged)
 	}
 	if !strings.Contains(logged, "payment.demopay.authorize") {
+		t.Errorf("expected the event type in the real log line for debuggability, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "omitted") {
+		t.Errorf("expected a size placeholder in the real log line, got:\n%s", logged)
+	}
+}
+
+// TestHandleEvent_RefundResultRedactedInRealLog is the true end-to-end proof
+// for ut-docs#385, mirroring TestHandleEvent_AuthorizeResultRedactedInRealLog
+// for ".refund" events: a REAL compiled WASM module, run through the REAL
+// wazero runtime and the REAL logging package, answers a payment plugin's
+// refund hook (blockingPaymentEventWithResponse, refund_page.go) with a
+// large auth_token field. Same rationale as the ".authorize" sibling test —
+// a helper-only unit test can't prove HandleEvent's real call site routes
+// ".refund" through redaction too.
+func TestHandleEvent_RefundResultRedactedInRealLog(t *testing.T) {
+	guest := buildBigRefundGuest(t)
+	w := NewWasmRuntime(t.TempDir())
+	const pluginID = "com.test.bigrefund"
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
+		t.Fatalf("load guest module: %v", err)
+	}
+
+	ev := Event{ID: "ev1", Type: "payment.demopay.refund", Timestamp: time.Now(), Payload: json.RawMessage(`{}`)}
+
+	var resp json.RawMessage
+	var handleErr error
+	logged := captureRealStdout(t, func() {
+		resp, handleErr = w.HandleEvent(context.Background(), pluginID, ev)
+	})
+	if handleErr != nil {
+		t.Fatalf("HandleEvent: %v", handleErr)
+	}
+
+	var parsed struct {
+		AuthToken string `json:"auth_token"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil {
+		t.Fatalf("parse guest response %s: %v", resp, err)
+	}
+	if len(parsed.AuthToken) < 5000 {
+		t.Fatalf("test setup: guest response too small to prove anything, got %d bytes", len(parsed.AuthToken))
+	}
+
+	// The REAL returned answer (what the refund flow would actually act on)
+	// must be completely untouched by the logging fix.
+	if !strings.Contains(string(resp), parsed.AuthToken) {
+		t.Fatalf("HandleEvent's returned value was altered -- redaction must only affect the log, never the real plugin answer")
+	}
+
+	// The REAL log line, from the REAL logging package, must not.
+	if strings.Contains(logged, parsed.AuthToken) {
+		t.Fatalf("the real process log still contains the full auth_token payload verbatim:\n%s", logged)
+	}
+	if !strings.Contains(logged, "payment.demopay.refund") {
 		t.Errorf("expected the event type in the real log line for debuggability, got:\n%s", logged)
 	}
 	if !strings.Contains(logged, "omitted") {
