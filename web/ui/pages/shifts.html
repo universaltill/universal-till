@@ -76,6 +76,9 @@
                  onchange="document.getElementById('adjust-minor').value = Math.round(parseFloat(this.value || 0) * 100)">
         </label>
         <label>{{ T "shifts.reason" }} <input type="text" name="reason" required></label>
+        <label>{{ T "shifts.manager_pin" }}
+          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "shifts.manager_pin_placeholder" }}">
+        </label>
         <button type="submit" class="btn">{{ T "shifts.record" }}</button>
       </form>
     </details>
@@ -97,7 +100,7 @@
       <button type="submit" class="btn primary" style="width:100%">{{ T "shifts.open_new" }}</button>
     </form>
     {{ end }}
-    <div id="shift-result" class="muted" style="min-height:1.3rem; margin-top:.5rem"></div>
+    <div id="shift-result" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.5rem"></div>
 
     <details class="catalog-extra">
       <summary>{{ T "shifts.formula_title" }}</summary>
@@ -105,4 +108,22 @@
     </details>
   </div>
 </div>
+
+<script>
+// The open/close/adjustment forms above all target #shift-result with
+// hx-swap="innerHTML", but htmx never swaps a non-2xx response by default
+// — without this, every error (validation, the manager-PIN-required 403,
+// …) fails completely silently: the operator clicks Record and nothing
+// visibly happens. Same fix as refund.html's own #refund-msg handler.
+document.body.addEventListener('htmx:responseError', function (ev) {
+  var target = ev.detail && ev.detail.target;
+  if (!target || target.id !== 'shift-result') return;
+  // The server already renders a styled `<div class='error'>…</div>`
+  // fragment for non-JSON requests (respondAdjustmentError/
+  // respondShiftError/respondCloseError) — swap it in the same way a
+  // successful 2xx response would be, htmx just refuses to do this step
+  // itself for a non-2xx status.
+  target.innerHTML = ev.detail.xhr.responseText || '';
+});
+</script>
 {{ end }}
