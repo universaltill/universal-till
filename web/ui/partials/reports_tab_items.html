@@ -1,0 +1,52 @@
+<div class="card">
+  <h2>{{ T "reports.top_items" }}</h2>
+  <table class="table">
+    <tbody>
+      {{ range .Top }}
+      <tr><td>{{ .Name }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+<div class="card">
+  <h2>{{ T "reports.slow_items" }}</h2>
+  <table class="table">
+    <tbody>
+      {{ range .Slow }}
+      <tr><td>{{ .Name }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+<div class="card">
+  <h2>{{ T "reports.dead_stock" }}</h2>
+  <p class="muted" style="margin-block-start:0">{{ T "reports.dead_stock_hint" }}</p>
+  <table class="table">
+    <tbody>
+      {{ range .DeadStock }}
+      <tr><td>{{ .Name }}</td><td class="muted">{{ .SKU }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .StockValue }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+<div class="card">
+  <h2>{{ T "reports.margins" }}</h2>
+  <p class="muted" style="margin-block-start:0">{{ T "reports.margins_hint" }}</p>
+  <table class="table">
+    <tbody>
+      {{ range .Margins }}
+      <tr><td>{{ .Name }}</td><td class="muted" style="text-align:end">{{ money .Revenue }}</td>
+          <td class="muted" style="text-align:end">−{{ money .Cost }}</td>
+          <td style="text-align:end; font-weight:600" class="{{ if lt .Margin 0 }}stock-low{{ end }}">{{ money .Margin }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.margins_none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>

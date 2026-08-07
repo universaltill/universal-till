@@ -55,6 +55,14 @@ func getReportsPage(t *testing.T, mux *http.ServeMux, query string) *httptest.Re
 	return rec
 }
 
+func getReportsTab(t *testing.T, mux *http.ServeMux, name, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/ui/reports/tab/"+name+query, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestReportsPage_DaysParamValidAndInvalidValues(t *testing.T) {
 	mux, _ := newReportsPageTestDeps(t)
 
@@ -179,7 +187,7 @@ func TestReportsPage_TillsSectionHiddenUnlessMultipleRegisters(t *testing.T) {
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,till_id,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,'',datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec := getReportsPage(t, mux, "")
+	rec := getReportsTab(t, mux, "payments", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -194,7 +202,7 @@ func TestReportsPage_TillsSectionHiddenUnlessMultipleRegisters(t *testing.T) {
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,till_id,created_at) VALUES('s2','R002','completed','sale','GBP',900,0,0,900,'t2',datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec = getReportsPage(t, mux, "")
+	rec = getReportsTab(t, mux, "payments", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -221,7 +229,7 @@ func TestReportsPage_EODRowsOnlyIncludeEODKind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := getReportsPage(t, mux, "")
+	rec := getReportsTab(t, mux, "eod", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -242,7 +250,16 @@ func TestReportsPage_ManagerOnlySectionsGatedByRole(t *testing.T) {
 	// silently pass or fail depending on the developer's shell environment.
 	t.Setenv("UT_AUTH", "on")
 	mux, _ := newReportsPageTestDeps(t)
+	// The page itself must not offer the EOD tab to a non-manager…
 	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "/ui/reports/tab/eod") {
+		t.Fatalf("expected the manager-only EOD tab hidden for a non-manager, got: %s", rec.Body.String())
+	}
+	// …and the fragment itself stays gated even when requested directly.
+	rec = getReportsTab(t, mux, "eod", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -281,7 +298,7 @@ func TestReportsPage_SeasonalCardRendersLunarBadgeAndCategoryRollup(t *testing.T
 	seedSeasonalSale("sy1", "bread", 10, 360)
 	seedSeasonalSale("sy2", "dates", 9, 330)
 
-	rec := getReportsPage(t, mux, "")
+	rec := getReportsTab(t, mux, "forecast", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -356,7 +373,7 @@ func TestReportsPage_SeasonalCategoryRollupHiddenWhenOnlyUncategorized(t *testin
 		t.Fatal(err)
 	}
 
-	rec := getReportsPage(t, mux, "")
+	rec := getReportsTab(t, mux, "forecast", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -391,7 +408,7 @@ func TestReportsPage_WeekdayBarsNormalizeToBusiestAsFullWidth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := getReportsPage(t, mux, "")
+	rec := getReportsTab(t, mux, "sales-trend", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -401,5 +418,121 @@ func TestReportsPage_WeekdayBarsNormalizeToBusiestAsFullWidth(t *testing.T) {
 	}
 	if !strings.Contains(body, "inline-size:50%") {
 		t.Fatalf("expected the less-busy weekday bar normalized to 50%%, got: %s", body)
+	}
+}
+
+// The whole point of ut-docs#401: heavy report queries must NOT run on page
+// load. A distinctively-named top seller proves it — its name can only reach
+// the response body via TopItems, so it must be absent from GET /reports and
+// present only in the items tab fragment.
+func TestReportsPage_TopItemsDeferredToItemsTab(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('zz1','SKU-zz','Zzyzx Distinctive Top Item',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('s1-l1','s1',1,'zz1','Zzyzx Distinctive Top Item',3,100,0,0,0,100,100)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Zzyzx Distinctive Top Item") {
+		t.Fatalf("expected the top-items query deferred (item name absent from the initial page), got: %s", rec.Body.String())
+	}
+
+	rec = getReportsTab(t, mux, "items", "?days=14")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Zzyzx Distinctive Top Item") {
+		t.Fatalf("expected the top seller in the items tab fragment, got: %s", rec.Body.String())
+	}
+}
+
+func TestReportsTabs_AllNamedTabsReturn200(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod"} {
+		rec := getReportsTab(t, mux, name, "?days=14")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("tab %q: expected 200, got %d: %s", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestReportsTabs_DaysParamHonored(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	// A sale 5 days ago: inside a 14-day window, outside a 2-day one.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('zz1','SKU-zz','Zzyzx Windowed Item',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now','-5 days'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('s1-l1','s1',1,'zz1','Zzyzx Windowed Item',3,100,0,0,0,100,100)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "items", "?days=14")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Zzyzx Windowed Item") {
+		t.Fatalf("expected the 5-day-old sale inside the 14-day window, got: %s", rec.Body.String())
+	}
+
+	rec = getReportsTab(t, mux, "items", "?days=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Zzyzx Windowed Item") {
+		t.Fatalf("expected the 5-day-old sale outside the 2-day window, got: %s", rec.Body.String())
+	}
+}
+
+func TestReportsTabs_UnknownNameReturns404(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+	rec := getReportsTab(t, mux, "nonsense", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown tab, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReportsPage_TabNavWiredToFragmentRoutes(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+	rec := getReportsPage(t, mux, "?days=30")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod"} {
+		want := `hx-get="/ui/reports/tab/` + name + `?days=30"`
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected the tab nav to contain %s, got: %s", want, body)
+		}
+	}
+	if !strings.Contains(body, `id="report-tab-panel"`) {
+		t.Fatalf("expected the empty tab panel container, got: %s", body)
+	}
+	// No tab may auto-fire on page load — a load trigger would defeat the
+	// entire deferral. (The base layout has its own unrelated load-triggered
+	// elements, so only inspect elements pointing at the tab fragments.)
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, "/ui/reports/tab/") && strings.Contains(line, "hx-trigger") {
+			t.Fatalf("expected no explicit hx-trigger on tab buttons (click is the default; load would defeat deferral), got: %s", line)
+		}
 	}
 }
