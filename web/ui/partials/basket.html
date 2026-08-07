@@ -36,19 +36,21 @@
         {{ if .Lines }}
           {{ range .Lines }}
             <tr>
-              <td class="line-item">
-                {{ if .ImageURL }}<img class="line-thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="line-thumb line-thumb-empty"></span>{{ end }}
-                <span class="line-text">
-                  <span class="line-name">{{ .Name }}</span>
-                  <small class="muted">{{ .SKU }}</small>
-                  {{ if .Modifiers }}
-                  <ul class="line-modifiers">
-                    {{ range .Modifiers }}
-                    <li class="muted">+ {{ .OptionName }}{{ if .PriceDeltaMinor }} ({{ money .PriceDeltaMinor }}){{ end }}</li>
+              <td>
+                <div class="line-item">
+                  {{ if .ImageURL }}<img class="line-thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="line-thumb line-thumb-empty"></span>{{ end }}
+                  <span class="line-text">
+                    <span class="line-name">{{ .Name }}</span>
+                    <small class="muted">{{ .SKU }}</small>
+                    {{ if .Modifiers }}
+                    <ul class="line-modifiers">
+                      {{ range .Modifiers }}
+                      <li class="muted">+ {{ .OptionName }}{{ if .PriceDeltaMinor }} ({{ money .PriceDeltaMinor }}){{ end }}</li>
+                      {{ end }}
+                    </ul>
                     {{ end }}
-                  </ul>
-                  {{ end }}
-                </span>
+                  </span>
+                </div>
               </td>
               <td>
                 <div class="line-inputs">
