@@ -119,6 +119,85 @@ func TestSafeAskResultForLog_RedactsTokenOrSecretFieldByNameEvenWhenSmall(t *tes
 	}
 }
 
+// TestSafeAskResultForLog_RedactsNestedTokenFieldByName proves a credential
+// nested under another key -- e.g. a payment-gateway response shaped like
+// {"approved":true,"provider":{"auth_token":"…"}} -- is redacted the same
+// way a top-level auth_token is (ut-docs#384). Before this fix,
+// safeAskResultForLog only inspected top-level keys: "provider" itself
+// doesn't match looksLikeSensitiveFieldName and its raw JSON value can stay
+// under maxAskFieldBytes, so the nested token reached the log verbatim.
+func TestSafeAskResultForLog_RedactsNestedTokenFieldByName(t *testing.T) {
+	out := `{"approved":true,"provider":{"auth_token":"tok_live_abc123"}}`
+
+	got := safeAskResultForLog(out)
+
+	if strings.Contains(got, "tok_live_abc123") {
+		t.Fatalf("a nested auth_token field was logged verbatim: %s", got)
+	}
+	if !strings.Contains(got, `"approved":true`) {
+		t.Errorf("logged line should still show the small top-level approved field, got: %s", got)
+	}
+	if !strings.Contains(got, "omitted") {
+		t.Errorf("expected a size placeholder for the redacted nested field, got: %s", got)
+	}
+}
+
+// TestSafeAskResultForLog_RedactsOversizedNestedField proves a nested field
+// that's too large (rather than sensitively-named) is also caught -- the
+// same maxAskFieldBytes rule top-level fields already get, applied one
+// level down.
+func TestSafeAskResultForLog_RedactsOversizedNestedField(t *testing.T) {
+	bigPayload := strings.Repeat("A", 5000)
+	out := `{"approved":true,"provider":{"raw_response":"` + bigPayload + `"}}`
+
+	got := safeAskResultForLog(out)
+
+	if strings.Contains(got, bigPayload) {
+		t.Fatalf("a large nested field was logged verbatim: %s", got)
+	}
+	if !strings.Contains(got, `"approved":true`) {
+		t.Errorf("logged line should still show the small top-level approved field, got: %s", got)
+	}
+}
+
+// TestSafeAskResultForLog_RedactsTokenInArrayOfObjects proves an
+// array-of-objects field is walked the same way a nested object is -- a
+// report/export-shaped response can return a list of per-row objects, any
+// of which could carry a sensitive field.
+func TestSafeAskResultForLog_RedactsTokenInArrayOfObjects(t *testing.T) {
+	out := `{"ok":true,"charges":[{"id":"ch_1","client_secret":"cs_live_abc123"},{"id":"ch_2"}]}`
+
+	got := safeAskResultForLog(out)
+
+	if strings.Contains(got, "cs_live_abc123") {
+		t.Fatalf("a client_secret nested inside an array element was logged verbatim: %s", got)
+	}
+	for _, want := range []string{`"ok":true`, `"id":"ch_1"`, `"id":"ch_2"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("logged line missing %s, still needed for debugging: %s", want, got)
+		}
+	}
+}
+
+// TestSafeAskResultForLog_FlatShapeRedactionUnchanged is a direct
+// before/after guard for the flat-shape behavior safeAskResultForLog had
+// prior to ut-docs#384's recursive rewrite -- proves the existing top-level
+// redaction rules (oversized field, sensitively-named field, small
+// response left untouched) still hold byte-for-byte.
+func TestSafeAskResultForLog_FlatShapeRedactionUnchanged(t *testing.T) {
+	if got, want := safeAskResultForLog(`{"rate_bp":2000}`), `{"rate_bp":2000}`; got != want {
+		t.Errorf("flat small response changed: got %q want %q", got, want)
+	}
+	out := `{"approved":true,"auth_token":"tok_live_abc123"}`
+	got := safeAskResultForLog(out)
+	if strings.Contains(got, "tok_live_abc123") {
+		t.Fatalf("flat top-level auth_token no longer redacted: %s", got)
+	}
+	if !strings.Contains(got, `"approved":true`) {
+		t.Errorf("flat top-level approved field should survive redaction, got: %s", got)
+	}
+}
+
 // TestSafeAskResultForLog_CapsOverallSizeWhenManySmallFieldsAddUp proves
 // many individually-small fields (each under maxAskFieldBytes, so none is
 // redacted on its own) can't sum to an unbounded log line -- e.g. a report
