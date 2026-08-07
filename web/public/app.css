@@ -497,6 +497,16 @@ a.btn, a.btn:hover { text-decoration: none; }
 .btn-actions { display: flex; gap: .25rem; justify-content: center; }
 .btn-actions .btn { padding: .4rem .6rem; font-size: .85rem; min-height: 0; }
 
+/* ---------- Sale-screen category tabs + search (ut-docs#418) ----------
+   .products-finder is the Alpine scope shared by the search input, the
+   tab bar and the grid below it — all three filters (active tab, search
+   query) apply client-side to the already-rendered tile set, no server
+   round trip, so there is nothing for a second filter to silently drop
+   (the class of bug the self-order kiosk's own search+category
+   combination has, ut-docs#419). */
+.products-finder { display: flex; flex-direction: column; gap: .6rem; }
+.products-finder input[type="search"] { width: 100%; }
+
 /* ---------- Category groups ----------
    Each section's --cat-color custom property is set inline per group (an
    explicit per-category color, or a deterministic auto-color — see
