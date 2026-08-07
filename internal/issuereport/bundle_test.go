@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,14 +19,14 @@ func withTempPendingDir(t *testing.T) {
 
 func TestSaveRequiresNoteOrAudio(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := Save("", nil, nil, nil); err == nil {
+	if _, err := Save("", "", nil, nil, nil); err == nil {
 		t.Fatal("expected error when both note and audio are empty")
 	}
 }
 
 func TestSaveAcceptsNoteOnly(t *testing.T) {
 	withTempPendingDir(t)
-	id, err := Save("printer jammed, no voice note", nil, nil, nil)
+	id, err := Save("printer jammed, no voice note", "", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Save with note only: %v", err)
 	}
@@ -46,14 +47,65 @@ func TestSaveAcceptsNoteOnly(t *testing.T) {
 
 func TestSaveAcceptsAudioOnly(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := Save("", []byte("fake-audio"), nil, nil); err != nil {
+	if _, err := Save("", "", []byte("fake-audio"), nil, nil); err != nil {
 		t.Fatalf("Save with audio only: %v", err)
+	}
+}
+
+// The operator's UI locale at capture time (ut-docs#397) must survive the
+// save: written into meta.json under the "locale" key and read back on the
+// bundle by Pending(), so cloud-side transcription can hand it to Whisper.
+func TestSaveLocaleRoundTrips(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("", "fa", []byte("fake-audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save with locale: %v", err)
+	}
+
+	// The raw meta.json must carry the snake_case "locale" key — that file is
+	// the on-disk contract, not just the in-process struct.
+	raw, err := os.ReadFile(filepath.Join(PendingDir, id, "meta.json"))
+	if err != nil {
+		t.Fatalf("read meta.json: %v", err)
+	}
+	if !strings.Contains(string(raw), `"locale": "fa"`) {
+		t.Errorf("meta.json = %s, want a %q entry", raw, `"locale": "fa"`)
+	}
+
+	bundles, err := Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 pending bundle, got %d", len(bundles))
+	}
+	if bundles[0].Meta.Locale != "fa" {
+		t.Errorf("Meta.Locale = %q, want %q", bundles[0].Meta.Locale, "fa")
+	}
+}
+
+// An empty locale (never captured — e.g. the JS-less path) is valid: the
+// bundle saves exactly as before and the field just round-trips empty.
+func TestSaveEmptyLocaleStillSaves(t *testing.T) {
+	withTempPendingDir(t)
+	if _, err := Save("printer jammed", "", []byte("fake-audio"), nil, nil); err != nil {
+		t.Fatalf("Save with empty locale: %v", err)
+	}
+	bundles, err := Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(bundles) != 1 {
+		t.Fatalf("expected 1 pending bundle, got %d", len(bundles))
+	}
+	if bundles[0].Meta.Locale != "" {
+		t.Errorf("Meta.Locale = %q, want empty", bundles[0].Meta.Locale)
 	}
 }
 
 func TestSaveThenPendingRoundTrip(t *testing.T) {
 	withTempPendingDir(t)
-	id, err := Save("printer jammed", []byte("fake-audio"), []byte("fake-video"), nil)
+	id, err := Save("printer jammed", "", []byte("fake-audio"), []byte("fake-video"), nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -85,7 +137,7 @@ func TestSaveThenPendingRoundTrip(t *testing.T) {
 
 func TestSaveWithoutVideoLeavesVideoPathEmpty(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := Save("", []byte("fake-audio"), nil, nil); err != nil {
+	if _, err := Save("", "", []byte("fake-audio"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	bundles, err := Pending()
@@ -102,14 +154,14 @@ func TestSaveWithoutVideoLeavesVideoPathEmpty(t *testing.T) {
 
 func TestPendingOrdersOldestFirst(t *testing.T) {
 	withTempPendingDir(t)
-	first, err := Save("first", []byte("a"), nil, nil)
+	first, err := Save("first", "", []byte("a"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	// Force a distinguishable timestamp — two Saves in the same test can
 	// land in the same nanosecond-resolution instant on a fast machine.
 	time.Sleep(2 * time.Millisecond)
-	second, err := Save("second", []byte("a"), nil, nil)
+	second, err := Save("second", "", []byte("a"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -129,7 +181,7 @@ func TestPendingOrdersOldestFirst(t *testing.T) {
 
 func TestDiscardRemovesBundle(t *testing.T) {
 	withTempPendingDir(t)
-	id, err := Save("note", []byte("a"), nil, nil)
+	id, err := Save("note", "", []byte("a"), nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -167,7 +219,7 @@ func TestSaveCleansUpDirectoryOnWriteFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	if _, err := Save("note", []byte("audio"), nil, nil); err == nil {
+	if _, err := Save("note", "", []byte("audio"), nil, nil); err == nil {
 		t.Fatal("expected Save to fail on a read-only bundle directory")
 	}
 
@@ -179,7 +231,7 @@ func TestSaveCleansUpDirectoryOnWriteFailure(t *testing.T) {
 func TestSaveWithImagesRoundTrip(t *testing.T) {
 	withTempPendingDir(t)
 	images := [][]byte{[]byte("fake-png-0"), []byte("fake-png-1"), []byte("fake-png-2")}
-	id, err := Save("printer jammed", nil, nil, images)
+	id, err := Save("printer jammed", "", nil, nil, images)
 	if err != nil {
 		t.Fatalf("Save with images: %v", err)
 	}
@@ -231,7 +283,7 @@ func TestPendingOrdersImagesNumericallyNotLexically(t *testing.T) {
 	for i := range images {
 		images[i] = []byte("fake-png-" + strconv.Itoa(i))
 	}
-	if _, err := Save("twelve screenshots", nil, nil, images); err != nil {
+	if _, err := Save("twelve screenshots", "", nil, nil, images); err != nil {
 		t.Fatalf("Save with %d images: %v", n, err)
 	}
 
@@ -263,7 +315,7 @@ func TestPendingOrdersImagesNumericallyNotLexically(t *testing.T) {
 
 func TestSaveWithoutImagesLeavesImagePathsEmpty(t *testing.T) {
 	withTempPendingDir(t)
-	if _, err := Save("printer jammed", nil, nil, nil); err != nil {
+	if _, err := Save("printer jammed", "", nil, nil, nil); err != nil {
 		t.Fatalf("Save without images: %v", err)
 	}
 	bundles, err := Pending()
