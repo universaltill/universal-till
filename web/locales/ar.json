@@ -855,6 +855,7 @@
   "tills.revoke": "إلغاء",
   "tills.revoke_confirm": "هل تريد إلغاء هذا الصندوق؟ سيتوقف عن المزامنة حتى يُقترن مجدداً.",
   "tills.show_qr": "إظهار رمز الاقتران",
+  "tills.the_primary": "الأساسي",
   "tills.this_till": "هذا الصندوق",
   "tills.title": "الصناديق",
   "translations.col.key": "المفتاح",

@@ -127,9 +127,15 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 				break
 			}
 		}
+		// ut-docs#405: this used to show only a bare replica COUNT — there
+		// was nowhere else to read a name from before #396 added
+		// tillNameOrDefault. Now it shows the same "this till's own name"
+		// every other identity surface (Settings, /tills) already shows.
+		label := tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
 		httpx.RenderPartial("ui/partials/sync_chip.html", map[string]any{
 			"isReplica": false,
 			"class":     class,
+			"label":     label,
 			"count":     len(list),
 		})(w, r)
 	})

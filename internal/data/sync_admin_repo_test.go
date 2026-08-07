@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -136,6 +137,177 @@ func TestAdminDumpApplyRoundTrip(t *testing.T) {
 	_ = replica.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE barcode = '500123'`).Scan(&n)
 	if n != 0 {
 		t.Fatal("deleted barcode survived on the replica")
+	}
+}
+
+// ut-docs#405: the shop's till roster now syncs like any other admin
+// table, but bearer_hash is that row's sync-auth secret and must never
+// leave the primary — redactCols strips it out of the dump, and migration
+// 030 relaxed the column to nullable so the resulting upsert (which force-
+// nulls it) doesn't violate NOT NULL. Two tills landing on a replica with
+// no bearer_hash at all must not collide against the UNIQUE index either
+// (SQLite treats every NULL as distinct).
+func TestAdminDumpApplyRoundTrip_TillsRosterRedactsBearerHash(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-a', 'Front Counter', 'realhash-a')`)
+	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-b', 'Back Counter', 'realhash-b')`)
+
+	repo := NewSyncAdminRepo(primary.DB)
+	bundle, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["tills"] {
+		if _, ok := rec["bearer_hash"]; ok {
+			t.Fatalf("bearer_hash must never appear in a dumped tills row, got %+v", rec)
+		}
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	rows, err := replica.Query(`SELECT id, name, bearer_hash FROM tills ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query replica tills: %v", err)
+	}
+	defer rows.Close()
+	var got []struct {
+		id, name string
+		hash     sql.NullString
+	}
+	for rows.Next() {
+		var r struct {
+			id, name string
+			hash     sql.NullString
+		}
+		if err := rows.Scan(&r.id, &r.name, &r.hash); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected both tills to land on the replica, got %d", len(got))
+	}
+	for _, r := range got {
+		if r.hash.Valid {
+			t.Fatalf("till %s: bearer_hash leaked to the replica: %q", r.id, r.hash.String)
+		}
+	}
+
+	// Primary's own copy is untouched — dumping never mutates the source.
+	var stillReal string
+	if err := primary.QueryRow(`SELECT bearer_hash FROM tills WHERE id = 'till-a'`).Scan(&stillReal); err != nil || stillReal != "realhash-a" {
+		t.Fatalf("primary's own bearer_hash must be unchanged: %q %v", stillReal, err)
+	}
+}
+
+// ut-docs#405 (independent review finding): a replica doesn't only learn
+// about tills through this incremental sync — the enrolment snapshot
+// (ut-docs#368) is a full-DB copy, so a freshly-joined replica ALREADY has
+// every till's REAL bearer_hash the moment it joins, before this table's
+// sync ever runs once. skipCols's "leave whatever's there alone" (the
+// payment_methods.plugin_id semantics) would let that real secret sit on
+// the replica forever, untouched by every subsequent pull — redactCols
+// must actively NULL it out on every apply, not merely avoid setting a
+// new one, exactly BECAUSE a real value can already be there through a
+// path other than this table's own sync.
+func TestAdminApplyTills_RedactsPreExistingBearerHash(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-a', 'Front', 'realhash-a')`)
+	// Simulates a snapshot-joined replica: it already holds the primary's
+	// real row verbatim, from BEFORE any incremental admin-bundle sync.
+	mustExec(t, replica, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-a', 'Front', 'realhash-a')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var hash sql.NullString
+	if err := replica.QueryRow(`SELECT bearer_hash FROM tills WHERE id = 'till-a'`).Scan(&hash); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if hash.Valid {
+		t.Fatalf("a pre-existing REAL bearer_hash survived an admin-bundle apply on the replica: %q", hash.String)
+	}
+}
+
+// ut-docs#405 (independent review finding): same staleness problem as
+// bearer_hash, for a non-secret reason — a snapshot-joined replica starts
+// with the primary's real last_seen_at timestamps baked in, and nothing
+// but the primary ever updates them again. Left as skipCols (the first
+// draft of this fix), that stale timestamp would sit on the replica
+// forever, rendered as if it were live. redactCols means every replica
+// honestly shows "—" for a sibling's last-seen time instead.
+func TestAdminApplyTills_RedactsPreExistingLastSeenAt(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash, last_seen_at) VALUES ('till-a', 'Front', 'hash-a', '2026-08-07T10:00:00Z')`)
+	// Simulates a snapshot-joined replica holding a much older timestamp
+	// than the primary's current one, from before any incremental sync.
+	mustExec(t, replica, `INSERT INTO tills (id, name, bearer_hash, last_seen_at) VALUES ('till-a', 'Front', 'hash-a', '2026-01-01T00:00:00Z')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var lastSeen sql.NullString
+	if err := replica.QueryRow(`SELECT last_seen_at FROM tills WHERE id = 'till-a'`).Scan(&lastSeen); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if lastSeen.Valid {
+		t.Fatalf("a stale pre-existing last_seen_at survived an admin-bundle apply on the replica: %q", lastSeen.String)
+	}
+}
+
+// ut-docs#405 (independent review finding): TillByBearerHash bumps
+// tills.last_seen_at as a side effect of every single authenticated sync
+// call (see syncTill / registerSyncAdmin's admin-bundle endpoint) — if
+// that column were part of the dump, the bundle's whole-shop fingerprint
+// would move on every tick, permanently defeating the ?have=
+// unchanged-poll optimisation for EVERY table, not just tills, the moment
+// any till has ever synced once. last_seen_at must never enter the dump
+// at all (skipCols, not redactCols — a replica just never learns a
+// sibling's live last-seen time, which the UI already renders as "—").
+func TestAdminDumpFingerprint_StableAcrossTillAuthTouch(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-a', 'Replica 1', 'hash-a')`)
+
+	repo := NewSyncAdminRepo(primary.DB)
+	before, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+
+	// Exactly what every authenticated sync call does.
+	if _, ok, err := NewTillsRepo(primary.DB).TillByBearerHash(ctx, "hash-a"); err != nil || !ok {
+		t.Fatalf("auth: ok=%v err=%v", ok, err)
+	}
+
+	after, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("re-dump: %v", err)
+	}
+	if before.Fingerprint() != after.Fingerprint() {
+		t.Fatalf("fingerprint moved after a mere sync-auth touch (last_seen_at leaked into the dump): %s -> %s",
+			before.Fingerprint(), after.Fingerprint())
 	}
 }
 
