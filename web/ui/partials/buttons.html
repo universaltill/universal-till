@@ -2,26 +2,97 @@
 {{ define "buttons" }}
 <div class="products">
   <h2>{{ T "products.title" }}</h2>
-  <div id="buttons-grid" class="category-groups">
-    {{ if not .Groups }}
-      <p class="empty">{{ T "products.empty" }}</p>
-    {{ else if and (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
-      {{/* No category has ever been assigned to anything on this till's
-           sale screen — BuildCategoryGroups's only group is the synthetic
-           uncategorized bucket. Render flat, same as before this feature,
-           instead of one pointless "Uncategorized" header every existing
-           till (nothing has categories configured yet) would otherwise
-           show above its entire grid. */}}
-      <div class="grid">
-        {{ range (index .Groups 0).Buttons }}{{ template "product-tile" . }}{{ end }}
+  {{ if not .Groups }}
+    <p class="empty">{{ T "products.empty" }}</p>
+  {{ else }}
+    {{/* $flat: no category has ever been assigned to anything on this
+         till's sale screen — BuildCategoryGroups's only group is the
+         synthetic uncategorized bucket. Render bare (no header, exactly
+         the pre-#418 behavior) — one pointless "Uncategorized" header
+         above the entire grid helps nobody. $hasTabs: >=2 top-level
+         groups exist, so a tab bar has something to switch between. A
+         single REAL category (len==1, ID != "") falls into neither —
+         render it via "category-group" (its own header, unchanged from
+         before this feature) with no tab bar, same "nothing to switch
+         between" reasoning. Search applies in all three cases. */}}
+    {{ $flat := and (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
+    {{ $hasTabs := gt (len .Groups) 1 }}
+    {{/* .ID is interpolated raw into an Alpine JS string literal below
+         (x-data, :class, @click) — html/template auto-escapes this as a
+         plain HTML attribute (a literal ' survives as &#39;, which the
+         DOM decodes back to ' before Alpine parses it), NOT as a JS
+         string, since html/template doesn't recognize x-data/:class/
+         @click as JS-attribute contexts the way it does onclick=. Safe
+         ONLY because every CategoryGroup.ID this template ever receives
+         is a server-generated uuid.NewString() (CatalogRepo.
+         EnsureCategory / EnsureCategoryUnder) or one of the fixed
+         cat_* seed literals — never caller-supplied text. If a category
+         ID ever becomes user-editable, this needs SearchResult.AddVals()
+         's treatment (marshal server-side), not raw interpolation. */}}
+    <div class="products-finder" x-data="{ tab: '{{ if $hasTabs }}{{ (index .Groups 0).ID }}{{ end }}', q: '' }">
+      <input type="search" id="products-search" x-model="q"
+             placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
+             autocomplete="off">
+      {{ if $hasTabs }}
+      {{/* One tab per top-level category (ut-docs#418) — findable by name
+           via search below, ut-docs#173's barcode-less-item gap is
+           unaffected either way. Nested subcategories render as headed
+           sub-sections inside their parent's tab panel (see
+           "category-group-body"), not as their own top-level tab.
+           --cat-color carries each category's color onto its own tab
+           (border-block-start always, the active underline when
+           selected) — pre-#418, every category's color was visible at
+           once via its stacked section header; tabs make that one-at-a-
+           time, so the tab itself is now what carries the color instead
+           of losing it. */}}
+      <div class="tab-bar" role="tablist">
+        {{ range .Groups }}
+        <button type="button" class="tab" role="tab" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+        {{ end }}
       </div>
-    {{ else }}
-      {{ range .Groups }}{{ template "category-group" . }}{{ end }}
-    {{ end }}
-  </div>
+      {{ end }}
+      <div id="buttons-grid" class="category-groups">
+        {{ if $flat }}
+        <div class="grid">
+          {{ range (index .Groups 0).Buttons }}{{ template "product-tile" . }}{{ end }}
+        </div>
+        {{ else if $hasTabs }}
+        {{ range $i, $g := .Groups }}
+        {{/* x-cloak only the non-default panels — cloaking the initially-
+             active one too would hide the till's main content until
+             Alpine hydrates, the same tradeoff index.html's own Pay/Split
+             tabs make (only "split", never "pay", is cloaked). */}}
+        <div class="products-tab-panel" x-show="tab === '{{ $g.ID }}'"{{ if ne $i 0 }} x-cloak{{ end }}>
+          {{ template "category-group-body" $g }}
+        </div>
+        {{ end }}
+        {{ else }}
+        {{/* Exactly one real category, nothing uncategorized: no tab bar
+             (nothing to switch between), but its name/color still show
+             via the normal headed group template. */}}
+        {{ range .Groups }}{{ template "category-group" . }}{{ end }}
+        {{ end }}
+      </div>
+    </div>
+  {{ end }}
   <!-- Action buttons contributed by installed plugins -->
   <div hx-get="/ui/plugin-buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
+{{ end }}
+
+{{/* A top-level tab's own content: its own buttons (if any), then its
+     nested subcategories rendered with headers via the recursive
+     "category-group" template below — same markup a subcategory always
+     used, just no longer wrapping the top-level group itself (the tab
+     bar communicates that level now, so repeating it as a redundant
+     header inside every panel would be noise). */}}
+{{ define "category-group-body" }}
+  {{ if .Buttons }}
+  <div class="grid">
+    {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
+  </div>
+  {{ end }}
+  {{ range .Children }}{{ template "category-group" . }}{{ end }}
 {{ end }}
 
 {{/* One category (and, recursively, its nested subcategories) in the
@@ -45,6 +116,8 @@
   {{ if .HasModifiers }}
   <button
     class="btn-tile"
+    data-name="{{ .Label }}"
+    x-show="!q || $el.dataset.name.toLowerCase().includes(q.toLowerCase())"
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
     hx-trigger="click"
     hx-target="#modifier-modal"
@@ -57,6 +130,8 @@
   {{ else }}
   <button
     class="btn-tile"
+    data-name="{{ .Label }}"
+    x-show="!q || $el.dataset.name.toLowerCase().includes(q.toLowerCase())"
     hx-post="/api/pos/scan"
     hx-vals='{{ jsonVals "code" .Code }}'
     hx-trigger="click"
