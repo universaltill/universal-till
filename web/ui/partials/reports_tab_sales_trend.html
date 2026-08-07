@@ -1,0 +1,41 @@
+<div class="card">
+  <h2>{{ T "reports.by_day" }}</h2>
+  <table class="table">
+    <thead><tr><th>{{ T "reports.day" }}</th><th>{{ T "reports.sales" }}</th><th>{{ T "reports.tax" }}</th><th>{{ T "reports.revenue" }}</th></tr></thead>
+    <tbody>
+      {{ range .Daily }}
+      <tr><td>{{ .Day }}</td><td>{{ .Count }}</td><td>{{ money .TaxTotal }}</td><td><strong>{{ money .Total }}</strong></td></tr>
+      {{ else }}
+      <tr><td colspan="4" class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+<div class="card">
+  <h2>{{ T "reports.busy_days" }}</h2>
+  <table class="table busy-table">
+    <tbody>
+      {{ range .WeekdayBars }}
+      <tr><td style="inline-size:5.5rem">{{ T .Label }}</td>
+          <td><div class="busy-bar" style="inline-size:{{ .Pct }}%"></div></td>
+          <td class="muted" style="text-align:end; inline-size:4rem">{{ .Count }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+<div class="card">
+  <h2>{{ T "reports.busy_hours" }}</h2>
+  <table class="table busy-table">
+    <tbody>
+      {{ range .HourBars }}
+      <tr><td style="inline-size:5.5rem">{{ .Label }}</td>
+          <td><div class="busy-bar" style="inline-size:{{ .Pct }}%"></div></td>
+          <td class="muted" style="text-align:end; inline-size:4rem">{{ .Count }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>

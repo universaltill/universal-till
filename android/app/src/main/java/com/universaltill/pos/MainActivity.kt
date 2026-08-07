@@ -19,7 +19,9 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.os.LocaleListCompat
 
 /**
  * Native shell (ADR-0023, spec 013 Phase 2): binds to [TillService] — which
@@ -127,7 +129,83 @@ class MainActivity : AppCompatActivity() {
         statusView.visibility = if (BuildConfig.DEBUG) View.VISIBLE else View.GONE
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
-        webView.webViewClient = WebViewClient()
+        webView.webViewClient =
+            object : WebViewClient() {
+                // ut-docs#414: the loaded page already carries the till's
+                // configured locale on every render (base.html's
+                // <html lang="..."> — the same value web/locales/*.json is
+                // fully translated against), independent of the phone's own
+                // device locale. Reading it back here and applying it via
+                // AppCompatDelegate is what actually makes the NATIVE
+                // wrapper chrome (the foreground-service notification;
+                // TillService.refreshLocalizedNotification below) follow
+                // the till's own language instead of staying stuck on
+                // English/the device locale — that mismatch, not missing
+                // translated strings by themselves, was the actual gap
+                // this ticket reports.
+                //
+                // Independent review (2026-08-07) found and fixed two real
+                // bugs in the first draft of this mechanism, both load-
+                // bearing:
+                //  1. `?lang=` reaches <html lang="..."> UNVALIDATED
+                //     (internal/httpx.ResolveLocale) -- a value like "EN",
+                //     "fa_IR", or garbage would either never match the
+                //     comparison below (permanently re-firing on every
+                //     navigation) or reach LocaleListCompat.forLanguageTags
+                //     as garbage. Gated on KNOWN_LOCALES (the same four
+                //     this app actually ships translations for) before
+                //     touching AppCompatDelegate at all, and the
+                //     comparison itself now normalizes both sides through
+                //     the same LocaleListCompat round-trip instead of
+                //     comparing a canonical tag against raw DOM text.
+                //  2. AppCompatDelegate.setApplicationLocales() recreates
+                //     every resumed AppCompatActivity when the locale
+                //     actually changes (AndroidX's documented, OS-native
+                //     per-app-language mechanism) -- this Activity reloads
+                //     the WebView at TillService's root address afterward,
+                //     same as a normal cold start. Accepted deliberately: a
+                //     language switch is a rare, deliberate settings-type
+                //     action (done from /menu), and landing back on the
+                //     sale screen, fully localized, is standard per-app-
+                //     language UX, not a regression -- BUT ONLY if this
+                //     doesn't also fire on every ordinary cold launch. The
+                //     original comment claimed the applied locale persists
+                //     across process restarts "automatically" -- false:
+                //     AndroidX's auto-storage is opt-in via the
+                //     AppLocalesMetadataHolderService declaration
+                //     (AndroidManifest.xml), which the first draft never
+                //     added, so sRequestedAppLocales was null at every
+                //     process start and this recreated the Activity on
+                //     EVERY cold launch, not just on a genuine language
+                //     change. Fixed by adding that manifest declaration.
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    view?.evaluateJavascript("document.documentElement.lang") { result ->
+                        // evaluateJavascript's callback value is always
+                        // JSON-encoded ("\"en\"", or the literal string
+                        // "null" if the attribute is absent/empty) — never
+                        // raw text.
+                        val raw = result?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
+                        val lang = raw?.lowercase()?.takeIf { it in KNOWN_LOCALES }
+                        if (lang != null) {
+                            val requested = LocaleListCompat.forLanguageTags(lang)
+                            if (AppCompatDelegate.getApplicationLocales().toLanguageTags() != requested.toLanguageTags()) {
+                                AppCompatDelegate.setApplicationLocales(requested)
+                                // Same-process call: AppCompatDelegate's
+                                // static locale state (what str()/
+                                // ContextCompat.getString resolve against)
+                                // is already updated at this point, even
+                                // though the visual Activity recreate this
+                                // triggers hasn't happened yet -- so the
+                                // service's notification can catch up
+                                // immediately instead of waiting for a
+                                // restart it may never get.
+                                till?.refreshLocalizedNotification()
+                            }
+                        }
+                    }
+                }
+            }
         webView.webChromeClient =
             object : WebChromeClient() {
                 override fun onShowFileChooser(
@@ -193,5 +271,20 @@ class MainActivity : AppCompatActivity() {
         // an attached WebView is documented as unsafe) then release it.
         (webView.parent as? android.view.ViewGroup)?.removeView(webView)
         webView.destroy()
+    }
+
+    companion object {
+        // ut-docs#414: the exact locale codes this app ships native string
+        // resources for (values-fa/, values-tr/, values-ar/, plus the
+        // default values/ for "en") — matches
+        // universal-till/internal/httpx.AvailableLocales()'s set. A gate,
+        // not just a formatting nicety: internal/httpx.ResolveLocale
+        // accepts any `?lang=` value unvalidated and writes it straight
+        // into <html lang="...">, so without this a malformed or
+        // unsupported value would either permanently mismatch the
+        // comparison above (re-firing setApplicationLocales on every
+        // single page load) or reach LocaleListCompat.forLanguageTags as
+        // outright garbage (independent review, 2026-08-07).
+        private val KNOWN_LOCALES = setOf("en", "fa", "tr", "ar")
     }
 }

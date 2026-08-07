@@ -102,6 +102,23 @@ body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex
    touch target) that opens the /menu launcher of big tiles — no page has its
    own small-text link row. */
 .nav { flex-wrap: nowrap; }
+/* ut-docs#413: at a real phone width (confirmed live at 360px) .nav's own
+   content needs ~415px with `flex-wrap: nowrap` above — the right-most
+   nav-right chips (help, 🐞 report-issue, sync/session chips, and the
+   session chip's own Lock button) render past the right edge of the
+   viewport. Since `.nav` is inside `body.sale-screen`'s `overflow: hidden`
+   column (deliberate, so the sale screen itself never scrolls), that
+   overflow isn't a reachable scroll — it's simply invisible, off-canvas
+   content ("Lock" clipped to "Lo" in the field report). Wrapping to a
+   second row keeps every chip fully rendered and on-screen instead; the
+   sticky nav just gets taller, which `.pos-container`'s own `flex: 1 1
+   auto` already tolerates (see its own comment: "robust to the nav
+   wrapping to two rows"). Scoped to this new tier only — the 900px tablet
+   breakpoint above is untouched and still gets the single-row nav. */
+@media (max-width: 480px) {
+  .nav { flex-wrap: wrap; row-gap: .4rem; }
+  .nav-right { flex-wrap: wrap; margin-inline-start: 0; }
+}
 .nav-toggle { display: inline-flex; align-items: center; background: rgba(255,255,255,.12);
   color: #fff; border: 0; text-decoration: none;
   border-radius: 10px; padding: .6rem 1.1rem; min-height: 46px; font-size: 1rem;
@@ -289,6 +306,25 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   gap: 1rem; margin: .25rem 0 1rem;
 }
 .kiosk-actions { display: flex; align-items: center; gap: .6rem; }
+/* ut-docs#413: neither `.kiosk-header` nor `.kiosk-actions` wraps, so at a
+   real phone width (confirmed live at 360px) `.kiosk-actions` alone needs
+   ~411px for its three buttons (New Sale / Inventory / Deposit refund) in
+   one un-wrapped row. Flexbox's response to that squeeze isn't a clean
+   shrink — each button's own automatic minimum width is its LONGEST WORD
+   (buttons don't set white-space: nowrap), so "New Sale" and "Deposit
+   refund" each measured a rendered height of two text lines instead of
+   one, i.e. exactly the "blank-looking, no legible single-line label"
+   symptom reported — while the row as a whole still overflowed the
+   viewport (the same invisible-off-canvas mechanism as `.nav` above,
+   `body.sale-screen` hides it rather than scrolling to it). Wrapping both
+   levels lets each button render at its own full single-line width and
+   move to a new row instead of being squeezed below it — this is also
+   the underlying cause the ticket flagged as the money-path "Deposit
+   refund" trigger itself being unreachable/mis-rendered. */
+@media (max-width: 480px) {
+  .kiosk-header { flex-wrap: wrap; row-gap: .5rem; }
+  .kiosk-actions { flex-wrap: wrap; row-gap: .5rem; }
+}
 .status-pill {
   display: inline-flex; align-items: center; gap: .4rem;
   padding: .3rem .7rem; border-radius: 999px;
@@ -405,6 +441,37 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
     height: auto;
   }
   .pos-container > .basket { max-height: 45dvh; }
+}
+/* ut-docs#413: at the tablet tier above, `grid-template-rows: auto` is a
+   single track token applied to all three implicit rows (basket/tender/
+   products) alike, and none of them is a flexible (fr) track. Confirmed
+   live at 360x640: with no flexible track to absorb it, the grid's default
+   align-content (normal, which resolves to stretch for a grid container)
+   divided `.pos-container`'s own flex-allocated height into three EQUAL
+   ~129px rows regardless of content — nowhere near enough for the basket's
+   table + totals, so the totals row rendered below the fold of the
+   basket's own `overflow-y: auto` clip (an elementFromPoint probe at the
+   totals row's own coordinates hit the TENDER panel's tab-bar underneath
+   it, not the totals row itself — reported live as "the Subtotal row gets
+   obscured"). Giving tender the only flexible track absorbs all leftover
+   space itself during grid track sizing, which resolves before
+   align-content ever gets a say — the same trick the desktop grid above
+   already relies on (`minmax(8rem, 1fr) minmax(0, auto)`), just adapted
+   from two rows to three. `.products` gets an explicit cap too (a large
+   catalog's tile grid has no other height ceiling at this tier) and the
+   whole container keeps its overflow-y: auto — same "never invisible,
+   always reachable via scroll" fallback `.basket-scroll`/`.tab-panel`
+   already use elsewhere in this file, for a phone short enough that even
+   the three floors above don't all fit at once. Deliberately its own
+   block, not an edit to the 900px block above: this tier's fix is scoped
+   to phones, not the wider tablet range this bug also affects (a separate,
+   pre-existing issue, out of this ticket's scope). */
+@media (max-width: 480px) {
+  .pos-container {
+    grid-template-rows: minmax(min-content, 45dvh) minmax(min-content, 1fr) minmax(min-content, 26dvh);
+    overflow-y: auto;
+  }
+  .pos-container > .products { max-height: 26dvh; }
 }
 
 /* ---------- Cards & forms ---------- */
@@ -610,6 +677,19 @@ a.btn, a.btn:hover { text-decoration: none; }
                     min-height: 44px; }
 .modifier-price { margin-inline-start: auto; color: var(--accent); font-variant-numeric: tabular-nums; }
 .modifier-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-block-start: .5rem; }
+/* ut-docs#413: `#pfand-modal`/`#hold-modal` already size themselves safely
+   at 90vw (confirmed live at 360px — the deposit-refund dialog itself,
+   its amount/manager-PIN inputs and its Cancel/Pay Out buttons all measure
+   fully on-screen with no CSS change needed here). This is a defensive-
+   only addition for locale/scale combinations this session couldn't drive
+   live (a longer fa/ar button label, or a higher ui_scale stacked on a
+   360px phone): without wrapping, two unshrinkable buttons could still
+   squeeze past the modal's own narrow content width the same way the
+   nav/kiosk-header buttons did. Wrapping costs nothing when they already
+   fit (today, in English, at 1x scale) and only ever helps otherwise. */
+@media (max-width: 480px) {
+  .modifier-actions { flex-wrap: wrap; }
+}
 /* qty + line-discount side by side, not stacked — a stacked pair nearly
    doubled every row's height and was the main reason only ~1 line item
    fit in the old basket panel (ut-docs#213). */
@@ -794,6 +874,17 @@ a.btn, a.btn:hover { text-decoration: none; }
 .scan-row { display: flex; gap: .4rem; }
 .scan-row input[name="code"] { flex: 1; min-width: 0; }
 .scan-row input[name="qty"] { width: 3.8rem; }
+/* ut-docs#413: this input's own `min-width: 0` above deliberately lets it
+   shrink below its placeholder's content width (unlike the nav/kiosk
+   buttons elsewhere in this file, which is exactly what made them squeeze
+   below their own label) — a real, live reported symptom ("Barco" instead
+   of "Barcode") at a narrow enough width/locale/scale combination. Native
+   inputs clip an overflowing value or placeholder outright, mid-character,
+   with no ellipsis unless asked for; this makes any such truncation
+   deliberate instead. */
+@media (max-width: 480px) {
+  .scan-row input[name="code"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 
 .held-strip { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
 .held-strip:empty { display: none; }
@@ -858,6 +949,30 @@ a.btn, a.btn:hover { text-decoration: none; }
 .split-tender-status.success { color: #15803d; }
 .split-tender-status.info { color: #1d4ed8; }
 .tender-actions { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+
+/* ut-docs#413: every money-path action grid feeding the tender panel
+   (Cash/Card, Hold Sale/New customer, split-tender's own field + action
+   grids) is a plain `1fr 1fr` two-column layout — safe at kiosk/tablet
+   widths, but exactly the shape that squeezes a button below its own
+   label at a real phone width (360px content column here is ~290px after
+   panel padding; two 140px-floor columns plus their gap already only
+   just fits at 1x scale in English, with no margin for a longer locale
+   string or a higher ui_scale). Collapsed to one column instead of
+   measuring individual button widths, which would be fragile against
+   locale/scale variance. `.tender-actions` itself isn't applied by any
+   template today (confirmed: no hit for the class under web/ui) — it's
+   updated here anyway for parity with how this was originally scoped, but
+   `.pay-grid`/`.tender-footer`/`.split-grid`/`.split-controls` below are
+   the classes actually live on the sale screen. */
+@media (max-width: 480px) {
+  .pay-grid,
+  .tender-footer,
+  .split-grid,
+  .split-controls,
+  .tender-actions {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* ---------- Plugin buttons group (products panel) ---------- */
 .plugin-buttons { margin-top: .8rem; padding-top: .7rem; border-top: 1px dashed var(--border); }
@@ -1167,6 +1282,30 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar .sb-enrol:hover { color: var(--ink, #111827); border-color: var(--muted, #6b7280); }
+/* ut-docs#413: confirmed live at 360px — `.statusbar`'s row (conn chip +
+   the optional enrol/update pills + the version, none of it wrapping)
+   needs more width than a phone viewport has. Wrapping the bar itself
+   handles most of that; the update pill's own text is also the longest,
+   most locale-length-sensitive string on the bar ("Update available
+   v0.2.65 — In-app update isn't available here" reported truncated
+   mid-word) and the enrol pill has the same shape, so both get a deliberate
+   ellipsis cap too rather than relying on wrap alone for an outlier string
+   longer than one full row.
+   Placed AFTER .sb-update/.sb-enrol's own base rules above (independent
+   review, 2026-08-07) — not just after the tender/pos-container blocks
+   further up this file, like every other phone-tier block here. Equal
+   specificity to those base rules means source order decides the winner;
+   this only worked when it sat earlier because neither base rule declared
+   `overflow`/`text-overflow`/`max-inline-size` yet — a future edit adding
+   any of those to the base rule would have silently overridden this block
+   with nothing to warn about it. */
+@media (max-width: 480px) {
+  .statusbar { flex-wrap: wrap; row-gap: .2rem; }
+  .statusbar .sb-update,
+  .statusbar .sb-enrol {
+    overflow: hidden; text-overflow: ellipsis; max-inline-size: 70vw;
+  }
+}
 
 /* Claim-by-phone QR under the claim code (kiosk/desktop shells can't open a browser) */
 .claim-qr { margin-top: .6rem; }
