@@ -30,7 +30,8 @@ func TestWasmRuntimeSyncLoadsRealModuleAndSubscribes(t *testing.T) {
 	}
 	if _, err := db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES
 		('swh1', ?, 'test.sync.ping', 'guest.handle', 1),
-		('swh2', ?, 'test.sync.ask', 'guest.answer', 1)`, pluginID, pluginID); err != nil {
+		('swh2', ?, 'test.sync.ask', 'guest.answer', 1),
+		('swh3', ?, 'payment.test.refund', 'guest.handle', 1)`, pluginID, pluginID, pluginID); err != nil {
 		t.Fatalf("seed hooks: %v", err)
 	}
 
@@ -56,7 +57,7 @@ func TestWasmRuntimeSyncLoadsRealModuleAndSubscribes(t *testing.T) {
 
 	bus := SharedBus(db)
 	defer bus.ResetSubscribers() // stop drainers before the test DB closes
-	if !bus.HasSubscribers("test.sync.ping") || !bus.HasSubscribers("test.sync.ask") {
+	if !bus.HasSubscribers("test.sync.ping") || !bus.HasSubscribers("test.sync.ask") || !bus.HasSubscribers("payment.test.refund") {
 		t.Fatalf("hook events not subscribed")
 	}
 	// ".ask" events run blocking (the caller waits on the answer).
@@ -65,6 +66,11 @@ func TestWasmRuntimeSyncLoadsRealModuleAndSubscribes(t *testing.T) {
 	}
 	if bus.GetEventMode("test.sync.ping") == Blocking {
 		t.Fatalf("plain event unexpectedly blocking")
+	}
+	// ".refund" events run blocking too (the refund's payment leg waits on
+	// the plugin's decline/approve answer — ut-docs#434).
+	if bus.GetEventMode("payment.test.refund") != Blocking {
+		t.Fatalf("refund event not blocking")
 	}
 
 	// A second Sync with the same version keeps the compiled module (the
