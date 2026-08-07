@@ -361,10 +361,12 @@ func PfandRueckgabe(dp *common.Deps) http.HandlerFunc {
 	}
 }
 
-// Helper response functions for shifts
+// Helper response functions for shifts. JSON responses use the
+// { "data": …, "error": … } envelope universal-till/CLAUDE.md mandates for
+// every JSON API response (ut-docs#378).
 func respondShiftError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, status, ShiftOpenResponse{Success: false, Message: message})
+		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
 		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
 	}
@@ -372,7 +374,7 @@ func respondShiftError(w http.ResponseWriter, r *http.Request, status int, messa
 
 func respondShiftSuccess(w http.ResponseWriter, r *http.Request, data ShiftOpenResponse) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, http.StatusOK, data)
+		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
 		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Shift opened: %s</div>", data.ShiftID))
 	}
@@ -380,7 +382,7 @@ func respondShiftSuccess(w http.ResponseWriter, r *http.Request, data ShiftOpenR
 
 func respondCloseError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, status, ShiftCloseResponse{Success: false, Message: message})
+		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
 		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
 	}
@@ -388,7 +390,7 @@ func respondCloseError(w http.ResponseWriter, r *http.Request, status int, messa
 
 func respondCloseSuccess(w http.ResponseWriter, r *http.Request, data ShiftCloseResponse) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, http.StatusOK, data)
+		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
 		msg := fmt.Sprintf("<div class='success'>Shift closed. Expected: £%.2f, Actual: £%.2f, Variance: £%.2f</div>",
 			float64(data.ExpectedCash)/100, float64(data.ClosingCash)/100, float64(data.Variance)/100)
@@ -398,7 +400,7 @@ func respondCloseSuccess(w http.ResponseWriter, r *http.Request, data ShiftClose
 
 func respondAdjustmentError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, status, CashAdjustmentResponse{Success: false, Message: message})
+		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
 		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
 	}
@@ -406,7 +408,7 @@ func respondAdjustmentError(w http.ResponseWriter, r *http.Request, status int, 
 
 func respondAdjustmentSuccess(w http.ResponseWriter, r *http.Request, data CashAdjustmentResponse) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, http.StatusOK, data)
+		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
 		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Adjustment recorded: %s</div>", data.AdjustmentID))
 	}
