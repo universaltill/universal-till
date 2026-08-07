@@ -13,7 +13,7 @@ Ana kasa ekranı: ürünleri okutun veya seçin, ödemeyi alın, fişi yazdırı
 
 ## Nasıl kullanılır
 
-1. Barkodu okutun veya satış ekranında ürünü bulun: kategori sekmeleri arasında geçiş yapın ya da geçerli sekmeyi ada göre filtrelemek için arama kutusuna yazın.
+1. Barkodu okutun veya satış ekranında ürünü bulup dokunun: kategori sekmeleri arasında geçiş yapın ya da geçerli sekmeyi ada göre filtrelemek için arama kutusuna yazın, ardından eklemek için ürün kartına dokunun.
 2. Sepette adedi değiştirin veya satırı silin, sonra Öde'ye geçin.
 3. Sepeti beklet ile sıradaki müşteriye geçin, sonra geri çağırın; iadeler satış geçmişindedir.
 4. Tamamlanmış bir satışı iade etmek için Journal → satış geçmişinden açın: hangi satırların ne kadarının iade edileceğini seçin (daha önce iade edilen miktar izlenir, satılandan fazlasını iade edemezsiniz), ardından nakit mi yoksa orijinal ödeme yöntemine mi iade edileceğini seçin.
