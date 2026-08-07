@@ -401,6 +401,15 @@ func redactField(key string, v json.RawMessage, depth int) (json.RawMessage, boo
 		return placeholder, true
 	}
 	if depth >= maxAskNestingDepth {
+		// Fail closed, not open: a value still shaped like an object/array
+		// this deep can't be inspected further, so redact it wholesale by
+		// size rather than let it through un-redacted just because
+		// recursion stopped looking. A scalar this deep (already proven
+		// safe by the size/name check above) is left alone.
+		if len(v) > 0 && (v[0] == '{' || v[0] == '[') {
+			placeholder, _ := json.Marshal(fmt.Sprintf("<omitted: %d bytes>", len(v)))
+			return placeholder, true
+		}
 		return v, false
 	}
 
