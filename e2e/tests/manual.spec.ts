@@ -54,17 +54,65 @@ test('reads right-to-left in Persian', async ({ page }) => {
 });
 
 // Every page carries a "?" that lands on the topic documenting THAT page.
+// /backoffice and /menu are the ut-docs#326 coverage additions: pages the
+// route-coverage guard found undocumented.
 for (const [route, topic] of [
   ['/', 'sell'],
   ['/catalog', 'catalog'],
   ['/inventory', 'inventory'],
   ['/reports', 'reports'],
+  ['/backoffice', 'alerts'],
+  ['/menu', 'menu'],
 ] as const) {
   test(`the ? on ${route} opens the ${topic} topic`, async ({ page }) => {
     await page.goto(route);
-    const hint = page.getByTestId('help-hint');
+    // .first(): a page may carry extra section-level helpLink hints besides
+    // the nav's automatic one; the nav "?" always renders first.
+    const hint = page.getByTestId('help-hint').first();
     await expect(hint).toHaveAttribute('href', `/help/${topic}`);
     await hint.click();
     await expect(page.locator('#manual-topic')).toHaveAttribute('data-topic', topic);
   });
 }
+
+// A parameterized route: reports.md declares /journal/{receipt}, and the "?"
+// on a REAL receipt detail page (whose concrete path never equals that
+// pattern string) must resolve through the segment-wise matcher — the
+// end-to-end proof the Go unit tests can't give. The receipt comes from
+// completing a real cash sale, the same flow sale.spec.ts drives; the e2e
+// till has no pre-seeded sales.
+test('the ? on a receipt detail page opens the reports topic', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('textbox').first().fill('5000000000012');
+  await page.locator('.scan-row button[type=submit]').click();
+  await expect(page.locator('#basket')).toContainText('Coca-Cola');
+  await page.locator('.pay-btn', { hasText: 'Cash' }).first().click();
+  await expect(page.locator('#basket.receipt-view')).toBeVisible();
+
+  await page.goto('/journal');
+  const receiptLink = page.locator('a[href^="/journal/"]').first();
+  await expect(receiptLink).toBeVisible();
+  await receiptLink.click();
+  await expect(page).toHaveURL(/\/journal\/.+/);
+
+  const hint = page.getByTestId('help-hint').first();
+  await expect(hint).toHaveAttribute('href', '/help/reports');
+  await hint.click();
+  await expect(page.locator('#manual-topic')).toHaveAttribute('data-topic', 'reports');
+});
+
+// The settings page's route is claimed by the display topic, but five topics
+// document SECTIONS of it — those carry explicit helpLink "?" hints next to
+// their headings (backups, claim, payments, printing, updates). Asserting
+// each renders and points at its topic; no bounding-box placement check —
+// settings isn't a tap-critical kiosk surface like the tender panel, so
+// existence + target is the right strength here.
+test('settings sections carry their own ? hints', async ({ page }) => {
+  await page.goto('/settings');
+  for (const topic of ['claim', 'updates', 'payments', 'backups', 'printing']) {
+    await expect(
+      page.locator(`a.help-hint[href="/help/${topic}"]`),
+      `settings section ? for ${topic}`,
+    ).toBeVisible();
+  }
+});

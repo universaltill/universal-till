@@ -3,7 +3,7 @@
 <p id="settings-save-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
 <div class="settings-grid">
 <div class="card" id="registration">
-  <h2>{{ T "settings.enrol.title" }}</h2>
+  <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
   {{ if enrolled }}
     <p>✅ {{ T "settings.enrol.registered" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
@@ -37,7 +37,7 @@
 </div>
 {{ end }}
 <div class="card">
-  <h2>{{ T "settings.update.title" }}</h2>
+  <h2>{{ T "settings.update.title" }} {{ helpLink "updates" }}</h2>
   <p class="muted">Universal Till v{{ appversion }}</p>
   {{ if .isManager }}
   <div class="set-row">
@@ -111,7 +111,7 @@
 </div>
 {{ if and .isManager .payMethods }}
 <div class="card">
-  <h2>{{ T "settings.payments.title" }}</h2>
+  <h2>{{ T "settings.payments.title" }} {{ helpLink "payments" }}</h2>
   <p class="muted">{{ T "settings.payments.default_help" }}</p>
   <form hx-post="/api/settings/payments-default" hx-target="#pay-default-msg" hx-swap="innerHTML">
     <label class="set-row">{{ T "settings.payments.default" }}
@@ -143,7 +143,7 @@
 {{ end }}
 {{ if .isManager }}
 <div class="card settings-wide">
-  <h2>{{ T "settings.backup.title" }}</h2>
+  <h2>{{ T "settings.backup.title" }} {{ helpLink "backups" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>
   <div class="set-row set-below">
     <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML">{{ T "settings.backup.now" }}</button>
@@ -381,7 +381,7 @@
 })();
 </script>
 <div class="card">
-  <h2>{{ T "settings.printer.title" }}</h2>
+  <h2>{{ T "settings.printer.title" }} {{ helpLink "printing" }}</h2>
   <p class="muted">{{ T "settings.printer.help" }}</p>
   <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="window.location.reload()">
     {{ $p := .printer }}

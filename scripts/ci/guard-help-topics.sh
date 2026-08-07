@@ -32,6 +32,17 @@
 #   1. No duplicate/conflicting route across topics.
 #   2. Every topic's front matter parses.
 #   3. Every shipped locale has translated every topic English has.
+#   4. Every user-facing GET page route registered under internal/pages/**
+#      (mux.HandleFunc/mux.Handle, found via a go/ast scan) is claimed by
+#      some topic's routes: front matter — exactly or via a {param} pattern,
+#      matched with the SAME segment-wise matcher the runtime "?" resolves
+#      through (manual.RouteCovered), so the guard can't drift from the app.
+#      Non-page namespaces (/api/, /ui/ fragments, static assets, …) are
+#      denylisted by prefix in routecoverage.go, each with its reason.
+#      (Named routecoverage.go, not coverage.go — .gitignore's coverage.*
+#      rule for test profiles would swallow that filename.)
+#      (ut-docs#326 — this closes the page-route coverage gap that was
+#      tracked as ut-docs#365.)
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
