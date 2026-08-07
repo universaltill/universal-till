@@ -333,7 +333,6 @@ test('touch: the panel drags, and a cancelled gesture does not leave it stuck to
 
 test('touch: another pointer releasing mid-drag neither ends the drag nor throws', async ({ page }) => {
   const assertClean = watchConsole(page);
-  page.on('console', (m) => console.log('[BROWSER]', m.text()));
   await page.goto('/');
   await page.getByTestId('bugreport-toggle').click();
   const panel = page.getByTestId('bugreport-panel');
@@ -353,10 +352,18 @@ test('touch: another pointer releasing mid-drag neither ends the drag nor throws
     })));
 
   // The finger that owns the drag keeps going and must still be steering.
+  // Polled, not a single boundingBox() snapshot: CDP's Input.dispatchTouchEvent
+  // acks receipt at the protocol level before the renderer has necessarily
+  // finished running the resulting pointermove handler — confirmed by adding
+  // temporary event tracing and watching the correct, fully-computed target
+  // position land in the DOM slightly after this touchMove's own await had
+  // already resolved, on a CI runner slow enough to expose the gap (never
+  // reproduced against this repo's own faster local dev machines). A single
+  // synchronous read here is exactly the wrong tool for a value that can
+  // legitimately lag the event that produced it; expect.poll is.
   await touch('touchMove', [{ x: x - 240, y }]);
-  const end = (await panel.boundingBox())!;
+  await expect.poll(async () => (await panel.boundingBox())!.x).toBeLessThan(mid.x - 100);
   await touch('touchEnd', []);
-  expect(end.x).toBeLessThan(mid.x - 100);
   assertClean(); // no uncaught NotFoundError from releasePointerCapture
 });
 
