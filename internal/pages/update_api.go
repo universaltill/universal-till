@@ -36,6 +36,11 @@ var (
 	autoUpdateCheckNow  = updates.CheckNow
 	autoUpdateSupported = selfupdate.Supported
 	autoUpdateApply     = selfupdate.Apply
+	// autoUpdateBuildVersion is buildinfo.Version, but the manual Update-now
+	// button's own handler (`POST /api/update/apply`, above) does NOT use
+	// this seam or the guard built on it -- an explicit user action stays
+	// available even on a dev build; only the unattended scheduler defers.
+	autoUpdateBuildVersion = func() string { return buildinfo.Version }
 )
 
 // autoUpdateWindow bounds how late a catch-up can still fire. eodDue's
@@ -93,6 +98,13 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 		return
 	}
 	if !autoUpdateCurrent().Available || !autoUpdateSupported() {
+		return
+	}
+	// A "dev" build is a developer/hotfix build (ldflags -X never stamped a
+	// real version) — unattended self-replacement of it is never the right
+	// default, whatever the reason it ended up unstamped (ut-docs#369). The
+	// manual "Update now" button is a separate handler and stays available.
+	if autoUpdateBuildVersion() == "dev" {
 		return
 	}
 	if d.Engine.Basket().ItemCount() > 0 {
