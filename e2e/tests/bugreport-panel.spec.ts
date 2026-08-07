@@ -149,3 +149,40 @@ test('/report-issue still works and lands with the panel already open', async ({
   await expect(page.locator('#ir-note')).toHaveCount(1);
   assertClean();
 });
+
+// Regression lock for ut-docs#394: this app does full page loads for every
+// navigation (no hx-boost), and /report-issue force-opens the panel
+// server-side on every visit. A dismissal must survive that — otherwise
+// re-landing on /report-issue (a re-tapped /menu tile, a kiosk reload) pops
+// the panel back open with no way to make it stay closed, which is exactly
+// what the field report described.
+test('closing the panel sticks across a navigation, even back to /report-issue', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await page.goto('/');
+  const panel = page.getByTestId('bugreport-panel');
+
+  await page.getByTestId('bugreport-toggle').click();
+  await expect(panel).toBeVisible();
+  await page.getByTestId('bugreport-close').click();
+  await expect(panel).toBeHidden();
+
+  // The forced-open route must honor the dismissal, not override it.
+  const resp = await page.goto('/report-issue');
+  expect(resp!.status()).toBe(200);
+  await expect(panel).toBeHidden();
+
+  // An explicit re-open still works — dismissal isn't a one-way dead end.
+  await page.getByTestId('bugreport-toggle').click();
+  await expect(panel).toBeVisible();
+
+  // …and it comes back FUNCTIONAL, not merely visible (independent review,
+  // 2026-08-07). The suppression branch above deliberately skips the lazy
+  // initCapture() that the server-forced-open path used to run, so this is
+  // the one page state where the panel can exist, un-wired, and then be
+  // re-opened: drive a real save to prove the wiring happened on re-open
+  // rather than shipping a panel with dead buttons.
+  await page.locator('#ir-note').fill('e2e: re-opened after a dismissal');
+  await page.locator('#ir-save-btn').click();
+  await expect(page.locator('#ir-status')).toContainText('Saved');
+  assertClean();
+});

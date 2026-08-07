@@ -1087,7 +1087,7 @@
   "issuereport.panel_title": "Sorun bildir",
   "issuereport.panel_close": "Kapat",
   "issuereport.nav_ends_recording": "Başka bir sayfaya geçerseniz kayıt durur — önce raporunuzu gönderin.",
-  "issuereport.route_note": "Bildirim paneli açık. Üst çubuktaki 🐞 düğmesiyle her ekrandan da açabilirsiniz.",
+  "issuereport.route_note": "Bildirim panelini üst çubuktaki 🐞 düğmesiyle her ekrandan açabilirsiniz.",
   "osk.toggle": "Klavye",
   "basket.count_label": "Sepetteki ürün sayısı",
   "notice.dismiss": "Kapat",
