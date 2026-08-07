@@ -345,6 +345,124 @@ func TestPackagingShellScriptsParse(t *testing.T) {
 	}
 }
 
+// TestKioskLaunchWiresScreencastPortalEnvironment guards ut-docs#395: the
+// Wayland screencast portal is D-Bus-activated and does not inherit the
+// launch script's environment, so XDG_CURRENT_DESKTOP must be both exported
+// AND pushed via dbus-update-activation-environment — exporting alone is not
+// enough (proven live: the picker opened with nothing to select even though
+// the variable was exported). Uses codeLines/anyLineContains, same as every
+// other guard in this file, for the same reason stated in the file header: a
+// prior version of the standalone shell guard for this exact fix passed
+// while both lines sat inside a comment (independent review, ut-docs#395's
+// PR #210) — this Go-level regression test can't be satisfied that way.
+func TestKioskLaunchWiresScreencastPortalEnvironment(t *testing.T) {
+	code := codeLines(readScript(t, "packaging/linux/unitill-kiosk-launch.sh"))
+
+	if !anyLineContains(code, "export", "XDG_CURRENT_DESKTOP=wlroots") {
+		t.Error("unitill-kiosk-launch.sh: XDG_CURRENT_DESKTOP=wlroots is no longer exported as a real code line")
+	}
+	if !anyLineContains(code, "dbus-update-activation-environment") {
+		t.Error("unitill-kiosk-launch.sh: dbus-update-activation-environment call is gone — exporting XDG_CURRENT_DESKTOP alone does not reach the D-Bus-activated portal")
+	}
+	if !anyLineContains(code, "XDG_CURRENT_DESKTOP", "WAYLAND_DISPLAY") {
+		t.Error("unitill-kiosk-launch.sh: dbus-update-activation-environment no longer pushes XDG_CURRENT_DESKTOP/WAYLAND_DISPLAY into the activation environment")
+	}
+	// The failure mode this fix exists to close is a SILENT one (ut-docs#395:
+	// "Auto-started 0 plugins (0 failed)" on an unrelated surface, same
+	// silent-failure shape) — the activation call must not send its stderr to
+	// /dev/null, so a real failure at least reaches journalctl.
+	for _, l := range code {
+		if strings.Contains(l, "dbus-update-activation-environment") && strings.Contains(l, "2>/dev/null") {
+			t.Error("unitill-kiosk-launch.sh: dbus-update-activation-environment discards stderr — a real failure here leaves zero trace anywhere, the exact silent-failure class ut-docs#395 was filed about")
+		}
+	}
+}
+
+// TestKioskSetupConfiguresScreencastPortal guards the setup-script half of
+// ut-docs#395: the portal packages and both config files it depends on.
+// Regression coverage the independent review found missing entirely
+// (ut-docs#395's PR #210).
+func TestKioskSetupConfiguresScreencastPortal(t *testing.T) {
+	setup := readScript(t, "packaging/linux/unitill-kiosk-setup.sh")
+	code := codeLines(setup)
+
+	// Packages: the portal + wlr backend, plus the pipewire/session-manager
+	// and D-Bus pieces the capture stream actually needs at runtime — all
+	// listed explicitly (this script always runs --no-install-recommends),
+	// not left to chance the way the field devices "happened to" have them.
+	if !anyLineContains(code, "apt-get", "install", "xdg-desktop-portal", "xdg-desktop-portal-wlr") {
+		t.Error("unitill-kiosk-setup.sh: no real apt-get install line provides xdg-desktop-portal/xdg-desktop-portal-wlr")
+	}
+	if !anyLineContains(code, "apt-get", "install", "pipewire") {
+		t.Error("unitill-kiosk-setup.sh: pipewire is no longer installed — the portal can advertise ScreenCast but stream creation fails without it")
+	}
+	if !anyLineContains(code, "apt-get", "install", "wireplumber") {
+		t.Error("unitill-kiosk-setup.sh: wireplumber (the pipewire session manager) is no longer installed")
+	}
+	if !anyLineContains(code, "apt-get", "install", "dbus-user-session") {
+		t.Error("unitill-kiosk-setup.sh: dbus-user-session is no longer installed — the portal needs a user D-Bus session")
+	}
+	if !anyLineContains(code, "apt-get", "install", "dbus-bin") {
+		t.Error("unitill-kiosk-setup.sh: dbus-bin is no longer installed — dbus-update-activation-environment (called by the launch script) ships in this package on Debian trixie")
+	}
+
+	// Ordering: the portal install must not be able to abort the script
+	// before Chromium is installed (a screenshot dependency must never be
+	// able to leave a till without its POS).
+	chromiumIdx := strings.Index(setup, "chromium-browser")
+	portalIdx := strings.Index(setup, "xdg-desktop-portal-wlr")
+	if chromiumIdx < 0 || portalIdx < 0 || portalIdx < chromiumIdx {
+		t.Error("unitill-kiosk-setup.sh: the screencast portal packages must be installed AFTER chromium, not before")
+	}
+	// And it must not be fatal: a mirror hiccup on this specific package must
+	// not `set -e` abort the whole kiosk setup.
+	installLineIdx := -1
+	for i, l := range strings.Split(setup, "\n") {
+		if strings.Contains(l, "xdg-desktop-portal-wlr") && strings.Contains(l, "pipewire") {
+			installLineIdx = i
+			break
+		}
+	}
+	if installLineIdx < 0 {
+		t.Fatal("unitill-kiosk-setup.sh: could not locate the combined portal/pipewire apt-get install line")
+	}
+	lines := strings.Split(setup, "\n")
+	guarded := false
+	for i := installLineIdx; i >= 0 && i >= installLineIdx-3; i-- {
+		if strings.Contains(lines[i], "if !") || strings.Contains(lines[i], "if ! apt-get") {
+			guarded = true
+			break
+		}
+	}
+	if !guarded {
+		t.Error("unitill-kiosk-setup.sh: the screencast portal apt-get install is not wrapped in a non-fatal `if ! ...; then` guard — a failure here would abort setup before Chromium installs, under set -e")
+	}
+
+	// Config files: both live under system-wide /etc paths, never a
+	// $KIOSK_USER home directory — a per-user path here previously assumed
+	// the account's primary group shared its name, and could abort the
+	// entire setup under set -e if it didn't (independent review,
+	// ut-docs#395's PR #210).
+	portalsConf := heredocBlock(t, setup, "/etc/xdg-desktop-portal/wlroots-portals.conf")
+	if !anyLineContains(portalsConf, "org.freedesktop.impl.portal.ScreenCast=wlr") {
+		t.Error("wlroots-portals.conf: ScreenCast=wlr preference is gone")
+	}
+	if !anyLineContains(portalsConf, "org.freedesktop.impl.portal.Screenshot=wlr") {
+		t.Error("wlroots-portals.conf: Screenshot=wlr preference is gone")
+	}
+
+	wlrConf := heredocBlock(t, setup, "/etc/xdg/xdg-desktop-portal-wlr/config")
+	if !anyLineContains(wlrConf, "chooser_type=none") {
+		t.Error("xdg-desktop-portal-wlr config: chooser_type=none is gone — a kiosk cannot display a chooser dialog")
+	}
+
+	for _, l := range code {
+		if strings.Contains(l, "xdg-desktop-portal-wlr/config") && strings.Contains(l, "/home/") {
+			t.Error("unitill-kiosk-setup.sh: xdg-desktop-portal-wlr config path is back under a $KIOSK_USER home directory instead of /etc/xdg/xdg-desktop-portal-wlr")
+		}
+	}
+}
+
 func TestStaleX11KioskPathStaysRetired(t *testing.T) {
 	// The old deploy/raspberry-pi X11 flow (DISPLAY=:0, desktop autologin)
 	// contradicted the shipped Wayland/cage path and misled setup on real
