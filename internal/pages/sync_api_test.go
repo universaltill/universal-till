@@ -272,6 +272,72 @@ func TestSyncSnapshot_RequiresAuth(t *testing.T) {
 	}
 }
 
+// ut-docs#426: the snapshot handed to a joining replica is a full-DB copy,
+// and its tills table used to carry EVERY enrolled till's real bearer_hash
+// (the sync-auth secret) — the joining till held every sibling's secret from
+// the moment of join. The served snapshot must have bearer_hash NULLed for
+// every row, while the primary's live DB keeps the real values.
+func TestSyncSnapshot_RedactsOtherTillsBearerHash(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	primary, primaryPath := newSyncDepsWithPath(t, "primary.db")
+	pmux := http.NewServeMux()
+	registerSyncAPI(pmux, primary)
+
+	// Two enrolled tills with real (non-NULL) bearer hashes: the caller
+	// itself plus a sibling whose secret is the one at stake.
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(primary.Db)
+	callerBearer := "tok-caller"
+	if _, err := tillsRepo.InsertTill(ctx, "Caller Till", hashBearer(callerBearer)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tillsRepo.InsertTill(ctx, "Sibling Till", hashBearer("tok-sibling")); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/snapshot", nil)
+	req.Header.Set("Authorization", "Bearer "+callerBearer)
+	pmux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 fetching the snapshot, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// What the replica receives, opened as SQLite.
+	served := filepath.Join(t.TempDir(), "served-snapshot.db")
+	if err := os.WriteFile(served, rec.Body.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sdb, err := sql.Open("sqlite", served)
+	if err != nil {
+		t.Fatalf("open served snapshot: %v", err)
+	}
+	defer sdb.Close()
+	var total, withHash int
+	if err := sdb.QueryRow(`SELECT COUNT(*) FROM tills`).Scan(&total); err != nil {
+		t.Fatalf("count tills in served snapshot: %v", err)
+	}
+	if err := sdb.QueryRow(`SELECT COUNT(*) FROM tills WHERE bearer_hash IS NOT NULL`).Scan(&withHash); err != nil {
+		t.Fatalf("count bearer_hash in served snapshot: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("expected the till roster (2 rows) in the served snapshot, got %d", total)
+	}
+	if withHash != 0 {
+		t.Errorf("served snapshot leaks %d real bearer_hash value(s) — a joining replica would hold every sibling till's sync secret (ut-docs#426)", withHash)
+	}
+
+	// The primary's live DB must be untouched — both real hashes intact.
+	var live int
+	if err := primary.Db.QueryRow(`SELECT COUNT(*) FROM tills WHERE bearer_hash IS NOT NULL`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if live != 2 {
+		t.Errorf("primary's live tills table mutated: %d rows with bearer_hash, want 2", live)
+	}
+	_ = primaryPath
+}
+
 func TestSyncJoin_RejectsGarbageCode(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newSyncAPITestDeps(t)
@@ -400,6 +466,21 @@ func TestSyncJoin_FullFlow_StagesRestoreAndIdentity(t *testing.T) {
 	// restore that applies on the next restart.
 	if !appdb.PendingRestore(replicaPath) {
 		t.Fatalf("expected a staged restore-pending.db after a successful join")
+	}
+	// ut-docs#426: the staged DB the replica will boot from must NOT carry
+	// any till's real bearer_hash — the snapshot is redacted before serving.
+	stagedPath := filepath.Join(filepath.Dir(replicaPath), "restore-pending.db")
+	staged, err := sql.Open("sqlite", stagedPath)
+	if err != nil {
+		t.Fatalf("open staged restore: %v", err)
+	}
+	defer staged.Close()
+	var leaked int
+	if err := staged.QueryRow(`SELECT COUNT(*) FROM tills WHERE bearer_hash IS NOT NULL`).Scan(&leaked); err != nil {
+		t.Fatalf("count bearer_hash in staged restore: %v", err)
+	}
+	if leaked != 0 {
+		t.Errorf("staged restore leaks %d real bearer_hash value(s) to the joining replica (ut-docs#426)", leaked)
 	}
 	// And the replica identity (its own bearer/prefix/name) staged alongside.
 	idRaw, err := os.ReadFile(appdb.ReplicaIdentityPath(replicaPath))
