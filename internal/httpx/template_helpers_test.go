@@ -167,6 +167,9 @@ func TestBaseLayoutUpdateChipSaysDownloadWhenSelfUpdateUnsupported(t *testing.T)
 	funcs := FuncsFor("en")
 	funcs["updateavailable"] = func() bool { return true }
 	funcs["canselfupdate"] = func() bool { return false }
+	// windows/darwin case: a website link is actionable there (a windowed
+	// desktop OS with a browser), unlike the unix-kiosk case below.
+	funcs["updatedownloadlink"] = func() bool { return true }
 	funcs["latestversion"] = func() string { return "9.9.9" }
 	r, err := NewRenderer(
 		filepath.Join("web", "ui", "layouts", "base.html"),
@@ -202,8 +205,62 @@ func TestBaseLayoutUpdateChipSaysDownloadWhenSelfUpdateUnsupported(t *testing.T)
 	if !strings.Contains(chip, "Download") {
 		t.Fatalf("status-bar update chip must say Download when self-update isn't supported, not just \"available\" (ut-docs#152), got %q", chip)
 	}
+	if !strings.Contains(chip, `target="_blank"`) {
+		t.Fatalf("expected the kept download link to open in a new context (target=_blank) — a plain same-window navigation is a dead end in the WebView2 desktop shell, which has no NewWindowRequested/back affordance, got %q", chip)
+	}
 	if strings.Contains(body, `id="sb-update-btn"`) {
 		t.Fatalf("expected no in-app self-apply button when canselfupdate is false, got %.500s", body)
+	}
+}
+
+// A unix kiosk (updatedownloadlink false — GOOS not windows/darwin) is
+// fullscreen with no browser chrome: the same website link that's actionable
+// on Windows/macOS is a dead end there (ut-docs#147 field report reproduced
+// again outside Settings, ut-docs#159). The chip must fall back to plain
+// text — no <a>, no href — mirroring what internal/pages/update_api.go's
+// updateUnavailableHTML already does for the Settings page.
+func TestBaseLayoutUpdateChipHasNoLinkWhenDownloadLinkNotActionable(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	funcs := FuncsFor("en")
+	funcs["updateavailable"] = func() bool { return true }
+	funcs["canselfupdate"] = func() bool { return false }
+	funcs["updatedownloadlink"] = func() bool { return false }
+	funcs["latestversion"] = func() string { return "9.9.9" }
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		funcs,
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	body := w.Body.String()
+	idx := strings.Index(body, `class="sb-item sb-update"`)
+	if idx == -1 {
+		t.Fatalf("expected the status-bar update chip to still render (as plain text), got %.500s", body)
+	}
+	end := strings.Index(body[idx:], "</span>")
+	if end == -1 {
+		t.Fatalf("expected the kiosk-dead-end chip to be a plain <span>, not a link, got %.500s", body[idx:])
+	}
+	chip := body[idx : idx+end]
+	if strings.Contains(chip, "<a ") || strings.Contains(chip, "href=") {
+		t.Fatalf("expected no clickable link in the status bar when a download link isn't actionable on this platform (ut-docs#159 kiosk dead-end), got %q", chip)
+	}
+	// Parity with internal/pages/update_api.go's updateUnavailableHTML,
+	// which already tells the Settings page *why* nothing is clickable —
+	// an inert chip with no explanation looks identical to the actionable
+	// ones and offers no next step.
+	if !strings.Contains(chip, "available for this install") { // apostrophe is HTML-escaped
+		t.Fatalf("expected the no-link chip to explain why (settings.update.unavailable_here), got %q", chip)
+	}
+	if strings.Contains(body, `id="sb-update-btn"`) {
+		t.Fatalf("expected no in-app self-apply button either when canselfupdate is false, got %.500s", body)
 	}
 }
 
