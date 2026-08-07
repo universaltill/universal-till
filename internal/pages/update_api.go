@@ -36,6 +36,11 @@ var (
 	autoUpdateCheckNow  = updates.CheckNow
 	autoUpdateSupported = selfupdate.Supported
 	autoUpdateApply     = selfupdate.Apply
+	// autoUpdateBuildVersion is buildinfo.Version, but the manual Update-now
+	// button's own handler (`POST /api/update/apply`, above) does NOT use
+	// this seam or the guard built on it -- an explicit user action stays
+	// available even on a dev build; only the unattended scheduler defers.
+	autoUpdateBuildVersion = func() string { return buildinfo.Version }
 )
 
 // autoUpdateWindow bounds how late a catch-up can still fire. eodDue's
@@ -95,6 +100,13 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	if !autoUpdateCurrent().Available || !autoUpdateSupported() {
 		return
 	}
+	// A "dev" build is a developer/hotfix build (ldflags -X never stamped a
+	// real version) — unattended self-replacement of it is never the right
+	// default, whatever the reason it ended up unstamped (ut-docs#369). The
+	// manual "Update now" button is a separate handler and stays available.
+	if autoUpdateBuildVersion() == "dev" {
+		return
+	}
 	if d.Engine.Basket().ItemCount() > 0 {
 		return
 	}
@@ -139,8 +151,11 @@ func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps) {
 // kiosk never reaches here: selfupdate.Supported() is true for a
 // service-writable install, so the inline Apply button is shown instead.
 func updateUnavailableHTML(locale, latest, goos string) string {
-	if goos == "windows" || goos == "darwin" {
-		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="https://www.universaltill.com/download" rel="noopener">%s</a></span>`,
+	if selfupdate.DownloadLinkActionable(goos) {
+		// target="_blank": a plain same-window navigation is a dead end in
+		// the WebView2 desktop shell (cmd/unitill-desktop/webview_fallback.go
+		// has no NewWindowRequested handler) — ut-docs#159.
+		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="https://www.universaltill.com/download" rel="noopener" target="_blank">%s</a></span>`,
 			html.EscapeString(httpx.T(locale, "status.update_available")),
 			html.EscapeString(latest),
 			html.EscapeString(httpx.T(locale, "settings.update.download")))
