@@ -1,0 +1,11 @@
+<resources>
+    <!-- ut-docs#414: mirrors web/locales/fa.json's own app.name choice
+         (translated, not left as the brand literal — fa is the one shipped
+         locale that does this for app.name; tr/ar keep "Universal Till"). -->
+    <string name="app_name">صندوق فروش</string>
+    <string name="status_starting">در حال راه‌اندازی صندوق…</string>
+    <string name="status_running">در حال اجرا در %1$s</string>
+    <string name="status_failed">راه‌اندازی ناموفق بود: %1$s</string>
+    <string name="notification_running">صندوق فروش در حال اجراست</string>
+    <string name="notification_channel_name">سرویس صندوق فروش</string>
+</resources>

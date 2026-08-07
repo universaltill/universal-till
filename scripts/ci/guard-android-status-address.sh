@@ -55,7 +55,14 @@ if ! printf '%s\n' "$MAIN_CODE" | grep -q 'if[[:space:]]*(BuildConfig\.DEBUG)[[:
   exit 1
 fi
 
-if printf '%s\n' "$SERVICE_CODE" | grep -q 'updateNotification(getString(R\.string\.status_running'; then
+# ut-docs#414: TillService now routes every string lookup through a local
+# str(resId) helper (ContextCompat.getString — a plain Service's own
+# getString() doesn't follow AppCompatDelegate's per-app locale on API
+# 24-32, independent review, 2026-08-07) instead of calling getString()
+# directly — match either call shape so this guard doesn't go stale on a
+# refactor unrelated to what it actually protects: which STRING RESOURCE
+# feeds the notification, not which function fetched it.
+if printf '%s\n' "$SERVICE_CODE" | grep -qE '\<(getString|str)\(R\.string\.status_running'; then
   echo "❌ android-status-address guard: ${TILL_SERVICE} builds the foreground" >&2
   echo "   notification from status_running, which interpolates the raw bind" >&2
   echo "   address — the notification must use notification_running (no" >&2
@@ -63,7 +70,7 @@ if printf '%s\n' "$SERVICE_CODE" | grep -q 'updateNotification(getString(R\.stri
   exit 1
 fi
 
-if ! printf '%s\n' "$SERVICE_CODE" | grep -q 'updateNotification(getString(R\.string\.notification_running))'; then
+if ! printf '%s\n' "$SERVICE_CODE" | grep -qE '\<(getString|str)\(R\.string\.notification_running\)\)'; then
   echo "❌ android-status-address guard: ${TILL_SERVICE} no longer calls" >&2
   echo "   updateNotification with notification_running on a successful" >&2
   echo "   start — the running notification's text source changed; update" >&2

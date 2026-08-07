@@ -7,6 +7,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import mobile.Mobile
 
 /**
@@ -74,14 +75,26 @@ class TillService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
+    // ut-docs#414 (independent review, 2026-08-07): a plain Service's own
+    // getString() does NOT follow AppCompatDelegate.setApplicationLocales()
+    // on API 24-32 — that per-app-language mechanism only patches
+    // AppCompatActivity contexts on those levels (AppCompatDelegate's own
+    // javadoc says so explicitly). ContextCompat.getString/getContextForLanguage
+    // is the documented fix: it resolves against the process-wide per-app
+    // locale AppCompatDelegate maintains, regardless of what kind of
+    // Context asks. Every string this Service surfaces to a real user (the
+    // notification title/text, the channel name) MUST go through this, not
+    // the bare getString() the rest of this file used before that review.
+    private fun str(resId: Int) = ContextCompat.getString(this, resId)
+
     override fun onCreate() {
         super.onCreate()
         val channel =
             NotificationChannelCompat.Builder(CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
-                .setName(getString(R.string.notification_channel_name))
+                .setName(str(R.string.notification_channel_name))
                 .build()
         NotificationManagerCompat.from(this).createNotificationChannel(channel)
-        startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.status_starting)))
+        startForeground(NOTIFICATION_ID, buildNotification(str(R.string.status_starting)))
 
         // Start() is idempotent (mobile/mobile.go) — a service restart
         // (e.g. START_STICKY after the OS killed it under memory
@@ -96,15 +109,37 @@ class TillService : Service() {
                 // bind detail to the end user). The listener callback still
                 // gets the real addr — MainActivity's debug-only status bar
                 // and the WebView's loadUrl() both need it.
-                updateNotification(getString(R.string.notification_running))
+                updateNotification(str(R.string.notification_running))
                 synchronized(listeners) { listeners.toList() }.forEach { it(addr, null) }
             } catch (e: Exception) {
                 val message = e.message ?: e.toString()
                 startError = message
-                updateNotification(getString(R.string.status_failed, message))
+                updateNotification(String.format(str(R.string.status_failed), message))
                 synchronized(listeners) { listeners.toList() }.forEach { it(null, message) }
             }
         }.start()
+    }
+
+    // ut-docs#414: called by MainActivity right after it applies a newly-
+    // detected till locale, so the persistent notification (and the
+    // channel name, which Android only re-reads when the SAME channel ID
+    // is recreated with a new name — safe/idempotent, not a new channel)
+    // catch up immediately instead of staying in the previous language
+    // until this Service is next restarted. str() above already resolves
+    // against the just-updated per-app locale by the time this runs.
+    fun refreshLocalizedNotification() {
+        val channel =
+            NotificationChannelCompat.Builder(CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
+                .setName(str(R.string.notification_channel_name))
+                .build()
+        NotificationManagerCompat.from(this).createNotificationChannel(channel)
+        val text =
+            when {
+                address != null -> str(R.string.notification_running)
+                startError != null -> String.format(str(R.string.status_failed), startError)
+                else -> str(R.string.status_starting)
+            }
+        updateNotification(text)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -133,7 +168,7 @@ class TillService : Service() {
 
     private fun buildNotification(text: String) =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.app_name))
+            .setContentTitle(str(R.string.app_name))
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_stat_till)
             .setOngoing(true)
