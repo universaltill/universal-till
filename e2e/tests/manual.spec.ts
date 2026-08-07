@@ -47,6 +47,40 @@ test('manual lists topics and opens one without a full page load', async ({ page
   await expect(page.locator('.manual-nav')).toBeVisible(); // shell survived the swap
 });
 
+// ut-docs#351: every htmx topic swap replaces only #manual-panel, so the
+// tree keeps showing whatever was correct at the last FULL page load —
+// which means even the very first click after loading the bare /help index
+// (nothing highlighted, correctly) already fails to move the highlight onto
+// the clicked topic. Driving a SECOND, different topic click on top of that
+// additionally rules out a narrow fix that only handles one hardcoded
+// topic, and covers browser back/forward staying in sync.
+test('topic clicks move the active highlight, including a second click to a different topic (ut-docs#351)', async ({
+  page,
+}) => {
+  await page.goto('/help');
+  await page.getByRole('link', { name: 'Catalog, variants & barcodes' }).click();
+  await expect(page.locator('#manual-topic')).toHaveAttribute('data-topic', 'catalog');
+  await expect(page.locator('a[href="/help/catalog"]')).toHaveClass(/is-current/);
+  await expect(page.locator('a[href="/help/catalog"]')).toHaveAttribute('aria-current', 'page');
+
+  await page.getByRole('link', { name: 'Backups' }).click();
+  await expect(page.locator('#manual-topic')).toHaveAttribute('data-topic', 'backups');
+  await expect(page.locator('a[href="/help/backups"]')).toHaveClass(/is-current/);
+  await expect(page.locator('a[href="/help/backups"]')).toHaveAttribute('aria-current', 'page');
+  // The stale highlight from the first click must be gone, not just a second
+  // one added alongside it.
+  await expect(page.locator('a[href="/help/catalog"]')).not.toHaveClass(/is-current/);
+  await expect(page.locator('a[href="/help/catalog"]')).not.toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('.manual-link.is-current')).toHaveCount(1);
+
+  // Browser back/forward keeps the highlight in sync with the content
+  // (hx-push-url is on, so this is a real navigation, not just history state).
+  await page.goBack();
+  await expect(page.locator('#manual-topic')).toHaveAttribute('data-topic', 'catalog');
+  await expect(page.locator('a[href="/help/catalog"]')).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('a[href="/help/backups"]')).not.toHaveAttribute('aria-current', 'page');
+});
+
 test('search narrows to matching topics', async ({ page }) => {
   await page.goto('/help');
   await page.fill('#manual-q', 'barcode');

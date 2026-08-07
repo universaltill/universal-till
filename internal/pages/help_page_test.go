@@ -111,6 +111,45 @@ func TestHelpTopicHTMXReturnsFragmentOnly(t *testing.T) {
 	}
 }
 
+// ut-docs#351: an htmx topic swap only replaces #manual-panel, so without an
+// out-of-band update the tree's is-current/aria-current markup would stay on
+// whichever topic was current at the last full page load. The fragment must
+// carry a second, OOB-swapped copy of the tree with the highlight moved.
+func TestHelpTopicHTMXCarriesOOBNavWithMovedHighlight(t *testing.T) {
+	rec := get(t, helpMux(t), "/help/catalog", "HX-Request", "true")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="manual-tree"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("fragment missing the OOB tree swap: %s", body)
+	}
+	if !strings.Contains(body, `href="/help/catalog"`) {
+		t.Fatal("OOB tree missing a link to the current topic")
+	}
+	// The OOB tree's own markup must mark catalog SPECIFICALLY current, and
+	// exactly one topic — never a stale highlight left on whatever was
+	// current before, and never just "some" link lighting up regardless of
+	// which topic it's anchored to.
+	navStart := strings.Index(body, `id="manual-tree"`)
+	nav := body[navStart:]
+	if got := strings.Count(nav, "is-current"); got != 1 {
+		t.Errorf("OOB tree has %d is-current links, want exactly 1: %s", got, nav)
+	}
+	catalogIdx := strings.Index(nav, `href="/help/catalog"`)
+	if catalogIdx < 0 {
+		t.Fatalf("catalog link not found in OOB tree: %s", nav)
+	}
+	catalogLink := nav[catalogIdx:]
+	catalogTag := catalogLink[:strings.Index(catalogLink, ">")+1]
+	if !strings.Contains(catalogTag, `class="manual-link is-current"`) {
+		t.Errorf("catalog's own link is not marked is-current: %s", catalogTag)
+	}
+	if !strings.Contains(catalogTag, `aria-current="page"`) {
+		t.Errorf("catalog's own link is missing aria-current: %s", catalogTag)
+	}
+}
+
 // A stale "?" link must be visible as a 404, not silently swallowed into the
 // index — otherwise a broken help link looks like a working one.
 func TestHelpUnknownTopicIs404(t *testing.T) {
