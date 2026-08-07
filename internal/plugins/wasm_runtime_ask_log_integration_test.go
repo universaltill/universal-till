@@ -41,6 +41,21 @@ func buildBigAuthorizeGuest(t *testing.T) string {
 	return out
 }
 
+// buildBigNestedAuthorizeGuest compiles the wasip1 test fixture that
+// answers any ".authorize" event with a SMALL auth_token field NESTED under
+// "provider" (ut-docs#384) -- see the guest's own doc comment for why the
+// token is small rather than large, unlike buildBigAuthorizeGuest.
+func buildBigNestedAuthorizeGuest(t *testing.T) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "bignestedauthorize_guest.wasm")
+	cmd := exec.Command("go", "build", "-o", out, "./testdata/bignestedauthorize_guest")
+	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build wasip1 guest: %v\n%s", err, raw)
+	}
+	return out
+}
+
 // captureRealStdout redirects the process's real fd 1 (not just the Go
 // os.Stdout variable) to a pipe for the duration of fn, and returns
 // everything written to it. logging.go binds its *log.Logger to os.Stdout
@@ -188,6 +203,83 @@ func TestHandleEvent_AuthorizeResultRedactedInRealLog(t *testing.T) {
 	// The REAL log line, from the REAL logging package, must not.
 	if strings.Contains(logged, parsed.AuthToken) {
 		t.Fatalf("the real process log still contains the full auth_token payload verbatim:\n%s", logged)
+	}
+	if !strings.Contains(logged, "payment.demopay.authorize") {
+		t.Errorf("expected the event type in the real log line for debuggability, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "omitted") {
+		t.Errorf("expected a size placeholder in the real log line, got:\n%s", logged)
+	}
+}
+
+// TestHandleEvent_NestedAuthorizeTokenRedactedInRealLog is the true
+// end-to-end proof for ut-docs#384: a REAL compiled WASM module answers a
+// payment-authorize event with a SMALL auth_token NESTED under "provider"
+// -- the shape a real gateway SDK commonly uses, and exactly the shape
+// safeAskResultForLog's pre-fix top-level-only field check missed. Mirrors
+// TestHandleEvent_AuthorizeResultRedactedInRealLog, one level deeper; per
+// that test's own precedent, a helper-only unit test isn't enough to prove
+// HandleEvent's real call site actually redacts nested fields.
+//
+// The token is deliberately SMALL, unlike the sibling large-payload E2E
+// tests above -- independent review of this fix found that a large nested
+// token makes the *parent* "provider" field's raw JSON exceed
+// maxAskFieldBytes on its own, so the pre-existing top-level size check
+// would redact it wholesale regardless of whether nested-by-name redaction
+// worked at all. That made an earlier version of this test pass unchanged
+// against the pre-fix, unpatched code -- a vacuous regression test that
+// looked like it proved the fix while actually exercising a code path this
+// fix didn't touch. A small token forces the test through the actual
+// nested-by-NAME path ut-docs#384 adds.
+func TestHandleEvent_NestedAuthorizeTokenRedactedInRealLog(t *testing.T) {
+	guest := buildBigNestedAuthorizeGuest(t)
+	w := NewWasmRuntime(t.TempDir())
+	const pluginID = "com.test.bignestedauthorize"
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
+		t.Fatalf("load guest module: %v", err)
+	}
+
+	ev := Event{ID: "ev1", Type: "payment.demopay.authorize", Timestamp: time.Now(), Payload: json.RawMessage(`{}`)}
+
+	var resp json.RawMessage
+	var handleErr error
+	logged := captureRealStdout(t, func() {
+		resp, handleErr = w.HandleEvent(context.Background(), pluginID, ev)
+	})
+	if handleErr != nil {
+		t.Fatalf("HandleEvent: %v", handleErr)
+	}
+
+	var parsed struct {
+		Provider struct {
+			AuthToken string `json:"auth_token"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil {
+		t.Fatalf("parse guest response %s: %v", resp, err)
+	}
+	if parsed.Provider.AuthToken == "" {
+		t.Fatalf("test setup: guest response missing auth_token, got %s", resp)
+	}
+	var topLevel map[string]json.RawMessage
+	if err := json.Unmarshal(resp, &topLevel); err != nil {
+		t.Fatalf("test setup: could not measure raw provider field size: %v", err)
+	}
+	if rawProvider := len(topLevel["provider"]); rawProvider > maxAskFieldBytes {
+		t.Fatalf("test setup: nested provider field is %d bytes, over maxAskFieldBytes (%d) -- this would make the pre-existing top-level size check redact it wholesale regardless of nested-by-name redaction, silently making this test vacuous again (see ut-docs#384 review)", rawProvider, maxAskFieldBytes)
+	}
+
+	// The REAL returned answer (what the payment flow would actually act on)
+	// must be completely untouched by the logging fix.
+	if !strings.Contains(string(resp), parsed.Provider.AuthToken) {
+		t.Fatalf("HandleEvent's returned value was altered -- redaction must only affect the log, never the real plugin answer")
+	}
+
+	// The REAL log line, from the REAL logging package, must not -- this is
+	// the exact gap ut-docs#384 reported: pre-fix, the nested token reached
+	// the log verbatim because only top-level fields were inspected.
+	if strings.Contains(logged, parsed.Provider.AuthToken) {
+		t.Fatalf("the real process log still contains the full nested auth_token payload verbatim:\n%s", logged)
 	}
 	if !strings.Contains(logged, "payment.demopay.authorize") {
 		t.Errorf("expected the event type in the real log line for debuggability, got:\n%s", logged)
