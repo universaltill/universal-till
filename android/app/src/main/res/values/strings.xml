@@ -3,5 +3,10 @@
     <string name="status_starting">Starting the till…</string>
     <string name="status_running">Running at %1$s</string>
     <string name="status_failed">Failed to start: %1$s</string>
+    <!-- ut-docs#412: the foreground-service notification must convey that
+         the till is running without exposing the internal loopback
+         address — status_running (above) still carries the address for
+         the debug-only on-screen bar (MainActivity, BuildConfig.DEBUG). -->
+    <string name="notification_running">Universal Till is running</string>
     <string name="notification_channel_name">Universal Till service</string>
 </resources>
