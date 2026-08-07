@@ -80,14 +80,19 @@ func (p *replicaPairing) set(s *pendingJoinState) {
 // the "waiting" status carries the self-polling htmx attributes (see
 // pairing_wait.html's "polling" flag) — every other status is a terminal
 // render with no further hx-trigger, so the browser naturally stops
-// polling once one of them is swapped in.
-func pairWaitView(w http.ResponseWriter, r *http.Request, status, code, shopName, errMsg string) {
+// polling once one of them is swapped in. statusURL is the pair-status
+// route the waiting fragment polls: the manager flavour must poll the
+// manager-gated route and the first-boot flavour the middleware-exempt
+// setup route — a first-boot till polling /api/sync/pair-status would only
+// ever collect 401s and hang on "waiting" forever.
+func pairWaitView(w http.ResponseWriter, r *http.Request, statusURL, status, code, shopName, errMsg string) {
 	httpx.RenderPartial("ui/partials/pairing_wait.html", map[string]any{
-		"status":   status,
-		"code":     code,
-		"shopName": shopName,
-		"errMsg":   errMsg,
-		"polling":  status == "waiting",
+		"statusURL": statusURL,
+		"status":    status,
+		"code":      code,
+		"shopName":  shopName,
+		"errMsg":    errMsg,
+		"polling":   status == "waiting",
 	})(w, r)
 }
 
@@ -100,23 +105,47 @@ func validPrimaryBaseURL(raw string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
+// registerPairingJoinAPI wires the outbound pairing flow in its two
+// authorization flavours (ut-docs#289): manager-gated on the Tills page
+// (/api/sync/pair-start|pair-status) and first-boot-gated on the setup
+// wizard (/api/setup/pair-start|pair-status, middleware-exempt). All four
+// routes share ONE replicaPairing: a till only ever has one outbound
+// attempt in flight (see replicaPairing's doc comment), and first boot is
+// monotonic, so in practice only one route group is reachable at a time
+// anyway — two disconnected states would be the bug, not the fix.
 func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 	rp := &replicaPairing{}
 	client := &http.Client{Timeout: pairJoinHTTPTimeout}
 
-	// Manager-gated the same way discover-primaries is: sending a pair
-	// request is already the LAN-open, unauthenticated-by-design action on
-	// the PRIMARY's side (ADR-0033 §8) — being on this manager-gated page
-	// is enough, no extra manager-PIN prompt for this side.
-	//
-	// Every branch below renders a 200 with the outcome encoded in the
-	// body (waiting/error), never a 4xx/5xx status: this response is always
-	// swapped in by htmx, and htmx (the vendored 1.9.12 here) does not swap
-	// non-2xx responses by default — a non-200 render is invisible to the
-	// manager, not just cosmetically wrong.
-	mux.HandleFunc("POST /api/sync/pair-start", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+	mux.HandleFunc("POST /api/sync/pair-start", pairStartHandler(d, rp, client, managerGate, "/api/sync/pair-status"))
+	mux.HandleFunc("GET /api/sync/pair-status", pairStatusHandler(d, rp, client, managerGate, "/api/sync/pair-status"))
+	// Rate-limited (ut-docs#289 review): unlike its manager-gated sibling
+	// above, this flavour needs no session at all — pair-start is an
+	// unauthenticated outbound-HTTP primitive to any attacker-chosen host
+	// (validPrimaryBaseURL only checks scheme+host), so an unlimited caller
+	// during the first-boot window gets a free blind-SSRF port-scan oracle.
+	// pair-status stays unlimited, same as its manager-gated sibling: it's
+	// the legitimate 15s self-poll, not an attacker-chosen outbound call.
+	setupPairStartLimiter := newPairRateLimiter(time.Minute, 5)
+	mux.HandleFunc("POST /api/setup/pair-start", pairStartHandler(d, rp, client, rateLimited(setupPairStartLimiter, firstBootGate(d)), "/api/setup/pair-status"))
+	mux.HandleFunc("GET /api/setup/pair-status", pairStatusHandler(d, rp, client, firstBootGate(d), "/api/setup/pair-status"))
+}
+
+// pairStartHandler sends the pair request to the chosen primary and renders
+// the first "waiting" fragment. Gate rationale for the manager flavour:
+// sending a pair request is already the LAN-open, unauthenticated-by-design
+// action on the PRIMARY's side (ADR-0033 §8) — being on the manager-gated
+// page (or, for the wizard, in the first-boot window) is enough, no extra
+// manager-PIN prompt for this side.
+//
+// Every branch below renders a 200 with the outcome encoded in the
+// body (waiting/error), never a 4xx/5xx status: this response is always
+// swapped in by htmx, and htmx (the vendored 1.9.12 here) does not swap
+// non-2xx responses by default — a non-200 render is invisible to the
+// operator, not just cosmetically wrong.
+func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, gate apiGate, statusURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !gate(w, r) {
 			return
 		}
 		_ = r.ParseForm()
@@ -124,11 +153,11 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 		primaryTillID := strings.TrimSpace(r.Form.Get("till_id"))
 		name := strings.TrimSpace(r.Form.Get("name"))
 		if baseURL == "" || primaryTillID == "" || name == "" {
-			pairWaitView(w, r, "error", "", "", "base_url, till_id and name are all required")
+			pairWaitView(w, r, statusURL, "error", "", "", "base_url, till_id and name are all required")
 			return
 		}
 		if !validPrimaryBaseURL(baseURL) {
-			pairWaitView(w, r, "error", "", "", "not a valid primary address")
+			pairWaitView(w, r, statusURL, "error", "", "", "not a valid primary address")
 			return
 		}
 
@@ -142,18 +171,18 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 			baseURL+"/api/sync/pair-request", strings.NewReader(string(body)))
 		if err != nil {
-			pairWaitView(w, r, "error", "", "", err.Error())
+			pairWaitView(w, r, statusURL, "error", "", "", err.Error())
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
-			pairWaitView(w, r, "error", "", "", "cannot reach that primary: "+err.Error())
+			pairWaitView(w, r, statusURL, "error", "", "", "cannot reach that primary: "+err.Error())
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			pairWaitView(w, r, "error", "", "", "the primary refused the pair request")
+			pairWaitView(w, r, statusURL, "error", "", "", "the primary refused the pair request")
 			return
 		}
 		var out struct {
@@ -162,7 +191,7 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 			} `json:"data"`
 		}
 		if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.ID == "" {
-			pairWaitView(w, r, "error", "", "", "unexpected response from the primary")
+			pairWaitView(w, r, statusURL, "error", "", "", "unexpected response from the primary")
 			return
 		}
 
@@ -176,16 +205,18 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 			requestedAt:   pairingJoinNow(),
 			status:        "waiting",
 		})
-		pairWaitView(w, r, "waiting", derivedVerificationCode(commitment, primaryTillID), "", "")
-	})
+		pairWaitView(w, r, statusURL, "waiting", derivedVerificationCode(commitment, primaryTillID), "", "")
+	}
+}
 
-	// Polled by the waiting fragment itself (hx-trigger="every 15s") until
-	// it renders a terminal state. No request id/params — reads whatever
-	// the single active attempt is. Holds rp.mu for its whole body — see
-	// replicaPairing's own doc comment for why.
-	mux.HandleFunc("GET /api/sync/pair-status", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+// pairStatusHandler is polled by the waiting fragment itself
+// (hx-trigger="every 15s", pointing back at this handler's own statusURL)
+// until it renders a terminal state. No request id/params — reads whatever
+// the single active attempt is. Holds rp.mu for its whole body — see
+// replicaPairing's own doc comment for why.
+func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, gate apiGate, statusURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !gate(w, r) {
 			return
 		}
 		rp.mu.Lock()
@@ -193,33 +224,33 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 
 		state := rp.active
 		if state == nil {
-			pairWaitView(w, r, "idle", "", "", "")
+			pairWaitView(w, r, statusURL, "idle", "", "", "")
 			return
 		}
 		if state.status != "waiting" {
 			// Terminal already — re-render idempotently (a stray extra poll
 			// racing the swap that stopped it, or a page reload).
-			pairWaitView(w, r, state.status, "", state.shopName, state.errMsg)
+			pairWaitView(w, r, statusURL, state.status, "", state.shopName, state.errMsg)
 			return
 		}
 		if pairingJoinNow().Sub(state.requestedAt) > pairingRequestTTL {
 			next := *state
 			next.status = "expired"
 			rp.active = &next
-			pairWaitView(w, r, "expired", "", "", "")
+			pairWaitView(w, r, statusURL, "expired", "", "", "")
 			return
 		}
 
 		url := state.primaryURL + "/api/sync/pair-requests/" + state.id + "?request_secret=" + state.requestSecret
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
 		if err != nil {
-			pairWaitView(w, r, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
+			pairWaitView(w, r, statusURL, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
 			return
 		}
 		resp, err := client.Do(req)
 		if err != nil {
 			// Transient network hiccup — stay waiting, the next tick retries.
-			pairWaitView(w, r, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
+			pairWaitView(w, r, statusURL, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
 			return
 		}
 		defer resp.Body.Close()
@@ -230,14 +261,14 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 		// the shared pair-request rate limiter (registerPairingAPI) — an
 		// expected steady-state outcome at this poll cadence, not fatal.
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusTooManyRequests {
-			pairWaitView(w, r, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
+			pairWaitView(w, r, statusURL, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
 			return
 		}
 		if resp.StatusCode != http.StatusOK {
 			next := *state
 			next.status, next.errMsg = "error", fmt.Sprintf("unexpected response from the primary (%s)", resp.Status)
 			rp.active = &next
-			pairWaitView(w, r, "error", "", "", next.errMsg)
+			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
 			return
 		}
 		var out struct {
@@ -249,7 +280,7 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 			next := *state
 			next.status, next.errMsg = "error", "unexpected response from the primary"
 			rp.active = &next
-			pairWaitView(w, r, "error", "", "", next.errMsg)
+			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
 			return
 		}
 
@@ -258,12 +289,12 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 			next := *state
 			next.status, next.errMsg = "error", err.Error()
 			rp.active = &next
-			pairWaitView(w, r, "error", "", "", next.errMsg)
+			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
 			return
 		}
 		next := *state
 		next.status, next.shopName = "joined", shopName
 		rp.active = &next
-		pairWaitView(w, r, "joined", "", shopName, "")
-	})
+		pairWaitView(w, r, statusURL, "joined", "", shopName, "")
+	}
 }

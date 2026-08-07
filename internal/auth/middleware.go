@@ -25,11 +25,14 @@ func exempt(path string) bool {
 	}
 	// Machine-to-machine sync surface (ADR-0011): enroll is one-time-token
 	// authed; ping/snapshot/sales/admin are per-till-bearer authed —
-	// enforced in the handlers. /api/setup/join refuses once an operator
-	// exists (wizard).
+	// enforced in the handlers. The /api/setup/* wizard routes (manual join
+	// plus the first-boot discovery/pairing trio, ut-docs#289) all refuse
+	// once an operator exists — a brand-new till has no operators, so no
+	// session can exist and these could never be reached otherwise.
 	switch path {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
-		"/api/sync/assets", "/api/sync/assets/file", "/api/setup/join":
+		"/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
+		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status":
 		return true
 	}
 	// /self-order (ADR-0020): the self-order kiosk flow is used by
