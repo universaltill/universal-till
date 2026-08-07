@@ -152,7 +152,7 @@ func warnPaymentMethodAnomalies(ctx context.Context, repo *data.PluginRepo) {
 		log.Printf("check for orphaned plugin-owned payment methods: %v", err)
 	}
 	for _, o := range orphans {
-		log.Printf("payment method %s (%q) is plugin-owned by %s, which is not installed on this till — reinstall the plugin, or reassign/rename the tender if this is a stale capture", o.ID, o.Name, o.PluginID)
+		log.Print(orphanPaymentMethodWarning(o))
 	}
 
 	suppressed, err := repo.FindSuppressedPaymentNameEntries(ctx)
@@ -162,6 +162,22 @@ func warnPaymentMethodAnomalies(ctx context.Context, repo *data.PluginRepo) {
 	for _, s := range suppressed {
 		log.Printf("plugin %s's payment entry %s cannot use label %q — already used by payment method %s; pick a distinct label or rename the conflicting tender", s.PluginID, s.Key, s.Label, s.BlockingID)
 	}
+}
+
+// orphanPaymentMethodWarning builds the startup log line for a
+// payment_methods row stamped with a plugin_id that has no corresponding
+// plugins row (data.OrphanedPaymentMethod). ut-docs#170: the previous
+// wording told the operator to "reassign/rename the tender", but no such
+// affordance exists anywhere in web/ui/ — plugin-owned rows are
+// materialized by SyncPluginPaymentMethods, and nothing in the data layer
+// or UI can rename one afterward. It also read as an alarm on every boot
+// even when the plugin itself was uninstalled on purpose, a case where
+// ADR-0031 deliberately retains the tender row for sales history. This
+// wording drops the non-actionable instruction and says plainly that a
+// deliberate uninstall is expected, leaving reinstalling the plugin as the
+// one real remedy for a stale/accidental capture.
+func orphanPaymentMethodWarning(o data.OrphanedPaymentMethod) string {
+	return fmt.Sprintf("payment method %s (%q) is plugin-owned by %s, which is not installed on this till — if that plugin was uninstalled on purpose, this is expected (the tender is kept for sales history); otherwise, reinstall the plugin to make this tender usable again", o.ID, o.Name, o.PluginID)
 }
 
 // Reload refreshes installed plugins and menu entries (used after install/uninstall).
