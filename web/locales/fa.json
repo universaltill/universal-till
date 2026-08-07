@@ -1087,7 +1087,7 @@
   "issuereport.panel_title": "گزارش یک مشکل",
   "issuereport.panel_close": "بستن",
   "issuereport.nav_ends_recording": "با رفتن به صفحه‌ای دیگر، ضبط متوقف می‌شود — ابتدا گزارش خود را ارسال کنید.",
-  "issuereport.route_note": "پنل گزارش باز است. با دکمه 🐞 در نوار بالا نیز می‌توانید آن را از هر صفحه‌ای باز کنید.",
+  "issuereport.route_note": "می‌توانید پنل گزارش را با دکمه 🐞 در نوار بالا از هر صفحه‌ای باز کنید.",
   "osk.toggle": "صفحه‌کلید",
   "basket.count_label": "تعداد اقلام سبد",
   "notice.dismiss": "بستن",
