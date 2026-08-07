@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Universal Till</string>
+    <string name="status_starting">Kasa başlatılıyor…</string>
+    <string name="status_running">%1$s adresinde çalışıyor</string>
+    <string name="status_failed">Başlatılamadı: %1$s</string>
+    <string name="notification_running">Universal Till çalışıyor</string>
+    <string name="notification_channel_name">Universal Till servisi</string>
+</resources>
