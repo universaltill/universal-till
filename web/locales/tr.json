@@ -413,6 +413,7 @@
   "plugins.install.modal.title": "Eklenti kuruluyor",
   "plugins.install.success": "Eklenti başarıyla kuruldu.",
   "plugins.manage.action.disable": "Devre dışı bırak",
+  "plugins.manage.action.docs": "Kılavuz",
   "plugins.manage.action.enable": "Etkinleştir",
   "plugins.manage.action.export": "Dışa aktar",
   "plugins.manage.action.uninstall": "Kaldır",

@@ -413,6 +413,7 @@
   "plugins.install.modal.title": "در حال نصب افزونه",
   "plugins.install.success": "افزونه با موفقیت نصب شد.",
   "plugins.manage.action.disable": "غیرفعال‌سازی",
+  "plugins.manage.action.docs": "راهنما",
   "plugins.manage.action.enable": "فعال‌سازی",
   "plugins.manage.action.export": "خروجی",
   "plugins.manage.action.uninstall": "حذف نصب",
