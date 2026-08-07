@@ -192,11 +192,11 @@ const tickHHMM = "10:00" // == tickNow's clock, so due with zero elapsed
 
 func stubAutoUpdateSeams(t *testing.T, current updates.Status, checkNow updates.Status, supported bool, applyErr error) *int {
 	t.Helper()
-	origCurrent, origCheckNow, origSupported, origApply :=
-		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply
+	origCurrent, origCheckNow, origSupported, origApply, origBuildVersion :=
+		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply, autoUpdateBuildVersion
 	t.Cleanup(func() {
-		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply =
-			origCurrent, origCheckNow, origSupported, origApply
+		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply, autoUpdateBuildVersion =
+			origCurrent, origCheckNow, origSupported, origApply, origBuildVersion
 	})
 	applyCalls := 0
 	autoUpdateCurrent = func() updates.Status { return current }
@@ -206,6 +206,13 @@ func stubAutoUpdateSeams(t *testing.T, current updates.Status, checkNow updates.
 		applyCalls++
 		return applyErr
 	}
+	// A real stamped version by default -- the test binary's own
+	// buildinfo.Version is "dev" (never ldflags-stamped), which would
+	// otherwise make every one of these tests exercise the ut-docs#369
+	// dev-build guard instead of what each actually means to test. The two
+	// tests that specifically cover that guard override this after calling
+	// stubAutoUpdateSeams.
+	autoUpdateBuildVersion = func() string { return "0.2.60" }
 	return &applyCalls
 }
 
@@ -266,6 +273,54 @@ func TestAutoUpdateTick_SkipsWhenUnsupported(t *testing.T) {
 
 	if *applyCalls != 0 {
 		t.Fatalf("expected Apply not called when unsupported, got %d calls", *applyCalls)
+	}
+}
+
+// Regression (ut-docs#369): a `make build` binary used to silently report
+// Version="dev" (the ldflags -X target was a symbol that doesn't exist), and
+// internal/updates.Newer treats "dev" as older than every release -- so an
+// unattended auto-update would replace a just-built/deployed developer
+// binary with the latest GitHub release minutes later. Now that the ldflags
+// bug is fixed a "dev" build should be rare, but unattended self-replacement
+// of a developer's own build is never the right default regardless of how
+// it got that way -- decline to act, same as the other guard conditions
+// above. The manual "Update now" button (a separate handler,
+// POST /api/update/apply) is unaffected: it's an explicit user action, not
+// something this silent scheduler should also gate.
+func TestAutoUpdateTick_SkipsWhenBuildVersionIsDev(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, true, nil)
+	autoUpdateBuildVersion = func() string { return "dev" }
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+
+	if *applyCalls != 0 {
+		t.Fatalf("expected Apply not called on a dev build, got %d calls", *applyCalls)
+	}
+	if v, _, _ := dp.Settings.Get(t.Context(), keyAutoUpdateLastAttempt); v != "" {
+		t.Fatalf("expected no attempt recorded on a dev build, got %q", v)
+	}
+}
+
+// A real stamped version (stubAutoUpdateSeams's default) must still
+// auto-update normally -- the guard above isn't a blanket "auto-update
+// never fires" regression in disguise. Covered by
+// TestAutoUpdateTick_AppliesOnceWhenDueAndAvailable already exercising the
+// default; this test exists to name that coverage explicitly against
+// ut-docs#369, since a future change to the default could otherwise make it
+// silently disappear.
+func TestAutoUpdateTick_FiresWithRealBuildVersion(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, tickHHMM)
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, true, nil)
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+
+	if *applyCalls != 1 {
+		t.Fatalf("expected Apply called once with a real build version, got %d calls", *applyCalls)
 	}
 }
 
