@@ -1,0 +1,39 @@
+{{ if .Seasonal }}
+<div class="card">
+  <h2>{{ T "reports.seasonal" }}</h2>
+  <p class="muted" style="margin-block-start:0">{{ T "reports.seasonal_hint" }}</p>
+  <table class="table">
+    <thead><tr><th>{{ T "basket.col.item" }}</th><th style="text-align:end">{{ T "reports.seasonal_expected" }}</th><th style="text-align:end">{{ T "basket.col.qty" }}</th><th style="text-align:end">{{ T "reports.seasonal_suggest" }}</th></tr></thead>
+    <tbody>
+      {{ range .Seasonal }}
+      <tr><td>{{ .Name }}{{ if .Lunar }} <span class="muted" title="{{ T "reports.seasonal_lunar_hint" }}">🌙&nbsp;{{ T "reports.seasonal_lunar_badge" }}</span>{{ end }}</td>
+          <td style="text-align:end" class="muted">{{ .Expected }}</td>
+          <td style="text-align:end" class="muted">{{ .OnHand }}</td>
+          <td style="text-align:end; font-weight:600">{{ if .SuggestQty }}{{ .SuggestQty }}{{ else }}✓{{ end }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ if .SeasonalCats }}
+  <h3>{{ T "reports.seasonal_by_category" }}</h3>
+  <table class="table">
+    <thead><tr><th>{{ T "catalog.category" }}</th><th style="text-align:end">{{ T "reports.seasonal_expected" }}</th><th style="text-align:end">{{ T "basket.col.qty" }}</th><th style="text-align:end">{{ T "reports.seasonal_suggest" }}</th></tr></thead>
+    <tbody>
+      {{ range .SeasonalCats }}
+      <tr><td>{{ if .Name }}{{ .Name }}{{ else }}{{ T "reports.seasonal_uncategorized" }}{{ end }}</td>
+          <td style="text-align:end" class="muted">{{ .Expected }}</td>
+          <td style="text-align:end" class="muted">{{ .OnHand }}</td>
+          <td style="text-align:end; font-weight:600">{{ if .SuggestQty }}{{ .SuggestQty }}{{ else }}✓{{ end }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+</div>
+{{ else }}
+<div class="card">
+  <h2>{{ T "reports.seasonal" }}</h2>
+  <p class="muted" style="margin-block-start:0">{{ T "reports.seasonal_hint" }}</p>
+  <table class="table">
+    <tbody><tr><td class="empty">{{ T "reports.none" }}</td></tr></tbody>
+  </table>
+</div>
+{{ end }}

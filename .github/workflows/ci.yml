@@ -39,6 +39,8 @@ jobs:
         run: bash scripts/ci/guard-kiosk-launch-flags.sh
       - name: Android status/notification address guard
         run: bash scripts/ci/guard-android-status-address.sh
+      - name: Android string resource i18n guard
+        run: bash scripts/ci/guard-android-i18n.sh
       - name: Emoji font guard
         run: bash scripts/ci/guard-emoji-font.sh
       - name: htmx-loaded guard

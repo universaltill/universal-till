@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Universal Till</string>
+    <string name="status_starting">جارٍ تشغيل الصندوق…</string>
+    <string name="status_running">قيد التشغيل على %1$s</string>
+    <string name="status_failed">فشل بدء التشغيل: %1$s</string>
+    <!-- ut-docs#414 (independent review, 2026-08-07): leads with an RLM
+         (U+200F, invisible) so the bidi algorithm resolves this line as an
+         RTL paragraph. Without it, the first strong character being Latin
+         ("Universal") made the whole notification line render left-
+         anchored inside an otherwise-RTL notification shade. -->
+    <string name="notification_running">‏Universal Till قيد التشغيل</string>
+    <string name="notification_channel_name">خدمة Universal Till</string>
+</resources>
