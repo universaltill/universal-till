@@ -134,6 +134,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 
+		// A fresh till needs a real usable register the moment onboarding
+		// finishes, not just an admin user — the Shifts page's register
+		// picker is driven entirely from real `registers` rows, and without
+		// one Open Shift 500s on a FK constraint failure (ut-docs#429).
+		if _, err := posRepo.EnsureRegister(r.Context()); err != nil {
+			http.Error(w, "setup failed", http.StatusInternalServerError)
+			return
+		}
+
 		// Admin operator + session — the same first-boot semantics as
 		// POST /api/auth/setup (which stays as the bare fallback).
 		adminID, err := ensureFirstBootAdmin(r, svc)
