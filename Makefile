@@ -1,6 +1,14 @@
 BIN=unitill-pos
 VERSION?=0.1.0
-LDFLAGS=-s -w -X main.version=$(VERSION)
+# internal/buildinfo.Version is the symbol the app actually reads (see that
+# package's doc comment) — "main.version" doesn't exist anywhere in this
+# codebase, so `-X main.version=...` used to be a silent no-op: `go build`
+# does not error on an -X target that isn't a real symbol. Every `make
+# build` binary reported Version="dev", which internal/updates.Newer treats
+# as older than every release — with auto-update on, the till would
+# silently replace a freshly built/deployed binary with the latest GitHub
+# release minutes later (ut-docs#369, found deploying a field hotfix).
+LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION)
 
 .PHONY: build run test e2e e2e-seed docs-shots
 
