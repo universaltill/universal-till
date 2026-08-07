@@ -4,7 +4,7 @@ title: متجر الإضافات
 section: الاتصال والإضافات
 order: 330
 summary: "أضف ميزات دون تغيير التطبيق الأساسي: مدفوعات، سمات، حزم لغات، تكاملات، أدوات ذكاء اصطناعي وأكثر."
-routes: [/plugins, /plugins/store]
+routes: [/plugins, /plugins/store, /plugins/{id}/settings]
 ---
 
 # متجر الإضافات
