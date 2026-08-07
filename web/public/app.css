@@ -545,11 +545,14 @@ a.btn, a.btn:hover { text-decoration: none; }
    which is what actually participates in table-layout: fixed's column-
    width algorithm (.basket table above). A `width`/`nth-child` rule
    aimed at the original <td> silently stopped reaching the real column
-   box, collapsing the item column to a fraction of its declared 34%
-   (caught via a live DOM probe, not visually — the column still
-   *rendered*, just squeezed the name to 0 width, invisible without
+   box (caught via a live DOM probe, not visually — the column still
+   *rendered*, just squeezed the name near 0 width, invisible without
    inspecting). basket.html wraps this in its own <div class="line-item">
-   now so the <td> stays a genuine table-cell. */
+   now so the <td> stays a genuine table-cell. max-width matters for
+   real now, not just decorative: the item column is deliberately left
+   with no declared table width (.basket table's comment above) so it
+   can grow to fill whatever the other columns don't need — this caps
+   how far that growth goes at the panel's roomy default width. */
 .line-item { max-width: 9.875rem; display: flex; align-items: center; gap: .4rem; }
 .line-thumb {
   flex: 0 0 auto; width: 2rem; height: 2rem; object-fit: cover;
@@ -597,50 +600,87 @@ a.btn, a.btn:hover { text-decoration: none; }
    doubled every row's height and was the main reason only ~1 line item
    fit in the old basket panel (ut-docs#213). */
 .line-inputs { display: flex; align-items: center; gap: .25rem; justify-content: flex-end; }
-.qty-input { width: 3.3rem; padding: .3rem .3rem; font-size: .85rem; }
-.disc-input { width: 3.3rem; padding: .3rem .3rem; font-size: .8rem; }
+.qty-input { width: 3.4rem; padding: .3rem .3rem; font-size: .85rem; }
+.disc-input { width: 3.4rem; padding: .3rem .3rem; font-size: .8rem; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
 
 .order-type-toggle { display: flex; gap: .4rem; margin-bottom: .6rem; }
 .order-type-toggle .btn { flex: 1; }
 
-/* ut-docs#391 (3rd recurrence — see .basket-scroll below for the other
-   two prior symptomatic fixes this one replaces). table-layout: auto
-   (the default) sizes every column from its content's natural width and
-   only shrinks below that once the total exceeds the container — but
-   the shrink is redistributed across ALL columns, including ones that
-   have no room to give (a first attempt at this fix let auto-layout
-   redistribute shrinkage into the PRICE/TOTAL columns via
-   overflow-wrap: anywhere, which "worked" by the scrollWidth measure but
-   broke the columns' own single-line rendering — caught by the manual's
-   docs-shots screenshot, not by the geometry assertions). table-layout:
-   fixed makes the split explicit and deterministic instead: every
-   column gets a declared share of the table's own 100% width, so it can
-   never demand more than the panel has, and a too-long ITEM name wraps
-   (already handled: .line-name's 2-line clamp) rather than stealing
-   space from the money columns. Budget, narrowest→widest columns:
-     item 33% | qty+discount inputs 31% | price 14% | total 14% | remove 8%
-   qty+discount 31% comfortably fits two 3.3rem inputs + their gap (wide
-   enough that a real "1.00"/"0.00" value never scrolls inside its own
-   input — a first pass at 3rem was 4px too narrow, silently clipping the
-   trailing digit; caught the same way as the column-budget bug itself,
-   by reading the regenerated docs-shots screenshot rather than trusting
-   the geometry assertions alone) at the 22rem basket-column floor
-   (verified live via e2e/tests/basket-no-horizontal-scroll-391.spec.ts
-   at the 1024x600 kiosk resolution, both LTR and RTL) with headroom for
-   a wider manual ui_scale on top. */
+/* ut-docs#391 (3rd recurrence — see .basket-scroll below for two more
+   prior symptomatic fixes this replaces). table-layout: auto (the
+   default) sizes columns from content and only shrinks once the total
+   exceeds the container — but the shrink redistributes across ALL
+   columns including ones with no room to give.
+   THREE failed attempts before this one, all worth recording so nobody
+   re-walks them:
+   1. A straight PERCENTAGE budget (33/31/14/14/8) under table-layout:
+      fixed. Deterministic against auto-layout's redistribution problem,
+      but wrong differently: independent review measured it failing at
+      ui_scale 2 (offered in Settings, guarded as supported by
+      ui-scale-basket.spec.ts) — negative margins up to -42px, the
+      remove button clipped in half again — and passing the one
+      viewport the e2e spec covered by only 0.48px. Root cause:
+      qty-input/disc-input/.btn-x are REM-sized (track --ui-scale
+      exactly), but a PERCENTAGE column is a share of the panel's
+      rendered px width, which does not scale in lockstep with rem
+      content once the panel hits its own 22rem/26.25rem clamp
+      (.pos-container above) at a viewport/scale combination where the
+      two stop moving together.
+   2. Reserving qty+discount and remove as explicit REM (matching their
+      real content, invariant to scale) and splitting the rest via
+      calc((100% - reserved) * ratio) on item/price/total. The REM
+      columns came out exactly right — but table-layout: fixed's
+      column-sizing algorithm does not evaluate calc() the way normal
+      box sizing does: instead of the intended 55:22.5:22.5 ratio, the
+      browser silently fell back to splitting the remainder EQUALLY
+      across the three calc()'d columns, squeezing item to a third of
+      its intended share. Table scrollWidth still matched clientWidth
+      (no horizontal overflow — the specific thing this bug is about),
+      so the e2e spec's geometry assertions never caught it; only a
+      targeted live DOM probe (declared vs. rendered column widths) did.
+   3. Same REM reservations, but item/price/total as plain PERCENTAGES
+      (not calc()) calibrated for the WORST case (the panel's 22rem
+      floor, where the REM columns eat the largest share). Correctly
+      scale-invariant this time — but a FIXED percentage of the table's
+      width can't also be generous at the panel's roomy 26.25rem default
+      width, so calibrating for the worst case starved the item column
+      everywhere else: regressed ut-docs#213's own ">=4 basket lines
+      visible without scrolling at 1280x800" (narrower item column ->
+      more names hit their 2-line clamp -> taller rows -> fewer fit).
+   The fix that actually holds: reserve qty+discount (8rem: two 3.4rem
+   inputs + .25rem gap + .35rem*2 cell padding), price (4rem) and total
+   (4rem) as explicit REM sized to their real content — including the
+   PRICE/TOTAL header labels themselves, which need more room than the
+   data amounts do — and remove
+   (2.8rem: .btn-x + its padding + cell padding, with headroom for
+   "wider font metrics (Linux/CI, some kiosk builds)" — .pos-container's
+   own comment above documents this exact hazard). ITEM alone is left
+   with NO declared width. table-layout: fixed's own algorithm (not
+   calc(), not a guessed ratio) gives the one column with no width its
+   own dedicated behaviour: 100% of whatever is left after the declared
+   columns are honoured — unambiguous with exactly one such column
+   (attempt 2's equal-split trap only happens with MULTIPLE unspecified/
+   calc()'d columns competing for the same leftover space). So item
+   grows freely up to its own max-width (9.875rem, below) at the panel's
+   normal 26.25rem width — recovering attempt 3's regression — while
+   still only ever shrinking, never overflowing, at the tightest floor+
+   scale corner. Verified live — scrollWidth/clientWidth, remove-button
+   bbox, each column's actual rendered width against its declared one
+   (the exact thing attempt 2 didn't check), AND the >=4-visible-lines
+   AC at 1280x800 (the exact thing attempt 3 broke) — across ui_scale
+   1/1.75/2 at 901px/1024px/1280px width, LTR and RTL. */
 .basket table { width: 100%; border-collapse: collapse; background: var(--surface);
-                border-radius: var(--radius); overflow: hidden; table-layout: fixed; }
+                border-radius: var(--radius); table-layout: fixed; }
 .basket th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
              color: var(--muted); padding: .5rem .6rem; border-bottom: 2px solid var(--border);
              text-align: start; }
 .basket td { padding: .55rem .6rem; border-bottom: 1px solid var(--border); text-align: start; }
 .basket th:nth-child(n+2), .basket td:nth-child(n+2) { text-align: end; }
-.basket th:nth-child(1), .basket td:nth-child(1) { width: 33%; }
-.basket th:nth-child(2), .basket td:nth-child(2) { width: 31%; }
-.basket th:nth-child(3), .basket td:nth-child(3) { width: 14%; }
-.basket th:nth-child(4), .basket td:nth-child(4) { width: 14%; }
-.basket th:nth-child(5), .basket td:nth-child(5) { width: 8%; }
+.basket th:nth-child(2), .basket td:nth-child(2) { width: 8rem; }
+.basket th:nth-child(3), .basket td:nth-child(3) { width: 4rem; }
+.basket th:nth-child(4), .basket td:nth-child(4) { width: 4rem; }
+.basket th:nth-child(5), .basket td:nth-child(5) { width: 2.8rem; }
 .basket tr:last-child td { border-bottom: none; }
 .basket .totals {
   margin-top: .5rem; display: grid; gap: .2rem; justify-items: end;
@@ -669,13 +709,19 @@ a.btn, a.btn:hover { text-decoration: none; }
    budget (see .basket table above). */
 .basket td { padding: .4rem .35rem; }
 .basket th { padding: .4rem .35rem; }
-/* With table-layout: fixed (above) the price/total columns get a fixed
-   14% each regardless of content -- normal amounts fit comfortably, but
-   a pathological one (locale grouping, a very large total) can no longer
-   grow the column to fit; without somewhere to give, it would overflow
-   the fixed cell and bleed into its neighbour instead. Let it wrap onto a
-   second line there rather than that. */
-.basket td:nth-child(3), .basket td:nth-child(4) { overflow-wrap: anywhere; }
+/* Safety net, not the primary mechanism: price/total's percentages
+   (.basket table above) fit ordinary amounts on one line at every
+   supported viewport/ui_scale (verified live) -- but at the tightest
+   floor+scale corner, or a pathological locale-grouped/very-large
+   amount, the column can still be narrower than the text. table-layout:
+   fixed can't grow a column to fit, so without somewhere to give it
+   would overflow into its neighbour instead; let it wrap onto a second
+   line there rather than that. Covers the header cells too -- at that
+   same extreme corner "PRICE"/"TOTAL" are single unbreakable words that
+   would otherwise overflow their th into each other, unreadable in a
+   different way than the data cells' amounts but the same root cause. */
+.basket td:nth-child(3), .basket td:nth-child(4),
+.basket th:nth-child(3), .basket th:nth-child(4) { overflow-wrap: anywhere; }
 
 /* ---------- Sale-screen notices (ut-docs#213) ----------
    THE notification surface for the sale screen — one component, two slots:
