@@ -37,6 +37,8 @@ jobs:
         run: bash scripts/ci/guard-webkit-version.sh
       - name: Kiosk launch flags guard
         run: bash scripts/ci/guard-kiosk-launch-flags.sh
+      - name: Android status/notification address guard
+        run: bash scripts/ci/guard-android-status-address.sh
       - name: Emoji font guard
         run: bash scripts/ci/guard-emoji-font.sh
       - name: htmx-loaded guard

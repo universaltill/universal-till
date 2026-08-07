@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.view.View
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -113,6 +114,17 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webview)
         statusView = findViewById(R.id.status)
+        // ut-docs#412: this bar (including the loopback address it shows)
+        // is a debug convenience for developers running the wrapper off a
+        // USB-attached device, not something a shop worker has any use
+        // for — it ate scarce vertical space on a phone screen and leaked
+        // an internal bind address to end users. Real users never see it;
+        // BuildConfig.DEBUG is false in the release build shipped via
+        // release.yml's android-app job. The foreground-service
+        // notification (TillService.buildNotification) still surfaces
+        // "till is running" without the address, in every build — that
+        // one's a genuine OS requirement, not a diagnostic.
+        statusView.visibility = if (BuildConfig.DEBUG) View.VISIBLE else View.GONE
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.webViewClient = WebViewClient()
