@@ -42,6 +42,7 @@ func isManagerOrAuthOff(r *http.Request) bool {
 
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
 		all, _ := d.Settings.All(r.Context())
 		st := d.CurrentState()
 		scale := st.UIScale
@@ -101,6 +102,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"exportEntries":     exportEntries,
 			"autoUpdateEnabled": autoUpdateEnabled == "true",
 			"autoUpdateTime":    autoUpdateTime,
+			"TillName":          tillNameOrDefault(r.Context(), d, locale),
+			"IsPrimaryTill":     d.SyncPrimaryURL(r.Context()) == "",
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -387,6 +390,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if err := d.Settings.Set(r.Context(), "display.mode", mode); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// This till's own display name (ut-docs#396) — distinct from a replica's
+	// own sync.till_name — shown in Settings and on the /tills page.
+	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		if name := strings.TrimSpace(r.Form.Get("name")); name != "" {
+			if rs := []rune(name); len(rs) > 60 { // mirrors the field's own maxlength="60" server-side
+				name = string(rs[:60])
+			}
+			if err := d.Settings.Set(r.Context(), "till.name", name); err != nil {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

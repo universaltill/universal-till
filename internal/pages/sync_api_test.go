@@ -567,6 +567,51 @@ func TestTillsPage_ListsEnrolledTills(t *testing.T) {
 	}
 }
 
+// GET /tills shows the primary till itself in the Enrolled list (ut-docs#396)
+// when this device IS the primary (SyncPrimaryURL empty) — the common single
+// -till-shop case, which previously showed nothing at all in that card.
+func TestTillsPage_ShowsPrimaryTillWhenThisDeviceIsThePrimary(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	if err := dp.Settings.Set(context.Background(), "till.name", "Front Counter"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Front Counter") {
+		t.Fatalf("expected the primary's own name in the Enrolled list, got body without it: %s", rec.Body.String())
+	}
+}
+
+// A replica (non-empty SyncPrimaryURL) must NOT fabricate a primary row —
+// that card is only about the primary showing itself, out of scope here.
+func TestTillsPage_NoFabricatedPrimaryRowWhenViewingFromAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "till.name", "Front Counter"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Front Counter") {
+		t.Fatalf("a replica must not show a fabricated primary row for its own till.name: %s", rec.Body.String())
+	}
+}
+
 // --- pairing code is opaque, not raw JSON (issue #7) ---
 
 func TestEnrollCode_RoundTripOpaque(t *testing.T) {
