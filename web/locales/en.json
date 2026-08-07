@@ -492,6 +492,7 @@
   "plugins.type.theme": "Theme",
   "plugins.type_label": "Type:",
   "products.empty": "No products yet. Add some in Designer.",
+  "products.search_ph": "Search products…",
   "products.title": "Products",
   "products.uncategorized": "Uncategorized",
   "receipt.auto_reset": "Auto-reset in 60s...",

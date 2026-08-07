@@ -257,6 +257,112 @@ func TestButtonsHTTPList_FlatWhenNoCategoriesConfigured(t *testing.T) {
 	}
 }
 
+// TestButtonsHTTPList_RendersTabBarAndSearchWithMultipleCategories pins
+// ut-docs#418: once there are >=2 top-level categories, the sale screen
+// gets a tab bar (one tab per root, in Groups order) plus a search input —
+// both scoped by the shared Alpine "products-finder" data so a tile's
+// visibility is driven by both the active tab (x-show on the tab panel)
+// and the search query (x-show on the tile itself), entirely client-side
+// (see app.css's ut-docs#418 comment for why: no server round trip means
+// no risk of one filter silently dropping the other, the bug class
+// ut-docs#419 fixes on the self-order kiosk side).
+func TestButtonsHTTPList_RendersTabBarAndSearchWithMultipleCategories(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('drinks','Drinks',NULL,0,NULL)`)
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('food','Food',NULL,1,NULL)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm1','S1','Cola', 150, 1, 'drinks')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm2','S2','Burger', 650, 1, 'food')`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Cola','itm1',0)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B2','Burger','itm2',1)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `id="products-search"`) {
+		t.Fatalf("expected a search input on the sale screen, got: %s", body)
+	}
+	if !strings.Contains(body, `class="tab-bar"`) {
+		t.Fatalf("expected a tab bar once >=2 categories exist, got: %s", body)
+	}
+	if !strings.Contains(body, ">Drinks<") || !strings.Contains(body, ">Food<") {
+		t.Fatalf("expected a tab per top-level category, got: %s", body)
+	}
+	if !strings.Contains(body, `data-name="Cola"`) || !strings.Contains(body, `data-name="Burger"`) {
+		t.Fatalf("expected each tile to carry data-name for the search filter, got: %s", body)
+	}
+	// Exactly one tab starts active — the first group's ID drives the
+	// shared x-data seed, so its own tab panel (and only its own) shows
+	// x-show="tab === 'drinks'" wired to that same value.
+	if !strings.Contains(body, `x-data="{ tab: 'drinks', q: '' }"`) {
+		t.Fatalf("expected the first root category to seed the initial active tab, got: %s", body)
+	}
+}
+
+// TestButtonsHTTPList_NoTabBarWithOneCategory: a single real category has
+// nothing to switch between, so no tab bar renders — search alone still
+// applies. Distinct from the fully-flat (zero categories) case above.
+func TestButtonsHTTPList_NoTabBarWithOneCategory(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('drinks','Drinks',NULL,0,NULL)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm1','S1','Cola', 150, 1, 'drinks')`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Cola','itm1',0)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, `class="tab-bar"`) {
+		t.Fatalf("did not expect a tab bar with only one top-level category, got: %s", body)
+	}
+	if !strings.Contains(body, `id="products-search"`) {
+		t.Fatalf("expected search to still be present with only one category, got: %s", body)
+	}
+}
+
+// TestButtonsHTTPList_TabsCarryColorWithMultipleCategories: independent
+// review of ut-docs#418 found that TestButtonsHTTPList_RendersNestedColorCodedGroups
+// (above) seeds only ONE root category, which renders via "category-group"
+// (unchanged since before this feature) — not the >=2-category tab-bar
+// branch real multi-category tills actually take. That left the tab bar's
+// own color handling completely untested: the first draft of this feature
+// dropped every category's --cat-color the moment a till had 2+ categories
+// (tabs carried no color at all), and this specific test would have kept
+// passing throughout since it never exercises that branch. Pins the fix in
+// the branch that matters instead.
+func TestButtonsHTTPList_TabsCarryColorWithMultipleCategories(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('drinks','Drinks',NULL,0,'#1D4ED8')`)
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('food','Food',NULL,1,'#AA0011')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm1','S1','Cola', 150, 1, 'drinks')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm2','S2','Burger', 650, 1, 'food')`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Cola','itm1',0)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B2','Burger','itm2',1)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, "ZgotmplZ") {
+		t.Fatalf("html/template mangled a color value: %s", body)
+	}
+	if !strings.Contains(body, "--cat-color: #1D4ED8") || !strings.Contains(body, "--cat-color: #AA0011") {
+		t.Fatalf("expected both explicit tab colors to survive verbatim on the tab bar, got: %s", body)
+	}
+}
+
 func TestNewRenderer_ErrorOnMissingTemplate(t *testing.T) {
 	_, err := NewRenderer(
 		filepath.Join("web", "ui", "layouts", "base.html"),
