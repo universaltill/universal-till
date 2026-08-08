@@ -21,14 +21,20 @@ import (
 type Deps struct {
 	StateMu sync.RWMutex
 
-	Cfg         *config.Config
-	Pm          *plugins.Manager
-	Db          *sql.DB
-	Settings    *settings.Store
-	State       RuntimeState
-	BaseMenu    []MenuItem
-	Menu        []MenuItem
-	Engine      *pos.Service
+	Cfg      *config.Config
+	Pm       *plugins.Manager
+	Db       *sql.DB
+	Settings *settings.Store
+	State    RuntimeState
+	BaseMenu []MenuItem
+	Menu     []MenuItem
+	Engine   *pos.Service
+	// KioskEngine is the self-order kiosk's own basket engine — deliberately
+	// a SEPARATE instance from Engine (ut-docs#449): the kiosk surface is
+	// auth-exempt and reachable by any LAN client, so it must never be able
+	// to read or mutate the cashier's live sale (before the split, merely
+	// landing on GET /self-order wiped the cashier's in-progress basket).
+	KioskEngine *pos.Service
 	BtnStore    *ui.ButtonStore
 	CatalogRepo *marketplace.CatalogRepository
 	AuthSvc     *auth.Service

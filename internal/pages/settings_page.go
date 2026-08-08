@@ -463,11 +463,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		d.SetState(st)
 		httpx.InitCurrency(st.Currency)
 		// In place: replacing the engine would empty a basket in progress.
-		d.Engine.SetConfig(pos.Config{
+		// Both engines: the kiosk's separate instance (ut-docs#449) must see
+		// the same tax config or it would silently charge stale rates.
+		newCfg := pos.Config{
 			TaxInclusive:                 st.TaxInclusive,
 			TaxRateBasisPoints:           st.TaxRatePct * 100,
 			ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
-		})
+		}
+		d.Engine.SetConfig(newCfg)
+		if d.KioskEngine != nil {
+			d.KioskEngine.SetConfig(newCfg)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -531,11 +537,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			httpx.InitCurrency(st.Currency)
 		case common.KeyTaxInclusive, common.KeyServiceChargeRate:
 			// In place: replacing the engine would empty a basket in progress.
-			d.Engine.SetConfig(pos.Config{
+			// Both engines — see the currency-card handler above (ut-docs#449).
+			newCfg := pos.Config{
 				TaxInclusive:                 st.TaxInclusive,
 				TaxRateBasisPoints:           st.TaxRatePct * 100,
 				ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
-			})
+			}
+			d.Engine.SetConfig(newCfg)
+			if d.KioskEngine != nil {
+				d.KioskEngine.SetConfig(newCfg)
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

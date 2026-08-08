@@ -24,12 +24,16 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 		// one, since the basket is till-process-level state, not
 		// per-visit (see spec 011 Phase 2's "revisit once there's real
 		// cart state to discard on reset" note — this is that revisit).
-		// d.Engine is nil in some page-level test harnesses that never
+		// KioskEngine, not Engine (ut-docs#449): this route is reachable by
+		// any LAN client in any display mode, so resetting the shared
+		// cashier engine here used to wipe the till's live sale. Only the
+		// kiosk's own basket may be cleared.
+		// d.KioskEngine is nil in some page-level test harnesses that never
 		// exercise the basket (e.g. TestSelfOrderModeRedirectsHome) — this
 		// route is reachable from those too since it's part of the "/"
 		// mode-redirect flow, so guard rather than assume it's always set.
-		if d.Engine != nil {
-			d.Engine.Reset()
+		if d.KioskEngine != nil {
+			d.KioskEngine.Reset()
 		}
 		st := d.CurrentState()
 		httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
