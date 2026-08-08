@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,95 @@ func TestPOSRepo_SeasonalForecast_SameSaleNotDoubleCountedAcrossWindows(t *testi
 	}
 }
 
+// TestPOSRepo_SeasonalForecast_ThreeYearsWithOverlapAndLunarK3 exercises all
+// three prior years together on one item, INCLUDING lunar k=3 — no prior
+// test placed a sale in that specific window (ut-docs#199 review finding).
+// It's also the first test to combine a k=1 solar/lunar overlap with signal
+// in k=2 and k=3 in the SAME query, the exact shape the single-scan
+// seasonalWindowQuery rewrite (up to 6 CASE-bucketed columns in one row) had
+// no dedicated coverage for.
+func TestPOSRepo_SeasonalForecast_ThreeYearsWithOverlapAndLunarK3(t *testing.T) {
+	d := b8OpenDB(t, "sf_3yr_overlap.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	b8Item(t, d, "anchor", 100, nil, 1)
+	b8Item(t, d, "thorough", 100, nil, 1)
+
+	// anchor's own sale is old enough on its own to pin yearsAvail=3
+	// (3*365-28=1067 days), independent of "thorough"'s windows below.
+	sfSale(t, d, "anchor1", "anchor", 1, 1094)
+
+	// k=1: −340d sits in BOTH solar[1] [−365,−337) and lunar[1] [−354,−326)
+	// — must count ONCE via max(solar,lunar).
+	sfSale(t, d, "th-k1", "thorough", 6, 340)
+	// k=2: −720d is solar[2] [−730,−702) ONLY (lunar[2] is [−709,−681)).
+	sfSale(t, d, "th-k2", "thorough", 10, 720)
+	// k=3: −1050d is lunar[3] [−1063,−1035) ONLY (solar[3] is [−1095,−1067)).
+	sfSale(t, d, "th-k3", "thorough", 8, 1050)
+
+	items, _, err := repo.SeasonalForecast(ctx, 28, 10)
+	if err != nil {
+		t.Fatalf("SeasonalForecast: %v", err)
+	}
+	got := map[string]SeasonalItem{}
+	for _, it := range items {
+		got[it.Name] = it
+	}
+	it, ok := got["Name thorough"]
+	if !ok {
+		t.Fatalf("thorough item missing from %+v", items)
+	}
+	// (max(6,6) + max(10,0) + max(0,8)) / 3 = 24/3 = 8.0;
+	// sumSolar = 6+10+0 = 16 > sumLunar = 6+0+8 = 14, so not Lunar.
+	if it.Expected != 8 || it.Years != 3 || it.Lunar {
+		t.Fatalf("thorough = %+v, want Expected 8, Years 3, Lunar false", it)
+	}
+}
+
+// TestPOSRepo_SeasonalForecast_ZeroSumWindowItemDoesNotPoisonCategoryWithNaN
+// covers a gap the single-scan rewrite opened (ut-docs#199 review finding):
+// the old per-window queries used HAVING units > 0, so an item could never
+// enter the result with an all-zero signal. seasonalWindowQuery's WHERE only
+// guarantees a matching ROW existed in some window, not that it summed
+// positive — a net-zero-quantity line still passes it. Without the
+// firstK==0 guard in SeasonalForecast, that item's Expected becomes 0/0 =
+// NaN, which then poisons its entire category's rollup (Expected += NaN).
+func TestPOSRepo_SeasonalForecast_ZeroSumWindowItemDoesNotPoisonCategoryWithNaN(t *testing.T) {
+	d := b8OpenDB(t, "sf_zerosum.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	mustExec(t, d, `INSERT INTO categories (id, name) VALUES ('c1', 'Bakery')`)
+	mustExec(t, d, `INSERT INTO items (id, sku, name, base_price, is_active, category_id) VALUES
+		('anchor', 'SKU-anchor', 'Name anchor', 100, 1, 'c1'),
+		('zeroed', 'SKU-zeroed', 'Name zeroed', 100, 1, 'c1')`)
+
+	sfSale(t, d, "a1", "anchor", 5, 360)
+	// A zero-quantity line still produces a row inside the k=1 window, so it
+	// passes seasonalWindowQuery's WHERE gate, but its window sum is 0.
+	b8Sale(t, d, "z1", sfAt(350), "completed", "sale", 0, 100)
+	b8Line(t, d, "z1", 1, "zeroed", "", "Zeroed", 0, 0, 0, 100, 100)
+
+	items, cats, err := repo.SeasonalForecast(ctx, 28, 10)
+	if err != nil {
+		t.Fatalf("SeasonalForecast: %v", err)
+	}
+	for _, it := range items {
+		if it.Name == "Name zeroed" {
+			t.Fatalf("zero-signal item must not appear in the forecast at all: %+v", it)
+		}
+		if math.IsNaN(it.Expected) {
+			t.Fatalf("NaN leaked into an item: %+v", it)
+		}
+	}
+	for _, c := range cats {
+		if math.IsNaN(c.Expected) {
+			t.Fatalf("NaN leaked into category rollup: %+v", c)
+		}
+	}
+}
+
 func TestPOSRepo_SeasonalForecast_CategoryRollup(t *testing.T) {
 	d := b8OpenDB(t, "sf_cats.db")
 	ctx := context.Background()
@@ -210,6 +300,76 @@ func TestPOSRepo_SeasonalForecast_LunarWindowBoundaryPinsYearLength(t *testing.T
 	}
 	if !names["Name edge"] || !names["Name anchor"] {
 		t.Fatalf("edge sale at -326.5d must land inside the 354-day lunar window, got %+v", items)
+	}
+}
+
+// ut-docs#199: SeasonalForecast used to run one query PER window (up to 6
+// full sale_lines/sales scans per call — 3 years × solar+lunar — each
+// unindexable because the datetime(s.created_at) wrapper the storage format
+// requires defeats idx_sales_created). seasonalWindowQuery collapses all
+// requested windows into ONE query via CASE-bucketed sums, so the join is
+// scanned once no matter how many windows are requested.
+func TestSeasonalWindowQuery_IsSingleScanNotOnePerWindow(t *testing.T) {
+	windows := []seasonalWindow{
+		{k: 1, lunar: false, offset: 365},
+		{k: 1, lunar: true, offset: 354},
+		{k: 2, lunar: false, offset: 730},
+		{k: 2, lunar: true, offset: 708},
+	}
+	query, args := seasonalWindowQuery(windows, 28)
+
+	if n := strings.Count(strings.ToUpper(query), "FROM SALE_LINES"); n != 1 {
+		t.Fatalf("query joins sale_lines %d times, want exactly 1 (one query, not one per window):\n%s", n, query)
+	}
+	// Each window's bound pair is used twice — once in its SELECT CASE, once
+	// in the WHERE OR — so 4 windows × 2 uses × 2 bounds (from/to) = 16 args.
+	if want := len(windows) * 4; len(args) != want {
+		t.Fatalf("args = %d, want %d", len(args), want)
+	}
+}
+
+// TestSeasonalWindowQuery_PlanIsOneScan runs the real generated query
+// through SQLite's own planner: EXPLAIN QUERY PLAN must show sale_lines
+// scanned exactly once, per ut-docs#199's acceptance criteria.
+func TestSeasonalWindowQuery_PlanIsOneScan(t *testing.T) {
+	d := b8OpenDB(t, "sf_plan.db")
+	windows := []seasonalWindow{
+		{k: 1, lunar: false, offset: 365},
+		{k: 1, lunar: true, offset: 354},
+		{k: 2, lunar: false, offset: 730},
+		{k: 2, lunar: true, offset: 708},
+		{k: 3, lunar: false, offset: 1095},
+		{k: 3, lunar: true, offset: 1063},
+	}
+	query, args := seasonalWindowQuery(windows, 28)
+
+	rows, err := d.DB.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
+	}
+	defer rows.Close()
+	scans := 0
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatalf("scan plan row: %v", err)
+		}
+		// Match the sale_lines table by its "sl" alias as SQLite's own
+		// planner names it ("SCAN sl" / "SEARCH sl USING INDEX ..."), not by
+		// a substring of the detail text — an index happening to be named
+		// with "sale_lines" in it (or not) is a planner/schema detail this
+		// test shouldn't be coupled to; the alias token is what's actually
+		// being asserted (ut-docs#199 review finding).
+		if fields := strings.Fields(detail); len(fields) >= 2 && fields[1] == "sl" {
+			scans++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("plan rows: %v", err)
+	}
+	if scans != 1 {
+		t.Fatalf("plan scans sale_lines (alias sl) %d times, want 1 (single scan for all 6 windows):\n%s", scans, query)
 	}
 }
 
