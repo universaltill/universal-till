@@ -215,10 +215,14 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 		return nil
 	}
 	c := nameConflicts[0]
-	if c.Owner == "" {
+	switch {
+	case c.Owner == "":
 		return fmt.Errorf("payment entry label %q collides with an existing built-in or shop-configured tender's name — pick a distinct label", c.Key)
+	case !c.OwnerInstalled:
+		return fmt.Errorf("payment entry label %q belongs to plugin %s, which is no longer installed — its tender row is retained for sales history; reinstall it or pick a different label", c.Key, c.Owner)
+	default:
+		return fmt.Errorf("payment entry label %q is already used by plugin %s — pick a distinct label", c.Key, c.Owner)
 	}
-	return fmt.Errorf("payment entry label %q is already used by plugin %s — pick a distinct label", c.Key, c.Owner)
 }
 
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {

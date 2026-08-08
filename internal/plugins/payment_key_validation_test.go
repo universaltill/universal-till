@@ -95,6 +95,31 @@ VALUES ('ghostpay', 'Ghost Pay', 'card', 0, 100, 'com.gone.pay')`)
 	}
 }
 
+// ut-docs#169: FindPaymentNameConflicts's error construction only ever had
+// two branches (no owner / owner) — unlike the key-conflict switch just
+// above, it never checked OwnerInstalled, so a label held by an uninstalled
+// plugin's retained tender row reported as owned by a plugin the operator
+// can't see or remove, instead of the correct "no longer installed" framing.
+func TestPersistManifest_NameReservedByUninstalledPluginSaysSo(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	// Same uninstalled-plugin state as TestPersistManifest_KeyReservedByUninstalledPluginSaysSo,
+	// but colliding on the NAME/label instead of the key.
+	mustExecSQL(t, d, `INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id)
+VALUES ('ghostpay2', 'Ghost Tender', 'card', 0, 100, 'com.gone.namepay')`)
+
+	m := paymentManifest("com.new.namepay", "freshkey")
+	m.Entries[0].Label = "Ghost Tender"
+	err := PersistManifest(ctx, d.DB, m, InstallOptions{})
+	if err == nil {
+		t.Fatal("label held by an uninstalled plugin's retained tender row must still be rejected")
+	}
+	if !strings.Contains(err.Error(), "Ghost Tender") || !strings.Contains(err.Error(), "com.gone.namepay") || !strings.Contains(err.Error(), "no longer installed") {
+		t.Fatalf("error should name label + former owner and say it is no longer installed, got: %v", err)
+	}
+}
+
 func mustExecSQL(t *testing.T, d *db.DB, q string, args ...any) {
 	t.Helper()
 	if _, err := d.Exec(q, args...); err != nil {
