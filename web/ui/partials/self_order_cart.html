@@ -1,5 +1,15 @@
 <div class="selforder-cart" id="selforder-cart">
   {{ if .Basket.ToastMessage }}<div class="toast info">{{ .Basket.ToastMessage }}</div>{{ end }}
+  <div class="order-type-toggle selforder-order-type" role="group" aria-label="{{ T "selforder.order_type.label" }}">
+    <button type="button" class="btn btn-touch{{ if eq .Basket.OrderType "takeaway" }} secondary{{ end }}"
+            aria-pressed="{{ if ne .Basket.OrderType "takeaway" }}true{{ else }}false{{ end }}"
+            hx-post="/api/self-order/order-type" hx-vals='{"order_type":""}' hx-target="#selforder-cart" hx-swap="outerHTML">
+      {{ if ne .Basket.OrderType "takeaway" }}✓ {{ end }}{{ T "selforder.order_type.dine_in" }}</button>
+    <button type="button" class="btn btn-touch{{ if ne .Basket.OrderType "takeaway" }} secondary{{ end }}"
+            aria-pressed="{{ if eq .Basket.OrderType "takeaway" }}true{{ else }}false{{ end }}"
+            hx-post="/api/self-order/order-type" hx-vals='{"order_type":"takeaway"}' hx-target="#selforder-cart" hx-swap="outerHTML">
+      {{ if eq .Basket.OrderType "takeaway" }}✓ {{ end }}{{ T "selforder.order_type.takeaway" }}</button>
+  </div>
   {{ if .Basket.Lines }}
   <ul class="selforder-cart-lines">
     {{ range .Basket.Lines }}
