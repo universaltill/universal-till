@@ -91,6 +91,13 @@ type MenuPlugin struct {
 	Menu     string `json:"menu"`
 }
 
+// DocsEntryKey is the reserved page-entry key (ADR-0037) a plugin uses to
+// register its documentation page, surfaced by /plugins' Docs button
+// (internal/pages/plugins_page.go). It is deliberately excluded from the
+// /menu launcher in loadMenuEntries below — a docs entry is not navigation,
+// and every type:"page" entry is otherwise also a menu candidate.
+const DocsEntryKey = "docs"
+
 type CatalogEntry struct {
 	ID          string   `json:"id"`
 	Version     string   `json:"version"`
@@ -225,6 +232,12 @@ func (m *Manager) loadMenuEntries(ctx context.Context, repo *data.PluginRepo) er
 	}
 
 	for _, row := range entries {
+		// A "docs" page entry is a Docs-button target (ADR-0037), not a
+		// navigation destination — without this, every plugin adopting the
+		// convention adds an unlocalized, unmapped-icon tile to /menu.
+		if row.Key == DocsEntryKey {
+			continue
+		}
 		mp := MenuPlugin{
 			PluginID: row.PluginID,
 			Key:      row.Key,

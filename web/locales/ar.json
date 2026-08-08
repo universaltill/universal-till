@@ -414,6 +414,7 @@
   "plugins.install.modal.title": "جارٍ تثبيت الإضافة",
   "plugins.install.success": "تم تثبيت الإضافة بنجاح.",
   "plugins.manage.action.disable": "تعطيل",
+  "plugins.manage.action.docs": "الدليل",
   "plugins.manage.action.enable": "تفعيل",
   "plugins.manage.action.export": "تصدير",
   "plugins.manage.action.uninstall": "إلغاء التثبيت",

@@ -26,6 +26,22 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
 
+		// Docs button targets (ADR-0037): a plugin registering a page entry
+		// under the reserved key "docs" gets a Docs button pointing at that
+		// entry's route. ListPageEntries already filters to active entries of
+		// active plugins, so a disabled plugin (or entry) surfaces no route —
+		// never a button that opens an empty/404 page.
+		docsRouteByPlugin := map[string]string{}
+		if entries, err := data.NewPluginRepo(d.Db).ListPageEntries(ctx); err == nil {
+			for _, e := range entries {
+				if e.EntryKey == plugins.DocsEntryKey && e.Route != "" {
+					if _, seen := docsRouteByPlugin[e.PluginID]; !seen {
+						docsRouteByPlugin[e.PluginID] = e.Route
+					}
+				}
+			}
+		}
+
 		// Latest catalog versions keyed by plugin id via the install-status
 		// listing mapping. GetOrFetch serves the cache when present (offline-
 		// first) and only fetches when there is no cache at all — otherwise a
@@ -66,6 +82,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 				"state":     row.InstallState,
 				"hasUpdate": latest != "" && latest != row.Version,
 				"latest":    latest,
+				"docsRoute": docsRouteByPlugin[row.ID],
 			})
 		}
 

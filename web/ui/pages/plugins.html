@@ -35,6 +35,7 @@
         </div>
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">
           <a class="btn secondary" x-show="p.enabled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
+          <a class="btn secondary" x-show="p.docsRoute" :href="p.docsRoute">{{ T "plugins.manage.action.docs" }}</a>
           <button class="btn secondary" x-show="p.enabled"
                   @click="act('/api/plugins/' + p.id + '/disable', 'POST')">{{ T "plugins.manage.action.disable" }}</button>
           <button class="btn" x-show="!p.enabled"

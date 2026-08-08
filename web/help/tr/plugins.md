@@ -16,3 +16,4 @@ routes: [/plugins, /plugins/store, /plugins/{id}/settings]
 1. Kataloğa göz atmak için Eklentiler → Mağaza'yı açın.
 2. Tek tıkla kurun; eklentiler güven rozetleri taşır (altın = resmî Universal Till, yeşil = doğrulanmış geliştirici) ve doğrulanmamış yayıncılar önce onayınızı ister.
 3. Her eklentinin kendi ayar sayfası vardır; bazı ayarlar dükkân genelinde, bazıları kasa başınadır.
+4. Kendi kılavuzuyla gelen kurulu bir eklenti, kartında bir Kılavuz düğmesi gösterir; bu düğme kılavuzu doğrudan kasanın içinde açar.
