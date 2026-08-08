@@ -125,6 +125,32 @@ Error:<nil>}`), then restored and confirmed it passes again.
 - TDD re-verification personally repeated on the post-review fix (see
   above): reverted, confirmed real failure, restored, confirmed pass.
 
+## Post-merge CI finding — fixed: `tests/e2e` consumer missed by both dev and review
+
+CI's `e2e` job (`tests/e2e/`, a *different* Playwright suite from `web/ui/**`'s
+inline JS and from `guard-docs-shots.sh`'s harness) failed on
+`tests/e2e/tests/plugin_install_flow.spec.ts` — two specs asserted
+`expect(body).toMatchObject({ plugin_id: …, … })` directly against the raw
+response of `POST /v1/install/intents` and `GET /v1/install/status`, which
+this PR moved under `data`. Neither the dev implementation brief nor the
+independent Opus review's consumer sweep covered `tests/e2e/` (both scoped
+the JS-consumer check to `web/ui/**`) — a real scope gap in this PR's own
+process, not just the diff.
+
+**Fix**: updated both assertions to check `body.error` is `null` and
+`body.data` matches the same shape as before. Verified locally against a
+CI-equivalent run (seeded via `scripts/e2e_seed`, `UT_AUTH=off
+UT_DEV_MODE=true`, matching `.github/workflows/ci.yml`'s `e2e` job exactly)
+— all 5 specs in the file pass, and the full `tests/e2e` suite (21
+non-skipped specs; the 4 `docs_hub`/`plugin_lifecycle_docs` specs skip
+without a `DOCS_READ_TOKEN`, same as CI without the secret) passes clean.
+
+Grepped `tests/e2e/tests/` for every other route this PR touches
+(`api/pos/tender`, `v1/install`, `v1/telemetry`, `api/plugins/store`,
+`api/update/apply`, `api/data/*`, `api/plugins/entries`,
+`install-from-marketplace`, etc.) — `plugin_install_flow.spec.ts` is the
+only file referencing any of them, so no further gap.
+
 ## Deferred (not in scope, noted for a future backlog card)
 
 - `/api/pos/tender`'s JSON-mode **error** paths (invalid JSON, insufficient
