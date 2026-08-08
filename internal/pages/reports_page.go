@@ -38,8 +38,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		if lastYear.Total > 0 {
 			yoyPct = int((curPeriod.Total - lastYear.Total) * 100 / lastYear.Total)
 		}
-		// Low-stock heads-up (same model as the inventory page, via
-		// LowStockItem.EffectiveWarnDays — this chip links straight to
+		// Low-stock heads-up (shares the inventory page's exact decision via
+		// LowStockItem.IsRunningOut — this chip links straight to
 		// /inventory, so it must never disagree with what that page itself
 		// warns about): a chip on the reports header so the owner sees it
 		// without digging.
