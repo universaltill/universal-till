@@ -83,6 +83,50 @@ func TestExportDispatch_FromAfterTo(t *testing.T) {
 	}
 }
 
+// TestExportDispatch_DateRangeTooLarge is the ut-docs#229 regression: with
+// no cap, a year-plus-long range would attempt SalesForExport's full
+// data-gathering step (however cheap the query shape is made) with no
+// upper bound at all — on till-class hardware, an unbounded request is
+// itself the risk, independent of how efficient the query becomes. The
+// host rejects an over-long range before ever calling SalesForExport,
+// mirroring TestExportDispatch_FromAfterTo's shape.
+func TestExportDispatch_DateRangeTooLarge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+	// Independent review finding (2026-08-08): without a subscriber, an
+	// unrelated failure ("export plugin did not respond") also 400s, so
+	// the status-code check alone can't tell the cap from a red herring —
+	// subscribe so a missing cap would 200, making the status check
+	// genuinely load-bearing rather than just the exact message text.
+	subscribeExportAsk(t, dp.Db, "com.t.exp1", json.RawMessage(`{"ok":true,"message":"accepted"}`))
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2024-01-01"}, "to": {"2026-06-01"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	if body["message"] != "date range exceeds the 366-day maximum" {
+		t.Fatalf("unexpected message: %+v", body)
+	}
+}
+
+// TestExportDispatch_DateRangeAtCap proves the cap is inclusive — exactly
+// maxExportRangeDays apart must still succeed, matching the "off-by-one"
+// caution most range-boundary code in this repo already takes (e.g.
+// SalesForExport's own inclusive-of-final-day handling).
+func TestExportDispatch_DateRangeAtCap(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+	subscribeExportAsk(t, dp.Db, "com.t.exp1", json.RawMessage(`{"ok":true,"message":"accepted"}`))
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2025-01-01"}, "to": {"2026-01-02"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 at exactly the cap (366 days), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestExportDispatch_InvalidBase64Content(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newDataAPITestDeps(t)
