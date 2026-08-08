@@ -9,6 +9,9 @@
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
+    <!-- ut-docs#400: see web/public/autofill.js's own comment for why this
+         can't be app.js. Customer-facing kiosk surface — covered here too. -->
+    <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
     <style>
       body.selforder-shop { padding: 1rem; }
       .selforder-shop-header { display:flex; align-items:center; gap:1rem; margin-block-end:.75rem; }
