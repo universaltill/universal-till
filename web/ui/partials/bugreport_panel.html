@@ -74,6 +74,10 @@
        it next to the recorders it actually applies to. -->
   <p class="set-gap muted bugreport-nav-note">{{ T "issuereport.nav_ends_recording" }}</p>
   <p class="muted">{{ T "issuereport.logs_note" }}</p>
+  <!-- "My reports" (ut-docs#348): where sent reports and their statuses
+       live. A plain link, not htmx — it's a full page, and navigating away
+       ends any in-progress recording (the note above already says so). -->
+  <p><a href="/my-reports">{{ T "issuereport.view_my_reports" }}</a></p>
 </section>
 
 <script>

@@ -1,0 +1,54 @@
+{{ define "content" }}
+<!-- "My reports" (ut-docs#348): every bug report this till has uploaded,
+     with the last-known cloud status. Rendered entirely from the local
+     issue_reports_sent table — no network call on this page, offline just
+     means the statuses shown are the last ones cloudsync pulled down.
+     Logical CSS properties only (RTL locales mirror for free). -->
+<div class="page-head">
+  <h1>{{ T "issuereport.my_reports.title" }}</h1>
+</div>
+
+<div class="card">
+  <p class="muted">{{ T "issuereport.my_reports.intro" }}</p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th style="text-align:start">{{ T "issuereport.my_reports.sent_at" }}</th>
+        <th style="text-align:start">{{ T "issuereport.my_reports.contents" }}</th>
+        <th style="text-align:start">{{ T "issuereport.my_reports.status" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ if .Rows }}
+        {{ range .Rows }}
+        <tr>
+          <td>
+            {{ .CapturedAt }}
+            <div class="muted" style="font-size:.75rem"><code>{{ .ID }}</code></div>
+          </td>
+          <td>
+            {{ if .Note }}<div>{{ .Note }}</div>{{ end }}
+            <div class="muted" style="font-size:.82rem">
+              {{ if .Note }}<span class="tag">{{ T "issuereport.my_reports.attached_note" }}</span>{{ end }}
+              {{ if .HadAudio }}<span class="tag">{{ T "issuereport.my_reports.attached_audio" }}</span>{{ end }}
+              {{ if .HadVideo }}<span class="tag">{{ T "issuereport.my_reports.attached_video" }}</span>{{ end }}
+              {{ if .ImageCount }}<span class="tag">{{ .ImageCount }} {{ T "issuereport.my_reports.attached_images" }}</span>{{ end }}
+            </div>
+          </td>
+          <td>
+            <span class="tag">{{ T .StatusKey }}</span>
+            {{ if .GithubIssueURL }}
+            <div style="margin-block-start:.25rem">
+              <a href="{{ .GithubIssueURL }}" target="_blank" rel="noopener">{{ T "issuereport.my_reports.view_on_github" }}</a>
+            </div>
+            {{ end }}
+          </td>
+        </tr>
+        {{ end }}
+      {{ else }}
+        <tr><td colspan="3" class="empty">{{ T "issuereport.my_reports.empty" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ end }}

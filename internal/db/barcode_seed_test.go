@@ -181,11 +181,16 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE stock_locations DROP COLUMN is_active`); err != nil {
 		t.Fatalf("rewind stock_locations.is_active column: %v", err)
 	}
+	// Migration 032 creates a table -- same non-idempotent-replay problem as
+	// 027, drop it too (ut-docs#348).
+	if _, err := d.DB.Exec(`DROP TABLE issue_reports_sent`); err != nil {
+		t.Fatalf("rewind issue_reports_sent table: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies only 023
+	d, err = Open(path) // re-applies 023 and its followers (027-032)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,11 +223,17 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 31`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
+	// 031 itself is a pure UPDATE (no DDL), but rewinding past it also
+	// replays 032, whose CREATE TABLE isn't idempotent — drop the table so
+	// the replay works, same as the pre-023 rewind above (ut-docs#348).
+	if _, err := d.DB.Exec(`DROP TABLE issue_reports_sent`); err != nil {
+		t.Fatalf("rewind issue_reports_sent table: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies only 031
+	d, err = Open(path) // re-applies 031 and 032
 	if err != nil {
 		t.Fatal(err)
 	}
