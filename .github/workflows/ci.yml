@@ -24,6 +24,8 @@ jobs:
             ${{ runner.os }}-go-
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
+      - name: Data-access policy guard regression test
+        run: bash scripts/ci/guard-data-access_test.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
       - name: Manual screenshot freshness guard
