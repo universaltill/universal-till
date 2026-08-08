@@ -22,6 +22,16 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo â
 - Surface offline/sync/install state with status chips/banners, never modal
   blockers in the kiosk flow. Status/lock/exit must always be reachable.
 
+## Self-order kiosk isolation (enforced by scripts/ci/guard-kiosk-engine.sh)
+- The self-order kiosk's basket (`common.Deps.KioskEngine`) is a separate
+  instance from the cashier's (`common.Deps.Engine`) â€” ADR-0020, ut-docs#449.
+  `/self-order` and `/api/self-order/*` are auth-exempt (reachable by any
+  anonymous LAN client), so a handler under those routes that touches
+  `d.Engine` reads or mutates the cashier's live sale. CI fails if any file
+  registering a `/self-order` or `/api/self-order/*` route references
+  `d.Engine` as code (comments are exempt; a reviewed exception needs an
+  inline `// kiosk-engine-guard:allow <reason>` comment).
+
 ## Money
 - Monetary amounts use the **`internal/money.Money`** type (integer minor units).
   It's a distinct type, so the compiler blocks mixing money with quantities/rates.
@@ -48,7 +58,8 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo â
   (`internal/plugins/manifest_verifier.go`). Never run an unverified plugin.
 
 ## Before committing
-- `go build ./... && go test ./...` and `bash scripts/ci/guard-data-access.sh`.
+- `go build ./... && go test ./...` and `bash scripts/ci/guard-data-access.sh`
+  and `bash scripts/ci/guard-kiosk-engine.sh`.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 
