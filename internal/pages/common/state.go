@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 
@@ -69,8 +70,8 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		}
 	}
 	if v := get(KeyServiceChargeRate, "0"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			st.ServiceChargeRatePct = n
+		if bp, ok := ParseServiceChargeRateBasisPoints(v); ok {
+			st.ServiceChargeRateBasisPoints = bp
 		}
 	}
 	if v := get("pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
@@ -97,6 +98,31 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 	return st
 }
 
+// ParseServiceChargeRateBasisPoints parses the decimal-percent string
+// persisted under KeyServiceChargeRate (e.g. "12.5") into basis points
+// (1250), half-up rounded. A whole-percent string written by a pre-#244
+// version ("12") still parses correctly (1200bp) — no migration needed,
+// the on-disk key and its string format are unchanged. Returns ok=false
+// for a negative, non-finite (NaN/Inf — strconv.ParseFloat accepts
+// "NaN"/"Inf"/"Infinity" as valid floats, and float64->int conversion of
+// either is undefined behaviour, not a clamped/zero value) or unparsable
+// value, so the caller can fall back to a default (LoadState) or reject
+// the input outright (the settings-upsert handler).
+func ParseServiceChargeRateBasisPoints(v string) (int, bool) {
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return int(math.Round(f * 100)), true
+}
+
+// FormatServiceChargeRatePercent renders basis points back to the
+// decimal-percent string ParseServiceChargeRateBasisPoints reads (e.g.
+// 1250 -> "12.5", 1200 -> "12" — no spurious ".0").
+func FormatServiceChargeRatePercent(bp int) string {
+	return strconv.FormatFloat(float64(bp)/100, 'f', -1, 64)
+}
+
 // SaveState writes every field in one transaction (store.SetMany), so a
 // mid-way failure (disk full, SQLITE_BUSY) never leaves a partial mix of
 // old and new settings behind — matching Store.SaveRuntimeConfig's guarantee.
@@ -108,7 +134,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyRegion:                      st.Region,
 		KeyTaxInclusive:                strconv.FormatBool(st.TaxInclusive),
 		KeyTaxRate:                     strconv.Itoa(st.TaxRatePct),
-		KeyServiceChargeRate:           strconv.Itoa(st.ServiceChargeRatePct),
+		KeyServiceChargeRate:           FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),
 		"pos.allow_negative_inventory": strconv.FormatBool(st.AllowNegativeInventory),
 		KeyIdleLock:                    strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:              strconv.Itoa(st.KioskIdleResetSeconds),
