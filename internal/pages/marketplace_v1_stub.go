@@ -47,14 +47,14 @@ func registerMarketplaceV1Stub(mux *http.ServeMux, d *common.Deps) {
 		}
 		var payload installIntentPayload
 		if err := decodeJSONBody(r, &payload); err != nil {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": err.Error()})
 			return
 		}
 		if payload.PluginID == "" || payload.Version == "" || payload.MerchantID == "" {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "plugin_id, version, and merchant_id are required"})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "plugin_id, version, and merchant_id are required"})
 			return
 		}
-		writeJSONResponse(w, http.StatusCreated, payload)
+		writeJSONResponse(w, http.StatusCreated, map[string]any{"data": payload, "error": nil})
 	})
 
 	mux.HandleFunc("/v1/install/status", func(w http.ResponseWriter, r *http.Request) {
@@ -65,13 +65,16 @@ func registerMarketplaceV1Stub(mux *http.ServeMux, d *common.Deps) {
 		pluginID := r.URL.Query().Get("plugin_id")
 		merchantID := r.URL.Query().Get("merchant_id")
 		if pluginID == "" || merchantID == "" {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "plugin_id and merchant_id are required"})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "plugin_id and merchant_id are required"})
 			return
 		}
 		writeJSONResponse(w, http.StatusOK, map[string]any{
-			"plugin_id":   pluginID,
-			"merchant_id": merchantID,
-			"status":      "pending",
+			"data": map[string]any{
+				"plugin_id":   pluginID,
+				"merchant_id": merchantID,
+				"status":      "pending",
+			},
+			"error": nil,
 		})
 	})
 
@@ -82,14 +85,14 @@ func registerMarketplaceV1Stub(mux *http.ServeMux, d *common.Deps) {
 		}
 		var payload bundlePayload
 		if err := decodeJSONBody(r, &payload); err != nil {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": err.Error()})
 			return
 		}
 		if payload.PluginID == "" || payload.Version == "" || payload.Checksum == "" || payload.MerchantID == "" {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "plugin_id, version, checksum, and merchant_id are required"})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "plugin_id, version, checksum, and merchant_id are required"})
 			return
 		}
-		writeJSONResponse(w, http.StatusOK, payload)
+		writeJSONResponse(w, http.StatusOK, map[string]any{"data": payload, "error": nil})
 	})
 
 	mux.HandleFunc("/v1/install/bundles/import", func(w http.ResponseWriter, r *http.Request) {
@@ -99,16 +102,19 @@ func registerMarketplaceV1Stub(mux *http.ServeMux, d *common.Deps) {
 		}
 		var payload bundlePayload
 		if err := decodeJSONBody(r, &payload); err != nil {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": err.Error()})
 			return
 		}
 		if payload.PluginID == "" || payload.Version == "" || payload.Checksum == "" || payload.MerchantID == "" {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "plugin_id, version, checksum, and merchant_id are required"})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "plugin_id, version, checksum, and merchant_id are required"})
 			return
 		}
 		writeJSONResponse(w, http.StatusAccepted, map[string]any{
-			"status":  "accepted",
-			"payload": payload,
+			"data": map[string]any{
+				"status":  "accepted",
+				"payload": payload,
+			},
+			"error": nil,
 		})
 	})
 
@@ -119,14 +125,14 @@ func registerMarketplaceV1Stub(mux *http.ServeMux, d *common.Deps) {
 		}
 		var payload telemetryPayload
 		if err := decodeJSONBody(r, &payload); err != nil {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": err.Error()})
 			return
 		}
 		if payload.PluginID == "" || payload.Version == "" || payload.MerchantID == "" || payload.State == "" || payload.Timestamp == "" {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "plugin_id, version, merchant_id, state, and timestamp are required"})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "plugin_id, version, merchant_id, state, and timestamp are required"})
 			return
 		}
-		writeJSONResponse(w, http.StatusAccepted, map[string]any{"status": "accepted"})
+		writeJSONResponse(w, http.StatusAccepted, map[string]any{"data": map[string]any{"status": "accepted"}, "error": nil})
 	})
 }
 

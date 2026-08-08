@@ -3,6 +3,7 @@ package pages
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -441,9 +442,25 @@ func TestPluginButtons_PartialAndAction(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("button action = %d (%s)", rec2.Code, rec2.Body.String())
 	}
+	// Envelope: { "data": { success, event, event_id }, "error": null }
+	// (universal-till/CLAUDE.md, ut-docs#387).
 	resp := rec2.Body.String()
-	if !strings.Contains(resp, `"success":true`) || !strings.Contains(resp, `"event":"drawer.open"`) {
+	if !strings.Contains(resp, `"error":null`) || !strings.Contains(resp, `"success":true`) || !strings.Contains(resp, `"event":"drawer.open"`) {
 		t.Errorf("action response = %s", resp)
+	}
+	var out struct {
+		Data struct {
+			Success bool   `json:"success"`
+			Event   string `json:"event"`
+			EventID string `json:"event_id"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode action response: %v (%s)", err, resp)
+	}
+	if out.Error != nil || !out.Data.Success || out.Data.Event != "drawer.open" || out.Data.EventID == "" {
+		t.Fatalf("expected data.{success,event,event_id} populated and error:null, got %+v", out)
 	}
 
 	// Unknown button -> 404.

@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -90,6 +91,69 @@ func TestUpdateAPI_ManagerGate(t *testing.T) {
 			t.Fatalf("POST %s without manager: code %d, want 403 (body %q)",
 				path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// Regression (ut-docs#387): POST /api/update/apply's respond/respondCurrent
+// used to write a bare {"success":…, "message":…} body, not the
+// { "data": …, "error": null|"…" } envelope universal-till/CLAUDE.md
+// mandates. The handler deliberately does NOT go through the
+// autoUpdate*/selfupdate seams (an explicit user action stays available even
+// on a dev build — see the comment on those seams above), so it can't be
+// driven through httptest without hitting the real GitHub releases API and
+// selfupdate.Apply's binary swap/re-exec, which this suite's other
+// selfupdate-touching tests deliberately avoid.
+//
+// respondUpdateApply/respondUpdateApplyCurrent are called HERE directly
+// (package-level funcs, not closures copied into the test) — an earlier
+// version of this test declared its own local copy of the closure body and
+// asserted against that copy, which stayed green even when the real
+// registerUpdateAPI handler was reverted to the old bare shape (caught in
+// independent review, ut-docs#387). Calling the real functions closes that
+// gap: a regression in either one now fails this test directly.
+func TestUpdateApplyResponseHelpers_EnvelopeShape(t *testing.T) {
+	rec := httptest.NewRecorder()
+	respondUpdateApply(rec, http.StatusOK, true, "update installed — restarting")
+	var okBody struct {
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &okBody); err != nil {
+		t.Fatalf("decode success envelope: %v (%s)", err, rec.Body.String())
+	}
+	if okBody.Error != nil || okBody.Data.Message != "update installed — restarting" {
+		t.Fatalf("expected data.message populated and error:null, got %+v", okBody)
+	}
+
+	rec = httptest.NewRecorder()
+	respondUpdateApply(rec, http.StatusBadGateway, false, "boom")
+	var errBody struct {
+		Data  any    `json:"data"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode error envelope: %v (%s)", err, rec.Body.String())
+	}
+	if errBody.Data != nil || errBody.Error != "boom" {
+		t.Fatalf("expected data:null and error:%q, got %+v", "boom", errBody)
+	}
+
+	rec = httptest.NewRecorder()
+	respondUpdateApplyCurrent(rec)
+	var curBody struct {
+		Data struct {
+			AlreadyCurrent bool   `json:"already_current"`
+			Message        string `json:"message"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &curBody); err != nil {
+		t.Fatalf("decode already-current envelope: %v (%s)", err, rec.Body.String())
+	}
+	if curBody.Error != nil || !curBody.Data.AlreadyCurrent || curBody.Data.Message == "" {
+		t.Fatalf("expected data.already_current:true, data.message non-empty, error:null, got %+v", curBody)
 	}
 }
 
