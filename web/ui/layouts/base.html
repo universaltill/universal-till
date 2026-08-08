@@ -94,12 +94,12 @@
         btn.addEventListener('click', function () {
           if (!armed) {
             armed = true;
-            btn.textContent = '⬆ Confirm update to v' + latest;
+            btn.textContent = '⬆ Confirm update to v' + latest; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
             armTimer = setTimeout(function () { armed = false; btn.textContent = label; }, 4000);
             return;
           }
           armed = false; clearTimeout(armTimer);
-          btn.disabled = true; btn.textContent = 'Downloading update…';
+          btn.disabled = true; btn.textContent = 'Downloading update…'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
           fetch('/api/update/apply', { method: 'POST' })
             .then(function (r) { return r.json().catch(function () { return {}; }); })
             .then(function (res) {
@@ -111,7 +111,7 @@
               // restarted, so don't claim it was.
               var data = res && res.data;
               if (data && data.already_current) {
-                btn.textContent = 'Already up to date';
+                btn.textContent = 'Already up to date'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
                 btn.disabled = false;
                 return;
               }
@@ -142,7 +142,7 @@
                   // read as "the update doesn't work" — offer a manual retry
                   // instead of a silent, permanent dead end.
                   btn.disabled = false;
-                  btn.textContent = 'Update installed — click to reload';
+                  btn.textContent = 'Update installed — click to reload'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
                   btn.onclick = function () { location.reload(); };
                 }
               }, 2000);

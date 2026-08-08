@@ -48,6 +48,18 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   key set). Enforced by `scripts/ci/guard-i18n.sh` — CI fails on a missing
   key or a locale that drifts from en.json. Go-side menu labels are locale
   keys too (`nav.*`), rendered through `T` in the nav template.
+- **This includes inline `<script>` blocks**, not just template markup: a
+  status message set via `.textContent`/`.innerHTML` in a page's own JS is
+  just as user-facing as anything in the HTML around it. Route it through a
+  small, page-local, template-populated lookup object —
+  `var T = { key: "{{ T "some.key" }}" }` — the pattern already used in
+  `web/ui/partials/bugreport_panel.html` and `web/ui/pages/settings.html`'s
+  `data-reset-btn`/`export-run-btn` handlers. `guard-i18n.sh` flags a
+  hardcoded prose literal here too (ut-docs#205); a reviewed pre-existing
+  exception (not yet migrated) gets a same-line `// i18n:ignore` comment,
+  same escape hatch the Go-side check already uses. Known gap: the guard
+  only scans `web/ui/**/*.html` — shipped JS under `web/public/` isn't
+  covered yet.
 - **RTL:** the document `dir` is derived from the locale (`httpx.IsRTL`);
   style with **logical** CSS properties (`margin-inline-start`, `text-align:
   start/end`, `padding-inline-*`) — never `left`/`right` — so RTL locales
