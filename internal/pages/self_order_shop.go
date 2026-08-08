@@ -134,7 +134,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// no scan-to-refund, no customer-barcode lookup. Those are
 			// cashier-facing behaviors on /api/pos/scan that must not be
 			// reachable from this anonymous surface.
-			d.Engine.ScanQtyWithResult(code, qty)
+			d.KioskEngine.ScanQtyWithResult(code, qty)
 		}
 		renderKioskCart(w, r, d)
 	})
@@ -142,7 +142,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /api/self-order/modifiers", func(w http.ResponseWriter, r *http.Request) {
 		itemID := strings.TrimSpace(r.URL.Query().Get("item"))
 		code := strings.TrimSpace(r.URL.Query().Get("code"))
-		base, ok := d.Engine.ResolveBase(code)
+		base, ok := d.KioskEngine.ResolveBase(code)
 		if !ok || itemID == "" {
 			http.Error(w, "item not found", http.StatusNotFound)
 			return
@@ -165,7 +165,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		code := strings.TrimSpace(r.Form.Get("code"))
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 
-		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, code, itemID, r.Form)
+		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, d.KioskEngine, code, itemID, r.Form)
 		if err != nil {
 			if userMsg == "" {
 				http.Error(w, "failed to load customization options", http.StatusInternalServerError)
@@ -181,7 +181,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				qty = f
 			}
 		}
-		d.Engine.AddLineWithModifiers(base, qty, selected)
+		d.KioskEngine.AddLineWithModifiers(base, qty, selected)
 		renderKioskCart(w, r, d)
 	})
 
@@ -205,7 +205,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "invalid delta", http.StatusBadRequest)
 				return
 			}
-			for _, l := range d.Engine.Basket().Lines {
+			for _, l := range d.KioskEngine.Basket().Lines {
 				if l.LineKey == key {
 					qty = l.Qty + delta
 					break
@@ -219,7 +219,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				qty = f
 			}
 		}
-		d.Engine.UpdateLineByKey(key, qty, 0)
+		d.KioskEngine.UpdateLineByKey(key, qty, 0)
 		renderKioskCart(w, r, d)
 	})
 
@@ -236,7 +236,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
 			orderType = pos.OrderTypeTakeaway
 		}
-		d.Engine.SetOrderType(orderType)
+		d.KioskEngine.SetOrderType(orderType)
 		renderKioskCart(w, r, d)
 	})
 
@@ -247,7 +247,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "key required", http.StatusBadRequest)
 			return
 		}
-		d.Engine.RemoveLine(key)
+		d.KioskEngine.RemoveLine(key)
 		renderKioskCart(w, r, d)
 	})
 
@@ -257,7 +257,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	// drawer at a kiosk) — shown in the same #selforder-modal the
 	// customization picker uses.
 	mux.HandleFunc("GET /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
-		if len(d.Engine.Lines()) == 0 {
+		if len(d.KioskEngine.Lines()) == 0 {
 			http.Error(w, "basket is empty", http.StatusBadRequest)
 			return
 		}
@@ -273,7 +273,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		method := strings.TrimSpace(r.Form.Get("method"))
 
-		lines := d.Engine.Lines()
+		lines := d.KioskEngine.Lines()
 		if len(lines) == 0 {
 			http.Error(w, "basket is empty", http.StatusBadRequest)
 			return
@@ -342,12 +342,12 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// anonymous request, unlike the cashier tender handler's
 			// signed-in-operator CashierID.
 			CashierID:              "kiosk",
-			CustomerID:             d.Engine.CustomerID(),
-			OrderType:              d.Engine.OrderType(),
+			CustomerID:             d.KioskEngine.CustomerID(),
+			OrderType:              d.KioskEngine.OrderType(),
 			AllowNegativeInventory: allowNegative,
 			ActorID:                "kiosk",
 		}
-		saleID, err := completeTender(r.Context(), d, repo, saleInput, saleInput.Payments, "kiosk")
+		saleID, err := completeTender(r.Context(), d, d.KioskEngine, repo, saleInput, saleInput.Payments, "kiosk")
 		if err != nil {
 			var declined *paymentDeclinedError
 			status := http.StatusBadRequest
@@ -381,10 +381,10 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 func kioskSaleLinesAndTotal(d *common.Deps, locID string) ([]pos.SaleLineInput, money.Money) {
 	var saleLines []pos.SaleLineInput
 	subtotal, taxTotal := money.Zero, money.Zero
-	for _, l := range d.Engine.Lines() {
+	for _, l := range d.KioskEngine.Lines() {
 		// Same resolution as the cashier tender handler (pos_api.go) —
 		// required by this function's own invariant above.
-		taxBP := d.Engine.EffectiveLineTaxRateBP(l)
+		taxBP := d.KioskEngine.EffectiveLineTaxRateBP(l)
 		saleLines = append(saleLines, pos.SaleLineInput{
 			ItemID:             l.ItemID,
 			VariantID:          l.VariantID,
@@ -419,7 +419,7 @@ func renderKioskCart(w http.ResponseWriter, r *http.Request, d *common.Deps) {
 }
 
 func renderKioskCartWithMessage(w http.ResponseWriter, r *http.Request, d *common.Deps, message string) {
-	b := d.Engine.Basket()
+	b := d.KioskEngine.Basket()
 	if message != "" {
 		b.ToastMessage = message
 	}
@@ -434,7 +434,7 @@ func renderKioskCartWithMessage(w http.ResponseWriter, r *http.Request, d *commo
 func renderKioskPaymentPicker(w http.ResponseWriter, r *http.Request, d *common.Deps, methods []data.PaymentMethod, errKey string) {
 	httpx.RenderPartial("ui/partials/self_order_payment_picker.html", map[string]any{
 		"Methods": methods,
-		"Total":   d.Engine.Basket().Total,
+		"Total":   d.KioskEngine.Basket().Total,
 		"ErrKey":  errKey,
 	})(w, r)
 }

@@ -37,11 +37,15 @@ type BasketSnapshot struct {
 
 // HasItems reports whether the current basket has any lines.
 func (s *Service) HasItems() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return len(s.lines) > 0
 }
 
 // Snapshot captures the current basket so it can be held and later restored.
 func (s *Service) Snapshot() BasketSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.recomputeTotals()
 	snap := BasketSnapshot{
 		DiscountType:      s.discountType,
@@ -66,7 +70,11 @@ func (s *Service) Snapshot() BasketSnapshot {
 
 // Restore replaces the current basket with a previously held snapshot.
 func (s *Service) Restore(snap BasketSnapshot) {
-	s.Reset()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Lock-free cores, NOT s.Reset()/s.SetCustomer() — s.mu is non-reentrant
+	// and already held here (see the locking-pattern comment on Service.mu).
+	s.resetLocked()
 	for _, l := range snap.Lines {
 		key := l.LineKey
 		if key == "" {
@@ -87,6 +95,6 @@ func (s *Service) Restore(snap BasketSnapshot) {
 	s.discountType = snap.DiscountType
 	s.discountValue = snap.DiscountValue
 	s.discountPercentBP = snap.DiscountPercentBP
-	s.SetCustomer(snap.CustomerID, snap.CustomerName)
+	s.setCustomerLocked(snap.CustomerID, snap.CustomerName)
 	s.recomputeTotals()
 }
