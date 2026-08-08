@@ -14,7 +14,7 @@ func registerDesigner(mux *http.ServeMux, d *common.Deps) {
 		data := map[string]any{
 			"title":     "Designer",
 			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"menuItems": d.MenuSnapshot(),
 			"Buttons":   ui.ToVM(btns),
 		}
 		httpx.Render("ui/pages/designer.html", data)(w, r)

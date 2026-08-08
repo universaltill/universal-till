@@ -95,7 +95,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"title":                "Universal Till",
 			"saleScreen":           true,
 			"theme":                d.CurrentState().Theme,
-			"menuItems":            d.Menu,
+			"menuItems":            d.MenuSnapshot(),
 			"currency":             d.CurrentState().Currency,
 			"paymentMethods":       methods,
 			"paymentFeesJSON":      template.JS(feesJSON),

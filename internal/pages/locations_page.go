@@ -40,7 +40,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/locations.html", map[string]any{
 			"title":     "Locations",
 			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"menuItems": d.MenuSnapshot(),
 			"locations": locs,
 			"errKey":    errKey,
 		})(w, r)

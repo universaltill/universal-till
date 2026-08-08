@@ -17,8 +17,8 @@ func registerExternalProxy(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		pid := parts[0]
-		mp := d.Pm.MenuPlugins[pid]
-		if mp.Route == "" {
+		mp, ok := d.MenuPluginByKey(pid)
+		if !ok || mp.Route == "" {
 			http.NotFound(w, r)
 			return
 		}

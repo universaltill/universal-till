@@ -90,7 +90,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		data := map[string]any{
 			"title":       "Inventory",
 			"theme":       d.CurrentState().Theme,
-			"menuItems":   d.Menu,
+			"menuItems":   d.MenuSnapshot(),
 			"StockLevels": levels,
 			"RunningOut":  runningOut,
 			"Locations":   locations,
