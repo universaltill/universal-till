@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -196,6 +197,58 @@ func TestMarketplaceStub_Telemetry(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 on GET, got %d", rec.Code)
+	}
+}
+
+// The marketplace stub's JSON responses must carry the { "data": …, "error":
+// null|"…" } envelope universal-till/CLAUDE.md mandates (ut-docs#387: these
+// endpoints used to respond bare, with no "data" key at all on error).
+func TestMarketplaceStub_ResponsesUseDataErrorEnvelope(t *testing.T) {
+	mux := marketplaceStubMux(t, &config.Config{DevMode: true})
+
+	// Success: data populated, error null.
+	body := `{"plugin_id":"p1","version":"1.0.0","merchant_id":"m1","device_id":"d1"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/install/intents", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body %s", rec.Code, rec.Body.String())
+	}
+	var ok struct {
+		Data struct {
+			PluginID string `json:"plugin_id"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ok); err != nil {
+		t.Fatalf("decode success envelope: %v (%s)", err, rec.Body.String())
+	}
+	if ok.Error != nil {
+		t.Fatalf("expected error:null on success, got %v", ok.Error)
+	}
+	if ok.Data.PluginID != "p1" {
+		t.Fatalf("expected the echoed payload under data, got %+v", ok.Data)
+	}
+
+	// Error: data null, error carries the message.
+	req = httptest.NewRequest(http.MethodPost, "/v1/install/intents", strings.NewReader(`{"plugin_id":"p1"}`))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	var bad struct {
+		Data  any    `json:"data"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &bad); err != nil {
+		t.Fatalf("decode error envelope: %v (%s)", err, rec.Body.String())
+	}
+	if bad.Data != nil {
+		t.Fatalf("expected data:null on error, got %v", bad.Data)
+	}
+	if !strings.Contains(bad.Error, "required") {
+		t.Fatalf("expected the validation message in error, got %q", bad.Error)
 	}
 }
 

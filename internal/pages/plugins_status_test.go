@@ -180,19 +180,21 @@ func TestInstallFromMarketplaceFailurePersistsOperatorVisibleStatus(t *testing.T
 		t.Fatalf("expected bad request, got %d body %s", rec.Code, rec.Body.String())
 	}
 
+	// Envelope: { "data": null, "error": "…" } (universal-till/CLAUDE.md,
+	// ut-docs#387) -- writeInstallResponse puts messageKey in error when no
+	// plain message is set, which is every failure call site in this handler.
 	var resp struct {
-		Success    bool   `json:"success"`
-		Message    string `json:"message"`
-		MessageKey string `json:"message_key"`
+		Data  any    `json:"data"`
+		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Success {
-		t.Fatalf("expected failed install response")
+	if resp.Data != nil {
+		t.Fatalf("expected data:null on a failed install, got %v", resp.Data)
 	}
-	if resp.MessageKey != "plugins.install.error.configuration" {
-		t.Fatalf("message key = %q, want configuration failure", resp.MessageKey)
+	if resp.Error != "plugins.install.error.configuration" {
+		t.Fatalf("error = %q, want configuration failure", resp.Error)
 	}
 
 	record, ok, err := plugins.NewInstallStatusStore(db).Get(context.Background(), "listing-failure")
