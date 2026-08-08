@@ -698,32 +698,16 @@ func TestPluginAPIHandlers_RejectMutationsOnReplica(t *testing.T) {
 		})
 	}
 
-	// Two legacy, UI-unreferenced install paths (review MINOR B) also write
-	// a `plugins` row directly and need the same guard: /upload resolves a
-	// listing off the marketplace catalog, /marketplace/install takes a
-	// caller-supplied URL. Neither is linked from web/ today, but both are
-	// live routes a replica could still be told to hit.
-	for _, tc := range []struct {
-		name, url, body, contentType string
-	}{
-		{"upload", "/api/plugins/upload", "id=com.test.upload-me", "application/x-www-form-urlencoded"},
-		{"marketplace-install", "/api/plugins/marketplace/install",
-			"id=com.test.mkt-me&version=1.0.0&package_url=http://example.invalid/x.zip&sha256=deadbeef",
-			"application/x-www-form-urlencoded"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, tc.url, strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", tc.contentType)
-			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, req)
-			if rec.Code != http.StatusConflict {
-				t.Fatalf("expected 409 on a replica, got %d (body=%s)", rec.Code, rec.Body.String())
-			}
-			if _, errMsg := decode(rec); errMsg != "plugins.install.error.replica_use_primary" {
-				t.Fatalf("expected the replica_use_primary message key, got %q", errMsg)
-			}
-		})
-	}
+	// The two legacy, UI-unreferenced install paths this block used to cover
+	// (/api/plugins/upload, /api/plugins/marketplace/install) were guarded
+	// here (review MINOR B) rather than fixed: they wrote a `plugins` row
+	// verifying only a caller/catalog-supplied SHA256, no Ed25519 signature
+	// check at all, in contradiction of this repo's "never run an
+	// unverified plugin" rule. ut-docs#480 removed both outright instead —
+	// replica-guarding a route doesn't fix an unverified install on the
+	// primary, and neither route was reachable from any UI or other repo
+	// (2026-07-30 QUEUE-ARCHIVE.md finding already recommended removal).
+	// See TestLegacyInstallEndpoints_Removed in plugin_api_legacy_test.go.
 
 	t.Run("uninstall", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/plugins/com.test.keepme/uninstall", nil)

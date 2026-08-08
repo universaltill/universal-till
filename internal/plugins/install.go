@@ -10,7 +10,18 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 )
 
+// Deprecated: InstallPlugin verifies only a SHA256 checksum — no Ed25519
+// manifest-signature verification, in contradiction of this repo's "never
+// run an unverified plugin" rule (universal-till/CLAUDE.md). Its last two
+// production call sites (the legacy /api/plugins/upload and
+// /api/plugins/marketplace/install endpoints) were removed in ut-docs#480;
+// it now has no production caller (only its own package tests). Do not wire
+// this to a new route — use MarketplaceInstaller.Install
+// (internal/plugins/installer_marketplace.go), which does real Ed25519
+// verification, instead. Full removal is tracked as a follow-up card.
+//
 // InstallPlugin installs a plugin from a file path with SHA256 verification
+// (no signature check).
 func InstallPlugin(ctx context.Context, db *sql.DB, manifestPath, binaryPath string, opts InstallOptions) error {
 	repo := data.NewPluginRepo(db)
 	// 1. Verify SHA256 checksum if provided
