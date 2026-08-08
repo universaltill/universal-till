@@ -205,6 +205,15 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusForbidden, "manager or admin required")
 			return
 		}
+		// ut-docs#460: the store page is fully reachable on a replica, so
+		// its download/install lifecycle needs the same primary-
+		// authoritative guard as handleInstallFromMarketplace — otherwise
+		// the store is a complete bypass of the replica rule. The error is
+		// the i18n key; the store page maps it to localized text.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			respond(w, http.StatusConflict, "plugins.install.error.replica_use_primary")
+			return
+		}
 		listingID := listingFrom(r)
 		if listingID == "" {
 			respond(w, http.StatusBadRequest, "listing_id required")
@@ -236,6 +245,11 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusForbidden, "manager or admin required")
 			return
 		}
+		// ut-docs#460: same replica guard as store/download above.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			respond(w, http.StatusConflict, "plugins.install.error.replica_use_primary")
+			return
+		}
 		listingID := listingFrom(r)
 		if listingID == "" {
 			respond(w, http.StatusBadRequest, "listing_id required")
@@ -258,11 +272,8 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			CurrentVersion: result.Version,
 			State:          plugins.InstallStateActive,
 		})
-		if d.Pm != nil {
-			if err := d.Pm.Reload(r.Context()); err != nil {
-				logging.L().Warnf("[PluginStore] reload after install: %v", err)
-			}
-			d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
+		if err := d.ReloadPlugins(r.Context()); err != nil {
+			logging.L().Warnf("[PluginStore] reload after install: %v", err)
 		}
 		respond(w, http.StatusOK, fmt.Sprintf("installed %s v%s", result.Name, result.Version))
 	})
