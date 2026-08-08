@@ -123,40 +123,58 @@ ORDER BY created_at ASC, receipt_no ASC`, from, to)
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sales for export: %w", err)
 	}
+	if len(out) == 0 {
+		return out, nil
+	}
 
+	// ut-docs#229: batch both breakdowns across every matched sale in two
+	// range-scoped joined queries instead of two extra queries PER sale
+	// (the previous shape meant ~100k queries for a busy till's year-long
+	// export). Same WHERE/GROUP BY semantics as the per-sale helpers this
+	// replaces, just joined against `sales` once for the whole range
+	// rather than filtered to one sale_id at a time.
+	taxLinesBySale, err := r.exportSaleTaxLinesBatch(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	paymentsBySale, err := r.exportSalePaymentsBatch(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
 	for _, k := range keys {
-		taxLines, err := r.exportSaleTaxLines(ctx, k.id)
-		if err != nil {
-			return nil, err
-		}
-		payments, err := r.exportSalePayments(ctx, k.id)
-		if err != nil {
-			return nil, err
-		}
-		out[k.idx].TaxLines = taxLines
-		out[k.idx].Payments = payments
+		out[k.idx].TaxLines = taxLinesBySale[k.id]
+		out[k.idx].Payments = paymentsBySale[k.id]
 	}
 	return out, nil
 }
 
-func (r *POSRepo) exportSaleTaxLines(ctx context.Context, saleID string) ([]ExportSaleTaxLine, error) {
+// exportSaleTaxLinesBatch returns every completed sale's tax-band breakdown
+// within [from, to] (same bounds SalesForExport already resolved), grouped
+// by sale ID then tax_rate_bp — one query for the whole range instead of
+// one per sale. Rows arrive ordered by sale_id then tax_rate_bp DESC, so
+// appending in scan order reproduces exportSaleTaxLines' old per-sale
+// ordering for each sale's slice.
+func (r *POSRepo) exportSaleTaxLinesBatch(ctx context.Context, from, to string) (map[string][]ExportSaleTaxLine, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT tax_rate_bp, COALESCE(SUM(total_before_tax), 0), COALESCE(SUM(tax_amount), 0)
-FROM sale_lines
-WHERE sale_id = ?
-GROUP BY tax_rate_bp
-ORDER BY tax_rate_bp DESC`, saleID)
+SELECT sl.sale_id, sl.tax_rate_bp, COALESCE(SUM(sl.total_before_tax), 0), COALESCE(SUM(sl.tax_amount), 0)
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND s.created_at >= ? AND s.created_at <= ?
+GROUP BY sl.sale_id, sl.tax_rate_bp
+ORDER BY sl.sale_id, sl.tax_rate_bp DESC`, from, to)
 	if err != nil {
-		return nil, fmt.Errorf("export sale tax lines: %w", err)
+		return nil, fmt.Errorf("export sale tax lines batch: %w", err)
 	}
 	defer rows.Close()
-	var out []ExportSaleTaxLine
+	out := make(map[string][]ExportSaleTaxLine)
 	for rows.Next() {
+		var saleID string
 		var rateBP, netMinor, taxMinor int64
-		if err := rows.Scan(&rateBP, &netMinor, &taxMinor); err != nil {
+		if err := rows.Scan(&saleID, &rateBP, &netMinor, &taxMinor); err != nil {
 			return nil, fmt.Errorf("scan export tax line: %w", err)
 		}
-		out = append(out, ExportSaleTaxLine{
+		out[saleID] = append(out[saleID], ExportSaleTaxLine{
 			RateBP: rateBP,
 			Net:    money.FromMinor(netMinor),
 			Tax:    money.FromMinor(taxMinor),
@@ -165,25 +183,30 @@ ORDER BY tax_rate_bp DESC`, saleID)
 	return out, rows.Err()
 }
 
-func (r *POSRepo) exportSalePayments(ctx context.Context, saleID string) ([]ExportSalePayment, error) {
+// exportSalePaymentsBatch is exportSaleTaxLinesBatch's payments-side
+// counterpart — one query for the whole range's payment-method breakdown
+// instead of one per sale.
+func (r *POSRepo) exportSalePaymentsBatch(ctx context.Context, from, to string) (map[string][]ExportSalePayment, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT method_id, COALESCE(SUM(amount - change_given), 0)
-FROM payments
-WHERE sale_id = ?
-GROUP BY method_id
-ORDER BY method_id`, saleID)
+SELECT p.sale_id, p.method_id, COALESCE(SUM(p.amount - p.change_given), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND s.created_at >= ? AND s.created_at <= ?
+GROUP BY p.sale_id, p.method_id
+ORDER BY p.sale_id, p.method_id`, from, to)
 	if err != nil {
-		return nil, fmt.Errorf("export sale payments: %w", err)
+		return nil, fmt.Errorf("export sale payments batch: %w", err)
 	}
 	defer rows.Close()
-	var out []ExportSalePayment
+	out := make(map[string][]ExportSalePayment)
 	for rows.Next() {
-		var method string
+		var saleID, method string
 		var amountMinor int64
-		if err := rows.Scan(&method, &amountMinor); err != nil {
+		if err := rows.Scan(&saleID, &method, &amountMinor); err != nil {
 			return nil, fmt.Errorf("scan export payment: %w", err)
 		}
-		out = append(out, ExportSalePayment{Method: method, Amount: money.FromMinor(amountMinor)})
+		out[saleID] = append(out[saleID], ExportSalePayment{Method: method, Amount: money.FromMinor(amountMinor)})
 	}
 	return out, rows.Err()
 }

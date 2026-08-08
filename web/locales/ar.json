@@ -615,7 +615,7 @@
   "settings.data.customer_search_ph": "ابحث بالاسم أو الهاتف أو البريد الإلكتروني",
   "settings.data.export.entry_label": "التصدير/التقرير",
   "settings.data.export.from_label": "من",
-  "settings.data.export.help": "شغّل إضافة تصدير أو تقرير مثبتة (مثل تصدير ضريبي DSFinV-K) لفترة زمنية محددة. تُنزَّل الملفات مباشرة إلى هذا الجهاز؛ أما عمليات التصدير الأخرى فتؤكد فقط أنه تم إرسالها.",
+  "settings.data.export.help": "شغّل إضافة تصدير أو تقرير مثبتة (مثل تصدير ضريبي DSFinV-K) لفترة زمنية تصل إلى 366 يومًا. تُنزَّل الملفات مباشرة إلى هذا الجهاز؛ أما عمليات التصدير الأخرى فتؤكد فقط أنه تم إرسالها.",
   "settings.data.export.none_installed": "لا توجد إضافة تصدير أو تقرير مثبتة.",
   "settings.data.export.run_btn": "تشغيل التصدير",
   "settings.data.export.title": "التصدير / التقرير",
