@@ -22,3 +22,5 @@ Something wrong with the till? Send a report — typed, spoken, or with a screen
 You can also reach it from the ☰ Menu via the 🐞 Report an issue tile.
 
 Closing the panel with ✕ keeps it closed until you ask for it again: it stays shut as you move between screens, and the Report an issue page no longer forces it back open. Press 🐞 in the top bar whenever you want it back.
+
+Wondering what happened to a report after you sent it? See [My reports](/help/my-reports) — every report this till has sent, with its current status.
