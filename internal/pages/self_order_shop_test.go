@@ -47,15 +47,20 @@ func setupSelfOrderShopDeps(t *testing.T) (*common.Deps, *db.DB) {
 
 	btnStore := ui.NewButtonStore(d.DB)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}
+	// Two SEPARATE engines, exactly like production Init (ut-docs#449): the
+	// kiosk handlers must only ever touch KioskEngine, never the cashier's
+	// Engine — TestSelfOrder_KioskAndCashierBasketsAreIsolated pins that.
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
+	kioskEngine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
 
 	dp := &common.Deps{
-		Cfg:      &config.Config{Theme: "default", StoreName: "Task Runner Cafe"},
-		Db:       d.DB,
-		State:    common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
-		Menu:     []common.MenuItem{},
-		Settings: settings.NewStore(d.DB),
-		Engine:   engine,
+		Cfg:         &config.Config{Theme: "default", StoreName: "Task Runner Cafe"},
+		Db:          d.DB,
+		State:       common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		Menu:        []common.MenuItem{},
+		Settings:    settings.NewStore(d.DB),
+		Engine:      engine,
+		KioskEngine: kioskEngine,
 	}
 	return dp, d
 }
@@ -196,7 +201,7 @@ func TestSelfOrderShop_ScanAddsPlainItem(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	b := dp.Engine.Basket()
+	b := dp.KioskEngine.Basket()
 	if len(b.Lines) != 1 || b.Lines[0].Name != "Flat White" {
 		t.Fatalf("expected Flat White added, got %+v", b.Lines)
 	}
@@ -265,7 +270,7 @@ func TestSelfOrderShop_ModifierFlow(t *testing.T) {
 	if rec3.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec3.Code, rec3.Body.String())
 	}
-	b := dp.Engine.Basket()
+	b := dp.KioskEngine.Basket()
 	if len(b.Lines) != 1 || b.Lines[0].PriceCents != 370 {
 		t.Fatalf("want 1 line at 370 (320+50), got %+v", b.Lines)
 	}
@@ -287,18 +292,18 @@ func TestSelfOrderShop_QtyStepperAndRemove(t *testing.T) {
 	}
 
 	post("/api/self-order/scan", "code=5000001")
-	key := dp.Engine.Basket().Lines[0].LineKey
+	key := dp.KioskEngine.Basket().Lines[0].LineKey
 
 	rec := post("/api/self-order/line", "key="+key+"&delta=1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delta+1: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := dp.Engine.Basket().Lines[0].Qty; got != 2 {
+	if got := dp.KioskEngine.Basket().Lines[0].Qty; got != 2 {
 		t.Fatalf("want qty 2 after +1, got %v", got)
 	}
 
 	post("/api/self-order/line", "key="+key+"&delta=-1")
-	if got := dp.Engine.Basket().Lines[0].Qty; got != 1 {
+	if got := dp.KioskEngine.Basket().Lines[0].Qty; got != 1 {
 		t.Fatalf("want qty 1 after -1, got %v", got)
 	}
 
@@ -306,7 +311,7 @@ func TestSelfOrderShop_QtyStepperAndRemove(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("remove: want 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
-	if len(dp.Engine.Basket().Lines) != 0 {
+	if len(dp.KioskEngine.Basket().Lines) != 0 {
 		t.Fatal("expected line removed")
 	}
 }
@@ -326,7 +331,7 @@ func TestSelfOrderShop_LineEndpointIgnoresDiscountParam(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(httptest.NewRecorder(), req)
-	key := dp.Engine.Basket().Lines[0].LineKey
+	key := dp.KioskEngine.Basket().Lines[0].LineKey
 
 	req2 := httptest.NewRequest(http.MethodPost, "/api/self-order/line", strings.NewReader("key="+key+"&delta=0&discount=999999"))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -335,9 +340,61 @@ func TestSelfOrderShop_LineEndpointIgnoresDiscountParam(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", rec.Code)
 	}
-	b := dp.Engine.Basket()
+	b := dp.KioskEngine.Basket()
 	if b.Lines[0].LineTotal != b.Lines[0].PriceCents {
 		t.Fatalf("a smuggled discount param must have no effect: line total %v != price %v", b.Lines[0].LineTotal, b.Lines[0].PriceCents)
+	}
+}
+
+// ut-docs#449: the kiosk surface is auth-exempt and reachable by any LAN
+// client, so its basket must be structurally separate from the cashier's —
+// an anonymous /api/self-order/* caller must never read or mutate the till's
+// live cashier sale, and vice versa.
+func TestSelfOrder_KioskAndCashierBasketsAreIsolated(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	// Kiosk → cashier: an anonymous kiosk scan must land ONLY in the kiosk's
+	// basket, never the cashier's.
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+	if got := len(dp.KioskEngine.Basket().Lines); got != 1 {
+		t.Fatalf("kiosk scan must reach the kiosk engine: want 1 line, got %d", got)
+	}
+	if got := len(dp.Engine.Basket().Lines); got != 0 {
+		t.Fatalf("kiosk scan must NOT touch the cashier's basket: want 0 lines, got %d", got)
+	}
+
+	// Cashier → kiosk: a cashier-rung line must never appear in (or be
+	// clearable from) the kiosk's basket.
+	if _, err := dp.Engine.Scan("5000001"); err != nil {
+		t.Fatal(err)
+	}
+	cashierKey := dp.Engine.Basket().Lines[0].LineKey
+	if got := len(dp.KioskEngine.Basket().Lines); got != 1 {
+		t.Fatalf("cashier scan must not add to the kiosk basket: want kiosk's own 1 line, got %d", got)
+	}
+	req2 := httptest.NewRequest(http.MethodPost, "/api/self-order/remove", strings.NewReader("key="+cashierKey))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req2)
+	if got := len(dp.Engine.Basket().Lines); got != 1 {
+		t.Fatalf("an anonymous kiosk remove must not reach the cashier's basket: want 1 line, got %d", got)
+	}
+
+	// The specific pre-#449 defect: GET /self-order (reachable by any LAN
+	// client, any display mode) called Reset() on the SHARED engine and wiped
+	// the cashier's in-progress sale. It must now reset only the kiosk basket.
+	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/self-order", nil))
+	if got := len(dp.KioskEngine.Basket().Lines); got != 0 {
+		t.Fatalf("landing on /self-order must reset the kiosk basket: want 0 lines, got %d", got)
+	}
+	if got := len(dp.Engine.Basket().Lines); got != 1 {
+		t.Fatalf("landing on /self-order must NOT wipe the cashier's live sale: want 1 line, got %d", got)
 	}
 }
 
@@ -352,7 +409,7 @@ func TestSelfOrder_LandingResetsBasket(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	shopMux.ServeHTTP(httptest.NewRecorder(), req)
-	if len(dp.Engine.Basket().Lines) != 1 {
+	if len(dp.KioskEngine.Basket().Lines) != 1 {
 		t.Fatal("setup: expected 1 line before landing-page reset")
 	}
 
@@ -360,7 +417,7 @@ func TestSelfOrder_LandingResetsBasket(t *testing.T) {
 	registerSelfOrder(landingMux, dp)
 	landingMux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/self-order", nil))
 
-	if len(dp.Engine.Basket().Lines) != 0 {
+	if len(dp.KioskEngine.Basket().Lines) != 0 {
 		t.Fatal("expected the abandoned cart to be cleared on landing-page revisit")
 	}
 }
@@ -421,8 +478,15 @@ func TestSelfOrderShop_CheckoutHappyPath(t *testing.T) {
 	if !strings.Contains(rec2.Body.String(), "Order placed") {
 		t.Fatalf("expected an order-confirmation screen, got: %s", rec2.Body.String())
 	}
-	if len(dp.Engine.Basket().Lines) != 0 {
+	if len(dp.KioskEngine.Basket().Lines) != 0 {
 		t.Fatal("basket should be reset after a completed checkout")
+	}
+	// ut-docs#449: completeTender resets the engine it's given, not always
+	// d.Engine — pins that a kiosk checkout resets ONLY the kiosk basket.
+	// A regression back to hardcoding d.Engine inside completeTender would
+	// leave this line 0 (already empty) and slip past the assertion above.
+	if len(dp.Engine.Basket().Lines) != 0 {
+		t.Fatal("a kiosk checkout must never touch the cashier's basket")
 	}
 
 	var total int64
@@ -517,7 +581,7 @@ func TestSelfOrderShop_OrderTypeToggleSetsTakeaway(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST order-type: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := dp.Engine.OrderType(); got != pos.OrderTypeTakeaway {
+	if got := dp.KioskEngine.OrderType(); got != pos.OrderTypeTakeaway {
 		t.Fatalf("want engine order type %q, got %q", pos.OrderTypeTakeaway, got)
 	}
 	if dineIn, takeaway := pressedState(t, rec.Body.String()); dineIn || !takeaway {
@@ -534,7 +598,7 @@ func TestSelfOrderShop_OrderTypeToggleSetsTakeaway(t *testing.T) {
 	if dineIn, takeaway := pressedState(t, rec2.Body.String()); !dineIn || takeaway {
 		t.Fatalf("want dine-in pressed and takeaway not, got dineIn=%v takeaway=%v: %s", dineIn, takeaway, rec2.Body.String())
 	}
-	if got := dp.Engine.OrderType(); got != "" {
+	if got := dp.KioskEngine.OrderType(); got != "" {
 		t.Fatalf("want engine order type reset to dine-in (\"\"), got %q", got)
 	}
 }
@@ -561,7 +625,7 @@ func TestSelfOrderShop_CheckoutRejectsCashMethod(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 rejecting cash, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(dp.Engine.Basket().Lines) != 1 {
+	if len(dp.KioskEngine.Basket().Lines) != 1 {
 		t.Fatal("a rejected checkout must not touch the basket")
 	}
 	var n int
@@ -681,7 +745,7 @@ func TestSelfOrderShop_CheckoutDeclinedByPluginGateNeverCompletesSale(t *testing
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("want 402 on a declined plugin gate, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(dp.Engine.Basket().Lines) != 1 {
+	if len(dp.KioskEngine.Basket().Lines) != 1 {
 		t.Fatal("a declined checkout must not reset/lose the basket")
 	}
 	var n int

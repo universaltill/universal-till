@@ -108,7 +108,12 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	if autoUpdateBuildVersion() == "dev" {
 		return
 	}
-	if d.Engine.Basket().ItemCount() > 0 {
+	// Both engines (ut-docs#449): the kiosk basket is a separate instance
+	// from the cashier's, so an unattended update mid-kiosk-order must be
+	// blocked too, not just a cashier's mid-sale basket. d.KioskEngine is
+	// nil in some test harnesses that never wire a kiosk engine.
+	if d.Engine.Basket().ItemCount() > 0 ||
+		(d.KioskEngine != nil && d.KioskEngine.Basket().ItemCount() > 0) {
 		return
 	}
 	// Mark the attempt BEFORE calling Apply so a failure (or a stale-cache
