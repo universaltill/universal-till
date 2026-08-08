@@ -33,6 +33,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			writeReplicaGuard(w, "plugins.install.error.replica_use_primary")
+			return
+		}
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -167,8 +171,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// Reload plugins
-		_ = d.Pm.Reload(r.Context())
-		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
+		_ = d.ReloadPlugins(r.Context())
 
 		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
@@ -237,6 +240,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			writeReplicaGuard(w, "plugins.install.error.replica_use_primary")
 			return
 		}
 
@@ -328,8 +335,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// Reload plugins
-		_ = d.Pm.Reload(r.Context())
-		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
+		_ = d.ReloadPlugins(r.Context())
 
 		locale := httpx.ResolveLocale(w, r)
 		w.WriteHeader(http.StatusOK)
@@ -499,6 +505,15 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: the installed plugin set is primary-authoritative,
+		// like the enrol-token/revoke handlers in sync_api.go — reject on a
+		// replica (no proxying), pointing the operator at the primary. The
+		// sync pull tick (syncPullPlugins) brings the primary's set here
+		// automatically within ~30s.
+		if d.SyncPrimaryURL(ctx) != "" {
+			writeInstallResponse(w, http.StatusConflict, false, "", "plugins.install.error.replica_use_primary")
+			return
+		}
 		statusStore := plugins.NewInstallStatusStore(d.Db)
 
 		// Parse request
@@ -575,13 +590,13 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			State:          plugins.InstallStateActive,
 		})
 
-		// Reload plugin manager to pick up new plugin
-		if err := d.Pm.Reload(ctx); err != nil {
+		// Reload plugin manager to pick up the new plugin and rebuild the
+		// nav so newly registered pages appear immediately (serialized —
+		// the sync-pull goroutine runs the same sequence).
+		if err := d.ReloadPlugins(ctx); err != nil {
 			// Non-fatal - plugin is installed but won't show until restart
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
-		// Rebuild the nav so newly registered pages appear immediately.
-		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -627,6 +642,19 @@ func writeInstallResponse(w http.ResponseWriter, status int, success bool, messa
 	})
 }
 
+// writeReplicaGuard answers a plugin mutation attempted on a replica
+// (ut-docs#460): 409 with an i18n message key in the standard envelope —
+// the plugins page maps the key to localized text client-side. Same
+// reject-with-pointer precedent as sync_api.go's enrol-token handlers.
+func writeReplicaGuard(w http.ResponseWriter, messageKey string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"data":  nil,
+		"error": messageKey,
+	})
+}
+
 // handleEnablePlugin handles enabling a plugin (T017)
 func handleEnablePlugin(d *common.Deps) http.HandlerFunc {
 	return setPluginActiveHandler(d, true, "enabled")
@@ -641,6 +669,14 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: plugin state (including is_active) is
+		// primary-authoritative. Nothing in the sync pull reconciles a
+		// locally flipped is_active back, so a replica-local toggle would
+		// be permanent silent drift from the shop's set — reject it.
+		if d.SyncPrimaryURL(ctx) != "" {
+			writeReplicaGuard(w, "plugins.manage.error.replica_use_primary")
+			return
+		}
 		pluginID := r.PathValue("id")
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
@@ -655,11 +691,8 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 			})
 			return
 		}
-		if d.Pm != nil {
-			if err := d.Pm.Reload(ctx); err != nil {
-				log.Printf("warning: reload after %s %s: %v", verb, pluginID, err)
-			}
-			d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
+		if err := d.ReloadPlugins(ctx); err != nil {
+			log.Printf("warning: reload after %s %s: %v", verb, pluginID, err)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -685,6 +718,14 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: same primary-authoritative guard as install — a
+		// local uninstall on a replica would only be undone by the next
+		// plugin sync pull, so reject it with a pointer to the primary
+		// (sync_api.go's enrol-token precedent; no proxying).
+		if d.SyncPrimaryURL(ctx) != "" {
+			writeReplicaGuard(w, "plugins.uninstall.error.replica_use_primary")
+			return
+		}
 		pluginID := r.PathValue("id")
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
@@ -721,11 +762,8 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 		}
 
 		// Reload so the nav/menu no longer shows the plugin's entries.
-		if d.Pm != nil {
-			if err := d.Pm.Reload(ctx); err != nil {
-				log.Printf("warning: failed to reload plugin manager after uninstall %s: %v", pluginID, err)
-			}
-			d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
+		if err := d.ReloadPlugins(ctx); err != nil {
+			log.Printf("warning: failed to reload plugin manager after uninstall %s: %v", pluginID, err)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -748,6 +786,13 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: version changes are primary-authoritative too — a
+		// replica-local update would put this till on a version the sync
+		// pull then fights (it converges versions to the primary's).
+		if d.SyncPrimaryURL(ctx) != "" {
+			writeReplicaGuard(w, "plugins.manage.error.replica_use_primary")
+			return
+		}
 		pluginID := r.PathValue("id")
 
 		if pluginID == "" {
@@ -827,10 +872,9 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 			State:          plugins.InstallStateActive,
 		})
 
-		if err := d.Pm.Reload(ctx); err != nil {
+		if err := d.ReloadPlugins(ctx); err != nil {
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
-		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -852,6 +896,13 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: same as update — a replica-local rollback moves this
+		// till's version off the shop's set; roll back on the primary and
+		// let the sync pull converge every till.
+		if d.SyncPrimaryURL(ctx) != "" {
+			writeReplicaGuard(w, "plugins.manage.error.replica_use_primary")
+			return
+		}
 		pluginID := r.PathValue("id")
 
 		if pluginID == "" {
@@ -879,7 +930,7 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		if err := d.Pm.Reload(ctx); err != nil {
+		if err := d.ReloadPlugins(ctx); err != nil {
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
 
@@ -930,6 +981,15 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: deliberately NOT replica-guarded. File imports are
+		// till-local by design — no listing_id, so the sync pull never
+		// propagates OR prunes them (its uninstall diff only touches
+		// plugins named by a plugin_install_status record), meaning an
+		// import here cannot drift from the primary's marketplace set.
+		// Blocking it with "install on the primary instead" would be
+		// actively false: a file import on the primary never arrives on
+		// any other till. Offline provisioning stays per-till, per the
+		// ADR-0011 amendment's scope boundary.
 
 		// Parse multipart form (max 200 MB)
 		if err := r.ParseMultipartForm(200 << 20); err != nil {
@@ -1020,7 +1080,7 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 		}
 
 		// Reload plugin manager
-		if err := d.Pm.Reload(ctx); err != nil {
+		if err := d.ReloadPlugins(ctx); err != nil {
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
 

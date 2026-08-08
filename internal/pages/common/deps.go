@@ -21,6 +21,15 @@ import (
 type Deps struct {
 	StateMu sync.RWMutex
 
+	// PluginMu serializes the plugin reload-and-rebuild sequence
+	// (Pm.Reload + the Menu reassignment, together — see ReloadPlugins).
+	// Since ut-docs#460 that sequence fires routinely from the replica
+	// sync-pull goroutine every 30s, not just from HTTP handlers, so two
+	// writers could otherwise rebuild the Installed map / Menu slice
+	// concurrently. Write-side only: handlers still READ Menu/Pm.Installed
+	// without a lock — a pre-existing, wider-scope gap tracked separately.
+	PluginMu sync.Mutex
+
 	Cfg      *config.Config
 	Pm       *plugins.Manager
 	Db       *sql.DB
@@ -112,6 +121,26 @@ func (d *Deps) SyncPrimaryURL(ctx context.Context) string {
 	}
 	v, _, _ := d.Settings.Get(ctx, "sync.primary_url")
 	return strings.TrimSpace(v)
+}
+
+// ReloadPlugins is THE way to refresh plugin-derived state after any plugin
+// lifecycle change (install/uninstall/enable/disable/update/rollback/import):
+// it reloads the plugin manager and rebuilds the nav menu as one critical
+// section under PluginMu, so the background sync-pull goroutine (ut-docs#460)
+// and HTTP handlers can never interleave the two writes and corrupt the
+// Installed map / Menu. Nil-safe on Pm (deps without a plugin manager are a
+// no-op, matching cloudRemovePlugin's historical check). The returned error
+// is the reload's — the menu is still rebuilt from whatever loaded, matching
+// every call site's historical log-and-continue behavior.
+func (d *Deps) ReloadPlugins(ctx context.Context) error {
+	if d.Pm == nil {
+		return nil
+	}
+	d.PluginMu.Lock()
+	defer d.PluginMu.Unlock()
+	err := d.Pm.Reload(ctx)
+	d.Menu = BuildMenu(d.BaseMenu, d.Pm)
+	return err
 }
 
 // RequestSyncPush asks the replica journal-push loop for one immediate push
