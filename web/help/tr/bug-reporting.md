@@ -21,3 +21,5 @@ Kasada bir sorun mu var? Her ekrandan 🐞 düğmesiyle bir rapor gönderin — 
 Panele ☰ Menü'deki 🐞 "Sorun bildir" kutucuğundan da ulaşabilirsiniz.
 
 Paneli ✕ ile kapatmak, siz yeniden açana kadar kapalı kalmasını sağlar: ekranlar arasında gezinirken kapalı kalır, "Sorun bildir" sayfası da onu artık zorla yeniden açmaz. İstediğiniz zaman üst çubuktaki 🐞 düğmesine basın.
+
+Gönderdikten sonra raporunuza ne olduğunu mu merak ediyorsunuz? [Raporlarım](/help/my-reports) sayfasına bakın — bu kasadan gönderilen tüm raporlar, her birinin güncel durumuyla.
