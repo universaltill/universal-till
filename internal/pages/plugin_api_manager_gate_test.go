@@ -11,10 +11,12 @@ import (
 
 // Every plugin-management endpoint that mutates install state (install,
 // uninstall, enable, disable, update, rollback, permission grant/revoke,
-// trust level, upload, import) must reject a request with no manager
-// session — previously none of them checked this at all. UT_AUTH is
-// deliberately left unset (not "off") so isManagerOrAuthOff's bypass
-// doesn't mask a missing gate.
+// trust level, import) must reject a request with no manager session —
+// previously none of them checked this at all. UT_AUTH is deliberately left
+// unset (not "off") so isManagerOrAuthOff's bypass doesn't mask a missing
+// gate. (The legacy unverified "upload"/"marketplace install" endpoints
+// this table used to cover were removed outright, ut-docs#480 — see
+// TestLegacyInstallEndpoints_Removed in plugin_api_legacy_test.go.)
 func TestPluginManagementEndpoints_RejectWithoutManagerAuth(t *testing.T) {
 	chdirRoot(t)
 	db := openPagesTestDB(t)
@@ -29,8 +31,6 @@ func TestPluginManagementEndpoints_RejectWithoutManagerAuth(t *testing.T) {
 		method string
 		path   string
 	}{
-		{"upload", http.MethodPost, "/api/plugins/upload"},
-		{"marketplace install", http.MethodPost, "/api/plugins/marketplace/install"},
 		{"permissions grant", http.MethodPost, "/api/plugins/permissions/grant"},
 		{"permissions revoke", http.MethodPost, "/api/plugins/permissions/revoke"},
 		{"trust level", http.MethodPost, "/api/plugins/trust"},
