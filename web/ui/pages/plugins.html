@@ -68,8 +68,8 @@
     msg.textContent = '⏳ …';
     fetch(url, { method: method }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (j) {
-        if (res.ok && j.success !== false) { window.location.reload(); return; }
-        msg.textContent = '✗ ' + (j.message || ('HTTP ' + res.status));
+        if (res.ok && !j.error) { window.location.reload(); return; }
+        msg.textContent = '✗ ' + (j.error || ('HTTP ' + res.status));
       });
     }).catch(function (e) { msg.textContent = '✗ ' + e; });
   };

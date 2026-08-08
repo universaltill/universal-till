@@ -97,9 +97,12 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, fmt.Sprintf("action failed: %v", err), http.StatusInternalServerError)
 				return
 			}
+			// Envelope: { "data": …, "error": null } (universal-till/CLAUDE.md,
+			// ut-docs#387: this endpoint used to respond bare).
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
-				"success": true, "event": eventType, "event_id": eventID,
+				"data":  map[string]any{"success": true, "event": eventType, "event_id": eventID},
+				"error": nil,
 			})
 			return
 		}

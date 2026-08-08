@@ -186,17 +186,26 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
 		}
+		// respond/respondCurrent write the { "data": …, "error": null|"…" }
+		// envelope universal-till/CLAUDE.md mandates (ut-docs#387).
 		respond := func(status int, ok bool, msg string) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": ok, "message": msg})
+			if ok {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"message": msg}, "error": nil})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
 		}
 		respondCurrent := func() {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"success": true, "already_current": true,
-				"message": "already up to date (v" + buildinfo.Version + ")",
+				"data": map[string]any{
+					"already_current": true,
+					"message":         "already up to date (v" + buildinfo.Version + ")",
+				},
+				"error": nil,
 			})
 		}
 		if !selfupdate.Supported() {
