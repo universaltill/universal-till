@@ -398,6 +398,7 @@
   "plugins.install.error.invalid_request": "Kurulum isteği geçersizdi.",
   "plugins.install.error.network": "Ağ hatası",
   "plugins.install.error.not_found": "Seçilen eklenti katalogda bulunamadı.",
+  "plugins.install.error.payment_conflict": "Bu eklentinin ödeme anahtarı veya etiketi mevcut biriyle çakışıyor. Farklı bir anahtar veya etiket seçip yeniden deneyin.",
   "plugins.install.error.retryable": "Kurulum başarısız. Yeniden deneyebilirsiniz.",
   "plugins.install.modal.cancel": "İptal",
   "plugins.install.modal.close": "Kapat",

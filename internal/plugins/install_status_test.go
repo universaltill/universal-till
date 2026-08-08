@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/web/locales"
 	_ "modernc.org/sqlite"
 )
 
@@ -19,6 +21,24 @@ func TestClassifyInstallError(t *testing.T) {
 		{name: "invalid package", err: "signature mismatch between marketplace metadata and manifest", key: "plugins.install.error.invalid_package", retryable: false},
 		{name: "configuration", err: "marketplace public key not configured", key: "plugins.install.error.configuration", retryable: false},
 		{name: "generic retryable", err: "request failed: dial tcp timeout", key: "plugins.install.error.retryable", retryable: true},
+		// ut-docs#169: a payment key/label collision is a permanent failure
+		// (retrying with the same manifest always fails the same way) until
+		// the plugin author picks a different key/label — must not fall
+		// into the generic retryable bucket.
+		{name: "payment key collides with built-in", err: `payment entry key "cash" collides with an existing built-in or shop-configured tender — pick a plugin-specific key`, key: "plugins.install.error.payment_conflict", retryable: false},
+		{name: "payment key owned by uninstalled plugin", err: `payment entry key "shared" belongs to plugin com.gone.pay, which is no longer installed — its tender row is retained for sales history; reinstall it or pick a different key`, key: "plugins.install.error.payment_conflict", retryable: false},
+		{name: "payment key owned by another plugin", err: `payment entry key "shared" is already provided by plugin com.other.pay — pick a different key`, key: "plugins.install.error.payment_conflict", retryable: false},
+		{name: "payment label collides with built-in", err: `payment entry label "Cash" collides with an existing built-in or shop-configured tender's name — pick a distinct label`, key: "plugins.install.error.payment_conflict", retryable: false},
+		{name: "payment label owned by uninstalled plugin", err: `payment entry label "Shared Label" belongs to plugin com.gone.pay, which is no longer installed — its tender row is retained for sales history; reinstall it or pick a different label`, key: "plugins.install.error.payment_conflict", retryable: false},
+		{name: "payment label owned by another plugin", err: `payment entry label "Shared Label" is already used by plugin com.other.pay — pick a distinct label`, key: "plugins.install.error.payment_conflict", retryable: false},
+		// Production never hands ClassifyInstallError the bare
+		// validatePaymentEntryKeys error — installer_marketplace.go wraps it
+		// as "persist plugin manifest: %w" first. Pin the wrapped shape too:
+		// the existing "manifest validation" case a few lines above matches
+		// on a substring of that same wrapper text, so a future wording
+		// change to either case could silently make this one unreachable
+		// while every other test here stays green (review finding, ut-docs#169).
+		{name: "payment key conflict, wrapped as production sends it", err: `persist plugin manifest: payment entry key "shared" belongs to plugin com.gone.pay, which is no longer installed — its tender row is retained for sales history; reinstall it or pick a different key`, key: "plugins.install.error.payment_conflict", retryable: false},
 	}
 
 	for _, tc := range tests {
@@ -34,6 +54,34 @@ func TestClassifyInstallError(t *testing.T) {
 				t.Fatalf("expected safe human-readable message")
 			}
 		})
+	}
+}
+
+// TestClassifyInstallError_KeysResolveInLocales guards a gap guard-i18n.sh
+// can't see (review finding, ut-docs#169): the UI renders a MessageKey via
+// {{ T .StatusMessageKey }} — a DYNAMIC key, not a literal `{{ T "..." }}`
+// call — so guard-i18n.sh's static template scan never checks any key
+// ClassifyInstallError can actually return. Had en.json been missed for a
+// new key, CI would still be green and a shop owner would see the raw
+// locale key string in a red badge instead of a translated message. T falls
+// back to returning the key unchanged when it's missing, which is exactly
+// what this test would catch.
+func TestClassifyInstallError_KeysResolveInLocales(t *testing.T) {
+	i18n, err := config.NewI18nFS(locales.FS, "en")
+	if err != nil {
+		t.Fatalf("load embedded locales: %v", err)
+	}
+	keys := []string{
+		"plugins.install.error.retryable",
+		"plugins.install.error.incompatible",
+		"plugins.install.error.configuration",
+		"plugins.install.error.invalid_package",
+		"plugins.install.error.payment_conflict",
+	}
+	for _, key := range keys {
+		if got := i18n.T("en", key); got == key {
+			t.Errorf("locale key %q has no translation in en.json — ClassifyInstallError can return this key, but it would render as the raw key string in the plugin install-failure badge", key)
+		}
 	}
 }
 

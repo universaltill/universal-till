@@ -398,6 +398,7 @@
   "plugins.install.error.invalid_request": "طلب التثبيت غير صالح.",
   "plugins.install.error.network": "خطأ في الشبكة",
   "plugins.install.error.not_found": "الإضافة المحددة غير موجودة في الكتالوج.",
+  "plugins.install.error.payment_conflict": "يتعارض مفتاح أو اسم الدفع في هذه الإضافة مع مفتاح أو اسم موجود بالفعل. اختر مفتاحًا أو اسمًا مختلفًا وأعد المحاولة.",
   "plugins.install.error.retryable": "فشل التثبيت. يمكنك إعادة المحاولة.",
   "plugins.install.modal.cancel": "إلغاء",
   "plugins.install.modal.close": "إغلاق",
