@@ -398,6 +398,7 @@
   "plugins.install.error.invalid_request": "The install request was invalid.",
   "plugins.install.error.network": "Network error",
   "plugins.install.error.not_found": "The selected plugin was not found in the catalog.",
+  "plugins.install.error.payment_conflict": "This plugin's payment key or label conflicts with an existing one. Pick a different key or label and try again.",
   "plugins.install.error.retryable": "Install failed. You can retry.",
   "plugins.install.modal.cancel": "Cancel",
   "plugins.install.modal.close": "Close",
