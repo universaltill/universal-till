@@ -115,8 +115,13 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 	}
 	// Issue-reporter bundles (ADR-0022, spec 012): best-effort, same "leave
 	// it and retry next tick" spirit as everything above — a manager's bug
-	// report can lag behind an offline stretch with no harm done.
-	uploadPendingIssueReports(ctx, cfg)
+	// report can lag behind an offline stretch with no harm done. Both
+	// directions ride this tick (ut-docs#348): pending bundles go up (media
+	// discarded once a retained record is saved), then the cloud's
+	// per-report statuses come down onto those retained rows so /my-reports
+	// shows what became of each report.
+	uploadPendingIssueReports(ctx, cfg, db)
+	pullIssueReportStatuses(ctx, cfg, db)
 	return nil
 }
 

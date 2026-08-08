@@ -254,6 +254,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSelfOrderShop(mux, dp)   // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
 	registerAuditPage(mux, dp)       // manager-only audit-trail browse/filter page
 	registerIssueReportPage(mux, dp) // manager-only "report an issue" capture (ADR-0022)
+	registerMyReportsPage(mux, dp)   // manager-only sent-report tracking list (ut-docs#348)
 	registerHelp(mux, dp)
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)

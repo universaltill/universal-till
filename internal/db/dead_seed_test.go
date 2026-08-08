@@ -83,11 +83,16 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE stock_locations DROP COLUMN is_active`); err != nil {
 		t.Fatalf("rewind stock_locations.is_active column: %v", err)
 	}
+	// Migration 032 creates a table -- same non-idempotent-replay problem as
+	// 027, drop it too (ut-docs#348).
+	if _, err := d.DB.Exec(`DROP TABLE issue_reports_sent`); err != nil {
+		t.Fatalf("rewind issue_reports_sent table: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies only 022
+	d, err = Open(path) // re-applies 022 and its followers (027-032)
 	if err != nil {
 		t.Fatal(err)
 	}
