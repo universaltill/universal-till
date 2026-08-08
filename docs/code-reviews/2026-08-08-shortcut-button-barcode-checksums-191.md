@@ -104,8 +104,42 @@ it:
 
 ### Findings
 
-None. No blocker-class issue, no non-blocking findings either — this is
-the rare clean pass.
+None from the independent review itself — it was scoped to `internal/db`
+(the Go module `go test ./...` covers), which is the correct scope for
+what it reviewed. See "CI-caught regression" below for a real finding
+this review didn't catch, since it falls outside that scope.
+
+## CI-caught regression (found after review, before merge)
+
+The PR's "UI E2E" GitHub Actions workflow (a separate Playwright suite,
+not part of `go test ./...` or the independent reviewer's scope) failed:
+`e2e/tests/sale-screen-scan-focus-search-423.spec.ts` hardcoded
+`BARCODE = '2000010000017'` — the *old, broken-checksum* shortcut-button
+barcode for `itm001` (Coca-Cola 330ml) — and scans it by literal value to
+exercise a focus-stealing bug fix (ut-docs#423). Migration 031 changes
+that exact barcode to `2000010000012`, so the scan endpoint
+(`POSRepo.resolveShortcut`, keyed on `shortcut_buttons.barcode`) correctly
+stopped resolving the old value — "Item not found" is the *correct* new
+behavior, not a regression in the scan path itself, but the test's fixture
+value was now stale.
+
+**Fix**: updated the test's `BARCODE` constant to the corrected value
+(`2000010000012`), with a comment explaining why it changed. Verified
+locally end-to-end, not just re-read: built the till binary, seeded the
+demo DB via the real migrations (so 031 actually ran), booted a real
+till server, and ran the spec against it with a real Chromium instance —
+all 3 tests in the file pass. Confirmed via `grep` that no other spec, in
+this repo or `ut-cloud`/`ut-infra`, hardcodes any of the other 9 barcodes
+this migration touches.
+
+This was a real gap in the review's scope, not the reviewer's error: an
+`internal/db`-scoped review has no reason to search `e2e/*.spec.ts` for
+literal barcode fixtures, and the CI signal (a separate workflow) is
+exactly the backstop this class of cross-layer coupling needs. No second
+independent-review round was spawned for this fix — it's a one-line
+test-fixture correction matching the same pattern the reviewer already
+verified for the production values, not a blocker-class (money/tax, data
+loss, security) finding.
 
 ## Verification performed (this session, after the fix)
 
@@ -135,6 +169,9 @@ plugin-loading path touched. No manual-doc update needed.
 
 ## Outcome
 
-Independent review found no blocking issues and no findings at all.
+Independent review found no blocking issues and no findings at all
+within its scope. CI surfaced one real, expected cross-layer fixture
+regression (a hardcoded e2e test barcode going stale) outside that scope,
+fixed and re-verified end-to-end in this same PR before merge.
 
 Safe to merge.
