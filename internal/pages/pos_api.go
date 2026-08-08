@@ -536,7 +536,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// demanded here for a zero-amount tender button, and what
 		// CompleteSale enforces all agree. The AMOUNT (not the rate) is
 		// what flows into SaleInput, same shape as SaleDiscount.
-		serviceCharge, _ := pos.ComputeTaxBasisPoints(subtotal.Sub(discount), d.CurrentState().ServiceChargeRatePct*100, false)
+		serviceCharge, _ := pos.ComputeTaxBasisPoints(subtotal.Sub(discount), d.CurrentState().ServiceChargeRateBasisPoints, false)
 		total := subtotal.Sub(discount).Add(serviceCharge)
 		if !d.CurrentState().TaxInclusive {
 			total = total.Add(taxTotal)

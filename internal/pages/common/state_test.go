@@ -233,6 +233,91 @@ func TestLoadState_CurrencyFallsBackToCfgDefaultWhenUnset(t *testing.T) {
 	}
 }
 
+// ut-docs#244: the service charge rate settings key must support decimal
+// percents (12.5% is the standard UK restaurant rate) at basis-point
+// precision, not just whole percent.
+func TestLoadState_ServiceChargeRateFractionalPercent(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	if err := store.Set(ctx, KeyServiceChargeRate, "12.5"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	st := LoadState(ctx, store, baseCfg())
+
+	if st.ServiceChargeRateBasisPoints != 1250 {
+		t.Errorf("ServiceChargeRateBasisPoints = %d, want 1250 (12.5%%)", st.ServiceChargeRateBasisPoints)
+	}
+}
+
+// A whole-percent value written by a pre-fix version ("12") must keep
+// meaning exactly what it always did (1200bp) — no migration, no silent
+// behaviour change for an existing shop's till on upgrade.
+func TestLoadState_ServiceChargeRateWholePercentBackwardCompatible(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	if err := store.Set(ctx, KeyServiceChargeRate, "12"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	st := LoadState(ctx, store, baseCfg())
+
+	if st.ServiceChargeRateBasisPoints != 1200 {
+		t.Errorf("ServiceChargeRateBasisPoints = %d, want 1200 (12%%, unchanged from before this fix)", st.ServiceChargeRateBasisPoints)
+	}
+}
+
+// Invalid/negative stored values must fall back to the default (0 =
+// disabled), matching every sibling field's silent-fallback-at-load-time
+// convention — not panic, not a negative rate.
+func TestLoadState_ServiceChargeRateInvalidFallsBackToDefault(t *testing.T) {
+	ctx := context.Background()
+	for _, bad := range []string{"not-a-number", "-5", "-5.5", "NaN", "Inf", "-Inf", "Infinity"} {
+		t.Run(bad, func(t *testing.T) {
+			ctx := ctx
+			store := newTestStore(t)
+			if err := store.Set(ctx, KeyServiceChargeRate, bad); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+
+			st := LoadState(ctx, store, baseCfg())
+
+			if st.ServiceChargeRateBasisPoints != 0 {
+				t.Errorf("ServiceChargeRateBasisPoints = %d from %q, want default 0", st.ServiceChargeRateBasisPoints, bad)
+			}
+		})
+	}
+}
+
+// SaveState persists basis points back as the same decimal-percent string
+// format LoadState reads (round-trips exactly, and a whole-percent value
+// keeps rendering without a spurious ".0").
+func TestSaveState_ServiceChargeRateRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	if err := SaveState(ctx, store, RuntimeState{ServiceChargeRateBasisPoints: 1250}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	raw, ok, err := store.Get(ctx, KeyServiceChargeRate)
+	if err != nil || !ok {
+		t.Fatalf("Get(%s) = ok=%v err=%v", KeyServiceChargeRate, ok, err)
+	}
+	if raw != "12.5" {
+		t.Fatalf("stored %s = %q, want %q", KeyServiceChargeRate, raw, "12.5")
+	}
+	if st := LoadState(ctx, store, baseCfg()); st.ServiceChargeRateBasisPoints != 1250 {
+		t.Fatalf("round trip: ServiceChargeRateBasisPoints = %d, want 1250", st.ServiceChargeRateBasisPoints)
+	}
+
+	if err := SaveState(ctx, store, RuntimeState{ServiceChargeRateBasisPoints: 1200}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if raw, _, _ := store.Get(ctx, KeyServiceChargeRate); raw != "12" {
+		t.Fatalf("stored %s = %q, want %q (whole percent, no spurious decimal)", KeyServiceChargeRate, raw, "12")
+	}
+}
+
 func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)

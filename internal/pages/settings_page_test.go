@@ -197,6 +197,40 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	}
 }
 
+// ut-docs#244: the service charge rate upsert accepts fractional percents
+// (12.5% is the standard UK rate) and rejects an invalid value with a 400
+// instead of silently no-op'ing — and, critically, never persists the
+// invalid value to the settings store in the first place.
+func TestServiceChargeRateUpsertEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.service_charge_rate_pct"}, "value": {"12.5"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("valid fractional rate = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if got := d.CurrentState().ServiceChargeRateBasisPoints; got != 1250 {
+		t.Fatalf("ServiceChargeRateBasisPoints = %d, want 1250", got)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "store.service_charge_rate_pct"); v != "12.5" {
+		t.Fatalf("stored service charge rate = %q, want %q", v, "12.5")
+	}
+
+	for _, bad := range []string{"abc", "-5", "NaN", "Inf", "Infinity"} {
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.service_charge_rate_pct"}, "value": {bad}}, &mgrUser)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid rate %q = %d, want 400", bad, rec.Code)
+		}
+		// Must not have overwritten the prior valid value in either the
+		// live state or the settings store.
+		if got := d.CurrentState().ServiceChargeRateBasisPoints; got != 1250 {
+			t.Fatalf("after rejected upsert %q: ServiceChargeRateBasisPoints = %d, want unchanged 1250", bad, got)
+		}
+		if v, _, _ := d.Settings.Get(t.Context(), "store.service_charge_rate_pct"); v != "12.5" {
+			t.Fatalf("after rejected upsert %q: stored service charge rate = %q, want unchanged %q", bad, v, "12.5")
+		}
+	}
+}
+
 // The Settings page's dedicated till-name field (ut-docs#396) persists under
 // till.name — distinct from a replica's own sync.till_name — and is
 // manager-gated the same way as /api/settings/display-mode.
