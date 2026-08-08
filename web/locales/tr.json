@@ -389,7 +389,6 @@
   "plugins.import.warning": "Yalnızca güvenilir kaynaklardan eklenti kurun. Elle içe aktarmalar market doğrulamasını atlar.",
   "plugins.install": "Kur",
   "plugins.permission.granted": "İzin verildi",
-  "plugins.marketplace.install_success": "Eklenti başarıyla kuruldu",
   "plugins.permission.revoked": "İzin iptal edildi",
   "plugins.install.error.configuration": "Market kurulumu yapılandırılmamış.",
   "plugins.install.error.forbidden": "Eklentileri yalnızca yönetici kurabilir.",

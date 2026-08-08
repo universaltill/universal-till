@@ -18,15 +18,22 @@ import (
 
 // --- helpers for the legacy inline handlers in registerPluginAPI ----------
 //
-// These endpoints (/api/plugins/upload, /api/plugins/marketplace,
-// /api/plugins/marketplace/install, permissions grant/revoke, trust) predate
-// the T017 lifecycle handlers and are not wired to any UI template. They
-// still ship, so their contract (gates, validation, error mapping, install
-// side effects) is pinned here. NOTE: the two install endpoints are known
-// half-implementations — they persist a manifest row but delete the artifact
-// and extract nothing, so the "installed" plugin has no runnable code. That
-// gap is a product decision (remove vs finish), tracked in ut-docs/QUEUE.md,
-// deliberately not blessed nor "fixed" here.
+// These endpoints (/api/plugins/marketplace, permissions grant/revoke,
+// trust) predate the T017 lifecycle handlers and are not wired to any UI
+// template. They still ship, so their contract (gates, validation, error
+// mapping) is pinned here.
+//
+// /api/plugins/upload and /api/plugins/marketplace/install used to live
+// here too. Both were known half-implementations (ut-docs QUEUE-ARCHIVE.md,
+// 2026-07-30 finding): they persisted a manifest DB row but deleted the
+// downloaded artifact and extracted nothing, so the "installed" plugin had
+// no runnable code — and neither performed any Ed25519 manifest-signature
+// verification (they checked only a caller/catalog-supplied SHA256), in
+// direct contradiction of this repo's "never run an unverified plugin"
+// rule. Confirmed unreferenced by any UI template, JS, or other repo, and
+// with the 2026-07-30 finding already recommending removal, ut-docs#480
+// removed both rather than bolting Ed25519 + real extraction onto
+// intentionally-dead code — see TestLegacyInstallEndpoints_Removed below.
 
 // legacyCatalogPlugin is one entry the stub marketplace catalog serves.
 type legacyCatalogPlugin struct {
@@ -64,6 +71,7 @@ func legacyMarketplaceStub(t *testing.T, plugins []legacyCatalogPlugin, artifact
 	return srv, &lastQuery
 }
 
+// sha256Hex is a shared test helper (also used by sync_plugins_test.go).
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
@@ -161,246 +169,54 @@ func TestLegacyMarketplaceList_MethodAndUpstreamErrors(t *testing.T) {
 	}
 }
 
-// --- /api/plugins/upload (install by listing id) --------------------------
-
-func TestLegacyUpload_Validation(t *testing.T) {
+// --- /api/plugins/upload and /api/plugins/marketplace/install: removed ----
+//
+// ut-docs#480: both endpoints installed a plugin verifying only a
+// caller/catalog-supplied SHA256 — no Ed25519 manifest-signature check at
+// all, in direct contradiction of this repo's "never run an unverified
+// plugin" rule — and (per the 2026-07-30 QUEUE-ARCHIVE.md finding) never
+// actually produced a runnable plugin in the first place, since the
+// downloaded artifact was deleted and nothing was ever extracted. Neither
+// was reachable from any UI template, JS, or other repo. Rather than bolt
+// real Ed25519 verification and extraction onto intentionally-dead code,
+// both routes were deleted outright: the marketplace-listing install flow
+// they duplicated already exists, fully Ed25519-verified, at
+// POST /api/plugins/install-from-marketplace (handleInstallFromMarketplace).
+// This is a stronger guarantee than "rejects a bad signature" — there is no
+// unverified *legacy* install route left (import-from-file and the store
+// API are separate, existing routes, both Ed25519-verified in their normal
+// path, unaffected by this change).
+// Both requests below are built to be forms the OLD handlers would have
+// happily accepted and installed (matching catalog entry + correct
+// checksum, or a fully-populated field set) — an unknown id would 404
+// under the old code too and prove nothing. Only a request the old code
+// would have returned 200 for, now returning 404, demonstrates the route
+// itself is gone rather than just still rejecting this particular input.
+func TestLegacyInstallEndpoints_Removed(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	srv, _ := legacyMarketplaceStub(t, nil, nil)
-	mux, _ := newLegacyMux(t, srv.URL)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/plugins/upload", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("GET upload = %d, want 405", rec.Code)
-	}
-
-	if rec := postForm(mux, "/api/plugins/upload", url.Values{}, nil); rec.Code != http.StatusBadRequest {
-		t.Fatalf("missing id = %d, want 400", rec.Code)
-	}
-
-	// Unknown listing id -> 404 (catalog is empty).
-	if rec := postForm(mux, "/api/plugins/upload", url.Values{"id": {"com.test.ghost"}}, nil); rec.Code != http.StatusNotFound {
-		t.Fatalf("unknown listing = %d, want 404", rec.Code)
-	}
-}
-
-func TestLegacyUpload_ChecksumMismatch_400(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	artifact := []byte("real artifact bytes")
-	// Catalog entry advertises the WRONG hash for the artifact it serves.
+	artifact := []byte("would-have-installed artifact")
 	pluginsList := []legacyCatalogPlugin{{
-		ListingID: "com.test.sum",
-		Name:      "Sum Plugin",
+		ListingID: "com.test.wouldinstall",
+		Name:      "Would Install Plugin",
 		Version:   "1.0.0",
-		SHA256:    sha256Hex([]byte("different bytes")),
 	}}
-	srv, _ := legacyMarketplaceStub(t, pluginsList, map[string][]byte{"com.test.sum": artifact})
-	// The stub's URL exists only after creation; patch the shared slice.
-	pluginsList[0].ArtifactURL = srv.URL + "/artifact/com.test.sum"
-
-	mux, _ := newLegacyMux(t, srv.URL)
-	rec := postForm(mux, "/api/plugins/upload", url.Values{"id": {"com.test.sum"}}, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("checksum mismatch = %d, want 400 (%s)", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "checksum mismatch") {
-		t.Fatalf("error should say checksum mismatch, got: %s", rec.Body.String())
-	}
-}
-
-func TestLegacyUpload_InstallsListedPlugin(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	artifact := []byte("legacy artifact payload")
-	pluginsList := []legacyCatalogPlugin{{
-		ListingID: "com.test.legacyup",
-		Name:      "Legacy Upload Plugin",
-		Version:   "1.2.3",
-		SHA256:    sha256Hex(artifact),
-	}}
-	srv, _ := legacyMarketplaceStub(t, pluginsList, map[string][]byte{"com.test.legacyup": artifact})
-	pluginsList[0].ArtifactURL = srv.URL + "/artifact/com.test.legacyup"
-
-	mux, d := newLegacyMux(t, srv.URL)
-	rec := postForm(mux, "/api/plugins/upload", url.Values{"id": {"com.test.legacyup"}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("upload install = %d, want 200 (%s)", rec.Code, rec.Body.String())
-	}
-	var name, version string
-	if err := d.Db.QueryRow(`SELECT name, version FROM plugins WHERE id = 'com.test.legacyup'`).Scan(&name, &version); err != nil {
-		t.Fatalf("installed plugin row missing: %v", err)
-	}
-	if name != "Legacy Upload Plugin" || version != "1.2.3" {
-		t.Fatalf("stored name/version = %q/%q, want catalog values", name, version)
-	}
-	// The install must be visible to the plugin manager after Reload.
-	if _, ok := d.Pm.Installed["com.test.legacyup"]; !ok {
-		t.Fatalf("plugin manager not reloaded with new install")
-	}
-}
-
-// A legitimate plugin name containing JSON-special characters must install
-// with the exact name preserved. The legacy handler used to synthesize the
-// manifest via fmt.Sprintf into a JSON string literal — any quote in the
-// catalog name produced invalid JSON (install failed 500), and a crafted
-// name could inject arbitrary manifest fields.
-func TestLegacyUpload_PluginNameWithQuotesInstalls(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	artifact := []byte("quoted name artifact")
-	quoted := `Legacy "Quoted" Plugin`
-	pluginsList := []legacyCatalogPlugin{{
-		ListingID: "com.test.quoted",
-		Name:      quoted,
-		Version:   "1.0.0",
-		SHA256:    sha256Hex(artifact),
-	}}
-	srv, _ := legacyMarketplaceStub(t, pluginsList, map[string][]byte{"com.test.quoted": artifact})
-	pluginsList[0].ArtifactURL = srv.URL + "/artifact/com.test.quoted"
-
-	mux, d := newLegacyMux(t, srv.URL)
-	rec := postForm(mux, "/api/plugins/upload", url.Values{"id": {"com.test.quoted"}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("install with quoted name = %d, want 200 (%s)", rec.Code, rec.Body.String())
-	}
-	var name string
-	if err := d.Db.QueryRow(`SELECT name FROM plugins WHERE id = 'com.test.quoted'`).Scan(&name); err != nil {
-		t.Fatalf("installed plugin row missing: %v", err)
-	}
-	if name != quoted {
-		t.Fatalf("stored name = %q, want %q", name, quoted)
-	}
-}
-
-// --- /api/plugins/marketplace/install (install by URL) --------------------
-
-func TestLegacyMarketplaceInstall_Validation(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	srv, _ := legacyMarketplaceStub(t, nil, nil)
+	srv, _ := legacyMarketplaceStub(t, pluginsList, map[string][]byte{"com.test.wouldinstall": artifact})
+	pluginsList[0].ArtifactURL = srv.URL + "/artifact/com.test.wouldinstall"
+	pluginsList[0].SHA256 = sha256Hex(artifact)
 	mux, _ := newLegacyMux(t, srv.URL)
 
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/plugins/marketplace/install", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("GET install = %d, want 405", rec.Code)
+	if rec := postForm(mux, "/api/plugins/upload", url.Values{"id": {"com.test.wouldinstall"}}, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/plugins/upload (catalog-matched, correct checksum) = %d, want 404 (route must not exist)", rec.Code)
 	}
-
-	// Each required field missing -> 400.
-	full := url.Values{
-		"id":          {"com.test.x"},
-		"version":     {"1.0.0"},
-		"package_url": {"http://example.invalid/p.tar.gz"},
-		"sha256":      {"abc"},
-	}
-	for _, missing := range []string{"id", "version", "package_url", "sha256"} {
-		form := url.Values{}
-		for k, v := range full {
-			if k != missing {
-				form[k] = v
-			}
-		}
-		if rec := postForm(mux, "/api/plugins/marketplace/install", form, nil); rec.Code != http.StatusBadRequest {
-			t.Fatalf("missing %s = %d, want 400", missing, rec.Code)
-		}
-	}
-}
-
-// A catalog entry whose artifact URL is dead (404) must fail the install
-// loudly — a real-world case whenever a release artifact is pruned.
-func TestLegacyInstalls_DeadArtifactURL_500(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	pluginsList := []legacyCatalogPlugin{{
-		ListingID: "com.test.deadurl",
-		Name:      "Dead URL Plugin",
-		Version:   "1.0.0",
-		SHA256:    sha256Hex([]byte("whatever")),
-	}}
-	srv, _ := legacyMarketplaceStub(t, pluginsList, nil) // no artifacts served
-	pluginsList[0].ArtifactURL = srv.URL + "/artifact/com.test.deadurl"
-	mux, _ := newLegacyMux(t, srv.URL)
-
-	rec := postForm(mux, "/api/plugins/upload", url.Values{"id": {"com.test.deadurl"}}, nil)
-	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "download failed") {
-		t.Fatalf("upload with dead artifact = %d (%s), want 500 download failed", rec.Code, rec.Body.String())
-	}
-
-	rec = postForm(mux, "/api/plugins/marketplace/install", url.Values{
-		"id":          {"com.test.deadurl"},
-		"version":     {"1.0.0"},
-		"package_url": {srv.URL + "/artifact/com.test.deadurl"},
-		"sha256":      {sha256Hex([]byte("whatever"))},
-	}, nil)
-	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "download failed") {
-		t.Fatalf("marketplace install with dead artifact = %d (%s), want 500 download failed", rec.Code, rec.Body.String())
-	}
-}
-
-func TestLegacyMarketplaceInstall_ChecksumMismatch_400(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	artifact := []byte("mp install artifact")
-	srv, _ := legacyMarketplaceStub(t, nil, map[string][]byte{"com.test.mpsum": artifact})
-	mux, _ := newLegacyMux(t, srv.URL)
 
 	rec := postForm(mux, "/api/plugins/marketplace/install", url.Values{
-		"id":          {"com.test.mpsum"},
+		"id":          {"com.test.wouldinstall"},
 		"version":     {"1.0.0"},
-		"package_url": {srv.URL + "/artifact/com.test.mpsum"},
-		"sha256":      {sha256Hex([]byte("not the artifact"))},
+		"package_url": {pluginsList[0].ArtifactURL},
+		"sha256":      {pluginsList[0].SHA256},
 	}, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("checksum mismatch = %d, want 400 (%s)", rec.Code, rec.Body.String())
-	}
-}
-
-func TestLegacyMarketplaceInstall_InstallsAndDefaultsTrust(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	artifact := []byte("mp trusted artifact")
-	srv, _ := legacyMarketplaceStub(t, nil, map[string][]byte{"com.test.mpok": artifact})
-	mux, d := newLegacyMux(t, srv.URL)
-
-	rec := postForm(mux, "/api/plugins/marketplace/install", url.Values{
-		"id":          {"com.test.mpok"},
-		"version":     {"2.0.0"},
-		"package_url": {srv.URL + "/artifact/com.test.mpok"},
-		"sha256":      {sha256Hex(artifact)},
-	}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("marketplace install = %d, want 200 (%s)", rec.Code, rec.Body.String())
-	}
-	var trust, version string
-	if err := d.Db.QueryRow(`SELECT trust_level, version FROM plugins WHERE id = 'com.test.mpok'`).Scan(&trust, &version); err != nil {
-		t.Fatalf("installed plugin row missing: %v", err)
-	}
-	if trust != "untrusted" {
-		t.Fatalf("default trust_level = %q, want untrusted", trust)
-	}
-	if version != "2.0.0" {
-		t.Fatalf("version = %q, want 2.0.0", version)
-	}
-}
-
-// Same manifest-synthesis bug as the upload path: a version (or id) with a
-// quote used to break the fmt.Sprintf-built JSON. Must install verbatim.
-func TestLegacyMarketplaceInstall_VersionWithQuoteInstalls(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	artifact := []byte("mp quoted artifact")
-	version := `1.0.0-beta"x`
-	srv, _ := legacyMarketplaceStub(t, nil, map[string][]byte{"com.test.mpquoted": artifact})
-	mux, d := newLegacyMux(t, srv.URL)
-
-	rec := postForm(mux, "/api/plugins/marketplace/install", url.Values{
-		"id":          {"com.test.mpquoted"},
-		"version":     {version},
-		"package_url": {srv.URL + "/artifact/com.test.mpquoted"},
-		"sha256":      {sha256Hex(artifact)},
-	}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("install with quoted version = %d, want 200 (%s)", rec.Code, rec.Body.String())
-	}
-	var got string
-	if err := d.Db.QueryRow(`SELECT version FROM plugins WHERE id = 'com.test.mpquoted'`).Scan(&got); err != nil {
-		t.Fatalf("installed plugin row missing: %v", err)
-	}
-	if got != version {
-		t.Fatalf("stored version = %q, want %q", got, version)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/plugins/marketplace/install (fully valid form) = %d, want 404 (route must not exist)", rec.Code)
 	}
 }
 
