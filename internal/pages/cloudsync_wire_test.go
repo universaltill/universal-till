@@ -323,6 +323,17 @@ func TestCollectProblems_IncludesFailedPluginInstalls(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	ctx := t.Context()
 
+	// collectProblems fills its maxProblems=20 cap from logging.Recent()
+	// first, then falls back to failed-install records only while slots
+	// remain. logging.Recent() is a process-global ring shared by the whole
+	// test binary (ut-docs#404), so under -shuffle=on, other tests' warn/
+	// error lines logged earlier in the process can already occupy all 20
+	// slots by the time this test runs — silently starving the DB-backed
+	// failed-install entry this test asserts on (ut-docs#219).
+	// logging.ResetRecent() (test-only) clears the ring right before the
+	// scenario under test, same isolation pattern as stock_ownership_test.go.
+	logging.ResetRecent()
+
 	if err := plugins.NewInstallStatusStore(dp.Db).Save(ctx, plugins.InstallStatusRecord{
 		ListingID:  "listing-broken",
 		State:      plugins.InstallStateFailed,
