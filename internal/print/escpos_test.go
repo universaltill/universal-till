@@ -90,9 +90,55 @@ func TestLongNameWraps(t *testing.T) {
 	if !strings.Contains(out, "A very long product name") {
 		t.Error("long name row missing")
 	}
-	// its amount lands on its own right-aligned row
-	if !strings.Contains(out, strings.Repeat(" ", Width-len("£1.00"))+"£1.00") {
-		t.Error("wrapped amount row missing")
+	// its amount lands on its own right-aligned row, padded to exactly
+	// Width visible columns. Compares the exact row (not a Contains
+	// substring check, which can't distinguish "close enough" from
+	// "exact" -- a run of N spaces trivially contains any shorter run of
+	// the same character regardless of alignment, so this used to pass
+	// for the wrong reason; ut-docs#438), and uses rune count rather than
+	// byte length for the padding width, matching what kvRow itself pads
+	// to (ut-docs#376).
+	amount := "£1.00"
+	wantRow := strings.Repeat(" ", Width-utf8.RuneCountInString(amount)) + amount
+	found := false
+	for _, row := range strings.Split(out, "\n") {
+		if row == wantRow {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("wrapped amount row missing or not exactly padded to width; want row %q", wantRow)
+	}
+}
+
+// TestLayoutLineRuneBoundaryFitsOneRow: a multi-byte label whose BYTE length
+// exceeds Width but whose RUNE count does not must stay on one row --
+// layoutLine's one-row/two-row threshold has to agree with kvRow's own
+// rune-based padding, or a label right at this boundary gets routed to an
+// unnecessary two-row fallback even though kvRow can render it on one row
+// fine (ut-docs#438; kvRow's own rune-safety fixed by ut-docs#376).
+func TestLayoutLineRuneBoundaryFitsOneRow(t *testing.T) {
+	amount := "£1.00"                // 5 runes, 6 bytes
+	label := strings.Repeat("é", 20) // 20 runes, 40 bytes
+	// rune total: 20 + 1 + 5 = 26 <= Width(42)  -> fits on one row
+	// byte total:  40 + 1 + 6 = 47 >  Width(42) -> byte-based math would wrap
+	if got := utf8.RuneCountInString(label) + 1 + utf8.RuneCountInString(amount); got > Width {
+		t.Fatalf("test setup invalid: rune total %d exceeds Width %d", got, Width)
+	}
+	if got := len(label) + 1 + len(amount); got <= Width {
+		t.Fatalf("test setup invalid: byte total %d does not exceed Width %d", got, Width)
+	}
+
+	rows := layoutLine(Line{Name: label, Qty: "1", Amount: amount})
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row for a label that fits by rune count, got %d: %q", len(rows), rows)
+	}
+	if !strings.HasSuffix(rows[0], amount) {
+		t.Errorf("row %q does not end with amount %q", rows[0], amount)
+	}
+	if utf8.RuneCountInString(rows[0]) != Width {
+		t.Errorf("row %q is %d visible columns wide, want %d", rows[0], utf8.RuneCountInString(rows[0]), Width)
 	}
 }
 
