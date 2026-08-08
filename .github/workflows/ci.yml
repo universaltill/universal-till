@@ -53,6 +53,10 @@ jobs:
         run: bash scripts/ci/guard-emoji-font.sh
       - name: htmx-loaded guard
         run: bash scripts/ci/guard-htmx-loaded.sh
+      - name: Autofill-suppression guard
+        run: bash scripts/ci/guard-autofill-suppression.sh
+      - name: Autofill-suppression guard regression test
+        run: bash scripts/ci/guard-autofill-suppression_test.sh
       - name: Brand asset guard
         run: bash scripts/ci/check-brand-assets.sh
       - name: Makefile version-stamp guard
