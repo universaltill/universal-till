@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -90,6 +91,57 @@ func TestUpdateAPI_ManagerGate(t *testing.T) {
 			t.Fatalf("POST %s without manager: code %d, want 403 (body %q)",
 				path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// Regression (ut-docs#387): POST /api/update/apply's respond/respondCurrent
+// closures used to write a bare {"success":…, "message":…} body, not the
+// { "data": …, "error": null|"…" } envelope universal-till/CLAUDE.md
+// mandates. The handler deliberately does NOT go through the
+// autoUpdate*/selfupdate seams (an explicit user action stays available even
+// on a dev build — see the comment on those seams above), so it can't be
+// driven through httptest without hitting the real GitHub releases API and
+// selfupdate.Apply's binary swap/re-exec, which this suite's other
+// selfupdate-touching tests deliberately avoid. respond/respondCurrent are
+// pinned directly instead, mirroring exactly how they're built in
+// registerUpdateAPI.
+func TestUpdateApplyResponseHelpers_EnvelopeShape(t *testing.T) {
+	respond := func(w http.ResponseWriter, status int, ok bool, msg string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		if ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"message": msg}, "error": nil})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
+	}
+
+	rec := httptest.NewRecorder()
+	respond(rec, http.StatusOK, true, "update installed — restarting")
+	var okBody struct {
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &okBody); err != nil {
+		t.Fatalf("decode success envelope: %v (%s)", err, rec.Body.String())
+	}
+	if okBody.Error != nil || okBody.Data.Message != "update installed — restarting" {
+		t.Fatalf("expected data.message populated and error:null, got %+v", okBody)
+	}
+
+	rec = httptest.NewRecorder()
+	respond(rec, http.StatusBadGateway, false, "boom")
+	var errBody struct {
+		Data  any    `json:"data"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode error envelope: %v (%s)", err, rec.Body.String())
+	}
+	if errBody.Data != nil || errBody.Error != "boom" {
+		t.Fatalf("expected data:null and error:%q, got %+v", "boom", errBody)
 	}
 }
 

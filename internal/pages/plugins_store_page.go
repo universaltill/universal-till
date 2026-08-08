@@ -178,13 +178,21 @@ func storeCategories(items []storeItem) []storeCategory {
 
 // registerPluginStoreAPI wires the store lifecycle actions.
 func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
+	// respond writes the { "data": …, "error": null|"…" } envelope
+	// universal-till/CLAUDE.md mandates (ut-docs#387): on success msg lands
+	// under data.message with error:null, on failure data is null and error
+	// carries msg.
 	respond := func(w http.ResponseWriter, status int, msg string) {
 		if status >= 400 {
 			logging.L().Warnf("[PluginStore] %s", msg)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{"success": status < 400, "message": msg})
+		if status < 400 {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"message": msg}, "error": nil})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
 	}
 
 	listingFrom := func(r *http.Request) string {

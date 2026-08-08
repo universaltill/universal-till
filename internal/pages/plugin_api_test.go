@@ -242,6 +242,70 @@ func TestSetPluginActiveHandler_DisableThenEnableTogglesInstalled(t *testing.T) 
 	}
 }
 
+// Regression (ut-docs#387): the lifecycle handlers in this file used to
+// respond bare {"success":…, "message":…}, not the { "data": …, "error":
+// null|"…" } envelope universal-till/CLAUDE.md mandates. Pins both branches
+// for setPluginActiveHandler: success carries the message under data with
+// error:null, and a genuine failure (closed DB) carries data:null with the
+// error message.
+func TestSetPluginActiveHandler_ResponseEnvelope(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	db := openRealSchemaPagesDB(t)
+	seedInstalledPlugin(t, db, "com.test.envelope", "1.0.0")
+	deps := newPluginAPIDeps(t, db, nil)
+	if err := deps.Pm.Reload(t.Context()); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	h := handleDisablePlugin(deps)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/com.test.envelope/disable", nil)
+	req.SetPathValue("id", "com.test.envelope")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var okResp struct {
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &okResp); err != nil {
+		t.Fatalf("decode success envelope: %v (%s)", err, rec.Body.String())
+	}
+	if okResp.Error != nil {
+		t.Fatalf("expected error:null on success, got %v", okResp.Error)
+	}
+	if okResp.Data.Message == "" {
+		t.Fatalf("expected data.message populated, got %+v", okResp)
+	}
+
+	// Force the DB-error branch: a closed DB makes SetPluginActive fail.
+	db.Close()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/plugins/com.test.envelope/disable", nil)
+	req2.SetPathValue("id", "com.test.envelope")
+	rec2 := httptest.NewRecorder()
+	h(rec2, req2)
+	if rec2.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 with a closed DB, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var errResp struct {
+		Data  any    `json:"data"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("decode error envelope: %v (%s)", err, rec2.Body.String())
+	}
+	if errResp.Data != nil {
+		t.Fatalf("expected data:null on error, got %v", errResp.Data)
+	}
+	if !strings.Contains(errResp.Error, "failed to disabled plugin") {
+		t.Fatalf("expected the failure reason in error, got %q", errResp.Error)
+	}
+}
+
 // --- handleUninstallPlugin -------------------------------------------------
 
 func TestHandleUninstallPlugin_EmptyID_400(t *testing.T) {
@@ -414,14 +478,19 @@ func TestHandleCheckUpdates_NoInstalledPlugins_200Empty(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		Success bool `json:"success"`
-		Count   int  `json:"count"`
+		Data struct {
+			Count int `json:"count"`
+		} `json:"data"`
+		Error any `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !resp.Success || resp.Count != 0 {
-		t.Fatalf("expected success with 0 updates, got %+v", resp)
+	if resp.Error != nil {
+		t.Fatalf("expected error:null on success, got %v", resp.Error)
+	}
+	if resp.Data.Count != 0 {
+		t.Fatalf("expected 0 updates, got %+v", resp)
 	}
 }
 

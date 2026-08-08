@@ -180,7 +180,7 @@ window.utTrustPrompt = {{ printf "%q" (T "plugins.trust.confirm") }};
       body: new URLSearchParams({ listing_id: listing }).toString()
     }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
       if (res.ok) { window.location.reload(); return; }
-      msg.textContent = '✗ ' + (j.message || ('HTTP ' + res.status));
+      msg.textContent = '✗ ' + (j.error || ('HTTP ' + res.status));
       card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
     }); }).catch(function (e) {
       msg.textContent = '✗ ' + e;

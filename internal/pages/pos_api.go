@@ -659,7 +659,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			receiptNo = saleID
 		}
 
-		// Render receipt JSON if requested
+		// Render receipt JSON if requested. Wrapped as { "data": …, "error":
+		// null } -- the envelope universal-till/CLAUDE.md mandates for every
+		// JSON API response (ut-docs#387: this endpoint used to respond bare).
 		if r.Header.Get("Accept") == "application/json" {
 			resp := map[string]any{
 				"saleId":    saleID,
@@ -668,7 +670,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				"payments":  payments,
 				"note":      in.Note,
 			}
-			_ = json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": resp, "error": nil})
 			return
 		}
 

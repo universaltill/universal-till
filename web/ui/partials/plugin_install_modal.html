@@ -183,15 +183,20 @@ function installPlugin(listingId, pluginName) {
 		body: JSON.stringify({ listing_id: listingId })
 	})
 	.then(response => response.json())
-	.then(data => {
-		if (data.success) {
+	.then(body => {
+		// { "data": …, "error": null|"…" } envelope (universal-till/CLAUDE.md,
+		// ut-docs#387). On error, "error" carries the same message_key string
+		// the success payload used to carry (writeInstallResponse prefers the
+		// i18n key over a plain message), so installMessage's lookup still works.
+		if (!body.error) {
+			var data = body.data || {};
 			updateInstallProgress(50, pluginInstallText.progressDownloading);
 			// Simulate progress updates (in production, this would be server-sent events or polling)
 			setTimeout(() => updateInstallProgress(75, pluginInstallText.progressVerifying), 1000);
 			setTimeout(() => updateInstallProgress(90, pluginInstallText.progressInstalling), 2000);
 			setTimeout(() => showInstallSuccess(installMessage(data.message_key, 'success')), 3000);
 		} else {
-			showInstallError(installMessage(data.message_key, 'errorRetryable'));
+			showInstallError(installMessage(body.error, 'errorRetryable'));
 		}
 	})
 	.catch(error => {

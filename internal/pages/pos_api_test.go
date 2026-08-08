@@ -195,22 +195,30 @@ func TestTenderHandler_JSONAcceptReturnsSaleSummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
+	// Envelope: { "data": { saleId, receiptNo, total, ... }, "error": null }
+	// (universal-till/CLAUDE.md, ut-docs#387).
 	var out struct {
-		SaleID    string `json:"saleId"`
-		ReceiptNo string `json:"receiptNo"`
-		Total     int64  `json:"total"`
+		Data struct {
+			SaleID    string `json:"saleId"`
+			ReceiptNo string `json:"receiptNo"`
+			Total     int64  `json:"total"`
+		} `json:"data"`
+		Error any `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("expected valid JSON, got: %v\nbody: %s", err, rec.Body.String())
 	}
-	if out.SaleID == "" || out.ReceiptNo == "" {
-		t.Fatalf("expected saleId and receiptNo populated, got: %+v", out)
+	if out.Error != nil {
+		t.Fatalf("expected error:null on success, got %+v", out.Error)
 	}
-	if out.Total != 120 {
-		t.Fatalf("expected total 120, got %d", out.Total)
+	if out.Data.SaleID == "" || out.Data.ReceiptNo == "" {
+		t.Fatalf("expected saleId and receiptNo populated, got: %+v", out.Data)
+	}
+	if out.Data.Total != 120 {
+		t.Fatalf("expected total 120, got %d", out.Data.Total)
 	}
 	var subtotal, taxTotal int64
-	if err := dp.Db.QueryRow(`SELECT subtotal, tax_total FROM sales WHERE id = ?`, out.SaleID).Scan(&subtotal, &taxTotal); err != nil {
+	if err := dp.Db.QueryRow(`SELECT subtotal, tax_total FROM sales WHERE id = ?`, out.Data.SaleID).Scan(&subtotal, &taxTotal); err != nil {
 		t.Fatalf("query sale totals: %v", err)
 	}
 	if subtotal != 100 || taxTotal != 20 {
@@ -274,14 +282,20 @@ func TestTenderHandler_AppliesPluginReportedTipFromAuthorizeResponse(t *testing.
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		SaleID string `json:"saleId"`
+		Data struct {
+			SaleID string `json:"saleId"`
+		} `json:"data"`
+		Error any `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("expected valid JSON, got: %v\nbody: %s", err, rec.Body.String())
 	}
+	if out.Error != nil {
+		t.Fatalf("expected error:null on success, got %+v", out.Error)
+	}
 
 	var tip int64
-	if err := dp.Db.QueryRow(`SELECT tip_amount FROM payments WHERE sale_id = ?`, out.SaleID).Scan(&tip); err != nil {
+	if err := dp.Db.QueryRow(`SELECT tip_amount FROM payments WHERE sale_id = ?`, out.Data.SaleID).Scan(&tip); err != nil {
 		t.Fatalf("expected a payment row for the sale: %v", err)
 	}
 	if tip != 150 {
