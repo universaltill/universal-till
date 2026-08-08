@@ -161,6 +161,13 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	if !strings.Contains(body, "Front Till") {
 		t.Fatalf("expected the configured till_name label, got %q", body)
 	}
+	// ut-docs#408: the primary's own URL is cross-device data — it must
+	// never leak into the chip's rendered HTML (the #390-class risk this
+	// card guards against), regardless of whether a handler still passes
+	// it into the template's data map.
+	if strings.Contains(body, "http://primary.example") {
+		t.Fatalf("replica chip must never render the primary's URL, got %q", body)
+	}
 	// ut-docs#405: was a bare <span>, not clickable at all.
 	if !strings.Contains(body, `<a href="/tills"`) {
 		t.Fatalf("expected the replica chip to be a clickable link to the local /tills page, got %q", body)
