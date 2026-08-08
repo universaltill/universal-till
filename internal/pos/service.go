@@ -3,6 +3,7 @@ package pos
 import (
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
@@ -14,6 +15,18 @@ type PriceResolver interface {
 }
 
 type Service struct {
+	// mu guards all mutable state below (ut-docs#449): a Service instance is
+	// shared by every request handler (one goroutine per request, net/http's
+	// normal model), so exported methods must serialize access themselves.
+	//
+	// Locking pattern — mu is a plain, NON-reentrant Mutex, so every EXPORTED
+	// method takes it exactly once at its own top and then only ever calls
+	// unexported lock-free cores (scanQty, removeLocked, resetLocked, ...),
+	// never another exported method on the same receiver. Unexported methods
+	// assume mu is already held. Breaking this convention self-deadlocks
+	// (hangs, not fails) the first time the reentrant path is exercised.
+	mu sync.Mutex
+
 	cfg       Config
 	basket    Basket
 	resolver  PriceResolver
@@ -92,6 +105,8 @@ func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
 // SetTaxRateAsker installs (or clears, with nil) the plugin-backed tax-rate
 // override hook and recomputes totals so the change is reflected immediately.
 func (s *Service) SetTaxRateAsker(a TaxRateAsker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.taxAsker = a
 	s.recomputeTotals()
 }
@@ -101,12 +116,18 @@ func (s *Service) SetTaxRateAsker(a TaxRateAsker) {
 // rather than replacing the service — a replacement engine is empty and
 // would silently discard a sale in progress.
 func (s *Service) SetConfig(cfg Config) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.cfg = cfg
 	s.recomputeTotals()
 }
 
 // Config returns the service's current tax configuration.
-func (s *Service) Config() Config { return s.cfg }
+func (s *Service) Config() Config {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg
+}
 
 type BasketLine struct {
 	LineKey      string      `json:"lineKey,omitempty"` // stable per-line id, assigned when a line is first appended (ADR-0020) — the only safe way to address ONE line once modifiers let several share a SKU
@@ -185,8 +206,22 @@ func (b Basket) ItemCount() int {
 	return n
 }
 
+// basketCopyLocked returns a pointer to a private copy of the current basket,
+// safe for the caller to read (and decorate with e.g. ToastMessage) after
+// s.mu is released. Returning &s.basket directly would alias live state that
+// the next locked call rewrites under the reader. The Lines slice inside the
+// copy is safe to share: recomputeTotals always publishes a freshly allocated
+// slice and nothing writes to its elements afterwards. Caller must hold s.mu.
+func (s *Service) basketCopyLocked() *Basket {
+	b := s.basket
+	return &b
+}
+
 func (s *Service) Scan(code string) (*Basket, error) {
-	return s.ScanQty(code, 1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scanQty(code, 1)
+	return s.basketCopyLocked(), nil
 }
 
 // ResolveBase resolves code to its plain, pre-modifier BasketLine via the
@@ -194,6 +229,10 @@ func (s *Service) Scan(code string) (*Basket, error) {
 // modifier-selection step needs the item's base price/name before the
 // operator has chosen any customization, to build the picker and then call
 // AddLineWithModifiers once they have.
+//
+// Deliberately NOT locked: it only reads s.resolver, which is set once at
+// construction (NewServiceWithResolver) and never reassigned — verify that
+// still holds before adding any resolver-swapping method.
 func (s *Service) ResolveBase(code string) (BasketLine, bool) {
 	code = strings.TrimSpace(code)
 	if s.resolver == nil || code == "" {
@@ -203,15 +242,21 @@ func (s *Service) ResolveBase(code string) (BasketLine, bool) {
 }
 
 func (s *Service) ScanQty(code string, qty float64) (*Basket, error) {
-	b, _ := s.scanQty(code, qty)
-	return b, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scanQty(code, qty)
+	return s.basketCopyLocked(), nil
 }
 
 func (s *Service) ScanQtyWithResult(code string, qty float64) (*Basket, bool, error) {
-	b, found := s.scanQty(code, qty)
-	return b, found, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, found := s.scanQty(code, qty)
+	return s.basketCopyLocked(), found, nil
 }
 
+// scanQty is the lock-free core shared by Scan/ScanQty/ScanQtyWithResult.
+// Caller must hold s.mu.
 func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 	if qty <= 0 {
 		qty = 1
@@ -257,6 +302,8 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 // persistence snapshot. base must already be resolved (via PriceResolver or
 // equivalent catalog lookup) with its plain, pre-modifier PriceCents.
 func (s *Service) AddLineWithModifiers(base BasketLine, qty float64, mods []data.SelectedModifier) *Basket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if qty <= 0 {
 		qty = 1
 	}
@@ -267,15 +314,19 @@ func (s *Service) AddLineWithModifiers(base BasketLine, qty float64, mods []data
 		line.PriceCents = line.PriceCents.Add(money.FromMinor(m.PriceDeltaMinor))
 	}
 	s.mergeResolved(line)
-	return &s.basket
+	return s.basketCopyLocked()
 }
 
 func (s *Service) HasLine(code string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	code = strings.TrimSpace(code)
 	return code != "" && s.findLineIndex(code) >= 0
 }
 
 func (s *Service) HasScanCache(code string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return false
@@ -404,6 +455,8 @@ func (s *Service) recomputeTotals() {
 }
 
 func (s *Service) Tender(amount money.Money, method string) (map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// reset basket for demo
 	s.basket = Basket{}
 	s.lines = nil
@@ -412,7 +465,11 @@ func (s *Service) Tender(amount money.Money, method string) (map[string]any, err
 }
 
 // OrderType returns the current sale's order type ("" or OrderTypeTakeaway).
-func (s *Service) OrderType() string { return s.orderType }
+func (s *Service) OrderType() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.orderType
+}
 
 // EffectiveLineTaxRateBP resolves the basis points to actually charge line l
 // under the sale's current order type — the single source of truth callers
@@ -420,6 +477,8 @@ func (s *Service) OrderType() string { return s.orderType }
 // sale) must both use, so what a cashier sees pre-payment matches what gets
 // recorded/receipted.
 func (s *Service) EffectiveLineTaxRateBP(l BasketLine) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.effectiveTaxRateBP(l)
 }
 
@@ -431,18 +490,24 @@ func (s *Service) EffectiveLineTaxRateBP(l BasketLine) int {
 // stay the line's dine-in/takeaway pair); only recomputeTotals' downstream
 // tax total reflects the switch.
 func (s *Service) SetOrderType(orderType string) *Basket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.orderType = orderType
 	s.recomputeTotals()
-	return &s.basket
+	return s.basketCopyLocked()
 }
 
 // Lines returns a copy of the current basket lines.
 func (s *Service) Lines() []BasketLine {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return append([]BasketLine{}, s.lines...)
 }
 
 // Basket returns the current basket snapshot.
 func (s *Service) Basket() Basket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.recomputeTotals()
 	return s.basket
 }
@@ -457,6 +522,14 @@ func (s *Service) Basket() Basket {
 // exactly one line; this SKU-based version is kept for callers that only
 // ever have one line per SKU (nothing modifier-bearing).
 func (s *Service) Remove(sku string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.removeLocked(sku)
+}
+
+// removeLocked is Remove's lock-free core — also called by updateLineLocked
+// when an update zeroes a quantity. Caller must hold s.mu.
+func (s *Service) removeLocked(sku string) {
 	filtered := s.lines[:0]
 	for _, l := range s.lines {
 		if l.SKU == sku {
@@ -473,6 +546,14 @@ func (s *Service) Remove(sku string) {
 // safe even when multiple lines share a SKU because they carry different
 // modifiers, unlike Remove(sku) which would delete all of them.
 func (s *Service) RemoveLine(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.removeLineLocked(key)
+}
+
+// removeLineLocked is RemoveLine's lock-free core — also called by
+// updateLineByKeyLocked when an update zeroes a quantity. Caller must hold s.mu.
+func (s *Service) removeLineLocked(key string) {
 	filtered := s.lines[:0]
 	for _, l := range s.lines {
 		if l.LineKey == key {
@@ -487,6 +568,14 @@ func (s *Service) RemoveLine(key string) {
 
 // Reset clears basket and lines after completion.
 func (s *Service) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resetLocked()
+}
+
+// resetLocked is Reset's lock-free core — also called by Restore before
+// loading a snapshot. Caller must hold s.mu.
+func (s *Service) resetLocked() {
 	s.basket = Basket{}
 	s.lines = nil
 	s.discountType = ""
@@ -516,6 +605,8 @@ func (s *Service) clearCacheForCode(code string) {
 // Remove (see its doc comment): unsafe once multiple modifier-distinct
 // lines can share a SKU. The cashier UI uses UpdateLineByKey instead.
 func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if qty < 0 {
 		qty = 0
 	}
@@ -524,7 +615,7 @@ func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 			s.lines[i].Qty = qty
 			s.lines[i].LineDiscount = discount
 			if s.lines[i].Qty == 0 {
-				s.Remove(s.lines[i].SKU)
+				s.removeLocked(s.lines[i].SKU)
 				return
 			}
 			s.recomputeTotals()
@@ -536,6 +627,8 @@ func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 // UpdateLineByKey sets qty/discount for the single line matching key
 // exactly (ADR-0020) — safe even when multiple lines share a SKU.
 func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if qty < 0 {
 		qty = 0
 	}
@@ -544,7 +637,7 @@ func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money)
 			s.lines[i].Qty = qty
 			s.lines[i].LineDiscount = discount
 			if s.lines[i].Qty == 0 {
-				s.RemoveLine(key)
+				s.removeLineLocked(key)
 				return
 			}
 			s.recomputeTotals()
@@ -555,6 +648,8 @@ func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money)
 
 // SetDiscount sets the sale-level discount (minor units) and recomputes totals.
 func (s *Service) SetDiscount(discount money.Money) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if discount.IsNegative() {
 		discount = 0
 	}
@@ -566,12 +661,16 @@ func (s *Service) SetDiscount(discount money.Money) {
 
 // SaleDiscount returns the current sale-level discount.
 func (s *Service) SaleDiscount() money.Money {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.recomputeTotals()
 	return s.basket.Discount
 }
 
 // SetDiscountPercent sets a sale-level percentage discount (basis points, 1% = 100).
 func (s *Service) SetDiscountPercent(bp int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if bp < 0 {
 		bp = 0
 	}
@@ -583,17 +682,29 @@ func (s *Service) SetDiscountPercent(bp int64) {
 
 // CustomerID returns the current customer attached to the basket.
 func (s *Service) CustomerID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.customerID
 }
 
 // SetCustomerID attaches the basket to a customer (or clears when empty).
 func (s *Service) SetCustomerID(customerID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.customerID = customerID
 	s.basket.CustomerID = customerID
 }
 
 // SetCustomer sets both id and name for the basket.
 func (s *Service) SetCustomer(id, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setCustomerLocked(id, name)
+}
+
+// setCustomerLocked is SetCustomer's lock-free core — also called by Restore
+// when loading a snapshot. Caller must hold s.mu.
+func (s *Service) setCustomerLocked(id, name string) {
 	s.customerID = id
 	s.customerName = name
 	s.basket.CustomerID = id

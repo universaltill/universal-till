@@ -112,8 +112,22 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	}, resolver)
 	// Country-specific tax rules (e.g. Germany's dine-in/takeaway VAT
 	// switch) are entirely a plugin's call — core has no built-in opinion,
-	// see pluginTaxRateAsker.
-	engine.SetTaxRateAsker(&pluginTaxRateAsker{db: db})
+	// see pluginTaxRateAsker. ONE shared asker instance for both engines
+	// below: it's self-locked and its cache is keyed only by
+	// (ItemID, TaxCodeID, TaxRateBP, OrderType) — nothing basket-specific —
+	// so sharing is safe and reuses the cache.
+	taxAsker := &pluginTaxRateAsker{db: db}
+	engine.SetTaxRateAsker(taxAsker)
+	// The self-order kiosk gets its OWN engine (ut-docs#449) — see
+	// common.Deps.KioskEngine for why this must never be the same instance
+	// the cashier's handlers use. The resolver is a stateless read-only
+	// adapter, safe to share.
+	kioskEngine := pos.NewServiceWithResolver(pos.Config{
+		TaxInclusive:                 state.TaxInclusive,
+		TaxRateBasisPoints:           state.TaxRatePct * 100,
+		ServiceChargeRateBasisPoints: state.ServiceChargeRateBasisPoints,
+	}, resolver)
+	kioskEngine.SetTaxRateAsker(taxAsker)
 
 	// Labels are locale keys; the nav renders them through T (unknown keys —
 	// e.g. plugin menu labels from manifests — pass through unchanged).
@@ -164,6 +178,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		BaseMenu:    baseMenu,
 		Menu:        common.BuildMenu(baseMenu, pm),
 		Engine:      engine,
+		KioskEngine: kioskEngine,
 		BtnStore:    btnStore,
 		CatalogRepo: catalogRepo,
 		AuthSvc:     authSvc,
@@ -217,12 +232,16 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		httpx.InitCurrency(applied.Currency)
 		// In-place tax swap: replacing the engine (as the settings
 		// handlers do) would empty the basket of a sale in progress.
+		// Both engines: the kiosk's separate instance (ut-docs#449) must
+		// see the same tax config or a kiosk checkout would silently
+		// charge stale rates after a settings drift.
 		if newCfg := (pos.Config{
 			TaxInclusive:                 applied.TaxInclusive,
 			TaxRateBasisPoints:           applied.TaxRatePct * 100,
 			ServiceChargeRateBasisPoints: applied.ServiceChargeRateBasisPoints,
 		}); dp.Engine.Config() != newCfg {
 			dp.Engine.SetConfig(newCfg)
+			dp.KioskEngine.SetConfig(newCfg)
 		}
 		authSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
 		if !authDisabled {
