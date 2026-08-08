@@ -34,7 +34,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		docsRouteByPlugin := map[string]string{}
 		if entries, err := data.NewPluginRepo(d.Db).ListPageEntries(ctx); err == nil {
 			for _, e := range entries {
-				if e.EntryKey == "docs" && e.Route != "" {
+				if e.EntryKey == plugins.DocsEntryKey && e.Route != "" {
 					if _, seen := docsRouteByPlugin[e.PluginID]; !seen {
 						docsRouteByPlugin[e.PluginID] = e.Route
 					}
