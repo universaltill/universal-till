@@ -3,14 +3,14 @@ id: my-reports
 title: My reports
 section: Connecting & extending
 order: 361
-summary: "See every problem report this till has sent, with its last-known status — works offline too."
+summary: "See the problem reports this till has sent (most recent 100), with their last-known status — works offline too."
 routes: [/my-reports]
 keywords: [bug, issue, report, status, sent, github, tracking]
 ---
 
 # My reports
 
-See every problem report this till has sent, with its last-known status — works offline too.
+See the problem reports this till has sent (the most recent 100), with their last-known status — works offline too.
 
 ## What the page shows
 

@@ -190,7 +190,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies only 023
+	d, err = Open(path) // re-applies 023 and its followers (027-032)
 	if err != nil {
 		t.Fatal(err)
 	}
