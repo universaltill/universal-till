@@ -129,6 +129,20 @@ func ClassifyInstallError(err error) InstallFailure {
 		return InstallFailure{MessageKey: "plugins.install.error.configuration", Message: "Marketplace installation is not configured.", Retryable: false}
 	case strings.Contains(msg, "signature mismatch"), strings.Contains(msg, "artifact hash"), strings.Contains(msg, "verify manifest"), strings.Contains(msg, "manifest validation"), strings.Contains(msg, "executable not found"), strings.Contains(msg, "incomplete"):
 		return InstallFailure{MessageKey: "plugins.install.error.invalid_package", Message: "The plugin package failed verification.", Retryable: false}
+	// ut-docs#169: a payment entry key/label collision (with a built-in
+	// tender, another installed plugin, or an uninstalled plugin's retained
+	// tender row — see validatePaymentEntryKeys in manifest.go) is a
+	// permanent failure: retrying with the same manifest always fails the
+	// same way until the plugin author picks a different key/label. Scoped
+	// to the true collision messages ("collides with"/"belongs to
+	// plugin"/"is already provided by plugin"/"is already used by plugin")
+	// — deliberately excludes the separate within-manifest-duplicate and
+	// malformed-key validation errors, which stay on the generic retryable
+	// default below (unrelated bug class, not this ticket's scope).
+	case (strings.Contains(msg, "payment entry key") || strings.Contains(msg, "payment entry label")) &&
+		(strings.Contains(msg, "collides with") || strings.Contains(msg, "belongs to plugin") ||
+			strings.Contains(msg, "is already provided by plugin") || strings.Contains(msg, "is already used by plugin")):
+		return InstallFailure{MessageKey: "plugins.install.error.payment_conflict", Message: "This plugin's payment key or label conflicts with an existing one.", Retryable: false}
 	default:
 		return InstallFailure{MessageKey: "plugins.install.error.retryable", Message: "Install failed. You can retry.", Retryable: true}
 	}
