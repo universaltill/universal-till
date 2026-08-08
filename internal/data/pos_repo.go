@@ -143,6 +143,26 @@ func (l LowStockItem) EffectiveWarnDays() int {
 	return defaultWarnDays
 }
 
+// IsRunningOut is the single shared "is this item running out" decision
+// given a sell rate (units/day), used identically by the /inventory page,
+// the low-stock digest and the /reports header chip
+// (universaltill/ut-docs#275 — before this method existed, /inventory
+// floored the days-left prediction before comparing while the other two
+// compared the raw float directly, so they could disagree at an exact
+// boundary, e.g. qty/rate=7.5 against a 7-day window). Floor-then-compare
+// is the standardized behavior: it matches /inventory (the primary
+// surface) for the common case, and is the more conservative of the two —
+// it never warns later than a raw-float compare would.
+func (l LowStockItem) IsRunningOut(rate float64) bool {
+	if rate <= 0 {
+		return false
+	}
+	if l.CurrentQty <= 0 {
+		return true
+	}
+	return int(l.CurrentQty/rate) <= l.EffectiveWarnDays()
+}
+
 // SearchActiveItems finds active items matching name/sku/barcode with optional pagination.
 func (r *POSRepo) SearchActiveItems(ctx context.Context, q string, offset, limit int) ([]catalogtypes.ItemInput, error) {
 	var err error
