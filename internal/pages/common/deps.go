@@ -45,18 +45,24 @@ type Deps struct {
 
 // RuntimeState mirrors fields needed from pages.state (theme, tax, currency).
 type RuntimeState struct {
-	Theme                  string
-	Currency               string
-	Country                string
-	Region                 string
-	TaxInclusive           bool
-	TaxRatePct             int
-	ServiceChargeRatePct   int // till-set service charge %, added to the sale total (distinct from tip); 0 = disabled
-	AllowNegativeInventory bool
-	UIScale                float64 // interface scale for this till's screen (0 = unset)
-	IdleLockMinutes        int     // idle auto-lock window in minutes (0 = off)
-	OSKMode                string  // on-screen keyboard: auto|on|off ("" = auto)
-	KioskIdleResetSeconds  int     // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
+	Theme        string
+	Currency     string
+	Country      string
+	Region       string
+	TaxInclusive bool
+	TaxRatePct   int
+	// ServiceChargeRateBasisPoints (ut-docs#244) is the till-set service
+	// charge rate in basis points (1bp = 0.01%), added to the sale total
+	// (distinct from tip); 0 = disabled. Basis-point granularity is finer
+	// than whole percent, so fractional rates like the UK's standard 12.5%
+	// (1250bp) are expressible exactly — unlike TaxRatePct, which stays
+	// whole-percent (a separate, explicitly out-of-scope limitation).
+	ServiceChargeRateBasisPoints int
+	AllowNegativeInventory       bool
+	UIScale                      float64 // interface scale for this till's screen (0 = unset)
+	IdleLockMinutes              int     // idle auto-lock window in minutes (0 = off)
+	OSKMode                      string  // on-screen keyboard: auto|on|off ("" = auto)
+	KioskIdleResetSeconds        int     // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.

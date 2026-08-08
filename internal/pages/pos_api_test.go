@@ -336,7 +336,7 @@ func TestTenderHandler_QuickTenderFormFallback(t *testing.T) {
 // on at all. This proves the real HTTP path, not just the engine.
 func TestTenderHandler_QuickTenderCoversServiceCharge(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
-	dp.UpdateState(func(s *common.RuntimeState) { s.ServiceChargeRatePct = 10 })
+	dp.UpdateState(func(s *common.RuntimeState) { s.ServiceChargeRateBasisPoints = 1000 })
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
 	}
@@ -366,6 +366,35 @@ func TestTenderHandler_QuickTenderCoversServiceCharge(t *testing.T) {
 	}
 	if paymentAmount != 130 {
 		t.Fatalf("expected the zero-amount payment to be filled in as 130, got %d", paymentAmount)
+	}
+}
+
+// ut-docs#244: a fractional rate like the UK's standard 12.5% must compute
+// the exact basis-point amount end-to-end, not the 12%/13% a whole-percent
+// field would truncate to.
+func TestTenderHandler_QuickTenderCoversFractionalServiceCharge(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.ServiceChargeRateBasisPoints = 1250 })
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	rec := posPostForm(mux, "/api/pos/tender", "method=cash&amount=0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// ABC: price 100, 20% tax = 20, 12.5% service charge on the 100
+	// subtotal = 12.5 -> rounds to 13 (half-up) -> total 133.
+	var total, serviceCharge int64
+	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales`).Scan(&total, &serviceCharge); err != nil {
+		t.Fatalf("query sale: %v", err)
+	}
+	if serviceCharge != 13 {
+		t.Fatalf("expected service_charge_amount 13 (12.5%% of 100, half-up), got %d", serviceCharge)
+	}
+	if total != 133 {
+		t.Fatalf("expected total 133 (100 + 20 tax + 13 service charge), got %d", total)
 	}
 }
 
