@@ -422,6 +422,7 @@
   "plugins.manage.action.update": "Güncelle",
   "plugins.manage.confirm_uninstall": "Kaldır",
   "plugins.manage.disabled": "Devre dışı",
+  "plugins.manage.error.replica_use_primary": "Bu kasa bir ana kasayı takip ediyor — eklentileri ana kasada yönetin.",
   "plugins.manage.empty": "Kurulu eklenti yok. Eklenti Mağazası'ndan edinin.",
   "plugins.manage.enabled": "Etkin",
   "plugins.manage.import_btn": "İçe aktar",
