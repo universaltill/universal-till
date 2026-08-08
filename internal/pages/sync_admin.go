@@ -355,9 +355,13 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 // whole sync loop for good. Never called on the checkout path.
 //
 // Steady state is NOT a no-op: an Unchanged poll only means the PRIMARY's
-// set hasn't moved — it says nothing about local drift (a manually deleted
-// plugin dir, a failed reload, anything that slips past the replica
-// guards). The last-applied bundle rows are persisted locally
+// set hasn't moved — it says nothing about local drift (a failed reload,
+// anything that slips past the replica guards). The local half of this
+// diff is DB-row based (InstalledPluginVersion reads the plugins table),
+// so it CANNOT detect a plugin whose row survives but whose files were
+// deleted out from under it — that's ut-docs#368's failure mode, a
+// separate still-open card, not covered here. The last-applied bundle
+// rows are persisted locally
 // (sync.plugins_bundle, alongside sync.plugins_version), and on an
 // Unchanged response the same diff/converge loop re-runs against that
 // cached row set every tick. The `?have=` fingerprint still saves the

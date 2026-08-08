@@ -33,6 +33,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			writeReplicaGuard(w, "plugins.install.error.replica_use_primary")
+			return
+		}
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -236,6 +240,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			writeReplicaGuard(w, "plugins.install.error.replica_use_primary")
 			return
 		}
 
