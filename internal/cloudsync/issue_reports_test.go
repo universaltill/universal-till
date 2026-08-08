@@ -2,6 +2,7 @@ package cloudsync
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -336,12 +338,15 @@ func TestUploadIssueReportMissingAudioFileErrors(t *testing.T) {
 	}
 }
 
-// uploadPendingIssueReports drives the real Pending -> upload -> Discard
-// cycle: a bundle that uploads successfully must be discarded, and a bundle
-// the cloud rejects must stay pending for the next tick to retry.
+// uploadPendingIssueReports drives the real Pending -> upload -> retain ->
+// Discard cycle: a bundle that uploads successfully must leave a retained
+// record in issue_reports_sent (status "sent") with its media directory
+// discarded, and a bundle the cloud rejects must stay pending for the next
+// tick to retry — with no retained record yet.
 func TestUploadPendingIssueReportsFullCycle(t *testing.T) {
 	withTempPendingDir(t)
-	okID, err := issuereport.Save("this one uploads", "", []byte("audio-ok"), nil, nil)
+	d := openMigratedDB(t, "issue_reports_cycle.db")
+	okID, err := issuereport.Save("this one uploads", "", []byte("audio-ok"), []byte("video-ok"), [][]byte{[]byte("png-0"), []byte("png-1")})
 	if err != nil {
 		t.Fatalf("Save ok bundle: %v", err)
 	}
@@ -360,7 +365,7 @@ func TestUploadPendingIssueReportsFullCycle(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL))
+	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), d.DB)
 
 	remaining, err := issuereport.Pending()
 	if err != nil {
@@ -375,6 +380,52 @@ func TestUploadPendingIssueReportsFullCycle(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(issuereport.PendingDir, okID)); !os.IsNotExist(err) {
 		t.Fatalf("discarded bundle dir for %q should be gone, stat err = %v", okID, err)
+	}
+
+	// The core ut-docs#348 behavior change: the media is gone (above), but a
+	// local record of the sent report survives.
+	sent, err := data.NewIssueReportsRepo(d.DB).ListSent(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListSent: %v", err)
+	}
+	if len(sent) != 1 || sent[0].ID != okID {
+		t.Fatalf("retained records = %+v, want exactly one for %q (the failed upload must NOT be recorded as sent)", sent, okID)
+	}
+	rec := sent[0]
+	if rec.Status != "sent" {
+		t.Fatalf("retained status = %q, want %q", rec.Status, "sent")
+	}
+	if rec.Note != "this one uploads" || !rec.HadAudio || !rec.HadVideo || rec.ImageCount != 2 {
+		t.Fatalf("retained record fields wrong: %+v", rec)
+	}
+}
+
+// If the retained record cannot be persisted, the bundle must NOT be
+// discarded — better to retry the whole upload next tick than to lose the
+// report with no trace anywhere. Simulated with a database that has no
+// issue_reports_sent table (the same shape as any other SaveSent failure).
+func TestUploadPendingIssueReportsKeepsBundleWhenSaveSentFails(t *testing.T) {
+	withTempPendingDir(t)
+	brokenDB := testDB(t) // settings table only — SaveSent must fail
+	id, err := issuereport.Save("record must not be lost", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(10 << 20)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), brokenDB)
+
+	if _, err := os.Stat(filepath.Join(issuereport.PendingDir, id)); err != nil {
+		t.Fatalf("bundle dir must survive a failed SaveSent (stat err = %v)", err)
+	}
+	remaining, err := issuereport.Pending()
+	if err != nil || len(remaining) != 1 || remaining[0].Meta.ID != id {
+		t.Fatalf("bundle must stay pending after a failed SaveSent: %v (%d)", err, len(remaining))
 	}
 }
 
@@ -393,7 +444,116 @@ func TestUploadPendingIssueReportsPendingListError(t *testing.T) {
 	t.Cleanup(func() { issuereport.PendingDir = orig })
 
 	// Must not panic; nothing to assert on the (empty) cloud side.
-	uploadPendingIssueReports(context.Background(), registeredCfg("http://unused.example"))
+	uploadPendingIssueReports(context.Background(), registeredCfg("http://unused.example"), testDB(t))
+}
+
+// pullIssueReportStatuses pulls the cloud's per-report statuses down and
+// applies them to the retained local rows — matched by the till's own report
+// id, which is the correlation key (the cloud echoes it back verbatim).
+func TestPullIssueReportStatusesUpdatesLocalRows(t *testing.T) {
+	d := openMigratedDB(t, "issue_reports_pull.db")
+	repo := data.NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	for i, id := range []string{"rep-filed", "rep-transcribing", "rep-untouched"} {
+		if err := repo.SaveSent(ctx, data.SentReport{
+			ID:         id,
+			CapturedAt: time.Date(2026, 8, 1+i, 0, 0, 0, 0, time.UTC),
+		}); err != nil {
+			t.Fatalf("SaveSent %s: %v", id, err)
+		}
+	}
+
+	var gotPath, gotAuth, gotStoreID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotStoreID = r.URL.Query().Get("store_id")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"store_id": "store-1",
+				"reports": []map[string]any{
+					{"id": "rep-filed", "status": "filed", "github_issue_url": "https://github.com/universaltill/ut-docs/issues/999", "captured_at": "2026-08-01T00:00:00Z"},
+					{"id": "rep-transcribing", "status": "transcribing", "github_issue_url": "", "captured_at": "2026-08-02T00:00:00Z"},
+					// An id this till never retained — must be silently skipped.
+					{"id": "rep-from-another-life", "status": "discarded", "github_issue_url": "", "captured_at": "2020-01-01T00:00:00Z"},
+				},
+			},
+			"error": nil,
+		})
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB)
+
+	if gotPath != "/v1/stores/issue-reports" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotAuth != "Bearer tok-1" || gotStoreID != "store-1" {
+		t.Fatalf("auth = %q store_id = %q", gotAuth, gotStoreID)
+	}
+
+	sent, err := repo.ListSent(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListSent: %v", err)
+	}
+	byID := map[string]data.SentReport{}
+	for _, r := range sent {
+		byID[r.ID] = r
+	}
+	if len(byID) != 3 {
+		t.Fatalf("retained rows = %d, want 3 (the unknown cloud id must not create one)", len(byID))
+	}
+	if byID["rep-filed"].Status != "filed" || byID["rep-filed"].GithubIssueURL != "https://github.com/universaltill/ut-docs/issues/999" {
+		t.Fatalf("rep-filed not updated: %+v", byID["rep-filed"])
+	}
+	if byID["rep-transcribing"].Status != "transcribing" {
+		t.Fatalf("rep-transcribing not updated: %+v", byID["rep-transcribing"])
+	}
+	if byID["rep-untouched"].Status != "sent" {
+		t.Fatalf("rep-untouched must keep its local-only status: %+v", byID["rep-untouched"])
+	}
+}
+
+// Best-effort contract: an unregistered store, a 500, or an unparsable body
+// must all be silent no-ops — no panic, no error propagated, local rows
+// untouched.
+func TestPullIssueReportStatusesBestEffortNoops(t *testing.T) {
+	d := openMigratedDB(t, "issue_reports_pull_noop.db")
+	repo := data.NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	if err := repo.SaveSent(ctx, data.SentReport{
+		ID:         "rep-1",
+		CapturedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("SaveSent: %v", err)
+	}
+	assertUntouched := func(label string) {
+		t.Helper()
+		sent, err := repo.ListSent(ctx, 10)
+		if err != nil || len(sent) != 1 || sent[0].Status != "sent" {
+			t.Fatalf("%s: local row must be untouched: %v %+v", label, err, sent)
+		}
+	}
+
+	// Not registered — must return before any network call.
+	pullIssueReportStatuses(context.Background(), &config.Config{}, d.DB)
+	assertUntouched("unregistered")
+
+	// Server 500s.
+	srv500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv500.Close()
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv500.URL), d.DB)
+	assertUntouched("500")
+
+	// Body doesn't parse.
+	srvGarbage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srvGarbage.Close()
+	pullIssueReportStatuses(context.Background(), registeredCfg(srvGarbage.URL), d.DB)
+	assertUntouched("garbage body")
 }
 
 func TestAttachFileMultipartFormWritesRealBytes(t *testing.T) {
