@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"time"
 )
 
 // RedactedJoinSnapshot produces a throwaway, bearer_hash-redacted COPY of
@@ -92,4 +94,61 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		return "", nil, fmt.Errorf("redact tills in join snapshot: %w", execErr)
 	}
 	return copyPath, cleanup, nil
+}
+
+// joinSnapshotOrphanAge is how long a join-snapshot-*.db file may sit in the
+// backup directory before SweepOrphanedJoinSnapshots treats it as orphaned by
+// a crash between os.CreateTemp and cleanup() running in RedactedJoinSnapshot,
+// rather than one still being served to a joining replica mid-request (which
+// should complete in well under a second) — ut-docs#436.
+const joinSnapshotOrphanAge = 5 * time.Minute
+
+// SweepOrphanedJoinSnapshots removes join-snapshot-*.db files (and their
+// -wal/-shm sidecars) left behind in the backup directory by a
+// RedactedJoinSnapshot call whose cleanup() never ran, older than
+// joinSnapshotOrphanAge. It never touches real backup snapshots
+// (unitill-pos-*.db, backupPrefix) — a disjoint file namespace, matched by
+// ListBackups/PruneBackups/ValidBackupName, never by this function. Intended
+// to run once at startup, before the DB is opened (join-snapshot copies don't
+// need a live connection to remove). Per-file removal errors are swallowed —
+// same best-effort spirit as RedactedJoinSnapshot's own cleanup() — so one
+// unremovable file can't stop the sweep or fail startup; only a failure to
+// list the backup directory itself is returned. Returns the number of
+// join-snapshot files removed.
+func SweepOrphanedJoinSnapshots(dbPath string) (int, error) {
+	dir, err := BackupDir(dbPath)
+	if err != nil {
+		return 0, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("read backup dir: %w", err)
+	}
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if ok, _ := filepath.Match("join-snapshot-*.db", name); !ok {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) < joinSnapshotOrphanAge {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		// Sidecar removal errors stay swallowed (they're only ever present if
+		// a pragma changed the copy's journal mode, same as cleanup() above),
+		// but the primary .db removal must actually succeed before counting
+		// this file as swept — otherwise a permission error/read-only volume
+		// would still report a false "removed" count via the caller's log.
+		if err := os.Remove(path); err != nil {
+			continue
+		}
+		_ = os.Remove(path + "-wal")
+		_ = os.Remove(path + "-shm")
+		removed++
+	}
+	return removed, nil
 }
