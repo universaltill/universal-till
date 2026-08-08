@@ -168,13 +168,19 @@ func Render(d Doc) []byte {
 }
 
 // layoutLine renders one sale line: "qty x name" left, amount right; long
-// names wrap onto their own row with the amount on the last row.
+// names wrap onto their own row with the amount on the last row. The
+// one-row/two-row threshold is rune-based, not byte-based -- Width tracks
+// visible columns, and kvRow (which this calls for the one-row case) pads
+// by rune count too, so a byte-based threshold here was inconsistent with
+// what kvRow can actually fit on one row: a multi-byte label/amount pair
+// (é/ö/ü/ß, ar/fa/tr text) sitting between the rune-count and byte-count
+// widths got routed to an unnecessary two-row fallback (ut-docs#438).
 func layoutLine(l Line) []string {
 	label := l.Name
 	if l.Qty != "" && l.Qty != "1" {
 		label = l.Qty + " x " + l.Name
 	}
-	if len(label)+1+len(l.Amount) <= Width {
+	if utf8.RuneCountInString(label)+1+utf8.RuneCountInString(l.Amount) <= Width {
 		return []string{kvRow(label, l.Amount)}
 	}
 	return []string{clip(label, Width), kvRow("", l.Amount)}
