@@ -56,7 +56,7 @@ func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
 	}
 	n := 0
 	for _, l := range levels {
-		if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty/rate <= float64(l.EffectiveWarnDays()) {
+		if l.IsRunningOut(rates[l.ItemID]) {
 			n++
 		}
 	}

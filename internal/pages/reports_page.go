@@ -47,7 +47,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		if rates, err := repo.ItemDailySellRates(r.Context(), 28); err == nil && len(rates) > 0 {
 			if lvls, err := repo.ListStockLevels(r.Context()); err == nil {
 				for _, l := range lvls {
-					if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty/rate <= float64(l.EffectiveWarnDays()) {
+					if l.IsRunningOut(rates[l.ItemID]) {
 						runningOut++
 					}
 				}
