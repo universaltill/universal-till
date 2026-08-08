@@ -9,6 +9,16 @@
 #      invisible to checks 1-2 above, which only ever look at web/ui/*.html
 #      (found ut-docs#19 — /api/buttons/search's "Type 3+ characters" hint,
 #      plus four plugin_api.go status strings, none going through httpx.T).
+#   4. No hand-written hx-vals JSON literal replaces {{ jsonVals "k" .V }} —
+#      breaks (invalid JSON, or a value escaping the attribute) for any
+#      quoted/apostrophe-containing value (ut-docs#19).
+#   5. No hardcoded prose literal assigned to .textContent/.innerHTML inside
+#      an inline <script> block in web/ui/**/*.html — invisible to checks
+#      1-2 (template-only) and check 3 (Go-response-only) alike (ut-docs#205).
+#      Known gap, not yet covered: shipped JS under web/public/ (outside this
+#      check's web/ui/ glob) can carry the same class of hardcoded string —
+#      see ut-docs#205's own follow-up card before assuming this check is
+#      exhaustive.
 # Fails CI so a new page/string can't ship untranslated.
 set -euo pipefail
 
@@ -128,8 +138,42 @@ if hxvals_hits:
     for f, i, line in hxvals_hits:
         print(f"  {f}:{i}: {line}")
 
+# 5. Hardcoded inline-JS status text (ut-docs#205): a <script> block inside a
+#    web/ui page/partial can set .textContent/.innerHTML to a raw English
+#    literal -- invisible to checks 1-2 (template-only) and check 3
+#    (Go-response-only). Same prose heuristic as check 3 (near-zero false
+#    positives over exhaustive recall), applied to the assigned literal
+#    after stripping any HTML tags out of it first: without stripping, a
+#    literal that's actually a markup skeleton being built up in JS (e.g.
+#    innerHTML = '<ul style="list-style:none; ...">') false-positives on
+#    attribute-name pairs like "ul style" that aren't prose at all; with
+#    stripping, that false positive disappears while a literal that's a
+#    real user-facing string wrapped in a tag (e.g.
+#    '<p class="muted">No matches.</p>') still correctly flags on "No
+#    matches." A reviewed exception (existing debt not in a given card's
+#    migration scope) is the same same-line `i18n:ignore` used above.
+jsassign_re = re.compile(r'''\.(?:textContent|innerHTML)\s*=\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
+tag_re = re.compile(r'<[^>]*>')
+jsassign_hits = []
+for f in sorted(glob.glob("web/ui/**/*.html", recursive=True)):
+    for i, line in enumerate(open(f, encoding="utf-8").read().splitlines(), 1):
+        if "i18n:ignore" in line:
+            continue
+        for m in jsassign_re.finditer(line):
+            literal = m.group(2)
+            stripped = tag_re.sub(' ', literal)
+            if prose_re.search(stripped):
+                jsassign_hits.append((f, i, literal))
+
+if jsassign_hits:
+    fail = True
+    print("guard-i18n: hardcoded user-facing string in inline <script> (route through a template-populated JS lookup, e.g. bugreport_panel.html's `var T = {...}` pattern):")
+    for f, i, literal in jsassign_hits:
+        print(f"  {f}:{i}: {literal!r}")
+
 if fail:
     sys.exit(1)
 print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json; "
-      f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found")
+      f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found; "
+      f"no hardcoded inline-JS status strings found")
 PY
