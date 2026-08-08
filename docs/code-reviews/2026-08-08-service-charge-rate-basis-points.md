@@ -97,7 +97,26 @@ No other findings. Reviewer's verdict: safe to merge.
   actually changed.
 - No real client/shop name used in any new test data.
 
+## Merge conflict (ut-docs#244 vs. PR #246)
+
+PR #246 ("My reports" tracking page, ut-docs#348) merged to `main` first
+and had also regenerated `web/help/img/` (a new `my-reports` topic),
+producing a binary conflict on every docs-shots artifact this PR had
+already regenerated. Merged `main` into the branch, took `--theirs` for
+the conflicted screenshots/manifest as a starting point, then re-ran
+`make docs-shots` fresh against the actual merged tree (both changes
+together) rather than trusting either side's stale regeneration. 60
+specs passed (15 topics × 4 locales, up from 14 — `my-reports` is new).
+Only `alerts`/`designer` (time-baked content, as before) and `ar/sell`
+(a few bytes — almost certainly the animated "Connected" status pulse
+caught on a different frame, not a layout change; looked at it directly,
+correctly laid out RTL) differ from what was on `main`; every other
+screenshot is byte-identical. Full gate (build/vet/test/all four guards)
+re-run clean on the merged tree before this PR's final push.
+
 ## Safe-to-merge verdict
 
 Yes. Independent review found one real-but-minor gap; fixed and re-verified
-TDD-first in this same diff before merge, not deferred.
+TDD-first in this same diff before merge, not deferred. Merge conflict with
+a same-day sibling PR resolved by regenerating docs-shots against the true
+merged tree, not by force-picking either side.
