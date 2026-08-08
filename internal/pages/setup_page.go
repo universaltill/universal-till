@@ -114,7 +114,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		d.Engine.SetConfig(pos.Config{
 			TaxInclusive:                 st.TaxInclusive,
 			TaxRateBasisPoints:           st.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: st.ServiceChargeRatePct * 100,
+			ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
 		})
 
 		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {
