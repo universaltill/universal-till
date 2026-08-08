@@ -615,7 +615,7 @@
   "settings.data.customer_search_ph": "ad, telefon veya e-posta ile ara",
   "settings.data.export.entry_label": "Dışa aktarma/rapor",
   "settings.data.export.from_label": "Başlangıç",
-  "settings.data.export.help": "Bir tarih aralığı için yüklü bir dışa aktarma veya rapor eklentisini (ör. mali bir DSFinV-K dışa aktarımı) çalıştırın. Dosyalar doğrudan bu cihaza indirilir; diğer dışa aktarmalar yalnızca gönderildiğini onaylar.",
+  "settings.data.export.help": "En fazla 366 günlük bir tarih aralığı için yüklü bir dışa aktarma veya rapor eklentisini (ör. mali bir DSFinV-K dışa aktarımı) çalıştırın. Dosyalar doğrudan bu cihaza indirilir; diğer dışa aktarmalar yalnızca gönderildiğini onaylar.",
   "settings.data.export.none_installed": "Yüklü bir dışa aktarma veya rapor eklentisi yok.",
   "settings.data.export.run_btn": "Dışa aktarmayı çalıştır",
   "settings.data.export.title": "Dışa aktarma / rapor",

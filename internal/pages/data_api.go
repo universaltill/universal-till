@@ -16,6 +16,15 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
+// maxExportRangeDays bounds POST /api/data/export's [from, to] span
+// (ut-docs#229). 366 covers a full calendar year (including a leap Feb)
+// end-to-end plus one day of slack, which is generous for the stated
+// shop-month-end-export use case while still ruling out an accidentally
+// (or maliciously) unbounded request.
+const maxExportRangeDays = 366
+
+const maxExportRange = maxExportRangeDays * 24 * time.Hour
+
 // exportRequestPayload is the event payload a subscribing export/report
 // plugin receives on "export.requested.ask" (EventBus.AskPlugin) — mirrors
 // tax_hook.go's taxRateAskPayload convention for a value-returning hook.
@@ -182,6 +191,14 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		if fromDate.After(toDate) {
 			respond(w, http.StatusBadRequest, false, "from must not be after to")
+			return
+		}
+		// ut-docs#229: an unbounded range means an unbounded data-gathering
+		// step on till-class (e.g. Pi) hardware before the plugin call even
+		// starts — reject before touching the repo layer at all, regardless
+		// of how cheap SalesForExport's own query shape is.
+		if toDate.Sub(fromDate) > maxExportRange {
+			respond(w, http.StatusBadRequest, false, fmt.Sprintf("date range exceeds the %d-day maximum", maxExportRangeDays))
 			return
 		}
 
