@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 // LAN sync D2b + D4 (ADR-0011): the primary serves its admin state
@@ -32,6 +33,14 @@ type stockBundleResponse struct {
 	Version   string           `json:"version"`
 	Unchanged bool             `json:"unchanged"`
 	Bundle    data.StockBundle `json:"bundle"`
+}
+
+// pluginsBundleResponse is the wire shape of GET /api/sync/plugins
+// (ut-docs#460): the primary's active marketplace-plugin registry.
+type pluginsBundleResponse struct {
+	Version   string             `json:"version"`
+	Unchanged bool               `json:"unchanged"`
+	Bundle    data.PluginsBundle `json:"bundle"`
 }
 
 func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
@@ -78,6 +87,33 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		resp := stockBundleResponse{Version: bundle.Fingerprint()}
+		if r.URL.Query().Get("have") == resp.Version {
+			resp.Unchanged = true
+		} else {
+			resp.Bundle = bundle
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": resp, "error": nil})
+	})
+
+	// Primary side: the active marketplace-plugin registry (ut-docs#460,
+	// ADR-0011 amendment 2026-08-08). Same auth and same `?have=`
+	// fingerprint poll as the admin/stock bundles. Registry only — never
+	// plugin bytes: a replica converges by re-fetching each listing from
+	// the marketplace itself through the Ed25519-verified installer.
+	pluginsRepo := data.NewSyncPluginsRepo(d.Db)
+	mux.HandleFunc("GET /api/sync/plugins", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := syncTill(r, tills); !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
+			return
+		}
+		bundle, err := pluginsRepo.DumpActivePlugins(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp := pluginsBundleResponse{Version: bundle.Fingerprint()}
 		if r.URL.Query().Get("have") == resp.Version {
 			resp.Unchanged = true
 		} else {
@@ -240,6 +276,15 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		logging.L().Infof("sync pull: admin state %s applied from the primary", out.Data.Version)
 	}
 
+	// ut-docs#460 — the plugin set follows the primary. Best-effort like
+	// everything else in this tick: syncPullPlugins logs and returns on any
+	// failure, never panics and never causes THIS function to return early,
+	// so the stock section below still runs. Ordered after the admin apply
+	// (a freshly propagated plugin's global plugin_settings rows land on a
+	// subsequent admin pull, once installed locally) and before the stock
+	// section (whose push-queue gate may legitimately end the tick).
+	syncPullPlugins(ctx, d, client, primary, bearer)
+
 	// D3b — stock levels follow the primary (it has every till's sale
 	// journal, so its aggregate is the shop truth). Runs AFTER the admin
 	// apply (corrections may reference freshly synced items/variants) and
@@ -289,4 +334,170 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	if corrections > 0 {
 		logging.L().Infof("stock sync: %d level corrections applied from the primary (%s)", corrections, sout.Data.Version)
 	}
+}
+
+// syncPullPlugins is the plugin-set section of syncPullTick (ut-docs#460,
+// ADR-0011 amendment 2026-08-08): fetch the primary's active
+// marketplace-plugin registry and converge this replica's installed set to
+// it. Installs go through cloudInstallPlugin — the same
+// download-token + Ed25519-verification MarketplaceInstaller path a manual
+// install button click takes, just triggered by the tick instead of a
+// manager; the primary never ships plugin bytes. Uninstalls go through
+// cloudRemovePlugin, the shared uninstall core the manual handler and the
+// cloud directive already use.
+//
+// Best-effort throughout: every failure is logged and skipped, and the
+// pull fingerprint (sync.plugins_version) is only advanced once a tick
+// converges with NO failures, so a transient marketplace outage is retried
+// on every subsequent tick until the set matches. A recover() at the top
+// keeps the "never panics" promise honest — runSyncLoop has no recover of
+// its own, so a panic in the reload/install path would otherwise kill the
+// whole sync loop for good. Never called on the checkout path.
+//
+// Steady state is NOT a no-op: an Unchanged poll only means the PRIMARY's
+// set hasn't moved — it says nothing about local drift (a failed reload,
+// anything that slips past the replica guards). The local half of this
+// diff is DB-row based (InstalledPluginVersion reads the plugins table),
+// so it CANNOT detect a plugin whose row survives but whose files were
+// deleted out from under it — that's ut-docs#368's failure mode, a
+// separate still-open card, not covered here. The last-applied bundle
+// rows are persisted locally
+// (sync.plugins_bundle, alongside sync.plugins_version), and on an
+// Unchanged response the same diff/converge loop re-runs against that
+// cached row set every tick. The `?have=` fingerprint still saves the
+// primary→replica payload; only the local diff (a few dozen rows, cheap
+// version lookups) repeats.
+//
+// Scope boundary (intentional, ut-docs#460): only plugins with a
+// listing_id — i.e. installed from the marketplace — propagate. A
+// file-imported plugin (import-from-file / offline provisioning) has no
+// listing on either side: the primary's dump can't include it (no
+// plugin_install_status row exists), and the prune below only ever removes
+// plugins named by a local install-status record, so a replica-local file
+// import is never touched (and import-from-file stays usable on every
+// till, replicas included). Provision those per till, as before.
+func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logging.L().Errorf("plugin sync: recovered from panic (will retry next tick): %v", r)
+		}
+	}()
+	get := func(k string) string {
+		v, _, _ := d.Settings.Get(ctx, k)
+		return strings.TrimSpace(v)
+	}
+	url := strings.TrimSuffix(primary, "/") + "/api/sync/plugins?have=" + get("sync.plugins_version")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := client.Do(req)
+	if err != nil {
+		return // primary just answered the admin poll; transient — next tick retries
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// A not-yet-upgraded primary answers 404 here — quietly wait for it
+		// to upgrade rather than spamming the log every 30s.
+		if resp.StatusCode != http.StatusNotFound {
+			logging.L().Errorf("plugin sync pull rejected: %s", resp.Status)
+		}
+		return
+	}
+	var out struct {
+		Data pluginsBundleResponse `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		logging.L().Errorf("plugin sync pull: bad response: %v", err)
+		return
+	}
+
+	if out.Data.Unchanged {
+		// Primary unchanged — still reconcile locally against the cached
+		// last-applied rows so local drift heals instead of hiding behind
+		// the fingerprint forever.
+		var cached data.PluginsBundle
+		raw, _, _ := d.Settings.Get(ctx, "sync.plugins_bundle")
+		if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &cached) != nil {
+			// No usable cache (pre-cache release, or corrupt). Clear the
+			// fingerprint so the next tick full-fetches and rebuilds it.
+			_ = d.Settings.Set(ctx, "sync.plugins_version", "")
+			return
+		}
+		convergePluginSet(ctx, d, cached.Plugins)
+		return
+	}
+
+	if convergePluginSet(ctx, d, out.Data.Bundle.Plugins) {
+		// Advance the fingerprint (and the reconcile cache) only on full
+		// convergence, so any skipped install/uninstall is retried next
+		// tick instead of silently forgotten behind an unchanged poll.
+		if raw, err := json.Marshal(out.Data.Bundle); err == nil {
+			_ = d.Settings.Set(ctx, "sync.plugins_bundle", string(raw))
+		}
+		_ = d.Settings.Set(ctx, "sync.plugins_version", out.Data.Version)
+	}
+}
+
+// convergePluginSet makes this till's marketplace-installed plugin set match
+// the given primary registry rows — the shared diff loop of both the
+// changed-bundle and steady-state (cached rows) paths of syncPullPlugins.
+// Returns true only if every needed install/uninstall succeeded.
+func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSyncRow) bool {
+	repo := data.NewSyncPluginsRepo(d.Db)
+	statusStore := plugins.NewInstallStatusStore(d.Db)
+	converged := true
+
+	// Installs/updates: listing active on the primary, missing or at a
+	// different version locally → re-fetch from the marketplace (verified),
+	// pinned to the PRIMARY's version — not the marketplace's latest — so a
+	// primary deliberately held behind latest doesn't fork its replicas.
+	inPrimary := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if row.ListingID == "" || row.PluginID == "" {
+			continue // defense in depth; DumpActivePlugins already filters these
+		}
+		inPrimary[row.ListingID] = true
+		version, installed, err := repo.InstalledPluginVersion(ctx, row.PluginID)
+		if err != nil {
+			logging.L().Errorf("plugin sync: read local state for %s: %v", row.PluginID, err)
+			converged = false
+			continue
+		}
+		if installed && version == row.Version {
+			continue
+		}
+		if _, err := cloudInstallPluginVersion(ctx, d, row.ListingID, row.Version); err != nil {
+			logging.L().Warnf("plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",
+				row.PluginName, row.ListingID, row.Version, err)
+			converged = false
+			continue
+		}
+		logging.L().Infof("plugin sync: installed %s (%s@%s) to follow the primary",
+			row.PluginName, row.ListingID, row.Version)
+	}
+
+	// Uninstalls: a listing this till holds as active that the primary no
+	// longer has. Keyed off local plugin_install_status records, so only
+	// marketplace-installed plugins can ever be pruned (scope boundary above).
+	records, err := statusStore.List(ctx)
+	if err != nil {
+		logging.L().Errorf("plugin sync: list local install records: %v", err)
+		converged = false
+		records = nil
+	}
+	for listingID, rec := range records {
+		if inPrimary[listingID] || rec.State != plugins.InstallStateActive || rec.PluginID == "" {
+			continue
+		}
+		if _, err := cloudRemovePlugin(ctx, d, rec.PluginID); err != nil {
+			logging.L().Warnf("plugin sync: uninstall %s (removed on the primary) failed (will retry): %v",
+				rec.PluginID, err)
+			converged = false
+			continue
+		}
+		logging.L().Infof("plugin sync: uninstalled %s to follow the primary", rec.PluginID)
+	}
+	return converged
 }

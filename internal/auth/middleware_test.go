@@ -26,6 +26,11 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/sales",
 		"/api/sync/admin",
 		"/api/sync/stock",
+		// ut-docs#460: the replica pull tick's plugin-set poll. Missing at
+		// first — the exact /api/sync/stock failure class again: the till
+		// authenticated perfectly and was still 401'd here, so plugin
+		// propagation silently never worked at all.
+		"/api/sync/plugins",
 		"/api/sync/assets",
 		"/api/sync/assets/file",
 		"/api/setup/join",

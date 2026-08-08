@@ -126,8 +126,21 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 }
 
 // cloudInstallPlugin mirrors handleInstallFromMarketplace for a directive:
-// same installer, same signature verification, same install-status records.
+// same installer, same signature verification, same install-status records,
+// same reload-and-rebuild-menu tail. Cloud directives carry no version, so
+// this installs the marketplace's current release — historical behavior,
+// unchanged.
 func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (string, error) {
+	return cloudInstallPluginVersion(ctx, d, listingID, "")
+}
+
+// cloudInstallPluginVersion is cloudInstallPlugin with an optional version
+// pin. The LAN plugin sync (syncPullPlugins, ut-docs#460) passes the
+// PRIMARY's recorded version so a replica converges to the version the shop
+// actually runs — not whatever the marketplace happens to serve as latest
+// (a primary pinned behind latest would otherwise silently fork its
+// replicas). version=="" keeps the unpinned latest-release behavior.
+func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string) (string, error) {
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 	_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 		ListingID: listingID,
@@ -145,6 +158,7 @@ func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (
 	}
 	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
 		ListingID:  listingID,
+		Version:    version,
 		MerchantID: effCfg.Marketplace.ClientID,
 		StoreID:    effCfg.Marketplace.StoreID,
 		DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
@@ -165,14 +179,19 @@ func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (
 		ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
 		CurrentVersion: result.Version, State: plugins.InstallStateActive,
 	})
-	if err := d.Pm.Reload(ctx); err != nil {
+	// ReloadPlugins nil-checks d.Pm (this path used to dereference it bare
+	// while cloudRemovePlugin checked — now both are safe) and serializes
+	// the reload + menu rebuild against every other lifecycle call site.
+	if err := d.ReloadPlugins(ctx); err != nil {
 		log.Printf("Warning: failed to reload plugin manager: %v", err)
 	}
-	d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
 	return "installed " + result.Name + " " + result.Version, nil
 }
 
-// cloudRemovePlugin mirrors handleUninstallPlugin for a directive.
+// cloudRemovePlugin mirrors handleUninstallPlugin for a directive: DB rows,
+// installed files, install-status records, then the shared
+// reload-and-rebuild-menu tail. Also the uninstall step of the LAN plugin
+// sync (syncPullPlugins, ut-docs#460).
 func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (string, error) {
 	if strings.ContainsAny(pluginID, `/\`) || strings.Contains(pluginID, "..") {
 		return "", fmt.Errorf("invalid plugin id")
@@ -186,11 +205,8 @@ func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (st
 	if err := plugins.NewInstallStatusStore(d.Db).ClearForPlugin(ctx, pluginID); err != nil {
 		log.Printf("warning: failed to clear install status for %s: %v", pluginID, err)
 	}
-	if d.Pm != nil {
-		if err := d.Pm.Reload(ctx); err != nil {
-			log.Printf("warning: failed to reload plugin manager after uninstall %s: %v", pluginID, err)
-		}
-		d.Menu = common.BuildMenu(d.BaseMenu, d.Pm)
+	if err := d.ReloadPlugins(ctx); err != nil {
+		log.Printf("warning: failed to reload plugin manager after uninstall %s: %v", pluginID, err)
 	}
 	return "uninstalled " + pluginID, nil
 }
