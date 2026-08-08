@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -615,6 +617,92 @@ func TestSyncJoin_SnapshotDownloadFails(t *testing.T) {
 	}
 	if _, err := os.Stat(appdb.ReplicaIdentityPath(replicaPath)); err == nil {
 		t.Fatalf("a failed snapshot download must not stage a replica identity")
+	}
+}
+
+// TestFriendlyJoinError_TranslatesEachKind pins the ut-docs#36 fix: every
+// joinPrimary/completeJoin failure kind renders through httpx.T instead of
+// leaking its Go-side locale key or English wording, and a kind carrying a
+// dynamic detail (a URL, a wrapped network error) interpolates it into the
+// locale string's %s placeholder — the same fmt.Sprintf(httpx.T(...), v)
+// convention catalog.error.barcode_conflict already uses.
+func TestFriendlyJoinError_TranslatesEachKind(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		key    string
+		detail string // "" if the locale string has no placeholder
+	}{
+		{"bad code", &joinError{kind: joinErrBadCode}, "tills.join_error.bad_code", ""},
+		{"request failed", &joinError{kind: joinErrRequestFailed, detail: "boom"}, "tills.join_error.request_failed", "boom"},
+		{"unreachable", &joinError{kind: joinErrUnreachable, detail: "dial tcp: connect refused"}, "tills.join_error.unreachable", "dial tcp: connect refused"},
+		{"not a till", &joinError{kind: joinErrNotATill, detail: "http://10.0.0.5:8080"}, "tills.join_error.not_a_till", "http://10.0.0.5:8080"},
+		{"refused", &joinError{kind: joinErrRefused}, "tills.join_error.refused", ""},
+		{"snapshot failed", &joinError{kind: joinErrSnapshotFailed, detail: "500 Internal Server Error"}, "tills.join_error.snapshot_failed", "500 Internal Server Error"},
+		{"stage snapshot failed", &joinError{kind: joinErrStageSnapshotFailed, detail: "boom"}, "tills.join_error.stage_snapshot_failed", "boom"},
+		{"stage identity failed", &joinError{kind: joinErrStageIdentityFailed, detail: "boom"}, "tills.join_error.stage_identity_failed", "boom"},
+	}
+	for _, locale := range []string{"en", "ar", "fa", "tr"} {
+		for _, tt := range tests {
+			t.Run(locale+"/"+tt.name, func(t *testing.T) {
+				want := httpx.T(locale, tt.key)
+				if tt.detail != "" {
+					want = fmt.Sprintf(want, tt.detail)
+				}
+				if want == tt.key {
+					t.Fatalf("locale key %q has no translation for %q (httpx.T fell back to the key itself)", tt.key, locale)
+				}
+				if got := friendlyJoinError(locale, tt.err); got != want {
+					t.Errorf("friendlyJoinError(%q, %v) = %q, want %q", locale, tt.err, got, want)
+				}
+			})
+		}
+	}
+}
+
+// TestFriendlyJoinError_FallsBackForUnclassifiedErrors covers the defensive
+// branch: a plain (non-*joinError) error is shown as its own Error() text
+// rather than panicking or silently returning an empty string.
+func TestFriendlyJoinError_FallsBackForUnclassifiedErrors(t *testing.T) {
+	err := fmt.Errorf("some other failure")
+	if got := friendlyJoinError("fa", err); got != "some other failure" {
+		t.Errorf("expected the raw error text as a fallback, got %q", got)
+	}
+}
+
+// TestSyncJoin_ErrorsAreLocalized drives the real HTTP handler end-to-end
+// with a non-English locale and proves the ut-docs#36 bug is actually
+// fixed: the raw English error must not leak, and the operator's own
+// locale's translation must appear instead.
+func TestSyncJoin_ErrorsAreLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerSyncAPI(rmux, replica)
+
+	// A well-formed code pointing at a port nothing is listening on —
+	// same "unreachable" case as TestSyncJoin_PrimaryUnreachable, but
+	// requested in Farsi.
+	code := `{"url":"http://127.0.0.1:1","token":"whatever"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/join?lang=fa",
+		strings.NewReader("code="+url.QueryEscape(code)+"&name=Till+2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rmux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "cannot reach") {
+		t.Fatalf("a fa-locale till must not show the English error text, got %q", body)
+	}
+	wantPrefix := strings.SplitN(httpx.T("fa", "tills.join_error.unreachable"), "%s", 2)[0]
+	if !strings.Contains(body, wantPrefix) {
+		t.Fatalf("expected the fa translation %q to appear, got %q", wantPrefix, body)
+	}
+	if appdb.PendingRestore(replicaPath) {
+		t.Fatalf("a failed join must not stage a restore")
 	}
 }
 
