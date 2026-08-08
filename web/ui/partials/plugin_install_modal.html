@@ -75,7 +75,8 @@ const pluginInstallText = {
 	errorConfiguration: '{{ T "plugins.install.error.configuration" }}',
 	errorInvalidRequest: '{{ T "plugins.install.error.invalid_request" }}',
 	errorNotFound: '{{ T "plugins.install.error.not_found" }}',
-	errorForbidden: '{{ T "plugins.install.error.forbidden" }}'
+	errorForbidden: '{{ T "plugins.install.error.forbidden" }}',
+	errorReplicaUsePrimary: '{{ T "plugins.install.error.replica_use_primary" }}'
 };
 
 function installMessage(messageKey, fallbackKey) {
@@ -106,6 +107,8 @@ function camelizeInstallKey(messageKey) {
 			return 'errorNotFound';
 		case 'plugins.install.error.forbidden':
 			return 'errorForbidden';
+		case 'plugins.install.error.replica_use_primary':
+			return 'errorReplicaUsePrimary';
 		default:
 			return '';
 	}

@@ -17,3 +17,4 @@ routes: [/plugins, /plugins/store, /plugins/{id}/settings]
 2. Tek tıkla kurun; eklentiler güven rozetleri taşır (altın = resmî Universal Till, yeşil = doğrulanmış geliştirici) ve doğrulanmamış yayıncılar önce onayınızı ister.
 3. Her eklentinin kendi ayar sayfası vardır; bazı ayarlar dükkân genelinde, bazıları kasa başınadır.
 4. Kendi kılavuzuyla gelen kurulu bir eklenti, kartında bir Kılavuz düğmesi gösterir; bu düğme kılavuzu doğrudan kasanın içinde açar.
+5. Birden çok kasalı bir dükkânda eklentileri yalnızca **ana kasada** kurun ve kaldırın: her katılmış kasa aynı eklentiyi mağazadan kendisi alır ve değişikliği yaklaşık yarım dakika içinde otomatik olarak uygular. Katılmış bir kasadaki kurma ve kaldırma denemeleri, sizi ana kasaya yönlendiren bir mesajla reddedilir. Dosyadan içe aktarılan eklentiler istisnadır — içe aktarıldıkları kasada kalırlar.

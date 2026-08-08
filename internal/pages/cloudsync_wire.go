@@ -126,7 +126,10 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 }
 
 // cloudInstallPlugin mirrors handleInstallFromMarketplace for a directive:
-// same installer, same signature verification, same install-status records.
+// same installer, same signature verification, same install-status records,
+// same reload-and-rebuild-menu tail. Also the install step of the LAN
+// plugin sync (syncPullPlugins, ut-docs#460) — a replica following its
+// primary's plugin set makes exactly this move.
 func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (string, error) {
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 	_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
@@ -172,7 +175,10 @@ func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (
 	return "installed " + result.Name + " " + result.Version, nil
 }
 
-// cloudRemovePlugin mirrors handleUninstallPlugin for a directive.
+// cloudRemovePlugin mirrors handleUninstallPlugin for a directive: DB rows,
+// installed files, install-status records, then the shared
+// reload-and-rebuild-menu tail. Also the uninstall step of the LAN plugin
+// sync (syncPullPlugins, ut-docs#460).
 func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (string, error) {
 	if strings.ContainsAny(pluginID, `/\`) || strings.Contains(pluginID, "..") {
 		return "", fmt.Errorf("invalid plugin id")
