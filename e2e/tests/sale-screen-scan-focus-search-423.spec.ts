@@ -9,7 +9,10 @@ import { watchConsole } from './helpers';
 // focus. Reproduce with a real fast (scanner-speed) keystroke sequence via
 // page.keyboard, not .fill() (which bypasses per-character keydown events
 // entirely and would not exercise the app.js scan buffer either way).
-const BARCODE = '2000010000017'; // Coca-Cola 330ml (internal/db/migrations/001_init.sql)
+// ut-docs#191: this shortcut_buttons barcode's check digit was corrected
+// by migration 031 (was '2000010000017', a fabricated checksum) — kept in
+// sync here since this test scans it by literal value, not by item name.
+const BARCODE = '2000010000012'; // Coca-Cola 330ml (internal/db/migrations/001_init.sql)
 
 test.describe('scan while focus is in another sale-screen field (ut-docs#423)', () => {
   test.afterEach(async ({ page }) => {
