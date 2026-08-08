@@ -919,12 +919,15 @@ func TestReloadPlugins_SerializesConcurrentReloadAndRebuild(t *testing.T) {
 	wg.Wait()
 }
 
-// ut-docs#478: handlers that READ Menu/Pm.Installed (via MenuSnapshot /
-// InstalledPlugin) must be safe to run concurrently with ReloadPlugins —
-// Manager.Reload reassigns Installed to a fresh map and repopulates it
-// key-by-key, so an unlocked concurrent reader is a fatal concurrent map
-// access, not just a stale read. Run with -race: before the read-side
-// RLock this deadlocks the detector (or crashes outright) rather than
+// ut-docs#478: handlers that READ Menu/Pm.Installed/Pm.MenuPlugins (via
+// MenuSnapshot / InstalledPlugin / MenuPluginByKey) must be safe to run
+// concurrently with ReloadPlugins — Manager.Reload reassigns Installed AND
+// MenuPlugins to fresh maps and repopulates both key-by-key, so an unlocked
+// concurrent reader of either is a fatal concurrent map access, not just a
+// stale read. (Review round 1 caught MenuPlugins missing from this test —
+// the original sweep covered the two fields the ticket named and missed
+// this third one reassigned in the very same critical section.) Run with
+// -race: before the read-side RLock this crashes the detector rather than
 // passing quietly.
 func TestReloadPlugins_ConcurrentReadersSurviveRace(t *testing.T) {
 	initTestPaths(t)
@@ -961,6 +964,7 @@ func TestReloadPlugins_ConcurrentReadersSurviveRace(t *testing.T) {
 				default:
 					_ = dp.MenuSnapshot()
 					_, _ = dp.InstalledPlugin("com.test.sync-alpha")
+					_, _ = dp.MenuPluginByKey("some-menu-plugin-key")
 				}
 			}
 		}()
