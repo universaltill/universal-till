@@ -273,8 +273,8 @@
     var id = document.getElementById('image-item-id').value;
     var f = document.getElementById('image-file').files[0];
     var imsg = document.getElementById('image-msg');
-    if (!id) { imsg.textContent = '✗ pick an item first (click a row)'; return; }
-    if (!f) { imsg.textContent = '✗ choose an image'; return; }
+    if (!id) { imsg.textContent = '✗ pick an item first (click a row)'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+    if (!f) { imsg.textContent = '✗ choose an image'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
     var fd = new FormData();
     fd.append('item_id', id);
     fd.append('image', f);
@@ -285,7 +285,7 @@
         var table = document.getElementById('catalog-table');
         table.outerHTML = html;
         htmx.process(document.getElementById('catalog-table'));
-        imsg.textContent = '✓ image updated';
+        imsg.textContent = '✓ image updated'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
         filterRows();
       });
     }).catch(function (e) { imsg.textContent = '✗ ' + e; });
