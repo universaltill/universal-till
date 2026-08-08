@@ -422,6 +422,7 @@
   "plugins.manage.action.update": "Update",
   "plugins.manage.confirm_uninstall": "Uninstall",
   "plugins.manage.disabled": "Disabled",
+  "plugins.manage.error.replica_use_primary": "This till follows a primary till — manage plugins on the primary till.",
   "plugins.manage.empty": "No plugins installed. Get some from the Plugin Store.",
   "plugins.manage.enabled": "Enabled",
   "plugins.manage.import_btn": "Import",

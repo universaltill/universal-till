@@ -349,8 +349,20 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 // Best-effort throughout: every failure is logged and skipped, and the
 // pull fingerprint (sync.plugins_version) is only advanced once a tick
 // converges with NO failures, so a transient marketplace outage is retried
-// on every subsequent tick until the set matches. Never called on the
-// checkout path.
+// on every subsequent tick until the set matches. A recover() at the top
+// keeps the "never panics" promise honest — runSyncLoop has no recover of
+// its own, so a panic in the reload/install path would otherwise kill the
+// whole sync loop for good. Never called on the checkout path.
+//
+// Steady state is NOT a no-op: an Unchanged poll only means the PRIMARY's
+// set hasn't moved — it says nothing about local drift (a manually deleted
+// plugin dir, a failed reload, anything that slips past the replica
+// guards). The last-applied bundle rows are persisted locally
+// (sync.plugins_bundle, alongside sync.plugins_version), and on an
+// Unchanged response the same diff/converge loop re-runs against that
+// cached row set every tick. The `?have=` fingerprint still saves the
+// primary→replica payload; only the local diff (a few dozen rows, cheap
+// version lookups) repeats.
 //
 // Scope boundary (intentional, ut-docs#460): only plugins with a
 // listing_id — i.e. installed from the marketplace — propagate. A
@@ -358,8 +370,14 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 // listing on either side: the primary's dump can't include it (no
 // plugin_install_status row exists), and the prune below only ever removes
 // plugins named by a local install-status record, so a replica-local file
-// import is never touched. Provision those per till, as before.
+// import is never touched (and import-from-file stays usable on every
+// till, replicas included). Provision those per till, as before.
 func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logging.L().Errorf("plugin sync: recovered from panic (will retry next tick): %v", r)
+		}
+	}()
 	get := func(k string) string {
 		v, _, _ := d.Settings.Get(ctx, k)
 		return strings.TrimSpace(v)
@@ -390,18 +408,49 @@ func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, p
 		logging.L().Errorf("plugin sync pull: bad response: %v", err)
 		return
 	}
+
 	if out.Data.Unchanged {
+		// Primary unchanged — still reconcile locally against the cached
+		// last-applied rows so local drift heals instead of hiding behind
+		// the fingerprint forever.
+		var cached data.PluginsBundle
+		raw, _, _ := d.Settings.Get(ctx, "sync.plugins_bundle")
+		if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &cached) != nil {
+			// No usable cache (pre-cache release, or corrupt). Clear the
+			// fingerprint so the next tick full-fetches and rebuilds it.
+			_ = d.Settings.Set(ctx, "sync.plugins_version", "")
+			return
+		}
+		convergePluginSet(ctx, d, cached.Plugins)
 		return
 	}
 
+	if convergePluginSet(ctx, d, out.Data.Bundle.Plugins) {
+		// Advance the fingerprint (and the reconcile cache) only on full
+		// convergence, so any skipped install/uninstall is retried next
+		// tick instead of silently forgotten behind an unchanged poll.
+		if raw, err := json.Marshal(out.Data.Bundle); err == nil {
+			_ = d.Settings.Set(ctx, "sync.plugins_bundle", string(raw))
+		}
+		_ = d.Settings.Set(ctx, "sync.plugins_version", out.Data.Version)
+	}
+}
+
+// convergePluginSet makes this till's marketplace-installed plugin set match
+// the given primary registry rows — the shared diff loop of both the
+// changed-bundle and steady-state (cached rows) paths of syncPullPlugins.
+// Returns true only if every needed install/uninstall succeeded.
+func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSyncRow) bool {
 	repo := data.NewSyncPluginsRepo(d.Db)
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 	converged := true
 
 	// Installs/updates: listing active on the primary, missing or at a
-	// different version locally → re-fetch from the marketplace (verified).
-	inPrimary := make(map[string]bool, len(out.Data.Bundle.Plugins))
-	for _, row := range out.Data.Bundle.Plugins {
+	// different version locally → re-fetch from the marketplace (verified),
+	// pinned to the PRIMARY's version — not the marketplace's latest — so a
+	// primary deliberately held behind latest doesn't fork its replicas.
+	inPrimary := make(map[string]bool, len(rows))
+	for _, row := range rows {
 		if row.ListingID == "" || row.PluginID == "" {
 			continue // defense in depth; DumpActivePlugins already filters these
 		}
@@ -415,13 +464,14 @@ func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, p
 		if installed && version == row.Version {
 			continue
 		}
-		if _, err := cloudInstallPlugin(ctx, d, row.ListingID); err != nil {
-			logging.L().Warnf("plugin sync: install %s (%s) from the marketplace failed (will retry): %v",
-				row.PluginName, row.ListingID, err)
+		if _, err := cloudInstallPluginVersion(ctx, d, row.ListingID, row.Version); err != nil {
+			logging.L().Warnf("plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",
+				row.PluginName, row.ListingID, row.Version, err)
 			converged = false
 			continue
 		}
-		logging.L().Infof("plugin sync: installed %s (%s) to follow the primary", row.PluginName, row.ListingID)
+		logging.L().Infof("plugin sync: installed %s (%s@%s) to follow the primary",
+			row.PluginName, row.ListingID, row.Version)
 	}
 
 	// Uninstalls: a listing this till holds as active that the primary no
@@ -445,11 +495,5 @@ func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, p
 		}
 		logging.L().Infof("plugin sync: uninstalled %s to follow the primary", rec.PluginID)
 	}
-
-	// Advance the fingerprint only on full convergence, so any skipped
-	// install/uninstall is retried next tick instead of silently forgotten
-	// behind an unchanged poll.
-	if converged {
-		_ = d.Settings.Set(ctx, "sync.plugins_version", out.Data.Version)
-	}
+	return converged
 }

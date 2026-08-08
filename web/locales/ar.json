@@ -422,6 +422,7 @@
   "plugins.manage.action.update": "تحديث",
   "plugins.manage.confirm_uninstall": "إلغاء التثبيت",
   "plugins.manage.disabled": "معطّل",
+  "plugins.manage.error.replica_use_primary": "يتبع هذا الصندوق الصندوق الأساسي — أدر الإضافات من الصندوق الأساسي.",
   "plugins.manage.empty": "لا توجد إضافات مثبّتة. احصل على بعضها من متجر الإضافات.",
   "plugins.manage.enabled": "مُفعّل",
   "plugins.manage.import_btn": "استيراد",

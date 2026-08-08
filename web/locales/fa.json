@@ -422,6 +422,7 @@
   "plugins.manage.action.update": "به‌روزرسانی",
   "plugins.manage.confirm_uninstall": "حذف نصب",
   "plugins.manage.disabled": "غیرفعال",
+  "plugins.manage.error.replica_use_primary": "این صندوق پیرو صندوق اصلی است — افزونه‌ها را روی صندوق اصلی مدیریت کنید.",
   "plugins.manage.empty": "افزونه‌ای نصب نشده است.",
   "plugins.manage.enabled": "فعال",
   "plugins.manage.import_btn": "درون‌ریزی",
