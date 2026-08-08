@@ -40,10 +40,11 @@ func init() {
 func firstDelay() time.Duration   { return time.Duration(firstDelayNS.Load()) }
 func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }
 
-// runningOutCount mirrors the inventory page's model
-// (internal/pages/inventory_page.go's stockLevelsForDisplay): items whose
-// on-hand stock covers ≤ their effective warn window (their own lead time,
-// once set — otherwise the flat 7-day default) at the 28-day selling rate.
+// runningOutCount shares the inventory page's exact decision
+// (data.LowStockItem.IsRunningOut, same as internal/pages/inventory_page.go's
+// stockLevelsForDisplay): items whose on-hand stock covers ≤ their effective
+// warn window (their own lead time, once set — otherwise the flat 7-day
+// default) at the 28-day selling rate.
 func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
 	repo := data.NewPOSRepo(db)
 	rates, err := repo.ItemDailySellRates(ctx, 28)
