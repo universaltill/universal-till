@@ -65,12 +65,21 @@
 <script>
 (function () {
   var msg = document.getElementById('manage-msg');
+  // API errors that arrive as i18n message KEYS (not prose) map to localized
+  // text here — the template-populated-lookup pattern CLAUDE.md mandates for
+  // inline scripts (same as bugreport_panel.html). ut-docs#460: on a till
+  // that follows a primary, install/import/uninstall are rejected with these.
+  var T = {
+    'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
+    'plugins.uninstall.error.replica_use_primary': '{{ T "plugins.uninstall.error.replica_use_primary" }}',
+    'plugins.manage.error.replica_use_primary': '{{ T "plugins.manage.error.replica_use_primary" }}'
+  };
   window.act = function (url, method) {
     msg.textContent = '⏳ …';
     fetch(url, { method: method }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (j) {
         if (res.ok && !j.error) { window.location.reload(); return; }
-        msg.textContent = '✗ ' + (j.error || ('HTTP ' + res.status));
+        msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
       });
     }).catch(function (e) { msg.textContent = '✗ ' + e; });
   };
@@ -82,7 +91,11 @@
     fetch('/api/plugins/import-from-file', { method: 'POST', body: fd }).then(function (res) {
       return res.text().then(function (t) {
         if (res.ok) { window.location.reload(); return; }
-        msg.textContent = '✗ ' + t;
+        // The replica guard answers with the JSON envelope; legacy error
+        // paths still answer plain text — show whichever arrived.
+        var m = t;
+        try { var j = JSON.parse(t); if (j && j.error) { m = T[j.error] || j.error; } } catch (_) {}
+        msg.textContent = '✗ ' + m;
       });
     }).catch(function (e) { msg.textContent = '✗ ' + e; });
   });

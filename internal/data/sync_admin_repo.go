@@ -48,7 +48,11 @@ type adminTable struct {
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
 // here: inventory/stock (additive movements, D3), sales, sessions,
 // stock_locations (per-till), item_images (files don't travel — D2 limit),
-// plugin install tables (replicas install from the marketplace themselves).
+// plugin install tables — rows without the Ed25519-verified plugin FILES
+// would leave a replica with phantom plugins, so the installed set travels
+// as its own registry bundle instead (GET /api/sync/plugins, ut-docs#460 /
+// ADR-0011 amendment 2026-08-08: SyncPluginsRepo) and each replica
+// re-fetches + re-verifies every listing from the marketplace itself.
 // plugin_settings IS here, but only its GLOBAL-scope rows travel (shop-wide
 // config like a payment gateway's secret key); register/user-scoped rows
 // stay per-till. See applyPluginSettings for its special apply semantics.

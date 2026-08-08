@@ -41,7 +41,7 @@ func exempt(path string) bool {
 	// TestSyncPullPathsAreExempt pins the list against the client.
 	switch path {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
-		"/api/sync/stock", "/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
+		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status":
 		return true
 	}

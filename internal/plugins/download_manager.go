@@ -75,7 +75,13 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 		maxSize = dm.downloadBudget
 	}
 
-	// Create .part file path
+	// Create .part file path. MkdirAll first: the tmp dir does not exist on a
+	// fresh till until something else creates it, and the LAN plugin sync
+	// (ut-docs#460) can be the very first download a replica ever makes — no
+	// manager has necessarily opened the plugins page there.
+	if err := os.MkdirAll(dm.tmpDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create download tmp dir: %w", err)
+	}
 	partFile := filepath.Join(dm.tmpDir, fmt.Sprintf("%s.part", req.PluginID))
 
 	// Check if partial download exists
