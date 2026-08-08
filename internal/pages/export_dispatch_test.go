@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/http/httptest"
@@ -124,6 +125,79 @@ func TestExportDispatch_DateRangeAtCap(t *testing.T) {
 	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2025-01-01"}, "to": {"2026-01-02"}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 at exactly the cap (366 days), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestExportDispatch_RowCountTooLarge is the ut-docs#439 regression: the
+// 366-day range cap alone only bounds elapsed time, not row count -- a
+// matched-sale count over maxExportSalesRows must be rejected before
+// SalesForExport's batch gather (and the plugin dispatch after it) ever
+// runs, the same "reject before doing the expensive work" shape
+// TestExportDispatch_DateRangeTooLarge already proves for the range cap.
+// Overrides the package var rather than seeding 50,000 real rows.
+func TestExportDispatch_RowCountTooLarge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := maxExportSalesRows
+	maxExportSalesRows = 2
+	t.Cleanup(func() { maxExportSalesRows = orig })
+
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+	// Subscribed so a missing/broken cap would 200, not just 400 for an
+	// unrelated reason (same red-herring caution as the date-range test).
+	subscribeExportAsk(t, dp.Db, "com.t.exp1", json.RawMessage(`{"ok":true,"message":"accepted"}`))
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	for i, r := range []string{"R1", "R2", "R3"} {
+		mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+		          VALUES(?, ?, 'completed', 'sale', 'GBP', 1000, 0, 0, 1000, ?)`,
+			fmt.Sprintf("rc-sale-%d", i), r, fmt.Sprintf("2026-01-%02dT10:00:00Z", i+1))
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	if body["message"] != "matched sale count (3) exceeds the 2-row maximum — narrow the date range" {
+		t.Fatalf("unexpected message: %+v", body)
+	}
+}
+
+// TestExportDispatch_RowCountAtCap proves the bound is inclusive -- exactly
+// maxExportSalesRows matched sales must still succeed, matching the
+// boundary-inclusive convention TestExportDispatch_DateRangeAtCap already
+// establishes for the range cap.
+func TestExportDispatch_RowCountAtCap(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := maxExportSalesRows
+	maxExportSalesRows = 2
+	t.Cleanup(func() { maxExportSalesRows = orig })
+
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+	subscribeExportAsk(t, dp.Db, "com.t.exp1", json.RawMessage(`{"ok":true,"message":"accepted"}`))
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	for i, r := range []string{"R1", "R2"} {
+		mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+		          VALUES(?, ?, 'completed', 'sale', 'GBP', 1000, 0, 0, 1000, ?)`,
+			fmt.Sprintf("ac-sale-%d", i), r, fmt.Sprintf("2026-01-%02dT10:00:00Z", i+1))
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 at exactly the cap (2 sales), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

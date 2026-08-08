@@ -25,6 +25,19 @@ const maxExportRangeDays = 366
 
 const maxExportRange = maxExportRangeDays * 24 * time.Hour
 
+// maxExportSalesRows bounds how many matched sales POST /api/data/export
+// will gather and marshal into the export/report plugin's stdin (ut-docs#439,
+// follow-up to #229's range cap). The range cap alone only bounds elapsed
+// *time* -- 366 days of a busy till's sales can still be six-figure rows
+// loaded into one in-memory slice on Pi-class hardware, independent of how
+// short the query itself runs. 50,000 rows is generous for the stated
+// month/quarter/year-end export use case (a very busy quick-service till
+// doing ~135 sales/day, every day, for a year) while still ruling out the
+// six-figure case the range cap alone can't catch; a shop that genuinely
+// exceeds it can narrow the date range and export in parts. A `var`, not a
+// `const`, so tests can override it rather than seeding 50,000 rows.
+var maxExportSalesRows = 50_000
+
 // exportRequestPayload is the event payload a subscribing export/report
 // plugin receives on "export.requested.ask" (EventBus.AskPlugin) — mirrors
 // tax_hook.go's taxRateAskPayload convention for a value-returning hook.
@@ -257,6 +270,21 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		var sales []data.ExportSaleRow
 		if hasSales {
+			// ut-docs#439: reject before the expensive batch gather (and the
+			// WASM dispatch after it) if the matched row count exceeds the
+			// bound, the same "reject before doing the expensive work" shape
+			// the range cap above already uses. A cheap COUNT(*) first, not
+			// SalesForExport's own row count, so an over-large match never
+			// pays for the full batch gather it's about to be rejected for.
+			count, cerr := posRepo.CountSalesForExport(r.Context(), from, to)
+			if cerr != nil {
+				respond(w, http.StatusInternalServerError, false, cerr.Error())
+				return
+			}
+			if count > maxExportSalesRows {
+				respond(w, http.StatusBadRequest, false, fmt.Sprintf("matched sale count (%d) exceeds the %d-row maximum — narrow the date range", count, maxExportSalesRows))
+				return
+			}
 			sales, err = posRepo.SalesForExport(r.Context(), from, to)
 			if err != nil {
 				respond(w, http.StatusInternalServerError, false, err.Error())
