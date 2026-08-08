@@ -82,11 +82,19 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await page.locator('select[name=country]').selectOption('GB');
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
 
-    // Step 3 · shop name.
-    await page.locator('input[name=store_name]').fill('E2E Test Shop');
+    // Step 3 · shop name. setup.html is a standalone document that bypasses
+    // web/ui/layouts/base.html (ut-docs#400 review: a first version of the
+    // autofill-suppression fix loaded only via that layout and silently
+    // missed this page, along with login.html — the exact class of gap
+    // ut-docs#344 hit with htmx on this same template). Confirms the real
+    // fix (its own <script> tag, per-document) actually runs here.
+    const storeName = page.locator('input[name=store_name]');
+    await expect(storeName).toHaveAttribute('autocomplete', /^off-/);
+    await storeName.fill('E2E Test Shop');
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
 
     // Step 4 · admin PIN.
+    await expect(page.locator('input[name=pin]')).toHaveAttribute('autocomplete', /^off-/);
     await page.locator('input[name=pin]').fill('482913');
     await page.locator('input[name=pin_confirm]').fill('482913');
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();

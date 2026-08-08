@@ -9,6 +9,9 @@
     <!-- Vendored locally: the till must work fully offline. -->
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
+    <!-- ut-docs#400: the shared-till operator handover screen — see
+         web/public/autofill.js's own comment for why this can't be app.js. -->
+    <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}">
     <main class="login-card">
