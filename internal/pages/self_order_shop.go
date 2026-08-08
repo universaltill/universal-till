@@ -223,6 +223,23 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		renderKioskCart(w, r, d)
 	})
 
+	// Dine-in/takeaway toggle (ut-docs#260) — the kiosk-facing twin of the
+	// cashier's /api/pos/order-type (pos_api.go). Same clamp: anything other
+	// than the exact pos.OrderTypeTakeaway sentinel, including "", means
+	// dine-in/standard, and this is also how a customer switches back.
+	// Reuses Service.SetOrderType, so the same tax re-derivation
+	// (EffectiveLineTaxRateBP) and the checkout handler's existing
+	// SaleInput.OrderType wiring both pick this up with no further changes.
+	mux.HandleFunc("POST /api/self-order/order-type", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		orderType := ""
+		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
+			orderType = pos.OrderTypeTakeaway
+		}
+		d.Engine.SetOrderType(orderType)
+		renderKioskCart(w, r, d)
+	})
+
 	mux.HandleFunc("POST /api/self-order/remove", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		key := strings.TrimSpace(r.Form.Get("key"))

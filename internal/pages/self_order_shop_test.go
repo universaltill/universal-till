@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -438,6 +439,103 @@ func TestSelfOrderShop_CheckoutHappyPath(t *testing.T) {
 	}
 	if cashierID != "kiosk" {
 		t.Fatalf("kiosk sale must be attributed to the seeded 'kiosk' operator, got %q", cashierID)
+	}
+}
+
+// ut-docs#260: a customer who picks takeaway on the kiosk toggle must have
+// that recorded on the completed sale, the same as a cashier-rung takeaway
+// sale — this is the acceptance criterion the toggle exists to satisfy, not
+// just that the button visually looks pressed.
+func TestSelfOrderShop_CheckoutPersistsSelectedOrderType(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	post("/api/self-order/scan", "code=5000001")
+	post("/api/self-order/order-type", "order_type=takeaway")
+
+	rec := post("/api/self-order/checkout", "method=card")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST checkout: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var orderType string
+	if err := d.DB.QueryRow(`SELECT order_type FROM sales WHERE status = 'completed'`).Scan(&orderType); err != nil {
+		t.Fatalf("expected a completed sale row: %v", err)
+	}
+	if orderType != pos.OrderTypeTakeaway {
+		t.Fatalf("want persisted sale order_type %q, got %q", pos.OrderTypeTakeaway, orderType)
+	}
+}
+
+// pressedState reports which of the kiosk cart's two order-type buttons is
+// marked aria-pressed="true" (self_order_cart.html), by matching each
+// button's own aria-pressed attribute against its own hx-vals order_type —
+// not just searching the whole body for a bare `aria-pressed="true"`, which
+// would pass even if the wrong button were the one lit up, since exactly one
+// of the two always carries it.
+func pressedState(t *testing.T, body string) (dineInPressed, takeawayPressed bool) {
+	t.Helper()
+	dineIn := regexp.MustCompile(`aria-pressed="([^"]+)"[^>]*"order_type":""`).FindStringSubmatch(body)
+	takeaway := regexp.MustCompile(`aria-pressed="([^"]+)"[^>]*"order_type":"takeaway"`).FindStringSubmatch(body)
+	if dineIn == nil || takeaway == nil {
+		t.Fatalf("could not find both order-type buttons in rendered cart: %s", body)
+	}
+	return dineIn[1] == "true", takeaway[1] == "true"
+}
+
+// ut-docs#260: the kiosk had no way to tell the engine a customer chose
+// takeaway, even though Service.SetOrderType/EffectiveLineTaxRateBP and the
+// checkout handler's SaleInput.OrderType wiring already existed for it (this
+// endpoint is the missing piece, not new tax logic).
+func TestSelfOrderShop_OrderTypeToggleSetsTakeaway(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := post("/api/self-order/order-type", "order_type=takeaway")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST order-type: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.OrderType(); got != pos.OrderTypeTakeaway {
+		t.Fatalf("want engine order type %q, got %q", pos.OrderTypeTakeaway, got)
+	}
+	if dineIn, takeaway := pressedState(t, rec.Body.String()); dineIn || !takeaway {
+		t.Fatalf("want takeaway pressed and dine-in not, got dineIn=%v takeaway=%v: %s", dineIn, takeaway, rec.Body.String())
+	}
+
+	// Any other value than the exact takeaway sentinel — including an
+	// explicit "" to switch back — must clamp to dine-in/standard, exactly
+	// like the cashier's /api/pos/order-type (pos_api.go).
+	rec2 := post("/api/self-order/order-type", "order_type=")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("POST order-type (reset): want 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if dineIn, takeaway := pressedState(t, rec2.Body.String()); !dineIn || takeaway {
+		t.Fatalf("want dine-in pressed and takeaway not, got dineIn=%v takeaway=%v: %s", dineIn, takeaway, rec2.Body.String())
+	}
+	if got := dp.Engine.OrderType(); got != "" {
+		t.Fatalf("want engine order type reset to dine-in (\"\"), got %q", got)
 	}
 }
 
