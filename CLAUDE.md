@@ -72,7 +72,8 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo â
 
 ## Before committing
 - `go build ./... && go test ./...` and `bash scripts/ci/guard-data-access.sh`
-  and `bash scripts/ci/guard-kiosk-engine.sh`.
+  and `bash scripts/ci/guard-kiosk-engine.sh`
+  and `bash scripts/ci/guard-plugin-menu-read.sh`.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 
