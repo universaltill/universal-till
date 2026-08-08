@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -393,21 +394,58 @@ func imgVersion(url string) string {
 }
 
 func assetVersion(rel string) string {
-	// Uploaded assets (item/variant photos, receipt logo) live in the stable
-	// per-user data dir (see internal/paths), not the cwd-relative release
-	// tree — check there first so a re-uploaded file gets a fresh ?v= and
-	// isn't served stale from the browser cache. Falls back to the
-	// cwd-relative path for built-in assets shipped in web/.
-	if info, err := os.Stat(paths.Data(rel)); err == nil {
-		return strconv.FormatInt(info.ModTime().Unix(), 10)
-	}
-	if info, err := os.Stat(filepath.Join("web", rel)); err == nil {
+	if info, ok := statAsset(rel); ok {
 		return strconv.FormatInt(info.ModTime().Unix(), 10)
 	}
 	return strconv.FormatInt(bootTime, 10)
 }
 
+// statAsset looks up a web asset by its path relative to web/ or the public
+// data dir. Uploaded assets (item/variant photos, receipt logo) live in the
+// stable per-user data dir (see internal/paths), not the cwd-relative release
+// tree — check there first so a re-uploaded file wins over a stale built-in
+// one. Falls back to the cwd-relative path for built-in assets shipped in web/.
+func statAsset(rel string) (os.FileInfo, bool) {
+	if info, err := os.Stat(paths.Data(rel)); err == nil {
+		return info, true
+	}
+	if info, err := os.Stat(filepath.Join("web", rel)); err == nil {
+		return info, true
+	}
+	return nil, false
+}
+
 var bootTime = time.Now().Unix()
+
+// imgExists reports whether a /public/... URL (the same form imgv takes)
+// resolves to a real file the /public/ static handler would actually serve.
+// Used to skip rendering an <img> at all for assets that may not exist
+// (e.g. an item's thumb.png before any photo is added) — an unconditional
+// <img src> makes the browser issue a real, logged, always-doomed request
+// for every such item (ut-docs#319).
+//
+// Deliberately NOT just statAsset: that only checks the stable data dir and
+// the CWD-relative release tree, which is exactly right for cache-busting
+// (an embedded default's version can't change until the next build/boot
+// anyway) but wrong for existence — it would report false for a bundled
+// default asset (e.g. a seeded demo item's thumb.png) whenever the process
+// isn't running from the repo/install root, which real packaged installs
+// routinely aren't (internal/pages/static_page.go's fallbackFS is why /public/
+// itself still finds these). So this checks all three tiers /public/ does:
+// stable data dir, on-disk release tree, then the binary's embedded default.
+func imgExists(url string) bool {
+	rel, ok := strings.CutPrefix(url, "/")
+	if !ok {
+		return false
+	}
+	if _, ok := statAsset(rel); ok {
+		return true
+	}
+	if _, err := fs.Stat(uiassets.FS, rel); err == nil {
+		return true
+	}
+	return false
+}
 
 // FuncsFor builds template funcs for a specific request/locale.
 func FuncsFor(locale string) template.FuncMap {
@@ -430,6 +468,7 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["toJson"] = toJSON
 	funcs["assetv"] = assetVersion
 	funcs["imgv"] = imgVersion
+	funcs["imgExists"] = imgExists
 	funcs["kiosk"] = func() bool {
 		if v := kioskMode.Load(); v != nil {
 			b, _ := v.(bool)
