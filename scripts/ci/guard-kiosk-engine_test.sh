@@ -94,6 +94,40 @@ func registerZzGuardTest(mux *http.ServeMux, d *common.Deps) {
 expect_fail "d.Engine reached from a /self-order handler"
 clear_fixture "DirectEngineAccessPlainPrefix"
 
+# Bare-path route registration (no "METHOD " prefix in the mux.HandleFunc
+# string) — this exact style is already used elsewhere in this package
+# (pos_api.go, catalog/handlers.go), so a kiosk route registered this way
+# must be caught just as reliably as the "GET /..." style (independent
+# review round 1 found the guard's first draft missed this).
+plant "DirectEngineAccessBarePath" 'package pages
+
+import "net/http"
+
+func registerZzGuardTest(mux *http.ServeMux, d *common.Deps) {
+	mux.HandleFunc("/api/self-order/scan", func(w http.ResponseWriter, r *http.Request) {
+		d.Engine.Reset()
+	})
+}'
+expect_fail "d.Engine reached from a bare-path (no HTTP method) /api/self-order route"
+clear_fixture "DirectEngineAccessBarePath"
+
+# A different *common.Deps receiver variable name — this package is not
+# consistent about calling it "d" (registerShiftsAPI/registerInventoryAPI
+# use "dp", registerPluginStore uses "deps"), so the guard must not be
+# fooled by a kiosk handler written with one of those other names
+# (independent review round 1 found the guard's first draft missed this).
+plant "DirectEngineAccessAltReceiver" 'package pages
+
+import "net/http"
+
+func registerZzGuardTest(mux *http.ServeMux, dp *common.Deps) {
+	mux.HandleFunc("GET /self-order/shop", func(w http.ResponseWriter, r *http.Request) {
+		dp.Engine.Reset()
+	})
+}'
+expect_fail "dp.Engine (non-\"d\" receiver) reached from a /self-order handler"
+clear_fixture "DirectEngineAccessAltReceiver"
+
 # A comment that merely mentions "d.Engine" as prose (the real, existing
 # style of explanatory comment in self_order_page.go) must NOT trip the
 # guard — only actual code references count.
