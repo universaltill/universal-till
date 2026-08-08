@@ -45,7 +45,7 @@ func TestRenderStructure(t *testing.T) {
 	rows := strings.Split(string(out), "\n")
 	found := false
 	for _, r := range rows {
-		if strings.Contains(r, "2 x Coca-Cola") && strings.HasSuffix(r, "£2.80") && len([]byte(r)) >= Width {
+		if strings.Contains(r, "2 x Coca-Cola") && strings.HasSuffix(r, "£2.80") && utf8.RuneCountInString(r) >= Width {
 			found = true
 		}
 	}
@@ -242,6 +242,59 @@ func TestRenderMultiByteNameAtColumnBoundary_NoInvalidUTF8(t *testing.T) {
 	if !utf8.Valid(out) {
 		t.Error("render output contains invalid UTF-8 after clipping a name whose cut point lands mid multi-byte character")
 	}
+}
+
+// ut-docs#376: kvRow's padding must be computed from rune count, not byte
+// length, or any label/amount containing a multi-byte character (£, ä,
+// ar/fa/tr text) gets under-padded — the row ends up narrower than Width
+// visible columns, so right-alignment drifts left of where an equivalent
+// all-ASCII row would land.
+func TestKvRowPadsByRuneCountNotByteCount(t *testing.T) {
+	ascii := kvRow("Cola", "2.80")
+	multiByte := kvRow("Cola", "£2.80") // one extra byte, same rune count as "X2.80"
+
+	if utf8.RuneCountInString(multiByte) != utf8.RuneCountInString(ascii) {
+		t.Fatalf("multi-byte row should be the same visible width as the ASCII row: got %d runes vs %d runes", utf8.RuneCountInString(multiByte), utf8.RuneCountInString(ascii))
+	}
+	// The amount must land flush against the right edge (Width visible
+	// columns), same as the ASCII case — not one column short because the
+	// pound sign's extra UTF-8 byte was counted as if it were a column.
+	if got := utf8.RuneCountInString(multiByte); got < Width {
+		t.Errorf("row should pad to the full %d-column width, got %d visible columns: %q", Width, got, multiByte)
+	}
+	if !strings.HasSuffix(multiByte, "£2.80") {
+		t.Errorf("amount must be flush at the end of the row, got %q", multiByte)
+	}
+}
+
+// ut-docs#376: RenderText's center() helper must center on rune count —
+// a multi-byte store name was getting padded as if it were one column wider
+// than it visibly is, so it drifted off true center. A name with an odd
+// number of extra UTF-8 bytes is used so a byte-based calculation and a
+// rune-based one land on different integer results, not the same one by
+// coincidence of rounding.
+func TestRenderTextCentersByRuneCountNotByteCount(t *testing.T) {
+	d := sampleDoc()
+	name := "Café Bar Français" // 17 runes, 19 bytes (é, ç each +1 byte)
+	d.StoreName = name
+	out := RenderText(d)
+
+	wantPad := (Width - utf8.RuneCountInString(name)) / 2
+	gotPad := leadingSpacesStr(t, out, name)
+	if gotPad != wantPad {
+		t.Errorf("store name should center on rune count: want %d leading spaces, got %d", wantPad, gotPad)
+	}
+}
+
+func leadingSpacesStr(t *testing.T, out string, want string) int {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, want) {
+			return len(line) - len(strings.TrimLeft(line, " "))
+		}
+	}
+	t.Fatalf("line containing %q not found in output", want)
+	return -1
 }
 
 func TestRenderLabel(t *testing.T) {
