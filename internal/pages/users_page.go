@@ -63,7 +63,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		httpx.Render("ui/pages/users.html", map[string]any{
 			"title":     "Users",
 			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"menuItems": d.MenuSnapshot(),
 			"users":     rows,
 			"isAdmin":   actor.Role == "admin",
 			"errKey":    errKey,

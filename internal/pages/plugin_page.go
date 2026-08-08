@@ -136,7 +136,7 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 		// plain-text labels pass through T unchanged.
 		"title":     httpx.T(locale, entry.Label),
 		"theme":     d.CurrentState().Theme,
-		"menuItems": d.Menu,
+		"menuItems": d.MenuSnapshot(),
 	}
 
 	if bundle, usedFallback, ok := loadContentBundle(filepath.Join(pluginDir, "content"), locale); ok {

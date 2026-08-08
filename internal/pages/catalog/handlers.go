@@ -239,7 +239,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		variants, _ := repo.ItemVariants(r.Context())
 		data := map[string]any{
 			"title":       "Catalog",
-			"menuItems":   d.Menu,
+			"menuItems":   d.MenuSnapshot(),
 			"theme":       d.CurrentState().Theme,
 			"Items":       items,
 			"Barcodes":    barcodes,

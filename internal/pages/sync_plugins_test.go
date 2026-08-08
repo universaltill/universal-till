@@ -899,9 +899,9 @@ func TestSyncPullTick_PinsPrimaryVersionNotMarketplaceLatest(t *testing.T) {
 // from the background sync-pull goroutine every 30s as well as from HTTP
 // handlers — Deps.ReloadPlugins must serialize it (PluginMu) so concurrent
 // writers can never corrupt the Installed map / Menu (run with -race; the
-// unserialized sequence fails the detector). Write-side only by design:
-// lock-free READERS of d.Menu/d.Pm.Installed are a separate, pre-existing
-// gap outside this test's scope.
+// unserialized sequence fails the detector). Write-side only: see
+// TestReloadPlugins_ConcurrentReadersSurviveRace immediately below for the
+// read-side counterpart (ut-docs#478).
 func TestReloadPlugins_SerializesConcurrentReloadAndRebuild(t *testing.T) {
 	initTestPaths(t)
 	dp := newMigratedSyncDeps(t, "reload-race.db")
@@ -916,5 +916,61 @@ func TestReloadPlugins_SerializesConcurrentReloadAndRebuild(t *testing.T) {
 			}
 		}()
 	}
+	wg.Wait()
+}
+
+// ut-docs#478: handlers that READ Menu/Pm.Installed/Pm.MenuPlugins (via
+// MenuSnapshot / InstalledPlugin / MenuPluginByKey) must be safe to run
+// concurrently with ReloadPlugins — Manager.Reload reassigns Installed AND
+// MenuPlugins to fresh maps and repopulates both key-by-key, so an unlocked
+// concurrent reader of either is a fatal concurrent map access, not just a
+// stale read. (Review round 1 caught MenuPlugins missing from this test —
+// the original sweep covered the two fields the ticket named and missed
+// this third one reassigned in the very same critical section.) Run with
+// -race: before the read-side RLock this crashes the detector rather than
+// passing quietly.
+func TestReloadPlugins_ConcurrentReadersSurviveRace(t *testing.T) {
+	initTestPaths(t)
+	dp := newMigratedSyncDeps(t, "reload-read-race.db")
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// One writer goroutine hammering the exact reload-and-rebuild sequence
+	// this issue is about.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = dp.ReloadPlugins(context.Background())
+			}
+		}
+	}()
+
+	// Several reader goroutines doing what every d.Menu-rendering handler
+	// and the plugin-management API handlers do.
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_ = dp.MenuSnapshot()
+					_, _ = dp.InstalledPlugin("com.test.sync-alpha")
+					_, _ = dp.MenuPluginByKey("some-menu-plugin-key")
+				}
+			}
+		}()
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	close(stop)
 	wg.Wait()
 }

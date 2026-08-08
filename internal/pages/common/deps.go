@@ -22,13 +22,23 @@ type Deps struct {
 	StateMu sync.RWMutex
 
 	// PluginMu serializes the plugin reload-and-rebuild sequence
-	// (Pm.Reload + the Menu reassignment, together — see ReloadPlugins).
-	// Since ut-docs#460 that sequence fires routinely from the replica
-	// sync-pull goroutine every 30s, not just from HTTP handlers, so two
-	// writers could otherwise rebuild the Installed map / Menu slice
-	// concurrently. Write-side only: handlers still READ Menu/Pm.Installed
-	// without a lock — a pre-existing, wider-scope gap tracked separately.
-	PluginMu sync.Mutex
+	// (Pm.Reload + the Menu reassignment, together — see ReloadPlugins)
+	// against every read of Menu/Pm.Installed/Pm.MenuPlugins (via
+	// MenuSnapshot / InstalledPlugin / MenuPluginByKey below). Since
+	// ut-docs#460 that sequence fires routinely from the replica
+	// sync-pull goroutine every 30s, not just from HTTP handlers — an
+	// RWMutex lets concurrent request handlers keep reading in parallel
+	// while still serializing against the reload's writes. Pm.Reload
+	// reassigns Installed AND MenuPlugins to fresh maps and repopulates
+	// both key-by-key (see plugins.Manager.Reload) — an unlocked
+	// concurrent read of EITHER isn't just stale data, it's a fatal
+	// concurrent map access (ut-docs#478). Read call sites MUST go
+	// through MenuSnapshot / InstalledPlugin / MenuPluginByKey, never
+	// touch Menu/Pm.Installed/Pm.MenuPlugins directly — if Manager grows
+	// another field reassigned inside Reload's critical section, it
+	// needs the same treatment, not just the fields a report happened to
+	// name.
+	PluginMu sync.RWMutex
 
 	Cfg      *config.Config
 	Pm       *plugins.Manager
@@ -141,6 +151,51 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 	err := d.Pm.Reload(ctx)
 	d.Menu = BuildMenu(d.BaseMenu, d.Pm)
 	return err
+}
+
+// MenuSnapshot returns the current nav menu under PluginMu's read lock — the
+// only safe way to read Menu, since ReloadPlugins (the sync-pull goroutine,
+// every 30s since ut-docs#460, or any plugin lifecycle handler) reassigns it
+// concurrently (ut-docs#478). Callers that used to read d.Menu directly (nav
+// templates, menu_page.go's active-item lookup) call this instead.
+func (d *Deps) MenuSnapshot() []MenuItem {
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.Menu
+}
+
+// InstalledPlugin returns the installed plugin for id (if any) under
+// PluginMu's read lock. Manager.Reload repopulates Pm.Installed key-by-key
+// into a fresh map, so an unlocked concurrent read racing that isn't just
+// stale data — it's a fatal concurrent map read/write crash (ut-docs#478).
+// Nil-safe on Pm, matching every existing call site's own nil handling.
+func (d *Deps) InstalledPlugin(id string) (plugins.Plugin, bool) {
+	if d.Pm == nil {
+		return plugins.Plugin{}, false
+	}
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	p, ok := d.Pm.Installed[id]
+	return p, ok
+}
+
+// MenuPluginByKey returns the registered external menu plugin for key (if
+// any) under PluginMu's read lock. Manager.Reload reassigns Pm.MenuPlugins
+// to a fresh map and repopulates it key-by-key in the exact same critical
+// section as Installed (internal/plugins/plugins.go), so this has the same
+// fatal-crash-on-unlocked-read profile as InstalledPlugin (ut-docs#478
+// review round 1 — the original sweep grepped for the two field names named
+// in the ticket and missed this third one; every field Manager.Reload
+// reassigns needs a locked accessor, not just the two the ticket happened
+// to name). Nil-safe on Pm.
+func (d *Deps) MenuPluginByKey(key string) (plugins.MenuPlugin, bool) {
+	if d.Pm == nil {
+		return plugins.MenuPlugin{}, false
+	}
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	mp, ok := d.Pm.MenuPlugins[key]
+	return mp, ok
 }
 
 // RequestSyncPush asks the replica journal-push loop for one immediate push

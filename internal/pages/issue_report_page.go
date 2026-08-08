@@ -67,7 +67,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/report_issue.html", map[string]any{
 			"title":     "Report an issue",
 			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"menuItems": d.MenuSnapshot(),
 			// The capture UI lives in the shared bug-report panel now
 			// (ut-docs#346); this route stays as the /menu tile's target and
 			// simply lands with the panel already expanded — stamped

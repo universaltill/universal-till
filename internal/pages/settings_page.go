@@ -91,7 +91,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"themes":            availableThemes(r.Context(), d),
 			"settings":          st,
 			"settingsMap":       all,
-			"menuItems":         d.Menu,
+			"menuItems":         d.MenuSnapshot(),
 			"uiScale":           strconv.FormatFloat(scale, 'f', -1, 64),
 			"isManager":         isManagerOrAuthOff(r),
 			"printer":           printerConfig(r.Context(), d),

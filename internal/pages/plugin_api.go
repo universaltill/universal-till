@@ -501,7 +501,7 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		currentPlugin, exists := d.Pm.Installed[pluginID]
+		currentPlugin, exists := d.InstalledPlugin(pluginID)
 		if !exists {
 			http.Error(w, "Plugin not installed", http.StatusNotFound)
 			return

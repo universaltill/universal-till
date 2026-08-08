@@ -51,7 +51,7 @@ func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/audit.html", map[string]any{
 			"title":       "Audit trail",
 			"theme":       d.CurrentState().Theme,
-			"menuItems":   d.Menu,
+			"menuItems":   d.MenuSnapshot(),
 			"Entries":     entries,
 			"EntityTypes": entityTypes,
 			"Actors":      actors,

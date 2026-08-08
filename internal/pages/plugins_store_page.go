@@ -120,10 +120,8 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 					case plugins.InstallStateActive:
 						// Confirm against the actual installed set so a stale status
 						// (e.g. uninstalled plugin) doesn't freeze the store card.
-						if d.Pm != nil {
-							if _, installed := d.Pm.Installed[st.PluginID]; installed {
-								item.Installed = true
-							}
+						if _, installed := d.InstalledPlugin(st.PluginID); installed {
+							item.Installed = true
 						}
 					case plugins.InstallStateFailed:
 						// Operator-visible failure: keep the card actionable (retry
@@ -142,7 +140,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 		httpx.Render("ui/pages/plugins_store.html", map[string]any{
 			"title":            "Plugin Store",
 			"theme":            d.CurrentState().Theme,
-			"menuItems":        d.Menu,
+			"menuItems":        d.MenuSnapshot(),
 			"Items":            items,
 			"Categories":       storeCategories(items),
 			"EntitledFiltered": false,

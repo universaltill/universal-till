@@ -36,7 +36,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/import.html", map[string]any{
 			"title":     "Import",
 			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"menuItems": d.MenuSnapshot(),
 		})(w, r)
 	})
 
