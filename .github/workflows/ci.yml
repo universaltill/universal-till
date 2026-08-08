@@ -30,6 +30,10 @@ jobs:
         run: bash scripts/ci/guard-kiosk-engine.sh
       - name: Kiosk-engine isolation guard regression test
         run: bash scripts/ci/guard-kiosk-engine_test.sh
+      - name: Plugin-menu locked-read guard
+        run: bash scripts/ci/guard-plugin-menu-read.sh
+      - name: Plugin-menu locked-read guard regression test
+        run: bash scripts/ci/guard-plugin-menu-read_test.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
       - name: i18n coverage guard regression test
