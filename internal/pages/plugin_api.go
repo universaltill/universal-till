@@ -499,6 +499,15 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: the installed plugin set is primary-authoritative,
+		// like the enrol-token/revoke handlers in sync_api.go — reject on a
+		// replica (no proxying), pointing the operator at the primary. The
+		// sync pull tick (syncPullPlugins) brings the primary's set here
+		// automatically within ~30s.
+		if d.SyncPrimaryURL(ctx) != "" {
+			writeInstallResponse(w, http.StatusConflict, false, "", "plugins.install.error.replica_use_primary")
+			return
+		}
 		statusStore := plugins.NewInstallStatusStore(d.Db)
 
 		// Parse request
@@ -685,6 +694,19 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: same primary-authoritative guard as install — a
+		// local uninstall on a replica would only be undone by the next
+		// plugin sync pull, so reject it with a pointer to the primary
+		// (sync_api.go's enrol-token precedent; no proxying).
+		if d.SyncPrimaryURL(ctx) != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"data":  nil,
+				"error": "plugins.uninstall.error.replica_use_primary",
+			})
+			return
+		}
 		pluginID := r.PathValue("id")
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
@@ -930,6 +952,14 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
+		// ut-docs#460: file imports are till-local by design (no listing_id,
+		// so they can never propagate), but a replica's plugin set is still
+		// primary-authoritative — importing here would fork this till's set
+		// from the shop's. Same reject-with-pointer shape as install.
+		if d.SyncPrimaryURL(ctx) != "" {
+			writeInstallResponse(w, http.StatusConflict, false, "", "plugins.install.error.replica_use_primary")
+			return
+		}
 
 		// Parse multipart form (max 200 MB)
 		if err := r.ParseMultipartForm(200 << 20); err != nil {
