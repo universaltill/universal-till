@@ -99,6 +99,33 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await expect(page.locator('#basket')).toBeVisible();
   });
 
+  // ut-docs#429. The wizard just provisioned an admin + PIN as real usable
+  // state; a genuinely fresh till must be able to open its first shift the
+  // same way, on the exact register the wizard's completion step set up —
+  // not the shifts.html template's hardcoded fallback option, which used to
+  // point at a register row that was never actually inserted (a real
+  // browser submitting the real dropdown value is the only thing that
+  // catches this — a Go handler test with a hand-picked register_id would
+  // never see the template pick the wrong id in the first place).
+  test('a fresh till can open its first shift right after the wizard', async () => {
+    await page.goto('/shifts');
+    await expect(page.locator('#open-shift-form')).toBeVisible();
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/shifts/open')),
+      page.locator('#open-shift-form button[type=submit]').click(),
+    ]);
+
+    const result = page.locator('#shift-result');
+    await expect(result).not.toContainText('500');
+    await expect(result).not.toContainText('FOREIGN KEY');
+
+    // A genuine reload (the form's hx-on::after-request triggers one on
+    // success) shows the shift as open — not the still-showing Open Shift
+    // form, which is what a failed/ignored submit would leave behind.
+    await expect(page.locator('body')).toContainText('Shift open since', { timeout: 15_000 });
+  });
+
   // ut-docs#300, checked here because this is the only spec with a real
   // authenticated operator: GET /pin bounces to /login without one, so the
   // default (auth-off) project can never reach this surface. The change-PIN

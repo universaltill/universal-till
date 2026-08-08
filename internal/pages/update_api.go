@@ -108,7 +108,12 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	if autoUpdateBuildVersion() == "dev" {
 		return
 	}
-	if d.Engine.Basket().ItemCount() > 0 {
+	// Both engines (ut-docs#449): the kiosk basket is a separate instance
+	// from the cashier's, so an unattended update mid-kiosk-order must be
+	// blocked too, not just a cashier's mid-sale basket. d.KioskEngine is
+	// nil in some test harnesses that never wire a kiosk engine.
+	if d.Engine.Basket().ItemCount() > 0 ||
+		(d.KioskEngine != nil && d.KioskEngine.Basket().ItemCount() > 0) {
 		return
 	}
 	// Mark the attempt BEFORE calling Apply so a failure (or a stale-cache
@@ -180,25 +185,44 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 // (archive installs, and .deb installs whose postinstall chowns the tree to
 // the service user — ut-docs#151); Windows always uses its native installer,
 // and a non-writable install falls back to a plain reinstall.
+// respondUpdateApply writes the { "data": …, "error": null|"…" } envelope
+// universal-till/CLAUDE.md mandates (ut-docs#387) for POST /api/update/apply.
+// Package-level (not a closure inside the handler) so a test can call it
+// directly against a real ResponseRecorder instead of a copy of its body —
+// a copied closure would pass even if this one drifted (ut-docs#387 review).
+func respondUpdateApply(w http.ResponseWriter, status int, ok bool, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if ok {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"message": msg}, "error": nil})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
+}
+
+// respondUpdateApplyCurrent is respondUpdateApply's "already up to date"
+// case — see respondUpdateApply's own doc comment for why this is
+// package-level rather than a handler-local closure.
+func respondUpdateApplyCurrent(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"data": map[string]any{
+			"already_current": true,
+			"message":         "already up to date (v" + buildinfo.Version + ")",
+		},
+		"error": nil,
+	})
+}
+
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
 		}
-		respond := func(status int, ok bool, msg string) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": ok, "message": msg})
-		}
-		respondCurrent := func() {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"success": true, "already_current": true,
-				"message": "already up to date (v" + buildinfo.Version + ")",
-			})
-		}
+		respond := func(status int, ok bool, msg string) { respondUpdateApply(w, status, ok, msg) }
+		respondCurrent := func() { respondUpdateApplyCurrent(w) }
 		if !selfupdate.Supported() {
 			respond(http.StatusBadRequest, false, selfupdate.ErrUnsupported.Error())
 			return

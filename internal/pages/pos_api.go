@@ -40,12 +40,15 @@ func (e *paymentDeclinedError) Error() string {
 
 // completeTender runs the money-critical authorize -> complete -> publish
 // pipeline shared by every till-mode's tender path (cashier and self-order
-// kiosk alike): payment authorization gate, CompleteSale, basket reset,
-// plugin trigger_event fan-out, ERP/inventory mirroring, and silent
-// receipt/kitchen printing. It must behave identically regardless of the
-// caller, so it lives in exactly one place rather than being duplicated
-// per surface. actorID is attributed on printed receipts/tickets.
-func completeTender(ctx context.Context, d *common.Deps, repo *data.POSRepo, saleInput pos.SaleInput, payments []pos.PaymentInput, actorID string) (string, error) {
+// kiosk alike): payment authorization gate, CompleteSale, basket reset via
+// `engine` (the basket the tendered sale was rung on), plugin trigger_event
+// fan-out, ERP/inventory mirroring, and silent receipt/kitchen printing. It
+// must behave identically regardless of the caller, so it lives in exactly
+// one place rather than being duplicated per surface. actorID is attributed
+// on printed receipts/tickets. The cashier tender path passes d.Engine; the
+// kiosk checkout passes d.KioskEngine (ut-docs#449: an anonymous kiosk
+// checkout must never reset the cashier's live basket, and vice versa).
+func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, repo *data.POSRepo, saleInput pos.SaleInput, payments []pos.PaymentInput, actorID string) (string, error) {
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
 	// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
 	// BEFORE the sale completes — a declined card must stop the sale.
@@ -84,7 +87,7 @@ func completeTender(ctx context.Context, d *common.Deps, repo *data.POSRepo, sal
 		return "", err
 	}
 
-	d.Engine.Reset()
+	engine.Reset()
 
 	// Plugin-provided tender methods: publish each entry's trigger_event so
 	// the owning plugin can react (charge a terminal, show a QR, …).
@@ -536,7 +539,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// demanded here for a zero-amount tender button, and what
 		// CompleteSale enforces all agree. The AMOUNT (not the rate) is
 		// what flows into SaleInput, same shape as SaleDiscount.
-		serviceCharge, _ := pos.ComputeTaxBasisPoints(subtotal.Sub(discount), d.CurrentState().ServiceChargeRatePct*100, false)
+		serviceCharge, _ := pos.ComputeTaxBasisPoints(subtotal.Sub(discount), d.CurrentState().ServiceChargeRateBasisPoints, false)
 		total := subtotal.Sub(discount).Add(serviceCharge)
 		if !d.CurrentState().TaxInclusive {
 			total = total.Add(taxTotal)
@@ -625,7 +628,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			ActorID:                cashierID,
 			Offline:                offline,
 		}
-		saleID, err := completeTender(r.Context(), d, repo, saleInput, payments, getSessionUserID(r))
+		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r))
 		if err != nil {
 			var declined *paymentDeclinedError
 			if errors.As(err, &declined) {
@@ -659,7 +662,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			receiptNo = saleID
 		}
 
-		// Render receipt JSON if requested
+		// Render receipt JSON if requested. Wrapped as { "data": …, "error":
+		// null } -- the envelope universal-till/CLAUDE.md mandates for every
+		// JSON API response (ut-docs#387: this endpoint used to respond bare).
 		if r.Header.Get("Accept") == "application/json" {
 			resp := map[string]any{
 				"saleId":    saleID,
@@ -668,7 +673,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				"payments":  payments,
 				"note":      in.Note,
 			}
-			_ = json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": resp, "error": nil})
 			return
 		}
 

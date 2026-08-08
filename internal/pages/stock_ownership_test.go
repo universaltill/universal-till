@@ -84,9 +84,11 @@ func TestTenderHandler_ReplicaDirectSaleNeverBlocksOnLocalStock(t *testing.T) {
 		t.Fatalf("replica tender must never surface the insufficient-stock error, got: %s", rec.Body.String())
 	}
 	var out struct {
-		SaleID string `json:"saleId"`
+		Data struct {
+			SaleID string `json:"saleId"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.SaleID == "" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Data.SaleID == "" {
 		t.Fatalf("expected a completed sale summary, err=%v body=%s", err, rec.Body.String())
 	}
 	var qty float64
@@ -207,14 +209,16 @@ func TestTenderHandler_PrimaryDirectSaleNegativeStockSurfacesProblem(t *testing.
 		t.Fatalf("expected the oversell allowed by policy, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		ReceiptNo string `json:"receiptNo"`
+		Data struct {
+			ReceiptNo string `json:"receiptNo"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.ReceiptNo == "" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Data.ReceiptNo == "" {
 		t.Fatalf("expected a receipt, err=%v body=%s", err, rec.Body.String())
 	}
 	// 50 - 60 = -10.
-	if n := recentMatches("Apple", "-10.00", "sale "+out.ReceiptNo); n < 1 {
-		t.Fatalf("expected a Problem naming Apple at -10.00 for %s, got none\nrecent: %+v", out.ReceiptNo, logging.Recent())
+	if n := recentMatches("Apple", "-10.00", "sale "+out.Data.ReceiptNo); n < 1 {
+		t.Fatalf("expected a Problem naming Apple at -10.00 for %s, got none\nrecent: %+v", out.Data.ReceiptNo, logging.Recent())
 	}
 }
 
@@ -295,9 +299,11 @@ func TestTwoTills_SameLastUnit_BothSalesSucceed_StockNegative_OneProblem(t *test
 		t.Fatalf("till 2's sale must succeed too, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		ReceiptNo string `json:"receiptNo"`
+		Data struct {
+			ReceiptNo string `json:"receiptNo"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.ReceiptNo == "" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Data.ReceiptNo == "" {
 		t.Fatalf("expected a receipt from the replica sale, err=%v body=%s", err, rec.Body.String())
 	}
 

@@ -183,6 +183,53 @@ VALUES(?, 'multi', ?, ?, 'GBP', ?, '2026-06-15T09:00:00Z')`, p.id, p.method, p.a
 	}
 }
 
+// TestCountSalesForExport is the ut-docs#439 regression: CountSalesForExport
+// must agree with SalesForExport on exactly which sales match, using the
+// same fixture TestSalesForExport already exercises (in-range, boundary-day,
+// before/after the range, and a same-range return excluded by sale_type) so
+// the two can't silently drift on the WHERE semantics they share via
+// exportToSentinel.
+func TestCountSalesForExport(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	seedExportTestItem(t, dbx)
+
+	seedExportSale(t, dbx, "sale1", "R1", "sale", "2026-06-15T09:00:00Z", 1000, 200, 2000, "cash", 1200)
+	seedExportSale(t, dbx, "sale2", "R2", "sale", "2026-06-15T14:00:00Z", 500, 0, 0, "card", 500)
+	seedExportSale(t, dbx, "sale-boundary", "R3", "sale", "2026-06-30T23:59:59Z", 300, 60, 2000, "cash", 360)
+	seedExportSale(t, dbx, "sale-before", "R4", "sale", "2026-06-14T23:59:59Z", 900, 0, 0, "cash", 900)
+	seedExportSale(t, dbx, "sale-after", "R5", "sale", "2026-07-01T00:00:00Z", 900, 0, 0, "cash", 900)
+	seedExportSale(t, dbx, "sale-return", "R6", "return", "2026-06-15T10:00:00Z", 100, 20, 2000, "cash", 120)
+
+	got, err := dbx.repo.CountSalesForExport(ctx, "2026-06-15", "2026-06-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
+		t.Fatalf("expected 3 (matching TestSalesForExport's len(got)), got %d", got)
+	}
+
+	rows, err := dbx.repo.SalesForExport(ctx, "2026-06-15", "2026-06-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != len(rows) {
+		t.Fatalf("CountSalesForExport (%d) disagrees with len(SalesForExport(...)) (%d)", got, len(rows))
+	}
+}
+
+func TestCountSalesForExport_EmptyRange(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	got, err := dbx.repo.CountSalesForExport(ctx, "2026-01-01", "2026-01-31")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Fatalf("expected 0, got %d", got)
+	}
+}
+
 func TestSalesForExport_EmptyRange(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()

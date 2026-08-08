@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -23,6 +24,8 @@ func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) 
 		 created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, revoked_at TEXT, last_seen_at TEXT)`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL,
 		 entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL)`,
+		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, location_id TEXT,
+		 is_active INTEGER NOT NULL DEFAULT 1)`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatalf("setup: %v", err)
@@ -49,7 +52,7 @@ func postForm(mux *http.ServeMux, path string, form url.Values, user *auth.User)
 }
 
 func TestFirstBootSetupThenLogin(t *testing.T) {
-	mux, svc, _ := newAuthTestMux(t)
+	mux, svc, d := newAuthTestMux(t)
 
 	// Fresh DB: /login redirects to the guided setup wizard.
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
@@ -89,6 +92,13 @@ func TestFirstBootSetupThenLogin(t *testing.T) {
 	}
 	if u, ok := svc.Resolve(t.Context(), cookie); !ok || u.Role != "admin" {
 		t.Fatalf("setup session resolves to %+v ok=%v", u, ok)
+	}
+
+	// ut-docs#429: the bare fallback must leave the till with a real usable
+	// register too, not just an admin — a fresh till with no register can't
+	// open a shift (FK constraint failure) even though setup "succeeded".
+	if regs, err := data.NewPOSRepo(d.Db).ListRegisters(t.Context()); err != nil || len(regs) == 0 {
+		t.Fatalf("ListRegisters after first-boot setup = %+v, err=%v; want at least one register", regs, err)
 	}
 
 	// Setup is one-time: a second attempt bounces to /login untouched.

@@ -143,6 +143,51 @@ func (l LowStockItem) EffectiveWarnDays() int {
 	return defaultWarnDays
 }
 
+// DaysLeftAt returns floor(CurrentQty / rate) — the shared "days of stock
+// left" computation used by both /inventory's displayed number (see
+// stockLevelsForDisplay in internal/pages/inventory_page.go) and
+// IsRunningOut's boundary decision below (universaltill/ut-docs#440),
+// extracted so a future change to the formula (e.g. math.Ceil, a safety
+// margin) can't silently desync the displayed number from the warning
+// flag the way two independently-maintained copies could.
+//
+// Guards the float64→int conversion, which Go leaves implementation-
+// defined for a NaN or out-of-int-range result: a rate small enough that
+// CurrentQty/rate overflows int range, or a NaN input, clamps to
+// math.MaxInt ("effectively never running out at this rate") rather than
+// converting directly — the same direction a raw-float comparison against
+// a small warn-days threshold would also land on. Unreachable through
+// today's three call sites (rate is always a positive, finite
+// positive_qty/28 from ItemDailySellRates), but this method is exported
+// from internal/data, so a future caller isn't guaranteed the same input.
+func (l LowStockItem) DaysLeftAt(rate float64) int {
+	days := l.CurrentQty / rate
+	if math.IsNaN(days) || days > float64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(days)
+}
+
+// IsRunningOut is the single shared "is this item running out" decision
+// given a sell rate (units/day), used identically by the /inventory page,
+// the low-stock digest and the /reports header chip
+// (universaltill/ut-docs#275 — before this method existed, /inventory
+// floored the days-left prediction before comparing while the other two
+// compared the raw float directly, so they could disagree at an exact
+// boundary, e.g. qty/rate=7.5 against a 7-day window). Floor-then-compare
+// is the standardized behavior: it matches /inventory (the primary
+// surface) for the common case, and is the more conservative of the two —
+// it never warns later than a raw-float compare would.
+func (l LowStockItem) IsRunningOut(rate float64) bool {
+	if rate <= 0 || math.IsNaN(rate) {
+		return false
+	}
+	if l.CurrentQty <= 0 {
+		return true
+	}
+	return l.DaysLeftAt(rate) <= l.EffectiveWarnDays()
+}
+
 // SearchActiveItems finds active items matching name/sku/barcode with optional pagination.
 func (r *POSRepo) SearchActiveItems(ctx context.Context, q string, offset, limit int) ([]catalogtypes.ItemInput, error) {
 	var err error
@@ -1039,19 +1084,72 @@ type SeasonalCategory struct {
 // lunarYearDays is the mean lunar (Hijri) year length in days.
 const lunarYearDays = 354.37
 
-// seasonalWindowSQL sums units per item inside one historical window.
-const seasonalWindowSQL = `
-SELECT i.id, i.name, COALESCE(c.name, ''), SUM(sl.quantity) AS units
+// seasonalWindow is one historical solar- or lunar-calendar window: units
+// sold in the `days`-long span starting `offset` days before now, for prior
+// year k (1..3).
+type seasonalWindow struct {
+	k      int
+	lunar  bool
+	offset int
+}
+
+// seasonalWindowQuery builds ONE query that sums units per item across ALL
+// given windows in a single sale_lines/sales/items scan, instead of one
+// query per window (ut-docs#199 — up to 6 full scans per SeasonalForecast
+// call, each unindexable: created_at is stored RFC3339 ('...T...Z'), while
+// datetime('now', ...) yields SQLite's own space-separated format, so the
+// column side of the comparison MUST go through datetime() too (see the
+// PeriodComparison trap above) — that wrapper is what makes idx_sales_created
+// unusable, on every one of the old per-window queries alike. Collapsing to
+// one query doesn't fix that, but it does cut the table scan count from up
+// to 6 down to 1, which is the structural fix this ticket asked for.
+// Each window contributes one SUM(CASE WHEN <window bound> ...) column, and
+// the same bound also gates which rows the query even considers (the WHERE
+// OR), so an item with no MATCHING ROW in any window never appears in the
+// result. That's weaker than the old per-window queries' HAVING units > 0,
+// though: a row that exists inside a window but sums to zero/net-zero
+// quantity still passes the WHERE gate and comes back as an all-zero row —
+// SeasonalForecast's caller is the one that must skip it (see the firstK==0
+// guard there), this builder only guarantees "no window, no row".
+func seasonalWindowQuery(windows []seasonalWindow, days int) (string, []any) {
+	if len(windows) == 0 {
+		return "", nil
+	}
+	type bound struct{ from, to string }
+	bounds := make([]bound, len(windows))
+	for i, w := range windows {
+		bounds[i] = bound{
+			from: fmt.Sprintf("-%d days", w.offset),
+			to:   fmt.Sprintf("-%d days", w.offset-days),
+		}
+	}
+	cols := make([]string, len(windows))
+	preds := make([]string, len(windows))
+	for i := range windows {
+		pred := "(datetime(s.created_at) >= datetime('now', ?) AND datetime(s.created_at) < datetime('now', ?))"
+		cols[i] = fmt.Sprintf("SUM(CASE WHEN %s THEN sl.quantity ELSE 0 END) AS w%d", pred, i)
+		preds[i] = pred
+	}
+	query := fmt.Sprintf(`
+SELECT i.id, i.name, COALESCE(c.name, ''), %s
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
 JOIN items i ON i.id = COALESCE(NULLIF(sl.item_id, ''),
                                 (SELECT v.item_id FROM item_variants v WHERE v.id = sl.variant_id))
 LEFT JOIN categories c ON c.id = i.category_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale'
-  AND datetime(s.created_at) >= datetime('now', ?)
-  AND datetime(s.created_at) <  datetime('now', ?)
-  AND i.is_active = 1
-GROUP BY i.id HAVING units > 0`
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND i.is_active = 1
+  AND (%s)
+GROUP BY i.id`, strings.Join(cols, ",\n       "), strings.Join(preds, "\n    OR "))
+
+	args := make([]any, 0, len(windows)*4)
+	for _, b := range bounds { // one pass per SELECT CASE column
+		args = append(args, b.from, b.to)
+	}
+	for _, b := range bounds { // one pass per WHERE OR predicate
+		args = append(args, b.from, b.to)
+	}
+	return query, args
+}
 
 // SeasonalForecast looks at the NEXT `days` days across up to three prior
 // years (solar + lunar windows, see SeasonalItem) and returns the items that
@@ -1085,44 +1183,47 @@ WHERE status = 'completed' AND sale_type = 'sale'`).Scan(&ageDays); err != nil {
 		return nil, nil, nil
 	}
 
+	windows := make([]seasonalWindow, 0, yearsAvail*2)
+	for k := 1; k <= yearsAvail; k++ {
+		windows = append(windows,
+			seasonalWindow{k: k, lunar: false, offset: k * 365},
+			seasonalWindow{k: k, lunar: true, offset: int(math.Round(float64(k) * lunarYearDays))})
+	}
+
 	type acc struct {
 		name, category string
 		solar, lunar   [4]float64 // indexed by year k (1..3)
 	}
 	accs := map[string]*acc{}
-	scanWindow := func(k, offset int, lunar bool) error {
-		rows, err := r.db.QueryContext(ctx, seasonalWindowSQL,
-			fmt.Sprintf("-%d days", offset), fmt.Sprintf("-%d days", offset-days))
-		if err != nil {
-			return fmt.Errorf("seasonal window: %w", err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id, name, category string
-			var units float64
-			if err := rows.Scan(&id, &name, &category, &units); err != nil {
-				return fmt.Errorf("scan seasonal window: %w", err)
-			}
-			a := accs[id]
-			if a == nil {
-				a = &acc{name: name, category: category}
-				accs[id] = a
-			}
-			if lunar {
-				a.lunar[k] = units
-			} else {
-				a.solar[k] = units
-			}
-		}
-		return rows.Err()
+	query, args := seasonalWindowQuery(windows, days)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("seasonal windows: %w", err)
 	}
-	for k := 1; k <= yearsAvail; k++ {
-		if err := scanWindow(k, k*365, false); err != nil {
-			return nil, nil, err
+	defer rows.Close()
+	for rows.Next() {
+		var id, name, category string
+		sums := make([]float64, len(windows))
+		dest := make([]any, 0, 3+len(windows))
+		dest = append(dest, &id, &name, &category)
+		for i := range sums {
+			dest = append(dest, &sums[i])
 		}
-		if err := scanWindow(k, int(math.Round(float64(k)*lunarYearDays)), true); err != nil {
-			return nil, nil, err
+		if err := rows.Scan(dest...); err != nil {
+			return nil, nil, fmt.Errorf("scan seasonal windows: %w", err)
 		}
+		a := &acc{name: name, category: category}
+		accs[id] = a
+		for i, w := range windows {
+			if w.lunar {
+				a.lunar[w.k] = sums[i]
+			} else {
+				a.solar[w.k] = sums[i]
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("seasonal windows: %w", err)
 	}
 	if len(accs) == 0 {
 		return nil, nil, nil
@@ -1172,6 +1273,16 @@ GROUP BY iid`)
 				firstK = k
 				break
 			}
+		}
+		if firstK == 0 {
+			// seasonalWindowQuery's WHERE only guarantees a matching ROW
+			// existed in some window, not that it summed positive (a
+			// zero/net-zero-quantity row, or a solar/lunar wash, can still
+			// pass it — the old per-window HAVING units > 0 caught this,
+			// this doesn't). Without this guard, sum/firstK below is 0/0 =
+			// NaN, which then poisons this item's WHOLE category rollup
+			// (Expected += NaN) on the shop's live reports page.
+			continue
 		}
 		var sum, sumSolar, sumLunar float64
 		for k := 1; k <= firstK; k++ {

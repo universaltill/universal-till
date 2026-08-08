@@ -91,6 +91,48 @@ func TestSeedVariantBarcodesValidEAN13(t *testing.T) {
 	}
 }
 
+// ut-docs#191 (split from #17's independent review): shortcut_buttons also
+// seeds a barcode column and carried the same fabricated check digit.
+func TestSeedShortcutButtonsValidEAN13(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "shortcut-buttons.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	rows, err := d.DB.Query(`SELECT barcode FROM shortcut_buttons`)
+	if err != nil {
+		t.Fatalf("query shortcut_buttons: %v", err)
+	}
+	defer rows.Close()
+
+	var barcodes []string
+	for rows.Next() {
+		var barcode string
+		if err := rows.Scan(&barcode); err != nil {
+			t.Fatalf("scan barcode: %v", err)
+		}
+		barcodes = append(barcodes, barcode)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(barcodes) != 10 {
+		t.Fatalf("got %d seeded shortcut_buttons, want 10", len(barcodes))
+	}
+
+	var invalid []string
+	for _, barcode := range barcodes {
+		if !isValidEAN13(barcode) {
+			invalid = append(invalid, barcode)
+		}
+	}
+	if len(invalid) > 0 {
+		t.Fatalf("seeded shortcut_buttons with invalid EAN-13 check digit: %v", invalid)
+	}
+}
+
 // The upgrade path: a till that installed before migration 023 existed
 // already has the broken checksums from 001's seed. Simulate by rewinding
 // schema_migrations past 023 and restoring one broken barcode, then
@@ -139,11 +181,16 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE stock_locations DROP COLUMN is_active`); err != nil {
 		t.Fatalf("rewind stock_locations.is_active column: %v", err)
 	}
+	// Migration 032 creates a table -- same non-idempotent-replay problem as
+	// 027, drop it too (ut-docs#348).
+	if _, err := d.DB.Exec(`DROP TABLE issue_reports_sent`); err != nil {
+		t.Fatalf("rewind issue_reports_sent table: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies only 023
+	d, err = Open(path) // re-applies 023 and its followers (027-032)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +202,49 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	}
 	if barcode != "5000000000012" {
 		t.Fatalf("itm001 barcode = %q after 023 upgrade, want %q", barcode, "5000000000012")
+	}
+}
+
+// The upgrade path for #191's fix: a till that installed before migration
+// 031 existed already has the broken shortcut_buttons checksum from 001's
+// seed. Simulate by rewinding schema_migrations past 031 and restoring one
+// broken barcode, then reopening — 031 alone must correct it on the next
+// boot. Unlike 023's followers, 031 is a pure UPDATE (no DDL), so no column/
+// table rewind is needed alongside it.
+func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shortcut-button-upgrade.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`UPDATE shortcut_buttons SET barcode = '2000010000017' WHERE barcode = '2000010000012'`); err != nil {
+		t.Fatalf("simulate pre-031 broken checksum: %v", err)
+	}
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 31`); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	// 031 itself is a pure UPDATE (no DDL), but rewinding past it also
+	// replays 032, whose CREATE TABLE isn't idempotent — drop the table so
+	// the replay works, same as the pre-023 rewind above (ut-docs#348).
+	if _, err := d.DB.Exec(`DROP TABLE issue_reports_sent`); err != nil {
+		t.Fatalf("rewind issue_reports_sent table: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err = Open(path) // re-applies 031 and 032
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var barcode string
+	if err := d.DB.QueryRow(`SELECT barcode FROM shortcut_buttons WHERE item_id = 'itm001'`).Scan(&barcode); err != nil {
+		t.Fatal(err)
+	}
+	if barcode != "2000010000012" {
+		t.Fatalf("itm001 shortcut barcode = %q after 031 upgrade, want %q", barcode, "2000010000012")
 	}
 }
 

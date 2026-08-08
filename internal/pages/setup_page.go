@@ -111,11 +111,17 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		d.SetState(st)
 		httpx.InitCurrency(st.Currency)
-		d.Engine.SetConfig(pos.Config{
+		// Both engines: the kiosk's separate instance (ut-docs#449) must see
+		// the same tax config or it would silently charge stale rates.
+		newCfg := pos.Config{
 			TaxInclusive:                 st.TaxInclusive,
 			TaxRateBasisPoints:           st.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: st.ServiceChargeRatePct * 100,
-		})
+			ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
+		}
+		d.Engine.SetConfig(newCfg)
+		if d.KioskEngine != nil {
+			d.KioskEngine.SetConfig(newCfg)
+		}
 
 		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {
 			if err := d.Settings.Set(r.Context(), "store.name", name); err != nil {
@@ -130,6 +136,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			}
 		}
 		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {
+			http.Error(w, "setup failed", http.StatusInternalServerError)
+			return
+		}
+
+		// A fresh till needs a real usable register the moment onboarding
+		// finishes, not just an admin user — the Shifts page's register
+		// picker is driven entirely from real `registers` rows, and without
+		// one Open Shift 500s on a FK constraint failure (ut-docs#429).
+		if _, err := posRepo.EnsureRegister(r.Context()); err != nil {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
 			return
 		}

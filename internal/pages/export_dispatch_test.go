@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/http/httptest"
@@ -49,6 +50,24 @@ func seedExportPluginWithPermissions(t *testing.T, db *sql.DB, pluginID, key, la
 	}
 }
 
+// exportErrorEnvelope decodes /api/data/export's failure envelope --
+// { "data": null, "error": "…" } (universal-till/CLAUDE.md, ut-docs#387) --
+// and returns the error string, failing the test if data isn't null.
+func exportErrorEnvelope(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var out struct {
+		Data  any    `json:"data"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode error envelope: %v (%s)", err, rec.Body.String())
+	}
+	if out.Data != nil {
+		t.Fatalf("expected data:null on error, got %v", out.Data)
+	}
+	return out.Error
+}
+
 // subscribeExportAsk resets the shared bus's subscribers (the bus is a
 // process-wide singleton — see SharedBus's doc comment — so each test that
 // needs a fresh, single answering handler for "export.requested.ask" must
@@ -77,9 +96,126 @@ func TestExportDispatch_FromAfterTo(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := dataAPIJSONBody(t, rec)
-	if body["message"] != "from must not be after to" {
-		t.Fatalf("unexpected message: %+v", body)
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "from must not be after to" {
+		t.Fatalf("unexpected message: %q", errMsg)
+	}
+}
+
+// TestExportDispatch_DateRangeTooLarge is the ut-docs#229 regression: with
+// no cap, a year-plus-long range would attempt SalesForExport's full
+// data-gathering step (however cheap the query shape is made) with no
+// upper bound at all — on till-class hardware, an unbounded request is
+// itself the risk, independent of how efficient the query becomes. The
+// host rejects an over-long range before ever calling SalesForExport,
+// mirroring TestExportDispatch_FromAfterTo's shape.
+func TestExportDispatch_DateRangeTooLarge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+	// Independent review finding (2026-08-08): without a subscriber, an
+	// unrelated failure ("export plugin did not respond") also 400s, so
+	// the status-code check alone can't tell the cap from a red herring —
+	// subscribe so a missing cap would 200, making the status check
+	// genuinely load-bearing rather than just the exact message text.
+	subscribeExportAsk(t, dp.Db, "com.t.exp1", json.RawMessage(`{"ok":true,"message":"accepted"}`))
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2024-01-01"}, "to": {"2026-06-01"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "date range exceeds the 366-day maximum" {
+		t.Fatalf("unexpected message: %q", errMsg)
+	}
+}
+
+// TestExportDispatch_DateRangeAtCap proves the cap is inclusive — exactly
+// maxExportRangeDays apart must still succeed, matching the "off-by-one"
+// caution most range-boundary code in this repo already takes (e.g.
+// SalesForExport's own inclusive-of-final-day handling).
+func TestExportDispatch_DateRangeAtCap(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+	subscribeExportAsk(t, dp.Db, "com.t.exp1", json.RawMessage(`{"ok":true,"message":"accepted"}`))
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2025-01-01"}, "to": {"2026-01-02"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 at exactly the cap (366 days), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestExportDispatch_RowCountTooLarge is the ut-docs#439 regression: the
+// 366-day range cap alone only bounds elapsed time, not row count -- a
+// matched-sale count over maxExportSalesRows must be rejected before
+// SalesForExport's batch gather (and the plugin dispatch after it) ever
+// runs, the same "reject before doing the expensive work" shape
+// TestExportDispatch_DateRangeTooLarge already proves for the range cap.
+// Overrides the package var rather than seeding 50,000 real rows.
+func TestExportDispatch_RowCountTooLarge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := maxExportSalesRows
+	maxExportSalesRows = 2
+	t.Cleanup(func() { maxExportSalesRows = orig })
+
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+	// Subscribed so a missing/broken cap would 200, not just 400 for an
+	// unrelated reason (same red-herring caution as the date-range test).
+	subscribeExportAsk(t, dp.Db, "com.t.exp1", json.RawMessage(`{"ok":true,"message":"accepted"}`))
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	for i, r := range []string{"R1", "R2", "R3"} {
+		mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+		          VALUES(?, ?, 'completed', 'sale', 'GBP', 1000, 0, 0, 1000, ?)`,
+			fmt.Sprintf("rc-sale-%d", i), r, fmt.Sprintf("2026-01-%02dT10:00:00Z", i+1))
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "matched sale count (3) exceeds the 2-row maximum — narrow the date range" {
+		t.Fatalf("unexpected message: %q", errMsg)
+	}
+}
+
+// TestExportDispatch_RowCountAtCap proves the bound is inclusive -- exactly
+// maxExportSalesRows matched sales must still succeed, matching the
+// boundary-inclusive convention TestExportDispatch_DateRangeAtCap already
+// establishes for the range cap.
+func TestExportDispatch_RowCountAtCap(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := maxExportSalesRows
+	maxExportSalesRows = 2
+	t.Cleanup(func() { maxExportSalesRows = orig })
+
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+	subscribeExportAsk(t, dp.Db, "com.t.exp1", json.RawMessage(`{"ok":true,"message":"accepted"}`))
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	for i, r := range []string{"R1", "R2"} {
+		mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+		          VALUES(?, ?, 'completed', 'sale', 'GBP', 1000, 0, 0, 1000, ?)`,
+			fmt.Sprintf("ac-sale-%d", i), r, fmt.Sprintf("2026-01-%02dT10:00:00Z", i+1))
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 at exactly the cap (2 sales), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -105,9 +241,9 @@ func TestExportDispatch_NoExporterInstalled(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := dataAPIJSONBody(t, rec)
-	if body["message"] != "no export plugin installed" {
-		t.Fatalf("unexpected message: %+v", body)
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "no export plugin installed" {
+		t.Fatalf("unexpected message: %q", errMsg)
 	}
 }
 
@@ -121,9 +257,9 @@ func TestExportDispatch_AmbiguousEntryKey(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := dataAPIJSONBody(t, rec)
-	if body["message"] != "multiple export entries installed — specify entry_key" {
-		t.Fatalf("unexpected message: %+v", body)
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "multiple export entries installed — specify entry_key" {
+		t.Fatalf("unexpected message: %q", errMsg)
 	}
 }
 
@@ -136,9 +272,9 @@ func TestExportDispatch_UnknownEntryKey(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := dataAPIJSONBody(t, rec)
-	if body["message"] != "no installed export entry with that key" {
-		t.Fatalf("unexpected message: %+v", body)
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "no installed export entry with that key" {
+		t.Fatalf("unexpected message: %q", errMsg)
 	}
 }
 
@@ -155,9 +291,9 @@ func TestExportDispatch_NoSubscriberAnswers(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := dataAPIJSONBody(t, rec)
-	if body["message"] != "export plugin did not respond" {
-		t.Fatalf("unexpected message: %+v", body)
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "export plugin did not respond" {
+		t.Fatalf("unexpected message: %q", errMsg)
 	}
 }
 
@@ -211,9 +347,9 @@ func TestExportDispatch_NeverAnswersFromWrongPlugin(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 (right plugin has no subscriber), got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := dataAPIJSONBody(t, rec)
-	if body["message"] != "export plugin did not respond" {
-		t.Fatalf("leaked the wrong plugin's answer instead of failing: %+v", body)
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "export plugin did not respond" {
+		t.Fatalf("leaked the wrong plugin's answer instead of failing: %q", errMsg)
 	}
 }
 
@@ -229,8 +365,14 @@ func TestExportDispatch_MessageOnlyResponse(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
+	// Envelope: { "data": { "message": "triggered" }, "error": null }
+	// (universal-till/CLAUDE.md, ut-docs#387).
 	body := dataAPIJSONBody(t, rec)
-	if body["success"] != true || body["message"] != "triggered" {
+	if body["error"] != nil {
+		t.Fatalf("expected error:null, got %+v", body)
+	}
+	data, _ := body["data"].(map[string]any)
+	if data == nil || data["message"] != "triggered" {
 		t.Fatalf("unexpected body: %+v", body)
 	}
 }
@@ -247,9 +389,9 @@ func TestExportDispatch_PluginError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := dataAPIJSONBody(t, rec)
-	if body["message"] != "boom" {
-		t.Fatalf("unexpected message: %+v", body)
+	errMsg := exportErrorEnvelope(t, rec)
+	if errMsg != "boom" {
+		t.Fatalf("unexpected message: %q", errMsg)
 	}
 }
 

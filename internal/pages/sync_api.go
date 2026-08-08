@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net"
@@ -192,13 +193,24 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// This device's own row (ut-docs#396): only when THIS device is
-		// itself the primary — a replica showing its primary is a separate,
-		// out-of-scope concern.
+		// The primary's own name (ut-docs#396's till.name setting): shown
+		// on this page regardless of role. till.name is NOT in
+		// PerTillSettingPrefixes, so on a replica it's already the value
+		// synced down from the primary via the admin bundle (ut-docs#405 —
+		// this used to be primary-only: "a replica showing its primary is
+		// a separate, out-of-scope concern," which is exactly the gap this
+		// card closes; tillNameOrDefault needs no replica-specific branch
+		// because that setting key means "the primary's name" everywhere
+		// it's read, on any till).
 		primaryURL := d.SyncPrimaryURL(r.Context())
-		var primaryName string
-		if primaryURL == "" {
-			primaryName = tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
+		primaryName := tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
+		// This device's own till id, when it's itself a replica — used
+		// below only to tag its own row in .Tills (now populated on a
+		// replica too, ut-docs#405's adminTables addition) as "(this
+		// till)" rather than just another sibling.
+		var thisTillID string
+		if primaryURL != "" {
+			thisTillID, _, _ = d.Settings.Get(r.Context(), "sync.till_id")
 		}
 		httpx.Render("ui/pages/tills.html", map[string]any{
 			"title":           "Tills",
@@ -207,6 +219,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			"Tills":           list,
 			"PrimaryTillName": primaryName,
 			"SyncPrimary":     primaryURL,
+			"ThisTillID":      thisTillID,
 		})(w, r)
 	})
 
@@ -215,6 +228,19 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	mux.HandleFunc("POST /api/sync/enroll-token", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		// ut-docs#405 (independent review finding): enrolling is the other
+		// half of the revoke guard above — a code minted on a REPLICA would
+		// encode the replica's own address, so the new till would enrol
+		// against the replica's local (non-authoritative) tills table
+		// instead of the shop's real primary. It looks like it worked
+		// (QR shown, till joins, gets a real bearer) right up until the
+		// next admin-bundle pull prunes that row — the primary never knew
+		// about it — and the new till's access silently vanishes ~30s
+		// later with no explanation. Fail here, before ever showing a QR.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
 			return
 		}
 		_ = r.ParseForm()
@@ -256,6 +282,15 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// Replica enrolment — token IS the auth (one-time, 10-min), so this
 	// path is middleware-exempt like the login flow.
 	mux.HandleFunc("POST /api/sync/enroll", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#405: defense in depth alongside the enroll-token guard
+		// above — a stale QR/code minted before this fix (or copy-pasted
+		// to the wrong device by hand) must still not be honoured by a
+		// replica. See that guard's comment for the failure mode this
+		// prevents.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
+			return
+		}
 		var in struct {
 			Token string `json:"token"`
 			Name  string `json:"name"`
@@ -302,18 +337,24 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	})
 
 	// D2: full-DB snapshot for a joining replica (bearer-gated). Uses the
-	// backup mechanism (VACUUM INTO) — safe while selling.
+	// backup mechanism (VACUUM INTO) — safe while selling. Served from a
+	// throwaway bearer_hash-redacted COPY (ut-docs#426): the sync-auth
+	// secret of every OTHER till must never reach a replica — the same rule
+	// the D4 admin-bundle redactCols enforces on every incremental pull. The
+	// real backup snapshot itself stays pristine (it's a disaster-recovery
+	// artifact whose restore must bring back the real till roster).
 	mux.HandleFunc("GET /api/sync/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		till, ok := syncTill(r, repo)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		path, err := db.Snapshot(d.Db, d.Cfg.DBPath)
+		path, cleanup, err := db.RedactedJoinSnapshot(d.Db, d.Cfg.DBPath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		defer cleanup()
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", till.ID, "snapshot_served",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -335,10 +376,23 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		})
 	})
 
-	// Revoke a replica (manager).
+	// Revoke a replica (manager, primary only).
 	mux.HandleFunc("POST /api/sync/tills/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		// ut-docs#405: the shop's till roster now syncs to every replica
+		// (adminTables), so .Tills on a replica's own /tills page is no
+		// longer always empty — without this check a replica could revoke
+		// a sibling row in its OWN local copy (a real DELETE, so it looks
+		// like it worked, HX-Refresh and all), while the shop-wide roster
+		// on the primary is untouched: the row just reappears on the next
+		// ~30s admin-bundle pull. Revocation is a primary-authoritative
+		// write, same rule ADR-0011 §2 already states for catalog/settings
+		// ("replicas never write ... directly").
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "revoke must be done on the primary till", http.StatusConflict)
 			return
 		}
 		id := r.PathValue("id")
@@ -398,10 +452,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
-			// Escaped: these errors embed the operator-pasted primary URL
-			// (`Post "http://…": dial tcp …`), so an unescaped write reflects
-			// attacker-chosen markup back into the page.
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(err.Error()))
+			// Escaped: a joinError's dynamic detail can embed the
+			// operator-pasted primary URL (`Post "http://…": dial tcp …`),
+			// so an unescaped write reflects attacker-chosen markup back
+			// into the page (ut-docs#36).
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(friendlyJoinError(locale, err)))
 			return
 		}
 		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
@@ -423,10 +478,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
-			// Escaped: these errors embed the operator-pasted primary URL
-			// (`Post "http://…": dial tcp …`), so an unescaped write reflects
-			// attacker-chosen markup back into the page.
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(err.Error()))
+			// Escaped: a joinError's dynamic detail can embed the
+			// operator-pasted primary URL (`Post "http://…": dial tcp …`),
+			// so an unescaped write reflects attacker-chosen markup back
+			// into the page (ut-docs#36).
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(friendlyJoinError(locale, err)))
 			return
 		}
 		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
@@ -436,12 +492,81 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	return tokens
 }
 
+// joinErrKind classifies why joinPrimary/completeJoin failed, so the
+// /api/sync/join and /api/setup/join handlers can render a localized
+// message instead of raw English (ut-docs#36: the success path was already
+// i18n'd via httpx.T, but every error here was a hardcoded fmt.Errorf shown
+// straight to the operator, so a mis-pasted code showed English on an
+// ar/fa/tr till).
+type joinErrKind int
+
+const (
+	joinErrBadCode joinErrKind = iota
+	joinErrRequestFailed
+	joinErrUnreachable
+	joinErrNotATill
+	joinErrRefused
+	joinErrSnapshotFailed
+	joinErrStageSnapshotFailed
+	joinErrStageIdentityFailed
+)
+
+// joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
+// here must exist, translated, in every locale file — guard-i18n.sh enforces
+// that the locale files' key sets match en.json exactly.
+var joinErrLocaleKey = map[joinErrKind]string{
+	joinErrBadCode:             "tills.join_error.bad_code",
+	joinErrRequestFailed:       "tills.join_error.request_failed",
+	joinErrUnreachable:         "tills.join_error.unreachable",
+	joinErrNotATill:            "tills.join_error.not_a_till",
+	joinErrRefused:             "tills.join_error.refused",
+	joinErrSnapshotFailed:      "tills.join_error.snapshot_failed",
+	joinErrStageSnapshotFailed: "tills.join_error.stage_snapshot_failed",
+	joinErrStageIdentityFailed: "tills.join_error.stage_identity_failed",
+}
+
+// joinError is what every joinPrimary/completeJoin failure path returns.
+// detail carries non-translatable dynamic content (a URL, a wrapped network
+// error, an HTTP status) that gets substituted into the locale string's
+// %s placeholder by friendlyJoinError — the same fmt.Sprintf(httpx.T(...),
+// dynamicValue) convention catalog.error.barcode_conflict already uses
+// (internal/pages/common/barcode_conflict.go). Error() returns an
+// untranslated fallback for logs/tests, never shown to an operator directly.
+type joinError struct {
+	kind   joinErrKind
+	detail string // "" if the locale string has no placeholder
+}
+
+func (e *joinError) Error() string {
+	if e.detail == "" {
+		return joinErrLocaleKey[e.kind]
+	}
+	return joinErrLocaleKey[e.kind] + ": " + e.detail
+}
+
+// friendlyJoinError renders a join/enrolment failure for the operator,
+// translated via httpx.T. Falls back to the raw error text (English,
+// HTML-escaped by the caller) for anything that isn't a *joinError —
+// defensive only, since every joinPrimary/completeJoin return path
+// produces one.
+func friendlyJoinError(locale string, err error) string {
+	var je *joinError
+	if !errors.As(err, &je) {
+		return err.Error()
+	}
+	msg := httpx.T(locale, joinErrLocaleKey[je.kind])
+	if je.detail == "" {
+		return msg
+	}
+	return fmt.Sprintf(msg, je.detail)
+}
+
 // joinPrimary runs the whole replica-side join: enrol with the one-time
 // code, download the snapshot, stage restore + identity for the restart.
 func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, error) {
 	primaryURL, token, err := decodeEnrollCode(code)
 	if err != nil {
-		return "", fmt.Errorf("paste the full code shown on the other till")
+		return "", &joinError{kind: joinErrBadCode}
 	}
 	return completeJoin(r, d, primaryURL, token, name)
 }
@@ -458,12 +583,12 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		base+"/api/sync/enroll", strings.NewReader(string(body)))
 	if err != nil {
-		return "", err
+		return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("cannot reach the primary till: %w", err)
+		return "", &joinError{kind: joinErrUnreachable, detail: err.Error()}
 	}
 	defer resp.Body.Close()
 	var out struct {
@@ -479,28 +604,28 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		// usually the code points at the wrong machine. Saying "code used or
 		// expired" here is what made ut-docs#362 undiagnosable from the shop
 		// floor: it blames the code, so the owner regenerates it forever.
-		return "", fmt.Errorf("reached %s but it is not a Universal Till — check the address in the code", base)
+		return "", &joinError{kind: joinErrNotATill, detail: base}
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Bearer == "" {
-		return "", fmt.Errorf("primary refused the enrolment (code used or expired?)")
+		return "", &joinError{kind: joinErrRefused}
 	}
 
 	// Download the shop snapshot with our new bearer and stage it.
 	sreq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/api/sync/snapshot", nil)
 	if err != nil {
-		return "", err
+		return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
 	}
 	sreq.Header.Set("Authorization", "Bearer "+out.Data.Bearer)
 	sresp, err := client.Do(sreq)
 	if err != nil {
-		return "", fmt.Errorf("snapshot download failed: %w", err)
+		return "", &joinError{kind: joinErrSnapshotFailed, detail: err.Error()}
 	}
 	defer sresp.Body.Close()
 	if sresp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("snapshot download failed: %s", sresp.Status)
+		return "", &joinError{kind: joinErrSnapshotFailed, detail: sresp.Status}
 	}
 	if err := db.StageRestoreFromReader(d.Cfg.DBPath, sresp.Body); err != nil {
-		return "", fmt.Errorf("stage snapshot: %w", err)
+		return "", &joinError{kind: joinErrStageSnapshotFailed, detail: err.Error()}
 	}
 	draw := make([]byte, 16)
 	_, _ = rand.Read(draw)
@@ -512,7 +637,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		TillName:      name,
 		DeviceID:      "till-" + hex.EncodeToString(draw),
 	}); err != nil {
-		return "", fmt.Errorf("stage identity: %w", err)
+		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
 	}
 	posRepo := data.NewPOSRepo(d.Db)
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",

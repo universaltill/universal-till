@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -272,6 +274,72 @@ func TestSyncSnapshot_RequiresAuth(t *testing.T) {
 	}
 }
 
+// ut-docs#426: the snapshot handed to a joining replica is a full-DB copy,
+// and its tills table used to carry EVERY enrolled till's real bearer_hash
+// (the sync-auth secret) — the joining till held every sibling's secret from
+// the moment of join. The served snapshot must have bearer_hash NULLed for
+// every row, while the primary's live DB keeps the real values.
+func TestSyncSnapshot_RedactsOtherTillsBearerHash(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	primary, primaryPath := newSyncDepsWithPath(t, "primary.db")
+	pmux := http.NewServeMux()
+	registerSyncAPI(pmux, primary)
+
+	// Two enrolled tills with real (non-NULL) bearer hashes: the caller
+	// itself plus a sibling whose secret is the one at stake.
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(primary.Db)
+	callerBearer := "tok-caller"
+	if _, err := tillsRepo.InsertTill(ctx, "Caller Till", hashBearer(callerBearer)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tillsRepo.InsertTill(ctx, "Sibling Till", hashBearer("tok-sibling")); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/snapshot", nil)
+	req.Header.Set("Authorization", "Bearer "+callerBearer)
+	pmux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 fetching the snapshot, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// What the replica receives, opened as SQLite.
+	served := filepath.Join(t.TempDir(), "served-snapshot.db")
+	if err := os.WriteFile(served, rec.Body.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sdb, err := sql.Open("sqlite", served)
+	if err != nil {
+		t.Fatalf("open served snapshot: %v", err)
+	}
+	defer sdb.Close()
+	var total, withHash int
+	if err := sdb.QueryRow(`SELECT COUNT(*) FROM tills`).Scan(&total); err != nil {
+		t.Fatalf("count tills in served snapshot: %v", err)
+	}
+	if err := sdb.QueryRow(`SELECT COUNT(*) FROM tills WHERE bearer_hash IS NOT NULL`).Scan(&withHash); err != nil {
+		t.Fatalf("count bearer_hash in served snapshot: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("expected the till roster (2 rows) in the served snapshot, got %d", total)
+	}
+	if withHash != 0 {
+		t.Errorf("served snapshot leaks %d real bearer_hash value(s) — a joining replica would hold every sibling till's sync secret (ut-docs#426)", withHash)
+	}
+
+	// The primary's live DB must be untouched — both real hashes intact.
+	var live int
+	if err := primary.Db.QueryRow(`SELECT COUNT(*) FROM tills WHERE bearer_hash IS NOT NULL`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if live != 2 {
+		t.Errorf("primary's live tills table mutated: %d rows with bearer_hash, want 2", live)
+	}
+	_ = primaryPath
+}
+
 func TestSyncJoin_RejectsGarbageCode(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newSyncAPITestDeps(t)
@@ -400,6 +468,21 @@ func TestSyncJoin_FullFlow_StagesRestoreAndIdentity(t *testing.T) {
 	// restore that applies on the next restart.
 	if !appdb.PendingRestore(replicaPath) {
 		t.Fatalf("expected a staged restore-pending.db after a successful join")
+	}
+	// ut-docs#426: the staged DB the replica will boot from must NOT carry
+	// any till's real bearer_hash — the snapshot is redacted before serving.
+	stagedPath := filepath.Join(filepath.Dir(replicaPath), "restore-pending.db")
+	staged, err := sql.Open("sqlite", stagedPath)
+	if err != nil {
+		t.Fatalf("open staged restore: %v", err)
+	}
+	defer staged.Close()
+	var leaked int
+	if err := staged.QueryRow(`SELECT COUNT(*) FROM tills WHERE bearer_hash IS NOT NULL`).Scan(&leaked); err != nil {
+		t.Fatalf("count bearer_hash in staged restore: %v", err)
+	}
+	if leaked != 0 {
+		t.Errorf("staged restore leaks %d real bearer_hash value(s) to the joining replica (ut-docs#426)", leaked)
 	}
 	// And the replica identity (its own bearer/prefix/name) staged alongside.
 	idRaw, err := os.ReadFile(appdb.ReplicaIdentityPath(replicaPath))
@@ -537,6 +620,92 @@ func TestSyncJoin_SnapshotDownloadFails(t *testing.T) {
 	}
 }
 
+// TestFriendlyJoinError_TranslatesEachKind pins the ut-docs#36 fix: every
+// joinPrimary/completeJoin failure kind renders through httpx.T instead of
+// leaking its Go-side locale key or English wording, and a kind carrying a
+// dynamic detail (a URL, a wrapped network error) interpolates it into the
+// locale string's %s placeholder — the same fmt.Sprintf(httpx.T(...), v)
+// convention catalog.error.barcode_conflict already uses.
+func TestFriendlyJoinError_TranslatesEachKind(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		key    string
+		detail string // "" if the locale string has no placeholder
+	}{
+		{"bad code", &joinError{kind: joinErrBadCode}, "tills.join_error.bad_code", ""},
+		{"request failed", &joinError{kind: joinErrRequestFailed, detail: "boom"}, "tills.join_error.request_failed", "boom"},
+		{"unreachable", &joinError{kind: joinErrUnreachable, detail: "dial tcp: connect refused"}, "tills.join_error.unreachable", "dial tcp: connect refused"},
+		{"not a till", &joinError{kind: joinErrNotATill, detail: "http://10.0.0.5:8080"}, "tills.join_error.not_a_till", "http://10.0.0.5:8080"},
+		{"refused", &joinError{kind: joinErrRefused}, "tills.join_error.refused", ""},
+		{"snapshot failed", &joinError{kind: joinErrSnapshotFailed, detail: "500 Internal Server Error"}, "tills.join_error.snapshot_failed", "500 Internal Server Error"},
+		{"stage snapshot failed", &joinError{kind: joinErrStageSnapshotFailed, detail: "boom"}, "tills.join_error.stage_snapshot_failed", "boom"},
+		{"stage identity failed", &joinError{kind: joinErrStageIdentityFailed, detail: "boom"}, "tills.join_error.stage_identity_failed", "boom"},
+	}
+	for _, locale := range []string{"en", "ar", "fa", "tr"} {
+		for _, tt := range tests {
+			t.Run(locale+"/"+tt.name, func(t *testing.T) {
+				want := httpx.T(locale, tt.key)
+				if tt.detail != "" {
+					want = fmt.Sprintf(want, tt.detail)
+				}
+				if want == tt.key {
+					t.Fatalf("locale key %q has no translation for %q (httpx.T fell back to the key itself)", tt.key, locale)
+				}
+				if got := friendlyJoinError(locale, tt.err); got != want {
+					t.Errorf("friendlyJoinError(%q, %v) = %q, want %q", locale, tt.err, got, want)
+				}
+			})
+		}
+	}
+}
+
+// TestFriendlyJoinError_FallsBackForUnclassifiedErrors covers the defensive
+// branch: a plain (non-*joinError) error is shown as its own Error() text
+// rather than panicking or silently returning an empty string.
+func TestFriendlyJoinError_FallsBackForUnclassifiedErrors(t *testing.T) {
+	err := fmt.Errorf("some other failure")
+	if got := friendlyJoinError("fa", err); got != "some other failure" {
+		t.Errorf("expected the raw error text as a fallback, got %q", got)
+	}
+}
+
+// TestSyncJoin_ErrorsAreLocalized drives the real HTTP handler end-to-end
+// with a non-English locale and proves the ut-docs#36 bug is actually
+// fixed: the raw English error must not leak, and the operator's own
+// locale's translation must appear instead.
+func TestSyncJoin_ErrorsAreLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerSyncAPI(rmux, replica)
+
+	// A well-formed code pointing at a port nothing is listening on —
+	// same "unreachable" case as TestSyncJoin_PrimaryUnreachable, but
+	// requested in Farsi.
+	code := `{"url":"http://127.0.0.1:1","token":"whatever"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/join?lang=fa",
+		strings.NewReader("code="+url.QueryEscape(code)+"&name=Till+2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rmux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "cannot reach") {
+		t.Fatalf("a fa-locale till must not show the English error text, got %q", body)
+	}
+	wantPrefix := strings.SplitN(httpx.T("fa", "tills.join_error.unreachable"), "%s", 2)[0]
+	if !strings.Contains(body, wantPrefix) {
+		t.Fatalf("expected the fa translation %q to appear, got %q", wantPrefix, body)
+	}
+	if appdb.PendingRestore(replicaPath) {
+		t.Fatalf("a failed join must not stage a restore")
+	}
+}
+
 func TestTillsPage_RequiresManager(t *testing.T) {
 	mux, _ := newSyncAPITestDeps(t)
 	rec := httptest.NewRecorder()
@@ -588,9 +757,12 @@ func TestTillsPage_ShowsPrimaryTillWhenThisDeviceIsThePrimary(t *testing.T) {
 	}
 }
 
-// A replica (non-empty SyncPrimaryURL) must NOT fabricate a primary row —
-// that card is only about the primary showing itself, out of scope here.
-func TestTillsPage_NoFabricatedPrimaryRowWhenViewingFromAReplica(t *testing.T) {
+// ut-docs#405: on a replica, till.name is NOT a fabrication — it's synced
+// down verbatim from the primary (till.name isn't in
+// PerTillSettingPrefixes), so it genuinely IS the primary's own name. The
+// row must render, but tagged "(the primary)" rather than "(this till)" —
+// the replica is not that till.
+func TestTillsPage_ShowsPrimaryRowTaggedAsPrimaryWhenViewingFromAReplica(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
@@ -607,8 +779,169 @@ func TestTillsPage_NoFabricatedPrimaryRowWhenViewingFromAReplica(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "Front Counter") {
-		t.Fatalf("a replica must not show a fabricated primary row for its own till.name: %s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "Front Counter") {
+		t.Fatalf("expected a replica to show the synced primary name, got body without it: %s", body)
+	}
+	if !strings.Contains(body, "the primary") {
+		t.Fatalf("expected the primary row tagged as \"the primary\" (not \"this till\") on a replica, got: %s", body)
+	}
+}
+
+// ut-docs#405: the shop's till roster now syncs to every replica
+// (adminTables), so a replica's own row appears in .Tills too (the
+// primary enrols it there at join time) — it must be tagged "(this
+// till)" by matching sync.till_id, same idea TestTillsPage_
+// ShowsPrimaryRowTaggedAsPrimaryWhenViewingFromAReplica applies to the
+// primary's own row.
+func TestTillsPage_TagsThisTillWithinSyncedRosterOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	selfID, err := tillsRepo.InsertTill(ctx, "Back Counter", hashBearer("tok-self"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling")); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.till_id", selfID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Back Counter") || !strings.Contains(body, "Till 3") {
+		t.Fatalf("expected both the shop's tills listed on the replica, got: %s", body)
+	}
+	if !strings.Contains(body, "Back Counter <span class=\"muted\">(this till)</span>") {
+		t.Fatalf("expected the replica's own row tagged (this till), got: %s", body)
+	}
+	if strings.Contains(body, "Till 3 <span class=\"muted\">(this till)</span>") {
+		t.Fatalf("a sibling till must not be tagged (this till): %s", body)
+	}
+}
+
+// ut-docs#405: revoke is primary-authoritative — a replica's own local
+// DELETE would look like it worked (row disappears, HX-Refresh) but
+// silently reverts on the next admin-bundle pull, since the shop-wide
+// roster only really changes on the primary. The button must not even
+// render on a replica.
+func TestTillsPage_HidesRevokeButtonOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	if _, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling")); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	mux.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "/revoke") {
+		t.Fatalf("a replica must not offer a revoke action: %s", rec.Body.String())
+	}
+}
+
+// Backend enforcement independent of the UI hiding the button above —
+// never trust the template alone for a primary-authoritative write.
+func TestRevokeTill_RejectedOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	id, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 rejecting a revoke attempted on a replica, got %d: %s", rec.Code, rec.Body.String())
+	}
+	list, err := tillsRepo.ListTills(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected the till to survive a rejected revoke, got %d rows", len(list))
+	}
+}
+
+// ut-docs#405 (independent review finding): enrolling is the other half of
+// the revoke guard — a code minted on a replica would enrol the new till
+// against this replica's own local, non-authoritative tills table instead
+// of the shop's real primary, and it would silently lose access on the
+// next admin-bundle pull. The QR/code card must not even render there.
+func TestTillsPage_HidesAddTillCardOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if strings.Contains(body, "/api/sync/enroll-token") {
+		t.Fatalf("a replica must not offer to enrol a new till against itself: %s", body)
+	}
+	// The "join another shop" / LAN-discovery cards are a different flow
+	// (this device joining someone ELSE, not someone joining this device)
+	// and must still render.
+	if !strings.Contains(body, "/api/sync/join") {
+		t.Fatalf("expected the join-an-existing-shop form to still render on a replica: %s", body)
+	}
+}
+
+// Backend enforcement independent of the UI hiding the card above.
+func TestEnrolTokenAndEnroll_RejectedOnAReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 rejecting enroll-token issued on a replica, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(`{"token":"whatever","name":"New Till"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("expected 409 rejecting enroll attempted on a replica, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	list, err := tillsRepo.ListTills(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected no till to have been enrolled against the replica, got %d rows", len(list))
 	}
 }
 

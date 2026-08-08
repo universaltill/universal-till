@@ -69,6 +69,13 @@ func Run(ctx context.Context) error {
 	} else if applied {
 		log.Infof("staged backup restore applied to %s", cfg.DBPath)
 	}
+	// Best-effort housekeeping, never fatal: a sweep failure must not block
+	// boot (offline-first — startup can't depend on this succeeding).
+	if n, err := db.SweepOrphanedJoinSnapshots(cfg.DBPath); err != nil {
+		log.Warnf("sweep orphaned join snapshots: %v", err)
+	} else if n > 0 {
+		log.Infof("swept %d orphaned join-snapshot file(s)", n)
+	}
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return err

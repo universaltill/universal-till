@@ -463,11 +463,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		d.SetState(st)
 		httpx.InitCurrency(st.Currency)
 		// In place: replacing the engine would empty a basket in progress.
-		d.Engine.SetConfig(pos.Config{
+		// Both engines: the kiosk's separate instance (ut-docs#449) must see
+		// the same tax config or it would silently charge stale rates.
+		newCfg := pos.Config{
 			TaxInclusive:                 st.TaxInclusive,
 			TaxRateBasisPoints:           st.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: st.ServiceChargeRatePct * 100,
-		})
+			ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
+		}
+		d.Engine.SetConfig(newCfg)
+		if d.KioskEngine != nil {
+			d.KioskEngine.SetConfig(newCfg)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -483,6 +489,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if key == "" {
 			http.Error(w, "key required", http.StatusBadRequest)
 			return
+		}
+		// ut-docs#244: validate before persisting, not just before reflecting
+		// into RuntimeState — the old code let an unparsable value through to
+		// d.Settings.Set unchanged (silently no-op'ing only the in-memory
+		// reflection below), so the DB and the live state disagreed with no
+		// operator feedback at all.
+		if key == common.KeyServiceChargeRate {
+			if _, ok := common.ParseServiceChargeRateBasisPoints(value); !ok {
+				http.Error(w, "invalid service charge rate", http.StatusBadRequest)
+				return
+			}
 		}
 		if err := d.Settings.Set(r.Context(), key, value); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -507,8 +524,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 					s.TaxRatePct = n
 				}
 			case common.KeyServiceChargeRate:
-				if n, err := strconv.Atoi(value); err == nil && n >= 0 {
-					s.ServiceChargeRatePct = n
+				// Already validated above; guard kept for defensive safety.
+				if bp, ok := common.ParseServiceChargeRateBasisPoints(value); ok {
+					s.ServiceChargeRateBasisPoints = bp
 				}
 			case "pos.allow_negative_inventory":
 				s.AllowNegativeInventory = truthy(value)
@@ -519,11 +537,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			httpx.InitCurrency(st.Currency)
 		case common.KeyTaxInclusive, common.KeyServiceChargeRate:
 			// In place: replacing the engine would empty a basket in progress.
-			d.Engine.SetConfig(pos.Config{
+			// Both engines — see the currency-card handler above (ut-docs#449).
+			newCfg := pos.Config{
 				TaxInclusive:                 st.TaxInclusive,
 				TaxRateBasisPoints:           st.TaxRatePct * 100,
-				ServiceChargeRateBasisPoints: st.ServiceChargeRatePct * 100,
-			})
+				ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
+			}
+			d.Engine.SetConfig(newCfg)
+			if d.KioskEngine != nil {
+				d.KioskEngine.SetConfig(newCfg)
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

@@ -14,8 +14,22 @@ cd "${ROOT_DIR}"
 
 # SQL statement as a Go string literal on one line (…"SELECT / `INSERT INTO …),
 # or the start of a multi-line backtick query (a line beginning with a keyword).
-same_line='("|`)[[:space:]]*(SELECT|INSERT[[:space:]]+INTO|UPDATE[[:space:]]|DELETE[[:space:]]+FROM|CREATE[[:space:]]+TABLE)'
-line_start='^[[:space:]]*(SELECT[[:space:]]|INSERT[[:space:]]+INTO[[:space:]]|UPDATE[[:space:]]+[A-Za-z_]+[[:space:]]+SET|DELETE[[:space:]]+FROM[[:space:]]|CREATE[[:space:]]+TABLE[[:space:]])'
+# Also covers savepoint/transaction-control statement text (SAVEPOINT,
+# ROLLBACK TO, RELEASE, BEGIN, COMMIT) — same rule, these are query text too,
+# not to be confused with the *sql.Tx methods of the same name (Go method
+# calls are mixed-case, e.g. tx.Commit(), so they never match these
+# upper-case-only patterns).
+#
+# The five transaction-control keywords are short, plausible prefixes of
+# ordinary identifiers (RELEASE_CANDIDATE, COMMITMENT_LEVEL, BEGINNER_MODE),
+# unlike the longer/rarer existing keywords — so, unlike those, each one
+# requires a word-boundary immediately after it (a non-word char or end of
+# line) before counting as a match, in both same_line (a non-word char or
+# end of line) and line_start (space, semicolon, or end of line — a bare
+# `BEGIN`/`COMMIT` statement is commonly semicolon-terminated even as the
+# first token on its own line inside a multi-line raw-string query).
+same_line='("|`)[[:space:]]*(SELECT|INSERT[[:space:]]+INTO|UPDATE[[:space:]]|DELETE[[:space:]]+FROM|CREATE[[:space:]]+TABLE|SAVEPOINT([^A-Za-z0-9_]|$)|ROLLBACK[[:space:]]+TO([^A-Za-z0-9_]|$)|RELEASE([^A-Za-z0-9_]|$)|BEGIN([^A-Za-z0-9_]|$)|COMMIT([^A-Za-z0-9_]|$))'
+line_start='^[[:space:]]*(SELECT[[:space:]]|INSERT[[:space:]]+INTO[[:space:]]|UPDATE[[:space:]]+[A-Za-z_]+[[:space:]]+SET|DELETE[[:space:]]+FROM[[:space:]]|CREATE[[:space:]]+TABLE[[:space:]]|SAVEPOINT([[:space:];]|$)|ROLLBACK[[:space:]]+TO([[:space:];]|$)|RELEASE([[:space:];]|$)|BEGIN([[:space:];]|$)|COMMIT([[:space:];]|$))'
 
 matches="$(grep -rnE "${same_line}|${line_start}" --include='*.go' internal 2>/dev/null \
   | grep -vE '/(data|db|testsupport)/' \

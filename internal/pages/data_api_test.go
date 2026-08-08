@@ -71,8 +71,11 @@ func TestDataAPI_AllEndpointsRequireManager(t *testing.T) {
 			t.Errorf("%s %s: expected 403, got %d: %s", c.method, c.path, rec.Code, rec.Body.String())
 		}
 		body := dataAPIJSONBody(t, rec)
-		if body["success"] != false {
-			t.Errorf("%s %s: expected success:false, got %+v", c.method, c.path, body)
+		if body["data"] != nil {
+			t.Errorf("%s %s: expected data:null, got %+v", c.method, c.path, body)
+		}
+		if s, _ := body["error"].(string); s == "" {
+			t.Errorf("%s %s: expected a non-empty error message, got %+v", c.method, c.path, body)
 		}
 	}
 }
@@ -109,11 +112,12 @@ func TestResetTransactions_ClearsSalesWhenConfirmed(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := dataAPIJSONBody(t, rec)
-	if body["success"] != true {
-		t.Fatalf("expected success:true, got %+v", body)
+	if body["error"] != nil {
+		t.Fatalf("expected error:null, got %+v", body)
 	}
-	if body["message"] != "cleared 1 sales and related records" {
-		t.Fatalf("expected the exact cleared-count message, got %+v", body)
+	data, _ := body["data"].(map[string]any)
+	if data == nil || data["message"] != "cleared 1 sales and related records" {
+		t.Fatalf("expected the exact cleared-count message under data, got %+v", body)
 	}
 	var count int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
@@ -149,6 +153,16 @@ func TestGetCustomers_SearchesByQuery(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Jane Doe") {
 		t.Fatalf("expected Jane Doe in the search results, got: %s", rec.Body.String())
+	}
+	// Envelope: { "data": { "customers": [...] }, "error": null }
+	// (universal-till/CLAUDE.md, ut-docs#387).
+	body := dataAPIJSONBody(t, rec)
+	if body["error"] != nil {
+		t.Fatalf("expected error:null, got %+v", body)
+	}
+	data, _ := body["data"].(map[string]any)
+	if data == nil || data["customers"] == nil {
+		t.Fatalf("expected customers nested under data, got %+v", body)
 	}
 }
 
@@ -212,6 +226,16 @@ func TestGetObsoleteItems_ListsInactiveNeverSoldItems(t *testing.T) {
 	// itm1 (seedForPages) is active with stock, and must NOT show up.
 	if strings.Contains(rec.Body.String(), "Apple") {
 		t.Fatalf("expected the active seeded item to be excluded, got: %s", rec.Body.String())
+	}
+	// Envelope: { "data": { "items": [...] }, "error": null }
+	// (universal-till/CLAUDE.md, ut-docs#387).
+	body := dataAPIJSONBody(t, rec)
+	if body["error"] != nil {
+		t.Fatalf("expected error:null, got %+v", body)
+	}
+	data, _ := body["data"].(map[string]any)
+	if data == nil || data["items"] == nil {
+		t.Fatalf("expected items nested under data, got %+v", body)
 	}
 }
 

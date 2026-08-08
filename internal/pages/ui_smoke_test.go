@@ -326,7 +326,11 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		// would pass tests against a schema that can't reject what
 		// production's UNIQUE index rejects.
 		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, type TEXT, is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT);`,
-		`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT NOT NULL UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT);`,
+		// bearer_hash is nullable since migration 030 (ut-docs#405: a synced
+		// roster row on a replica carries NULL) — kept column-identical here
+		// so the ut-docs#426 join-snapshot redaction (UPDATE tills SET
+		// bearer_hash = NULL) behaves as it does against production's schema.
+		`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT);`,
 		`CREATE TABLE pending_pairings (id TEXT PRIMARY KEY, device_name TEXT NOT NULL, commitment TEXT NOT NULL, token TEXT NOT NULL DEFAULT '', requested_at TEXT NOT NULL, expires_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending');`,
 		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', order_type TEXT NOT NULL DEFAULT '', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, till_id TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, service_charge_amount INTEGER NOT NULL DEFAULT 0, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,

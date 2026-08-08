@@ -48,12 +48,11 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 		effectiveWarnDays := l.EffectiveWarnDays()
 		effectiveCoverDays := effectiveWarnDays + coverBufferDays
 		if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty > 0 {
-			row.DaysLeft = int(l.CurrentQty / rate)
-			row.RunsOut = row.DaysLeft <= effectiveWarnDays
+			row.DaysLeft = l.DaysLeftAt(rate)
 		} else if rate > 0 && l.CurrentQty <= 0 {
 			row.DaysLeft = 0
-			row.RunsOut = true
 		}
+		row.RunsOut = l.IsRunningOut(rates[l.ItemID])
 		if rate := rates[l.ItemID]; row.RunsOut && rate > 0 {
 			if need := rate*float64(effectiveCoverDays) - l.CurrentQty; need > 0 {
 				row.OrderQty = int(math.Ceil(need))

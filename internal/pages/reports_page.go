@@ -38,8 +38,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		if lastYear.Total > 0 {
 			yoyPct = int((curPeriod.Total - lastYear.Total) * 100 / lastYear.Total)
 		}
-		// Low-stock heads-up (same model as the inventory page, via
-		// LowStockItem.EffectiveWarnDays — this chip links straight to
+		// Low-stock heads-up (shares the inventory page's exact decision via
+		// LowStockItem.IsRunningOut — this chip links straight to
 		// /inventory, so it must never disagree with what that page itself
 		// warns about): a chip on the reports header so the owner sees it
 		// without digging.
@@ -47,7 +47,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		if rates, err := repo.ItemDailySellRates(r.Context(), 28); err == nil && len(rates) > 0 {
 			if lvls, err := repo.ListStockLevels(r.Context()); err == nil {
 				for _, l := range lvls {
-					if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty/rate <= float64(l.EffectiveWarnDays()) {
+					if l.IsRunningOut(rates[l.ItemID]) {
 						runningOut++
 					}
 				}
@@ -198,26 +198,36 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"Tills":       tills,
 			})(w, r)
 		case "eod":
-			archived, _ := repo.ListArchivedReports(r.Context(), 14)
+			// Manager-gated like every other manager-only handler in this
+			// codebase (isManagerOrAuthOff before the repo calls, not just in
+			// the template): the partial only ever renders its body
+			// {{ if .IsManager }}, so a non-manager gets nothing back either
+			// way — but pre-this-fix, ListArchivedReports and two Settings.Get
+			// calls still ran for a role that can never see the result.
+			isManager := isManagerOrAuthOff(r)
 			type eodRow struct {
 				Period string
 				Net    int64
 				Sales  int
 			}
 			var eodRows []eodRow
-			for _, a := range archived {
-				if a.Kind != "eod" {
-					continue
+			var eodEnabled, eodTime string
+			if isManager {
+				archived, _ := repo.ListArchivedReports(r.Context(), 14)
+				for _, a := range archived {
+					if a.Kind != "eod" {
+						continue
+					}
+					var rep data.EODReport
+					if json.Unmarshal([]byte(a.Content), &rep) == nil {
+						eodRows = append(eodRows, eodRow{Period: a.Period, Net: rep.Net, Sales: rep.SalesCount})
+					}
 				}
-				var rep data.EODReport
-				if json.Unmarshal([]byte(a.Content), &rep) == nil {
-					eodRows = append(eodRows, eodRow{Period: a.Period, Net: rep.Net, Sales: rep.SalesCount})
-				}
+				eodEnabled, _, _ = d.Settings.Get(r.Context(), keyEODEnabled)
+				eodTime, _, _ = d.Settings.Get(r.Context(), keyEODTime)
 			}
-			eodEnabled, _, _ := d.Settings.Get(r.Context(), keyEODEnabled)
-			eodTime, _, _ := d.Settings.Get(r.Context(), keyEODTime)
 			httpx.RenderPartial("ui/partials/reports_tab_eod.html", map[string]any{
-				"IsManager":  isManagerOrAuthOff(r),
+				"IsManager":  isManager,
 				"EODRows":    eodRows,
 				"EODEnabled": eodEnabled == "true",
 				"EODTime":    eodTime,
