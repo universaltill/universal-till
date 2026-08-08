@@ -336,18 +336,24 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	})
 
 	// D2: full-DB snapshot for a joining replica (bearer-gated). Uses the
-	// backup mechanism (VACUUM INTO) — safe while selling.
+	// backup mechanism (VACUUM INTO) — safe while selling. Served from a
+	// throwaway bearer_hash-redacted COPY (ut-docs#426): the sync-auth
+	// secret of every OTHER till must never reach a replica — the same rule
+	// the D4 admin-bundle redactCols enforces on every incremental pull. The
+	// real backup snapshot itself stays pristine (it's a disaster-recovery
+	// artifact whose restore must bring back the real till roster).
 	mux.HandleFunc("GET /api/sync/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		till, ok := syncTill(r, repo)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		path, err := db.Snapshot(d.Db, d.Cfg.DBPath)
+		path, cleanup, err := db.RedactedJoinSnapshot(d.Db, d.Cfg.DBPath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		defer cleanup()
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", till.ID, "snapshot_served",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
 		w.Header().Set("Content-Type", "application/octet-stream")
