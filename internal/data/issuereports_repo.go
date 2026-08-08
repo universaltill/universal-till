@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -111,6 +112,16 @@ func (r *IssueReportsRepo) UpdateStatus(ctx context.Context, id, status, githubI
 	var err error
 	done := issueReportsObs.trace("update_status")
 	defer func() { done(err) }()
+	// Independent review (ut-docs#348): github_issue_url is external input
+	// from the cloud, rendered on /my-reports as a trusted-looking "View on
+	// GitHub" link. html/template already neutralizes a javascript: URL, but
+	// a plausible-looking http(s) link to somewhere that isn't actually
+	// GitHub would render fine and mislead a manager who has every reason to
+	// trust it. Only ever persist a real https://github.com/... URL; drop
+	// anything else rather than fail the whole status update over it.
+	if githubIssueURL != "" && !strings.HasPrefix(githubIssueURL, "https://github.com/") {
+		githubIssueURL = ""
+	}
 	_, err = r.db.ExecContext(ctx, `
 UPDATE issue_reports_sent SET status = ?, github_issue_url = ?, last_synced_at = ? WHERE id = ?
 `, status, githubIssueURL, time.Now().UTC().Format(time.RFC3339), id)

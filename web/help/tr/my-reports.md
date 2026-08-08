@@ -3,13 +3,13 @@ id: my-reports
 title: Raporlarım
 section: Bağlantı ve eklentiler
 order: 361
-summary: "Bu kasadan gönderilen tüm sorun raporlarını bilinen son durumlarıyla görün — çevrimdışı da çalışır."
+summary: "Bu kasadan gönderilen sorun raporlarını (en son 100 tanesi) bilinen son durumlarıyla görün — çevrimdışı da çalışır."
 routes: [/my-reports]
 ---
 
 # Raporlarım
 
-Bu kasadan gönderilen tüm sorun raporlarını bilinen son durumlarıyla görün — çevrimdışı da çalışır.
+Bu kasadan gönderilen sorun raporlarını (en son 100 tanesi) bilinen son durumlarıyla görün — çevrimdışı da çalışır.
 
 ## Sayfa neyi gösterir
 

@@ -188,6 +188,46 @@ func TestIssueReportsUpdateStatusUpdatesRightRow(t *testing.T) {
 	}
 }
 
+// github_issue_url is external input from the cloud, rendered on
+// /my-reports as a trusted-looking "View on GitHub" link (independent
+// review, ut-docs#348). Only a real github.com URL may be persisted; a
+// lookalike/arbitrary URL is dropped rather than stored and rendered.
+func TestIssueReportsUpdateStatusRejectsNonGithubURL(t *testing.T) {
+	d := openIssueReportsTestDB(t)
+	repo := NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	if err := repo.SaveSent(ctx, SentReport{ID: "rep-x", CapturedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)}); err != nil {
+		t.Fatalf("SaveSent: %v", err)
+	}
+
+	if err := repo.UpdateStatus(ctx, "rep-x", "filed", "https://evil.example/looks-legit"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	got, err := repo.ListSent(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListSent: %v", err)
+	}
+	if got[0].GithubIssueURL != "" {
+		t.Fatalf("non-github URL must be dropped, got %q", got[0].GithubIssueURL)
+	}
+	if got[0].Status != "filed" {
+		t.Fatalf("status must still update even when the URL is rejected, got %q", got[0].Status)
+	}
+
+	// A real github.com URL is untouched.
+	if err := repo.UpdateStatus(ctx, "rep-x", "filed", "https://github.com/universaltill/ut-docs/issues/999"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	got, err = repo.ListSent(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListSent: %v", err)
+	}
+	if got[0].GithubIssueURL != "https://github.com/universaltill/ut-docs/issues/999" {
+		t.Fatalf("real github URL must be kept, got %q", got[0].GithubIssueURL)
+	}
+}
+
 // A status pull can reference a report id this till never retained (predates
 // the feature, or was purged) — that is NOT an error, just a no-op.
 func TestIssueReportsUpdateStatusUnknownIdIsNoop(t *testing.T) {
