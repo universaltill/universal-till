@@ -48,6 +48,36 @@ type ExportStockRow struct {
 	ReorderLevel int     `json:"reorder_level"`
 }
 
+// exportToSentinel applies the "include the whole final day" trick
+// SalesForExport and CountSalesForExport both need for a date-only upper
+// bound (same trick as InvoiceRepo.List) -- shared so the two queries can
+// never silently disagree about which sales are in range.
+func exportToSentinel(to string) string {
+	if to == "" {
+		return "￿"
+	}
+	return to + "￿"
+}
+
+// CountSalesForExport returns how many sales SalesForExport would return for
+// the same [from, to], without loading any row data -- a cheap COUNT(*)
+// used to reject an over-large export before the batch gather in
+// SalesForExport (and the WASM dispatch after it) ever runs (ut-docs#439).
+// The WHERE clause mirrors SalesForExport's exactly, via exportToSentinel,
+// so the two can never disagree on which sales match.
+func (r *POSRepo) CountSalesForExport(ctx context.Context, from, to string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM sales
+WHERE status = 'completed' AND sale_type = 'sale'
+  AND created_at >= ? AND created_at <= ?`, from, exportToSentinel(to)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count sales for export: %w", err)
+	}
+	return n, nil
+}
+
 // StockForExport returns current on-hand stock per active item/location for
 // an export/report plugin's payload — the same rows ListStockLevels already
 // serves the inventory page, reshaped with JSON tags for the wire.
@@ -84,11 +114,7 @@ func (r *POSRepo) StockForExport(ctx context.Context) ([]ExportStockRow, error) 
 // returns as their own rows (with a SaleType field) if a real export format
 // needs them.
 func (r *POSRepo) SalesForExport(ctx context.Context, from, to string) ([]ExportSaleRow, error) {
-	if to != "" {
-		to += "￿" // include the whole final day for date-only bounds
-	} else {
-		to = "￿"
-	}
+	to = exportToSentinel(to)
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, receipt_no, created_at, total
