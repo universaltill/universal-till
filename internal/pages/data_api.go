@@ -16,6 +16,28 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
+// maxExportRangeDays bounds POST /api/data/export's [from, to] span
+// (ut-docs#229). 366 covers a full calendar year (including a leap Feb)
+// end-to-end plus one day of slack, which is generous for the stated
+// shop-month-end-export use case while still ruling out an accidentally
+// (or maliciously) unbounded request.
+const maxExportRangeDays = 366
+
+const maxExportRange = maxExportRangeDays * 24 * time.Hour
+
+// maxExportSalesRows bounds how many matched sales POST /api/data/export
+// will gather and marshal into the export/report plugin's stdin (ut-docs#439,
+// follow-up to #229's range cap). The range cap alone only bounds elapsed
+// *time* -- 366 days of a busy till's sales can still be six-figure rows
+// loaded into one in-memory slice on Pi-class hardware, independent of how
+// short the query itself runs. 50,000 rows is generous for the stated
+// month/quarter/year-end export use case (a very busy quick-service till
+// doing ~135 sales/day, every day, for a year) while still ruling out the
+// six-figure case the range cap alone can't catch; a shop that genuinely
+// exceeds it can narrow the date range and export in parts. A `var`, not a
+// `const`, so tests can override it rather than seeding 50,000 rows.
+var maxExportSalesRows = 50_000
+
 // exportRequestPayload is the event payload a subscribing export/report
 // plugin receives on "export.requested.ask" (EventBus.AskPlugin) — mirrors
 // tax_hook.go's taxRateAskPayload convention for a value-returning hook.
@@ -50,10 +72,18 @@ type exportResponse struct {
 // individual sales). More operations (customer erasure, catalog cleanup) build
 // on this pattern.
 func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
+	// respond writes the { "data": …, "error": null|"…" } envelope
+	// universal-till/CLAUDE.md mandates (ut-docs#387): on success msg lands
+	// under data.message with error:null, on failure data is null and error
+	// carries msg.
 	respond := func(w http.ResponseWriter, status int, ok bool, msg string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{"success": ok, "message": msg})
+		if ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"message": msg}, "error": nil})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
 	}
 
 	mux.HandleFunc("POST /api/data/reset-transactions", func(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +118,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"customers": list})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"customers": list}, "error": nil})
 	})
 
 	// GDPR: erase a customer's personal data (keeps their sales, anonymised).
@@ -127,7 +157,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": list})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": list}, "error": nil})
 	})
 
 	// Catalog cleanup: permanently remove the previewed obsolete items.
@@ -182,6 +212,14 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		if fromDate.After(toDate) {
 			respond(w, http.StatusBadRequest, false, "from must not be after to")
+			return
+		}
+		// ut-docs#229: an unbounded range means an unbounded data-gathering
+		// step on till-class (e.g. Pi) hardware before the plugin call even
+		// starts — reject before touching the repo layer at all, regardless
+		// of how cheap SalesForExport's own query shape is.
+		if toDate.Sub(fromDate) > maxExportRange {
+			respond(w, http.StatusBadRequest, false, fmt.Sprintf("date range exceeds the %d-day maximum", maxExportRangeDays))
 			return
 		}
 
@@ -240,6 +278,21 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		var sales []data.ExportSaleRow
 		if hasSales {
+			// ut-docs#439: reject before the expensive batch gather (and the
+			// WASM dispatch after it) if the matched row count exceeds the
+			// bound, the same "reject before doing the expensive work" shape
+			// the range cap above already uses. A cheap COUNT(*) first, not
+			// SalesForExport's own row count, so an over-large match never
+			// pays for the full batch gather it's about to be rejected for.
+			count, cerr := posRepo.CountSalesForExport(r.Context(), from, to)
+			if cerr != nil {
+				respond(w, http.StatusInternalServerError, false, cerr.Error())
+				return
+			}
+			if count > maxExportSalesRows {
+				respond(w, http.StatusBadRequest, false, fmt.Sprintf("matched sale count (%d) exceeds the %d-row maximum — narrow the date range", count, maxExportSalesRows))
+				return
+			}
 			sales, err = posRepo.SalesForExport(r.Context(), from, to)
 			if err != nil {
 				respond(w, http.StatusInternalServerError, false, err.Error())

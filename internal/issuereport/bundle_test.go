@@ -205,6 +205,9 @@ func TestSaveCleansUpDirectoryOnWriteFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("directory permission semantics differ on Windows")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; read-only dir does not block writes")
+	}
 	withTempPendingDir(t)
 
 	origID := newBundleID

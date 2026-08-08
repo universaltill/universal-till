@@ -24,9 +24,14 @@ import (
 // code path, rather than two independently-maintained copies that could
 // drift. userMsg is set (and err non-nil) for a validation failure the
 // caller should show the requester (400); userMsg is empty with err
-// non-nil for an unexpected/server error (500).
-func resolveAndValidateModifiers(ctx context.Context, d *common.Deps, code, itemID string, form url.Values) (pos.BasketLine, []data.SelectedModifier, string, error) {
-	base, ok := d.Engine.ResolveBase(code)
+// non-nil for an unexpected/server error (500). engine is the caller's own
+// basket engine (d.Engine for the cashier, d.KioskEngine for the kiosk,
+// ut-docs#449) — ResolveBase is read-only and both engines share one
+// resolver instance, so this is a consistency fix (every kiosk call now
+// goes through KioskEngine, matching the rest of the split) rather than a
+// behavior change.
+func resolveAndValidateModifiers(ctx context.Context, d *common.Deps, engine *pos.Service, code, itemID string, form url.Values) (pos.BasketLine, []data.SelectedModifier, string, error) {
+	base, ok := engine.ResolveBase(code)
 	if !ok {
 		return pos.BasketLine{}, nil, "Item not found", errors.New("resolve base: not found")
 	}
@@ -119,7 +124,7 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = basketView.Render(w, &b)
 		}
 
-		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, code, itemID, r.Form)
+		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, d.Engine, code, itemID, r.Form)
 		if err != nil {
 			if userMsg == "" {
 				http.Error(w, "failed to load customization options", http.StatusInternalServerError)

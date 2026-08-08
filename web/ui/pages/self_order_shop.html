@@ -12,8 +12,6 @@
     <style>
       body.selforder-shop { padding: 1rem; }
       .selforder-shop-header { display:flex; align-items:center; gap:1rem; margin-block-end:.75rem; }
-      .selforder-search { flex:1; min-height:52px; padding:.6rem 1rem; font-size:1.1rem;
-        border:1px solid var(--border, #d1d5db); border-radius:999px; }
       .selforder-cats { display:flex; flex-wrap:wrap; gap:.5rem; margin-block-end:1rem; }
       .selforder-shop-main { display:grid; grid-template-columns:1fr 22rem; gap:1.25rem; align-items:start; }
       .selforder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
@@ -22,6 +20,18 @@
         padding:.75rem; min-height:120px; border:1px solid var(--border, #d1d5db);
         border-radius:12px; background:var(--surface, #fff); font:inherit; cursor:pointer;
         text-align:start; }
+      /* ut-docs#419: the category-chip filter toggles the `hidden` IDL
+         property on tiles it wants to hide (see the page script below).
+         Without this rule, the tile's own author-stylesheet `display:flex`
+         above overrides the UA stylesheet's `[hidden] { display:none }` —
+         author rules beat UA rules regardless of specificity — so a
+         "hidden" tile stayed visually onscreen even though `.hidden` was
+         true in the DOM. This rule is itself an author rule with higher
+         specificity than `.selforder-tile` alone, so it wins the tile back.
+         Found driving the kiosk for real, not just asserting on rendered
+         HTML: the server-rendered markup looks identical either way, only
+         a browser actually shows the bug. */
+      .selforder-tile[hidden] { display:none; }
       .selforder-tile-img { width:100%; height:72px; object-fit:contain; border-radius:8px; }
       .selforder-tile-name { font-weight:700; font-size:1rem; }
       .selforder-tile-price { color:var(--accent, #4f46e5); font-weight:700; }
@@ -47,17 +57,12 @@
   <body class="selforder-shop{{ if kiosk }} kiosk{{ end }}">
     <header class="selforder-shop-header">
       <a class="btn secondary" href="/self-order">← {{ T "selforder.back" }}</a>
-      <input type="search" id="selforder-search" class="selforder-search"
-             placeholder="{{ T "selforder.search_ph" }}" aria-label="{{ T "selforder.search_ph" }}"
-             autocomplete="off"
-             hx-get="/api/self-order/search" hx-trigger="input changed delay:300ms, search"
-             hx-target="#selforder-grid" hx-swap="outerHTML" hx-include="this">
       <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
     </header>
 
     {{ if .Categories }}
     <div class="selforder-cats" role="group" aria-label="{{ T "products.title" }}">
-      <button type="button" class="cat-chip active" data-cat="">{{ T "plugins.store.all" }}</button>
+      <button type="button" class="cat-chip active" data-cat="">{{ T "selforder.all_categories" }}</button>
       {{ range .Categories }}
       <button type="button" class="cat-chip" data-cat="{{ .ID }}">{{ .Name }}</button>
       {{ end }}
@@ -65,7 +70,7 @@
     {{ end }}
 
     <main class="selforder-shop-main">
-      <div id="selforder-grid" class="selforder-grid" hx-get="/api/self-order/search" hx-trigger="load" hx-swap="outerHTML"></div>
+      <div id="selforder-grid" class="selforder-grid" hx-get="/api/self-order/grid" hx-trigger="load" hx-swap="outerHTML"></div>
       <div id="selforder-cart" class="selforder-cart" hx-get="/api/self-order/cart" hx-trigger="load" hx-swap="outerHTML"></div>
     </main>
 
@@ -90,9 +95,10 @@
         }
       });
 
-      // Category chip filter: client-side show/hide over the loaded grid
-      // (search already re-fetches server-side; category filtering doesn't
-      // need a round trip since the full catalog is already on the page).
+      // Category chip filter: client-side show/hide over the loaded grid.
+      // This is the kiosk's sole find mechanism (ut-docs#419 removed the
+      // text search box) — no round trip needed, the full catalog is
+      // already on the page from the grid's own hx-trigger="load".
       (function () {
         document.addEventListener('click', function (e) {
           var chip = e.target.closest('.cat-chip');

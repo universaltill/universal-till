@@ -168,23 +168,33 @@ func Render(d Doc) []byte {
 }
 
 // layoutLine renders one sale line: "qty x name" left, amount right; long
-// names wrap onto their own row with the amount on the last row.
+// names wrap onto their own row with the amount on the last row. The
+// one-row/two-row threshold is rune-based, not byte-based -- Width tracks
+// visible columns, and kvRow (which this calls for the one-row case) pads
+// by rune count too, so a byte-based threshold here was inconsistent with
+// what kvRow can actually fit on one row: a multi-byte label/amount pair
+// (é/ö/ü/ß, ar/fa/tr text) sitting between the rune-count and byte-count
+// widths got routed to an unnecessary two-row fallback (ut-docs#438).
 func layoutLine(l Line) []string {
 	label := l.Name
 	if l.Qty != "" && l.Qty != "1" {
 		label = l.Qty + " x " + l.Name
 	}
-	if len(label)+1+len(l.Amount) <= Width {
+	if utf8.RuneCountInString(label)+1+utf8.RuneCountInString(l.Amount) <= Width {
 		return []string{kvRow(label, l.Amount)}
 	}
 	return []string{clip(label, Width), kvRow("", l.Amount)}
 }
 
-// kvRow right-aligns amount against label on one fixed-width row.
+// kvRow right-aligns amount against label on one fixed-width row. Padding is
+// computed from rune count, not byte length — Width tracks visible columns,
+// and a byte-based calculation under-pads any label/amount containing a
+// multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text), leaving the row one or
+// more columns narrower than Width actually intends (ut-docs#376).
 func kvRow(label, amount string) string {
-	space := Width - len(label) - len(amount)
+	space := Width - utf8.RuneCountInString(label) - utf8.RuneCountInString(amount)
 	if space < 1 {
-		label = clip(label, Width-len(amount)-1)
+		label = clip(label, Width-utf8.RuneCountInString(amount)-1)
 		space = 1
 	}
 	return label + strings.Repeat(" ", space) + amount
@@ -249,7 +259,7 @@ func RenderText(d Doc) string {
 	var b strings.Builder
 	center := func(s string) {
 		s = clip(s, Width)
-		pad := (Width - len(s)) / 2
+		pad := (Width - utf8.RuneCountInString(s)) / 2
 		if pad < 0 {
 			pad = 0
 		}

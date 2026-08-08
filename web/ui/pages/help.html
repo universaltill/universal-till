@@ -6,6 +6,10 @@
   Navigation is htmx: clicking a topic swaps only the reading panel and pushes
   the URL, so /help/<topic> stays shareable and Back works. Without JS the
   links are ordinary hrefs to the same routes, which render the full page.
+  The tree itself (help_nav.html) rides along as an htmx out-of-band swap on
+  every /help/{topic} response (ut-docs#351), so the active-topic highlight
+  follows the click instead of staying pinned to whichever topic was current
+  on the last full page load.
 */}}
 <div class="manual" id="manual">
   <aside class="manual-nav" aria-label="{{ T "help.nav.label" }}">
@@ -22,21 +26,7 @@
              hx-trigger="input changed delay:200ms, search">
     </form>
 
-    <nav class="manual-tree">
-      {{ range .sections }}
-      <h2 class="manual-section">{{ .Title }}</h2>
-      <ul>
-        {{ range .Topics }}
-        <li>
-          <a href="/help/{{ .ID }}"
-             class="manual-link{{ if eq .ID $.currentID }} is-current{{ end }}"
-             hx-get="/help/{{ .ID }}" hx-target="#manual-panel" hx-push-url="true"
-             {{ if eq .ID $.currentID }}aria-current="page"{{ end }}>{{ .Title }}</a>
-        </li>
-        {{ end }}
-      </ul>
-      {{ end }}
-    </nav>
+    {{ template "help_nav" . }}
   </aside>
 
   <div class="manual-panel" id="manual-panel">

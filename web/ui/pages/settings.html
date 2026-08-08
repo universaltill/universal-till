@@ -246,17 +246,22 @@
   if (!btn) return;
   var msg = document.getElementById('data-reset-msg');
   var inp = document.getElementById('data-reset-confirm');
+  var T = {
+    confirmRequired: "{{ T "settings.data.reset_confirm_required" }}",
+    clearing: "{{ T "settings.data.reset_clearing" }}",
+    confirmDialog: "{{ T "settings.data.reset_confirm_dialog" }}"
+  };
   btn.addEventListener('click', function () {
-    if (inp.value.trim() !== 'RESET') { msg.textContent = '✗ type RESET to confirm'; return; }
-    if (!confirm('Permanently clear ALL sales, shifts and invoices? The catalog, users and settings are kept. This cannot be undone.')) return;
-    btn.disabled = true; msg.textContent = '⏳ clearing…';
+    if (inp.value.trim() !== 'RESET') { msg.textContent = '✗ ' + T.confirmRequired; return; }
+    if (!confirm(T.confirmDialog)) return;
+    btn.disabled = true; msg.textContent = '⏳ ' + T.clearing;
     fetch('/api/data/reset-transactions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
     }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
       btn.disabled = false;
-      msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
+      msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       if (r.ok) inp.value = '';
     }); }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
   });
@@ -274,8 +279,8 @@
       .then(function (r) { return r.json(); })
       .then(function (j) {
         msg.textContent = '';
-        var list = (j.customers) || [];
-        if (!list.length) { out.innerHTML = '<p class="muted">No matches.</p>'; return; }
+        var list = (j.data && j.data.customers) || [];
+        if (!list.length) { out.innerHTML = '<p class="muted">No matches.</p>'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
         out.innerHTML = list.map(function (c) {
           return '<div style="display:flex;gap:.5rem;align-items:center;margin:.2rem 0">'
             + '<span>' + esc(c.Name) + (c.Phone ? ' · ' + esc(c.Phone) : '') + (c.Email ? ' · ' + esc(c.Email) : '') + '</span>'
@@ -294,7 +299,7 @@
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ id: b.getAttribute('data-erase') }).toString()
     }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-      msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
+      msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       if (r.ok) { b.closest('div').remove(); } else { b.disabled = false; }
     }); }).catch(function (e) { b.disabled = false; msg.textContent = '✗ ' + e; });
   });
@@ -313,9 +318,9 @@
       .then(function (r) { return r.json(); })
       .then(function (j) {
         msg.textContent = '';
-        var list = (j.items) || [];
+        var list = (j.data && j.data.items) || [];
         run.disabled = list.length === 0;
-        if (!list.length) { out.innerHTML = '<p class="muted">Nothing to remove — no inactive, never-sold products.</p>'; return; }
+        if (!list.length) { out.innerHTML = '<p class="muted">Nothing to remove — no inactive, never-sold products.</p>'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
         out.innerHTML = '<p class="muted">' + list.length + ' product(s) will be removed:</p>'
           + list.map(function (it) {
               return '<div style="margin:.15rem 0">' + esc(it.Name) + (it.SKU ? ' · ' + esc(it.SKU) : '') + '</div>';
@@ -323,14 +328,14 @@
       }).catch(function (e) { msg.textContent = '✗ ' + e; });
   });
   run.addEventListener('click', function () {
-    if (conf.value.trim() !== 'CLEANUP') { msg.textContent = '✗ type CLEANUP to confirm'; return; }
+    if (conf.value.trim() !== 'CLEANUP') { msg.textContent = '✗ type CLEANUP to confirm'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
     if (!confirm('Permanently delete these inactive, never-sold products? This cannot be undone.')) return;
     run.disabled = true; msg.textContent = '⏳ removing…';
     fetch('/api/data/cleanup-catalog', {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ confirm: conf.value.trim() }).toString()
     }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-      msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
+      msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       if (r.ok) { conf.value = ''; out.innerHTML = ''; run.disabled = true; }
       else { run.disabled = false; }
     }); }).catch(function (e) { run.disabled = false; msg.textContent = '✗ ' + e; });
@@ -343,8 +348,12 @@
   var from = document.getElementById('export-from');
   var to = document.getElementById('export-to');
   var entryKey = document.getElementById('export-entry-key');
+  var T = {
+    pickDatesRequired: "{{ T "settings.data.export.pick_dates_required" }}",
+    downloaded: "{{ T "settings.data.export.downloaded" }}"
+  };
   btn.addEventListener('click', function () {
-    if (!from.value || !to.value) { msg.textContent = '✗ pick a from/to date'; return; }
+    if (!from.value || !to.value) { msg.textContent = '✗ ' + T.pickDatesRequired; return; }
     btn.disabled = true; msg.textContent = '⏳ …';
     var body = { from: from.value, to: to.value };
     if (entryKey && entryKey.value) { body.entry_key = entryKey.value; }
@@ -364,7 +373,7 @@
         var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
         var filename = m ? m[1] : 'export.bin';
         return r.blob().then(function (blob) {
-          btn.disabled = false; msg.textContent = '✓ downloaded ' + filename;
+          btn.disabled = false; msg.textContent = '✓ ' + T.downloaded + ' ' + filename;
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
           a.href = url; a.download = filename;
@@ -374,7 +383,7 @@
       }
       return r.json().catch(function () { return {}; }).then(function (j) {
         btn.disabled = false;
-        msg.textContent = (r.ok ? '✓ ' : '✗ ') + (j.message || ('HTTP ' + r.status));
+        msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       });
     }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
   });

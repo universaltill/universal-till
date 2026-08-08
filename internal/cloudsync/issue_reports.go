@@ -3,6 +3,8 @@ package cloudsync
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -22,19 +25,96 @@ import (
 // next tick — the same "never blocks, always retries" contract as the rest
 // of this file. Uploads go to the live cloud endpoint
 // (POST /v1/stores/issue-reports, see uploadIssueReport below).
-func uploadPendingIssueReports(ctx context.Context, cfg *config.Config) {
+//
+// After a successful upload the local record survives (ut-docs#348): a
+// SentReport row is persisted BEFORE the bundle's media is discarded, so
+// /my-reports can show what was reported and what became of it. Only the
+// bulky blobs (audio/video/screenshots + logs) are thrown away. If the
+// record can't be persisted, the bundle is deliberately NOT discarded —
+// re-uploading the whole thing next tick beats losing the report with no
+// trace anywhere (SaveSent upserts by id, so the retry never duplicates).
+func uploadPendingIssueReports(ctx context.Context, cfg *config.Config, db *sql.DB) {
 	bundles, err := issuereport.Pending()
 	if err != nil {
 		logging.L().Warnf("cloudsync: listing pending issue reports: %v", err)
 		return
 	}
+	repo := data.NewIssueReportsRepo(db)
 	for _, b := range bundles {
 		if err := uploadIssueReport(ctx, cfg, b); err != nil {
 			logging.L().Warnf("cloudsync: issue report %s not uploaded (will retry): %v", b.Meta.ID, err)
 			continue
 		}
+		if err := repo.SaveSent(ctx, data.SentReport{
+			ID:         b.Meta.ID,
+			Note:       b.Meta.Note,
+			CapturedAt: b.Meta.CreatedAt,
+			HadAudio:   b.AudioPath != "",
+			HadVideo:   b.VideoPath != "",
+			ImageCount: len(b.ImagePaths),
+			Status:     "sent",
+		}); err != nil {
+			logging.L().Warnf("cloudsync: issue report %s uploaded but its retained record failed to save — keeping the bundle for retry: %v", b.Meta.ID, err)
+			continue
+		}
 		if err := issuereport.Discard(b.Meta.ID); err != nil {
 			logging.L().Warnf("cloudsync: issue report %s uploaded but not cleared locally: %v", b.Meta.ID, err)
+		}
+	}
+}
+
+// pullIssueReportStatuses pulls the cloud's per-report statuses down
+// (GET /v1/stores/issue-reports, ut-docs#348) and applies them to the
+// retained issue_reports_sent rows, matched by the till's own report id —
+// the correlation key the cloud echoes back verbatim. Best-effort like
+// everything else in this file: any failure logs a warning and returns, and
+// /my-reports simply keeps showing the last-known statuses (offline-first —
+// the page itself never touches the network).
+func pullIssueReportStatuses(ctx context.Context, cfg *config.Config, db *sql.DB) {
+	eff := enroll.Effective(cfg)
+	m := eff.Marketplace
+	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+		return // not registered — nothing to pull
+	}
+
+	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/issue-reports?store_id=" + m.StoreID
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		logging.L().Warnf("cloudsync: issue-report status pull: %v", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+m.MerchantToken)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		logging.L().Warnf("cloudsync: issue-report status pull: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		logging.L().Warnf("cloudsync: issue-report status pull returned %d", resp.StatusCode)
+		return
+	}
+	var out struct {
+		Data struct {
+			Reports []struct {
+				ID             string `json:"id"`
+				Status         string `json:"status"`
+				GithubIssueURL string `json:"github_issue_url"`
+			} `json:"reports"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		logging.L().Warnf("cloudsync: decode issue-report statuses: %v", err)
+		return
+	}
+	repo := data.NewIssueReportsRepo(db)
+	for _, item := range out.Data.Reports {
+		if item.ID == "" {
+			continue
+		}
+		// An id the till never retained is a silent no-op inside UpdateStatus.
+		if err := repo.UpdateStatus(ctx, item.ID, item.Status, item.GithubIssueURL); err != nil {
+			logging.L().Warnf("cloudsync: issue report %s status not applied: %v", item.ID, err)
 		}
 	}
 }

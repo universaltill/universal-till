@@ -24,8 +24,16 @@ jobs:
             ${{ runner.os }}-go-
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
+      - name: Data-access policy guard regression test
+        run: bash scripts/ci/guard-data-access_test.sh
+      - name: Kiosk-engine isolation guard
+        run: bash scripts/ci/guard-kiosk-engine.sh
+      - name: Kiosk-engine isolation guard regression test
+        run: bash scripts/ci/guard-kiosk-engine_test.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
+      - name: i18n coverage guard regression test
+        run: bash scripts/ci/guard-i18n_test.sh
       - name: Manual screenshot freshness guard
         run: bash scripts/ci/guard-docs-shots.sh
       - name: Help-topic registry guard

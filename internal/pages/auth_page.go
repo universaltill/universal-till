@@ -137,6 +137,14 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			renderLogin(w, r, "auth.error.pin_format", "")
 			return
 		}
+		// A fresh till needs a real usable register the moment this bare
+		// fallback completes first boot too — same gap and fix as the
+		// guided wizard (ut-docs#429).
+		if _, err := posRepo.EnsureRegister(r.Context()); err != nil {
+			http.Error(w, "setup failed", http.StatusInternalServerError)
+			return
+		}
+
 		// The seeded 'system' user stays a service identity; first boot
 		// creates (or reuses) a real admin operator.
 		adminID, err := ensureFirstBootAdmin(r, svc)

@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -50,6 +51,23 @@ func TestWasmResultLogLine_GatesOnAuthorizeSuffix(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "[wasm:com.test.plugin] result (payment.demopay.authorize, ") {
 		t.Errorf("expected event type + byte count in the .authorize log line, got: %s", got)
+	}
+}
+
+// TestWasmResultLogLine_GatesOnRefundSuffix proves ".refund" events (the
+// payment leg blockingPaymentEventWithResponse publishes for a refund, see
+// refund_page.go) get the same redaction treatment as ".ask"/".authorize"
+// events (ut-docs#385) — a refund plugin's response is just as likely to
+// carry a gateway transaction token as an authorize response.
+func TestWasmResultLogLine_GatesOnRefundSuffix(t *testing.T) {
+	bigToken := strings.Repeat("A", 5000)
+	refundOut := `{"approved":true,"auth_token":"` + bigToken + `"}`
+	got := wasmResultLogLine("com.test.plugin", "payment.demopay.refund", refundOut)
+	if strings.Contains(got, bigToken) {
+		t.Fatalf("wasmResultLogLine did not redact a large field on a .refund event")
+	}
+	if !strings.HasPrefix(got, "[wasm:com.test.plugin] result (payment.demopay.refund, ") {
+		t.Errorf("expected event type + byte count in the .refund log line, got: %s", got)
 	}
 }
 
@@ -139,6 +157,114 @@ func TestSafeAskResultForLog_RedactsNestedTokenFieldByName(t *testing.T) {
 	}
 	if !strings.Contains(got, "omitted") {
 		t.Errorf("expected a size placeholder for the redacted nested field, got: %s", got)
+	}
+}
+
+// TestSafeAskResultForLog_RedactsTokenInEmbeddedJSONString proves a
+// credential nested inside a field whose raw JSON value is itself a JSON
+// *string* containing an embedded object -- e.g.
+// {"approved":true,"provider":"{\"auth_token\":\"…\"}"} -- is redacted the
+// same way a directly-nested object is (ut-docs#384). Before this fix,
+// redactField only recursed when a field's value unmarshaled as an object
+// or array; a JSON string whose *content* happens to be JSON (one encoding
+// layer removed, as some payment-gateway SDKs proxy a raw upstream response)
+// unmarshaled as neither, so recursion never triggered and the embedded
+// credential reached the log verbatim (ut-docs#393).
+func TestSafeAskResultForLog_RedactsTokenInEmbeddedJSONString(t *testing.T) {
+	out := `{"approved":true,"provider":"{\"auth_token\":\"tok_live_abc123\"}"}`
+
+	got := safeAskResultForLog(out)
+
+	if strings.Contains(got, "tok_live_abc123") {
+		t.Fatalf("an auth_token embedded in a JSON-string field was logged verbatim: %s", got)
+	}
+	if !strings.Contains(got, `"approved":true`) {
+		t.Errorf("logged line should still show the small top-level approved field, got: %s", got)
+	}
+	if !strings.Contains(got, "omitted") {
+		t.Errorf("expected a size placeholder for the redacted embedded field, got: %s", got)
+	}
+
+	// The redacted "provider" field must still be a JSON string (its outer
+	// type preserved), not an object -- callers unmarshaling the logged
+	// shape (or a human reading it) shouldn't see the field's type change.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(got), &fields); err != nil {
+		t.Fatalf("redacted output is not valid JSON: %v\n%s", err, got)
+	}
+	var providerAsString string
+	if err := json.Unmarshal(fields["provider"], &providerAsString); err != nil {
+		t.Fatalf("redacted \"provider\" field is no longer a JSON string (outer type not preserved): %v\n%s", err, got)
+	}
+}
+
+// TestSafeAskResultForLog_LeavesPlainJSONStringFieldAlone proves a field
+// whose value merely LOOKS parseable one way (e.g. a numeric or quoted
+// string once decoded) but isn't a nested object/array doesn't trip the new
+// embedded-JSON-string recursion added for ut-docs#393 -- only an embedded
+// object/array is worth descending into.
+func TestSafeAskResultForLog_LeavesPlainJSONStringFieldAlone(t *testing.T) {
+	out := `{"ok":true,"note":"42"}`
+	if got := safeAskResultForLog(out); got != out {
+		t.Errorf("plain non-nested string field should be unchanged, got %q want %q", got, out)
+	}
+}
+
+// TestSafeAskResultForLog_RedactsTokenInDoublyEmbeddedJSONString proves a
+// credential still can't hide behind TWO layers of JSON-string encoding --
+// a string containing a string containing an object -- not just one.
+// Independent review of an earlier draft of ut-docs#393's fix found that
+// gating the single-layer unwrap on the decoded shape being an
+// object/array stopped recursion after exactly one layer: each extra
+// escaping layer only adds a few dozen bytes (measured: 32B raw -> 38B
+// once-encoded -> 50B twice-encoded), so a credential proxied through more
+// than one layer of serialization -- plausible for the same payment/
+// gateway-SDK reason this card exists at all -- stayed comfortably under
+// maxAskFieldBytes at every layer and leaked verbatim. redactField now
+// recurses into an embedded JSON string unconditionally rather than
+// pre-checking its decoded shape, so each layer's own branch (object,
+// array, string, or scalar) decides what to do with its own content,
+// cascading through however many layers actually exist (bounded by
+// maxAskNestingDepth, same as object/array recursion already was).
+func TestSafeAskResultForLog_RedactsTokenInDoublyEmbeddedJSONString(t *testing.T) {
+	inner := `{"auth_token":"tok_live_abc123"}`
+	onceEncoded, err := json.Marshal(inner)
+	if err != nil {
+		t.Fatalf("test setup: %v", err)
+	}
+	twiceEncoded, err := json.Marshal(string(onceEncoded))
+	if err != nil {
+		t.Fatalf("test setup: %v", err)
+	}
+	out := `{"approved":true,"provider":` + string(twiceEncoded) + `}`
+
+	got := safeAskResultForLog(out)
+
+	if strings.Contains(got, "tok_live_abc123") {
+		t.Fatalf("an auth_token embedded two JSON-string layers deep was logged verbatim: %s", got)
+	}
+	if !strings.Contains(got, `"approved":true`) {
+		t.Errorf("logged line should still show the small top-level approved field, got: %s", got)
+	}
+	if !strings.Contains(got, "omitted") {
+		t.Errorf("expected a size placeholder for the redacted embedded field, got: %s", got)
+	}
+
+	// The redacted "provider" field must still be a JSON string one level
+	// down too -- unwrapping twice should re-wrap twice, preserving the
+	// original double-string shape, not collapse it to a single string or
+	// a bare object.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(got), &fields); err != nil {
+		t.Fatalf("redacted output is not valid JSON: %v\n%s", err, got)
+	}
+	var onceUnwrapped string
+	if err := json.Unmarshal(fields["provider"], &onceUnwrapped); err != nil {
+		t.Fatalf("redacted \"provider\" field is no longer a JSON string (outer type not preserved): %v\n%s", err, got)
+	}
+	var twiceUnwrapped string
+	if err := json.Unmarshal([]byte(onceUnwrapped), &twiceUnwrapped); err != nil {
+		t.Fatalf("redacted \"provider\" field's inner layer is no longer a JSON string (double-string shape not preserved): %v\n%s", err, onceUnwrapped)
 	}
 }
 

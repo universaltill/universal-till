@@ -166,8 +166,12 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		// verdict (docs: wasm-runtime.md payment authorization). ".ask"
 		// events are the generic value-returning hook (EventBus.Ask) — also
 		// blocking, since the caller is waiting on the plugin's answer.
+		// ".refund" events block the same way: a refund's payment leg
+		// (blockingPaymentEventWithResponse in internal/pages/refund_page.go)
+		// waits on the plugin's decline/approve answer before letting the
+		// refund proceed (ut-docs#434).
 		for _, evName := range events {
-			if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") {
+			if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") {
 				bus.SetEventMode(evName, Blocking)
 			}
 		}
@@ -288,9 +292,9 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 }
 
 // wasmResultLogLine builds the exact line logged for a handler's stdout
-// result. Non-".ask"/".authorize" events (e.g. sale.completed) keep the
-// original, unredacted format — out of scope for ut-docs#202. ".ask"
-// events (the generic value-returning hook, EventBus.Ask) go through
+// result. Non-".ask"/".authorize"/".refund" events (e.g. sale.completed)
+// keep the original, unredacted format — out of scope for ut-docs#202.
+// ".ask" events (the generic value-returning hook, EventBus.Ask) go through
 // safeAskResultForLog: export.requested.ask can answer with a full
 // exported dataset (base64 in content_b64), and that must never reach the
 // log verbatim ("no secrets in logs", GDPR-adjacent given the
@@ -300,9 +304,13 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 // see Sync's ".authorize"/".ask" branch above), and their responses are
 // arguably the most credential-adjacent plugin output in the system —
 // transaction/auth tokens, card-present metadata, depending on the
-// integration.
+// integration. ".refund" events (ut-docs#385) are the same blocking,
+// value-returning hook shape published by blockingPaymentEventWithResponse
+// (refund_page.go) for a refund's payment leg — a refund plugin's response
+// is just as likely to carry a gateway transaction token as an authorize
+// response, so it goes through the identical redaction path.
 func wasmResultLogLine(pluginID, eventType, out string) string {
-	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") {
+	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") && !strings.HasSuffix(eventType, ".refund") {
 		return fmt.Sprintf("[wasm:%s] result: %s", pluginID, out)
 	}
 	return fmt.Sprintf("[wasm:%s] result (%s, %d bytes): %s", pluginID, eventType, len(out), safeAskResultForLog(out))
@@ -447,6 +455,47 @@ func redactField(key string, v json.RawMessage, depth int) (json.RawMessage, boo
 			return b, true
 		}
 		return v, false
+	}
+
+	// v isn't an object or array -- check whether it's a JSON *string* whose
+	// own content is itself JSON, one encoding layer removed from the
+	// object/array case above. Some payment/gateway SDKs proxy a raw
+	// upstream response by stashing it as an embedded JSON string (e.g.
+	// {"provider":"{\"auth_token\":\"…\"}"}) rather than a nested object,
+	// and json.Unmarshal(v, &obj) fails for that shape (a string isn't a
+	// map), so without this branch the recursion above never triggers and
+	// the embedded credential reaches the log verbatim (ut-docs#393, one
+	// encoding removed from ut-docs#384's nested-object fix).
+	//
+	// Deliberately recurse unconditionally here rather than pre-checking
+	// the decoded shape (object/array vs. scalar) before descending:
+	// review of an earlier draft found that gating on shape stops after
+	// exactly one unwrap, so a credential wrapped in TWO layers of
+	// JSON-string encoding (a string containing a string containing an
+	// object -- plausible if a payload passes through more than one layer
+	// of proxying/serialization) still leaked, well within maxAskFieldBytes
+	// at every layer. Recursing unconditionally lets each layer's own
+	// object/array/string/scalar branch decide what to do with its own
+	// content, cascading through however many layers actually exist; a
+	// scalar payload (a JSON string containing just "42" or "\"x\"") still
+	// self-terminates as a no-op two calls deeper, at negligible extra
+	// cost given the 200-byte field cap this only ever runs under.
+	// maxAskNestingDepth bounds the whole chain against a pathological or
+	// malformed plugin response, same as it already bounds object/array
+	// recursion.
+	var strVal string
+	if json.Unmarshal(v, &strVal) == nil {
+		inner := json.RawMessage(strVal)
+		if !json.Valid(inner) {
+			return v, false
+		}
+		if red, didChange := redactField(key, inner, depth+1); didChange {
+			// Re-encode the redacted content back into a JSON string so the
+			// field's outer type (string) is preserved for the caller.
+			if reencoded, err := json.Marshal(string(red)); err == nil {
+				return reencoded, true
+			}
+		}
 	}
 
 	return v, false

@@ -94,25 +94,28 @@
         btn.addEventListener('click', function () {
           if (!armed) {
             armed = true;
-            btn.textContent = '⬆ Confirm update to v' + latest;
+            btn.textContent = '⬆ Confirm update to v' + latest; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
             armTimer = setTimeout(function () { armed = false; btn.textContent = label; }, 4000);
             return;
           }
           armed = false; clearTimeout(armTimer);
-          btn.disabled = true; btn.textContent = 'Downloading update…';
+          btn.disabled = true; btn.textContent = 'Downloading update…'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
           fetch('/api/update/apply', { method: 'POST' })
             .then(function (r) { return r.json().catch(function () { return {}; }); })
             .then(function (res) {
-              // already_current: the status bar's cached "update available"
-              // was stale (checked up to 24h ago) and the backend re-verified
-              // right before applying that this build is already the latest
-              // — nothing was downloaded or restarted, so don't claim it was.
-              if (res && res.already_current) {
-                btn.textContent = 'Already up to date';
+              // { "data": …, "error": null|"…" } envelope (universal-till/
+              // CLAUDE.md, ut-docs#387). already_current: the status bar's
+              // cached "update available" was stale (checked up to 24h ago)
+              // and the backend re-verified right before applying that this
+              // build is already the latest — nothing was downloaded or
+              // restarted, so don't claim it was.
+              var data = res && res.data;
+              if (data && data.already_current) {
+                btn.textContent = 'Already up to date'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
                 btn.disabled = false;
                 return;
               }
-              var failed = res && res.success === false;
+              var failed = !!(res && res.error);
               btn.textContent = failed ? 'Update failed — see logs' : 'Restarting…';
               // A failed apply never left the server mid-restart — nothing to
               // poll for, and polling anyway just leaves the failure message
@@ -139,7 +142,7 @@
                   // read as "the update doesn't work" — offer a manual retry
                   // instead of a silent, permanent dead end.
                   btn.disabled = false;
-                  btn.textContent = 'Update installed — click to reload';
+                  btn.textContent = 'Update installed — click to reload'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
                   btn.onclick = function () { location.reload(); };
                 }
               }, 2000);

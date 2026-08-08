@@ -22,6 +22,17 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 - Surface offline/sync/install state with status chips/banners, never modal
   blockers in the kiosk flow. Status/lock/exit must always be reachable.
 
+## Self-order kiosk isolation (enforced by scripts/ci/guard-kiosk-engine.sh)
+- The self-order kiosk's basket (`common.Deps.KioskEngine`) is a separate
+  instance from the cashier's (`common.Deps.Engine`) — ADR-0020, ut-docs#449.
+  `/self-order` and `/api/self-order/*` are auth-exempt (reachable by any
+  anonymous LAN client), so a handler under those routes that touches
+  `Engine` reads or mutates the cashier's live sale. CI fails if any file
+  registering a `/self-order` or `/api/self-order/*` route (method-prefixed
+  or bare-path) references the `Engine` field as code, regardless of the
+  `*common.Deps` receiver variable's name (comments are exempt; a reviewed
+  exception needs an inline `// kiosk-engine-guard:allow <reason>` comment).
+
 ## Money
 - Monetary amounts use the **`internal/money.Money`** type (integer minor units).
   It's a distinct type, so the compiler blocks mixing money with quantities/rates.
@@ -37,6 +48,18 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   key set). Enforced by `scripts/ci/guard-i18n.sh` — CI fails on a missing
   key or a locale that drifts from en.json. Go-side menu labels are locale
   keys too (`nav.*`), rendered through `T` in the nav template.
+- **This includes inline `<script>` blocks**, not just template markup: a
+  status message set via `.textContent`/`.innerHTML` in a page's own JS is
+  just as user-facing as anything in the HTML around it. Route it through a
+  small, page-local, template-populated lookup object —
+  `var T = { key: "{{ T "some.key" }}" }` — the pattern already used in
+  `web/ui/partials/bugreport_panel.html` and `web/ui/pages/settings.html`'s
+  `data-reset-btn`/`export-run-btn` handlers. `guard-i18n.sh` flags a
+  hardcoded prose literal here too (ut-docs#205); a reviewed pre-existing
+  exception (not yet migrated) gets a same-line `// i18n:ignore` comment,
+  same escape hatch the Go-side check already uses. Known gap: the guard
+  only scans `web/ui/**/*.html` — shipped JS under `web/public/` isn't
+  covered yet.
 - **RTL:** the document `dir` is derived from the locale (`httpx.IsRTL`);
   style with **logical** CSS properties (`margin-inline-start`, `text-align:
   start/end`, `padding-inline-*`) — never `left`/`right` — so RTL locales
@@ -48,7 +71,8 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   (`internal/plugins/manifest_verifier.go`). Never run an unverified plugin.
 
 ## Before committing
-- `go build ./... && go test ./...` and `bash scripts/ci/guard-data-access.sh`.
+- `go build ./... && go test ./...` and `bash scripts/ci/guard-data-access.sh`
+  and `bash scripts/ci/guard-kiosk-engine.sh`.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 

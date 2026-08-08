@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"bytes"
 	"io/fs"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/manual"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/ui"
 	uiassets "github.com/universaltill/universal-till/web"
 )
 
@@ -119,6 +121,24 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 
 	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
 		httpx.RenderPartial("ui/partials/help_topic.html", data)(w, r)
+		// Out-of-band swap of the tree alongside the topic panel, so the
+		// active-topic highlight follows this click instead of staying
+		// pinned to whichever topic was current on the last full page load
+		// (ut-docs#351). Rendered into a buffer first (same pattern as
+		// pos_api.go's journal OOB swap) rather than straight to w: a
+		// partial write reaching the client as a truncated
+		// hx-swap-oob="true" fragment would let htmx swap a broken nav
+		// into the DOM, which is worse than skipping the refresh.
+		if navView, err := ui.NewHelpNavView(httpx.FuncsFor(locale)); err == nil {
+			var navBuf bytes.Buffer
+			if navView.Render(&navBuf, map[string]any{
+				"sections":  data["sections"],
+				"currentID": data["currentID"],
+				"OOB":       true,
+			}) == nil {
+				_, _ = w.Write(navBuf.Bytes())
+			}
+		}
 		return
 	}
 	httpx.Render("ui/pages/help.html", data)(w, r)

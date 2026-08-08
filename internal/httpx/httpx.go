@@ -487,6 +487,7 @@ func Render(tplPath string, data any) http.HandlerFunc {
 			"ui/partials/plugin_install_modal.html",
 			"ui/partials/plugin_manual_import.html",
 			"ui/partials/help_topic.html",
+			"ui/partials/help_nav.html",
 			"ui/partials/bugreport_panel.html",
 		))
 		if err := t.ExecuteTemplate(w, "base", data); err != nil {
