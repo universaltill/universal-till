@@ -103,6 +103,29 @@ func TestManagerInitAndReload(t *testing.T) {
 	}
 }
 
+// A "docs" page entry (ADR-0037) is a Docs-button target, not a navigation
+// destination — it must not surface as a /menu tile, unlike any other
+// page-entry key.
+func TestLoadMenuEntriesExcludesDocsEntry(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+
+	seedInstalledPlugin(t, db, "com.test.docs", "Docs Plugin", "1.0.0", "none", true)
+	seedMenuEntry(t, db, "com.test.docs", DocsEntryKey, "How this plugin works")
+	seedMenuEntry(t, db, "com.test.docs", "settings-page", "Settings")
+
+	m, err := Init(ctx, &config.Config{Env: "test"}, db)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, ok := m.MenuPlugins[DocsEntryKey]; ok {
+		t.Fatalf("docs entry surfaced as a menu tile: %+v", m.MenuPlugins)
+	}
+	if _, ok := m.MenuPlugins["settings-page"]; !ok {
+		t.Fatalf("non-docs page entry wrongly excluded: %+v", m.MenuPlugins)
+	}
+}
+
 func TestLoadMenuEntriesPermissionGating(t *testing.T) {
 	db := managerTestDB(t)
 	ctx := context.Background()
