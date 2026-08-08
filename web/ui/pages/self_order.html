@@ -15,6 +15,10 @@
       .selforder-start { min-height:64px; padding-inline:2.5rem; font-size:1.15rem; }
     </style>
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
+    <!-- ut-docs#400: see web/public/autofill.js's own comment for why this
+         can't be app.js. No text inputs on this screen today, but a future
+         one is covered without needing to remember this file. -->
+    <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
   </head>
   <body class="selforder-screen{{ if kiosk }} kiosk{{ end }}" data-kiosk-idle-reset="{{ .idleResetSecs }}">
     <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
