@@ -118,7 +118,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		httpx.Render("ui/pages/refund.html", map[string]any{
 			"title":     "Refund",
 			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"menuItems": d.MenuSnapshot(),
 			"Sale":      detail,
 			"Lines":     refundableLines(detail, returned),
 			"Methods":   methods,

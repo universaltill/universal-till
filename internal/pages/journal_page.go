@@ -17,7 +17,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/journal.html", map[string]any{
 			"title":       "Journal",
 			"theme":       d.CurrentState().Theme,
-			"menuItems":   d.Menu,
+			"menuItems":   d.MenuSnapshot(),
 			"InvoicingOn": invoicingOn && isManagerOrAuthOff(r),
 		})(w, r)
 	})
@@ -49,7 +49,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
 			"title":       "Receipt " + sale.ReceiptNo,
 			"theme":       d.CurrentState().Theme,
-			"menuItems":   d.Menu,
+			"menuItems":   d.MenuSnapshot(),
 			"Sale":        sale,
 			"Returns":     returns,
 			"Original":    original,

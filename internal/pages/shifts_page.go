@@ -17,7 +17,7 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 		data := map[string]any{
 			"title":     "Shifts",
 			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"menuItems": d.MenuSnapshot(),
 			"Current":   current,
 			"HasOpen":   hasOpen,
 			"History":   history,
