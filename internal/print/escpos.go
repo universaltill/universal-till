@@ -180,11 +180,15 @@ func layoutLine(l Line) []string {
 	return []string{clip(label, Width), kvRow("", l.Amount)}
 }
 
-// kvRow right-aligns amount against label on one fixed-width row.
+// kvRow right-aligns amount against label on one fixed-width row. Padding is
+// computed from rune count, not byte length — Width tracks visible columns,
+// and a byte-based calculation under-pads any label/amount containing a
+// multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text), leaving the row one or
+// more columns narrower than Width actually intends (ut-docs#376).
 func kvRow(label, amount string) string {
-	space := Width - len(label) - len(amount)
+	space := Width - utf8.RuneCountInString(label) - utf8.RuneCountInString(amount)
 	if space < 1 {
-		label = clip(label, Width-len(amount)-1)
+		label = clip(label, Width-utf8.RuneCountInString(amount)-1)
 		space = 1
 	}
 	return label + strings.Repeat(" ", space) + amount
@@ -249,7 +253,7 @@ func RenderText(d Doc) string {
 	var b strings.Builder
 	center := func(s string) {
 		s = clip(s, Width)
-		pad := (Width - len(s)) / 2
+		pad := (Width - utf8.RuneCountInString(s)) / 2
 		if pad < 0 {
 			pad = 0
 		}

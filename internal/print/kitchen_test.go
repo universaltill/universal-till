@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func sampleTicket() KitchenTicket {
@@ -67,4 +68,32 @@ func TestRenderKitchenTicketTextMirrors(t *testing.T) {
 	if strings.ContainsRune(txt, 0x1b) || strings.ContainsRune(txt, 0x1d) {
 		t.Error("preview text must not contain ESC/POS control bytes")
 	}
+}
+
+// ut-docs#376: RenderKitchenTicketText's center() helper must center on
+// rune count, not byte length — a multi-byte station/table name (e.g. an
+// ä/ö/ü/ß or ar/fa/tr string) would otherwise pad as if it were one column
+// wider than it visibly is, drifting off true center.
+func TestRenderKitchenTicketTextCentersByRuneCountNotByteCount(t *testing.T) {
+	tk := sampleTicket()
+	station := "Grill Café Français" // 19 runes, 21 bytes (é, ç each +1 byte)
+	tk.Station = station
+	out := RenderKitchenTicketText(tk)
+
+	wantPad := (Width - utf8.RuneCountInString(station)) / 2
+	gotPad := kitchenLeadingSpaces(t, out, station)
+	if gotPad != wantPad {
+		t.Errorf("station name should center on rune count: want %d leading spaces, got %d", wantPad, gotPad)
+	}
+}
+
+func kitchenLeadingSpaces(t *testing.T, out string, want string) int {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, want) {
+			return len(line) - len(strings.TrimLeft(line, " "))
+		}
+	}
+	t.Fatalf("line containing %q not found in output", want)
+	return -1
 }
