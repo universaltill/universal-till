@@ -3,6 +3,7 @@ package print
 import (
 	"bytes"
 	"strings"
+	"unicode/utf8"
 )
 
 // KitchenTicket is one kitchen-facing order ticket (docs:
@@ -98,7 +99,7 @@ func RenderKitchenTicketText(t KitchenTicket) string {
 	var b strings.Builder
 	center := func(s string) {
 		s = clip(s, Width)
-		pad := (Width - len(s)) / 2
+		pad := (Width - utf8.RuneCountInString(s)) / 2
 		if pad < 0 {
 			pad = 0
 		}
