@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net"
@@ -451,10 +452,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
-			// Escaped: these errors embed the operator-pasted primary URL
-			// (`Post "http://…": dial tcp …`), so an unescaped write reflects
-			// attacker-chosen markup back into the page.
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(err.Error()))
+			// Escaped: a joinError's dynamic detail can embed the
+			// operator-pasted primary URL (`Post "http://…": dial tcp …`),
+			// so an unescaped write reflects attacker-chosen markup back
+			// into the page (ut-docs#36).
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(friendlyJoinError(locale, err)))
 			return
 		}
 		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
@@ -476,10 +478,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
-			// Escaped: these errors embed the operator-pasted primary URL
-			// (`Post "http://…": dial tcp …`), so an unescaped write reflects
-			// attacker-chosen markup back into the page.
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(err.Error()))
+			// Escaped: a joinError's dynamic detail can embed the
+			// operator-pasted primary URL (`Post "http://…": dial tcp …`),
+			// so an unescaped write reflects attacker-chosen markup back
+			// into the page (ut-docs#36).
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(friendlyJoinError(locale, err)))
 			return
 		}
 		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
@@ -489,12 +492,81 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	return tokens
 }
 
+// joinErrKind classifies why joinPrimary/completeJoin failed, so the
+// /api/sync/join and /api/setup/join handlers can render a localized
+// message instead of raw English (ut-docs#36: the success path was already
+// i18n'd via httpx.T, but every error here was a hardcoded fmt.Errorf shown
+// straight to the operator, so a mis-pasted code showed English on an
+// ar/fa/tr till).
+type joinErrKind int
+
+const (
+	joinErrBadCode joinErrKind = iota
+	joinErrRequestFailed
+	joinErrUnreachable
+	joinErrNotATill
+	joinErrRefused
+	joinErrSnapshotFailed
+	joinErrStageSnapshotFailed
+	joinErrStageIdentityFailed
+)
+
+// joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
+// here must exist, translated, in every locale file — guard-i18n.sh enforces
+// that the locale files' key sets match en.json exactly.
+var joinErrLocaleKey = map[joinErrKind]string{
+	joinErrBadCode:             "tills.join_error.bad_code",
+	joinErrRequestFailed:       "tills.join_error.request_failed",
+	joinErrUnreachable:         "tills.join_error.unreachable",
+	joinErrNotATill:            "tills.join_error.not_a_till",
+	joinErrRefused:             "tills.join_error.refused",
+	joinErrSnapshotFailed:      "tills.join_error.snapshot_failed",
+	joinErrStageSnapshotFailed: "tills.join_error.stage_snapshot_failed",
+	joinErrStageIdentityFailed: "tills.join_error.stage_identity_failed",
+}
+
+// joinError is what every joinPrimary/completeJoin failure path returns.
+// detail carries non-translatable dynamic content (a URL, a wrapped network
+// error, an HTTP status) that gets substituted into the locale string's
+// %s placeholder by friendlyJoinError — the same fmt.Sprintf(httpx.T(...),
+// dynamicValue) convention catalog.error.barcode_conflict already uses
+// (internal/pages/common/barcode_conflict.go). Error() returns an
+// untranslated fallback for logs/tests, never shown to an operator directly.
+type joinError struct {
+	kind   joinErrKind
+	detail string // "" if the locale string has no placeholder
+}
+
+func (e *joinError) Error() string {
+	if e.detail == "" {
+		return joinErrLocaleKey[e.kind]
+	}
+	return joinErrLocaleKey[e.kind] + ": " + e.detail
+}
+
+// friendlyJoinError renders a join/enrolment failure for the operator,
+// translated via httpx.T. Falls back to the raw error text (English,
+// HTML-escaped by the caller) for anything that isn't a *joinError —
+// defensive only, since every joinPrimary/completeJoin return path
+// produces one.
+func friendlyJoinError(locale string, err error) string {
+	var je *joinError
+	if !errors.As(err, &je) {
+		return err.Error()
+	}
+	msg := httpx.T(locale, joinErrLocaleKey[je.kind])
+	if je.detail == "" {
+		return msg
+	}
+	return fmt.Sprintf(msg, je.detail)
+}
+
 // joinPrimary runs the whole replica-side join: enrol with the one-time
 // code, download the snapshot, stage restore + identity for the restart.
 func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, error) {
 	primaryURL, token, err := decodeEnrollCode(code)
 	if err != nil {
-		return "", fmt.Errorf("paste the full code shown on the other till")
+		return "", &joinError{kind: joinErrBadCode}
 	}
 	return completeJoin(r, d, primaryURL, token, name)
 }
@@ -511,12 +583,12 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		base+"/api/sync/enroll", strings.NewReader(string(body)))
 	if err != nil {
-		return "", err
+		return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("cannot reach the primary till: %w", err)
+		return "", &joinError{kind: joinErrUnreachable, detail: err.Error()}
 	}
 	defer resp.Body.Close()
 	var out struct {
@@ -532,28 +604,28 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		// usually the code points at the wrong machine. Saying "code used or
 		// expired" here is what made ut-docs#362 undiagnosable from the shop
 		// floor: it blames the code, so the owner regenerates it forever.
-		return "", fmt.Errorf("reached %s but it is not a Universal Till — check the address in the code", base)
+		return "", &joinError{kind: joinErrNotATill, detail: base}
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Bearer == "" {
-		return "", fmt.Errorf("primary refused the enrolment (code used or expired?)")
+		return "", &joinError{kind: joinErrRefused}
 	}
 
 	// Download the shop snapshot with our new bearer and stage it.
 	sreq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/api/sync/snapshot", nil)
 	if err != nil {
-		return "", err
+		return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
 	}
 	sreq.Header.Set("Authorization", "Bearer "+out.Data.Bearer)
 	sresp, err := client.Do(sreq)
 	if err != nil {
-		return "", fmt.Errorf("snapshot download failed: %w", err)
+		return "", &joinError{kind: joinErrSnapshotFailed, detail: err.Error()}
 	}
 	defer sresp.Body.Close()
 	if sresp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("snapshot download failed: %s", sresp.Status)
+		return "", &joinError{kind: joinErrSnapshotFailed, detail: sresp.Status}
 	}
 	if err := db.StageRestoreFromReader(d.Cfg.DBPath, sresp.Body); err != nil {
-		return "", fmt.Errorf("stage snapshot: %w", err)
+		return "", &joinError{kind: joinErrStageSnapshotFailed, detail: err.Error()}
 	}
 	draw := make([]byte, 16)
 	_, _ = rand.Read(draw)
@@ -565,7 +637,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		TillName:      name,
 		DeviceID:      "till-" + hex.EncodeToString(draw),
 	}); err != nil {
-		return "", fmt.Errorf("stage identity: %w", err)
+		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
 	}
 	posRepo := data.NewPOSRepo(d.Db)
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",

@@ -287,7 +287,10 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		shopName, err := completeJoin(r, d, state.primaryURL, out.Data.Token, state.deviceName)
 		if err != nil {
 			next := *state
-			next.status, next.errMsg = "error", err.Error()
+			// friendlyJoinError, not err.Error(): completeJoin's failures are
+			// now a *joinError (ut-docs#36) whose raw Error() is a locale
+			// key, not English prose — this must go through httpx.T.
+			next.status, next.errMsg = "error", friendlyJoinError(httpx.ResolveLocale(w, r), err)
 			rp.active = &next
 			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
 			return
