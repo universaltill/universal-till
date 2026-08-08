@@ -35,17 +35,28 @@ func newStoreAPIMux(t *testing.T, mp config.MarketplaceConfig) (*http.ServeMux, 
 	return mux, d
 }
 
-// storeRespOf decodes the store API's JSON envelope.
+// storeRespOf decodes the store API's { "data": …, "error": null|"…" }
+// envelope (universal-till/CLAUDE.md, ut-docs#387) into the (ok, message)
+// shape every caller here already expects: ok=true with data.message on
+// success, ok=false with the error string on failure.
 func storeRespOf(t *testing.T, rec *httptest.ResponseRecorder) (bool, string) {
 	t.Helper()
 	var body struct {
-		Success bool   `json:"success"`
-		Message string `json:"message"`
+		Data *struct {
+			Message string `json:"message"`
+		} `json:"data"`
+		Error *string `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("store response is not the JSON envelope: %v (%s)", err, rec.Body.String())
 	}
-	return body.Success, body.Message
+	if body.Error != nil {
+		return false, *body.Error
+	}
+	if body.Data != nil {
+		return true, body.Data.Message
+	}
+	return false, ""
 }
 
 func TestStoreAPI_MissingListingID_400(t *testing.T) {
@@ -156,6 +167,55 @@ func TestStoreAPI_DeleteDownloadRemovesStagedBundle(t *testing.T) {
 	rec = postForm(mux, "/api/plugins/store/delete-download", url.Values{"listing_id": {"lst-del"}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second delete-download = %d, want 200", rec.Code)
+	}
+}
+
+// Regression (ut-docs#387): the store API's respond closure used to write a
+// bare {"success":…, "message":…} body, not the { "data": …, "error":
+// null|"…" } envelope universal-till/CLAUDE.md mandates. Pins the raw shape
+// directly (storeRespOf above hides it behind a compatibility shim).
+func TestStoreAPI_ResponsesUseDataErrorEnvelope(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:0"})
+
+	// Failure: data null, error carries the message.
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	var bad struct {
+		Data  any    `json:"data"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &bad); err != nil {
+		t.Fatalf("decode error envelope: %v (%s)", err, rec.Body.String())
+	}
+	if bad.Data != nil {
+		t.Fatalf("expected data:null on error, got %v", bad.Data)
+	}
+	if !strings.Contains(bad.Error, "listing_id") {
+		t.Fatalf("expected the validation message in error, got %q", bad.Error)
+	}
+
+	// Success: data populated (message under data.message), error null.
+	rec = postForm(mux, "/api/plugins/store/delete-download", url.Values{"listing_id": {"lst-envelope"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var ok struct {
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ok); err != nil {
+		t.Fatalf("decode success envelope: %v (%s)", err, rec.Body.String())
+	}
+	if ok.Error != nil {
+		t.Fatalf("expected error:null on success, got %v", ok.Error)
+	}
+	if ok.Data.Message == "" {
+		t.Fatalf("expected data.message populated, got %+v", ok)
 	}
 }
 

@@ -585,21 +585,45 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":     true,
-			"message":     "",
-			"message_key": "plugins.install.success",
-			"plugin_id":   result.PluginID,
+			"data": map[string]interface{}{
+				"success":     true,
+				"message":     "",
+				"message_key": "plugins.install.success",
+				"plugin_id":   result.PluginID,
+			},
+			"error": nil,
 		})
 	}
 }
 
+// writeInstallResponse writes the { "data": …, "error": null|"…" } envelope
+// universal-till/CLAUDE.md mandates (ut-docs#387). Every existing call site
+// passes success=false (the success path above encodes its own richer body
+// directly) so on failure data is null and error carries the most specific
+// message available -- messageKey first (an i18n key the modal's JS already
+// maps to localized text), falling back to the plain message some call sites
+// use instead.
 func writeInstallResponse(w http.ResponseWriter, status int, success bool, message string, messageKey string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	if success {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"success":     success,
+				"message":     message,
+				"message_key": messageKey,
+			},
+			"error": nil,
+		})
+		return
+	}
+	errMsg := messageKey
+	if errMsg == "" {
+		errMsg = message
+	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":     success,
-		"message":     message,
-		"message_key": messageKey,
+		"data":  nil,
+		"error": errMsg,
 	})
 }
 
@@ -626,8 +650,8 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": fmt.Sprintf("failed to %s plugin: %v", verb, err),
+				"data":  nil,
+				"error": fmt.Sprintf("failed to %s plugin: %v", verb, err),
 			})
 			return
 		}
@@ -639,8 +663,8 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("Plugin %s %s", pluginID, verb),
+			"data":  map[string]interface{}{"message": fmt.Sprintf("Plugin %s %s", pluginID, verb)},
+			"error": nil,
 		})
 	}
 }
@@ -678,8 +702,8 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": fmt.Sprintf("Uninstall failed: %v", err),
+				"data":  nil,
+				"error": fmt.Sprintf("Uninstall failed: %v", err),
 			})
 			return
 		}
@@ -706,8 +730,8 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("Plugin %s uninstalled", pluginID),
+			"data":  map[string]interface{}{"message": fmt.Sprintf("Plugin %s uninstalled", pluginID)},
+			"error": nil,
 		})
 	}
 }
@@ -810,10 +834,12 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":      true,
-			"message":      fmt.Sprintf("Plugin updated from %s to %s", currentPlugin.Version, result.Version),
-			"from_version": currentPlugin.Version,
-			"to_version":   result.Version,
+			"data": map[string]interface{}{
+				"message":      fmt.Sprintf("Plugin updated from %s to %s", currentPlugin.Version, result.Version),
+				"from_version": currentPlugin.Version,
+				"to_version":   result.Version,
+			},
+			"error": nil,
 		})
 	}
 }
@@ -859,9 +885,11 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("Plugin rolled back to version %s", req.Version),
-			"version": req.Version,
+			"data": map[string]interface{}{
+				"message": fmt.Sprintf("Plugin rolled back to version %s", req.Version),
+				"version": req.Version,
+			},
+			"error": nil,
 		})
 	}
 }
@@ -885,9 +913,11 @@ func handleCheckUpdates(d *common.Deps) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"updates": updates,
-			"count":   len(updates),
+			"data": map[string]interface{}{
+				"updates": updates,
+				"count":   len(updates),
+			},
+			"error": nil,
 		})
 	}
 }
@@ -996,11 +1026,13 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":  true,
-			"message":  fmt.Sprintf("Plugin %s v%s imported successfully", result.Name, result.Version),
-			"plugin":   result.PluginID,
-			"version":  result.Version,
-			"warnings": result.Warnings,
+			"data": map[string]interface{}{
+				"message":  fmt.Sprintf("Plugin %s v%s imported successfully", result.Name, result.Version),
+				"plugin":   result.PluginID,
+				"version":  result.Version,
+				"warnings": result.Warnings,
+			},
+			"error": nil,
 		})
 	}
 }
