@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // countTills opens the SQLite file at dbPath on a fresh connection and
@@ -140,5 +141,94 @@ func TestRedactedJoinSnapshot_EmptyTillsTableIsFine(t *testing.T) {
 	defer cleanup()
 	if total, withHash := countTills(t, copyPath); total != 0 || withHash != 0 {
 		t.Errorf("expected an empty tills table in the copy, got %d/%d", total, withHash)
+	}
+}
+
+// ut-docs#436: a join-snapshot-*.db left behind by a crash between
+// os.CreateTemp and cleanup() (simulated here directly, not by an actual
+// crash) must be reaped once it's old enough to no longer plausibly be
+// mid-request.
+func TestSweepOrphanedJoinSnapshots_RemovesStaleOrphan(t *testing.T) {
+	path := testDBPath(t)
+	dir, err := BackupDir(path)
+	if err != nil {
+		t.Fatalf("backup dir: %v", err)
+	}
+
+	orphan := filepath.Join(dir, "join-snapshot-stale123.db")
+	if err := os.WriteFile(orphan, []byte("stale copy"), 0o644); err != nil {
+		t.Fatalf("write orphan: %v", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.WriteFile(orphan+suffix, []byte("sidecar"), 0o644); err != nil {
+			t.Fatalf("write sidecar %s: %v", suffix, err)
+		}
+	}
+	old := time.Now().Add(-10 * time.Minute)
+	if err := os.Chtimes(orphan, old, old); err != nil {
+		t.Fatalf("backdate orphan mtime: %v", err)
+	}
+
+	n, err := SweepOrphanedJoinSnapshots(path)
+	if err != nil {
+		t.Fatalf("SweepOrphanedJoinSnapshots: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("removed = %d, want 1", n)
+	}
+	for _, p := range []string{orphan, orphan + "-wal", orphan + "-shm"} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still exists after sweep (stat err = %v)", p, err)
+		}
+	}
+}
+
+// A join-snapshot-*.db created moments ago (simulating one genuinely
+// mid-request) must survive the sweep — only genuinely stale copies are
+// orphans.
+func TestSweepOrphanedJoinSnapshots_LeavesFreshCopyAlone(t *testing.T) {
+	path := testDBPath(t)
+	dir, err := BackupDir(path)
+	if err != nil {
+		t.Fatalf("backup dir: %v", err)
+	}
+
+	fresh := filepath.Join(dir, "join-snapshot-fresh456.db")
+	if err := os.WriteFile(fresh, []byte("in-flight copy"), 0o644); err != nil {
+		t.Fatalf("write fresh copy: %v", err)
+	}
+
+	n, err := SweepOrphanedJoinSnapshots(path)
+	if err != nil {
+		t.Fatalf("SweepOrphanedJoinSnapshots: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("removed = %d, want 0 — a fresh in-flight copy must not be swept", n)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh copy removed by sweep: stat err = %v", err)
+	}
+}
+
+// Real backup files (unitill-pos-*.db) must never be touched by this sweep,
+// no matter how old they are.
+func TestSweepOrphanedJoinSnapshots_NeverTouchesRealBackups(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+
+	realBackup, err := Snapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(realBackup, old, old); err != nil {
+		t.Fatalf("backdate real backup mtime: %v", err)
+	}
+
+	if _, err := SweepOrphanedJoinSnapshots(path); err != nil {
+		t.Fatalf("SweepOrphanedJoinSnapshots: %v", err)
+	}
+	if _, err := os.Stat(realBackup); err != nil {
+		t.Errorf("real backup %s removed by join-snapshot sweep: stat err = %v", realBackup, err)
 	}
 }
