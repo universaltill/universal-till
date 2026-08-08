@@ -615,7 +615,7 @@
   "settings.data.customer_search_ph": "search by name, phone or email",
   "settings.data.export.entry_label": "Export/report",
   "settings.data.export.from_label": "From",
-  "settings.data.export.help": "Trigger an installed export or report plugin (e.g. a fiscal DSFinV-K export) for a date range. Files download straight to this device; other exports just confirm they were sent.",
+  "settings.data.export.help": "Trigger an installed export or report plugin (e.g. a fiscal DSFinV-K export) for a date range of up to 366 days. Files download straight to this device; other exports just confirm they were sent.",
   "settings.data.export.none_installed": "No export or report plugin is installed.",
   "settings.data.export.run_btn": "Run export",
   "settings.data.export.title": "Export / report",
