@@ -143,6 +143,31 @@ func (l LowStockItem) EffectiveWarnDays() int {
 	return defaultWarnDays
 }
 
+// DaysLeftAt returns floor(CurrentQty / rate) — the shared "days of stock
+// left" computation used by both /inventory's displayed number (see
+// stockLevelsForDisplay in internal/pages/inventory_page.go) and
+// IsRunningOut's boundary decision below (universaltill/ut-docs#440),
+// extracted so a future change to the formula (e.g. math.Ceil, a safety
+// margin) can't silently desync the displayed number from the warning
+// flag the way two independently-maintained copies could.
+//
+// Guards the float64→int conversion, which Go leaves implementation-
+// defined for a NaN or out-of-int-range result: a rate small enough that
+// CurrentQty/rate overflows int range, or a NaN input, clamps to
+// math.MaxInt ("effectively never running out at this rate") rather than
+// converting directly — the same direction a raw-float comparison against
+// a small warn-days threshold would also land on. Unreachable through
+// today's three call sites (rate is always a positive, finite
+// positive_qty/28 from ItemDailySellRates), but this method is exported
+// from internal/data, so a future caller isn't guaranteed the same input.
+func (l LowStockItem) DaysLeftAt(rate float64) int {
+	days := l.CurrentQty / rate
+	if math.IsNaN(days) || days > float64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(days)
+}
+
 // IsRunningOut is the single shared "is this item running out" decision
 // given a sell rate (units/day), used identically by the /inventory page,
 // the low-stock digest and the /reports header chip
@@ -154,13 +179,13 @@ func (l LowStockItem) EffectiveWarnDays() int {
 // surface) for the common case, and is the more conservative of the two —
 // it never warns later than a raw-float compare would.
 func (l LowStockItem) IsRunningOut(rate float64) bool {
-	if rate <= 0 {
+	if rate <= 0 || math.IsNaN(rate) {
 		return false
 	}
 	if l.CurrentQty <= 0 {
 		return true
 	}
-	return int(l.CurrentQty/rate) <= l.EffectiveWarnDays()
+	return l.DaysLeftAt(rate) <= l.EffectiveWarnDays()
 }
 
 // SearchActiveItems finds active items matching name/sku/barcode with optional pagination.
