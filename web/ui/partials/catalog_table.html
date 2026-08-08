@@ -13,7 +13,7 @@
               data-brand="{{ with .BrandID }}{{ . }}{{ end }}"
               data-price="{{ .BasePrice }}"
               data-tax="{{ with .TaxCodeID }}{{ . }}{{ end }}">
-            <td class="catalog-thumb-cell"><img class="thumb small" src="{{ imgv (printf "/public/assets/items/%s/thumb.png" .ID) }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'"></td>
+            <td class="catalog-thumb-cell">{{ $thumb := printf "/public/assets/items/%s/thumb.png" .ID }}{{ if imgExists $thumb }}<img class="thumb small" src="{{ imgv $thumb }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ else }}<div class="thumb small" aria-hidden="true"></div>{{ end }}</td>
             <td class="catalog-name">{{ .Name }}
               {{ with index $.Barcodes .ID }}<div class="muted" style="font-size:.8em">{{ T "catalog.barcodes" }}: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b }}{{ end }}</div>{{ end }}
               {{ with index $.Variants .ID }}<div class="muted" style="font-size:.8em">{{ T "catalog.variants" }}: {{ range $i, $v := . }}{{ if $i }}, {{ end }}{{ $v.Name }}{{ if $v.Barcode }} [{{ $v.Barcode }}]{{ end }}{{ end }}</div>{{ end }}
