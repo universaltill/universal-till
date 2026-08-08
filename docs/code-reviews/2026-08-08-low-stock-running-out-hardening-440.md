@@ -146,3 +146,24 @@ confirm the diff's own claims. The one real defect found (`gofmt`
 misalignment) was fixed and re-verified. No ADR needed — same-package,
 non-architectural, behavior-preserving-for-real-inputs hardening, same class
 as the ticket it follows up on.
+
+## CI finding, post-review — `guard-docs-shots.sh`
+
+The first CI push failed a check neither Tester nor Reviewer ran locally:
+`guard-docs-shots.sh` hashes the *whole* `internal/pages/**.go` surface (non-
+test files), not a semantic diff, so the `inventory_page.go` call-site swap
+tripped it even though it changes no rendered output. Fixed by actually
+running `make docs-shots` (the real Playwright harness against a live till,
+not a hand-edited manifest) and committing the refreshed screenshots +
+`manifest.json`.
+
+Six of the sixty regenerated screenshots (alerts/designer in all 4 locales,
+plus `tr/sell`) came out with real pixel diffs unrelated to this PR's code:
+`alerts` bakes a live "Recent problems" log timestamp into the page, and the
+receipt `designer` preview bakes today's date into the receipt mock — both
+already tracked as universaltill/ut-docs#360 (pin the designer preview's
+time) and universaltill/ut-docs#370 (root-cause the generation-environment
+sensitivity this guard has). Visually inspected each before committing —
+correct rendering, no missing fonts/truncation/layout breakage, the only
+difference is the expected live timestamp/seed content. Re-ran
+`guard-docs-shots.sh` after committing: clean.
