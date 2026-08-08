@@ -7,7 +7,8 @@
 
     <aside class="catalog-detail-info">
       <div class="catalog-detail-title">
-        <img class="thumb" src="{{ imgv (printf "/public/assets/items/%s/thumb.png" .ItemID) }}" alt="" onerror="this.style.display='none'">
+        {{ $itemThumb := printf "/public/assets/items/%s/thumb.png" .ItemID }}
+        {{ if imgExists $itemThumb }}<img class="thumb" src="{{ imgv $itemThumb }}" alt="" onerror="this.style.display='none'">{{ else }}<div class="thumb" aria-hidden="true"></div>{{ end }}
         <h3>{{ .ItemName }}</h3>
       </div>
       <div class="muted catalog-detail-label">{{ T "catalog.barcodes" }} — {{ T "catalog.whole_item" }}</div>
@@ -82,8 +83,16 @@
         {{ range .Variants }}
         <div class="vg-cols vg-row{{ if not .IsActive }} vg-inactive{{ end }}" role="row">
           <div class="vg-img">
-            <img src="{{ imgv (printf "/public/assets/items/%s/variants/%s/thumb.png" $.ItemID .ID) }}" alt=""
-                 onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='{{ imgv (printf "/public/assets/items/%s/thumb.png" $.ItemID) }}';}else{this.style.visibility='hidden';}">
+            {{ $variantThumb := printf "/public/assets/items/%s/variants/%s/thumb.png" $.ItemID .ID }}
+            {{ $itemThumbFallback := printf "/public/assets/items/%s/thumb.png" $.ItemID }}
+            {{ if imgExists $variantThumb }}
+            <img src="{{ imgv $variantThumb }}" alt=""
+                 onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='{{ imgv $itemThumbFallback }}';}else{this.style.visibility='hidden';}">
+            {{ else if imgExists $itemThumbFallback }}
+            <img src="{{ imgv $itemThumbFallback }}" alt="" onerror="this.style.visibility='hidden'">
+            {{ else }}
+            <div class="thumb-ph" aria-hidden="true"></div>
+            {{ end }}
             <form hx-post="/api/catalog/variant/image" hx-encoding="multipart/form-data"
                   hx-target="#catalog-variants" hx-swap="outerHTML" class="vg-img-upload">
               <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
