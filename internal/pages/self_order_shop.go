@@ -29,12 +29,11 @@ type shopItem struct {
 	ImageURL     string
 }
 
-// loadShopItems returns every active catalog item as a kiosk browse tile,
-// optionally filtered to items whose name contains q (case-insensitive,
-// in Go rather than SQL — single-shop catalogs are small enough that this
-// is simpler and safer than a second hand-written search query to keep in
-// sync with the admin catalog listing).
-func loadShopItems(ctx context.Context, d *common.Deps, q string) ([]shopItem, error) {
+// loadShopItems returns every active catalog item as a kiosk browse tile.
+// The kiosk is category-browsing only (ut-docs#419) — there is no
+// server-side name search here; category-chip filtering is client-side JS
+// over this full set, keyed off each tile's data-cat attribute.
+func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 	repo := data.NewCatalogRepo(d.Db)
 	items, err := repo.ListItems(ctx)
 	if err != nil {
@@ -51,12 +50,8 @@ func loadShopItems(ctx context.Context, d *common.Deps, q string) ([]shopItem, e
 	}
 	hasMods, _ := data.NewModifierRepo(d.Db).ItemIDsWithModifiers(ctx, ids)
 
-	q = strings.ToLower(strings.TrimSpace(q))
 	out := make([]shopItem, 0, len(items))
 	for _, it := range items {
-		if q != "" && !strings.Contains(strings.ToLower(it.Name), q) {
-			continue
-		}
 		code := it.SKU
 		if bcs := barcodes[it.ID]; len(bcs) > 0 {
 			code = bcs[0] // primary first, per CatalogRepo.ItemBarcodes ordering
@@ -109,9 +104,13 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		renderKioskCart(w, r, d)
 	})
 
-	mux.HandleFunc("GET /api/self-order/search", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query().Get("q")
-		items, err := loadShopItems(r.Context(), d, q)
+	// Renamed from /api/self-order/search (ut-docs#419) — the kiosk is
+	// category-browsing only now, so this endpoint just loads the grid,
+	// it doesn't search anything. Backs both the page's initial
+	// hx-trigger="load" and re-renders after category-chip filtering
+	// resets (chip filtering itself is client-side, see the page script).
+	mux.HandleFunc("GET /api/self-order/grid", func(w http.ResponseWriter, r *http.Request) {
+		items, err := loadShopItems(r.Context(), d)
 		if err != nil {
 			http.Error(w, "failed to load catalog", http.StatusInternalServerError)
 			return

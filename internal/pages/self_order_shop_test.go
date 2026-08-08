@@ -83,7 +83,7 @@ func TestSelfOrderShop_BrowseGridShowsActiveItems(t *testing.T) {
 	registerSelfOrderShop(mux, dp)
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/search", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/grid", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -96,7 +96,11 @@ func TestSelfOrderShop_BrowseGridShowsActiveItems(t *testing.T) {
 	}
 }
 
-func TestSelfOrderShop_SearchFiltersbyName(t *testing.T) {
+// ut-docs#419: the self-order kiosk is category-browsing only — there is no
+// search affordance, and the grid endpoint (renamed from .../search to
+// .../grid, since it no longer searches anything) always returns the full
+// active catalog regardless of what a client sends it.
+func TestSelfOrderShop_GridIgnoresQueryParam(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
 	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
 	seedShopItem(t, d, "itm-tea", "TEA", "5000002", "Tea", 250)
@@ -105,13 +109,75 @@ func TestSelfOrderShop_SearchFiltersbyName(t *testing.T) {
 	registerSelfOrderShop(mux, dp)
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/search?q=flat", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/grid?q=flat", nil))
 	body := rec.Body.String()
-	if !strings.Contains(body, "Flat White") {
-		t.Fatal("search for 'flat' should match Flat White")
+	if !strings.Contains(body, "Flat White") || !strings.Contains(body, "Tea") {
+		t.Fatalf("grid must ignore any q param and return the full catalog, got: %s", body)
 	}
-	if strings.Contains(body, ">Tea<") {
-		t.Fatal("search for 'flat' should not match Tea")
+}
+
+// ut-docs#419: the search input and the old /api/self-order/search path
+// must be entirely gone from the rendered shop page — category chips are
+// the sole find mechanism now.
+func TestSelfOrderShop_PageHasNoSearchInput(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/self-order/shop", nil))
+	body := rec.Body.String()
+	if strings.Contains(body, "selforder-search") {
+		t.Fatalf("search input must be removed from the self-order shop page: %s", body)
+	}
+	if strings.Contains(body, "/api/self-order/search") {
+		t.Fatalf("no reference to the retired search endpoint should remain: %s", body)
+	}
+}
+
+// ut-docs#419: category-chip filtering is client-side JS keyed off each
+// tile's data-cat attribute — prove the grid still stamps it on every
+// tile now that it's the sole find mechanism.
+func TestSelfOrderShop_TilesCarryCategoryForChipFiltering(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	if _, err := d.DB.Exec(`INSERT INTO categories (id, name) VALUES ('cat-drinks','Drinks')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO items (id, sku, name, base_price, is_active, category_id) VALUES ('itm-coffee','COFFEE','Flat White',320,1,'cat-drinks')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO item_barcodes (item_id, barcode, is_primary) VALUES ('itm-coffee','5000001',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/grid", nil))
+	if !strings.Contains(rec.Body.String(), `data-cat="cat-drinks"`) {
+		t.Fatalf("tile must carry its category in data-cat for client-side chip filtering, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#419: found driving the kiosk in a real browser, not from
+// rendered-HTML assertions alone — .selforder-tile's own `display:flex`
+// has equal-or-later specificity over the UA stylesheet's
+// `[hidden] { display:none }`, so toggling a tile's `hidden` IDL property
+// (what the chip-filter script does) silently had NO visual effect until
+// this override rule was added. A Go test can't see the rendered pixels,
+// but it can pin the CSS rule that fixes it so a future edit to the tile
+// styles doesn't silently drop the override again.
+func TestSelfOrderShop_HiddenTileRuleOverridesTileDisplay(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/self-order/shop", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, ".selforder-tile[hidden]") || !strings.Contains(body, "display:none") {
+		t.Fatalf("expected a .selforder-tile[hidden] { display:none } override so the chip filter's hidden=true actually hides the tile, got: %s", body)
 	}
 }
 
@@ -177,7 +243,7 @@ func TestSelfOrderShop_ModifierFlow(t *testing.T) {
 
 	// The grid should route this item to the modifier picker.
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/search", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/grid", nil))
 	if !strings.Contains(rec.Body.String(), "/api/self-order/modifiers?item=itm-coffee") {
 		t.Fatalf("grid should route the modifier-bearing item to the picker: %s", rec.Body.String())
 	}
@@ -615,7 +681,7 @@ func TestSelfOrderShop_RoutesAreAuthExempt(t *testing.T) {
 	authSvc := auth.NewService(d.DB)
 	h := auth.Middleware(mux, authSvc)
 
-	for _, path := range []string{"/self-order/shop", "/api/self-order/search", "/api/self-order/cart"} {
+	for _, path := range []string{"/self-order/shop", "/api/self-order/grid", "/api/self-order/cart"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK {
