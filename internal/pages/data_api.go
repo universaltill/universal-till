@@ -72,10 +72,18 @@ type exportResponse struct {
 // individual sales). More operations (customer erasure, catalog cleanup) build
 // on this pattern.
 func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
+	// respond writes the { "data": …, "error": null|"…" } envelope
+	// universal-till/CLAUDE.md mandates (ut-docs#387): on success msg lands
+	// under data.message with error:null, on failure data is null and error
+	// carries msg.
 	respond := func(w http.ResponseWriter, status int, ok bool, msg string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{"success": ok, "message": msg})
+		if ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"message": msg}, "error": nil})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
 	}
 
 	mux.HandleFunc("POST /api/data/reset-transactions", func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +118,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"customers": list})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"customers": list}, "error": nil})
 	})
 
 	// GDPR: erase a customer's personal data (keeps their sales, anonymised).
@@ -149,7 +157,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": list})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": list}, "error": nil})
 	})
 
 	// Catalog cleanup: permanently remove the previewed obsolete items.

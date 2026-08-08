@@ -10,7 +10,10 @@ test.describe('Plugin Install Flow (CLI + Marketplace + POS)', () => {
 
     expect(response.status()).toBe(201);
     const body = await response.json();
-    expect(body).toMatchObject({
+    // { data: …, error: null } envelope (universal-till/CLAUDE.md,
+    // ut-docs#387) -- the payload moved under data, error stays null.
+    expect(body.error).toBeNull();
+    expect(body.data).toMatchObject({
       plugin_id: intent.plugin_id,
       version: intent.version,
       merchant_id: intent.merchant_id,
@@ -26,7 +29,10 @@ test.describe('Plugin Install Flow (CLI + Marketplace + POS)', () => {
 
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body).toMatchObject({
+    // { data: …, error: null } envelope (universal-till/CLAUDE.md,
+    // ut-docs#387) -- the payload moved under data, error stays null.
+    expect(body.error).toBeNull();
+    expect(body.data).toMatchObject({
       plugin_id: intent.plugin_id,
       status: expect.any(String),
     });
