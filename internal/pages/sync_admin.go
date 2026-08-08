@@ -106,12 +106,11 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 				label = strings.TrimSuffix(get("sync.receipt_prefix"), "-")
 			}
 			httpx.RenderPartial("ui/partials/sync_chip.html", map[string]any{
-				"isReplica":  true,
-				"class":      class,
-				"label":      label,
-				"queued":     queued,
-				"offline":    !fresh,
-				"primaryURL": primary,
+				"isReplica": true,
+				"class":     class,
+				"label":     label,
+				"queued":    queued,
+				"offline":   !fresh,
 			})(w, r)
 			return
 		}
