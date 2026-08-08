@@ -215,7 +215,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		httpx.Render("ui/pages/tills.html", map[string]any{
 			"title":           "Tills",
 			"theme":           d.CurrentState().Theme,
-			"menuItems":       d.Menu,
+			"menuItems":       d.MenuSnapshot(),
 			"Tills":           list,
 			"PrimaryTillName": primaryName,
 			"SyncPrimary":     primaryURL,

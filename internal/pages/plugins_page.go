@@ -90,7 +90,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/plugins.html", map[string]any{
 			"title":       "Plugins",
 			"theme":       d.CurrentState().Theme,
-			"menuItems":   d.Menu,
+			"menuItems":   d.MenuSnapshot(),
 			"pluginsJSON": template.JS(raw),
 		})(w, r)
 	})

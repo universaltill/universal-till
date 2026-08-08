@@ -71,7 +71,7 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 		httpx.Render("ui/pages/translations.html", map[string]any{
 			"title":      "Translations",
 			"theme":      d.CurrentState().Theme,
-			"menuItems":  d.Menu,
+			"menuItems":  d.MenuSnapshot(),
 			"editLocale": editLocale,
 			"locales":    i18n.Available(),
 		})(w, r)

@@ -69,7 +69,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/plugin_settings.html", map[string]any{
 			"title":     "Plugin settings",
 			"theme":     d.CurrentState().Theme,
-			"menuItems": d.Menu,
+			"menuItems": d.MenuSnapshot(),
 			"PluginID":  pluginID,
 			"Settings":  views,
 		})(w, r)

@@ -49,7 +49,7 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/backoffice.html", map[string]any{
 			"title":      "Back office",
 			"theme":      d.CurrentState().Theme,
-			"menuItems":  d.Menu,
+			"menuItems":  d.MenuSnapshot(),
 			"TodayTotal": todayTotal,
 			"TodayCount": todayCount,
 			"YdayTotal":  ydayTotal,
