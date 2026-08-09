@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,7 +46,31 @@ type Meta struct {
 	Locale    string            `json:"locale"`
 	CreatedAt time.Time         `json:"created_at"`
 	Logs      []logging.Problem `json:"logs"`
+	// SentFailCount counts how many times this bundle uploaded to the cloud
+	// successfully but its local issue_reports_sent retention record
+	// (ut-docs#348) failed to save — e.g. disk full, DB briefly read-only.
+	// Not necessarily N *consecutive* ticks: an intervening cloud-upload
+	// failure (offline) never touches this counter, so it's a lifetime
+	// total across however many SaveSent attempts this bundle has actually
+	// had. Persisted here (not tracked purely in memory) so it survives a
+	// till restart between cloudsync ticks; see RecordSentFailure and
+	// MaxSentFailCount (ut-docs#446). Omitted from JSON — and so zero — for
+	// every bundle saved before this field existed.
+	SentFailCount int `json:"sent_fail_count,omitempty"`
 }
+
+// MaxSentFailCount caps how many SaveSent failures a bundle tolerates
+// before the till gives up on local retention and discards it (ut-docs#446)
+// — without this cap, a persistently-failing local write re-uploads the
+// bundle's full multipart body (including any audio/video) on every single
+// cloudsync tick, forever. 5 is a small, explicit cap chosen for this
+// mechanism specifically — not a reuse of another cap's exact semantics
+// elsewhere in this codebase (e.g. internal/plugins/download_manager.go's
+// maxRetries permits maxRetries+1 total attempts; this permits exactly
+// MaxSentFailCount). This does NOT apply to the cloud upload itself failing
+// (offline/network-down) — that keeps retrying unboundedly, per
+// offline-first (ADR-0003).
+const MaxSentFailCount = 5
 
 // Bundle is one saved, not-yet-uploaded capture on disk.
 type Bundle struct {
@@ -175,4 +200,126 @@ func imageIndex(path string) int {
 // has confirmed receipt, so the till never re-uploads it.
 func Discard(id string) error {
 	return os.RemoveAll(filepath.Join(PendingDir, id))
+}
+
+// sentFailFallback tracks SentFailCount in memory for bundles whose durable
+// write (writeMeta, below) has failed — independent review (ut-docs#446)
+// caught that the counter's own persistence shares a failure domain with
+// the failure it exists to protect against: on a genuinely full disk, the
+// meta.json write fails for exactly the same reason SaveSent does, so a
+// pure on-disk counter never advances and the cap never engages in the
+// ticket's own headline scenario. This fallback closes that gap: it does
+// NOT survive a till restart (an accepted, explicitly-noted degradation —
+// once disk pressure is bad enough to fail this write, the harm this cap
+// exists to bound is limited to this process's remaining lifetime rather
+// than eliminated outright), but it does mean the cap still engages within
+// one process's run even while the disk stays unwritable.
+var sentFailFallback = struct {
+	mu     sync.Mutex
+	counts map[string]int
+}{counts: map[string]int{}}
+
+// RecordSentFailure increments and persists a bundle's SentFailCount,
+// returning the new count. Called each time a bundle uploaded successfully
+// but its local issue_reports_sent record failed to save — the caller
+// compares the returned count against MaxSentFailCount to decide whether to
+// keep retrying or give up.
+//
+// An unknown/unreadable bundle id (already discarded, or its meta.json is
+// corrupt) is a real error — distinct from "this bundle exists but its
+// write just failed" — so the caller can tell "nothing to count" from "this
+// failure needs counting."
+//
+// The write itself is durable (fsync'd, via writeMeta) so the count
+// survives a till restart in the common case. If the write fails — the
+// disk itself is the problem, i.e. exactly the scenario this counter
+// exists to catch — falls back to sentFailFallback so the cap still
+// engages rather than looping forever; see that var's own doc for the
+// trade-off.
+func RecordSentFailure(id string) (int, error) {
+	path := filepath.Join(PendingDir, id, "meta.json")
+	mb, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("issuereport: read meta for %s: %w", id, err)
+	}
+	var meta Meta
+	if err := json.Unmarshal(mb, &meta); err != nil {
+		return 0, fmt.Errorf("issuereport: decode meta for %s: %w", id, err)
+	}
+
+	sentFailFallback.mu.Lock()
+	// Fold in any progress accumulated purely in memory on a prior call
+	// whose write failed — otherwise a disk that fails intermittently
+	// (fails, then briefly recovers, then fails again) would lose the
+	// fallback's count the moment one write happens to succeed.
+	if fb := sentFailFallback.counts[id]; fb > meta.SentFailCount {
+		meta.SentFailCount = fb
+	}
+	meta.SentFailCount++
+	sentFailFallback.mu.Unlock()
+
+	if err := writeMeta(path, meta); err != nil {
+		sentFailFallback.mu.Lock()
+		sentFailFallback.counts[id] = meta.SentFailCount
+		sentFailFallback.mu.Unlock()
+		return meta.SentFailCount, nil
+	}
+
+	sentFailFallback.mu.Lock()
+	delete(sentFailFallback.counts, id)
+	sentFailFallback.mu.Unlock()
+	return meta.SentFailCount, nil
+}
+
+// writeMeta is overridable in tests that need to simulate the durable write
+// itself failing (e.g. disk full) without needing OS-level tricks — same
+// convention as newBundleID above.
+var writeMeta = writeMetaAtomic
+
+// writeMetaAtomic durably persists meta to path: write to a sibling temp
+// file, fsync it, then atomically rename over the target. A plain
+// os.WriteFile has two gaps this closes (independent review, ut-docs#446):
+//
+//   - A write interrupted partway (disk full, power loss, SIGKILL) leaves a
+//     truncated, unparsable meta.json. Pending() silently skips a bundle
+//     whose meta.json doesn't parse (by design — one corrupt directory must
+//     not block every other pending report), which would otherwise strand
+//     that bundle's directory, and its media, unreachable forever: nothing
+//     can ever learn its id again to Discard it. Rename is atomic on the
+//     same filesystem — the target either ends up with the old content or
+//     the new content, never a partial write.
+//   - fsync makes the update durable across a power loss (plausible on a
+//     till), rather than only surviving in the OS write-back cache.
+func writeMetaAtomic(path string, meta Meta) error {
+	out, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("issuereport: encode meta for %s: %w", meta.ID, err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".meta-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("issuereport: create temp meta for %s: %w", meta.ID, err)
+	}
+	tmpPath := tmp.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		return fmt.Errorf("issuereport: write temp meta for %s: %w", meta.ID, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("issuereport: fsync temp meta for %s: %w", meta.ID, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("issuereport: close temp meta for %s: %w", meta.ID, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("issuereport: rename temp meta for %s: %w", meta.ID, err)
+	}
+	renamed = true
+	return nil
 }

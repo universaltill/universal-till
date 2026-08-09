@@ -27,4 +27,6 @@ The statuses mean:
 
 The page never needs the network: it always shows the statuses from the last time this shop was online, and refreshes them automatically in the background once you're connected again. A report you've just saved appears here shortly after it uploads.
 
+If this till can't save its own copy of a report — for example, its storage is full — it keeps retrying, but only for a while. After several failed attempts it gives up trying to remember the report locally. The report itself still reaches support either way; it just won't be listed here.
+
 Open it from the report panel's **View my reports** link (🐞 button in the top bar — see the Reporting a problem topic).
