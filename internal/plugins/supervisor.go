@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // Supervisor manages plugin process lifecycle
@@ -16,6 +17,28 @@ type Supervisor struct {
 	db        *sql.DB
 	mu        sync.RWMutex
 	processes map[string]*PluginProcess // key = plugin_id
+	// procWg joins the monitorProcess goroutines (ut-docs#380): Add(1)
+	// happens immediately before every `go s.monitorProcess(...)` — both
+	// call sites already hold s.mu, which is the same lock Shutdown flips
+	// stopped/cancel under, so an Add can never race a Wait that already
+	// observed zero WHILE s.mu is held across both the Add and the check of
+	// closed below. Done() is monitorProcess's first-registered defer, so
+	// it fires only after the goroutine's whole body (including its own
+	// s.mu section and audit writes) has finished — which is what lets
+	// Shutdown wait on this WITHOUT holding s.mu (see closed's doc for the
+	// case s.mu alone doesn't cover: a StartPlugin arriving AFTER shutdown
+	// has already released s.mu and started procWg.Wait()).
+	procWg sync.WaitGroup
+	// closed is set once, under s.mu, at the top of shutdown's critical
+	// section — before s.mu is released for the procWg.Wait() below. Every
+	// StartPlugin call checks it under the SAME s.mu and refuses to spawn a
+	// new monitorProcess if set. Without this (mirroring WasmRuntime's
+	// identical closed guard), a StartPlugin racing in after shutdown's
+	// s.mu.Unlock() would procWg.Add(1) from a counter that may already be
+	// zero and being Waited on — the classic WaitGroup "Add after Wait
+	// observed zero" misuse, which panics or simply leaves the new monitor
+	// unjoined.
+	closed bool
 }
 
 // PluginProcess represents a running plugin process
@@ -60,6 +83,13 @@ func (s *Supervisor) StartPlugin(ctx context.Context, pluginID, entrypoint strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Refuse after Shutdown (see closed's doc): once shutdown has released
+	// s.mu to wait on procWg, a new process's monitorProcess goroutine must
+	// not register on it.
+	if s.closed {
+		return fmt.Errorf("plugin %s: supervisor is shut down", pluginID)
+	}
+
 	// Check if already running
 	if proc, exists := s.processes[pluginID]; exists && !proc.stopped {
 		return fmt.Errorf("plugin %s is already running", pluginID)
@@ -90,7 +120,8 @@ func (s *Supervisor) StartPlugin(ctx context.Context, pluginID, entrypoint strin
 		fmt.Printf("warning: failed to audit plugin start: %v\n", err)
 	}
 
-	// Monitor process in background
+	// Monitor process in background (Add under s.mu — see procWg's doc)
+	s.procWg.Add(1)
 	go s.monitorProcess(procCtx, proc)
 
 	return nil
@@ -147,6 +178,13 @@ func (s *Supervisor) RestartPlugin(ctx context.Context, pluginID string) error {
 
 // monitorProcess watches a plugin process and handles restarts
 func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
+	// Registered FIRST so it runs LAST (defers are LIFO): Done only fires
+	// after the deferred s.mu.Unlock below, i.e. after this goroutine is
+	// completely finished — audit writes included. Done itself never needs
+	// s.mu, so Shutdown can procWg.Wait() lock-free without deadlocking
+	// against the s.mu.Lock() this goroutine takes after Cmd.Wait returns.
+	defer s.procWg.Done()
+
 	err := proc.Cmd.Wait()
 
 	s.mu.Lock()
@@ -214,7 +252,10 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 		fmt.Printf("warning: failed to audit plugin restart: %v\n", err)
 	}
 
-	// Continue monitoring
+	// Continue monitoring (Add under s.mu — held by the deferred unlock
+	// above — and before this invocation's own Done fires, so the counter
+	// never dips to zero between a restart and its new monitor).
+	s.procWg.Add(1)
 	go s.monitorProcess(procCtx, proc)
 }
 
@@ -270,11 +311,33 @@ func (s *Supervisor) ListRunning() []string {
 	return running
 }
 
-// Shutdown stops all running plugin processes
-func (s *Supervisor) Shutdown(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// pluginShutdownDrainTimeout bounds how long Shutdown waits for the
+// monitorProcess goroutines to exit after their processes are cancelled.
+// server.Start wraps the whole supervisor.Shutdown call in a 5-second
+// shutdown context shared with srv.Shutdown, called first — so that context
+// can already be most of the way to its own deadline by the time this runs.
+// shutdown's select also watches ctx.Done() (not just this timeout) so a
+// mostly-spent shutdownCtx doesn't let the two waits add up past the 5s the
+// caller actually budgeted; this constant is the FALLBACK bound for a fresh
+// ctx with time still on it, not a guarantee this always finishes under it.
+const pluginShutdownDrainTimeout = 4 * time.Second
 
+// Shutdown stops all running plugin processes and waits — bounded — for
+// every monitorProcess goroutine to actually exit before returning
+// (ut-docs#380). server.Start invokes this from a wg-joined goroutine, so
+// once this returns (whether by a clean join or by the bound/ctx giving up
+// and logging loudly), app.Run's drain has done everything it can to keep a
+// monitor goroutine from racing database.Close() with an audit write.
+func (s *Supervisor) Shutdown(ctx context.Context) error {
+	return s.shutdown(ctx, pluginShutdownDrainTimeout)
+}
+
+// shutdown is Shutdown with the drain bound as a parameter, so tests can
+// exercise the timeout branch without a real multi-second wait (same reason
+// app's drainBackgroundServices takes its timeout as a parameter).
+func (s *Supervisor) shutdown(ctx context.Context, drainTimeout time.Duration) error {
+	s.mu.Lock()
+	s.closed = true // refuse new StartPlugin calls from here on (see closed's doc)
 	for pluginID, proc := range s.processes {
 		proc.stopped = true
 		proc.cancel()
@@ -283,8 +346,34 @@ func (s *Supervisor) Shutdown(ctx context.Context) error {
 			fmt.Printf("warning: failed to audit plugin shutdown: %v\n", err)
 		}
 	}
-
 	s.processes = make(map[string]*PluginProcess)
+	// NOT deferred to function end: the wait below must run without s.mu,
+	// or it would deadlock against monitorProcess's own s.mu.Lock() after
+	// Cmd.Wait returns.
+	s.mu.Unlock()
+
+	// Bounded join, mirroring app.drainBackgroundServices: a monitor
+	// goroutine that never exits (a reap that never completes) is a bug to
+	// fix, not a reason to never shut down — after the bound, log loudly
+	// and return anyway. The inner Wait goroutine is intentionally leaked
+	// on timeout (harmless; it exits whenever the wedged monitor does).
+	// ctx.Done() is watched too, and separately logged: server.Start's
+	// shutdownCtx may already be mostly spent by srv.Shutdown before this
+	// runs, and without this branch drainTimeout would run to its own full
+	// length on top of that instead of respecting the caller's remaining
+	// budget.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.procWg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		logging.L().Errorf("plugin supervisor shutdown: caller context done (%v) before monitor goroutines finished — continuing shutdown anyway", ctx.Err())
+	case <-time.After(drainTimeout):
+		logging.L().Errorf("plugin supervisor shutdown: monitor goroutines still running %s after stop — continuing shutdown anyway", drainTimeout)
+	}
 	return nil
 }
 

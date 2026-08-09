@@ -38,9 +38,18 @@ import (
 // StartCloudSync, StartSyncPush, StartSyncPull, StartEODScheduler and
 // StartAutoUpdateScheduler are all wired this way now (ut-docs#153).
 // internal/plugins.Supervisor's monitorProcess goroutines and the wasm
-// runtime's per-plugin event-channel drainer are NOT yet joined — both need
-// real design work before a join is even safe, tracked separately
-// (ut-docs#380).
+// runtime's per-plugin event-channel drainers are joined too since
+// ut-docs#380 (both bounded, so a wedged plugin goroutine logs loudly
+// instead of eating the whole drain budget) — but NOT the same way as
+// everything else on this page: Supervisor's join is inside
+// Supervisor.Shutdown itself, reached via server.Start's wg-joined shutdown
+// goroutine, so it's still covered by this wg. The wasm runtime's join is
+// deliberately NOT a wg member — Wasm.Shutdown closes the same subscriber
+// channels EventBus.Publish sends on, so racing it against this wg's other
+// still-live publishers (a cloudsync tick, an in-flight checkout) is a real
+// "send on closed channel" panic, not a hypothetical one. app.Run calls
+// Wasm.Shutdown from its own deferred cleanup, strictly AFTER this wg's
+// drain completes.
 func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository, wg *sync.WaitGroup) http.Handler {
 	log := logging.L()
 	mux := http.NewServeMux()

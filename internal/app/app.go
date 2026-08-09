@@ -104,14 +104,36 @@ func Run(ctx context.Context) error {
 	// to actually exit before its deferred database.Close() above runs.
 	// Without this, "Run returned" didn't mean "nothing is still writing to
 	// the data dir" (found 2026-07-30 via a mobile-shutdown CI flake).
-	// STILL NOT covered — the drain is not complete:
-	// internal/plugins.Supervisor's monitorProcess goroutines (native plugin
-	// processes — dynamically spawned per start/restart, no bounded join
-	// point yet) and the wasm runtime's per-plugin event-channel drainer
-	// (internal/plugins/wasm_runtime.go — its channel is only closed on the
-	// next Sync/reload, never on shutdown, so tracking it here would make
-	// every drain time out) both need real design work before a join is even
-	// safe; tracked as ut-docs#380.
+	// The two goroutine classes this comment used to name as still-open are
+	// covered too since ut-docs#380, each behind its own bounded wait:
+	// internal/plugins.Supervisor's monitorProcess goroutines are joined
+	// INSIDE Supervisor.Shutdown itself (bounded by
+	// pluginShutdownDrainTimeout), which server.Start already invokes from a
+	// wg-joined shutdown goroutine — so this wg transitively covers them.
+	// The wasm runtime's per-plugin event-channel drainers are joined by
+	// Wasm.Shutdown too (bounded by wasmShutdownDrainTimeout) — but NOT as
+	// a wg member racing bgCtx.Done() the way every other service here is:
+	// Wasm.Shutdown's ResetSubscribers call closes the same subscriber
+	// channels EventBus.publish sends on (ipc.go), and publish releases its
+	// lock before that send — so closing those channels while a publisher
+	// (e.g. cloudsync's unrecovered goroutine, or an in-flight checkout)
+	// could still be mid-send is a real "send on closed channel" panic, not
+	// a hypothetical one (reproduced during review). It is called instead
+	// from the deferred cleanup below, AFTER drainBackgroundServices — ON
+	// THE CLEAN PATH, every wg-joined publisher has by then actually
+	// exited, not merely been asked to; but drainBackgroundServices' own
+	// wait is itself bounded (backgroundDrainTimeout) — if THAT bound is
+	// what ends it, a wedged publisher can still be live when Wasm.Shutdown
+	// runs, and the panic window this sequencing exists to close reopens on
+	// that degraded path. wasmShutdownDrainTimeout is NOT contained inside
+	// backgroundDrainTimeout the way pluginShutdownDrainTimeout is — it
+	// runs strictly AFTER that drain, so it's additive on top of it
+	// (worst case backgroundDrainTimeout + wasmShutdownDrainTimeout before
+	// Run returns), not a sub-budget of it. Either way it's bounded: a
+	// wedged plugin goroutine logs its own loud error rather than hanging
+	// shutdown forever, but on a timeout the drain returning does NOT mean
+	// every such goroutine is provably gone — it means the bound elapsed
+	// and the timeout was logged.
 	//
 	// bgCtx is independently cancellable from ctx: an early startup error
 	// below (plugins.Init, marketplace.NewCatalogRepository, server.Start's
@@ -119,17 +141,32 @@ func Run(ctx context.Context) error {
 	// without this, the background goroutines already started (e.g. enroll's
 	// registration loop) would never be told to stop — drainBackgroundServices
 	// would then always time out waiting on goroutines nothing signalled.
-	// stopBg() is deferred so it (and the drain) run on every return path.
+	// stopBg() is deferred so it (and the drain, and the wasm shutdown
+	// below) run on every return path, including these early-return ones —
+	// pluginManager is declared here (not with := at its assignment below)
+	// so this closure can reference it before it exists yet. plugins.Init
+	// returns a nil *Manager on any of its own error paths, and Wasm is a
+	// FIELD, not a method — pluginManager.Wasm would dereference the nil
+	// Manager before WasmRuntime.Shutdown's own nil-receiver check ever
+	// runs, so the nil guard has to happen here, one level up.
 	var wg sync.WaitGroup
+	var pluginManager *plugins.Manager
 	bgCtx, stopBg := context.WithCancel(ctx)
 	defer func() {
 		stopBg()
 		drainBackgroundServices(&wg, log, backgroundDrainTimeout)
+		// Only after every wg-joined publisher has actually exited — see
+		// the long comment above for why this can't be a wg member itself.
+		// nil-checked: plugins.Init can return a nil Manager on an early
+		// error return, before this is ever assigned below.
+		if pluginManager != nil {
+			pluginManager.Wasm.Shutdown(wasmShutdownDrainTimeout)
+		}
 	}()
 
 	enroll.Init(bgCtx, cfg, settingsStore, &wg)
 
-	pluginManager, err := plugins.Init(ctx, cfg, database.DB)
+	pluginManager, err = plugins.Init(ctx, cfg, database.DB)
 	if err != nil {
 		return err
 	}
@@ -175,6 +212,14 @@ func Run(ctx context.Context) error {
 // backgroundDrainTimeout bounds how long Run waits for background goroutines
 // to exit before giving up and closing the database anyway.
 const backgroundDrainTimeout = 10 * time.Second
+
+// wasmShutdownDrainTimeout bounds Wasm.Shutdown's wait for the per-plugin
+// event drainer goroutines. Wasm.Shutdown runs AFTER drainBackgroundServices
+// (see the long comment above for why), so this is additive on top of
+// backgroundDrainTimeout, not contained inside it — a wedged drainer logs
+// its own specific error rather than hanging shutdown forever, but it does
+// add its own bound's worth of time on top in that case.
+const wasmShutdownDrainTimeout = 5 * time.Second
 
 // drainBackgroundServices blocks until every goroutine registered on wg has
 // exited, so the caller's subsequent database.Close() never races a

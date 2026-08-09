@@ -54,6 +54,20 @@ type WasmRuntime struct {
 	db         *sql.DB         // for host functions; set by Sync
 	baseDir    string
 	unsubGen   int // bumped per sync so stale handlers no-op
+	// Shutdown support (ut-docs#380). drainWg tracks the per-plugin
+	// event-channel drainer goroutines Sync spawns: Add(1) under w.mu
+	// (guarded by !closed) before each spawn, Done() as the drainer's first
+	// defer. Across repeated live Syncs the accounting stays correct on its
+	// own: ResetSubscribers closes the old generation's channels (their
+	// drainers exit and Done), new drainers Add for the new generation, and
+	// nothing Waits in between. bus is the shared EventBus of the last
+	// Sync, kept so Shutdown can close every subscriber channel. closed
+	// flips once in Shutdown; every Add is guarded by it under w.mu, so no
+	// Add can start after Shutdown's Wait has begun (the WaitGroup
+	// "Add-after-Wait-observes-zero" rule).
+	drainWg sync.WaitGroup
+	bus     *EventBus
+	closed  bool
 }
 
 // exportTimeout is the deadline granted to the export/report event class
@@ -114,6 +128,16 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	if w == nil {
 		return
 	}
+	// A Sync after Shutdown would re-subscribe channels nothing will ever
+	// drain again. Best-effort early exit; the authoritative guard is the
+	// per-spawn closed check further down, under the same w.mu Shutdown
+	// flips closed under.
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
+	w.mu.Unlock()
 	repo := data.NewPluginRepo(db)
 	rows, err := repo.ListInstalledPlugins(ctx)
 	if err != nil {
@@ -146,6 +170,9 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	w.mu.Unlock()
 
 	bus := SharedBus(db)
+	w.mu.Lock()
+	w.bus = bus // remembered so Shutdown can close the subscriptions
+	w.mu.Unlock()
 	bus.ResetSubscribers()
 
 	for _, row := range rows {
@@ -197,12 +224,77 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			logging.L().Errorf("wasm subscribe %s: %v", pluginID, err)
 			continue
 		}
+		// The Add is guarded by closed under w.mu (see drainWg's doc): a
+		// Sync racing Shutdown must not register a drainer after Shutdown
+		// has started waiting for them. The subscription above already
+		// exists in the bus at this point with nothing left to drain it —
+		// harmless: Publish's non-blocking path just audits a "dropped"
+		// send on a full buffer rather than panicking or hanging, and the
+		// process is on its way out anyway.
+		w.mu.Lock()
+		if w.closed {
+			w.mu.Unlock()
+			continue
+		}
+		w.drainWg.Add(1)
+		w.mu.Unlock()
 		go func() {
+			defer w.drainWg.Done()
 			for ev := range ch {
 				_, _ = handle(context.Background(), ev)
 			}
 		}()
 		logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
+	}
+}
+
+// Shutdown stops the per-plugin event-channel drainer goroutines Sync
+// spawned and waits — bounded — for them to exit (ut-docs#380). Their
+// channels are otherwise only closed by the NEXT Sync/reload's
+// ResetSubscribers, never at process end, so without this every drainer
+// leaked forever on shutdown, invisible to app.Run's drain.
+//
+// Unlike every other background service app.Run joins, this is NOT called
+// as a wg member racing bgCtx.Done(): ResetSubscribers here closes the same
+// subscriber channels EventBus.publish sends on, and publish releases its
+// read lock before that send — closing the channel while a publisher (an
+// in-flight checkout, a live cloudsync tick) could still be mid-send is a
+// real "send on closed channel" panic (confirmed during review, not
+// hypothetical). app.Run instead calls this from its own deferred cleanup,
+// AFTER drainBackgroundServices has already joined every wg-registered
+// publisher — see app.go's Run for the exact sequencing and its caveat
+// about what happens if that drain itself times out.
+//
+// timeout is a parameter (not a constant read here) so tests can exercise
+// the timeout branch without a real multi-second wait.
+func (w *WasmRuntime) Shutdown(timeout time.Duration) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.closed = true // no new drainers may be registered from here on
+	bus := w.bus
+	w.mu.Unlock()
+	if bus != nil {
+		// Closes every subscriber channel (see EventBus.ResetSubscribers),
+		// which ends each drainer's `for ev := range ch` loop.
+		bus.ResetSubscribers()
+	}
+
+	// Bounded join, mirroring app.drainBackgroundServices: a wedged drainer
+	// (a handler that never returns) is a bug to fix, not a reason to never
+	// shut down — log loudly and return anyway. The inner Wait goroutine is
+	// intentionally leaked on timeout (harmless; it exits whenever the
+	// wedged drainer does).
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.drainWg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		logging.L().Errorf("wasm shutdown: event drainer goroutines still running %s after unsubscribe — continuing shutdown anyway", timeout)
 	}
 }
 
