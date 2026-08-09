@@ -113,7 +113,7 @@ func TestItemCost_ValidationAndClear(t *testing.T) {
 	if rec := postForm(t, mux, "/api/catalog/item-cost", "cost=1.00"); rec.Code != http.StatusBadRequest {
 		t.Errorf("missing item: want 400, got %d", rec.Code)
 	}
-	for _, bad := range []string{"abc", "-1"} {
+	for _, bad := range []string{"abc", "-1", "1000001"} {
 		if rec := postForm(t, mux, "/api/catalog/item-cost", "panelItem=itm1&cost="+bad); rec.Code != http.StatusBadRequest {
 			t.Errorf("cost=%q: want 400, got %d", bad, rec.Code)
 		}
@@ -143,7 +143,7 @@ func TestItemLeadTime_ValidationAndClear(t *testing.T) {
 	if rec := postForm(t, mux, "/api/catalog/item-lead-time", "leadTimeDays=5"); rec.Code != http.StatusBadRequest {
 		t.Errorf("missing item: want 400, got %d", rec.Code)
 	}
-	for _, bad := range []string{"abc", "-1"} {
+	for _, bad := range []string{"abc", "-1", "366"} {
 		if rec := postForm(t, mux, "/api/catalog/item-lead-time", "panelItem=itm1&leadTimeDays="+bad); rec.Code != http.StatusBadRequest {
 			t.Errorf("leadTimeDays=%q: want 400, got %d", bad, rec.Code)
 		}

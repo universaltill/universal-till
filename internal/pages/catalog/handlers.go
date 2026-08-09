@@ -173,7 +173,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		var minor int64
 		if raw != "" {
 			f, err := strconv.ParseFloat(raw, 64)
-			if err != nil || f < 0 {
+			// Upper bound is a sanity ceiling, not a real limit on shop
+			// pricing (universaltill/ut-docs#276) — 1,000,000 major units
+			// survives conversion to minor units at any known currency's
+			// decimal count with no int64 overflow risk.
+			if err != nil || f < 0 || f > 1_000_000 {
 				http.Error(w, "invalid cost", http.StatusBadRequest)
 				return
 			}
@@ -205,7 +209,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		var days int
 		if raw != "" {
 			n, err := strconv.Atoi(raw)
-			if err != nil || n < 0 {
+			// Upper bound is a sanity ceiling (universaltill/ut-docs#276):
+			// without it, an absurdly large value (e.g. 999999999) makes
+			// the inventory/digest "DaysLeft <= leadTimeDays" warning fire
+			// permanently — a real, if self-inflicted, footgun.
+			if err != nil || n < 0 || n > 365 {
 				http.Error(w, "invalid lead time", http.StatusBadRequest)
 				return
 			}
