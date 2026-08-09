@@ -186,8 +186,13 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 
 // printReceiptAsync prints a completed sale without ever blocking checkout:
 // fired as a goroutine after tender, failures are logged + audited only.
+// Tracked on d.AsyncWork (ut-docs#425) so a caller tearing down shared state
+// (a test closing Db, graceful shutdown) can wait for it to actually finish
+// instead of racing it — see AsyncWork's doc comment on common.Deps.
 func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
+	d.AsyncWork.Add(1)
 	go func() {
+		defer d.AsyncWork.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		cfg := printerConfig(ctx, d)
