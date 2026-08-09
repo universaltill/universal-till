@@ -1,6 +1,8 @@
 package issuereport
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -342,5 +344,138 @@ func TestPendingOnMissingDirReturnsEmpty(t *testing.T) {
 	}
 	if len(bundles) != 0 {
 		t.Fatalf("expected 0 bundles, got %d", len(bundles))
+	}
+}
+
+// RecordSentFailure durably increments the bundle's failure count on disk
+// (survives a till restart, unlike an in-memory counter — ut-docs#446) and
+// returns the new count each time.
+func TestRecordSentFailureIncrementsAndPersists(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("printer jammed", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	for want := 1; want <= 3; want++ {
+		got, err := RecordSentFailure(id)
+		if err != nil {
+			t.Fatalf("RecordSentFailure #%d: %v", want, err)
+		}
+		if got != want {
+			t.Fatalf("RecordSentFailure #%d = %d, want %d", want, got, want)
+		}
+	}
+
+	// Persisted, not in-memory: re-reading the bundle from disk (as Pending()
+	// does on every fresh cloudsync tick, including after a till restart)
+	// must see the same count.
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.SentFailCount != 3 {
+		t.Fatalf("Meta.SentFailCount = %d, want 3", bundles[0].Meta.SentFailCount)
+	}
+}
+
+// A bundle id with no meta.json (already discarded, or never existed) is a
+// real error, not a silent 0 — callers must not mistake "can't find it" for
+// "this is its first failure".
+func TestRecordSentFailureUnknownIDErrors(t *testing.T) {
+	withTempPendingDir(t)
+	if _, err := RecordSentFailure("does-not-exist"); err == nil {
+		t.Fatal("expected an error for an unknown bundle id")
+	}
+}
+
+// The core ut-docs#446 blocker (independent review): if the durable write
+// itself keeps failing — the disk is genuinely the problem, which is the
+// ticket's own headline scenario — the cap must still engage via the
+// in-memory fallback, not silently stop counting forever.
+func TestRecordSentFailureFallsBackToMemoryWhenWriteFails(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("disk is full", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	origWriteMeta := writeMeta
+	writeMeta = func(string, Meta) error { return fmt.Errorf("simulated: no space left on device") }
+	defer func() { writeMeta = origWriteMeta }()
+
+	for want := 1; want <= MaxSentFailCount; want++ {
+		got, err := RecordSentFailure(id)
+		if err != nil {
+			t.Fatalf("RecordSentFailure #%d: %v", want, err)
+		}
+		if got != want {
+			t.Fatalf("RecordSentFailure #%d = %d, want %d (cap must still advance while every write fails)", want, got, want)
+		}
+	}
+
+	// The on-disk file must be untouched by the failed writes — atomicity
+	// (writeMetaAtomic never renames a half-written temp file over it) means
+	// a bundle whose write can't succeed still has a valid, parsable
+	// meta.json, not a truncated one that would strand it from Pending().
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d) — a corrupted meta.json would silently drop the bundle here", err, len(bundles))
+	}
+	if bundles[0].Meta.SentFailCount != 0 {
+		t.Fatalf("on-disk SentFailCount = %d, want 0 (every write failed, so disk must still hold the pre-failure value)", bundles[0].Meta.SentFailCount)
+	}
+
+	// Once the disk recovers, the fallback's progress must be folded back
+	// in — not discarded, and not silently restarted from the stale
+	// on-disk value.
+	writeMeta = origWriteMeta
+	got, err := RecordSentFailure(id)
+	if err != nil {
+		t.Fatalf("RecordSentFailure after recovery: %v", err)
+	}
+	if got != MaxSentFailCount+1 {
+		t.Fatalf("RecordSentFailure after recovery = %d, want %d (fallback progress must carry over)", got, MaxSentFailCount+1)
+	}
+	bundles, err = Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending after recovery: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.SentFailCount != MaxSentFailCount+1 {
+		t.Fatalf("on-disk SentFailCount after recovery = %d, want %d", bundles[0].Meta.SentFailCount, MaxSentFailCount+1)
+	}
+}
+
+// writeMetaAtomic itself: a successful write leaves valid content and no
+// leftover temp file behind.
+func TestWriteMetaAtomicLeavesNoTempFileBehind(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("printer jammed", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	path := filepath.Join(PendingDir, id, "meta.json")
+	meta := Meta{ID: id, Note: "updated", CreatedAt: time.Now().UTC(), SentFailCount: 2}
+	if err := writeMetaAtomic(path, meta); err != nil {
+		t.Fatalf("writeMetaAtomic: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(PendingDir, id))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Fatalf("leftover temp file: %s", e.Name())
+		}
+	}
+	mb, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read written meta: %v", err)
+	}
+	var got Meta
+	if err := json.Unmarshal(mb, &got); err != nil {
+		t.Fatalf("unmarshal written meta: %v", err)
+	}
+	if got.Note != "updated" || got.SentFailCount != 2 {
+		t.Fatalf("written meta = %+v, want Note=updated SentFailCount=2", got)
 	}
 }

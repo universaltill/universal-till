@@ -429,6 +429,83 @@ func TestUploadPendingIssueReportsKeepsBundleWhenSaveSentFails(t *testing.T) {
 	}
 }
 
+// The core ut-docs#446 fix: a bundle whose cloud upload keeps succeeding but
+// whose local retained-record save keeps failing (e.g. disk full, DB briefly
+// read-only) must NOT be re-uploaded forever. After issuereport.MaxSentFailCount
+// consecutive SaveSent failures, the till gives up on local retention and
+// discards the bundle — it was already delivered to the cloud (idempotent
+// there), so nothing is lost except this till's own "sent" record of it.
+func TestUploadPendingIssueReportsDiscardsAfterSaveSentFailureCap(t *testing.T) {
+	withTempPendingDir(t)
+	brokenDB := testDB(t) // settings table only — SaveSent always fails
+	id, err := issuereport.Save("record must not loop forever", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	var uploadCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uploadCount++
+		_ = r.ParseMultipartForm(10 << 20)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < issuereport.MaxSentFailCount; i++ {
+		uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), brokenDB)
+	}
+
+	if uploadCount != issuereport.MaxSentFailCount {
+		t.Fatalf("cloud upload called %d times, want exactly %d (must stop re-uploading once it gives up)", uploadCount, issuereport.MaxSentFailCount)
+	}
+	remaining, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("bundle %q still pending after %d failed SaveSent attempts, want it discarded", id, issuereport.MaxSentFailCount)
+	}
+
+	// One more tick must be a true no-op: nothing left to upload, no growth.
+	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), brokenDB)
+	if uploadCount != issuereport.MaxSentFailCount {
+		t.Fatalf("cloud upload called %d times after an extra tick, want it to stay at %d", uploadCount, issuereport.MaxSentFailCount)
+	}
+}
+
+// A bundle whose cloud upload keeps FAILING (not the SaveSent step) must keep
+// retrying unboundedly — the cap above applies only to the SaveSent-failure
+// path. This is the offline-first guarantee: a till with no connectivity for
+// days must keep trying once it reconnects, not give up after N ticks.
+func TestUploadPendingIssueReportsUploadFailureIsNeverCapped(t *testing.T) {
+	withTempPendingDir(t)
+	d := openMigratedDB(t, "issue_reports_uncapped.db")
+	id, err := issuereport.Save("cloud is unreachable", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < issuereport.MaxSentFailCount+3; i++ {
+		uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), d.DB)
+	}
+
+	remaining, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].Meta.ID != id {
+		t.Fatalf("bundle must still be pending after upload failures alone (never capped): %+v", remaining)
+	}
+	if remaining[0].Meta.SentFailCount != 0 {
+		t.Fatalf("SentFailCount = %d, want 0 — an upload failure must never touch the SaveSent failure counter", remaining[0].Meta.SentFailCount)
+	}
+}
+
 // Pending() itself erroring (not just "no bundles yet") must not panic the
 // tick loop — uploadPendingIssueReports logs and returns.
 func TestUploadPendingIssueReportsPendingListError(t *testing.T) {
