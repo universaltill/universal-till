@@ -203,20 +203,31 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	return nil
 }
 
-// StoreVersion saves a plugin version for potential rollback
+// StoreVersion saves a plugin version for potential rollback: snapshots the
+// live per-version install directory (pluginBaseDir/pluginID/version/, the
+// layout installer_marketplace.go's installBundleFile leaves behind) into
+// this manager's own versions/ tree (pluginBaseDir/pluginID/versions/
+// version/), which Rollback reads from later. sourcePath == "" keeps the
+// pre-ut-docs#495 no-op-copy behavior (directory created, nothing to copy —
+// some callers store a version marker with no known source location yet).
 func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) error {
 	log := logging.L()
 
 	versionDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions", version)
 
-	// Create version directory
-	if err := os.MkdirAll(versionDir, 0755); err != nil {
+	if sourcePath != "" && filepath.Clean(sourcePath) != filepath.Clean(versionDir) {
+		// Fresh snapshot every time: an interrupted previous StoreVersion
+		// call (partial copy) must never be trusted as complete.
+		if err := os.RemoveAll(versionDir); err != nil {
+			return fmt.Errorf("failed to clear stale version directory: %w", err)
+		}
+		if err := copyVersionFiles(sourcePath, versionDir); err != nil {
+			_ = os.RemoveAll(versionDir)
+			return fmt.Errorf("failed to copy plugin files from %s: %w", sourcePath, err)
+		}
+	} else if err := os.MkdirAll(versionDir, 0755); err != nil {
 		return fmt.Errorf("failed to create version directory: %w", err)
 	}
-
-	// Copy plugin files to version directory
-	// For now, we assume sourcePath is already in the correct location
-	// In a full implementation, you'd copy files here
 
 	log.Infof("[Rollback] Stored version %s for plugin %s", version, pluginID)
 
@@ -226,6 +237,33 @@ func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) er
 	}
 
 	return nil
+}
+
+// copyVersionFiles recursively copies sourceDir's tree into destDir,
+// preserving relative structure and regular-file permissions.
+func copyVersionFiles(sourceDir, destDir string) error {
+	return filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(sourceDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		target := filepath.Join(destDir, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
 }
 
 // cleanupOldVersions removes old plugin versions, keeping only maxVersions

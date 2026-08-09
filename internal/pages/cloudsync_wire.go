@@ -142,6 +142,35 @@ func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (
 // replicas). version=="" keeps the unpinned latest-release behavior.
 func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string) (string, error) {
 	statusStore := plugins.NewInstallStatusStore(d.Db)
+
+	// ut-docs#495: a pinned (upgrade) install can fail the version-mismatch
+	// check below, by which point Install has already overwritten this
+	// listing's plugins-table row. Capture "the version that was good before
+	// this attempt" NOW, while it's still the one on record, and snapshot
+	// its files — the only way a later Rollback (instead of a full
+	// uninstall) has anything to restore. Only pinned installs can ever hit
+	// the mismatch branch, so unpinned (version == "") installs skip this
+	// entirely.
+	var priorGood plugins.InstallStatusRecord
+	var hasPriorGood bool
+	if version != "" {
+		if prior, ok, err := statusStore.Get(ctx, listingID); err == nil && ok &&
+			prior.State == plugins.InstallStateActive && prior.PluginID != "" && prior.CurrentVersion != "" {
+			priorGood = prior
+			hasPriorGood = true
+			sourcePath := filepath.Join(paths.Plugins(), prior.PluginID, prior.CurrentVersion)
+			if err := plugins.NewRollbackManager(d.Db, paths.Plugins()).StoreVersion(prior.PluginID, prior.CurrentVersion, sourcePath); err != nil {
+				logging.L().Warnf("plugin sync: failed to snapshot %s@%s before pinned install (rollback to it won't be possible if this mismatches): %v",
+					prior.PluginID, prior.CurrentVersion, err)
+				// Don't rely on Rollback's own os.Stat failure as the safety
+				// net for a snapshot that was never actually taken — that
+				// safety is accidental, living in the callee, not a decision
+				// made here.
+				hasPriorGood = false
+			}
+		}
+	}
+
 	_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 		ListingID: listingID,
 		State:     plugins.InstallStateRequested,
@@ -196,32 +225,78 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 	// same way a real uninstall does, before reporting the failure — never
 	// leave an unrequested version "installed and active" behind the scenes.
 	//
-	// Known gap (round 2 review, ut-docs#495): `plugins` is one row per
-	// plugin ID, and Install already overwrote it before this check runs —
-	// so if this listing had a DIFFERENT, previously-good version installed
-	// (an in-place upgrade attempt that mismatched, not a fresh install),
-	// cloudRemovePlugin here removes the WHOLE plugin, not just the bad
-	// version — the old good version's files happen to survive on disk
-	// (Install only touches its own version's directory), but its
-	// plugins/plugin_catalog rows and permissions are gone with the rest,
-	// so it does not stay active. Trading a wrong-but-active version for a
-	// clean-but-uninstalled one is the safer of the two failure modes for a
-	// money-affecting plugin (never silently compute under an unrequested
-	// version) — but it is a real availability regression on the upgrade
-	// path, not just the fresh-install path this fix's test covers.
-	// RollbackManager (rollback.go) exists for exactly this "restore the
-	// prior good version" shape but isn't wired in here, and its own
-	// StoreVersion is currently a stub that never actually snapshots files
-	// — using it correctly is its own piece of work, tracked separately
-	// rather than folded into this fix. See ut-docs#495.
+	// Fixed (ut-docs#495): `plugins` is one row per plugin ID, and Install
+	// already overwrote it before this check runs — so if this listing had a
+	// DIFFERENT, previously-good version installed (an in-place upgrade
+	// attempt that mismatched, not a fresh install), a plain cloudRemovePlugin
+	// here would remove the WHOLE plugin directory tree — every version's
+	// files, not just the bad one (os.RemoveAll targets pluginBaseDir/
+	// pluginID, the parent of every per-version subdirectory) — on top of
+	// dropping its plugins/plugin_catalog rows and permissions. If the
+	// snapshot above captured a prior good version for this exact plugin,
+	// restore it via RollbackManager.Rollback instead: the old version stays
+	// installed and active, and only this failed upgrade attempt is reported
+	// as failed. Only a fresh install (nothing to restore) still gets the
+	// full cloudRemovePlugin — unchanged from before this fix — and so does
+	// an upgrade whose Rollback itself fails (never leave a half-migrated
+	// plugin behind silently).
 	if version != "" && result.Version != version {
-		if _, rmErr := cloudRemovePlugin(ctx, d, result.PluginID); rmErr != nil {
-			logging.L().Errorf("plugin sync: failed to roll back mismatched install of %s (%s): %v", result.Name, result.PluginID, rmErr)
+		rolledBack := false
+		switch {
+		case hasPriorGood && priorGood.PluginID == result.PluginID && result.Version == priorGood.CurrentVersion:
+			// The marketplace answered the pin with a version that mismatches
+			// the PIN but happens to already BE the prior good version (e.g.
+			// re-served instead of a genuinely new release) — Install has
+			// already re-persisted it correctly. Nothing to restore:
+			// RollbackManager.Rollback would just error "already at version"
+			// (rollback.go) and fall through to a needless full uninstall of
+			// an already-correct install.
+			rolledBack = true
+		case hasPriorGood && priorGood.PluginID == result.PluginID:
+			if rbErr := plugins.NewRollbackManager(d.Db, paths.Plugins()).Rollback(ctx, result.PluginID, priorGood.CurrentVersion, "system"); rbErr != nil {
+				logging.L().Errorf("plugin sync: failed to roll back %s to prior version %s after mismatch, falling back to full uninstall: %v",
+					result.Name, priorGood.CurrentVersion, rbErr)
+			} else {
+				rolledBack = true
+				if err := d.ReloadPlugins(ctx); err != nil {
+					logging.L().Warnf("plugin sync: failed to reload plugin manager after rolling back %s: %v", result.Name, err)
+				}
+				// The mismatched version's own directory is now orphaned —
+				// Rollback only touches DB rows, and nothing else ever cleans
+				// up a per-version install dir that no row points at anymore.
+				// Left alone, this and every future retry against the same
+				// still-mismatching pin would leak disk space forever.
+				if rmErr := os.RemoveAll(filepath.Join(paths.Plugins(), result.PluginID, result.Version)); rmErr != nil {
+					logging.L().Warnf("plugin sync: failed to remove orphaned mismatched-version files for %s@%s: %v", result.PluginID, result.Version, rmErr)
+				}
+			}
 		}
-		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+		if !rolledBack {
+			if _, rmErr := cloudRemovePlugin(ctx, d, result.PluginID); rmErr != nil {
+				logging.L().Errorf("plugin sync: failed to roll back mismatched install of %s (%s): %v", result.Name, result.PluginID, rmErr)
+			}
+		}
+		rec := plugins.InstallStatusRecord{
 			ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
-			State: plugins.InstallStateFailed, MessageKey: "plugins.install.error.version_mismatch", Retryable: true,
-		})
+			MessageKey: "plugins.install.error.version_mismatch", Retryable: true,
+		}
+		if rolledBack {
+			// The plugin is genuinely still installed and ACTIVE at the prior
+			// good version — this record must say so, not Failed, or two
+			// things break: (1) the NEXT tick's "is there a prior good
+			// version to protect" check above reads this same record and
+			// requires State==Active, so a persistently-mismatching pin
+			// would lose the protection on the very next retry and fully
+			// uninstall anyway; (2) convergePluginSet's prune loop only ever
+			// prunes an Active record, so a Failed record here would make
+			// this plugin permanently unprunable even after the primary
+			// legitimately removes the listing later.
+			rec.State = plugins.InstallStateActive
+			rec.CurrentVersion = priorGood.CurrentVersion
+		} else {
+			rec.State = plugins.InstallStateFailed
+		}
+		_ = statusStore.Save(ctx, rec)
 		return "", fmt.Errorf("installed version %s does not match requested version %s", result.Version, version)
 	}
 	_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
