@@ -319,6 +319,36 @@ func TestRemovalScriptsCleanUpKioskUnits(t *testing.T) {
 	}
 }
 
+// TestPostremovePurgeCleansSelfUpdateBackups guards ut-docs#257: self-update
+// (ut-docs#151) leaves rollback-backup artifacts — internal/selfupdate's
+// Apply() renames the running binary to unitill-pos.bak and, if it swapped
+// web/ assets, the old web/ dir to web.bak — that a purge never cleaned up,
+// so remnants of /opt/unitill survived `apt remove --purge`. Reuses
+// chownDepthAt (same reasoning as TestPostinstallOwnsWholeInstallTreeForSelfUpdate:
+// a raw substring check can't tell "inside the purge conditional" from
+// "unconditional, or sitting in a comment") to require both cleanup lines
+// appear nested one level deep — inside `if [ "$1" = "purge" ]; then ... fi`,
+// not the script's unconditional top section.
+func TestPostremovePurgeCleansSelfUpdateBackups(t *testing.T) {
+	post := readScript(t, "packaging/scripts/postremove.sh")
+
+	binDepth, binFound := chownDepthAt(post, "rm -f /opt/unitill/bin/unitill-pos.bak")
+	if !binFound {
+		t.Fatal("postremove.sh: no `rm -f /opt/unitill/bin/unitill-pos.bak` — a purge leaves the self-update rollback binary backup behind")
+	}
+	if binDepth != 1 {
+		t.Errorf("postremove.sh: unitill-pos.bak cleanup is at depth %d, want 1 (nested inside the purge conditional, not unconditional)", binDepth)
+	}
+
+	webDepth, webFound := chownDepthAt(post, "rm -rf /opt/unitill/web.bak")
+	if !webFound {
+		t.Fatal("postremove.sh: no `rm -rf /opt/unitill/web.bak` — a purge leaves the self-update rollback web/ backup behind")
+	}
+	if webDepth != 1 {
+		t.Errorf("postremove.sh: web.bak cleanup is at depth %d, want 1 (nested inside the purge conditional, not unconditional)", webDepth)
+	}
+}
+
 func TestPackagingShellScriptsParse(t *testing.T) {
 	// postinstall/preremove/postremove run under /bin/sh on the target box;
 	// the kiosk setup declares bash. A bashism creeping into the sh scripts
