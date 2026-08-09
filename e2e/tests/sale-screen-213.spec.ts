@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, waitForStableLayout } from './helpers';
 
 // ut-docs#213: the basket is a full-height first-class panel (>=4 line
 // items visible at 1280x800 with no scrolling), carries an always-visible
@@ -50,18 +50,44 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     }
     await expect(page.locator('.basket table tbody tr')).toHaveCount(CODES.length);
 
+    // ut-docs#320: wait for layout to actually settle before measuring.
+    // Root-caused (not guessed): `.basket-scroll` is `flex: 1` inside the
+    // `.basket` flex column (app.css) — measured directly, its resolved
+    // height lags a fresh row swap by exactly one frame (623.78px ->
+    // 635.38px) while the rows inside it are already final. The margin
+    // between the 4th (last fully-visible) row's bottom edge and the
+    // box's OWN bottom edge is razor-thin (~11px settled, briefly
+    // *negative* unsettled) — so a measurement taken before the box
+    // itself finishes resizing intermittently undercounts. Must include
+    // the box itself in the selector, not just the rows — the rows never
+    // move, so watching only them would "stabilize" after the very first
+    // frame without ever having watched the element that actually moves.
+    await waitForStableLayout(page, '.basket-scroll, .basket-scroll tbody tr');
+
     // Fully-visible rows inside .basket-scroll's box, not merely in-DOM.
-    const fullyVisible = await page.evaluate(() => {
+    // Diagnostics attached to the assertion (not just the boolean) so a
+    // future occurrence is self-diagnosing instead of another bare
+    // "Received: 3" — this AC's margin is real (~2-3px per row) and CI
+    // font metrics are already known to sometimes wrap these names to an
+    // extra line (see .line-name's own comment in app.css), so a future
+    // failure here may be a genuine margin exhaustion, not a settle race.
+    const measured = await page.evaluate(() => {
       const scroll = document.querySelector('.basket-scroll') as HTMLElement;
       const box = scroll.getBoundingClientRect();
       let n = 0;
+      const rows: { top: number; bottom: number; height: number }[] = [];
       scroll.querySelectorAll('tbody tr').forEach((tr) => {
         const r = (tr as HTMLElement).getBoundingClientRect();
+        rows.push({ top: r.top, bottom: r.bottom, height: r.height });
         if (r.height > 0 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1) n++;
       });
-      return n;
+      return { fullyVisible: n, box: { top: box.top, bottom: box.bottom, height: box.height }, rows, rootFontSize: getComputedStyle(document.documentElement).fontSize };
     });
-    expect(fullyVisible, 'at least 4 line items fully visible without scrolling').toBeGreaterThanOrEqual(4);
+    expect(
+      measured.fullyVisible,
+      `at least 4 line items fully visible without scrolling — got ${measured.fullyVisible}. ` +
+        `box=${JSON.stringify(measured.box)} rootFontSize=${measured.rootFontSize} rows=${JSON.stringify(measured.rows)}`,
+    ).toBeGreaterThanOrEqual(4);
 
     await resetBasket(page);
     assertClean();
