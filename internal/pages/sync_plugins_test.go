@@ -955,6 +955,21 @@ func TestSyncPullTick_VersionMismatchFromMarketplaceFailsConvergence(t *testing.
 	if fingerprintAfter != fingerprintBefore {
 		t.Fatalf("fingerprint must not advance when convergence failed: before=%q after=%q", fingerprintBefore, fingerprintAfter)
 	}
+	// The mismatched version must not be left "installed and active" behind
+	// the status-table flag alone — round-1 review (ut-docs#479) found that
+	// installer.Install had already persisted it (files, plugins/
+	// plugin_catalog rows, granted permissions) before the version check
+	// ever ran, so ANY reload before the next successful retry would have
+	// wired the wrong, unrequested version into the live menu/WASM runtime.
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); ok {
+		t.Fatalf("mismatched version must be rolled back, not left installed: got version %q", v)
+	}
+	// A clean rollback removes the plugin's whole directory on disk, not
+	// just its DB row — asserted explicitly so a future change that drops
+	// the files-removal step doesn't regress silently.
+	if replica.hasPluginFiles("com.test.sync-alpha") {
+		t.Fatalf("mismatched version's files must be removed on rollback, found some under the plugin's directory")
+	}
 
 	// Retried on the next tick: once the marketplace serves the requested
 	// version correctly, the replica converges.
