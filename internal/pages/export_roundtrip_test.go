@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -105,6 +106,105 @@ func TestExportCatalogCSV_FormulaShapedValuesDefusedAndRoundTrip(t *testing.T) {
 	seasonal := res.Items[1]
 	if seasonal.Name != "'Twas the night" {
 		t.Errorf("genuine leading apostrophe was stripped: got %q", seasonal.Name)
+	}
+}
+
+// TestCatalogCSVFormulaTriggersStaySynced is a drift guard, not a security
+// test (ut-docs#356, follow-up from the ut-docs#321 review — see
+// docs/code-reviews/2026-08-06-catalog-csv-formula-injection.md finding 2).
+// csvSafe's trigger-char switch (this package's csv_export.go) and
+// catimport's csvFormulaTriggers const (internal/catimport/catimport.go)
+// describe the same characters as two independently-maintained literals —
+// catimport can't import this package to share one (this package already
+// imports catimport; the reverse would cycle) — kept in sync only by a
+// code comment before this test existed.
+//
+// Rather than hardcoding a third copy of the trigger set (which could
+// itself silently drift from both), this sweeps candidate bytes as the
+// LEADING byte of two round-tripped values through the real
+// writeCatalogCSV (csvSafe) and catimport.Parse (stripCSVDefuse):
+//
+//   - plain(b): no leading apostrophe. If csvSafe defuses b but catimport's
+//     set doesn't recognize it to strip the apostrophe back off on import,
+//     the round trip comes back with a stray leading "'" — this catches a
+//     trigger char added to csvSafe without mirroring it to
+//     csvFormulaTriggers, for any byte this sweep covers (tab, CR, and
+//     printable ASCII '!'-'~' — see candidates below; other C0 controls,
+//     DEL and bytes >=0x80 aren't swept, matching every trigger char this
+//     codebase has used so far), not just today's known set.
+//   - genuine(b): a REAL leading apostrophe followed by b, for b that
+//     csvSafe does not currently treat as a trigger. If catimport's set
+//     treats b as a trigger but csvSafe never defuses it, catimport wrongly
+//     strips the genuine apostrophe on import — this catches a trigger
+//     char added to csvFormulaTriggers without mirroring it to csvSafe.
+//     (Restricted to non-trigger b: for a byte csvSafe already treats as a
+//     trigger, "genuine apostrophe + trigger char" is indistinguishable
+//     from a defused value by design — the accepted, separately-documented
+//     non-injectivity trade-off on stripCSVDefuse, not drift. Whether b is
+//     "currently a trigger" is decided by calling the real csvSafe below,
+//     not a fourth hardcoded copy of the set — so a legitimate, synced
+//     addition of a new trigger char to both csvSafe and csvFormulaTriggers
+//     together stays covered by this skip, exactly as an existing one is.)
+//
+// Each value also embeds a comma and a quote, exercising real
+// encoding/csv quoting alongside the defuse/strip logic.
+func TestCatalogCSVFormulaTriggersStaySynced(t *testing.T) {
+	// isCurrentTrigger asks the real csvSafe whether it treats b as a
+	// trigger, rather than hardcoding a copy of the set. Probes with a
+	// second byte appended so the field is never exactly "-" — csvSafe's
+	// own sentinel exemption for the literal string "-" (InsertAudit's
+	// "no entity ID" marker) would otherwise misclassify '-' as a
+	// non-trigger here, even though it is one for every other value.
+	isCurrentTrigger := func(b byte) bool {
+		in := string(b) + "y"
+		out := csvSafe(in)
+		return len(out) == len(in)+1 && out[0] == '\''
+	}
+
+	var candidates []byte
+	candidates = append(candidates, '\t', '\r') // current triggers outside printable ASCII
+	for b := byte('!'); b <= '~'; b++ {         // printable ASCII, space excluded (see below)
+		candidates = append(candidates, b)
+	}
+	// Space is excluded: a plain value starting with a literal space that
+	// csvSafe leaves untouched gets trimmed by catimport's own
+	// strings.TrimSpace on read — a pre-existing, unrelated behavior, not
+	// something this drift guard is about.
+
+	roundTrip := func(t *testing.T, name string) string {
+		t.Helper()
+		rows := []data.ExportRow{{Name: name, SKU: "SKU-1", PriceMinor: 100, Category: "Cat", Stock: 1}}
+		var out strings.Builder
+		writeCatalogCSV(&out, rows, 2)
+		res, err := catimport.Parse(strings.NewReader(out.String()), 2)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if len(res.Items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(res.Items))
+		}
+		return res.Items[0].Name
+	}
+
+	for _, b := range candidates {
+		suffix := `est, "value"` // embeds a comma + quote (ut-docs#356 AC)
+
+		plain := string(b) + suffix
+		t.Run(fmt.Sprintf("plain %#02x", b), func(t *testing.T) {
+			if got := roundTrip(t, plain); got != plain {
+				t.Errorf("did not round-trip: got %q, want %q", got, plain)
+			}
+		})
+
+		if isCurrentTrigger(b) {
+			continue
+		}
+		genuine := "'" + string(b) + suffix
+		t.Run(fmt.Sprintf("genuine apostrophe %#02x", b), func(t *testing.T) {
+			if got := roundTrip(t, genuine); got != genuine {
+				t.Errorf("did not round-trip: got %q, want %q", got, genuine)
+			}
+		})
 	}
 }
 
