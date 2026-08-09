@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -105,7 +107,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "invalid upload", http.StatusBadRequest)
 			return
 		}
-		file, _, err := r.FormFile("file")
+		file, header, err := r.FormFile("file")
 		if err != nil {
 			http.Error(w, "csv file required", http.StatusBadRequest)
 			return
@@ -121,16 +123,45 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(locale)
 		T := funcs["T"].(func(string) string)
 
-		res, err := catimport.Parse(file, httpx.ActiveCurrency().Decimals)
+		// Format auto-detection (ut-docs#511): sniff the ZIP local-file-
+		// header magic before choosing a parser — a speedy kasse / pepperm
+		// cashbox .bkp is a plain ZIP, everything else on this page is a
+		// CSV. No separate page/route; the operator just uploads either.
+		isBkp, sniffErr := sniffZipUpload(file)
+		if sniffErr != nil {
+			log.Printf("[import] sniff upload: %v", sniffErr)
+			http.Error(w, T("import.error.invalid_file"), http.StatusBadRequest)
+			return
+		}
+
+		var res catimport.Result
+		if isBkp {
+			res, err = catimport.ParseBkp(file, header.Size, httpx.ActiveCurrency().Decimals)
+		} else {
+			res, err = catimport.Parse(file, httpx.ActiveCurrency().Decimals)
+		}
 		if err != nil {
-			if errors.Is(err, catimport.ErrNoNameColumn) {
+			switch {
+			case errors.Is(err, catimport.ErrNoNameColumn):
 				http.Error(w, T("import.error.no_name_column"), http.StatusBadRequest)
+				return
+			case errors.Is(err, catimport.ErrBkpMissingFiles), errors.Is(err, catimport.ErrBkpInvalidMeta), errors.Is(err, catimport.ErrBkpTooLarge):
+				// The upload looked like a ZIP but isn't a recognisable
+				// .bkp backup — log the real detail, never raw text on the
+				// operator's screen (ut-docs#303's rule, same as below).
+				log.Printf("[import] bkp parse: %v", err)
+				http.Error(w, T("import.error.bkp_unrecognised"), http.StatusBadRequest)
+				return
+			case errors.Is(err, catimport.ErrBkpChecksumMismatch):
+				log.Printf("[import] bkp parse: %v", err)
+				http.Error(w, T("import.error.bkp_checksum_failed"), http.StatusBadRequest)
 				return
 			}
 			// A rarer, lower-level parse failure (malformed CSV row,
-			// unreadable header) — same rule as everywhere else in this
-			// handler: log the real detail, never put raw Go/csv error
-			// text on the operator's screen (ut-docs#303).
+			// unreadable header, corrupt zip entry) — same rule as
+			// everywhere else in this handler: log the real detail, never
+			// put raw Go/csv/zip error text on the operator's screen
+			// (ut-docs#303).
 			log.Printf("[import] parse: %v", err)
 			http.Error(w, T("import.error.invalid_file"), http.StatusBadRequest)
 			return
@@ -590,6 +621,34 @@ func mergeTakeawayOverrides(ctx context.Context, pluginRepo *data.PluginRepo, di
 	return added, false
 }
 
+// zipMagic is the local-file-header signature every non-empty ZIP (a .bkp
+// backup included) starts with; zipEmptyMagic is the end-of-central-
+// directory signature an entirely empty ZIP starts with instead — sniffed
+// so /api/import can auto-detect a .bkp upload alongside the existing CSV
+// path with no separate route (ut-docs#511).
+var zipMagic = []byte{'P', 'K', 0x03, 0x04}
+var zipEmptyMagic = []byte{'P', 'K', 0x05, 0x06}
+
+// sniffZipUpload peeks at the upload's first bytes to decide whether it
+// looks like a ZIP (→ ParseBkp) or not (→ Parse, the CSV path), then seeks
+// back to the start so the chosen parser reads the whole file from byte 0.
+// multipart.File already implements io.Seeker (see catimport.ParseBkp's own
+// doc comment), so this never needs to buffer the upload itself.
+func sniffZipUpload(file multipart.File) (bool, error) {
+	var buf [4]byte
+	n, err := io.ReadFull(file, buf[:])
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read upload header: %w", err)
+	}
+	if _, serr := file.Seek(0, io.SeekStart); serr != nil {
+		return false, fmt.Errorf("reset upload after sniff: %w", serr)
+	}
+	if n < 4 {
+		return false, nil
+	}
+	return bytes.Equal(buf[:], zipMagic) || bytes.Equal(buf[:], zipEmptyMagic), nil
+}
+
 // translateImportIssue turns a catimport row-level Issue reason code into
 // an operator-facing, translated message — catimport itself has no locale
 // to translate into (ut-docs#303), so this is where the reason code plus
@@ -600,6 +659,12 @@ func translateImportIssue(T func(string) string, it catimport.ImportItem) string
 		return T("import.status.missing_name")
 	case catimport.IssueBadPrice:
 		return fmt.Sprintf(T("import.status.bad_price"), it.IssueDetail)
+	case catimport.IssueSourceDeleted:
+		return T("import.status.source_deleted")
+	case catimport.IssueNotSellable:
+		return T("import.status.not_sellable")
+	case catimport.IssueDuplicateSKUInFile:
+		return T("import.status.duplicate_sku_in_file")
 	default:
 		// A reason code with no case here (catimport grew one this
 		// switch doesn't know about yet) must never put machine text on
