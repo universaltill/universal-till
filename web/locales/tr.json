@@ -398,6 +398,7 @@
   "plugins.install.error.network": "Ağ hatası",
   "plugins.install.error.not_found": "Seçilen eklenti katalogda bulunamadı.",
   "plugins.install.error.page_conflict": "Bu eklentinin sayfa anahtarı mevcut biriyle çakışıyor. Farklı bir anahtar seçip yeniden deneyin.",
+  "plugins.install.error.page_route_conflict": "Bu eklentinin sayfa rotası mevcut biriyle çakışıyor. Farklı bir rota seçip yeniden deneyin.",
   "plugins.install.error.payment_conflict": "Bu eklentinin ödeme anahtarı veya etiketi mevcut biriyle çakışıyor. Farklı bir anahtar veya etiket seçip yeniden deneyin.",
   "plugins.install.error.replica_use_primary": "Bu kasa birincil kasayı takip eder — eklentileri birincil kasada kurun; yaklaşık yarım dakika içinde tüm kasalara otomatik olarak gelirler.",
   "plugins.install.error.retryable": "Kurulum başarısız. Yeniden deneyebilirsiniz.",

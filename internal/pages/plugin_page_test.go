@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 // bundleWithChecksum mirrors ut-plugin-faq's scripts/checksum.py: the
@@ -469,5 +470,51 @@ func TestPluginButtons_PartialAndAction(t *testing.T) {
 	mux.ServeHTTP(rec3, req3)
 	if rec3.Code != http.StatusNotFound {
 		t.Errorf("unknown button action = %d, want 404", rec3.Code)
+	}
+}
+
+// A second plugin declaring a type:"page" entry whose route is already
+// owned by another installed plugin must be rejected at install time
+// (validatePageEntryRoutes, ut-docs#499) — and, end to end through the real
+// dispatch path this ticket is about, GET /plugin/<route> must keep
+// resolving to the first plugin's content afterward, not 404 or serve
+// nothing, confirming the rejected install left no half-registered row
+// behind for findPageEntry's first-row-wins match to trip over.
+func TestPluginPage_RouteCollisionRejectedAtInstall_FirstPluginStillServes(t *testing.T) {
+	chdirRoot(t)
+	db := openRealSchemaPagesDB(t)
+
+	first := &plugins.Manifest{
+		ID: "com.first.route", Name: "First Route Plugin", Version: "1.0.0", Entrypoint: "./main.wasm",
+		Entries: []plugins.ManifestEntry{{Type: "page", Key: "firstkey", Label: "First", Route: "/plugin/shared-route"}},
+	}
+	if err := plugins.PersistManifest(t.Context(), db, first, plugins.InstallOptions{}); err != nil {
+		t.Fatalf("first plugin must install cleanly: %v", err)
+	}
+
+	second := &plugins.Manifest{
+		ID: "com.second.route", Name: "Second Route Plugin", Version: "1.0.0", Entrypoint: "./main.wasm",
+		Entries: []plugins.ManifestEntry{{Type: "page", Key: "secondkey", Label: "Second", Route: "/plugin/shared-route"}},
+	}
+	if err := plugins.PersistManifest(t.Context(), db, second, plugins.InstallOptions{}); err == nil {
+		t.Fatal("second plugin's colliding route must be rejected at install time")
+	}
+
+	d := &common.Deps{Db: db, State: common.RuntimeState{Theme: "monarch"}}
+	mux := http.NewServeMux()
+	registerPluginPages(mux, d)
+
+	req := httptest.NewRequest(http.MethodGet, "/plugin/shared-route", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugin/shared-route = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "First Route Plugin") {
+		t.Errorf("expected the first (accepted) plugin's content, got: %s", body[:min(400, len(body))])
+	}
+	if strings.Contains(body, "Second Route Plugin") {
+		t.Errorf("the rejected second plugin's content leaked into the response: %s", body[:min(400, len(body))])
 	}
 }

@@ -152,6 +152,12 @@ func ClassifyInstallError(err error) InstallFailure {
 	// validation errors, which stay on the generic retryable default.
 	case strings.Contains(msg, "page entry key") && strings.Contains(msg, "is already provided by plugin"):
 		return InstallFailure{MessageKey: "plugins.install.error.page_conflict", Message: "This plugin's page key conflicts with an existing one.", Retryable: false}
+	// ut-docs#499: a page entry route collision (validatePageEntryRoutes in
+	// manifest.go) — same permanent-failure shape as the key case above, a
+	// distinct namespace. Scoped to "page entry route" so it never matches
+	// the key-collision message above.
+	case strings.Contains(msg, "page entry route") && strings.Contains(msg, "is already provided by plugin"):
+		return InstallFailure{MessageKey: "plugins.install.error.page_route_conflict", Message: "This plugin's page route conflicts with an existing one.", Retryable: false}
 	default:
 		return InstallFailure{MessageKey: "plugins.install.error.retryable", Message: "Install failed. You can retry.", Retryable: true}
 	}

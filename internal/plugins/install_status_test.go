@@ -43,6 +43,10 @@ func TestClassifyInstallError(t *testing.T) {
 		// failure shape as the payment case above.
 		{name: "page key owned by another plugin", err: `page entry key "shared" is already provided by plugin com.other.page — pick a different key`, key: "plugins.install.error.page_conflict", retryable: false},
 		{name: "page key conflict, wrapped as production sends it", err: `persist plugin manifest: page entry key "shared" is already provided by plugin com.other.page — pick a different key`, key: "plugins.install.error.page_conflict", retryable: false},
+		// ut-docs#499: a page entry route collision — same permanent-failure
+		// shape, a distinct namespace from the key case above.
+		{name: "page route owned by another plugin", err: `page entry route "/plugin/docs" is already provided by plugin com.other.page — pick a different route`, key: "plugins.install.error.page_route_conflict", retryable: false},
+		{name: "page route conflict, wrapped as production sends it", err: `persist plugin manifest: page entry route "/plugin/docs" is already provided by plugin com.other.page — pick a different route`, key: "plugins.install.error.page_route_conflict", retryable: false},
 	}
 
 	for _, tc := range tests {
@@ -82,6 +86,7 @@ func TestClassifyInstallError_KeysResolveInLocales(t *testing.T) {
 		"plugins.install.error.invalid_package",
 		"plugins.install.error.payment_conflict",
 		"plugins.install.error.page_conflict",
+		"plugins.install.error.page_route_conflict",
 	}
 	for _, key := range keys {
 		if got := i18n.T("en", key); got == key {
