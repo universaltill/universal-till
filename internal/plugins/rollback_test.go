@@ -174,3 +174,56 @@ func TestStoreVersionCleansUpOldVersions(t *testing.T) {
 		t.Fatalf("newest versions missing: %v", names)
 	}
 }
+
+// ut-docs#495: StoreVersion's own comment used to say "we assume sourcePath
+// is already in the correct location... In a full implementation, you'd
+// copy files here" — it never actually snapshotted anything. A real
+// sourcePath must now be copied (including a nested subdirectory, not just
+// top-level files) so a later Rollback has real files to restore from.
+func TestStoreVersion_CopiesFilesFromSourcePath(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.snapshot"
+
+	// A live per-version install dir, the shape installer_marketplace.go's
+	// installBundleFile leaves behind: pluginBaseDir/pluginID/version/...,
+	// NOT pluginBaseDir/pluginID/versions/version/ (RollbackManager's own,
+	// separate snapshot tree) — StoreVersion's job is to bridge the two.
+	sourceDir := filepath.Join(base, pluginID, "1.0.0")
+	if err := os.MkdirAll(filepath.Join(sourceDir, "assets"), 0o755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "manifest.json"), []byte(`{"id":"com.test.snapshot","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "assets", "icon.png"), []byte("fake-png-bytes"), 0o644); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	if err := rm.StoreVersion(pluginID, "1.0.0", sourceDir); err != nil {
+		t.Fatalf("StoreVersion: %v", err)
+	}
+
+	snapshotDir := filepath.Join(base, pluginID, "versions", "1.0.0")
+	manifestBytes, err := os.ReadFile(filepath.Join(snapshotDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("snapshot manifest missing: %v", err)
+	}
+	if string(manifestBytes) != `{"id":"com.test.snapshot","version":"1.0.0"}` {
+		t.Fatalf("snapshot manifest content = %q", manifestBytes)
+	}
+	assetBytes, err := os.ReadFile(filepath.Join(snapshotDir, "assets", "icon.png"))
+	if err != nil {
+		t.Fatalf("snapshot nested asset missing: %v", err)
+	}
+	if string(assetBytes) != "fake-png-bytes" {
+		t.Fatalf("snapshot asset content = %q", assetBytes)
+	}
+
+	// The live source dir must be left untouched — StoreVersion snapshots,
+	// it doesn't move.
+	if _, err := os.Stat(filepath.Join(sourceDir, "manifest.json")); err != nil {
+		t.Fatalf("source dir must survive the copy: %v", err)
+	}
+}
