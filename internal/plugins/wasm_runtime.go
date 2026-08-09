@@ -93,7 +93,23 @@ func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 // (e.g. ./data/plugins).
 func NewWasmRuntime(baseDir string) *WasmRuntime {
 	ctx := context.Background()
-	rt := wazero.NewRuntime(ctx)
+	// WithCloseOnContextDone(true) (ut-docs#504 review finding): wazero
+	// disables this by default, meaning HandleEvent's per-call
+	// context.WithTimeout (timeoutFor) was computed but never actually
+	// enforced — a guest stuck in a CPU-bound loop (buggy or malicious
+	// plugin.wasm) ran forever regardless of the deadline. That was always
+	// latent, but ut-docs#504's fix (EventBus.publish holds eb.mu.RLock
+	// across a Blocking handler's call, closing the shutdown/Reload
+	// channel-close race) turned "one wedged handler hangs one publish
+	// call" into "one wedged handler wedges the entire bus" — including
+	// HasSubscribers/Generation on the checkout tax-rate-ask path
+	// (internal/pages/tax_hook.go) and every future ResetSubscribers
+	// (Manager.Reload/Close), since Go's RWMutex blocks new readers once a
+	// writer is pending. Enabling this makes the timeout this code already
+	// computes and applies actually terminate the guest module, bounding
+	// that hold — matching wazero's own documented guidance for untrusted
+	// guests.
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCloseOnContextDone(true))
 	wasi_snapshot_preview1.MustInstantiate(ctx, rt)
 	if err := instantiateHostModule(ctx, rt); err != nil {
 		// Modules that import "ut" will fail to instantiate; log, don't crash.

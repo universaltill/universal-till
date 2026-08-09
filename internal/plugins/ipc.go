@@ -164,7 +164,10 @@ func NewEventBus(db *sql.DB) *EventBus {
 
 // ResetSubscribers clears all in-memory subscriptions and closes their
 // channels so drainer goroutines exit; the wasm runtime re-subscribes active
-// plugins after every Manager.Reload.
+// plugins after every Manager.Reload. Safe to call concurrently with an
+// in-flight publish (ut-docs#504): publish holds eb.mu.RLock for its whole
+// dispatch loop and this method needs the exclusive Lock, so no channel a
+// live publish might still send on can be closed here.
 func (eb *EventBus) ResetSubscribers() {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
@@ -315,22 +318,44 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 		Payload:   payloadBytes,
 	}
 
-	// Snapshot subscribers
+	// Hold the read lock across the ENTIRE dispatch loop, not just the
+	// subscriber snapshot (ut-docs#504). ResetSubscribers takes the
+	// exclusive Lock before closing any subscriber channel, so holding the
+	// RLock until every send/handler call below has finished makes the two
+	// mutually exclusive — no channel this publish might still send on can
+	// be closed mid-dispatch ("send on closed channel", the panic #503
+	// fixed for the shutdown path only; this covers Manager.Reload —
+	// plugin install/uninstall — too).
+	//
+	// Reentrancy: nothing inside this critical section may reacquire
+	// eb.mu — a recursive RLock can deadlock once a writer is pending
+	// (sync.RWMutex documented behavior). Hence the direct eb.db /
+	// eb.eventModes field reads below (we already hold the lock) and the
+	// ...WithDB audit variants instead of dbHandle()/GetEventMode()/
+	// auditEvent()/auditDispatch(), all of which self-RLock. Blocking
+	// handlers (WasmRuntime.HandleEvent) and CheckPermission are DB/wazero
+	// only and never touch EventBus.
 	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	db := eb.db
 	subscribers, exists := eb.subscribers[eventType]
-	eb.mu.RUnlock()
 
 	if !exists || len(subscribers) == 0 {
-		_ = eb.auditEvent(ctx, event.ID, eventType, 0)
+		_ = eb.auditEventWithDB(ctx, db, event.ID, eventType, 0)
 		return event.ID, nil, nil
 	}
 
-	mode := eb.GetEventMode(eventType)
+	// Inline GetEventMode (incl. its NonBlocking default) — see the
+	// reentrancy note above.
+	mode, haveMode := eb.eventModes[eventType]
+	if !haveMode {
+		mode = NonBlocking
+	}
 	dispatched := 0
 
 	for _, sub := range subscribers {
-		if err := CheckPermission(ctx, eb.dbHandle(), sub.PluginID, "events:receive"); err != nil {
-			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
+		if err := CheckPermission(ctx, db, sub.PluginID, "events:receive"); err != nil {
+			eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "denied", err.Error())
 			if mode == Blocking {
 				return "", nil, fmt.Errorf("event %s denied for plugin %s: %w", eventType, sub.PluginID, err)
 			}
@@ -341,33 +366,51 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 		case Blocking:
 			if sub.Handler == nil {
 				msg := "blocking event requires handler"
-				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", msg)
+				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "error", msg)
 				return "", nil, fmt.Errorf("blocking event %s failed for plugin %s: %s", eventType, sub.PluginID, msg)
 			}
 			// Most Blocking callers only care about accept/reject (payment
 			// authorization); PublishAuthorize is how a caller opts into
 			// also reading the handler's raw response.
+			//
+			// Release eb.mu around the handler call itself (ut-docs#504
+			// review finding, defense in depth alongside
+			// WithCloseOnContextDone above): a Blocking handler can run
+			// for its full timeout (or longer, if that enforcement ever
+			// fails again) and, unlike the non-blocking case below, never
+			// touches sub.Channel or anything else guarded by eb.mu — mode
+			// is fixed for this whole publish() call (computed once from
+			// eventType, not per-subscriber), so every OTHER subscriber
+			// this loop visits is Blocking too and equally never sends on
+			// a channel. So a concurrent ResetSubscribers/Subscribe/
+			// SetEventMode/BumpGeneration racing this specific call can't
+			// touch anything this call still needs. Re-locked immediately
+			// after, before any return path below, so the function's
+			// single deferred eb.mu.RUnlock() stays correct (exactly one
+			// RUnlock for exactly one held lock at exit).
+			eb.mu.RUnlock()
 			handlerResp, err := sub.Handler(ctx, event)
+			eb.mu.RLock()
 			if err != nil {
-				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
+				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "error", err.Error())
 				return "", nil, fmt.Errorf("blocking event %s failed for plugin %s: %w", eventType, sub.PluginID, err)
 			}
 			resp = handlerResp
-			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "success", "")
+			eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "success", "")
 			dispatched++
 		default:
 			select {
 			case sub.Channel <- event:
-				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "enqueued", "")
+				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "enqueued", "")
 				dispatched++
 			default:
-				eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "dropped", "channel full")
+				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "dropped", "channel full")
 				fmt.Printf("warning: event channel full for plugin %s\n", sub.PluginID)
 			}
 		}
 	}
 
-	if err := eb.auditEvent(ctx, event.ID, eventType, dispatched); err != nil {
+	if err := eb.auditEventWithDB(ctx, db, event.ID, eventType, dispatched); err != nil {
 		fmt.Printf("warning: failed to audit event: %v\n", err)
 	}
 
@@ -486,18 +529,32 @@ func (eb *EventBus) Acknowledge(ctx context.Context, eventID, pluginID string, s
 
 // auditEvent logs event publication to audit_log
 func (eb *EventBus) auditEvent(ctx context.Context, eventID, eventType string, subscriberCount int) error {
+	return eb.auditEventWithDB(ctx, eb.dbHandle(), eventID, eventType, subscriberCount)
+}
+
+// auditEventWithDB is auditEvent with the db handle passed in explicitly, for
+// callers that already hold eb.mu (publish, ut-docs#504) — calling dbHandle()
+// there would be a recursive RLock, which can deadlock once a writer waits.
+func (eb *EventBus) auditEventWithDB(ctx context.Context, db *sql.DB, eventID, eventType string, subscriberCount int) error {
 	details := fmt.Sprintf("event_type=%s, subscribers=%d", eventType, subscriberCount)
-	return data.NewPluginRepo(eb.dbHandle()).InsertAuditRaw(ctx, nil, "event_published", "event", eventID, details, time.Now())
+	return data.NewPluginRepo(db).InsertAuditRaw(ctx, nil, "event_published", "event", eventID, details, time.Now())
 }
 
 // auditDispatch logs per-plugin dispatch results. Errors are swallowed to avoid blocking core flows.
 func (eb *EventBus) auditDispatch(ctx context.Context, eventID, eventType, pluginID, status, errMsg string) {
+	eb.auditDispatchWithDB(ctx, eb.dbHandle(), eventID, eventType, pluginID, status, errMsg)
+}
+
+// auditDispatchWithDB is auditDispatch with the db handle passed in
+// explicitly, for callers that already hold eb.mu (publish, ut-docs#504) —
+// see auditEventWithDB.
+func (eb *EventBus) auditDispatchWithDB(ctx context.Context, db *sql.DB, eventID, eventType, pluginID, status, errMsg string) {
 	details := fmt.Sprintf("event_type=%s, plugin_id=%s, status=%s", eventType, pluginID, status)
 	if errMsg != "" {
 		details += fmt.Sprintf(", error=%s", errMsg)
 	}
 
-	if err := data.NewPluginRepo(eb.dbHandle()).InsertAuditRaw(ctx, nil, "event_dispatch", "plugin", pluginID, details, time.Now()); err != nil {
+	if err := data.NewPluginRepo(db).InsertAuditRaw(ctx, nil, "event_dispatch", "plugin", pluginID, details, time.Now()); err != nil {
 		fmt.Printf("warning: failed to audit dispatch: %v\n", err)
 	}
 }
