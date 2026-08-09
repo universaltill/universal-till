@@ -39,6 +39,10 @@ func TestClassifyInstallError(t *testing.T) {
 		// change to either case could silently make this one unreachable
 		// while every other test here stays green (review finding, ut-docs#169).
 		{name: "payment key conflict, wrapped as production sends it", err: `persist plugin manifest: payment entry key "shared" belongs to plugin com.gone.pay, which is no longer installed — its tender row is retained for sales history; reinstall it or pick a different key`, key: "plugins.install.error.payment_conflict", retryable: false},
+		// ut-docs#472: a page entry key collision is the same permanent-
+		// failure shape as the payment case above.
+		{name: "page key owned by another plugin", err: `page entry key "shared" is already provided by plugin com.other.page — pick a different key`, key: "plugins.install.error.page_conflict", retryable: false},
+		{name: "page key conflict, wrapped as production sends it", err: `persist plugin manifest: page entry key "shared" is already provided by plugin com.other.page — pick a different key`, key: "plugins.install.error.page_conflict", retryable: false},
 	}
 
 	for _, tc := range tests {
@@ -77,6 +81,7 @@ func TestClassifyInstallError_KeysResolveInLocales(t *testing.T) {
 		"plugins.install.error.configuration",
 		"plugins.install.error.invalid_package",
 		"plugins.install.error.payment_conflict",
+		"plugins.install.error.page_conflict",
 	}
 	for _, key := range keys {
 		if got := i18n.T("en", key); got == key {

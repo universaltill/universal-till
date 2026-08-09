@@ -132,6 +132,13 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 
+	// Same protection for page-entry keys (ut-docs#472) — a legacy on-disk
+	// manifest can carry a page key that predates this validation and now
+	// collides with another currently-installed plugin.
+	if err := validatePageEntryKeys(ctx, repo, tx, pluginID, manifest.Entries); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
 	// Update plugins table
 	if err := repo.UpdatePluginVersion(ctx, tx, pluginID, targetVersion, manifest.Entrypoint, "installed"); err != nil {
 		return err
