@@ -377,3 +377,31 @@ func TestOrphanPaymentMethodWarning_DoesNotClaimNonexistentRenameAffordance(t *t
 		}
 	}
 }
+
+// TestSuppressedPaymentLabelWarning_DoesNotClaimNonexistentRenameAffordance
+// is the sibling of the orphan-warning test above (ut-docs#382): the second
+// warning loop in warnPaymentMethodAnomalies told the operator to "rename
+// the conflicting tender" — the exact same nonexistent affordance
+// ut-docs#170 already removed from the sibling message, just left in scope
+// out of that ticket's own text quote. Dropped here; the only real remedy
+// left is picking a distinct label for the plugin's own entry.
+func TestSuppressedPaymentLabelWarning_DoesNotClaimNonexistentRenameAffordance(t *testing.T) {
+	msg := suppressedPaymentLabelWarning(data.SuppressedPaymentNameEntry{
+		PluginID:   "com.example.tips",
+		Key:        "tips-cash",
+		Label:      "Cash",
+		BlockingID: "cash",
+	})
+
+	lowerMsg := strings.ToLower(msg)
+	for _, forbidden := range []string{"reassign", "rename"} {
+		if strings.Contains(lowerMsg, forbidden) {
+			t.Fatalf("warning still points at the nonexistent rename/reassign UI surface (contains %q): %s", forbidden, msg)
+		}
+	}
+	for _, want := range []string{"com.example.tips", "tips-cash", "Cash", "cash", "distinct label"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("warning missing expected content %q: %s", want, msg)
+		}
+	}
+}
