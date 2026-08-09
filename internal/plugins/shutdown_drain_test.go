@@ -158,10 +158,10 @@ func TestSupervisor_Shutdown_TimesOutLoudlyOnWedgedMonitor(t *testing.T) {
 	supervisor.wg.Add(1)
 	t.Cleanup(supervisor.wg.Done)
 
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	start := time.Now()
 	done := make(chan error, 1)
 	go func() { done <- supervisor.Shutdown(ctx) }()
 	select {
