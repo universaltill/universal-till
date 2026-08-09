@@ -1,0 +1,209 @@
+package plugins
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
+)
+
+// Supervisor.Shutdown must not return while a monitorProcess goroutine is
+// still running (ut-docs#380): app.Run closes the database right after its
+// drain, so a monitor still mid-audit-write after Shutdown returned races
+// database.Close(). This registers an extra in-flight goroutine on the SAME
+// WaitGroup StartPlugin registers real monitors on, and proves Shutdown
+// blocks until it (and the real monitor) finish — the old Shutdown returned
+// immediately after its cancel loop, never waiting on anything.
+func TestSupervisor_Shutdown_WaitsForMonitorProcessGoroutines(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	// setupTestDB opens ":memory:", where EVERY pooled connection gets its own
+	// private empty database — a second connection would not see the tables the
+	// first one created. This test touches db from several goroutines at once
+	// (monitorProcess audit writes vs. the test body), so pin the pool to one
+	// connection or those goroutines hit "no such table: audit_log".
+	db.SetMaxOpenConns(1)
+	setupAuditLog(t, db)
+
+	supervisor := NewSupervisor(db)
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "test.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 30\n"), 0755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	// A real plugin process, so Shutdown exercises its cancel/audit loop and
+	// the real monitorProcess goroutine's wg registration end-to-end.
+	if err := supervisor.StartPlugin(ctx, "com.test.drain", scriptPath, []string{}, RestartPolicy{Enabled: false}); err != nil {
+		t.Fatalf("StartPlugin failed: %v", err)
+	}
+
+	// Simulate a monitor goroutine still finishing its post-Wait work (e.g.
+	// an audit write) when Shutdown's cancel loop has already run: held open
+	// until the test releases it.
+	release := make(chan struct{})
+	supervisor.wg.Add(1)
+	go func() {
+		defer supervisor.wg.Done()
+		<-release
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Shutdown(ctx) }()
+
+	// Shutdown must be blocked on the in-flight goroutine, not returning.
+	select {
+	case err := <-done:
+		t.Fatalf("Shutdown returned (%v) while a monitor goroutine was still running", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Shutdown did not return after the last monitor goroutine finished")
+	}
+
+	// The REAL monitorProcess goroutine must be gone too, not just our
+	// simulated one — Shutdown only returned once the whole group drained.
+	waitForNoMonitorGoroutines(t, 2*time.Second)
+}
+
+// A crash-restart cycle re-registers the respawned monitor on the WaitGroup
+// (the Add happens before the previous monitor's deferred Done fires), so the
+// counter never goes negative (panic) and Shutdown after the restart-limit
+// audit still drains cleanly and promptly.
+func TestSupervisor_Shutdown_AfterCrashRestartCycleDrainsCleanly(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	// See the note in the test above: ":memory:" is per-connection, and the
+	// crash/restart monitors audit concurrently with this test's polling query.
+	db.SetMaxOpenConns(1)
+	setupAuditLog(t, db)
+
+	supervisor := NewSupervisor(db)
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "crash.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	policy := RestartPolicy{
+		Enabled:        true,
+		MaxRestarts:    1,
+		RestartWindow:  time.Minute,
+		BackoffInitial: 10 * time.Millisecond,
+		BackoffMax:     10 * time.Millisecond,
+	}
+	if err := supervisor.StartPlugin(ctx, "com.test.crashloop", scriptPath, []string{}, policy); err != nil {
+		t.Fatalf("StartPlugin failed: %v", err)
+	}
+
+	// Wait for the full cycle: crash -> restart -> crash -> restart-limit.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM audit_log WHERE action = 'plugin_restart_limit'`).Scan(&n); err != nil {
+			t.Fatalf("query audit_log: %v", err)
+		}
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("plugin never hit its restart limit")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Shutdown(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Shutdown hung after a crash-restart cycle — WaitGroup accounting broken")
+	}
+	waitForNoMonitorGoroutines(t, 2*time.Second)
+}
+
+// A wedged monitor (a plugin process that never dies, or a monitor stuck on a
+// blocked audit write) must not hang shutdown forever: once the caller's ctx
+// expires, Shutdown returns anyway — and logs LOUDLY that it gave up, same as
+// app.drainBackgroundServices does.
+func TestSupervisor_Shutdown_TimesOutLoudlyOnWedgedMonitor(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+
+	supervisor := NewSupervisor(db)
+
+	// Simulate a wedged monitor goroutine: registered but never finishing
+	// (until test cleanup lets the leaked waiter goroutine exit).
+	supervisor.wg.Add(1)
+	t.Cleanup(supervisor.wg.Done)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Shutdown(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown returned %v, want nil even on timeout (a wedged plugin must not fail shutdown)", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Shutdown never returned despite its ctx expiring")
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("Shutdown returned after %s, before its ctx deadline — it never actually waited", elapsed)
+	}
+
+	found := false
+	for _, p := range logging.Recent() {
+		if p.Level == "ERROR" && p.At.After(start.Add(-time.Second)) &&
+			strings.Contains(p.Msg, "plugin monitor goroutines still running") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected a loud ERROR log about monitor goroutines still running at shutdown timeout")
+	}
+}
+
+// waitForNoMonitorGoroutines polls the runtime's goroutine stacks until no
+// monitorProcess frame remains (a just-Done()d goroutine can still be
+// unwinding for an instant) or the bound elapses.
+func waitForNoMonitorGoroutines(t *testing.T, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		if !strings.Contains(string(buf[:n]), "monitorProcess") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("monitorProcess goroutine still running %s after Shutdown returned:\n%s", within, buf[:n])
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
