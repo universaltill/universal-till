@@ -1,8 +1,14 @@
 // Package catimport parses catalog exports from other POS systems
 // (docs: architecture/catalog-import.md, G22a). Formats are detected from
 // the CSV header row; per-format synonym tables map columns onto one
-// neutral ImportItem. Parsing never touches the database — the pages layer
-// previews, dedupes and commits.
+// neutral ImportItem. Parsing never touches THIS application's own catalog
+// database — the pages layer previews, dedupes and commits. (ParseBkp,
+// ut-docs#511, is a partial exception in letter only: it opens a SQLite
+// connection, but only against a temp file extracted from the operator's
+// own uploaded .bkp backup — a foreign, read-only file, never the live
+// catalog DB. Its actual SQL query text lives in internal/data, not here,
+// so this package still carries no literal SQL of its own — see bkp.go and
+// internal/data/bkp_products_repo.go's doc comments for why.)
 package catimport
 
 import (
@@ -32,6 +38,14 @@ var ErrNoNameColumn = errors.New("no name column recognised — is this a catalo
 const (
 	IssueMissingName = "missing_name"
 	IssueBadPrice    = "bad_price"
+
+	// The three below are ParseBkp's own reason codes (ut-docs#511, see
+	// bkp.go) — kept here rather than duplicated there so
+	// translateImportIssue's switch (import_page.go) and any other caller
+	// has exactly one place to look for the full Issue* set, CSV or .bkp.
+	IssueSourceDeleted      = "source_deleted"        // Status = 3 in the source till
+	IssueNotSellable        = "not_sellable"          // an order-type toggle (e.g. "⚠️ToGo⚠️"), ProductType = 4
+	IssueDuplicateSKUInFile = "duplicate_sku_in_file" // ProductNumber repeats within THIS file — distinct from import.status.sku_already_in_catalog, which is a DB-level check
 
 	BarcodeIssueUnsupportedFormat = "unsupported_format"
 	BarcodeIssueTooShort          = "too_short"

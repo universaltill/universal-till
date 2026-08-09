@@ -16,4 +16,4 @@ Your products: names, prices, departments, item variants (size, flavour…) and 
 
 1. Open Catalog and click an item row — the editor panel below shows all its variants and barcodes.
 2. Edit variant names, SKUs, prices, cost prices and photos right in the grid; add or remove barcodes as chips; print labels per variant.
-3. Use Import to load items from a CSV file, and Export to save your catalog.
+3. Use Import to load items from a CSV file, and Export to save your catalog. A speedy kasse / pepperm cashbox `.bkp` till backup is also accepted directly on Import — it's detected automatically, no conversion needed.
