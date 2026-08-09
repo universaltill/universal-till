@@ -53,10 +53,6 @@ async function setScale(page, scale: string) {
   if (scale === '1') return;
   await page.request.post('/api/settings/ui-scale', { form: { scale } });
 }
-async function resetScale(page, scale: string) {
-  if (scale === '1') return;
-  await page.request.post('/api/settings/ui-scale', { form: { scale: '1' } });
-}
 
 test.describe('basket never scrolls horizontally, remove button fully reachable (ut-docs#391)', () => {
   test.use({ viewport: { width: 1024, height: 600 } });
@@ -175,6 +171,18 @@ for (const viewport of VIEWPORTS) {
   test.describe(`ui_scale matrix at ${viewport.label}`, () => {
     test.use({ viewport: { width: viewport.width, height: viewport.height } });
 
+    // ui_scale is a server-side setting shared by every spec on the e2e
+    // suite's single, single-worker till server. A manual reset call at the
+    // tail of the test body (the original pattern here) never runs when an
+    // expect() earlier in the body throws, leaking a non-1 scale into every
+    // later spec (ut-docs#510). Mirrors setOskMode's own
+    // caller-must-restore-in-afterEach convention used elsewhere in this
+    // suite (e.g. settings-osk.spec.ts) -- runs unconditionally, pass or
+    // fail, and is a no-op when the test never changed the scale.
+    test.afterEach(async ({ page }) => {
+      await page.request.post('/api/settings/ui-scale', { form: { scale: '1' } });
+    });
+
     for (const scale of SCALES) {
       test(`remove button + inputs stay inside the panel at ui_scale ${scale}`, async ({ page }) => {
         const assertClean = watchConsole(page);
@@ -221,7 +229,6 @@ for (const viewport of VIEWPORTS) {
         expect(data.discOverflow, 'disc-input value not clipped').toBeLessThanOrEqual(1);
 
         await page.request.post('/api/pos/reset');
-        await resetScale(page, scale);
         assertClean();
       });
     }
