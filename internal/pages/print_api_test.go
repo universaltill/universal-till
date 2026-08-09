@@ -4,10 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -62,6 +65,88 @@ func TestPrinterConfig_Defaults(t *testing.T) {
 	}
 	if cfg.Enabled() {
 		t.Fatal("expected a default (unconfigured) printer to report Enabled()=false")
+	}
+}
+
+// ut-docs#425: printReceiptAsync/printKitchenAsync fire best-effort
+// goroutines after tender that read Settings (and, on failure, write an
+// audit row) through d.Db, with no caller left holding a handle to them —
+// by design, checkout must never block on printer I/O. That is correct for
+// callers, but a caller that closes Db and removes the directory its file
+// lives in right after tender returns can race that goroutine's still-
+// in-flight DB access — reproduced live with
+// `go test -race -run TestSelfOrderShop_CheckoutAppliesPluginReportedTipFromAuthorizeResponse -count=N`:
+// intermittent "sql: database is closed" from data.settings.get, and (via
+// t.TempDir()'s RemoveAll racing SQLite's WAL sidecar files) the actual
+// "directory not empty" cleanup failure this card is about.
+//
+// AsyncWork/WaitForAsyncWork (common.Deps) closes that gap. This test
+// proves Wait genuinely blocks until BOTH goroutines have finished, not
+// just started — NOT by inferring it from Close()/RemoveAll() succeeding
+// (an earlier draft did exactly that and was caught by independent review:
+// over 300 iterations under -race it passed every single time even with
+// AsyncWork.Add/Done removed entirely, because Close()/RemoveAll() almost
+// always succeed regardless — the actual "directory not empty" failure is
+// a much rarer sub-case than "a goroutine is still touching a closed db",
+// so asserting on the filesystem symptom instead of the goroutine's own
+// effect made this a false-pass test). Instead: configure both printers
+// pointing at a receipt/ticket that doesn't exist, so each goroutine is
+// GUARANTEED to fail (no network I/O involved — buildReceiptDoc/
+// buildKitchenTicket error out on the missing sale before ever reaching a
+// transport) and write a failure-audit row. Immediately after
+// WaitForAsyncWork returns, both rows must already be present — no
+// polling, no retry. Pre-fix (Wait is a no-op), the goroutines have
+// essentially never finished that fast, so this fails deterministically
+// rather than depending on a rare filesystem race window.
+func TestAsyncPrintGoroutinesFinishBeforeWaitForAsyncWorkReturns(t *testing.T) {
+	for i := 0; i < 3; i++ {
+		dir, err := os.MkdirTemp("", "print-async-race-*")
+		if err != nil {
+			t.Fatalf("iteration %d: MkdirTemp: %v", i, err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) }) // backstop if a t.Fatal below skips the loop's own removal
+
+		d, err := db.Open(filepath.Join(dir, "shop.db"))
+		if err != nil {
+			t.Fatalf("iteration %d: Open: %v", i, err)
+		}
+		dp := &common.Deps{
+			Cfg:      &config.Config{Theme: "default"},
+			Db:       d.DB,
+			Settings: settings.NewStore(d.DB),
+		}
+		if err := dp.Settings.SetMany(context.Background(), map[string]string{
+			keyPrinterMode:    "network",
+			keyPrinterAddress: "unused.invalid:9100", // never dialed — the sale lookup fails first
+			keyPrinterKitchen: "unused.invalid:9100",
+		}); err != nil {
+			t.Fatalf("iteration %d: seed printer settings: %v", i, err)
+		}
+
+		const receiptNo = "receipt-does-not-exist"
+		// actorID "" -> audit_log.actor_id NULL (nullIfEmpty), so this
+		// doesn't need a seeded users row to satisfy the FK.
+		printReceiptAsync(dp, receiptNo, "")
+		printKitchenAsync(dp, receiptNo, "")
+		dp.WaitForAsyncWork()
+
+		var failureRows int
+		if err := d.QueryRow(
+			`SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action IN ('print_failed', 'kitchen_print_failed')`,
+			receiptNo,
+		).Scan(&failureRows); err != nil {
+			t.Fatalf("iteration %d: query audit_log: %v", i, err)
+		}
+		if failureRows != 2 {
+			t.Fatalf("iteration %d: want 2 failure-audit rows (print_failed + kitchen_print_failed) immediately after WaitForAsyncWork, got %d — WaitForAsyncWork returned before both goroutines actually finished", i, failureRows)
+		}
+
+		if err := d.Close(); err != nil {
+			t.Fatalf("iteration %d: Close: %v", i, err)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatalf("iteration %d: RemoveAll immediately after Close: %v", i, err)
+		}
 	}
 }
 
