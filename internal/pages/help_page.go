@@ -119,7 +119,17 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 		data["currentID"] = topic.ID
 	}
 
-	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
+	// htmx caps historyCacheSize at 10 snapshots (web/public/vendor/htmx.min.js
+	// default), well under the manual's topic count. When the browser
+	// restores a /help/{topic} URL whose snapshot has aged out of that
+	// cache, htmx re-requests the URL itself with BOTH "HX-Request: true"
+	// and "HX-History-Restore-Request: true" set — and expects a full-page
+	// response back so it can replace the whole tracked history element,
+	// not the bare reading-panel fragment an ordinary in-page topic swap
+	// gets. Checking HX-Request alone (ut-docs#433) sent the fragment here
+	// too, leaving the restored page broken.
+	isHistoryRestore := strings.EqualFold(r.Header.Get("HX-History-Restore-Request"), "true")
+	if strings.EqualFold(r.Header.Get("HX-Request"), "true") && !isHistoryRestore {
 		httpx.RenderPartial("ui/partials/help_topic.html", data)(w, r)
 		// Out-of-band swap of the tree alongside the topic panel, so the
 		// active-topic highlight follows this click instead of staying

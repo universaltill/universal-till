@@ -150,6 +150,27 @@ func TestHelpTopicHTMXCarriesOOBNavWithMovedHighlight(t *testing.T) {
 	}
 }
 
+// ut-docs#433: htmx caps historyCacheSize at 10 snapshots, but the manual has
+// more topics than that. When the browser restores a /help/{topic} URL whose
+// snapshot has aged out of htmx's cache, htmx re-requests it itself with
+// BOTH "HX-Request: true" and "HX-History-Restore-Request: true" — and
+// expects a full-page response back so it can replace the whole tracked
+// history element, not the bare reading-panel fragment an ordinary in-page
+// topic swap gets.
+func TestHelpTopicHistoryRestoreReturnsFullPage(t *testing.T) {
+	rec := get(t, helpMux(t), "/help/catalog", "HX-Request", "true", "HX-History-Restore-Request", "true")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx history-restore GET: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-topic="catalog"`) {
+		t.Error("history-restore response missing the topic")
+	}
+	if !strings.Contains(body, `class="manual-nav"`) {
+		t.Error("history-restore response did not render the full page shell — htmx will replace the tracked history element with a bare fragment")
+	}
+}
+
 // A stale "?" link must be visible as a 404, not silently swallowed into the
 // index — otherwise a broken help link looks like a working one.
 func TestHelpUnknownTopicIs404(t *testing.T) {
