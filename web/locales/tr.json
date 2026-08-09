@@ -400,6 +400,7 @@
   "plugins.install.error.payment_conflict": "Bu eklentinin ödeme anahtarı veya etiketi mevcut biriyle çakışıyor. Farklı bir anahtar veya etiket seçip yeniden deneyin.",
   "plugins.install.error.replica_use_primary": "Bu kasa birincil kasayı takip eder — eklentileri birincil kasada kurun; yaklaşık yarım dakika içinde tüm kasalara otomatik olarak gelirler.",
   "plugins.install.error.retryable": "Kurulum başarısız. Yeniden deneyebilirsiniz.",
+  "plugins.install.error.version_mismatch": "Pazaryeri istenen eklenti sürümünü döndürmedi. Kurulum başarısız oldu.",
   "plugins.install.modal.cancel": "İptal",
   "plugins.install.modal.close": "Kapat",
   "plugins.install.modal.description": "Eklentiyi indirip kurarken lütfen bekleyin.",

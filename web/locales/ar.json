@@ -400,6 +400,7 @@
   "plugins.install.error.payment_conflict": "يتعارض مفتاح أو اسم الدفع في هذه الإضافة مع مفتاح أو اسم موجود بالفعل. اختر مفتاحًا أو اسمًا مختلفًا وأعد المحاولة.",
   "plugins.install.error.replica_use_primary": "يتبع هذا الصندوق الصندوق الأساسي — ثبِّت الإضافات على الصندوق الأساسي؛ تصل إلى كل الصناديق تلقائياً خلال نصف دقيقة تقريباً.",
   "plugins.install.error.retryable": "فشل التثبيت. يمكنك إعادة المحاولة.",
+  "plugins.install.error.version_mismatch": "لم يُرجع المتجر إصدار الإضافة المطلوب. فشل التثبيت.",
   "plugins.install.modal.cancel": "إلغاء",
   "plugins.install.modal.close": "إغلاق",
   "plugins.install.modal.description": "يرجى الانتظار بينما ننزّل الإضافة ونثبّتها.",

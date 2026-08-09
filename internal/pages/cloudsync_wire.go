@@ -175,6 +175,55 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 		})
 		return "", err
 	}
+	// ut-docs#479: a pinned request (version != "") must come back AS that
+	// version. installer.Install succeeding proves the bundle verified
+	// (signature, checksum, compatibility) — it says nothing about whether
+	// the marketplace actually honored the pin. Today's marketplace
+	// hard-errors on an unknown version instead of substituting one, so this
+	// is defense in depth, not a live bug — but a future/different backend
+	// answering the pin with the wrong release must not be accepted as a
+	// silent success (a replica converging to the wrong plugin version on a
+	// money-affecting path, e.g. tax, would be invisible).
+	//
+	// By this point Install has ALREADY persisted the wrong version: files
+	// in place, plugins/plugin_catalog rows written, permissions granted
+	// (installBundleFile / PersistManifest). A status-table flag alone
+	// (round 1 of this fix) doesn't undo any of that — Manager.Reload reads
+	// the plugins table with no version filtering, so the very next reload
+	// (fired by ANY other install/uninstall later in this same tick, or a
+	// later admin action) would wire the wrong, mismatched version into the
+	// live menu/WASM runtime regardless. So roll it back completely, the
+	// same way a real uninstall does, before reporting the failure — never
+	// leave an unrequested version "installed and active" behind the scenes.
+	//
+	// Known gap (round 2 review, ut-docs#495): `plugins` is one row per
+	// plugin ID, and Install already overwrote it before this check runs —
+	// so if this listing had a DIFFERENT, previously-good version installed
+	// (an in-place upgrade attempt that mismatched, not a fresh install),
+	// cloudRemovePlugin here removes the WHOLE plugin, not just the bad
+	// version — the old good version's files happen to survive on disk
+	// (Install only touches its own version's directory), but its
+	// plugins/plugin_catalog rows and permissions are gone with the rest,
+	// so it does not stay active. Trading a wrong-but-active version for a
+	// clean-but-uninstalled one is the safer of the two failure modes for a
+	// money-affecting plugin (never silently compute under an unrequested
+	// version) — but it is a real availability regression on the upgrade
+	// path, not just the fresh-install path this fix's test covers.
+	// RollbackManager (rollback.go) exists for exactly this "restore the
+	// prior good version" shape but isn't wired in here, and its own
+	// StoreVersion is currently a stub that never actually snapshots files
+	// — using it correctly is its own piece of work, tracked separately
+	// rather than folded into this fix. See ut-docs#495.
+	if version != "" && result.Version != version {
+		if _, rmErr := cloudRemovePlugin(ctx, d, result.PluginID); rmErr != nil {
+			logging.L().Errorf("plugin sync: failed to roll back mismatched install of %s (%s): %v", result.Name, result.PluginID, rmErr)
+		}
+		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+			ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
+			State: plugins.InstallStateFailed, MessageKey: "plugins.install.error.version_mismatch", Retryable: true,
+		})
+		return "", fmt.Errorf("installed version %s does not match requested version %s", result.Version, version)
+	}
 	_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 		ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
 		CurrentVersion: result.Version, State: plugins.InstallStateActive,
