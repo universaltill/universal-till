@@ -186,11 +186,22 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE issue_reports_sent`); err != nil {
 		t.Fatalf("rewind issue_reports_sent table: %v", err)
 	}
+	// Migration 033 adds two sales columns and a table -- same problem again
+	// (ut-docs#526).
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN order_status`); err != nil {
+		t.Fatalf("rewind sales.order_status column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN order_status_updated_at`); err != nil {
+		t.Fatalf("rewind sales.order_status_updated_at column: %v", err)
+	}
+	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
+		t.Fatalf("rewind order_status_events table: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 023 and its followers (027-032)
+	d, err = Open(path) // re-applies 023 and its followers (027-033)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,11 +240,21 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE issue_reports_sent`); err != nil {
 		t.Fatalf("rewind issue_reports_sent table: %v", err)
 	}
+	// Same for 033's sales columns + order_status_events table (ut-docs#526).
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN order_status`); err != nil {
+		t.Fatalf("rewind sales.order_status column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN order_status_updated_at`); err != nil {
+		t.Fatalf("rewind sales.order_status_updated_at column: %v", err)
+	}
+	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
+		t.Fatalf("rewind order_status_events table: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 031 and 032
+	d, err = Open(path) // re-applies 031 through 033
 	if err != nil {
 		t.Fatal(err)
 	}

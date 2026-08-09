@@ -47,6 +47,7 @@
 - Inventory management
 - Customer management
 - Receipt printing (thermal and regular)
+- Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff)
 - Barcode scanning
 - Multi-currency support
 - Tax calculation (configurable by region)
