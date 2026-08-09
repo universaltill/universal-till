@@ -30,9 +30,21 @@ import (
 // SentReport row is persisted BEFORE the bundle's media is discarded, so
 // /my-reports can show what was reported and what became of it. Only the
 // bulky blobs (audio/video/screenshots + logs) are thrown away. If the
-// record can't be persisted, the bundle is deliberately NOT discarded —
+// record can't be persisted, the bundle is NOT immediately discarded —
 // re-uploading the whole thing next tick beats losing the report with no
-// trace anywhere (SaveSent upserts by id, so the retry never duplicates).
+// trace anywhere (SaveSent upserts by id, so the retry never duplicates) —
+// but that retry is capped (ut-docs#446): a persistently-failing local write
+// (disk full, DB briefly read-only) would otherwise re-POST the bundle's
+// full multipart body forever. After issuereport.MaxSentFailCount SaveSent
+// failures (see that constant and RecordSentFailure's own docs for exactly
+// what counts and why it still engages even when the disk itself is what's
+// failing), the till gives up on local retention and discards the bundle —
+// the report itself is not lost, it already reached the cloud (verified
+// idempotent server-side), only this till's own local trace of it is. This
+// cap applies ONLY to the SaveSent step: the cloud upload itself failing
+// (offline/network-down) keeps retrying unboundedly, per offline-first
+// (ADR-0003) — see the "not uploaded" branch below, which never touches the
+// failure counter.
 func uploadPendingIssueReports(ctx context.Context, cfg *config.Config, db *sql.DB) {
 	bundles, err := issuereport.Pending()
 	if err != nil {
@@ -54,7 +66,19 @@ func uploadPendingIssueReports(ctx context.Context, cfg *config.Config, db *sql.
 			ImageCount: len(b.ImagePaths),
 			Status:     "sent",
 		}); err != nil {
-			logging.L().Warnf("cloudsync: issue report %s uploaded but its retained record failed to save — keeping the bundle for retry: %v", b.Meta.ID, err)
+			count, cerr := issuereport.RecordSentFailure(b.Meta.ID)
+			if cerr != nil {
+				logging.L().Warnf("cloudsync: issue report %s uploaded but its retained record failed to save, and its failure count couldn't be updated either — keeping the bundle for retry: %v (count error: %v)", b.Meta.ID, err, cerr)
+				continue
+			}
+			if count >= issuereport.MaxSentFailCount {
+				logging.L().Warnf("cloudsync: issue report %s uploaded to the cloud successfully but its local retained record failed to save %d times — giving up on local retention and discarding the bundle (the report itself was NOT lost; it is already on the cloud): %v", b.Meta.ID, count, err)
+				if derr := issuereport.Discard(b.Meta.ID); derr != nil {
+					logging.L().Warnf("cloudsync: issue report %s also failed to discard after giving up on local retention: %v", b.Meta.ID, derr)
+				}
+				continue
+			}
+			logging.L().Warnf("cloudsync: issue report %s uploaded but its retained record failed to save (attempt %d/%d) — keeping the bundle for retry: %v", b.Meta.ID, count, issuereport.MaxSentFailCount, err)
 			continue
 		}
 		if err := issuereport.Discard(b.Meta.ID); err != nil {
