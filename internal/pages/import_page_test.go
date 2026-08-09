@@ -755,6 +755,42 @@ func TestImport_UnparseableTaxCellWarnsButStillImports(t *testing.T) {
 	}
 }
 
+// Review finding N1 (ut-docs#512, 2026-08-09): a row with a parseable
+// takeaway-tax cell but a BLANK dine-in cell never reaches
+// FindOrCreateTaxCode (gated on it.HasTax) — the item silently lands on the
+// till's default rate with no warning at all, the exact class of silent
+// VAT loss this card exists to prevent, just via an odd column combination.
+func TestImport_TakeawayOnlyWithNoDineInRateWarns(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Price,Tax rate,Takeaway tax\n" +
+		"TakeawayOnly,T9,1.00,,7\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	var taxCodeID sql.NullString
+	if err := dp.Db.QueryRow(`SELECT tax_code_id FROM items WHERE sku = 'T9'`).Scan(&taxCodeID); err != nil {
+		t.Fatalf("item should still be created: %v", err)
+	}
+	if taxCodeID.Valid {
+		t.Fatalf("a takeaway-only row can't resolve a pair, must leave the item on the default rate, got tax_code_id=%q", taxCodeID.String)
+	}
+	if !strings.Contains(resp, `class="row-warn"`) {
+		t.Fatalf("takeaway-only row must warn, not silently drop the rate — got: %s", resp)
+	}
+}
+
 // A genuine DB-level failure creating the tax code fails the row (like a
 // category-creation failure) — it must not silently import at the wrong rate.
 func TestImport_TaxCodeCreationFailureFailsRow(t *testing.T) {

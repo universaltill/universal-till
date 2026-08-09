@@ -224,10 +224,29 @@ func TestParseTaxRateBP(t *testing.T) {
 			t.Errorf("ParseTaxRateBP(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", "%", "abc", "-5", "19,5,0"} {
+	for _, in := range []string{
+		"", "%", "abc", "-5", "19,5,0",
+		// Review finding B1 (ut-docs#512, 2026-08-09): strconv.ParseFloat
+		// happily accepts these, and neither is < 0, so they used to sail
+		// past the guard and round to math.MinInt64 — a persisted
+		// tax_codes.rate_basis_points of -9223372036854775808, silently,
+		// on the exact compliance-sensitive path this card exists to
+		// protect. Must all be rejected, same as any other garbage input.
+		"NaN", "nan", "Inf", "+Inf", "-Inf", "infinity",
+		// Also review finding B1: a rate over 100% is never a real VAT
+		// percentage — "1900" (a merchant typing basis points where a
+		// percentage was expected) and "1e3" (scientific notation) must
+		// not silently create a 1900%/1000% tax code.
+		"1900", "1e3", "101",
+	} {
 		if got, err := ParseTaxRateBP(in); err == nil {
 			t.Errorf("ParseTaxRateBP(%q) = %d, want error", in, got)
 		}
+	}
+	// 100 itself is a legitimate (if extreme) boundary — must not be
+	// rejected by the new upper bound.
+	if got, err := ParseTaxRateBP("100"); err != nil || got != 10000 {
+		t.Errorf("ParseTaxRateBP(\"100\") = %d, %v; want 10000, nil", got, err)
 	}
 }
 

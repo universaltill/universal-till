@@ -1177,6 +1177,7 @@
   "import.status.tax_unparseable": "نرخ مالیات «%s» وارد نشد: خواندن آن به‌صورت درصد ممکن نبود",
   "import.status.tax_code_failed": "ایجاد کد مالیات ممکن نشد",
   "import.status.tax_overrides_not_saved": "ذخیرهٔ نرخ‌های مالیات بیرون‌بر در تنظیمات افزونهٔ مالیات ممکن نشد",
+  "import.status.tax_takeaway_only": "نرخ مالیات بیرون‌بر داده شده بدون نرخ مالیات حضوری — کالا با نرخ پیش‌فرض صندوق وارد شد",
   "import.status.source_deleted": "در فایل مبدأ حذف شده",
   "import.status.not_sellable": "کالای قابل‌فروش نیست (دکمهٔ نوع سفارش)",
   "import.status.duplicate_sku_in_file": "شمارهٔ کالا در این فایل تکراری است",

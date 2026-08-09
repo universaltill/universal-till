@@ -286,6 +286,15 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						takeawayOverrides[id] = *takeawayBP
 					}
 				}
+				// A parseable takeaway rate with no dine-in rate can't
+				// resolve a (dine-in, takeaway) pair — the item lands on
+				// the till's default rate, same as any other no-tax-column
+				// row, but silently so is the exact class of VAT loss this
+				// card exists to prevent, just via an odd column
+				// combination (review finding N1, ut-docs#512, 2026-08-09).
+				// Folded into the warnings slice below, not set here — this
+				// runs before BeginTx, before that slice exists.
+				takeawayOnlyNoDineIn := taxCodeID == nil && it.HasTakeaway
 				// The item, its inventory row, and its opening-stock movement
 				// land together in one transaction (ut-docs#310): the only
 				// new failure path this introduces is tx.Commit() itself
@@ -405,6 +414,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				}
 				if it.TakeawayTaxIssue != "" {
 					warnings = append(warnings, translateTaxIssue(T, it.TakeawayTaxIssue, it.TakeawayTaxIssueRaw))
+				}
+				if takeawayOnlyNoDineIn {
+					warnings = append(warnings, T("import.status.tax_takeaway_only"))
 				}
 				if stockWarning != "" {
 					warnings = append(warnings, stockWarning)
