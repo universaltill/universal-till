@@ -125,6 +125,131 @@ func TestParseGenericERPStockAndDepartment(t *testing.T) {
 	}
 }
 
+// The real café rate distribution behind ut-docs#512: four (dine-in, takeaway)
+// pairs — (19,7) needs an override, (7,7)/(19,19)/(0,0) don't — plus a blank
+// cell and an unparseable cell. The parser stays mechanical: it carries both
+// rates raw and never blocks a row on a bad tax cell (compliance-sensitive,
+// so the drop must be visible — TaxIssue — but the row still imports).
+const taxCSV = `Name,Price,Tax rate,Takeaway tax
+Latte,3.50,19,7
+Cake Slice,4.00,7,7
+Logo Mug,9.00,19,19
+Gift Voucher,10.00,0,0
+Mystery Item,1.00,,
+Bad Tax,2.00,abc,7
+Bad Takeaway,2.50,19,wat
+`
+
+func TestParseTaxColumns(t *testing.T) {
+	res, err := Parse(strings.NewReader(taxCSV), 2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 7 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	latte := res.Items[0]
+	if !latte.HasTax || latte.TaxRateBP != 1900 || !latte.HasTakeaway || latte.TakeawayRateBP != 700 {
+		t.Errorf("latte (19,7) parsed wrong: %+v", latte)
+	}
+	cake := res.Items[1]
+	if !cake.HasTax || cake.TaxRateBP != 700 || !cake.HasTakeaway || cake.TakeawayRateBP != 700 {
+		t.Errorf("cake (7,7) parsed wrong: %+v", cake)
+	}
+	mug := res.Items[2]
+	if !mug.HasTax || mug.TaxRateBP != 1900 || !mug.HasTakeaway || mug.TakeawayRateBP != 1900 {
+		t.Errorf("mug (19,19) parsed wrong: %+v", mug)
+	}
+	voucher := res.Items[3]
+	if !voucher.HasTax || voucher.TaxRateBP != 0 || !voucher.HasTakeaway || voucher.TakeawayRateBP != 0 {
+		t.Errorf("voucher (0,0) parsed wrong: %+v", voucher)
+	}
+	// Blank cells: both flags false, no issue — the row imports at the
+	// till's default rate exactly as before this column existed.
+	mystery := res.Items[4]
+	if mystery.HasTax || mystery.HasTakeaway || mystery.TaxIssue != "" || mystery.TakeawayTaxIssue != "" {
+		t.Errorf("blank tax cells must stay silent: %+v", mystery)
+	}
+	// A present-but-unparseable dine-in cell: non-blocking issue, HasTax
+	// stays false so the row still imports at the default rate.
+	badTax := res.Items[5]
+	if badTax.HasTax || badTax.TaxIssue != TaxIssueUnparseable || badTax.TaxIssueRaw != "abc" {
+		t.Errorf("unparseable tax cell must set TaxIssue, not block: %+v", badTax)
+	}
+	if badTax.Issue != "" {
+		t.Errorf("a bad tax cell must never block the row: %+v", badTax)
+	}
+	if !badTax.HasTakeaway || badTax.TakeawayRateBP != 700 {
+		t.Errorf("takeaway cell must still parse when the dine-in cell is bad: %+v", badTax)
+	}
+	// Same treatment for the takeaway column.
+	badTA := res.Items[6]
+	if !badTA.HasTax || badTA.TaxRateBP != 1900 {
+		t.Errorf("dine-in cell must still parse when the takeaway cell is bad: %+v", badTA)
+	}
+	if badTA.HasTakeaway || badTA.TakeawayTaxIssue != TaxIssueUnparseable || badTA.TakeawayTaxIssueRaw != "wat" {
+		t.Errorf("unparseable takeaway cell must set TakeawayTaxIssue: %+v", badTA)
+	}
+}
+
+// A file with no tax column at all (every pre-existing fixture) must leave
+// the tax fields untouched — existing Loyverse/Square imports unchanged.
+func TestParseNoTaxColumnLeavesTaxUnset(t *testing.T) {
+	res, err := Parse(strings.NewReader(loyverseCSV), 2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for i, it := range res.Items {
+		if it.HasTax || it.HasTakeaway || it.TaxIssue != "" || it.TakeawayTaxIssue != "" {
+			t.Errorf("row %d: tax fields must stay zero without a tax column: %+v", i, it)
+		}
+	}
+}
+
+func TestParseTaxRateBP(t *testing.T) {
+	good := map[string]int{
+		"19":    1900,
+		"19%":   1900,
+		"19 %":  1900,
+		" 7 ":   700,
+		"19.5":  1950,
+		"19.5%": 1950,
+		"0":     0,
+		"0%":    0,
+		"8.875": 888, // rounds to the nearest basis point
+	}
+	for in, want := range good {
+		got, err := ParseTaxRateBP(in)
+		if err != nil || got != want {
+			t.Errorf("ParseTaxRateBP(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{
+		"", "%", "abc", "-5", "19,5,0",
+		// Review finding B1 (ut-docs#512, 2026-08-09): strconv.ParseFloat
+		// happily accepts these, and neither is < 0, so they used to sail
+		// past the guard and round to math.MinInt64 — a persisted
+		// tax_codes.rate_basis_points of -9223372036854775808, silently,
+		// on the exact compliance-sensitive path this card exists to
+		// protect. Must all be rejected, same as any other garbage input.
+		"NaN", "nan", "Inf", "+Inf", "-Inf", "infinity",
+		// Also review finding B1: a rate over 100% is never a real VAT
+		// percentage — "1900" (a merchant typing basis points where a
+		// percentage was expected) and "1e3" (scientific notation) must
+		// not silently create a 1900%/1000% tax code.
+		"1900", "1e3", "101",
+	} {
+		if got, err := ParseTaxRateBP(in); err == nil {
+			t.Errorf("ParseTaxRateBP(%q) = %d, want error", in, got)
+		}
+	}
+	// 100 itself is a legitimate (if extreme) boundary — must not be
+	// rejected by the new upper bound.
+	if got, err := ParseTaxRateBP("100"); err != nil || got != 10000 {
+		t.Errorf("ParseTaxRateBP(\"100\") = %d, %v; want 10000, nil", got, err)
+	}
+}
+
 func TestParseRejectsHeaderlessGarbage(t *testing.T) {
 	if _, err := Parse(strings.NewReader("a,b,c\n1,2,3\n"), 2); err == nil {
 		t.Fatal("no name column must be an error")

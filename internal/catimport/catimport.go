@@ -50,6 +50,12 @@ const (
 	BarcodeIssueUnsupportedFormat = "unsupported_format"
 	BarcodeIssueTooShort          = "too_short"
 	BarcodeIssueTooLong           = "too_long"
+
+	// TaxIssueUnparseable: a tax/takeaway-tax cell was present but didn't
+	// read as a percentage. Non-blocking, like BarcodeIssue — but unlike
+	// stock (silently optional), a dropped tax rate is compliance-sensitive
+	// (ut-docs#512), so the drop is reported rather than swallowed.
+	TaxIssueUnparseable = "unparseable"
 )
 
 // ImportItem is one parsed catalog row, prices in minor units.
@@ -77,6 +83,26 @@ type ImportItem struct {
 	// BarcodeIssueRaw is the raw value the reason applies to.
 	BarcodeIssue    string
 	BarcodeIssueRaw string
+	// Tax rates, in basis points (1900 = 19%), from optional tax columns —
+	// same optional-column pattern as Stock/HasStock: absent or blank ⇒
+	// both false/zero, never blocks the row (ut-docs#512). TakeawayRateBP
+	// is the source's distinct takeaway/off-premises rate where it carries
+	// one (Germany's §12 UStG dine-in/takeaway split). The parser carries
+	// both rates raw; deciding whether a pair needs a takeaway override is
+	// the pages layer's job.
+	TaxRateBP      int
+	HasTax         bool
+	TakeawayRateBP int
+	HasTakeaway    bool
+	// TaxIssue/TakeawayTaxIssue mirror BarcodeIssue for the two tax
+	// columns: set (with the raw cell value alongside) when a present,
+	// non-blank cell didn't parse as a percentage. Never blocks the row —
+	// it imports at the till's default rate — but the pages layer surfaces
+	// the drop as a per-row warning (reason codes, not prose: ut-docs#303).
+	TaxIssue            string
+	TaxIssueRaw         string
+	TakeawayTaxIssue    string
+	TakeawayTaxIssueRaw string
 }
 
 // Result is a parsed file.
@@ -99,6 +125,11 @@ var columnSynonyms = map[string][]string{
 	"description": {"description", "details"},
 	"weighed":     {"sold by weight", "weighed", "sold by weight (y/n)", "weighed (y/n)"},
 	"stock":       {"in stock", "stock", "quantity", "qty", "in_stock", "on_hand", "on hand", "current quantity", "stock quantity", "opening stock"},
+	// Tax columns (ut-docs#512): optional, ignored when absent so existing
+	// Loyverse/Square exports are unchanged. "takeaway tax" carries the
+	// off-premises rate where the source distinguishes one (§12 UStG).
+	"tax":          {"tax", "tax %", "tax rate", "vat", "vat %", "vat rate"},
+	"takeaway_tax": {"takeaway tax", "takeaway tax %", "takeaway vat", "takeaway rate", "takeaway tax rate"},
 	// square-specific extras used only for detection / variation naming
 	"variation": {"variation name"},
 	"token":     {"token", "handle"},
@@ -259,6 +290,24 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 				item.Stock, item.HasStock = qty, true
 			}
 		}
+		// Tax columns are optional too, but — unlike stock — a present cell
+		// that doesn't parse is reported (TaxIssue), not dropped silently:
+		// the row still imports at the till's default rate, and the pages
+		// layer warns the operator (ut-docs#512, compliance-sensitive).
+		if raw := get(rec, "tax"); raw != "" {
+			if bp, err := ParseTaxRateBP(raw); err == nil {
+				item.TaxRateBP, item.HasTax = bp, true
+			} else {
+				item.TaxIssue, item.TaxIssueRaw = TaxIssueUnparseable, raw
+			}
+		}
+		if raw := get(rec, "takeaway_tax"); raw != "" {
+			if bp, err := ParseTaxRateBP(raw); err == nil {
+				item.TakeawayRateBP, item.HasTakeaway = bp, true
+			} else {
+				item.TakeawayTaxIssue, item.TakeawayTaxIssueRaw = TaxIssueUnparseable, raw
+			}
+		}
 		switch {
 		case item.Name == "":
 			item.Issue = IssueMissingName
@@ -288,6 +337,35 @@ func ParsePrice(s string, decimals int) (int64, error) {
 		return 0, fmt.Errorf("unparseable price %q", s)
 	}
 	return int64(math.Round(f * math.Pow10(decimals))), nil
+}
+
+// ParseTaxRateBP converts a human tax-rate string ("19", "19%", "19.5") into
+// basis points (1900, 1900, 1950), rounding to the nearest basis point. Same
+// shape and strictness as ParsePrice: strip the % sign and whitespace, parse
+// the rest as a non-negative decimal, error on anything else.
+func ParseTaxRateBP(s string) (int, error) {
+	clean := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "%"))
+	clean = strings.TrimSpace(clean)
+	if clean == "" {
+		return 0, fmt.Errorf("empty tax rate")
+	}
+	f, err := strconv.ParseFloat(clean, 64)
+	// Review finding B1 (ut-docs#512, 2026-08-09): strconv.ParseFloat
+	// accepts "NaN"/"Inf"/"infinity" and neither is < 0, so they used to
+	// sail past this guard and int(math.Round(NaN*100)) silently rounds to
+	// math.MinInt64 — a persisted tax_codes.rate_basis_points of
+	// -9223372036854775808 on the exact compliance-sensitive path this
+	// card exists to protect, with no warning at all. IsNaN/IsInf must be
+	// checked BEFORE the < 0 comparison — NaN < 0 and +Inf < 0 are both
+	// false, so relying on that comparison alone lets them through. The
+	// upper bound (a tax rate is never a real percentage above 100) also
+	// catches a merchant typing basis points ("1900") or scientific
+	// notation ("1e3") where a plain percentage was expected — today that
+	// would otherwise silently create a 1900%/1000% tax code.
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > 100 {
+		return 0, fmt.Errorf("unparseable tax rate %q", s)
+	}
+	return int(math.Round(f * 100)), nil
 }
 
 func normalizeBarcode(s string) string {

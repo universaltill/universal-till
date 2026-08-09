@@ -35,6 +35,16 @@ type BkpProductRow struct {
 	ProductGroupText string
 	Status           int64
 	ProductType      int64
+	// TaxPercentageRaw/TaxPercentage2Raw (ut-docs#512): the source's
+	// dine-in / takeaway VAT rate columns — the real motivating case this
+	// card exists for (Germany's §12 UStG split; a real café's catalog
+	// conversion carries these). Formatted back to plain strings the same
+	// way SalesPriceRaw is, fed through catimport.ParseTaxRateBP by the
+	// caller. Blank when the column is absent from this backup.db's schema
+	// (see the fallback query below) or the cell itself is NULL/empty —
+	// both are "no tax data for this row", never an error.
+	TaxPercentageRaw  string
+	TaxPercentage2Raw string
 }
 
 // bkpProductsQuery is deliberately unexported and only ever used by
@@ -48,7 +58,14 @@ type BkpProductRow struct {
 // key). rowid is the source file's own insertion order, the only
 // deterministic ordering available without assuming anything about the
 // source schema beyond what's already documented.
-const bkpProductsQuery = `SELECT ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType FROM Products ORDER BY rowid`
+const bkpProductsQuery = `SELECT ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType, TaxPercentage, TaxPercentage2 FROM Products ORDER BY rowid`
+
+// bkpProductsQueryNoTax is bkpProductsQuery without the two tax columns —
+// the fallback for a backup.db whose Products table predates them (ut-docs#512:
+// nobody on this project has seen every real speedy kasse export, same
+// caveat as bkpScanString's doc comment; TaxPercentage/TaxPercentage2 are
+// documented from one real ticket's prose, not guaranteed on every backup).
+const bkpProductsQueryNoTax = `SELECT ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType FROM Products ORDER BY rowid`
 
 // ReadBkpProducts reads every row of an extracted speedy kasse backup.db's
 // Products table. db is NOT this application's own catalog database — it's
@@ -57,24 +74,45 @@ const bkpProductsQuery = `SELECT ProductNumber, ProductTextShort, SalesPrice, Pr
 // by the caller once this returns.
 func ReadBkpProducts(ctx context.Context, db *sql.DB) ([]BkpProductRow, error) {
 	rows, err := db.QueryContext(ctx, bkpProductsQuery)
+	hasTaxColumns := true
 	if err != nil {
-		return nil, fmt.Errorf("query Products: %w", err)
+		// SQLite reports a missing column by name in the error text — same
+		// fallback shape as CatalogRepo.ReadLookup's is_active handling
+		// (catalog_repo.go), for the same reason: an older/foreign schema
+		// missing an optional column is not a failure, just a narrower read.
+		if !strings.Contains(err.Error(), "no such column") {
+			return nil, fmt.Errorf("query Products: %w", err)
+		}
+		hasTaxColumns = false
+		rows, err = db.QueryContext(ctx, bkpProductsQueryNoTax)
+		if err != nil {
+			return nil, fmt.Errorf("query Products (no-tax fallback): %w", err)
+		}
 	}
 	defer rows.Close()
 
 	var out []BkpProductRow
 	for rows.Next() {
 		var productNumber, textShort, salesPrice, groupText, status, productType any
-		if err := rows.Scan(&productNumber, &textShort, &salesPrice, &groupText, &status, &productType); err != nil {
-			return nil, fmt.Errorf("scan Products row: %w", err)
+		var taxPct, taxPct2 any
+		var scanErr error
+		if hasTaxColumns {
+			scanErr = rows.Scan(&productNumber, &textShort, &salesPrice, &groupText, &status, &productType, &taxPct, &taxPct2)
+		} else {
+			scanErr = rows.Scan(&productNumber, &textShort, &salesPrice, &groupText, &status, &productType)
+		}
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan Products row: %w", scanErr)
 		}
 		out = append(out, BkpProductRow{
-			ProductNumber:    bkpScanString(productNumber),
-			ProductTextShort: bkpScanString(textShort),
-			SalesPriceRaw:    bkpScanString(salesPrice),
-			ProductGroupText: bkpScanString(groupText),
-			Status:           bkpScanInt(status),
-			ProductType:      bkpScanInt(productType),
+			ProductNumber:     bkpScanString(productNumber),
+			ProductTextShort:  bkpScanString(textShort),
+			SalesPriceRaw:     bkpScanString(salesPrice),
+			ProductGroupText:  bkpScanString(groupText),
+			Status:            bkpScanInt(status),
+			ProductType:       bkpScanInt(productType),
+			TaxPercentageRaw:  bkpScanString(taxPct),
+			TaxPercentage2Raw: bkpScanString(taxPct2),
 		})
 	}
 	if err := rows.Err(); err != nil {
