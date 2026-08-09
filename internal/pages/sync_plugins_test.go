@@ -983,6 +983,147 @@ func TestSyncPullTick_VersionMismatchFromMarketplaceFailsConvergence(t *testing.
 	}
 }
 
+// ut-docs#495 (round 2 of the #479 fix): a version mismatch on an IN-PLACE
+// UPGRADE — not a fresh install — must not fully uninstall the plugin. The
+// replica already has a previously-converged good version installed; when
+// the primary moves to a new version and the marketplace answers that pin
+// with the wrong release, the replica must land back on the prior good
+// version, active, files intact — not uninstalled.
+func TestSyncPullTick_VersionMismatchOnUpgradePreservesPriorGoodVersion(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-alpha": "com.test.sync-alpha"})
+	primary := newSyncPluginsPrimary(t, mkt)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Primary installs 1.0.0 for real; replica converges to it. This is the
+	// "previously-installed good version" the upgrade attempt below must not
+	// destroy.
+	primary.install(t, "listing-alpha")
+	replica.tick(t, client)
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); !ok || v != "1.0.0" {
+		t.Fatalf("precondition: replica should be converged at 1.0.0, got (%q, %v)", v, ok)
+	}
+	if !replica.hasPluginFiles("com.test.sync-alpha") {
+		t.Fatalf("precondition: replica should have plugin files for 1.0.0")
+	}
+
+	// The marketplace publishes a REAL 2.0.0 and the primary genuinely
+	// upgrades to it (a correct, matching install — not the mismatch itself).
+	mkt.publishVersion(t, "listing-alpha", "com.test.sync-alpha", "2.0.0")
+	primary.install(t, "listing-alpha") // unpinned = latest = 2.0.0
+	if v, _ := pluginInstalledVersion(t, primary.dp, "com.test.sync-alpha"); v != "2.0.0" {
+		t.Fatalf("precondition: primary should be at 2.0.0, got %q", v)
+	}
+
+	// NOW corrupt what the marketplace serves for a PINNED "2.0.0" request —
+	// simulating a future/different backend answering the pin with the wrong
+	// release, same shape as ut-docs#479's own test, but this time the
+	// replica already has an installed version to protect.
+	mkt.publishMismatchedRelease(t, "listing-alpha", "com.test.sync-alpha", "2.0.0", "9.9.9")
+
+	replica.tick(t, client) // replica sees primary at 2.0.0, attempts the pinned upgrade, hits the mismatch
+
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); !ok || v != "1.0.0" {
+		t.Fatalf("expected the prior good version 1.0.0 to stay installed and active after the mismatch, got (%q, %v)", v, ok)
+	}
+	if !replica.hasPluginFiles("com.test.sync-alpha") {
+		t.Fatalf("expected the plugin's files to survive the failed upgrade attempt")
+	}
+	// The status record must say Active, not Failed: the plugin IS genuinely
+	// still installed and active (just not at the version this pinned
+	// attempt wanted). Reviewer round 1 (ut-docs#495) caught that a Failed
+	// record here breaks BOTH the very protection this test checks (the next
+	// tick's "is there a prior good version" check requires State==Active —
+	// see TestSyncPullTick_VersionMismatchOnUpgradeSurvivesRepeatedTicks
+	// below) and the prune loop's ability to ever remove this plugin again
+	// (see TestSyncPullTick_RolledBackPluginStaysPrunableAfterPrimaryRemovesIt).
+	if state, ok := installStatusState(t, replica.dp, "listing-alpha"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("expected install status Active (the plugin is genuinely still active, just at the old version), got (%q, %v)", state, ok)
+	}
+
+	// Regression coverage for the sibling fresh-install case (#479): still
+	// covered by TestSyncPullTick_VersionMismatchFromMarketplaceFailsConvergence
+	// above, unchanged.
+}
+
+// ut-docs#495 round 1 review: the sync-pull loop retries every ~30s, so a
+// backend that persistently answers a pin with the wrong release (the
+// realistic case, not a one-off) must not be able to destroy the prior good
+// version merely by outlasting a single tick. Confirmed as a real bug in
+// round 1 (a status record left at Failed after a successful rollback lost
+// the "is there a prior good version" signal on the very next retry) —
+// this test ticks TWICE against the same still-mismatching marketplace.
+func TestSyncPullTick_VersionMismatchOnUpgradeSurvivesRepeatedTicks(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-alpha": "com.test.sync-alpha"})
+	primary := newSyncPluginsPrimary(t, mkt)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	primary.install(t, "listing-alpha")
+	replica.tick(t, client)
+	mkt.publishVersion(t, "listing-alpha", "com.test.sync-alpha", "2.0.0")
+	primary.install(t, "listing-alpha")
+	mkt.publishMismatchedRelease(t, "listing-alpha", "com.test.sync-alpha", "2.0.0", "9.9.9")
+
+	replica.tick(t, client) // tick 1: mismatch -> rollback to 1.0.0
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); !ok || v != "1.0.0" {
+		t.Fatalf("precondition: tick 1 should roll back to 1.0.0, got (%q, %v)", v, ok)
+	}
+
+	replica.tick(t, client) // tick 2: the SAME mismatch, 30s later in real life
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); !ok || v != "1.0.0" {
+		t.Fatalf("expected the prior good version to survive a SECOND mismatched tick too, got (%q, %v)", v, ok)
+	}
+	if !replica.hasPluginFiles("com.test.sync-alpha") {
+		t.Fatalf("expected plugin files to survive a second mismatched tick")
+	}
+
+	replica.tick(t, client) // tick 3, for good measure — this must not be a one-tick reprieve
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); !ok || v != "1.0.0" {
+		t.Fatalf("expected the prior good version to survive a THIRD mismatched tick, got (%q, %v)", v, ok)
+	}
+}
+
+// ut-docs#495 round 1 review: a rolled-back plugin's install-status record
+// must still be reachable by convergePluginSet's prune loop (which only
+// ever prunes an Active record) — otherwise, once the primary legitimately
+// removes the listing, the replica can never uninstall it. Confirmed as a
+// real bug in round 1 (the mismatch branch left the record at Failed after
+// a successful rollback).
+func TestSyncPullTick_RolledBackPluginStaysPrunableAfterPrimaryRemovesIt(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-alpha": "com.test.sync-alpha"})
+	primary := newSyncPluginsPrimary(t, mkt)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	primary.install(t, "listing-alpha")
+	replica.tick(t, client)
+	mkt.publishVersion(t, "listing-alpha", "com.test.sync-alpha", "2.0.0")
+	primary.install(t, "listing-alpha")
+	mkt.publishMismatchedRelease(t, "listing-alpha", "com.test.sync-alpha", "2.0.0", "9.9.9")
+
+	replica.tick(t, client) // mismatch -> rollback to 1.0.0, active
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); !ok || v != "1.0.0" {
+		t.Fatalf("precondition: should have rolled back to 1.0.0, got (%q, %v)", v, ok)
+	}
+
+	// The shop owner removes the plugin on the primary entirely (not an
+	// upgrade — a real, legitimate removal).
+	primary.uninstall(t, "com.test.sync-alpha")
+
+	replica.tick(t, client) // must prune the replica's rolled-back copy too
+
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); ok {
+		t.Fatalf("expected the replica to prune the plugin once the primary removed it, but it's still installed at %q", v)
+	}
+	if replica.hasPluginFiles("com.test.sync-alpha") {
+		t.Fatalf("expected the replica's plugin files to be removed once pruned")
+	}
+}
+
 // The reload-and-rebuild sequence (Pm.Reload + Menu reassignment) now fires
 // from the background sync-pull goroutine every 30s as well as from HTTP
 // handlers — Deps.ReloadPlugins must serialize it (PluginMu) so concurrent
