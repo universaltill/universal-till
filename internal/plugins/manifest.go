@@ -225,6 +225,75 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 	}
 }
 
+// validatePageEntryKeys enforces the install-time half of ut-docs#472:
+// internal/plugins.Manager.MenuPlugins (and the /ext/{key} dispatch it
+// backs) is keyed by bare entry key across ALL plugins, so an unchecked
+// collision between two plugins' type:"page" entries silently overwrites
+// one plugin's menu tile/route with another's — no error, no warning.
+// Called from both PersistManifest and Rollback, same shape as
+// validatePaymentEntryKeys, including the same key-format hygiene checks
+// (non-empty, no surrounding whitespace, no ':' — the reserved namespace
+// separator) applied to every type:"page" entry, docs included, since a
+// malformed key is invalid regardless of the collision exemption below.
+//
+// DocsEntryKey ("docs", ADR-0037) is EXEMPT from the cross-plugin
+// collision check specifically (not the format checks above): a docs
+// entry never enters MenuPlugins (loadMenuEntries skips it explicitly)
+// and the Docs-button feature looks docs entries up per plugin ID
+// (plugins_page.go's docsRouteByPlugin), not by bare key — so two plugins
+// both using key:"docs" never collide via MenuPlugins/GET /ext/{key} in
+// any live code path today, and rejecting on it would break the very
+// convention ADR-0037 asks every plugin author to reuse verbatim. This is
+// an implementation decision for the MenuPlugins namespace specifically,
+// not a resolution of ADR-0037's own "Not decided here" footnote (a
+// different question — a single plugin's manifest declaring two docs
+// entries — already prevented by the DB's UNIQUE(plugin_id, key)
+// constraint); that footnote stays open for the docs author to settle in
+// the ADR itself. Plugins can also still collide on a shared docs
+// *route* rather than key (internal/pages/plugin_page.go's /plugin/{...}
+// dispatch matches by route, first-row-wins) — a distinct gap, filed
+// separately rather than folded into this key-collision fix.
+//
+// Only type:"page" is checked — it's the only entry type ListMenuEntries
+// feeds into MenuPlugins. A within-manifest duplicate page key (two
+// entries in the SAME manifest sharing a key) is out of scope here, same
+// as it was for payment keys before ut-docs#363: the DB's existing
+// UNIQUE(plugin_id, key) constraint already rejects it, just with a raw
+// SQLite error rather than a clean one — unchanged by this fix.
+func validatePageEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
+	var checkKeys []string
+	for _, e := range entries {
+		if e.Type != "page" {
+			continue
+		}
+		if e.Key == "" {
+			return fmt.Errorf("page entry has an empty key")
+		}
+		if e.Key != strings.TrimSpace(e.Key) {
+			return fmt.Errorf("page entry key %q has surrounding whitespace", e.Key)
+		}
+		if strings.Contains(e.Key, ":") {
+			return fmt.Errorf("page entry key %q must not contain ':'", e.Key)
+		}
+		if e.Key == DocsEntryKey {
+			continue
+		}
+		checkKeys = append(checkKeys, e.Key)
+	}
+	if len(checkKeys) == 0 {
+		return nil
+	}
+	conflicts, err := repo.FindPageKeyConflicts(ctx, tx, pluginID, checkKeys)
+	if err != nil {
+		return fmt.Errorf("check page key conflicts: %w", err)
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	c := conflicts[0]
+	return fmt.Errorf("page entry key %q is already provided by plugin %s — pick a different key", c.Key, c.Owner)
+}
+
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {
 	repo := data.NewPluginRepo(db)
 	tx, err := db.BeginTx(ctx, nil)
@@ -240,6 +309,14 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// rejected here, loudly, instead of silently never materializing
 	// (the sync layer's ownership guard refuses the capture; ADR-0031).
 	if err := validatePaymentEntryKeys(ctx, repo, tx, m.ID, m.Entries); err != nil {
+		return err
+	}
+
+	// 0b. Page-entry keys feed the global MenuPlugins map (/menu, /ext/{key})
+	// keyed by bare key alone — a key colliding with another installed
+	// plugin's page entry must be rejected here, loudly, instead of
+	// silently overwriting that plugin's menu tile/route (ut-docs#472).
+	if err := validatePageEntryKeys(ctx, repo, tx, m.ID, m.Entries); err != nil {
 		return err
 	}
 

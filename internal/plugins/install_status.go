@@ -143,6 +143,15 @@ func ClassifyInstallError(err error) InstallFailure {
 		(strings.Contains(msg, "collides with") || strings.Contains(msg, "belongs to plugin") ||
 			strings.Contains(msg, "is already provided by plugin") || strings.Contains(msg, "is already used by plugin")):
 		return InstallFailure{MessageKey: "plugins.install.error.payment_conflict", Message: "This plugin's payment key or label conflicts with an existing one.", Retryable: false}
+	// ut-docs#472: a page entry key collision (validatePageEntryKeys in
+	// manifest.go) is the same permanent-failure shape as the payment case
+	// above — retrying the same manifest against the same till always
+	// fails identically until the plugin author picks a different key.
+	// Scoped to the true collision message ("is already provided by
+	// plugin") so it doesn't also swallow the separate malformed-key
+	// validation errors, which stay on the generic retryable default.
+	case strings.Contains(msg, "page entry key") && strings.Contains(msg, "is already provided by plugin"):
+		return InstallFailure{MessageKey: "plugins.install.error.page_conflict", Message: "This plugin's page key conflicts with an existing one.", Retryable: false}
 	default:
 		return InstallFailure{MessageKey: "plugins.install.error.retryable", Message: "Install failed. You can retry.", Retryable: true}
 	}
