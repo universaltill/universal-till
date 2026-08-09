@@ -104,14 +104,12 @@ func Run(ctx context.Context) error {
 	// to actually exit before its deferred database.Close() above runs.
 	// Without this, "Run returned" didn't mean "nothing is still writing to
 	// the data dir" (found 2026-07-30 via a mobile-shutdown CI flake).
-	// STILL NOT covered — the drain is not complete:
-	// internal/plugins.Supervisor's monitorProcess goroutines (native plugin
-	// processes — dynamically spawned per start/restart, no bounded join
-	// point yet) and the wasm runtime's per-plugin event-channel drainer
-	// (internal/plugins/wasm_runtime.go — its channel is only closed on the
-	// next Sync/reload, never on shutdown, so tracking it here would make
-	// every drain time out) both need real design work before a join is even
-	// safe; tracked as ut-docs#380.
+	// The two goroutine classes that used to be exempt are covered too since
+	// ut-docs#380: internal/plugins.Supervisor's monitorProcess goroutines are
+	// joined by Supervisor.Shutdown itself (bounded by its ctx), and the wasm
+	// runtime's per-plugin event-channel drainers are stopped and joined by
+	// pluginManager.Close — both called from server.Start's wg-tracked
+	// graceful-shutdown goroutine, so waiting on wg waits on them as well.
 	//
 	// bgCtx is independently cancellable from ctx: an early startup error
 	// below (plugins.Init, marketplace.NewCatalogRepository, server.Start's
@@ -169,7 +167,7 @@ func Run(ctx context.Context) error {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
 
-	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
+	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, pluginManager, &wg)
 }
 
 // backgroundDrainTimeout bounds how long Run waits for background goroutines

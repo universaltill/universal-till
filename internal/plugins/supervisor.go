@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // Supervisor manages plugin process lifecycle
@@ -16,6 +17,11 @@ type Supervisor struct {
 	db        *sql.DB
 	mu        sync.RWMutex
 	processes map[string]*PluginProcess // key = plugin_id
+	// wg tracks every monitorProcess goroutine (initial spawn and every
+	// restart respawn) so Shutdown can wait for them to actually finish —
+	// including their audit writes — before the caller closes the database
+	// (ut-docs#380).
+	wg sync.WaitGroup
 }
 
 // PluginProcess represents a running plugin process
@@ -90,7 +96,8 @@ func (s *Supervisor) StartPlugin(ctx context.Context, pluginID, entrypoint strin
 		fmt.Printf("warning: failed to audit plugin start: %v\n", err)
 	}
 
-	// Monitor process in background
+	// Monitor process in background (wg-tracked so Shutdown can join it)
+	s.wg.Add(1)
 	go s.monitorProcess(procCtx, proc)
 
 	return nil
@@ -145,8 +152,11 @@ func (s *Supervisor) RestartPlugin(ctx context.Context, pluginID string) error {
 	return s.StartPlugin(ctx, pluginID, entrypoint, args, policy)
 }
 
-// monitorProcess watches a plugin process and handles restarts
+// monitorProcess watches a plugin process and handles restarts. Every caller
+// must s.wg.Add(1) immediately before spawning it; the deferred Done here is
+// the FIRST defer so it fires on every return path (panics included).
 func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
+	defer s.wg.Done()
 	err := proc.Cmd.Wait()
 
 	s.mu.Lock()
@@ -214,7 +224,10 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 		fmt.Printf("warning: failed to audit plugin restart: %v\n", err)
 	}
 
-	// Continue monitoring
+	// Continue monitoring. The Add executes before this goroutine returns
+	// (and so before its own deferred Done fires), so the WaitGroup counter
+	// never has a window at zero mid-restart.
+	s.wg.Add(1)
 	go s.monitorProcess(procCtx, proc)
 }
 
@@ -270,11 +283,14 @@ func (s *Supervisor) ListRunning() []string {
 	return running
 }
 
-// Shutdown stops all running plugin processes
+// Shutdown stops all running plugin processes, then waits (bounded by ctx)
+// for every monitorProcess goroutine to actually observe the cancellation and
+// finish — including any in-flight audit write — so the caller can close the
+// database without racing a straggler (ut-docs#380). A wedged plugin process
+// must not hang shutdown forever: on ctx expiry this logs loudly and returns
+// nil anyway.
 func (s *Supervisor) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	for pluginID, proc := range s.processes {
 		proc.stopped = true
 		proc.cancel()
@@ -283,8 +299,23 @@ func (s *Supervisor) Shutdown(ctx context.Context) error {
 			fmt.Printf("warning: failed to audit plugin shutdown: %v\n", err)
 		}
 	}
-
 	s.processes = make(map[string]*PluginProcess)
+	// Release the lock BEFORE waiting: monitorProcess re-acquires s.mu itself
+	// (to check proc.stopped and audit) — waiting while holding it deadlocks.
+	s.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.wg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		// The internal wg.Wait goroutine is intentionally leaked — it only
+		// blocks on Wait and exits whenever the wedged monitor eventually does.
+		logging.L().Errorf("shutdown: plugin monitor goroutines still running when shutdown context expired — continuing anyway")
+	}
 	return nil
 }
 

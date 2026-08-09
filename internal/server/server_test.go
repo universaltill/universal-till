@@ -520,7 +520,7 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
-	go func() { errCh <- Start(ctx, cfg, handler, nil, nil, nil, &wg) }()
+	go func() { errCh <- Start(ctx, cfg, handler, nil, nil, nil, nil, &wg) }()
 
 	var url string
 	select {
@@ -576,7 +576,7 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 func TestStart_ReturnsErrorOnBadAddr(t *testing.T) {
 	t.Setenv("UT_OPEN_BROWSER", "false")
 	cfg := &config.Config{ListenAddr: "not-a-listen-addr"}
-	err := Start(context.Background(), cfg, http.NewServeMux(), nil, nil, nil, &sync.WaitGroup{})
+	err := Start(context.Background(), cfg, http.NewServeMux(), nil, nil, nil, nil, &sync.WaitGroup{})
 	if err == nil {
 		t.Fatal("Start succeeded on an unbindable address")
 	}
@@ -617,7 +617,7 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
-	go func() { errCh <- Start(ctx, cfg, http.NewServeMux(), nil, d.DB, nil, &wg) }()
+	go func() { errCh <- Start(ctx, cfg, http.NewServeMux(), nil, d.DB, nil, nil, &wg) }()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
