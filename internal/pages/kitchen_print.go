@@ -70,8 +70,11 @@ func printKitchen(ctx context.Context, d *common.Deps, receiptNo string) error {
 
 // printKitchenAsync sends a kitchen ticket without ever blocking the caller:
 // fired as a goroutine, a missing printer is a no-op and failures are audited.
+// Tracked on d.AsyncWork (ut-docs#425), same reasoning as printReceiptAsync.
 func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
+	d.AsyncWork.Add(1)
 	go func() {
+		defer d.AsyncWork.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if !printerConfig(ctx, d).KitchenEnabled() {
