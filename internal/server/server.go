@@ -181,7 +181,7 @@ func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 // that both waits on wg AND waits for Start to return (as app.Run does) can
 // safely assume nothing Start ever spawned is still touching db/supervisor
 // once both have happened. wg must not be nil.
-func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, pluginManager *plugins.Manager, wg *sync.WaitGroup) error {
+func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, wg *sync.WaitGroup) error {
 	// Start background jobs if catalog repository is configured. Start()
 	// itself only launches goroutines and returns immediately, so it doesn't
 	// need its own wrapping goroutine — jobs' own 3 goroutines register with
@@ -271,10 +271,22 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 
 	// Graceful shutdown when context is cancelled. Registered with wg because
 	// net/http's Shutdown contract only guarantees Serve returns once
-	// listeners are closed — supervisor.Shutdown/pluginManager.Close below can
-	// still be running after Serve (and so this function) has already
-	// returned; without this, a caller waiting on wg alone could race their
-	// DB writes (audit_log) against database.Close().
+	// listeners are closed — supervisor.Shutdown below can still be running
+	// after Serve (and so this function) has already returned; without this,
+	// a caller waiting on wg alone could race their DB writes (audit_log)
+	// against database.Close().
+	//
+	// Deliberately NOT where the wasm runtime's event-channel drainers are
+	// joined (ut-docs#503, a regression from ut-docs#380/PR#268's original
+	// wiring here): this goroutine fires on the SAME ctx.Done() signal that
+	// independently triggers every other background service on the caller's
+	// wg (cloudsync's ticker included), and closing the wasm runtime's
+	// subscriber channels while one of those is still mid-publish is a real
+	// "send on closed channel" panic (EventBus.publish releases its lock
+	// before the channel send — reproduced directly against this exact call
+	// path). That join now happens in app.Run's own deferred cleanup,
+	// strictly after every wg member — this goroutine included — has
+	// actually exited, not merely been asked to.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -286,9 +298,6 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		if supervisor != nil {
 			_ = supervisor.Shutdown(shutdownCtx)
 		}
-		// Stop the wasm runtime's event drainer goroutines too (ut-docs#380);
-		// nil-safe, and bounded by the same shutdownCtx as everything above.
-		pluginManager.Close(shutdownCtx)
 	}()
 
 	log.Printf("listening on %s", cfg.ListenAddr)

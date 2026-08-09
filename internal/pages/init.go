@@ -39,9 +39,15 @@ import (
 // StartAutoUpdateScheduler are all wired this way now (ut-docs#153).
 // internal/plugins.Supervisor's monitorProcess goroutines and the wasm
 // runtime's per-plugin event-channel drainer are joined too now, though not
-// via this wg — Supervisor.Shutdown and Manager.Close (called from
-// server.Start's own wg-tracked shutdown goroutine) wait on their own
-// internal WaitGroups instead (ut-docs#380).
+// both the same way (ut-docs#380, #503). Supervisor.Shutdown waits on its
+// own internal WaitGroup and IS reached via this wg (server.Start's
+// wg-tracked shutdown goroutine calls it). Manager.Close is deliberately
+// NOT called from that same goroutine: it closes the same subscriber
+// channels EventBus.publish sends on, and racing that close against a
+// still-live publisher on this wg (cloudsync's ticker, in particular) is a
+// real "send on closed channel" panic (ut-docs#503). app.Run calls
+// Manager.Close from its own deferred cleanup instead, strictly after this
+// wg's drain has joined everything, publishers included.
 func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository, wg *sync.WaitGroup) http.Handler {
 	log := logging.L()
 	mux := http.NewServeMux()
