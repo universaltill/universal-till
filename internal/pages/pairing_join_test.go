@@ -1,18 +1,25 @@
 package pages
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 // --- registerPairingJoinAPI: the replica-side "select a discovered primary
@@ -353,4 +360,247 @@ func TestPairStatus_ExpiresAfterTTL(t *testing.T) {
 	if strings.Contains(rec.Body.String(), `hx-trigger`) {
 		t.Fatal("expired state must not keep polling (no hx-trigger in the terminal fragment)")
 	}
+}
+
+// TestPairingSurface_ReachablePastAuthMiddleware is ut-docs#537's regression
+// test. A joining replica has no session on the primary at all — it's a
+// stranger LAN device sending its first-ever request there — so the two
+// inbound pairing endpoints it calls before it holds a token must survive
+// the REAL auth.Middleware. This is deliberately NOT the pattern the rest of
+// this file (and setup_pairing_test.go's own "real primary" tests) use: they
+// construct the primary as a bare *http.ServeMux with no middleware wrap at
+// all, so those tests would keep passing even if internal/auth/
+// middleware.go's exempt list regressed again — which is exactly how this
+// shipped broken (every existing pairing test ran with UT_AUTH=off, or
+// against an unwrapped mux, or both).
+func TestPairingSurface_ReachablePastAuthMiddleware(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+
+	primary, _ := newSyncDepsWithPath(t, "primary.db")
+	psvc := auth.NewService(primary.Db)
+	pmux := http.NewServeMux()
+	ptokens := registerSyncAPI(pmux, primary)
+	registerPairingAPI(pmux, primary, psvc, ptokens)
+	ph := auth.Middleware(pmux, psvc) // the real middleware — the whole point of this test
+	srv := httptest.NewServer(ph)
+	t.Cleanup(srv.Close)
+
+	// A stranger LAN device: no cookie jar, no session, no prior contact
+	// with this primary at all.
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	body, _ := json.Marshal(map[string]string{"device_name": "Till 2", "commitment": strings.Repeat("a", 64)})
+	resp, err := client.Post(srv.URL+"/api/sync/pair-request", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/sync/pair-request through the real auth middleware: got %d, want 200 — "+
+			"a session-less replica must be able to reach this handler (ut-docs#537)", resp.StatusCode)
+	}
+	var out struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.ID == "" {
+		t.Fatalf("expected a pending request id in the response, got: %s", resp.Status)
+	}
+
+	// Not yet approved: the possession-gated status poll must also survive
+	// the middleware and reach the HANDLER's own "not approved yet" 404 —
+	// not the middleware's 401 (the wrong secret here is fine; this proves
+	// reachability, not the possession check itself — that's pairing_api_test.go's job).
+	statusResp, err := client.Get(srv.URL + "/api/sync/pair-requests/" + out.Data.ID + "?request_secret=" + strings.Repeat("b", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusResp.Body.Close()
+	if statusResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /api/sync/pair-requests/{id} through the real auth middleware: got %d, want 404 "+
+			"(not-yet-approved, from the handler) — a 401 here means the middleware rejected it "+
+			"before the handler ever ran (ut-docs#537)", statusResp.StatusCode)
+	}
+
+	// The narrowness half of the same regression: the manager-gated LIST
+	// (no id) must stay genuinely behind a session, or any LAN caller could
+	// read every pending device name + derived verification code.
+	listResp, err := client.Get(srv.URL + "/api/sync/pair-requests")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listResp.Body.Close()
+	if listResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET /api/sync/pair-requests (the manager list) through the real auth middleware: "+
+			"got %d, want 401 — it must stay behind a session", listResp.StatusCode)
+	}
+
+	// ut-docs#537 independent review: approve/deny live one path segment
+	// deeper under the SAME /api/sync/pair-requests/ prefix as the
+	// possession-gated status GET above. A plain HasPrefix match on that
+	// prefix (the shipped-then-caught bug) would exempt these too, turning
+	// manager approval — ADR-0033 §8's stated trust boundary for inbound
+	// pairing — into an anonymous LAN PIN-guessing oracle. Both must still
+	// 401 through the real middleware with no session, regardless of the
+	// (wrong, deliberately) PIN posted.
+	for _, action := range []string{"approve", "deny"} {
+		form := url.Values{"manager_pin": {"0000"}}
+		actionResp, err := client.Post(srv.URL+"/api/sync/pair-requests/"+out.Data.ID+"/"+action,
+			"application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer actionResp.Body.Close()
+		if actionResp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("POST /api/sync/pair-requests/{id}/%s through the real auth middleware, no session: "+
+				"got %d, want 401 — manager approval must stay behind a session, not just a PIN "+
+				"(ut-docs#537 review finding)", action, actionResp.StatusCode)
+		}
+	}
+}
+
+// TestPairingSurface_FullAuthenticatedRoundTrip is the AC4 "end-to-end test
+// that pairs against an auth-enabled primary" this ticket asked for,
+// completed rather than just reachability-checked: a session-less replica
+// sends the pair request, a REAL logged-in manager (real /api/auth/login,
+// real session cookie, real PIN check) approves it through the real
+// auth.Middleware, and the replica retrieves a working token. Independent
+// review flagged that the reachability test above proves the middleware
+// lets requests through but never proves approve/deny stay correctly
+// gated for a genuine session — this closes that gap by exercising the
+// exact path (manager-authenticated approve) the review's blocker lived in.
+func TestPairingSurface_FullAuthenticatedRoundTrip(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+
+	// A real, fully-migrated schema (not the simplified seedForPages one
+	// newSyncDepsWithPath uses) — this test creates a real operator with a
+	// real PIN and logs in for real, and seedForPages' users table (built
+	// for the join/snapshot tests, not the auth ones) has a NOT NULL
+	// pin_hash that doesn't match production's actual first-boot shape.
+	// Same pattern as TestPairingFlow_AgainstRealMigratedSchema.
+	dbPath := filepath.Join(t.TempDir(), "unitill-pos.db")
+	d, err := appdb.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open real migrated db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	primary := &common.Deps{
+		Cfg: &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://localhost:8081"}},
+		Db:  d.DB,
+	}
+	psvc := auth.NewService(primary.Db)
+	pmux := http.NewServeMux()
+	registerPairingAPI(pmux, primary, psvc, &enrolTokens{tokens: map[string]time.Time{}})
+	registerAuth(pmux, primary, psvc)
+	ph := auth.Middleware(pmux, psvc)
+	srv := httptest.NewServer(ph)
+	t.Cleanup(srv.Close)
+	seedOperatorWithPIN(t, psvc) // username "boss", PIN "2468" — see setup_pairing_test.go
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Jar:     jar,
+		// A successful login 303s to "/", which this minimal test mux never
+		// registers (it only carries the auth + pairing routes this test
+		// actually needs) — following that redirect would land on an
+		// unrelated 404 and mask the login response itself. The Set-Cookie
+		// header lands on the redirect response either way, so the jar
+		// still picks it up without following it.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	// A real request_secret + its sha256 commitment — same derivation
+	// pairStartHandler itself uses (pairing_join.go) — since this test, unlike
+	// the reachability-only one above, actually retrieves the token and needs
+	// the possession check to genuinely succeed.
+	rawSecret := make([]byte, 32)
+	if _, err := rand.Read(rawSecret); err != nil {
+		t.Fatal(err)
+	}
+	secret := hex.EncodeToString(rawSecret)
+	sum := sha256.Sum256([]byte(secret))
+	commitment := hex.EncodeToString(sum[:])
+
+	// A stranger replica sends the pair request — no session needed, same
+	// as the reachability test above.
+	body, _ := json.Marshal(map[string]string{"device_name": "Till 2", "commitment": commitment})
+	resp, err := client.Post(srv.URL+"/api/sync/pair-request", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.ID == "" {
+		t.Fatalf("pair-request: expected 200 with a pending id, got %d", resp.StatusCode)
+	}
+
+	// A real manager logs in on the primary — a genuine session cookie via
+	// the real login handler, not a bypass.
+	loginResp, err := client.PostForm(srv.URL+"/api/auth/login", url.Values{"pin": {"2468"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loginResp.Body.Close()
+	if loginResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("manager login: expected 303 (redirect on success — a 200 here means the PIN "+
+			"was rejected and renderLogin's error state rendered instead), got %d", loginResp.StatusCode)
+	}
+	found := false
+	for _, c := range jar.Cookies(mustParseURL(t, srv.URL)) {
+		if c.Name == auth.CookieName {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a real session cookie (%s) after login — harness premise broken", auth.CookieName)
+	}
+
+	// The manager approves — through the real middleware, with the real
+	// session cookie (now carried automatically by the jar) plus the
+	// manager PIN the approve handler itself requires.
+	approveResp, err := client.PostForm(srv.URL+"/api/sync/pair-requests/"+out.Data.ID+"/approve",
+		url.Values{"manager_pin": {"2468"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer approveResp.Body.Close()
+	if approveResp.StatusCode != http.StatusOK {
+		t.Fatalf("approve with a real manager session: expected 200, got %d: the fixed exempt-list "+
+			"prefix must not have re-widened to swallow this route", approveResp.StatusCode)
+	}
+
+	// The replica (still no session — the primary's session cookie is not
+	// its concern) retrieves the token with its possession secret.
+	statusResp, err := client.Get(srv.URL + "/api/sync/pair-requests/" + out.Data.ID + "?request_secret=" + secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusResp.Body.Close()
+	var tokOut struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if statusResp.StatusCode != http.StatusOK || json.NewDecoder(statusResp.Body).Decode(&tokOut) != nil || tokOut.Data.Token == "" {
+		t.Fatalf("expected a real enrolment token after approval, got %d", statusResp.StatusCode)
+	}
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }

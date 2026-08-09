@@ -42,7 +42,13 @@ func exempt(path string) bool {
 	switch path {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
-		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status":
+		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
+		// ut-docs#537: a joining replica has no session on the primary at
+		// all — it's a stranger LAN device sending its first-ever request
+		// there. The inbound pair request is unauthenticated by design
+		// (ADR-0033 §8; rate-limited + sha256-commitment-gated in the
+		// handler itself).
+		"/api/sync/pair-request":
 		return true
 	}
 	// /self-order (ADR-0020): the self-order kiosk flow is used by
@@ -59,6 +65,26 @@ func exempt(path string) bool {
 		if strings.HasPrefix(path, p) {
 			return true
 		}
+	}
+	// The possession-gated per-id status poll a joining replica makes while
+	// waiting for approval (pairing_join.go's pairStatusHandler): GET
+	// /api/sync/pair-requests/{id} — same unauthenticated-by-design
+	// endpoint class as pair-request above, gated in the handler by the
+	// request_secret, not a session.
+	//
+	// This MUST be bounded to exactly one path segment after the prefix —
+	// pairing_api.go registers /api/sync/pair-requests/{id}/approve and
+	// /deny under this same prefix, and those stay manager-PIN-gated
+	// (authorizePairingManager) behind a REQUIRED session; a plain
+	// HasPrefix match would exempt them too, turning approve/deny into an
+	// anonymous LAN PIN-guessing oracle that also trips the device-wide
+	// login lockout (independent review, ut-docs#537 — caught before
+	// merge). The bare /api/sync/pair-requests LIST (no id) must also stay
+	// gated, or any LAN caller could read every pending device name +
+	// derived verification code. TestSyncPullPathsAreExempt pins all three
+	// exclusions.
+	if rest, ok := strings.CutPrefix(path, "/api/sync/pair-requests/"); ok && rest != "" && !strings.Contains(rest, "/") {
+		return true
 	}
 	return false
 }
