@@ -66,6 +66,34 @@ type Deps struct {
 	// tests/paths that never start the loop. Capacity-1: one pending nudge
 	// already covers any number of sales completed before the loop drains it.
 	SyncPushNow chan struct{}
+
+	// AsyncWork tracks best-effort, fire-and-forget goroutines started
+	// after a request already responded — printReceiptAsync (ut-docs#425)
+	// is the first user: checkout must never block on a slow/absent
+	// printer (offline-first), so it's dispatched via `go func()` with no
+	// caller left holding a handle to it. That's correct for production,
+	// but it means the goroutine can still be mid-flight (reading
+	// Settings/writing an audit row through Db) after the request that
+	// started it has already returned — a real, reproducible bug: a test
+	// that closes Db and removes its TempDir right after the HTTP
+	// response raced this goroutine's own DB access, intermittently
+	// tripping "sql: database is closed" and (via t.TempDir()'s
+	// RemoveAll racing SQLite's WAL sidecar files) "directory not empty"
+	// on cleanup. Any such goroutine should `AsyncWork.Add(1)` before
+	// starting and `defer AsyncWork.Done()`; callers that need every
+	// background effect to have settled before tearing down shared state
+	// (tests closing Db, graceful shutdown) call WaitForAsyncWork first —
+	// same shape as WasmRuntime's own wg/Close (ut-docs#380).
+	AsyncWork sync.WaitGroup
+}
+
+// WaitForAsyncWork blocks until every in-flight best-effort background
+// goroutine tracked via AsyncWork (e.g. printReceiptAsync) has finished.
+// Call this before closing Db or removing any directory Db's file lives in
+// — see AsyncWork's doc comment for why skipping it is a real race, not a
+// theoretical one.
+func (d *Deps) WaitForAsyncWork() {
+	d.AsyncWork.Wait()
 }
 
 // RuntimeState mirrors fields needed from pages.state (theme, tax, currency).

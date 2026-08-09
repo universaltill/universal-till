@@ -295,8 +295,11 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, htmlEscape(err.Error()))
 			return
 		}
-		// Best-effort thermal print, same posture as receipts.
+		// Best-effort thermal print, same posture as receipts. Tracked on
+		// d.AsyncWork (ut-docs#425), same reasoning as printReceiptAsync.
+		d.AsyncWork.Add(1)
 		go func() {
+			defer d.AsyncWork.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			cfg := printerConfig(ctx, d)
