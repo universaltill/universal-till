@@ -144,6 +144,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		{Href: "/inventory", Label: "nav.inventory"},
 		{Href: "/shifts", Label: "nav.shifts"},
 		{Href: "/journal", Label: "nav.journal"},
+		{Href: "/orders", Label: "nav.orders"},
 		{Href: "/reports", Label: "nav.reports"},
 		{Href: "/settings", Label: "nav.settings"},
 		{Href: "/plugins", Label: "nav.plugins"},
@@ -189,6 +190,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		BtnStore:    btnStore,
 		CatalogRepo: catalogRepo,
 		AuthSvc:     authSvc,
+		// Order-status pub/sub (ut-docs#526): one instance for the process —
+		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
+		OrderStatus: pos.NewOrderStatusBroadcaster(),
 	}
 
 	// Register routes
@@ -287,6 +291,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerJournal(mux, dp)
+	registerOrderStatus(mux, dp) // order lifecycle status one-tap surface (ut-docs#526)
 	registerHealth(mux)
 	registerExternalProxy(mux, dp)
 	registerPluginStore(mux, dp) // Marketplace plugin store
