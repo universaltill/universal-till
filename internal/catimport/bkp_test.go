@@ -26,6 +26,11 @@ type bkpProductRow struct {
 	ProductGroupText string
 	Status           int
 	ProductType      int
+	// TaxPercentage/TaxPercentage2 (ut-docs#512): dine-in/takeaway VAT rate
+	// columns. nil leaves the cell NULL — most existing fixtures don't set
+	// these, exercising "tax columns present but this row carries none".
+	TaxPercentage  any
+	TaxPercentage2 any
 }
 
 // buildBkpDBBytes creates a temp SQLite file with a Products table matching
@@ -51,15 +56,17 @@ func buildBkpDBBytes(t *testing.T, rows []bkpProductRow) []byte {
 		SalesPrice REAL,
 		ProductGroupText TEXT,
 		Status INTEGER,
-		ProductType INTEGER
+		ProductType INTEGER,
+		TaxPercentage REAL,
+		TaxPercentage2 REAL
 	)`); err != nil {
 		t.Fatalf("create Products table: %v", err)
 	}
 	for _, r := range rows {
 		if _, err := db.Exec(`INSERT INTO Products
-			(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType)
-			VALUES (?,?,?,?,?,?)`,
-			r.ProductNumber, r.ProductTextShort, r.SalesPrice, r.ProductGroupText, r.Status, r.ProductType); err != nil {
+			(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType, TaxPercentage, TaxPercentage2)
+			VALUES (?,?,?,?,?,?,?,?)`,
+			r.ProductNumber, r.ProductTextShort, r.SalesPrice, r.ProductGroupText, r.Status, r.ProductType, r.TaxPercentage, r.TaxPercentage2); err != nil {
 			t.Fatalf("insert product %+v: %v", r, err)
 		}
 	}
@@ -399,5 +406,125 @@ func TestParseBkp_ChecksumMatchPasses(t *testing.T) {
 	}
 	if len(res.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+}
+
+// ut-docs#512: the speedy kasse Products table carries two tax-rate
+// columns (TaxPercentage = dine-in, TaxPercentage2 = takeaway) — the real
+// motivating case this card exists for. ParseBkp must map them onto
+// ImportItem's TaxRateBP/TakeawayRateBP the same way the CSV path's Parse
+// does, covering the same four real pairs from the issue's own café data
+// (19/7 override, 7/7 no-override, 19/19 no-override — the second distinct
+// 19% group, 0/0 no-override) plus the equal-pair "no override" case.
+func TestParseBkp_TaxColumnsMapToTaxRates(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Cappuccino", SalesPrice: 3.50, ProductGroupText: "Coffee", Status: 1, ProductType: 1, TaxPercentage: 19.0, TaxPercentage2: 7.0},
+		{ProductNumber: "2", ProductTextShort: "Sparkling Water", SalesPrice: 2.50, ProductGroupText: "Drinks", Status: 1, ProductType: 1, TaxPercentage: 7.0, TaxPercentage2: 7.0},
+		{ProductNumber: "3", ProductTextShort: "Espresso", SalesPrice: 2.20, ProductGroupText: "Coffee", Status: 1, ProductType: 1, TaxPercentage: 19.0, TaxPercentage2: 19.0},
+		{ProductNumber: "4", ProductTextShort: "Gift Voucher", SalesPrice: 10.00, ProductGroupText: "Misc", Status: 1, ProductType: 1, TaxPercentage: 0.0, TaxPercentage2: 0.0},
+		{ProductNumber: "5", ProductTextShort: "No Tax Data", SalesPrice: 1.00, ProductGroupText: "Misc", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 5 {
+		t.Fatalf("items = %d, want 5", len(res.Items))
+	}
+
+	capp := res.Items[0]
+	if !capp.HasTax || capp.TaxRateBP != 1900 || !capp.HasTakeaway || capp.TakeawayRateBP != 700 {
+		t.Errorf("Cappuccino (19,7) parsed wrong: %+v", capp)
+	}
+	water := res.Items[1]
+	if !water.HasTax || water.TaxRateBP != 700 || !water.HasTakeaway || water.TakeawayRateBP != 700 {
+		t.Errorf("Sparkling Water (7,7) parsed wrong: %+v", water)
+	}
+	espresso := res.Items[2]
+	if !espresso.HasTax || espresso.TaxRateBP != 1900 || !espresso.HasTakeaway || espresso.TakeawayRateBP != 1900 {
+		t.Errorf("Espresso (19,19) parsed wrong: %+v", espresso)
+	}
+	voucher := res.Items[3]
+	if !voucher.HasTax || voucher.TaxRateBP != 0 || !voucher.HasTakeaway || voucher.TakeawayRateBP != 0 {
+		t.Errorf("Gift Voucher (0,0) parsed wrong: %+v", voucher)
+	}
+	noTax := res.Items[4]
+	if noTax.HasTax || noTax.HasTakeaway {
+		t.Errorf("row with NULL tax cells must leave HasTax/HasTakeaway false, got %+v", noTax)
+	}
+}
+
+// A tax cell that's present but not a parseable percentage must warn
+// (TaxIssue), not silently drop the compliance-relevant value or block the
+// row — same non-blocking treatment as the CSV path (ut-docs#512).
+func TestParseBkp_UnparseableTaxWarnsButStillImports(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Weird Row", SalesPrice: 3.00, ProductGroupText: "Misc", Status: 1, ProductType: 1, TaxPercentage: "n/a", TaxPercentage2: 7.0},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Issue != "" {
+		t.Errorf("unparseable tax must not block the row's own Issue, got %q", it.Issue)
+	}
+	if it.HasTax {
+		t.Error("unparseable tax cell must leave HasTax false")
+	}
+	if it.TaxIssue != TaxIssueUnparseable || it.TaxIssueRaw != "n/a" {
+		t.Errorf("TaxIssue = (%q,%q), want (%q,%q)", it.TaxIssue, it.TaxIssueRaw, TaxIssueUnparseable, "n/a")
+	}
+	if !it.HasTakeaway || it.TakeawayRateBP != 700 {
+		t.Errorf("the OTHER column (takeaway) must still parse independently: %+v", it)
+	}
+}
+
+// A backup.db predating the tax columns must still import cleanly end to
+// end — the data-layer fallback (bkp_products_repo_test.go) already covers
+// ReadBkpProducts itself; this confirms ParseBkp doesn't choke on it either.
+func TestParseBkp_NoTaxColumnsInSourceSchemaStillImports(t *testing.T) {
+	tmp, err := os.CreateTemp("", "bkp-notax-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := tmp.Name()
+	_ = tmp.Close()
+	t.Cleanup(func() { _ = os.Remove(path) })
+	sqlDB, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlDB.Exec(`CREATE TABLE Products (
+		ProductNumber TEXT, ProductTextShort TEXT, SalesPrice REAL,
+		ProductGroupText TEXT, Status INTEGER, ProductType INTEGER
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO Products VALUES ('1','Old Export',2.00,'Misc',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dbBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp must not error on a pre-tax-column schema: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].HasTax || res.Items[0].HasTakeaway {
+		t.Errorf("got %+v, want one item with no tax data", res.Items)
 	}
 }

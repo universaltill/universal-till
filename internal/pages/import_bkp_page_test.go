@@ -23,6 +23,23 @@ import (
 // table matching the documented speedy kasse schema and returns its bytes.
 func buildBkpDBBytesForPagesTest(t *testing.T) []byte {
 	t.Helper()
+	return buildBkpDBBytesForPagesTestWithTaxRows(t, nil)
+}
+
+// bkpTaxRow is one Products row carrying the ut-docs#512 tax columns, for
+// the .bkp tax-carry-through end-to-end test below.
+type bkpTaxRow struct {
+	ProductNumber, Name, Category string
+	Price                         float64
+	TaxPct, TaxPct2                any
+}
+
+// buildBkpDBBytesForPagesTestWithTaxRows is buildBkpDBBytesForPagesTest's
+// superset: same base fixture (Latte + a deleted row), plus any extra rows
+// the caller supplies, on a Products schema that also carries
+// TaxPercentage/TaxPercentage2 (ut-docs#512).
+func buildBkpDBBytesForPagesTestWithTaxRows(t *testing.T, extra []bkpTaxRow) []byte {
+	t.Helper()
 	tmp, err := os.CreateTemp("", "bkp-pages-fixture-*.db")
 	if err != nil {
 		t.Fatalf("create temp db: %v", err)
@@ -41,19 +58,28 @@ func buildBkpDBBytesForPagesTest(t *testing.T) []byte {
 		SalesPrice REAL,
 		ProductGroupText TEXT,
 		Status INTEGER,
-		ProductType INTEGER
+		ProductType INTEGER,
+		TaxPercentage REAL,
+		TaxPercentage2 REAL
 	)`); err != nil {
 		t.Fatalf("create Products table: %v", err)
 	}
-	rows := [][6]any{
-		{"20001", "Latte", 3.20, "Coffee", 1, 1},
-		{"20002", "Old Deleted Item", 1.00, "Misc", 3, 1},
+	rows := [][8]any{
+		{"20001", "Latte", 3.20, "Coffee", 1, 1, nil, nil},
+		{"20002", "Old Deleted Item", 1.00, "Misc", 3, 1, nil, nil},
 	}
 	for _, r := range rows {
 		if _, err := db.Exec(`INSERT INTO Products
-			(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType)
-			VALUES (?,?,?,?,?,?)`, r[0], r[1], r[2], r[3], r[4], r[5]); err != nil {
+			(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType, TaxPercentage, TaxPercentage2)
+			VALUES (?,?,?,?,?,?,?,?)`, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]); err != nil {
 			t.Fatalf("insert product: %v", err)
+		}
+	}
+	for _, r := range extra {
+		if _, err := db.Exec(`INSERT INTO Products
+			(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType, TaxPercentage, TaxPercentage2)
+			VALUES (?,?,?,?,1,1,?,?)`, r.ProductNumber, r.Name, r.Price, r.Category, r.TaxPct, r.TaxPct2); err != nil {
+			t.Fatalf("insert tax product: %v", err)
 		}
 	}
 	if err := db.Close(); err != nil {
@@ -72,6 +98,19 @@ func buildBkpDBBytesForPagesTest(t *testing.T) []byte {
 func buildBkpZipForPagesTest(t *testing.T) []byte {
 	t.Helper()
 	dbBytes := buildBkpDBBytesForPagesTest(t)
+	return zipBkpEntries(t, dbBytes)
+}
+
+// buildBkpZipForPagesTestWithTaxRows is buildBkpZipForPagesTest's
+// tax-carrying counterpart.
+func buildBkpZipForPagesTestWithTaxRows(t *testing.T, extra []bkpTaxRow) []byte {
+	t.Helper()
+	dbBytes := buildBkpDBBytesForPagesTestWithTaxRows(t, extra)
+	return zipBkpEntries(t, dbBytes)
+}
+
+func zipBkpEntries(t *testing.T, dbBytes []byte) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	dbW, err := zw.Create("backup.db")
@@ -259,5 +298,55 @@ func TestImport_BkpUpload_InvalidBackupShowsGenericMessage(t *testing.T) {
 	}
 	if !strings.Contains(resp, "recognised backup file") {
 		t.Fatalf("should show the translated bkp_unrecognised message, got: %s", resp)
+	}
+}
+
+// TestImport_BkpUploadCarriesTaxColumnsThrough is ut-docs#512's real
+// motivating case: the speedy kasse Products table's TaxPercentage/
+// TaxPercentage2 columns are the actual source the issue's own café
+// conversion described — this proves the .bkp path (not just the CSV path)
+// groups items onto tax codes by pair and populates ut-plugin-tax-de's
+// takeaway_rate_overrides, exactly like TestImport_TaxColumnsGroupOntoTax-
+// CodesAndPopulateOverrides already proves for CSV.
+func TestImport_BkpUploadCarriesTaxColumnsThrough(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	installTaxDePlugin(t, dp.Db)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	zipBytes := buildBkpZipForPagesTestWithTaxRows(t, []bkpTaxRow{
+		{ProductNumber: "30001", Name: "Cappuccino", Category: "Coffee", Price: 3.50, TaxPct: 19.0, TaxPct2: 7.0},
+		{ProductNumber: "30002", Name: "Espresso", Category: "Coffee", Price: 2.20, TaxPct: 19.0, TaxPct2: 19.0},
+	})
+	body, ct := multipartFile(t, "Backup 2026-08-09.bkp", zipBytes, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	cappCode, cappRate, cappTA := itemTaxPair(t, dp.Db, "30001")
+	if cappRate != 1900 || cappTA == nil || *cappTA != 700 {
+		t.Fatalf("Cappuccino pair = (%d,%v), want (1900,&700)", cappRate, cappTA)
+	}
+	espCode, espRate, espTA := itemTaxPair(t, dp.Db, "30002")
+	if espRate != 1900 || espTA != nil {
+		t.Fatalf("Espresso pair = (%d,%v), want (1900,nil) — equal pair needs no override", espRate, espTA)
+	}
+	if cappCode == espCode {
+		t.Fatal("the two distinct 19%% groups must not share a tax code, even from the .bkp path")
+	}
+
+	var overridesJSON string
+	if err := dp.Db.QueryRow(
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.universaltill.tax-de' AND key = 'takeaway_rate_overrides'`).
+		Scan(&overridesJSON); err != nil {
+		t.Fatalf("takeaway_rate_overrides not written from a .bkp import: %v", err)
+	}
+	if !strings.Contains(overridesJSON, cappCode) {
+		t.Fatalf("overrides JSON %s should contain Cappuccino's tax code %s", overridesJSON, cappCode)
 	}
 }

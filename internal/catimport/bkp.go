@@ -149,6 +149,29 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 			// barcodes at all, and ProductNumber is a 5-digit PLU, not a
 			// barcode — it must never be run through normalizeBarcode.
 		}
+		// Tax pairing (ut-docs#512): the real motivating case for this
+		// card — TaxPercentage (dine-in) / TaxPercentage2 (takeaway) is
+		// exactly the source data the issue's own café conversion
+		// described. Same optional-cell, non-blocking-on-bad-value
+		// treatment as the CSV path's Parse: blank/absent ⇒ unset, present
+		// but unparseable ⇒ a warning (TaxIssue), never a blocked row —
+		// compliance-sensitive, so unlike price a bad cell is reported,
+		// not silently dropped. The two columns are independent: one being
+		// unparseable never stops the other from parsing.
+		if raw := p.TaxPercentageRaw; raw != "" {
+			if bp, terr := ParseTaxRateBP(raw); terr == nil {
+				item.TaxRateBP, item.HasTax = bp, true
+			} else {
+				item.TaxIssue, item.TaxIssueRaw = TaxIssueUnparseable, raw
+			}
+		}
+		if raw := p.TaxPercentage2Raw; raw != "" {
+			if bp, terr := ParseTaxRateBP(raw); terr == nil {
+				item.TakeawayRateBP, item.HasTakeaway = bp, true
+			} else {
+				item.TakeawayTaxIssue, item.TakeawayTaxIssueRaw = TaxIssueUnparseable, raw
+			}
+		}
 		switch {
 		case p.Status == bkpStatusDeleted:
 			item.Issue = IssueSourceDeleted
