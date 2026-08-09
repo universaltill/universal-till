@@ -167,7 +167,7 @@ func warnPaymentMethodAnomalies(ctx context.Context, repo *data.PluginRepo) {
 		log.Printf("check for suppressed plugin payment-method labels: %v", err)
 	}
 	for _, s := range suppressed {
-		log.Printf("plugin %s's payment entry %s cannot use label %q — already used by payment method %s; pick a distinct label or rename the conflicting tender", s.PluginID, s.Key, s.Label, s.BlockingID)
+		log.Print(suppressedPaymentLabelWarning(s))
 	}
 }
 
@@ -185,6 +185,17 @@ func warnPaymentMethodAnomalies(ctx context.Context, repo *data.PluginRepo) {
 // one real remedy for a stale/accidental capture.
 func orphanPaymentMethodWarning(o data.OrphanedPaymentMethod) string {
 	return fmt.Sprintf("payment method %s (%q) is plugin-owned by %s, which is not installed on this till — if that plugin was uninstalled on purpose, this is expected (the tender is kept for sales history); otherwise, reinstall the plugin to make this tender usable again", o.ID, o.Name, o.PluginID)
+}
+
+// suppressedPaymentLabelWarning builds the startup log line for a plugin
+// payment entry whose label collides with another payment_methods row
+// (data.SuppressedPaymentNameEntry). Same class of fix as
+// orphanPaymentMethodWarning above (ut-docs#170): the previous wording also
+// told the operator to "rename the conflicting tender" — no such UI exists
+// anywhere in web/ui/, so the only real remedy left is picking a distinct
+// label for the plugin's own entry (ut-docs#382).
+func suppressedPaymentLabelWarning(s data.SuppressedPaymentNameEntry) string {
+	return fmt.Sprintf("plugin %s's payment entry %s cannot use label %q — already used by payment method %s; pick a distinct label", s.PluginID, s.Key, s.Label, s.BlockingID)
 }
 
 // Close releases the manager's shutdown-lifecycle resources: today that is
