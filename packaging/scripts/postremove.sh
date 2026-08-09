@@ -20,4 +20,10 @@ fi
 
 if [ "$1" = "purge" ]; then
     rm -rf /var/lib/unitill /opt/unitill/data /etc/unitill
+    # Self-update (ut-docs#151) keeps a rollback .bak of the binary and, if it
+    # swapped web/ assets, the old web/ dir — only present on a box that has
+    # self-updated at least once. A purge must remove these too, or remnants
+    # of /opt/unitill survive a full package removal (ut-docs#257).
+    rm -f /opt/unitill/bin/unitill-pos.bak
+    rm -rf /opt/unitill/web.bak
 fi
