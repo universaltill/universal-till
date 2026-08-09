@@ -94,7 +94,8 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 		byLocale: map[string]map[string]*Topic{},
 		routes:   map[string]string{},
 	}
-	routeOwner := map[string]string{} // route → file, for the error message
+	routeOwner := map[string]string{}       // route → file, for the error message
+	routeOwnerLocale := map[string]string{} // route → locale, so a later en topic can reclaim "owner"
 
 	locales, err := fs.ReadDir(fsys, root)
 	if err != nil {
@@ -172,11 +173,25 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 			// repeating them is fine, but must not contradict.
 			for _, r := range tp.Routes {
 				if owner, ok := lib.routes[r]; ok && owner != tp.ID {
+					ownerID, ownerFile := owner, routeOwner[r]
+					conflictID, conflictFile := tp.ID, name
+					// Routes are declared canonically on the English
+					// topic — if the current topic is en and the
+					// already-registered owner isn't, swap sides so the
+					// error always blames the en topic as owner,
+					// independent of fs.ReadDir's (alphabetical) locale
+					// scan order: "ar" sorts before "en" and would
+					// otherwise win the race to register first.
+					if locale == FallbackLocale && routeOwnerLocale[r] != FallbackLocale {
+						ownerID, ownerFile = tp.ID, name
+						conflictID, conflictFile = owner, routeOwner[r]
+					}
 					return nil, fmt.Errorf("manual: route %q claimed by both %q (%s) and %q (%s)",
-						r, owner, routeOwner[r], tp.ID, name)
+						r, ownerID, ownerFile, conflictID, conflictFile)
 				}
 				lib.routes[r] = tp.ID
 				routeOwner[r] = name
+				routeOwnerLocale[r] = locale
 			}
 		}
 	}
