@@ -113,6 +113,54 @@ export function watchConsole(page: Page): () => void {
   return () => expect(errors, 'page produced console errors').toEqual([]);
 }
 
+// ut-docs#320: wait until every element matching `selector` stops
+// moving/resizing across consecutive animation frames, before measuring
+// any of them. General-purpose — pass EVERY element whose geometry the
+// caller is about to read, not just the ones that look like they move.
+// sale-screen-213.spec.ts's own flaky-test investigation is the concrete
+// case this exists for: `.basket-scroll` is `flex: 1` inside a flex
+// column, and its resolved height lagged a fresh row swap by one frame
+// while the rows inside it were already final — so watching only the
+// rows (which never moved) missed the actual unsettled element. Include
+// the container AND its children in the selector, not just the children.
+//
+// Polls real frames (not a blind sleep) so this waits only as long as the
+// browser is actually still settling. Throws rather than silently
+// returning when `selector` matches nothing (a typo'd/renamed selector
+// must not degrade into "wait one frame and hope") or when nothing
+// stabilizes within `maxFrames` (a genuine layout regression must fail
+// loudly with a diagnosable message, not look identical to success).
+export async function waitForStableLayout(page: Page, selector: string, maxFrames = 10) {
+  await page.evaluate(
+    ({ selector, maxFrames }) => {
+      const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const snapshot = () => {
+        const els = Array.from(document.querySelectorAll(selector));
+        if (els.length === 0) throw new Error(`waitForStableLayout: selector "${selector}" matched no elements`);
+        return els
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return `${r.top},${r.bottom},${r.left},${r.right}`;
+          })
+          .join('|');
+      };
+      return (async () => {
+        let prev = snapshot();
+        for (let i = 0; i < maxFrames; i++) {
+          await frame();
+          const next = snapshot();
+          if (next === prev) return;
+          prev = next;
+        }
+        throw new Error(
+          `waitForStableLayout: "${selector}" did not stop moving/resizing within ${maxFrames} frames`,
+        );
+      })();
+    },
+    { selector, maxFrames },
+  );
+}
+
 // The OSK mode is a SERVER-side setting shared by every spec on this server
 // — callers must restore 'auto' in an afterEach even when the test body
 // fails, or a failed run leaks e.g. osk=on into unrelated later specs.
