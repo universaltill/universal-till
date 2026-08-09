@@ -15,4 +15,4 @@ routes: [/catalog, /import, /designer]
 
 1. Katalog'u açıp bir ürün satırına tıklayın — alttaki düzenleme paneli tüm varyant ve barkodları gösterir.
 2. Varyant adlarını, SKU'ları, fiyatları, maliyetleri ve fotoğrafları doğrudan tabloda düzenleyin; barkodları çip olarak ekleyip çıkarın; varyant başına etiket yazdırın.
-3. İçe aktar ile CSV dosyasından ürün yükleyin, Dışa aktar ile kataloğunuzu kaydedin. Dosya bir vergi oranı sütunu da taşıyabilir (farklıysa paket servis vergi oranı ile birlikte) — Universal Till eşleşen vergi kodlarını sizin için otomatik oluşturur.
+3. İçe aktar ile CSV dosyasından ürün yükleyin, Dışa aktar ile kataloğunuzu kaydedin — speedy kasse / pepperm cashbox `.bkp` yedek dosyası da doğrudan kabul edilir, dönüştürmeye gerek kalmadan otomatik tanınır. Her iki dosya da bir vergi oranı sütunu taşıyabilir (farklıysa paket servis vergi oranıyla birlikte) — Universal Till eşleşen vergi kodlarını sizin için otomatik oluşturur.
