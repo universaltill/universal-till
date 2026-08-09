@@ -272,6 +272,46 @@ func TestLoadRejectsDuplicateRoute(t *testing.T) {
 	}
 }
 
+// ut-docs#366: Load scans locale directories in fs.ReadDir order, which is
+// alphabetical — "ar" sorts before "en". A route conflict between an ar
+// translation and the canonical en topic must still name en as the "owner"
+// side of the error, not whichever locale happened to be scanned first.
+func TestLoadRouteConflictNamesEnglishTopicAsOwner(t *testing.T) {
+	dup := fstest.MapFS{
+		"help/ar/invoices.md": &fstest.MapFile{Data: []byte("---\nid: invoices\ntitle: Invoices\nroutes: [/invoices]\n---\nb\n")},
+		"help/en/catalog.md":  &fstest.MapFile{Data: []byte("---\nid: catalog\ntitle: Catalog\nroutes: [/invoices]\n---\nb\n")},
+	}
+	_, err := Load(dup, "help")
+	if err == nil {
+		t.Fatal("duplicate route should be a load error")
+	}
+	msg := err.Error()
+	// The en topic ("catalog", help/en/catalog.md) must be named first, as
+	// the owner — routes are declared canonically on the English topic
+	// (manual.go's own doc comment) — regardless of ar sorting first.
+	if !strings.Contains(msg, `claimed by both "catalog" (help/en/catalog.md)`) {
+		t.Errorf("conflict error must name the en topic as owner, got: %s", msg)
+	}
+}
+
+// Regression check for the case that already worked before ut-docs#366's
+// fix: en sorts before fa/tr, so it registers the route first natively — the
+// new conditional swap must not disturb that already-correct ordering.
+func TestLoadRouteConflictNamesEnglishTopicAsOwnerWhenEnScansFirst(t *testing.T) {
+	dup := fstest.MapFS{
+		"help/en/catalog.md": &fstest.MapFile{Data: []byte("---\nid: catalog\ntitle: Catalog\nroutes: [/invoices]\n---\nb\n")},
+		"help/fa/invoices.md": &fstest.MapFile{Data: []byte("---\nid: invoices\ntitle: Invoices\nroutes: [/invoices]\n---\nb\n")},
+	}
+	_, err := Load(dup, "help")
+	if err == nil {
+		t.Fatal("duplicate route should be a load error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `claimed by both "catalog" (help/en/catalog.md)`) {
+		t.Errorf("conflict error must still name the en topic as owner, got: %s", msg)
+	}
+}
+
 // The till's default locale is a BCP-47 tag ("en-US"), while the manual's
 // directories are bare language codes ("en"). Without matching on the base
 // subtag, a default install falls back for every topic and stamps "not
