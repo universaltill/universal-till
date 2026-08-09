@@ -62,6 +62,11 @@ func setupSelfOrderShopDeps(t *testing.T) (*common.Deps, *db.DB) {
 		Engine:      engine,
 		KioskEngine: kioskEngine,
 	}
+	// Registered AFTER d.Close's cleanup above, so LIFO cleanup order runs
+	// this FIRST: any printReceiptAsync goroutine a test's checkout
+	// started (ut-docs#425) finishes before Close/TempDir-removal can
+	// race its still-in-flight Settings/Db access.
+	t.Cleanup(dp.WaitForAsyncWork)
 	return dp, d
 }
 
