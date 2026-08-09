@@ -38,9 +38,10 @@ import (
 // StartCloudSync, StartSyncPush, StartSyncPull, StartEODScheduler and
 // StartAutoUpdateScheduler are all wired this way now (ut-docs#153).
 // internal/plugins.Supervisor's monitorProcess goroutines and the wasm
-// runtime's per-plugin event-channel drainer are NOT yet joined — both need
-// real design work before a join is even safe, tracked separately
-// (ut-docs#380).
+// runtime's per-plugin event-channel drainer are joined too now, though not
+// via this wg — Supervisor.Shutdown and Manager.Close (called from
+// server.Start's own wg-tracked shutdown goroutine) wait on their own
+// internal WaitGroups instead (ut-docs#380).
 func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository, wg *sync.WaitGroup) http.Handler {
 	log := logging.L()
 	mux := http.NewServeMux()

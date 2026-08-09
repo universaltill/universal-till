@@ -187,6 +187,17 @@ func orphanPaymentMethodWarning(o data.OrphanedPaymentMethod) string {
 	return fmt.Sprintf("payment method %s (%q) is plugin-owned by %s, which is not installed on this till — if that plugin was uninstalled on purpose, this is expected (the tender is kept for sales history); otherwise, reinstall the plugin to make this tender usable again", o.ID, o.Name, o.PluginID)
 }
 
+// Close releases the manager's shutdown-lifecycle resources: today that is
+// stopping the wasm runtime's event drainer goroutines (WasmRuntime.Close,
+// ut-docs#380). server.Start calls this from its graceful-shutdown goroutine;
+// nil-safe so callers without a plugin manager (tests) can pass nil through.
+func (m *Manager) Close(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	m.Wasm.Close(ctx)
+}
+
 // Reload refreshes installed plugins and menu entries (used after install/uninstall).
 func (m *Manager) Reload(ctx context.Context) error {
 	m.Installed = make(map[string]Plugin)
