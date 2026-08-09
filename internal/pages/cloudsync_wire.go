@@ -183,12 +183,22 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 	// is defense in depth, not a live bug — but a future/different backend
 	// answering the pin with the wrong release must not be accepted as a
 	// silent success (a replica converging to the wrong plugin version on a
-	// money-affecting path, e.g. tax, would be invisible). Treat it the same
-	// as any other install failure: record Failed (not Active) and return an
-	// error — the sync-pull caller (convergePluginSet) already logs and
-	// retries every tick on any error from this function, same as it does
-	// for a download/verification failure.
+	// money-affecting path, e.g. tax, would be invisible).
+	//
+	// By this point Install has ALREADY persisted the wrong version: files
+	// in place, plugins/plugin_catalog rows written, permissions granted
+	// (installBundleFile / PersistManifest). A status-table flag alone
+	// (round 1 of this fix) doesn't undo any of that — Manager.Reload reads
+	// the plugins table with no version filtering, so the very next reload
+	// (fired by ANY other install/uninstall later in this same tick, or a
+	// later admin action) would wire the wrong, mismatched version into the
+	// live menu/WASM runtime regardless. So roll it back completely, the
+	// same way a real uninstall does, before reporting the failure — never
+	// leave an unrequested version "installed and active" behind the scenes.
 	if version != "" && result.Version != version {
+		if _, rmErr := cloudRemovePlugin(ctx, d, result.PluginID); rmErr != nil {
+			logging.L().Errorf("plugin sync: failed to roll back mismatched install of %s (%s): %v", result.Name, result.PluginID, rmErr)
+		}
 		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 			ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
 			State: plugins.InstallStateFailed, MessageKey: "plugins.install.error.version_mismatch", Retryable: true,
