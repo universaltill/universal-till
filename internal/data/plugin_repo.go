@@ -1190,6 +1190,47 @@ WHERE type = 'page' AND key = ? AND plugin_id != ? LIMIT 1`, key, pluginID).Scan
 	return out, nil
 }
 
+// PageRouteConflict is an install-time type:"page" entry route collision —
+// the sibling of PageKeyConflict for a second, independent namespace.
+type PageRouteConflict struct {
+	Route string
+	Owner string // owning plugin id
+}
+
+// FindPageRouteConflicts returns, for the candidate type:"page" entry routes
+// of pluginID, those already owned by another plugin's type:"page" entry.
+// internal/pages/plugin_page.go's findPageEntry resolves GET /plugin/… by
+// matching route against ListPageEntries' rows and returning the first hit
+// (ORDER BY sort_order, plugin_id, key) — an unchecked collision means
+// whichever plugin sorts first silently serves every request to that route,
+// with the second plugin's page unreachable and no signal to either author
+// or the shop owner (ut-docs#499, found reviewing ut-docs#472's sibling
+// `key` check). Unlike DocsEntryKey's key exemption, no route is exempt
+// here: ADR-0037 has every plugin — docs entries included — declare its own
+// route ("/plugin/<its-usual-route>"), so a route collision, docs or not,
+// is always a genuine authoring conflict, never the expected shape. An
+// empty route entry is not dispatchable via findPageEntry at all (it
+// requires e.Route != ""), so it cannot collide and is skipped by the
+// caller before this is ever called with it.
+func (r *PluginRepo) FindPageRouteConflicts(ctx context.Context, tx *sql.Tx, pluginID string, routes []string) ([]PageRouteConflict, error) {
+	exec := r.executor(tx)
+	var out []PageRouteConflict
+	for _, route := range routes {
+		var owner string
+		err := exec.QueryRowContext(ctx, `
+SELECT plugin_id FROM plugin_entries
+WHERE type = 'page' AND route = ? AND plugin_id != ? LIMIT 1`, route, pluginID).Scan(&owner)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return nil, pluginObs.wrap("page_route_conflicts", err)
+		}
+		out = append(out, PageRouteConflict{Route: route, Owner: owner})
+	}
+	return out, nil
+}
+
 // OrphanedPaymentMethod is a plugin-owned payment_methods row whose owning
 // plugin no longer exists on this till — a shop-created or built-in tender
 // captured before ADR-0031's ownership guard shipped, which migration 021

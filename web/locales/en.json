@@ -398,6 +398,7 @@
   "plugins.install.error.network": "Network error",
   "plugins.install.error.not_found": "The selected plugin was not found in the catalog.",
   "plugins.install.error.page_conflict": "This plugin's page key conflicts with an existing one. Pick a different key and try again.",
+  "plugins.install.error.page_route_conflict": "This plugin's page route conflicts with an existing one. Pick a different route and try again.",
   "plugins.install.error.payment_conflict": "This plugin's payment key or label conflicts with an existing one. Pick a different key or label and try again.",
   "plugins.install.error.replica_use_primary": "This till follows a primary till — install plugins on the primary; they arrive on every till automatically within about half a minute.",
   "plugins.install.error.retryable": "Install failed. You can retry.",
