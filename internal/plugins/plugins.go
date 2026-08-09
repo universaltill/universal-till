@@ -276,6 +276,14 @@ func (m *Manager) loadMenuEntries(ctx context.Context, repo *data.PluginRepo) er
 		}
 		// If no permissions required (permsStr is NULL/empty), allow the entry
 
+		// validatePageEntryKeys (manifest.go) rejects a NEW collision at
+		// install time, but a till that already has one from before that
+		// guard existed would otherwise lose an entry here with no signal
+		// at all — same class of silent-drop warnPaymentMethodAnomalies
+		// exists to surface for payment entries (ut-docs#472 review finding).
+		if existing, ok := m.MenuPlugins[mp.Key]; ok && existing.PluginID != mp.PluginID {
+			log.Printf("plugin %s's page entry %q is shadowed by plugin %s's entry of the same key — only %s's menu tile/route is reachable; uninstall or reinstall one of them with a different key", existing.PluginID, mp.Key, mp.PluginID, mp.PluginID)
+		}
 		m.MenuPlugins[mp.Key] = mp
 	}
 	return nil

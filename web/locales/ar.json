@@ -397,6 +397,7 @@
   "plugins.install.error.invalid_request": "طلب التثبيت غير صالح.",
   "plugins.install.error.network": "خطأ في الشبكة",
   "plugins.install.error.not_found": "الإضافة المحددة غير موجودة في الكتالوج.",
+  "plugins.install.error.page_conflict": "يتعارض مفتاح الصفحة في هذه الإضافة مع مفتاح موجود بالفعل. اختر مفتاحًا مختلفًا وأعد المحاولة.",
   "plugins.install.error.payment_conflict": "يتعارض مفتاح أو اسم الدفع في هذه الإضافة مع مفتاح أو اسم موجود بالفعل. اختر مفتاحًا أو اسمًا مختلفًا وأعد المحاولة.",
   "plugins.install.error.replica_use_primary": "يتبع هذا الصندوق الصندوق الأساسي — ثبِّت الإضافات على الصندوق الأساسي؛ تصل إلى كل الصناديق تلقائياً خلال نصف دقيقة تقريباً.",
   "plugins.install.error.retryable": "فشل التثبيت. يمكنك إعادة المحاولة.",

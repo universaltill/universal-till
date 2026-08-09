@@ -1,8 +1,10 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,6 +125,39 @@ func TestLoadMenuEntriesExcludesDocsEntry(t *testing.T) {
 	}
 	if _, ok := m.MenuPlugins["settings-page"]; !ok {
 		t.Fatalf("non-docs page entry wrongly excluded: %+v", m.MenuPlugins)
+	}
+}
+
+// A page-key collision predating validatePageEntryKeys (ut-docs#472) — two
+// installed plugins whose type:"page" entries already share a key, seeded
+// directly like a till that had this before the install-time guard existed
+// — must not silently drop one entry with no signal: loadMenuEntries logs
+// which plugin got shadowed (review finding on ut-docs#472, same class as
+// warnPaymentMethodAnomalies for payment entries).
+func TestLoadMenuEntries_LogsShadowedPageKeyCollision(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+
+	seedInstalledPlugin(t, db, "com.test.first", "First", "1.0.0", "none", true)
+	seedInstalledPlugin(t, db, "com.test.second", "Second", "1.0.0", "none", true)
+	seedMenuEntry(t, db, "com.test.first", "clash", "First's Page")
+	seedMenuEntry(t, db, "com.test.second", "clash", "Second's Page")
+
+	var logBuf bytes.Buffer
+	oldOut := log.Writer()
+	log.SetOutput(&logBuf)
+	t.Cleanup(func() { log.SetOutput(oldOut) })
+
+	m, err := Init(ctx, &config.Config{Env: "test"}, db)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, ok := m.MenuPlugins["clash"]; !ok {
+		t.Fatalf("colliding key vanished entirely instead of one entry winning: %+v", m.MenuPlugins)
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "com.test.first") || !strings.Contains(logged, "com.test.second") || !strings.Contains(logged, `"clash"`) {
+		t.Fatalf("shadowed collision must name both plugins and the key, got log: %s", logged)
 	}
 }
 

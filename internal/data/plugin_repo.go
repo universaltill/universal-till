@@ -1153,6 +1153,43 @@ WHERE type = 'payment' AND label = ? AND plugin_id != ? LIMIT 1`, name, pluginID
 	return out, nil
 }
 
+// PageKeyConflict is an install-time type:"page" entry key collision.
+type PageKeyConflict struct {
+	Key   string
+	Owner string // owning plugin id
+}
+
+// FindPageKeyConflicts returns, for the candidate type:"page" entry keys of
+// pluginID, those already owned by another plugin's type:"page" entry.
+// internal/plugins.Manager.MenuPlugins (and the /ext/{key} dispatch it
+// backs, internal/pages/external_api.go) is keyed by bare entry key, so an
+// unchecked collision silently overwrites one plugin's menu tile/route with
+// another's (ut-docs#472). Unlike payment keys, a page entry has no
+// standalone table it can outlive — plugin_entries FK CASCADEs when a
+// plugin row is deleted — so any row found here belongs to a plugin that
+// still exists. The plugin's own existing keys never conflict, so
+// reinstall/upgrade stay clean. Companion to validatePaymentEntryKeys'
+// pattern, deliberately reused for a second entry type rather than
+// namespacing MenuPlugins itself, to keep the two conventions consistent.
+func (r *PluginRepo) FindPageKeyConflicts(ctx context.Context, tx *sql.Tx, pluginID string, keys []string) ([]PageKeyConflict, error) {
+	exec := r.executor(tx)
+	var out []PageKeyConflict
+	for _, key := range keys {
+		var owner string
+		err := exec.QueryRowContext(ctx, `
+SELECT plugin_id FROM plugin_entries
+WHERE type = 'page' AND key = ? AND plugin_id != ? LIMIT 1`, key, pluginID).Scan(&owner)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return nil, pluginObs.wrap("page_key_conflicts", err)
+		}
+		out = append(out, PageKeyConflict{Key: key, Owner: owner})
+	}
+	return out, nil
+}
+
 // OrphanedPaymentMethod is a plugin-owned payment_methods row whose owning
 // plugin no longer exists on this till — a shop-created or built-in tender
 // captured before ADR-0031's ownership guard shipped, which migration 021
