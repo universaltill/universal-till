@@ -350,7 +350,19 @@ func ParseTaxRateBP(s string) (int, error) {
 		return 0, fmt.Errorf("empty tax rate")
 	}
 	f, err := strconv.ParseFloat(clean, 64)
-	if err != nil || f < 0 {
+	// Review finding B1 (ut-docs#512, 2026-08-09): strconv.ParseFloat
+	// accepts "NaN"/"Inf"/"infinity" and neither is < 0, so they used to
+	// sail past this guard and int(math.Round(NaN*100)) silently rounds to
+	// math.MinInt64 — a persisted tax_codes.rate_basis_points of
+	// -9223372036854775808 on the exact compliance-sensitive path this
+	// card exists to protect, with no warning at all. IsNaN/IsInf must be
+	// checked BEFORE the < 0 comparison — NaN < 0 and +Inf < 0 are both
+	// false, so relying on that comparison alone lets them through. The
+	// upper bound (a tax rate is never a real percentage above 100) also
+	// catches a merchant typing basis points ("1900") or scientific
+	// notation ("1e3") where a plain percentage was expected — today that
+	// would otherwise silently create a 1900%/1000% tax code.
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > 100 {
 		return 0, fmt.Errorf("unparseable tax rate %q", s)
 	}
 	return int(math.Round(f * 100)), nil
