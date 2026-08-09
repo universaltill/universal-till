@@ -1,7 +1,9 @@
 package pages
 
 import (
+	"context"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -167,6 +169,16 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		created, warned, failed := 0, 0, 0
+		taxCodesCreated := 0
+		// Genuine (dine-in ≠ takeaway) override pairs discovered during this
+		// commit, tax_code_id → takeaway basis points — fed into
+		// ut-plugin-tax-de's takeaway_rate_overrides setting after the loop
+		// (ut-docs#512), regardless of whether the tax code row itself was
+		// created just now or already existed (an existing row's pairing may
+		// not be in the plugin's setting yet).
+		takeawayOverrides := map[string]int{}
+		overridesSet := 0
+		overridesFailed := false
 		if commit {
 			// Opening stock from the source file lands as a "receive"
 			// movement at the default location (same path as the
@@ -211,6 +223,38 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				} else if deptID != "" {
 					catID = &deptID
 				}
+				// Tax pairing (ut-docs#512): resolve the row's (dine-in,
+				// takeaway) pair onto a tax code — same idempotent,
+				// outside-the-item-tx placement as EnsureCategoryUnder
+				// above. An explicit equal pair (19,19) and an absent
+				// takeaway cell both mean "no override needed", so both
+				// normalise to a nil takeaway — they share tax-code space
+				// with any plain flat import at the same rate, and only a
+				// genuinely different takeaway rate fragments into its own
+				// override-carrying code.
+				var taxCodeID *string
+				if it.HasTax {
+					var takeawayBP *int
+					if it.HasTakeaway && it.TakeawayRateBP != it.TaxRateBP {
+						bp := it.TakeawayRateBP
+						takeawayBP = &bp
+					}
+					id, taxCreated, err := repo.FindOrCreateTaxCode(r.Context(), it.TaxRateBP, takeawayBP)
+					if err != nil {
+						log.Printf("[import] find/create tax code (%d,%v) for %q: %v", it.TaxRateBP, takeawayBP, it.Name, err)
+						rows[i].Status = T("import.status.tax_code_failed")
+						rows[i].Failed = true
+						failed++
+						continue
+					}
+					if taxCreated {
+						taxCodesCreated++
+					}
+					taxCodeID = &id
+					if takeawayBP != nil {
+						takeawayOverrides[id] = *takeawayBP
+					}
+				}
 				// The item, its inventory row, and its opening-stock movement
 				// land together in one transaction (ut-docs#310): the only
 				// new failure path this introduces is tx.Commit() itself
@@ -235,7 +279,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				itemID, err := repo.CreateItemTx(r.Context(), tx, pos.ItemInput{
 					Name: it.Name, SKU: it.SKU, BasePrice: it.PriceMinor,
 					Description: it.Description, CategoryID: catID,
-					Unit: "each", IsWeighed: it.IsWeighed, IsActive: true,
+					TaxCodeID: taxCodeID,
+					Unit:      "each", IsWeighed: it.IsWeighed, IsActive: true,
 				})
 				if err != nil {
 					_ = tx.Rollback()
@@ -320,6 +365,16 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					// class this card exists to fix (ut-docs#293).
 					warnings = append(warnings, translateBarcodeIssue(T, it))
 				}
+				// A present-but-unparseable tax cell imported the row at the
+				// till's default rate — compliance-sensitive, so the drop is
+				// warned about, never silent (ut-docs#512; same defect class
+				// as the dropped-barcode fix, ut-docs#293).
+				if it.TaxIssue != "" {
+					warnings = append(warnings, translateTaxIssue(T, it.TaxIssue, it.TaxIssueRaw))
+				}
+				if it.TakeawayTaxIssue != "" {
+					warnings = append(warnings, translateTaxIssue(T, it.TakeawayTaxIssue, it.TakeawayTaxIssueRaw))
+				}
 				if stockWarning != "" {
 					warnings = append(warnings, stockWarning)
 				}
@@ -344,16 +399,41 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				}
 				created++
 			}
+			// Populate ut-plugin-tax-de's takeaway_rate_overrides once, after
+			// the loop, so the merchant never hand-writes that JSON
+			// (ut-docs#512). Best-effort by design: the rows above are real,
+			// committed inventory — a plugin-setting hiccup must never fail
+			// them — but a failure IS surfaced in the summary line below so
+			// someone knows to check the plugin's settings. With the plugin
+			// not installed this is silently skipped: core has still done its
+			// whole job (correct-rate tax codes), a valid outcome, not an
+			// error. Merge-not-clobber: a key already present in the setting
+			// (a merchant's hand-set override) is never overwritten.
+			if len(takeawayOverrides) > 0 {
+				pluginRepo := data.NewPluginRepo(d.Db)
+				if active, err := pluginRepo.PluginActive(r.Context(), taxDePluginID); err != nil {
+					log.Printf("[import] check %s installed: %v", taxDePluginID, err)
+					overridesFailed = true
+				} else if active {
+					overridesSet, overridesFailed = mergeTakeawayOverrides(r.Context(), pluginRepo, takeawayOverrides)
+				}
+			}
 			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "import",
-				map[string]any{"format": res.Format, "created": created, "warned": warned, "failed": failed, "rows": len(rows)},
+				map[string]any{"format": res.Format, "created": created, "warned": warned, "failed": failed, "rows": len(rows),
+					"tax_codes_created": taxCodesCreated, "takeaway_overrides_set": overridesSet},
 				time.Now().UTC().Format(time.RFC3339), "")
 		}
 
 		var b strings.Builder
 		if commit {
-			fmt.Fprintf(&b, `<p><strong>✓ %s: %d — %s: %d — %s: %d</strong></p>`,
+			fmt.Fprintf(&b, `<p><strong>✓ %s: %d — %s: %d — %s: %d</strong>`,
 				T("import.created"), created, T("import.warned"), warned,
 				T("import.skipped"), len(rows)-created)
+			if overridesFailed {
+				fmt.Fprintf(&b, ` — <span class="row-warn-icon" aria-hidden="true">⚠</span>%s`,
+					T("import.status.tax_overrides_not_saved"))
+			}
+			b.WriteString(`</p>`)
 		} else {
 			fmt.Fprintf(&b, `<p><strong>%s: %s · %d %s, %d %s</strong></p>`,
 				T("import.detected"), res.Format, importable, T("import.ready"), len(rows)-importable, T("import.with_issues"))
@@ -431,8 +511,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 // round trip stays lossless — see that function's doc comment.
 func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	cw := csv.NewWriter(out)
+	// "Tax rate"/"Takeaway tax" match catimport's own column synonyms
+	// exactly, so the tax pairing round-trips through export → import
+	// (ut-docs#512). Blank cells when the item has no tax code / no
+	// takeaway rate — system-formatted percent strings, so no csvSafe.
 	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
-		"Description", "Sold by weight", "In stock", "Active"})
+		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax"})
 	yn := func(b bool) string {
 		if b {
 			return "Y"
@@ -440,13 +524,70 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 		return "N"
 	}
 	for _, e := range rows {
+		tax, takeaway := "", ""
+		if e.HasTax {
+			tax = bpToPercent(e.TaxRateBP)
+			if e.HasTakeaway {
+				takeaway = bpToPercent(e.TakeawayRateBP)
+			}
+		}
 		_ = cw.Write([]string{
 			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
 			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
 			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
+			tax, takeaway,
 		})
 	}
 	cw.Flush()
+}
+
+// taxDePluginID is the one plugin whose takeaway_rate_overrides setting the
+// import can populate — Germany's §12 UStG switch (ut-docs#512). Other
+// jurisdictions' plugins have their own setting shapes and are explicitly
+// out of this card's scope.
+const taxDePluginID = "com.universaltill.tax-de"
+
+// mergeTakeawayOverrides folds the override pairs discovered by one import
+// commit into ut-plugin-tax-de's takeaway_rate_overrides setting (a JSON
+// object, tax_code_id → takeaway basis points). Add-only: a key already
+// present — a merchant's hand-set override — is never overwritten, and an
+// existing value that doesn't parse as JSON is left completely untouched
+// (clobbering a hand-edit would be worse than skipping). Returns how many
+// entries were added and whether the step failed; failure is the caller's
+// summary-line warning, never a row failure.
+func mergeTakeawayOverrides(ctx context.Context, pluginRepo *data.PluginRepo, discovered map[string]int) (added int, failed bool) {
+	existing := map[string]int{}
+	raw, found, err := pluginRepo.GetPluginSetting(ctx, taxDePluginID, "takeaway_rate_overrides")
+	if err != nil {
+		log.Printf("[import] read takeaway_rate_overrides: %v", err)
+		return 0, true
+	}
+	if found && strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &existing); err != nil {
+			log.Printf("[import] takeaway_rate_overrides is not valid JSON, leaving it untouched: %v", err)
+			return 0, true
+		}
+	}
+	for id, bp := range discovered {
+		if _, ok := existing[id]; ok {
+			continue
+		}
+		existing[id] = bp
+		added++
+	}
+	if added == 0 {
+		return 0, false
+	}
+	merged, err := json.Marshal(existing)
+	if err != nil {
+		log.Printf("[import] marshal takeaway_rate_overrides: %v", err)
+		return 0, true
+	}
+	if err := pluginRepo.UpsertPluginSetting(ctx, taxDePluginID, "takeaway_rate_overrides", string(merged)); err != nil {
+		log.Printf("[import] write takeaway_rate_overrides: %v", err)
+		return 0, true
+	}
+	return added, false
 }
 
 // translateImportIssue turns a catimport row-level Issue reason code into
@@ -483,6 +624,34 @@ func translateBarcodeIssue(T func(string) string, it catimport.ImportItem) strin
 		log.Printf("[import] unrecognised BarcodeIssue reason code %q", it.BarcodeIssue)
 		return T("import.status.unknown_issue")
 	}
+}
+
+// translateTaxIssue is translateBarcodeIssue's counterpart for the
+// (non-blocking) tax-cell reason codes — one function serves both the
+// dine-in and takeaway columns, since the message shape is the same.
+func translateTaxIssue(T func(string) string, code, raw string) string {
+	switch code {
+	case catimport.TaxIssueUnparseable:
+		return fmt.Sprintf(T("import.status.tax_unparseable"), raw)
+	default:
+		log.Printf("[import] unrecognised tax issue reason code %q", code)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// bpToPercent renders basis points as a plain percent string ("19", "19.5")
+// — the exact shape ParseTaxRateBP reads back. Deliberately NOT
+// minorToDecimal: basis points are hundredths of a percent, a fixed scale of
+// their own, not money decimals.
+func bpToPercent(bp int) string {
+	sign := ""
+	if bp < 0 {
+		sign, bp = "-", -bp
+	}
+	if bp%100 == 0 {
+		return fmt.Sprintf("%s%d", sign, bp/100)
+	}
+	return sign + strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0")
 }
 
 // minorToDecimal renders minor units as a plain decimal ("1.20") — the

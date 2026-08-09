@@ -334,6 +334,68 @@ func (r *CatalogRepo) DeleteBarcode(ctx context.Context, barcode string) error {
 	return err
 }
 
+// FindOrCreateTaxCode returns the id of a tax_codes row matching the given
+// (rate, takeaway rate) pair, creating one if none exists (ut-docs#512:
+// catalog import groups items onto tax codes by pair, never one per item).
+// takeawayBP is nil when the source carries no distinct takeaway rate — a
+// pinned rate, no tax.rate.ask override needed for this code. Idempotent by
+// (rate, takeaway) pair: re-running an import must not create duplicate tax
+// codes, the same idempotency principle as the rest of catalog import.
+func (r *CatalogRepo) FindOrCreateTaxCode(ctx context.Context, rateBP int, takeawayBP *int) (string, bool, error) {
+	// SQLite: `= NULL` never matches, `IS ?` with a nullable bound
+	// parameter compares NULL-safely, so one query covers both shapes.
+	find := func() (string, error) {
+		var id string
+		err := r.db.QueryRowContext(ctx, `
+SELECT id FROM tax_codes
+WHERE rate_basis_points = ? AND takeaway_rate_basis_points IS ?
+ORDER BY id LIMIT 1`, rateBP, nullableIntPtr(takeawayBP)).Scan(&id)
+		return id, err
+	}
+	id, err := find()
+	if err == nil {
+		return id, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, fmt.Errorf("find tax code: %w", err)
+	}
+	// Named deterministically and human-readably, so a manager looking at
+	// the tax-code list later understands where the row came from. Two
+	// different pairs can never generate the same name, but the UNIQUE
+	// name constraint can still trip on a pre-existing manual code or a
+	// concurrent import creating the identical pair — retry the lookup
+	// before giving up, rather than failing a row that has a valid answer.
+	name := fmt.Sprintf("Imported %s%%", bpToPercentString(rateBP))
+	if takeawayBP != nil {
+		name = fmt.Sprintf("Imported %s%% (takeaway %s%%)", bpToPercentString(rateBP), bpToPercentString(*takeawayBP))
+	}
+	id = uuid.NewString()
+	_, insErr := r.db.ExecContext(ctx, `
+INSERT INTO tax_codes (id, name, rate_basis_points, takeaway_rate_basis_points, is_active)
+VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
+	if insErr == nil {
+		return id, true, nil
+	}
+	if id, err := find(); err == nil {
+		return id, false, nil
+	}
+	return "", false, fmt.Errorf("create tax code: %w", insErr)
+}
+
+// bpToPercentString renders basis points as a plain percent string
+// (1900 → "19", 1950 → "19.5") — hundredths of a percent, a fixed scale of
+// its own, deliberately NOT money/minorToDecimal formatting.
+func bpToPercentString(bp int) string {
+	sign := ""
+	if bp < 0 {
+		sign, bp = "-", -bp
+	}
+	if bp%100 == 0 {
+		return fmt.Sprintf("%s%d", sign, bp/100)
+	}
+	return sign + strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0")
+}
+
 // ExportRow is one catalog line for the CSV export (G22b — the
 // anti-lock-in half of import: a shop can always take its data and leave).
 // Columns are chosen so our own importer round-trips the file.
@@ -347,6 +409,13 @@ type ExportRow struct {
 	IsWeighed   bool
 	Stock       float64
 	IsActive    bool
+	// Tax pairing (ut-docs#512): HasTax when the item carries a tax code,
+	// HasTakeaway additionally when that code has a distinct takeaway rate —
+	// so export → import round-trips the (dine-in, takeaway) grouping.
+	TaxRateBP      int
+	HasTax         bool
+	TakeawayRateBP int
+	HasTakeaway    bool
 }
 
 // ExportRows reads the whole catalog for export, active items first.
@@ -358,8 +427,10 @@ SELECT i.name, COALESCE(i.sku, ''),
        i.base_price, COALESCE(c.name, ''), COALESCE(i.description, ''),
        i.is_weighed,
        COALESCE((SELECT SUM(v.quantity) FROM inventory v WHERE v.item_id = i.id), 0),
-       i.is_active
+       i.is_active,
+       t.rate_basis_points, t.takeaway_rate_basis_points
 FROM items i LEFT JOIN categories c ON c.id = i.category_id
+             LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 ORDER BY i.is_active DESC, i.name`)
 	if err != nil {
 		return nil, err
@@ -368,9 +439,16 @@ ORDER BY i.is_active DESC, i.name`)
 	var out []ExportRow
 	for rows.Next() {
 		var e ExportRow
+		var rate, takeaway sql.NullInt64
 		if err := rows.Scan(&e.Name, &e.SKU, &e.Barcode, &e.PriceMinor, &e.Category,
-			&e.Description, &e.IsWeighed, &e.Stock, &e.IsActive); err != nil {
+			&e.Description, &e.IsWeighed, &e.Stock, &e.IsActive, &rate, &takeaway); err != nil {
 			return nil, err
+		}
+		if rate.Valid {
+			e.TaxRateBP, e.HasTax = int(rate.Int64), true
+			if takeaway.Valid {
+				e.TakeawayRateBP, e.HasTakeaway = int(takeaway.Int64), true
+			}
 		}
 		out = append(out, e)
 	}
@@ -954,6 +1032,13 @@ func nullableString(s string) any {
 		return nil
 	}
 	return s
+}
+
+func nullableIntPtr(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 func nullableInt64(v *int64) any {
