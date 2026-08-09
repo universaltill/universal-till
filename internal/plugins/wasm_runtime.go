@@ -54,6 +54,9 @@ type WasmRuntime struct {
 	db         *sql.DB         // for host functions; set by Sync
 	baseDir    string
 	unsubGen   int // bumped per sync so stale handlers no-op
+	// wg tracks the per-plugin event-channel drainer goroutines Sync starts,
+	// so Close can wait for them to exit at shutdown (ut-docs#380).
+	wg sync.WaitGroup
 }
 
 // exportTimeout is the deadline granted to the export/report event class
@@ -197,12 +200,46 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			logging.L().Errorf("wasm subscribe %s: %v", pluginID, err)
 			continue
 		}
+		w.wg.Add(1)
 		go func() {
+			defer w.wg.Done()
 			for ev := range ch {
 				_, _ = handle(context.Background(), ev)
 			}
 		}()
 		logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
+	}
+}
+
+// Close stops the per-plugin event-channel drainer goroutines Sync started —
+// their channels are only ever closed by EventBus.ResetSubscribers, which
+// nothing called at process shutdown before ut-docs#380, leaving each drainer
+// blocked forever on `range ch` — and waits (bounded by ctx) for them to
+// exit. In production SubscribeWithHandler/ResetSubscribers on the shared bus
+// are used only by Sync, so resetting here is safe. A wedged drainer must not
+// hang shutdown forever: on ctx expiry this logs loudly and returns anyway.
+func (w *WasmRuntime) Close(ctx context.Context) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	db := w.db
+	w.mu.Unlock()
+	if db != nil {
+		SharedBus(db).ResetSubscribers() // closes every open channel — drainers exit
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.wg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		// The internal wg.Wait goroutine is intentionally leaked — it only
+		// blocks on Wait and exits whenever the wedged drainer eventually does.
+		logging.L().Errorf("shutdown: wasm event drainer goroutines still running when shutdown context expired — continuing anyway")
 	}
 }
 

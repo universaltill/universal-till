@@ -181,7 +181,7 @@ func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 // that both waits on wg AND waits for Start to return (as app.Run does) can
 // safely assume nothing Start ever spawned is still touching db/supervisor
 // once both have happened. wg must not be nil.
-func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, wg *sync.WaitGroup) error {
+func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, pluginManager *plugins.Manager, wg *sync.WaitGroup) error {
 	// Start background jobs if catalog repository is configured. Start()
 	// itself only launches goroutines and returns immediately, so it doesn't
 	// need its own wrapping goroutine — jobs' own 3 goroutines register with
@@ -271,10 +271,10 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 
 	// Graceful shutdown when context is cancelled. Registered with wg because
 	// net/http's Shutdown contract only guarantees Serve returns once
-	// listeners are closed — supervisor.Shutdown below can still be running
-	// after Serve (and so this function) has already returned; without this,
-	// a caller waiting on wg alone could race supervisor.Shutdown's own DB
-	// writes (audit_events) against database.Close().
+	// listeners are closed — supervisor.Shutdown/pluginManager.Close below can
+	// still be running after Serve (and so this function) has already
+	// returned; without this, a caller waiting on wg alone could race their
+	// DB writes (audit_log) against database.Close().
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -286,6 +286,9 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		if supervisor != nil {
 			_ = supervisor.Shutdown(shutdownCtx)
 		}
+		// Stop the wasm runtime's event drainer goroutines too (ut-docs#380);
+		// nil-safe, and bounded by the same shutdownCtx as everything above.
+		pluginManager.Close(shutdownCtx)
 	}()
 
 	log.Printf("listening on %s", cfg.ListenAddr)
