@@ -96,6 +96,35 @@ func (m *fakeMarketplace) publishVersion(t *testing.T, listingID, pluginID, vers
 	l.latest = version
 }
 
+// publishMismatchedRelease publishes a release keyed under requestedVersion
+// (so a pinned download-token request for requestedVersion resolves to it)
+// whose signed manifest actually declares actualVersion — a validly signed
+// bundle that nonetheless answers a pinned request with the wrong release.
+// Simulates ut-docs#479's scenario: a marketplace/backend that doesn't
+// hard-error on a version pin but substitutes a different one instead.
+func (m *fakeMarketplace) publishMismatchedRelease(t *testing.T, listingID, pluginID, requestedVersion, actualVersion string) {
+	t.Helper()
+	manifest := &plugins.Manifest{
+		ID:            pluginID,
+		Name:          "Sync Test Plugin " + pluginID,
+		Version:       actualVersion,
+		Entrypoint:    "./plugin-bin",
+		Executable:    "plugin-bin",
+		Runtime:       "go",
+		CanonicalType: "page",
+		DeviceArch:    runtime.GOOS + "/" + runtime.GOARCH,
+	}
+	artifact := signedFakeMktArtifact(t, m.privateKey, manifest)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.listings[listingID]
+	if l == nil {
+		l = &fakeMktListing{releases: map[string]fakeMktRelease{}}
+		m.listings[listingID] = l
+	}
+	l.releases[requestedVersion] = fakeMktRelease{artifact: artifact, manifest: manifest, checksum: sha256Hex(artifact)}
+}
+
 // newFakeMarketplace serves the minimal marketplace surface a real install
 // needs: download-token issue + bundle download. Deliberately NOT served:
 // /v1/stores/register and /v1/auth/merchant-token (404) — enrolment and
@@ -892,6 +921,50 @@ func TestSyncPullTick_PinsPrimaryVersionNotMarketplaceLatest(t *testing.T) {
 	replica.tick(t, client)
 	if v, _ := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); v != "1.0.0" {
 		t.Fatalf("expected the version mismatch healed back to the primary's pinned 1.0.0, got %q", v)
+	}
+}
+
+// ut-docs#479: cloudInstallPluginVersion must not silently accept an install
+// whose returned version disagrees with the one it pinned. Today's fake
+// marketplace hard-errors on an unknown version like the real one does, so
+// this forces the mismatch a step further back — a validly signed release
+// published under the REQUESTED version's key whose manifest actually
+// declares a different version, exactly the shape a future/different
+// backend answering the pin with the wrong release would produce.
+func TestSyncPullTick_VersionMismatchFromMarketplaceFailsConvergence(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-alpha": "com.test.sync-alpha"})
+	primary := newSyncPluginsPrimary(t, mkt)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	primary.install(t, "listing-alpha") // primary pinned at 1.0.0
+
+	// The marketplace answers a pinned "1.0.0" request with a validly signed
+	// bundle that actually declares "9.9.9".
+	mkt.publishMismatchedRelease(t, "listing-alpha", "com.test.sync-alpha", "1.0.0", "9.9.9")
+
+	fingerprintBefore, _, _ := replica.dp.Settings.Get(t.Context(), "sync.plugins_version")
+
+	replica.tick(t, client)
+
+	if state, ok := installStatusState(t, replica.dp, "listing-alpha"); !ok || state != string(plugins.InstallStateFailed) {
+		t.Fatalf("expected install status Failed after a version mismatch, got (%q, %v)", state, ok)
+	}
+	fingerprintAfter, _, _ := replica.dp.Settings.Get(t.Context(), "sync.plugins_version")
+	if fingerprintAfter != fingerprintBefore {
+		t.Fatalf("fingerprint must not advance when convergence failed: before=%q after=%q", fingerprintBefore, fingerprintAfter)
+	}
+
+	// Retried on the next tick: once the marketplace serves the requested
+	// version correctly, the replica converges.
+	mkt.publishVersion(t, "listing-alpha", "com.test.sync-alpha", "1.0.0")
+	replica.tick(t, client)
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-alpha"); !ok || v != "1.0.0" {
+		t.Fatalf("expected the retry to converge once the marketplace serves the pinned version, got (%q, %v)", v, ok)
+	}
+	if state, ok := installStatusState(t, replica.dp, "listing-alpha"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("expected install status Active after the retry converged, got (%q, %v)", state, ok)
 	}
 }
 

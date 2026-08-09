@@ -175,6 +175,26 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 		})
 		return "", err
 	}
+	// ut-docs#479: a pinned request (version != "") must come back AS that
+	// version. installer.Install succeeding proves the bundle verified
+	// (signature, checksum, compatibility) — it says nothing about whether
+	// the marketplace actually honored the pin. Today's marketplace
+	// hard-errors on an unknown version instead of substituting one, so this
+	// is defense in depth, not a live bug — but a future/different backend
+	// answering the pin with the wrong release must not be accepted as a
+	// silent success (a replica converging to the wrong plugin version on a
+	// money-affecting path, e.g. tax, would be invisible). Treat it the same
+	// as any other install failure: record Failed (not Active) and return an
+	// error — the sync-pull caller (convergePluginSet) already logs and
+	// retries every tick on any error from this function, same as it does
+	// for a download/verification failure.
+	if version != "" && result.Version != version {
+		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+			ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
+			State: plugins.InstallStateFailed, MessageKey: "plugins.install.error.version_mismatch", Retryable: true,
+		})
+		return "", fmt.Errorf("installed version %s does not match requested version %s", result.Version, version)
+	}
 	_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 		ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
 		CurrentVersion: result.Version, State: plugins.InstallStateActive,

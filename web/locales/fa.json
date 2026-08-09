@@ -400,6 +400,7 @@
   "plugins.install.error.payment_conflict": "کلید یا برچسب پرداخت این افزونه با یک مورد موجود تداخل دارد. کلید یا برچسب دیگری انتخاب کرده و دوباره تلاش کنید.",
   "plugins.install.error.replica_use_primary": "این صندوق پیرو صندوق اصلی است — افزونه‌ها را روی صندوق اصلی نصب کنید؛ در حدود نیم دقیقه به‌طور خودکار به همهٔ صندوق‌ها می‌رسند.",
   "plugins.install.error.retryable": "نصب ناموفق بود. می‌توانید دوباره تلاش کنید.",
+  "plugins.install.error.version_mismatch": "بازارچه نسخهٔ درخواستی افزونه را برنگرداند. نصب ناموفق بود.",
   "plugins.install.modal.cancel": "لغو",
   "plugins.install.modal.close": "بستن",
   "plugins.install.modal.description": "لطفا صبر کنید تا افزونه دانلود و نصب شود.",
