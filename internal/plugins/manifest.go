@@ -294,6 +294,61 @@ func validatePageEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sql.T
 	return fmt.Errorf("page entry key %q is already provided by plugin %s — pick a different key", c.Key, c.Owner)
 }
 
+// validatePageEntryRoutes enforces the install-time guard for ut-docs#499: a
+// second, independent namespace from validatePageEntryKeys above.
+// internal/pages/plugin_page.go's findPageEntry resolves GET /plugin/… by
+// matching route against ListPageEntries' rows and returning the first hit
+// (ORDER BY sort_order, plugin_id, key) — unguarded, so two plugins
+// declaring *different* keys but the *same* route both install cleanly, and
+// whichever sorts first silently serves every request to that route; the
+// second plugin's page (its Docs button included) opens the first plugin's
+// content instead, with no error and no signal to either author or the shop
+// owner.
+//
+// Unlike validatePageEntryKeys, there is no docs exemption here: ADR-0037
+// has every docs entry declare its own route ("/plugin/<its-usual-route>"),
+// so two plugins sharing a route — key:"docs" or otherwise — is always a
+// genuine authoring conflict, never the expected shape.
+//
+// A page entry with no route (Route == "") isn't dispatchable via
+// findPageEntry at all — it can't collide, so it's skipped rather than
+// checked or rejected.
+//
+// Routes must also be unique WITHIN this manifest (independent review
+// finding, ut-docs#499): unlike page entry keys, plugin_entries has no
+// unique constraint on route, so two entries in the SAME manifest
+// declaring distinct keys but the same route would otherwise install
+// cleanly — the identical silent-shadowing bug this whole check exists to
+// close, just intra-plugin instead of cross-plugin. Checked the same way
+// validatePaymentEntryKeys' seenKeys/seenLabels catches the analogous
+// within-manifest case for payment entries.
+func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
+	var checkRoutes []string
+	seenRoutes := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if e.Type != "page" || e.Route == "" {
+			continue
+		}
+		if seenRoutes[e.Route] {
+			return fmt.Errorf("page entry route %q is used by more than one entry in this manifest — pick distinct routes", e.Route)
+		}
+		seenRoutes[e.Route] = true
+		checkRoutes = append(checkRoutes, e.Route)
+	}
+	if len(checkRoutes) == 0 {
+		return nil
+	}
+	conflicts, err := repo.FindPageRouteConflicts(ctx, tx, pluginID, checkRoutes)
+	if err != nil {
+		return fmt.Errorf("check page route conflicts: %w", err)
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	c := conflicts[0]
+	return fmt.Errorf("page entry route %q is already provided by plugin %s — pick a different route", c.Route, c.Owner)
+}
+
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {
 	repo := data.NewPluginRepo(db)
 	tx, err := db.BeginTx(ctx, nil)
@@ -317,6 +372,14 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// plugin's page entry must be rejected here, loudly, instead of
 	// silently overwriting that plugin's menu tile/route (ut-docs#472).
 	if err := validatePageEntryKeys(ctx, repo, tx, m.ID, m.Entries); err != nil {
+		return err
+	}
+
+	// 0c. Page-entry routes back GET /plugin/… dispatch (first-row-wins) —
+	// a route colliding with another installed plugin's page entry must be
+	// rejected here too, the same shape as the key check above but a
+	// distinct namespace (ut-docs#499).
+	if err := validatePageEntryRoutes(ctx, repo, tx, m.ID, m.Entries); err != nil {
 		return err
 	}
 

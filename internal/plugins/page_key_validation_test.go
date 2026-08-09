@@ -20,13 +20,22 @@ import (
 // never actually collide in any live code path.
 
 func pageManifest(id, key string) *Manifest {
+	return pageManifestRoute(id, key, "/"+key)
+}
+
+// pageManifestRoute is pageManifest with an explicit route, for tests that
+// need the key and route to vary independently — e.g. two plugins legally
+// sharing the exempt DocsEntryKey (ADR-0037) must still each declare their
+// own distinct route (ut-docs#499), the real-world shape "/plugin/<its-
+// usual-route>" asks every docs-entry author to follow.
+func pageManifestRoute(id, key, route string) *Manifest {
 	return &Manifest{
 		ID:         id,
 		Name:       "Page " + id,
 		Version:    "1.0.0",
 		Entrypoint: "./main.wasm",
 		Entries: []ManifestEntry{
-			{Type: "page", Key: key, Label: "Page " + key, Route: "/" + key},
+			{Type: "page", Key: key, Label: "Page " + key, Route: route},
 		},
 	}
 }
@@ -35,10 +44,17 @@ func TestPersistManifest_RejectsPageKeyOwnedByAnotherPlugin(t *testing.T) {
 	d := openRealDB(t)
 	ctx := context.Background()
 
-	if err := PersistManifest(ctx, d.DB, pageManifest("com.first.page", "shared"), InstallOptions{}); err != nil {
+	// Distinct routes (independent review finding, ut-docs#499): the two
+	// plugins below share only the key, not the route, so it's the key
+	// check under test here that rejects the second install — not the
+	// separate route check, which would otherwise fire first (both plugins
+	// would collide on route too if pageManifest's default "/"+key route
+	// were left as-is, since they share the same key) and mask this test
+	// against a regression in validatePageEntryKeys.
+	if err := PersistManifest(ctx, d.DB, pageManifestRoute("com.first.page", "shared", "/plugin/first"), InstallOptions{}); err != nil {
 		t.Fatalf("first plugin must install cleanly: %v", err)
 	}
-	err := PersistManifest(ctx, d.DB, pageManifest("com.second.page", "shared"), InstallOptions{})
+	err := PersistManifest(ctx, d.DB, pageManifestRoute("com.second.page", "shared", "/plugin/second"), InstallOptions{})
 	if err == nil {
 		t.Fatal("PersistManifest accepted a page entry key already owned by another plugin")
 	}
@@ -103,10 +119,16 @@ func TestPersistManifest_DocsKeyExemptAcrossPlugins(t *testing.T) {
 	d := openRealDB(t)
 	ctx := context.Background()
 
-	if err := PersistManifest(ctx, d.DB, pageManifest("com.first.docs", DocsEntryKey), InstallOptions{}); err != nil {
+	// Distinct routes, matching ADR-0037's real convention
+	// ("/plugin/<its-usual-route>") — the key exemption below is scoped to
+	// MenuPlugins' key namespace only; the route namespace (ut-docs#499)
+	// exempts nothing, so two docs entries must still use different routes
+	// or this test would be asserting a collision the fix is required to
+	// reject, not the key exemption it means to cover.
+	if err := PersistManifest(ctx, d.DB, pageManifestRoute("com.first.docs", DocsEntryKey, "/plugin/first-docs"), InstallOptions{}); err != nil {
 		t.Fatalf("first plugin's docs entry must install cleanly: %v", err)
 	}
-	if err := PersistManifest(ctx, d.DB, pageManifest("com.second.docs", DocsEntryKey), InstallOptions{}); err != nil {
+	if err := PersistManifest(ctx, d.DB, pageManifestRoute("com.second.docs", DocsEntryKey, "/plugin/second-docs"), InstallOptions{}); err != nil {
 		t.Fatalf("a second plugin's docs entry must not be rejected as a collision (ADR-0037 convention): %v", err)
 	}
 	// Both plugins really do have their own docs row — this isn't passing
@@ -128,11 +150,14 @@ func TestRollback_RejectsCollidingPageKeys(t *testing.T) {
 	// Plugin currently at 2.0.0 with a clean key; its on-disk 1.0.0
 	// manifest (the rollback target) declares key "shared" — legacy
 	// versions predating validation can carry colliding keys, and rollback
-	// writes entries without going through PersistManifest.
-	if err := PersistManifest(ctx, d.DB, pageManifest("com.other.page", "shared"), InstallOptions{}); err != nil {
+	// writes entries without going through PersistManifest. Routes below
+	// are all distinct (independent review finding, ut-docs#499) so the
+	// key check under test here is what rejects the rollback, not the
+	// separate route check.
+	if err := PersistManifest(ctx, d.DB, pageManifestRoute("com.other.page", "shared", "/plugin/other"), InstallOptions{}); err != nil {
 		t.Fatalf("install colliding owner: %v", err)
 	}
-	v2 := pageManifest("com.rb.page", "rbpage")
+	v2 := pageManifestRoute("com.rb.page", "rbpage", "/plugin/rb-current")
 	v2.Version = "2.0.0"
 	if err := PersistManifest(ctx, d.DB, v2, InstallOptions{}); err != nil {
 		t.Fatalf("install v2: %v", err)
@@ -145,7 +170,7 @@ VALUES ('com.rb.page', '1.0.0', 'RB Page', 'wasm', './main.wasm', 'https://examp
 		t.Fatal(err)
 	}
 	manifest := `{"id":"com.rb.page","name":"RB Page","version":"1.0.0","entrypoint":"./main.wasm","runtime":"wasm",
-"entries":[{"type":"page","key":"shared","label":"Old Shared Page","route":"/shared"}]}`
+"entries":[{"type":"page","key":"shared","label":"Old Shared Page","route":"/plugin/rb-legacy"}]}`
 	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
