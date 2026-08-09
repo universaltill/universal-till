@@ -160,10 +160,10 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 	err := proc.Cmd.Wait()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if proc.stopped {
 		// Intentional stop, no restart
+		s.mu.Unlock()
 		return
 	}
 
@@ -179,6 +179,7 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 
 	// Check restart policy
 	if !proc.RestartPolicy.Enabled {
+		s.mu.Unlock()
 		return
 	}
 
@@ -187,6 +188,7 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 		if err := s.auditLifecycle(ctx, proc.PluginID, "plugin_restart_limit", details); err != nil {
 			fmt.Printf("warning: failed to audit restart limit: %v\n", err)
 		}
+		s.mu.Unlock()
 		return
 	}
 
@@ -196,7 +198,28 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 		backoff = proc.RestartPolicy.BackoffMax
 	}
 
-	time.Sleep(backoff)
+	// Release s.mu before sleeping: holding it here blocks Shutdown's own
+	// s.mu.Lock() (the first thing its cancel loop does) for up to the full
+	// backoff — BackoffMax is 30s under AutoStartPlugins' policy, well past
+	// the ctx-bounded wg.Wait ut-docs#380 added, which Shutdown would never
+	// even reach (ut-docs#502). Cancellable on ctx too, so a deliberate
+	// shutdown wakes this goroutine immediately instead of wasting the rest
+	// of a long backoff — ctx is this process's own procCtx, cancelled by
+	// Shutdown/StopPlugin via proc.cancel() before either sets proc.stopped.
+	s.mu.Unlock()
+	select {
+	case <-time.After(backoff):
+	case <-ctx.Done():
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-check: Shutdown or StopPlugin may have run while this goroutine
+	// slept without s.mu held.
+	if proc.stopped {
+		return
+	}
 
 	// Restart
 	proc.RestartCount++

@@ -189,6 +189,91 @@ func TestSupervisor_Shutdown_TimesOutLoudlyOnWedgedMonitor(t *testing.T) {
 	}
 }
 
+// A plugin sleeping through its restart backoff must not force Shutdown to
+// block behind that backoff just to acquire s.mu (ut-docs#502): before this
+// fix, monitorProcess held s.mu across its entire restart path, including
+// the backoff time.Sleep, so Shutdown's own s.mu.Lock() at the top of its
+// cancel loop queued behind it for however long the backoff was — up to
+// BackoffMax (30s in production, per AutoStartPlugins' policy), well past
+// server.Start's 5s shutdownCtx budget, defeating the ctx-bounded wg.Wait
+// ut-docs#380 added (Shutdown never even reached it).
+func TestSupervisor_Shutdown_DoesNotBlockOnMonitorProcessRestartBackoff(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	setupAuditLog(t, db)
+
+	supervisor := NewSupervisor(db)
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "crash.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	// A long backoff, matching production's AutoStartPlugins policy (30s) —
+	// the whole point of this test is proving Shutdown doesn't block behind it.
+	policy := RestartPolicy{
+		Enabled:        true,
+		MaxRestarts:    5,
+		RestartWindow:  time.Minute,
+		BackoffInitial: 30 * time.Second,
+		BackoffMax:     30 * time.Second,
+	}
+	if err := supervisor.StartPlugin(ctx, "com.test.backoffblock", scriptPath, []string{}, policy); err != nil {
+		t.Fatalf("StartPlugin failed: %v", err)
+	}
+
+	// Wait for the crash to be audited: monitorProcess has released s.mu and
+	// is now inside (or about to enter) its 30s backoff sleep.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM audit_log WHERE action = 'plugin_crashed'`).Scan(&n); err != nil {
+			t.Fatalf("query audit_log: %v", err)
+		}
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("plugin never crashed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Give monitorProcess a moment to actually reach (and release s.mu into)
+	// its backoff sleep, past the crash-audit write above.
+	time.Sleep(50 * time.Millisecond)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Shutdown(shutdownCtx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Shutdown did not return — still blocked, likely on s.mu held through the restart backoff sleep")
+	}
+	// Well under shutdownCtx's own 2s budget: Shutdown must DRAIN here — the
+	// ctx cancellation wakes the sleeping monitor immediately — not merely
+	// give up loudly once its deadline expires. A 3s bound would be satisfied
+	// by the give-up path too (measured: 2.00s), so it left the ctx.Done()
+	// half of the fix untested; the drain path measures ~0.1s.
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Shutdown took %s — should wake the backoff sleep via ctx and drain, not sit out its whole ctx budget", elapsed)
+	}
+	// And it really drained: the monitor is gone, not still sleeping out the
+	// rest of its 30s backoff while the caller goes on to close the database
+	// (the whole point of ut-docs#380's join).
+	waitForNoMonitorGoroutines(t, 2*time.Second)
+}
+
 // waitForNoMonitorGoroutines polls the runtime's goroutine stacks until no
 // monitorProcess frame remains (a just-Done()d goroutine can still be
 // unwinding for an instant) or the bound elapses.
