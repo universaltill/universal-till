@@ -260,9 +260,18 @@ func TestSupervisor_Shutdown_DoesNotBlockOnMonitorProcessRestartBackoff(t *testi
 	case <-time.After(10 * time.Second):
 		t.Fatal("Shutdown did not return — still blocked, likely on s.mu held through the restart backoff sleep")
 	}
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
-		t.Fatalf("Shutdown took %s — should return within its own ctx budget, not block ~30s on the restart backoff lock", elapsed)
+	// Well under shutdownCtx's own 2s budget: Shutdown must DRAIN here — the
+	// ctx cancellation wakes the sleeping monitor immediately — not merely
+	// give up loudly once its deadline expires. A 3s bound would be satisfied
+	// by the give-up path too (measured: 2.00s), so it left the ctx.Done()
+	// half of the fix untested; the drain path measures ~0.1s.
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Shutdown took %s — should wake the backoff sleep via ctx and drain, not sit out its whole ctx budget", elapsed)
 	}
+	// And it really drained: the monitor is gone, not still sleeping out the
+	// rest of its 30s backoff while the caller goes on to close the database
+	// (the whole point of ut-docs#380's join).
+	waitForNoMonitorGoroutines(t, 2*time.Second)
 }
 
 // waitForNoMonitorGoroutines polls the runtime's goroutine stacks until no
