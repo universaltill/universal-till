@@ -1,0 +1,37 @@
+<div id="orders">
+  {{ if not .Orders }}
+  <p class="muted">{{ T "orders.empty" }}</p>
+  {{ else }}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "orders.col.receipt" }}</th>
+        <th>{{ T "orders.col.time" }}</th>
+        <th>{{ T "orders.col.status" }}</th>
+        <th>{{ T "orders.col.actions" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Orders }}
+      <tr>
+        <td><a href="/journal/{{ .ReceiptNo }}">{{ .ReceiptNo }}</a>{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ end }}</td>
+        <td>{{ .CreatedAt }}</td>
+        <td id="order-status-{{ .ReceiptNo }}">
+          <span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span>
+          {{ if .StatusUpdatedAt }}<span class="muted">{{ .StatusUpdatedAt }}</span>{{ end }}
+        </td>
+        <td>
+          {{/* One-tap buttons. A tap that would move the status backward is a
+               silent no-op by the conflict rule — the swapped-in fragment just
+               re-shows the current state, so stale buttons are harmless. */}}
+          <button class="btn" hx-post="/api/orders/{{ .ReceiptNo }}/status" hx-vals='{"status":"preparing"}' hx-target="#order-status-{{ .ReceiptNo }}" hx-swap="innerHTML">{{ T "orders.status.preparing" }}</button>
+          <button class="btn" hx-post="/api/orders/{{ .ReceiptNo }}/status" hx-vals='{"status":"ready"}' hx-target="#order-status-{{ .ReceiptNo }}" hx-swap="innerHTML">{{ T "orders.status.ready" }}</button>
+          <button class="btn" hx-post="/api/orders/{{ .ReceiptNo }}/status" hx-vals='{"status":"collected"}' hx-target="#order-status-{{ .ReceiptNo }}" hx-swap="innerHTML">{{ T "orders.status.collected" }}</button>
+          <button class="btn danger" hx-post="/api/orders/{{ .ReceiptNo }}/status" hx-vals='{"status":"cancelled"}' hx-target="#order-status-{{ .ReceiptNo }}" hx-swap="innerHTML">{{ T "orders.btn.cancel" }}</button>
+        </td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+</div>
