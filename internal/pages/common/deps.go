@@ -67,6 +67,14 @@ type Deps struct {
 	// already covers any number of sales completed before the loop drains it.
 	SyncPushNow chan struct{}
 
+	// OrderStatus is the in-process pub/sub for order lifecycle status
+	// changes (ut-docs#526): the one-tap status endpoint Publishes on every
+	// APPLIED change (stale writes dropped by the conflict rule never
+	// publish), and the future KDS/pager/customer-tracking surfaces
+	// (#516/#517/#528/#527) Subscribe instead of polling the table. Set once
+	// in pages.Init; handlers nil-check it so bare-Deps tests stay valid.
+	OrderStatus *pos.OrderStatusBroadcaster
+
 	// AsyncWork tracks best-effort, fire-and-forget goroutines started
 	// after a request already responded — printReceiptAsync (ut-docs#425)
 	// is the first user: checkout must never block on a slow/absent
