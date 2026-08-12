@@ -190,6 +190,18 @@ func pruneReportArchive(ctx context.Context, d *common.Deps, repo *data.POSRepo,
 	}
 	*lastPruneDay = today
 	logging.L().Infof("report archive pruned: %d row(s) older than %s", n, cutoff)
+	if n > 0 {
+		// This permanently destroys rows ADR-0040 itself designates a
+		// retained legal record -- unlike a manager-triggered action (e.g.
+		// ResetTransactionHistory), it's fully automatic, so the audit
+		// trail is the only record that it happened at all. Best-effort:
+		// the rows are already gone either way, so a failed audit write
+		// logs but doesn't retry/block the scheduler.
+		if err := repo.InsertAudit(ctx, nil, "system", "report_archive", cutoff, "report_archive_pruned",
+			map[string]any{"rows_deleted": n, "cutoff": cutoff}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			logging.L().Errorf("report archive prune: audit write failed: %v", err)
+		}
+	}
 }
 
 // StartEODScheduler runs the background end-of-day loop (docs: G30). Lives
@@ -478,5 +490,11 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = cw.Write([]string{row.ID, row.Kind, row.Period, row.CreatedAt, row.Content})
 		}
 		cw.Flush()
+		if err := cw.Error(); err != nil {
+			// Headers and a 200 are already on the wire -- nothing left to
+			// do for the client, but this must not vanish silently: a
+			// truncated CSV under a 200 is worse than an ignored error.
+			logging.L().Errorf("report archive export: csv write: %v", err)
+		}
 	})
 }

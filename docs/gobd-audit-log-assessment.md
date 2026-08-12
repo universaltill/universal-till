@@ -56,11 +56,21 @@ financial records, with no code-level guard (REAL GAP)
 reachable via the manager-gated `POST /api/data/reset-transactions` handler
 (`internal/pages/data_api.go:25`), permanently `DELETE`s every row in
 `invoices`, `sale_links`, `payments`, `sale_discounts`, `sale_lines`,
-`sales`, `held_sales`, `shifts`, `stock_movements`, and `report_archive` —
+`sales`, `held_sales`, `shifts`, and `stock_movements` —
 i.e. every financial and till-operational record the product has. It writes
 one summary row to `audit_log` (`"transaction_history_reset"`, a sales-count
 only) — the underlying records themselves are gone with no way to recover
 them; not voided, not archived, actually deleted.
+
+**Update, ADR-0040 card 1 (ut-docs#571):** `report_archive` was in this
+delete set when this finding was written; it no longer is. ADR-0040 §9
+excludes it deliberately — a shop's 10-year-retained end-of-day reports are
+now a legal record `ResetTransactionHistory` cannot touch, same as this
+finding argues the *other* tables eventually need to be. This partially
+narrows the finding's blast radius (archived reports specifically survive a
+reset now) but does not resolve it — every other table listed above is
+still wiped unconditionally, and the "before going live" gap below still
+applies to them.
 
 The intent is legitimate and already documented: the handler's own comment
 and the UI copy (`web/locales/en.json:590`, "This permanently deletes ALL
