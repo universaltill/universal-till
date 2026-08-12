@@ -13,7 +13,7 @@ Implements ADR-0040 Decision §§1-3, 7, 9 — till-side 10-year retention for
 `report_archive`, independently buildable, no cloud dependency (cards 2-4
 are separate future work):
 
-- New append-only migration `036_report_archive_retention.sql`:
+- New append-only migration `037_report_archive_retention.sql`:
   `report_archive.cloud_acked_at` (nullable, unset by anything in this
   card — lands now so card 4 needs no second migration).
 - `report_retention_mode` setting (`store.report_retention_mode`,
