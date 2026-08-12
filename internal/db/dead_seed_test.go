@@ -99,11 +99,18 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
 		t.Fatalf("rewind order_status_events table: %v", err)
 	}
+	// Migration 034 creates three tables -- same non-idempotent-replay
+	// problem, drop them too (ut-docs#516).
+	for _, tbl := range []string{"item_station_routes", "category_station_routes", "kitchen_stations"} {
+		if _, err := d.DB.Exec(`DROP TABLE ` + tbl); err != nil {
+			t.Fatalf("rewind %s table: %v", tbl, err)
+		}
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 022 and its followers (027-033)
+	d, err = Open(path) // re-applies 022 and its followers (027-034)
 	if err != nil {
 		t.Fatal(err)
 	}
