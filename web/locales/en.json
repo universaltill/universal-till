@@ -786,6 +786,7 @@
   "setup.join.discover_help": "Or find the main till automatically: make sure it is on and connected to this network, press “Find a primary on this network”, pick it from the list and give this till a name. Both screens then show the same 6-digit code — the main till's manager compares them and approves.",
   "setup.join.help": "Already have a Universal Till in this shop? On that till open Settings → Tills → Show pairing code, then scan or paste the code here. This till will copy the whole shop — items, prices, staff PINs — and restart.",
   "setup.join.title": "Join an existing shop",
+  "setup.language.detected_coming_soon": "We don't have %s yet — it's on the way. Choose one of these for now:",
   "setup.language.title": "Choose your language",
   "setup.next": "Next",
   "setup.shop_type.cafe": "Café / coffee shop",

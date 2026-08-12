@@ -23,8 +23,13 @@
     <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}">
+    <!-- ut-docs#590: country/currency/tax start pre-filled from the OS locale
+         + timezone (Go side, setup_detect.go) instead of blank — still freely
+         changeable via the select below, detection is a default, never a
+         lock. -->
     <main class="setup-card" x-data="{ step: {{ if .errKey }}5{{ else }}1{{ end }}, last: 6,
-                                       country: '', currency: '', tax: '', taxinc: 'on' }">
+                                       country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
+                                       tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}' }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
@@ -36,6 +41,14 @@
         <!-- Step 1 · language (reloads with the chosen locale) -->
         <section x-show="step === 1" x-cloak.important>
           <h1>{{ T "setup.language.title" }}</h1>
+          <!-- ut-docs#590: the OS locale was detected but isn't one of the
+               languages this till ships today (core files + installed
+               language-pack plugins) — say so plainly rather than silently
+               landing on English, per the product owner's "tell them the
+               language will be ready soon" ask. Never promises a date. -->
+          {{ if .detectedLangCode }}
+            <p class="muted" data-detected-lang="{{ .detectedLangCode }}">{{ printf (T "setup.language.detected_coming_soon") .detectedLangCode }}</p>
+          {{ end }}
           <div class="setup-langs">
             {{ $current := locale }}
             {{ range locales }}
