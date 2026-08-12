@@ -119,9 +119,16 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 		}
 		requested := entry.Entities
 		if raw := strings.TrimSpace(r.FormValue("entities")); raw != "" {
+			// Dedupe as parsed (review finding F4, ut-docs#599): an
+			// unbounded, unduplicated "entities" value would otherwise cost
+			// one CheckPermissionGranted DB round-trip AND one duplicate
+			// entry in the dispatched payload per repeat -- manager-gated,
+			// so low severity, but free to close.
+			seen := map[string]bool{}
 			requested = nil
 			for _, e := range strings.Split(raw, ",") {
-				if e = strings.TrimSpace(e); e != "" {
+				if e = strings.TrimSpace(e); e != "" && !seen[e] {
+					seen[e] = true
 					requested = append(requested, e)
 				}
 			}

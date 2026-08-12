@@ -35,3 +35,36 @@ func TestWasmRuntimeTimeoutFor(t *testing.T) {
 		t.Fatalf("net-permitted export.requested.ask timeout = %v, want 30s", got)
 	}
 }
+
+// TestWasmRuntimeTimeoutFor_ImportClass proves import.requested.ask gets
+// importTimeout (5min), not exportTimeout or the blanket 2s (ut-docs#599
+// review finding F1): a real 270MB backup streamed through import_file_read
+// is bounded by disk throughput, not the small value-returning-hook shape
+// the original 2s/30s deadlines were sized for. Before this fix,
+// WithCloseOnContextDone killed the guest mid-stream at 2s (verified
+// against the real WASM guest fixture in review: a 50MB staged file was
+// force-killed with "context deadline exceeded"), making the staged-file
+// transport this card built practically unusable at the size it exists
+// for -- this test pins the fix so it can't silently regress back to that.
+func TestWasmRuntimeTimeoutFor_ImportClass(t *testing.T) {
+	w := NewWasmRuntime(t.TempDir())
+	const pluginID = "com.test.importtimeout"
+
+	if got := w.timeoutFor(pluginID, "import.requested.ask"); got != importTimeout {
+		t.Fatalf("import.requested.ask timeout = %v, want importTimeout (%v)", got, importTimeout)
+	}
+	// export's own floor must stay untouched by this addition.
+	if got := w.timeoutFor(pluginID, "export.requested.ask"); got != exportTimeout {
+		t.Fatalf("export.requested.ask timeout = %v, want unchanged exportTimeout (%v)", got, exportTimeout)
+	}
+
+	// A plugin holding net:* gets netTimeout (10s) for ordinary events --
+	// import.requested.ask must still get at least its own, much larger,
+	// importTimeout floor, not be capped down to netTimeout.
+	w.mu.Lock()
+	w.hasNet[pluginID] = true
+	w.mu.Unlock()
+	if got := w.timeoutFor(pluginID, "import.requested.ask"); got != importTimeout {
+		t.Fatalf("net-permitted import.requested.ask timeout = %v, want importTimeout (%v)", got, importTimeout)
+	}
+}
