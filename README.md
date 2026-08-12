@@ -48,6 +48,7 @@
 - Customer management
 - Receipt printing (thermal and regular)
 - Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff)
+- Kitchen station routing (send each category — or a single item — to its own kitchen printer)
 - Barcode scanning
 - Multi-currency support
 - Tax calculation (configurable by region)
