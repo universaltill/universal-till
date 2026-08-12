@@ -63,12 +63,50 @@ var setupCountries = []setupCountry{
 func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
 
-	renderWizard := func(w http.ResponseWriter, r *http.Request, errKey string) {
-		httpx.RenderPartial("ui/pages/setup.html", map[string]any{
+	renderWizard := func(w http.ResponseWriter, r *http.Request, errKey string, langUnavailableCode string) {
+		data := map[string]any{
 			"countries": setupCountries,
 			"shopTypes": setupShopTypes,
 			"errKey":    errKey,
-		})(w, r)
+			// Matches the wizard's pre-#590 default (tax-inclusive on) for the
+			// case nothing was detected — only overridden below when a country
+			// actually matches, same as the country step's own @change handler
+			// leaves taxinc alone until a real selection changes it.
+			"detectedTaxInclusive": true,
+		}
+		// Which country the wizard opens on:
+		//   - GET → the OS-detected one (ut-docs#590). Detected fresh on every
+		//     render: this wizard has no server-side draft state between steps,
+		//     so a full-page reload naturally re-detects rather than persisting
+		//     a choice the operator hasn't submitted yet. Always freely
+		//     changeable in the select below; "" (nothing detected) just leaves
+		//     the placeholder.
+		//   - POST re-render (PIN error, save failure) → the operator's OWN
+		//     submitted pick, never re-detection. They have already been through
+		//     the country step, and the hidden currency/tax_rate_pct inputs are
+		//     bound to this same x-data: re-detecting here would silently swap a
+		//     deliberate "France, 20%" for "Germany, 19%" behind an operator who
+		//     is only retyping a mistyped PIN, and the retry would then save the
+		//     wrong tax rate without ever showing them the country step again.
+		code := detectCountry()
+		if r.Method == http.MethodPost {
+			code = strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
+		}
+		if code != "" {
+			for _, c := range setupCountries {
+				if c.Code == code {
+					data["detectedCountry"] = c.Code
+					data["detectedCurrency"] = c.Currency
+					data["detectedTaxRatePct"] = c.TaxRatePct
+					data["detectedTaxInclusive"] = c.TaxInclusive
+					break
+				}
+			}
+		}
+		if langUnavailableCode != "" {
+			data["detectedLangCode"] = langUnavailableCode
+		}
+		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
 
 	mux.HandleFunc("GET /setup", func(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +119,35 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
-		renderWizard(w, r, "")
+
+		// Language detection (ut-docs#590): only on a genuinely first visit —
+		// no explicit ?lang= yet and no ut_lang cookie from an earlier visit —
+		// so detection is a one-time default, never a re-nagging lock, exactly
+		// per the card's requirement. An available detected language redirects
+		// through the existing ?lang= mechanism (same one the step-1 language
+		// buttons already use), which sets the cookie and re-renders; an
+		// unavailable one falls through to render with a "coming soon" note.
+		_, hasQueryLang := r.URL.Query()["lang"]
+		_, cookieErr := r.Cookie("ut_lang")
+		langUnavailableCode := ""
+		if !hasQueryLang && cookieErr != nil {
+			code, available := detectLanguage()
+			if available {
+				http.Redirect(w, r, "/setup?lang="+code, http.StatusSeeOther)
+				return
+			}
+			if code != "" {
+				langUnavailableCode = code
+				// Best-effort, per this wizard's standing pattern (see the
+				// demo-data seed below): a failed write here must never block
+				// rendering the wizard itself. Recorded for ut-docs#589's
+				// child 3 (auto-file a board ticket for a missing language).
+				if err := d.Settings.Set(r.Context(), "setup.detected_lang_unavailable", code); err != nil {
+					logging.L().Errorf("setup wizard: persist detected unavailable locale: %v", err)
+				}
+			}
+		}
+		renderWizard(w, r, "", langUnavailableCode)
 	})
 
 	mux.HandleFunc("POST /api/setup", func(w http.ResponseWriter, r *http.Request) {
@@ -94,16 +160,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 
 		pin, pin2 := r.PostFormValue("pin"), r.PostFormValue("pin_confirm")
 		if auth.ValidatePINFormat(pin) != nil {
-			renderWizard(w, r, "auth.error.pin_format")
+			renderWizard(w, r, "auth.error.pin_format", "")
 			return
 		}
 		if pin != pin2 {
-			renderWizard(w, r, "auth.error.pin_mismatch")
+			renderWizard(w, r, "auth.error.pin_mismatch", "")
 			return
 		}
 		hash, err := auth.HashPIN(pin)
 		if err != nil {
-			renderWizard(w, r, "auth.error.pin_format")
+			renderWizard(w, r, "auth.error.pin_format", "")
 			return
 		}
 
@@ -122,7 +188,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		st.TaxInclusive = r.Form.Get("tax_inclusive") != "off"
 		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
-			renderWizard(w, r, "setup.error.save_failed")
+			renderWizard(w, r, "setup.error.save_failed", "")
 			return
 		}
 		d.SetState(st)
