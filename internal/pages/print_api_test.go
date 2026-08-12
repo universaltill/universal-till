@@ -338,16 +338,22 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 
 	// Stand in for the hung printer: block until the print budget is spent,
 	// then fail with the context error, exactly as the real transports do.
+	// Two shapes: printKitchen's signature grew a station fan-out
+	// (ut-docs#516, total/failures/err) that printReceipt never had.
 	hang := func(ctx context.Context, _ *common.Deps, _ string) error {
 		<-ctx.Done()
 		return fmt.Errorf("printer write: %w", ctx.Err())
+	}
+	hangKitchen := func(ctx context.Context, _ *common.Deps, _, _ string) (int, []kitchenSendFailure, error) {
+		<-ctx.Done()
+		return 0, nil, fmt.Errorf("printer write: %w", ctx.Err())
 	}
 	restoreTimeout, restoreReceipt, restoreKitchen := printAsyncTimeout, printReceiptFn, printKitchenFn
 	t.Cleanup(func() {
 		printAsyncTimeout, printReceiptFn, printKitchenFn = restoreTimeout, restoreReceipt, restoreKitchen
 	})
 	printAsyncTimeout = 50 * time.Millisecond
-	printReceiptFn, printKitchenFn = hang, hang
+	printReceiptFn, printKitchenFn = hang, hangKitchen
 
 	printReceiptAsync(dp, "R-EXP1", "")
 	printKitchenAsync(dp, "R-EXP1", "")

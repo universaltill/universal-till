@@ -1,0 +1,181 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "kitchenstations.title" }}</h1>
+</div>
+
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+<div class="users-layout">
+  <div class="card users-list">
+    {{ if not .stations }}
+    <p class="muted">{{ T "kitchenstations.none" }}</p>
+    {{ else }}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "kitchenstations.col.name" }}</th>
+          <th>{{ T "kitchenstations.col.address" }}</th>
+          <th>{{ T "kitchenstations.col.status" }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .stations }}
+        <tr>
+          <td>{{ .Name }}</td>
+          <td dir="ltr">{{ .PrinterAddress }}</td>
+          <td>{{ if .Enabled }}{{ T "kitchenstations.active" }}{{ else }}<span class="muted">{{ T "kitchenstations.inactive" }}</span>{{ end }}</td>
+          <td class="users-actions">
+            <form method="post" action="/api/kitchen-stations/{{ .ID }}" class="users-inline">
+              <input type="text" name="name" value="{{ .Name }}" required />
+              <input type="text" name="printer_address" value="{{ .PrinterAddress }}" dir="ltr" />
+              <button type="submit" class="btn secondary">{{ T "kitchenstations.save" }}</button>
+            </form>
+            <form method="post" action="/api/kitchen-stations/{{ .ID }}/active" class="users-inline">
+              <input type="hidden" name="active" value="{{ if .Enabled }}0{{ else }}1{{ end }}" />
+              <button type="submit" class="btn secondary">
+                {{ if .Enabled }}{{ T "kitchenstations.deactivate" }}{{ else }}{{ T "kitchenstations.activate" }}{{ end }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ end }}
+  </div>
+
+  <div class="card users-form">
+    <h3>{{ T "kitchenstations.new.title" }}</h3>
+    <form method="post" action="/api/kitchen-stations" autocomplete="off">
+      <label>{{ T "kitchenstations.col.name" }} <input type="text" name="name" required /></label>
+      <label>{{ T "kitchenstations.col.address" }} <input type="text" name="printer_address" dir="ltr" /></label>
+      <p class="muted">{{ T "kitchenstations.address_help" }}</p>
+      <button type="submit" class="btn primary" style="width:100%">{{ T "kitchenstations.new.submit" }}</button>
+    </form>
+  </div>
+</div>
+
+{{ if .stations }}
+{{/* Routing checkboxes live in table cells; each row's inputs bind to a
+     row-scoped form element via the standard `form` attribute (a <form>
+     may not span <td> boundaries). */}}
+<div class="card" style="margin-block-start:1rem">
+  <h3>{{ T "kitchenstations.categories.title" }}</h3>
+  <p class="muted">{{ T "kitchenstations.categories.help" }}</p>
+  {{ if .categories }}
+  {{ range .categories }}
+  <form id="cat-routes-{{ .ID }}" method="post" action="/api/kitchen-stations/routes/categories/{{ .ID }}"></form>
+  {{ end }}
+  <div style="overflow-x:auto">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "kitchenstations.col.category" }}</th>
+          {{ range .stations }}<th>{{ .Name }}</th>{{ end }}
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .categories }}
+        <tr>
+          <td>{{ .Name }}</td>
+          {{ $formID := printf "cat-routes-%s" .ID }}
+          {{ range .Checks }}
+          <td><input type="checkbox" name="station_id" value="{{ .ID }}" form="{{ $formID }}" {{ if .Checked }}checked{{ end }} /></td>
+          {{ end }}
+          <td><button type="submit" class="btn secondary" form="{{ $formID }}">{{ T "kitchenstations.save" }}</button></td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ end }}
+</div>
+
+<div class="card" style="margin-block-start:1rem">
+  <h3>{{ T "kitchenstations.items.title" }}</h3>
+  <p class="muted">{{ T "kitchenstations.items.help" }}</p>
+
+  {{ if not .overrides }}
+  <p class="muted">{{ T "kitchenstations.items.none" }}</p>
+  {{ else }}
+  {{ range .overrides }}
+  <form id="item-routes-{{ .ItemID }}" method="post" action="/api/kitchen-stations/routes/items/{{ .ItemID }}"></form>
+  <form id="item-remove-{{ .ItemID }}" method="post" action="/api/kitchen-stations/routes/items/{{ .ItemID }}"></form>
+  {{ end }}
+  <div style="overflow-x:auto">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "kitchenstations.col.item" }}</th>
+          <th>{{ T "kitchenstations.col.sku" }}</th>
+          {{ range .stations }}<th>{{ .Name }}</th>{{ end }}
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .overrides }}
+        <tr>
+          <td>{{ .Name }}</td>
+          <td>{{ .SKU }}</td>
+          {{ $formID := printf "item-routes-%s" .ItemID }}
+          {{ range .Checks }}
+          <td><input type="checkbox" name="station_id" value="{{ .ID }}" form="{{ $formID }}" {{ if .Checked }}checked{{ end }} /></td>
+          {{ end }}
+          <td class="users-actions">
+            <button type="submit" class="btn secondary" form="{{ $formID }}">{{ T "kitchenstations.save" }}</button>
+            {{/* Remove = the same replace-all endpoint with no station_id values. */}}
+            <button type="submit" class="btn secondary" form="item-remove-{{ .ItemID }}">{{ T "kitchenstations.items.remove" }}</button>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ end }}
+
+  <form method="get" action="/kitchen-stations" class="users-inline" style="margin-block-start:0.5rem">
+    <label>{{ T "kitchenstations.items.search" }}
+      <input type="text" name="q" value="{{ .searchQuery }}" />
+    </label>
+    <button type="submit" class="btn secondary">{{ T "kitchenstations.items.search" }}</button>
+  </form>
+
+  {{ if .searchQuery }}
+    {{ if not .searchResults }}
+    <p class="muted">{{ T "kitchenstations.items.no_results" }}</p>
+    {{ else }}
+    {{ range .searchResults }}
+    <form id="item-add-{{ .ItemID }}" method="post" action="/api/kitchen-stations/routes/items/{{ .ItemID }}"></form>
+    {{ end }}
+    <div style="overflow-x:auto">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>{{ T "kitchenstations.col.item" }}</th>
+            <th>{{ T "kitchenstations.col.sku" }}</th>
+            {{ range .stations }}<th>{{ .Name }}</th>{{ end }}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .searchResults }}
+          <tr>
+            <td>{{ .Name }}</td>
+            <td>{{ .SKU }}</td>
+            {{ $formID := printf "item-add-%s" .ItemID }}
+            {{ range .Checks }}
+            <td><input type="checkbox" name="station_id" value="{{ .ID }}" form="{{ $formID }}" {{ if .Checked }}checked{{ end }} /></td>
+            {{ end }}
+            <td><button type="submit" class="btn secondary" form="{{ $formID }}">{{ T "kitchenstations.items.set" }}</button></td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+    {{ end }}
+  {{ end }}
+</div>
+{{ end }}
+{{ end }}
