@@ -197,11 +197,19 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
 		t.Fatalf("rewind order_status_events table: %v", err)
 	}
+	// Migration 034 adds two more sales columns -- same problem again
+	// (ut-docs#517).
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN kitchen_print_failed_at`); err != nil {
+		t.Fatalf("rewind sales.kitchen_print_failed_at column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN receipt_print_failed_at`); err != nil {
+		t.Fatalf("rewind sales.receipt_print_failed_at column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 023 and its followers (027-033)
+	d, err = Open(path) // re-applies 023 and its followers (027-034)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,11 +258,18 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
 		t.Fatalf("rewind order_status_events table: %v", err)
 	}
+	// Same for 034's print-failure columns (ut-docs#517).
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN kitchen_print_failed_at`); err != nil {
+		t.Fatalf("rewind sales.kitchen_print_failed_at column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN receipt_print_failed_at`); err != nil {
+		t.Fatalf("rewind sales.receipt_print_failed_at column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 031 through 033
+	d, err = Open(path) // re-applies 031 through 034
 	if err != nil {
 		t.Fatal(err)
 	}

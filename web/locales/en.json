@@ -1160,6 +1160,8 @@
   "orders.btn.cancel": "Cancel order",
   "orders.err.bad_status": "Unknown status",
   "orders.err.not_found": "Order not found",
+  "orders.print.kitchen_failed": "Kitchen print failed",
+  "orders.print.receipt_failed": "Receipt print failed",
   "osk.toggle": "Keyboard",
   "basket.count_label": "Items in basket",
   "notice.dismiss": "Dismiss",
