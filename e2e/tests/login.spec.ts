@@ -75,12 +75,22 @@ test.describe.serial('first-boot setup and PIN login', () => {
   });
 
   test('completing the wizard creates the admin PIN and logs in', async () => {
+    // Scoped to each numbered section rather than a bare `.setup-nav
+    // button:visible` — every step's own advance button shares the same
+    // "Next" label (T "setup.next"), and x-show only toggles CSS display
+    // rather than removing the other steps' buttons from the DOM, so an
+    // unscoped locator matches N simultaneously-present same-text buttons
+    // and relies on :visible alone to disambiguate (ut-docs#617 review:
+    // this became flaky once a 6th step joined the pool — see the sibling
+    // fix in tests-docs/docs-shots.spec.ts's ensureOperator).
+    const step = (n: number) => page.locator(`section[x-show="step === ${n}"]`);
+
     // Step 1 · language — just advance.
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
+    await step(1).locator('.setup-nav button', { hasText: 'Next' }).click();
 
     // Step 2 · country (prefills currency/tax client-side).
     await page.locator('select[name=country]').selectOption('GB');
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
+    await step(2).locator('.setup-nav button', { hasText: 'Next' }).click();
 
     // Step 3 · shop name. setup.html is a standalone document that bypasses
     // web/ui/layouts/base.html (ut-docs#400 review: a first version of the
@@ -91,7 +101,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
     const storeName = page.locator('input[name=store_name]');
     await expect(storeName).toHaveAttribute('autocomplete', /^off-/);
     await storeName.fill('E2E Test Shop');
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
+    await step(3).locator('.setup-nav button', { hasText: 'Next' }).click();
 
     // Step 4 · shop type + sample-data opt-in (ut-docs#539). Pick a type;
     // leave the sample-data checkbox at its unchecked default — the auth
@@ -99,15 +109,22 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // up with an empty catalogue unless the operator opts in.
     await page.locator('select[name=shop_type]').selectOption('cafe');
     await expect(page.locator('input[name=demo_data]:visible')).not.toBeChecked();
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
+    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 5 · admin PIN.
+    // Step 5 · restore from another POS? (ut-docs#617). "No, starting
+    // fresh" is the default path most real installs take — exercises it
+    // for real rather than skipping past it, and confirms the hidden
+    // restore_choice field genuinely stays out of the way of a normal
+    // wizard completion.
+    await step(5).locator('.setup-nav button.primary', { hasText: 'No' }).click();
+
+    // Step 6 · admin PIN.
     await expect(page.locator('input[name=pin]')).toHaveAttribute('autocomplete', /^off-/);
-    await page.locator('input[name=pin]').fill('482913');
-    await page.locator('input[name=pin_confirm]').fill('482913');
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
+    await step(6).locator('input[name=pin]').fill('482913');
+    await step(6).locator('input[name=pin_confirm]').fill('482913');
+    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 6 · finish — real form submit, real redirect to the till.
+    // Step 7 · finish — real form submit, real redirect to the till.
     await Promise.all([
       page.waitForURL((u) => !u.pathname.includes('/setup')),
       page.locator('button[type=submit]', { hasText: 'Start selling' }).click(),

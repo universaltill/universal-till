@@ -216,3 +216,61 @@ func TestSettingsRemoveDemoCatalogueEndpoint(t *testing.T) {
 		t.Fatalf("sample items after removal = %d, want 1 (the sold one)", n)
 	}
 }
+
+// ut-docs#617: the "Restore from another POS" resume prompt only shows once
+// the wizard's "Later" choice actually deferred it — not on a fresh till,
+// and not once dismissed/resumed.
+func TestSettingsShowsRestoreResumePromptOnlyWhenDeferred(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	getSettings := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	if strings.Contains(getSettings(), `id="restore-resume-block"`) {
+		t.Fatal("resume prompt shown before the wizard ever deferred it")
+	}
+
+	if err := d.Settings.Set(t.Context(), common.KeyRestorePromptStatus, common.RestorePromptStatusDeferred); err != nil {
+		t.Fatal(err)
+	}
+	body := getSettings()
+	if !strings.Contains(body, `id="restore-resume-block"`) {
+		t.Fatal("resume prompt not shown once deferred")
+	}
+	if !strings.Contains(body, `href="/import"`) {
+		t.Error("resume prompt does not link straight into /import")
+	}
+}
+
+// Dismissing the resume prompt is manager-gated and clears the flag so it
+// stops reappearing (distinct from actually using it via /import).
+func TestSettingsDismissRestorePromptEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	if err := d.Settings.Set(t.Context(), common.KeyRestorePromptStatus, common.RestorePromptStatusDeferred); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/settings/dismiss-restore-prompt", url.Values{}, &cashUser)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier dismiss: code=%d, want 403", rec.Code)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); v != common.RestorePromptStatusDeferred {
+		t.Fatalf("cashier attempt cleared the flag: %q", v)
+	}
+
+	rec = postForm(mux, "/api/settings/dismiss-restore-prompt", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager dismiss: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); ok && v != "" {
+		t.Fatalf("restore prompt status after dismiss = %q ok=%v, want cleared", v, ok)
+	}
+}

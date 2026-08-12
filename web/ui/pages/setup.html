@@ -27,7 +27,7 @@
          + timezone (Go side, setup_detect.go) instead of blank — still freely
          changeable via the select below, detection is a default, never a
          lock. -->
-    <main class="setup-card" x-data="{ step: {{ if .errKey }}5{{ else }}1{{ end }}, last: 6,
+    <main class="setup-card" x-data="{ step: {{ if .errKey }}6{{ else }}1{{ end }}, last: 7,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}' }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
@@ -119,8 +119,42 @@
           </div>
         </section>
 
-        <!-- Step 5 · admin PIN -->
-        <section x-show="step === 5" x-cloak>
+        <!-- Step 5 · restore from another POS? (ut-docs#617). Purely a UI
+             choice — no network call, never blocks the wizard. "No" costs
+             one tap; "Yes" reveals the only real option today (generic
+             CSV/Excel, straight into the existing /import flow) plus an
+             honest "no named-system plugins yet" note rather than a
+             fabricated vendor list; "Later" is resumable from Settings →
+             Data (settings.html). -->
+        <section x-show="step === 5" x-cloak x-data="{ choice: '' }">
+          <h1>{{ T "setup.restore.title" }}</h1>
+          <p class="muted">{{ T "setup.restore.hint" }}</p>
+          <input type="hidden" name="restore_choice" :value="choice">
+          <div x-show="choice !== 'ask'">
+            <div class="setup-nav">
+              <button type="button" class="btn primary" @click="choice = 'no'; step = 6">{{ T "setup.restore.no" }}</button>
+              <button type="button" class="btn secondary" @click="choice = 'ask'" style="margin-top:.4rem">{{ T "setup.restore.yes" }}</button>
+              <button type="button" class="btn secondary" @click="choice = 'later'; step = 6" style="margin-top:.4rem">{{ T "setup.restore.later" }}</button>
+            </div>
+            <div class="setup-nav">
+              <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
+            </div>
+          </div>
+          <div x-show="choice === 'ask'">
+            <label class="set-row">
+              <input type="radio" name="restore_source" value="csv_excel" @change="choice = 'csv_excel'">
+              {{ T "setup.restore.csv_excel" }}
+            </label>
+            <p class="muted">{{ T "setup.restore.no_plugins_yet" }}</p>
+            <div class="setup-nav">
+              <button type="button" class="btn secondary" @click="choice = ''">{{ T "setup.back" }}</button>
+              <button type="button" class="btn primary" :disabled="choice !== 'csv_excel'" @click="step = 6">{{ T "setup.next" }}</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Step 6 · admin PIN -->
+        <section x-show="step === 6" x-cloak>
           <h1>{{ T "auth.setup.title" }}</h1>
           <p class="muted">{{ T "auth.setup.hint" }}</p>
           <label>{{ T "auth.setup.pin" }}
@@ -130,17 +164,17 @@
             <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
           </label>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 6">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 7">{{ T "setup.next" }}</button>
           </div>
         </section>
 
-        <!-- Step 6 · done -->
-        <section x-show="step === 6" x-cloak>
+        <!-- Step 7 · done -->
+        <section x-show="step === 7" x-cloak>
           <h1>{{ T "setup.done.title" }}</h1>
           <p class="muted">{{ T "setup.done.hint" }}</p>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
+            <button type="button" class="btn secondary" @click="step = 6">{{ T "setup.back" }}</button>
             <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>
           </div>
         </section>
