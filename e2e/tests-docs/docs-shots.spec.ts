@@ -158,8 +158,10 @@ async function ensureOperator(page: Page) {
 // joined it here (ut-docs#326) — GET /translations has the same
 // requireManager gate (internal/pages/translations_page.go) and was failing
 // this harness with a blank `dir` attribute (a silent 403/redirect, not a
-// captured page) until it was routed to the auth till too.
-const AUTH_TILL_TOPICS = ['users', 'translations'];
+// captured page) until it was routed to the auth till too. "kitchen-stations"
+// (ut-docs#516) joined for the same reason — its requireManager gate has no
+// UT_AUTH=off bypass either (internal/pages/kitchen_stations_page.go).
+const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations'];
 
 const topics = routedTopics() as { id: string; route: string }[];
 

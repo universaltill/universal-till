@@ -22,5 +22,7 @@ Her siparişin ilerlemesini — hazırlanıyor, hazır, teslim edildi — tek do
 
 ## Notlar
 
+- Liste birkaç saniyede bir kendini yeniler — yeni siparişler (self-servis kiosktan verilenler dahil) sayfa yenilenmeden görünür.
+- Bir mutfak fişi ya da fiş yazdırılamazsa — kâğıdı biten, fişi çekilmiş ya da kapalı bir yazıcı — siparişin durumunun yanında ⚠ uyarısı görünür; böylece ödenmiş bir sipariş (örneğin self-servis kiosktan gelen) asla sessizce kaybolmaz. Mutfak ⚠ uyarısı, fişin mutfağa hiç ulaşmadığı anlamına gelir: yazıcıyı düzeltin ve siparişi mutfağa kendiniz iletin. Fiş ⚠ uyarısı ise, yazıcıyı düzeltip İşlem geçmişinde siparişin sayfasından fişi yeniden yazdırdığınız anda kaybolur.
 - Buradaki her şey, kasanın geri kalanı gibi tamamen çevrimdışı çalışır.
 - Bu ekran, sıradaki özelliklerin temelidir: mutfak ekranı, müşteri çağrı cihazları ve sipariş takibi aynı durumları kullanacak.

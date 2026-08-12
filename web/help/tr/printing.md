@@ -15,3 +15,4 @@ Fişleri, faturaları ve gün sonu raporlarını termal fiş yazıcısında veya
 1. Ayarlar'dan yazıcınızı ve türünü seçin — termal veya normal.
 2. Bağlantıyı test yazdırma düğmesiyle kontrol edin.
 3. Mutfak yazıcısı ayrı ayarlanabilir; yemek siparişleri hazırlandıkları yerde yazdırılır.
+4. Birden fazla mutfak yazıcısına mı ihtiyacınız var — bir ızgara yazıcısı ve bir bar yazıcısı gibi? Kategorileri veya tek tük ürünleri kendi istasyonlarına yönlendirmek için **Mutfak istasyonları**na bakın.

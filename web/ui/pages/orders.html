@@ -3,6 +3,10 @@
   <h1>{{ T "orders.title" }}</h1>
 </div>
 <div class="card">
+  {{/* Loads once here; the fragment's own root then polls every 15s (same
+       interval as pairing_wait.html's urgent live surface): a kiosk order
+       or a print-failure warning must appear without anyone reloading the
+       page (ut-docs#517a). */}}
   <div id="orders" hx-get="/ui/orders" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
 {{ end }}

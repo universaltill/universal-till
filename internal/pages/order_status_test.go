@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -206,6 +207,59 @@ func TestOrdersListFragment_ShowsStatusAndButtons(t *testing.T) {
 	}
 	if !strings.Contains(body, `/api/orders/R-0005/status`) {
 		t.Fatalf("list must carry one-tap buttons posting to the status endpoint, got %q", body)
+	}
+}
+
+// ut-docs#517a: a sale whose latest kitchen/receipt print attempt failed
+// must carry a visible warning in the orders list — a paid kiosk order must
+// never be silently lost to an out-of-paper printer.
+func TestOrdersListFragment_ShowsPrintFailureWarnings(t *testing.T) {
+	mux, dp, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0006")
+	seedOrderStatusTestSale(t, dbase, "sale-2", "R-0007")
+
+	repo := data.NewPOSRepo(dp.Db)
+	if err := repo.SetKitchenPrintFailed(t.Context(), "R-0006", "2026-08-12T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetReceiptPrintFailed(t.Context(), "R-0006", "2026-08-12T10:01:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/orders", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Kitchen print failed") {
+		t.Fatalf("list must warn about the failed kitchen print, got %q", body)
+	}
+	if !strings.Contains(body, "Receipt print failed") {
+		t.Fatalf("list must warn about the failed receipt print, got %q", body)
+	}
+	// Exactly one order failed — the warning must not leak onto healthy rows.
+	if got := strings.Count(body, "Kitchen print failed"); got != 2 { // span text + title attr
+		t.Fatalf("kitchen warning rendered %d times, want 2 (one row's span text + title)", got)
+	}
+}
+
+// The /orders page must actually POLL (ut-docs#517a) — the fragment swaps
+// itself with outerHTML, so the polling trigger has to live on the
+// fragment's own root (the pending_pairings.html pattern) or it would fire
+// once on page load and never again.
+func TestOrdersListFragment_RearmsPolling(t *testing.T) {
+	mux, _, _ := newOrderStatusTestDeps(t)
+	req := httptest.NewRequest(http.MethodGet, "/ui/orders", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-get="/ui/orders"`) || !strings.Contains(body, `hx-trigger="every 15s"`) {
+		t.Fatalf("fragment root must re-arm the 15s poll after each swap, got %q", body)
 	}
 }
 

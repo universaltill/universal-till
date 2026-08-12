@@ -2,9 +2,12 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"net"
 	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,5 +221,179 @@ func TestBrowse_CapsCandidatesFromAFloodingResponder(t *testing.T) {
 		t.Fatalf("Browse returned %d candidates from a flooding responder, want at most %d — "+
 			"an unauthenticated LAN peer must not be able to grow this without bound",
 			len(got), maxCandidates)
+	}
+}
+
+// TestBrowse_ReturnsCollectedCandidatesDespiteALateQueryError covers
+// ut-docs#538's acceptance criterion directly: candidates already collected
+// before mdns.Query reports an error must survive, not be thrown away. A
+// partial failure is not a total one.
+func TestBrowse_ReturnsCollectedCandidatesDespiteALateQueryError(t *testing.T) {
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=till-real", "name=Real Till"}, AddrV4: net.IPv4(192, 168, 1, 60), Port: 8080}
+		return errors.New("write udp6 [::]:57143->[ff02::fb]:5353: sendto: no route to host")
+	}
+
+	got, err := Browse(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("Browse: unexpected error %v — a candidate was already collected before the query error", err)
+	}
+	if len(got) != 1 || got[0].TillID != "till-real" {
+		t.Fatalf("got %+v, want the one candidate collected before the error to survive", got)
+	}
+}
+
+// TestBrowse_RetriesIPv4OnlyWhenTheFullQueryFailsOutright is the direct
+// regression test for ut-docs#538. hashicorp/mdns's client.query() sends
+// the v4 leg then the v6 leg of the same probe packet from one sendQuery
+// call, and returns immediately — before ever listening for a response —
+// if either leg's write fails (see vendor client.go: sendQuery aborts on
+// the first error, and query() returns that error before entering its
+// receive loop). So on a LAN where IPv6 multicast has no route (socket
+// binds fine, sendto doesn't), the real v4+v6 attempt can never collect
+// anything — the "just keep what was already collected" fix by itself
+// (the test above) would still return zero candidates for this exact bug.
+// The actual fix is a same-scan retry with IPv6 disabled.
+func TestBrowse_RetriesIPv4OnlyWhenTheFullQueryFailsOutright(t *testing.T) {
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+
+	var mu sync.Mutex
+	var calls []bool // recorded DisableIPv6 per call, in order
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		mu.Lock()
+		calls = append(calls, p.DisableIPv6)
+		mu.Unlock()
+		if !p.DisableIPv6 {
+			// Mirrors the real library: fails instantly, nothing collected.
+			return errors.New("write udp6 [::]:57143->[ff02::fb]:5353: sendto: no route to host")
+		}
+		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=till-v4only", "name=V4 Only Till"}, AddrV4: net.IPv4(192, 168, 1, 61), Port: 8080}
+		return nil
+	}
+
+	got, err := Browse(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("Browse: unexpected error %v — the v4-only retry should have recovered the peer", err)
+	}
+	if len(got) != 1 || got[0].TillID != "till-v4only" {
+		t.Fatalf("got %+v, want the v4-only retry's one candidate", got)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 2 || calls[0] != false || calls[1] != true {
+		t.Fatalf("got mdnsQuery calls (DisableIPv6 per call) = %v, want [false, true] — "+
+			"a v4+v6 attempt first, then a v4-only retry only after it fails", calls)
+	}
+}
+
+// TestBrowse_DoesNotRetryOnAGenuineEmptyResult — a scan that genuinely
+// finds nothing (err == nil, zero entries) is "no peers on this network,"
+// not a failure, and must not trigger the v4-only retry path — the UI
+// distinguishes "no peers found" from "the scan failed" (ut-docs#538's
+// third acceptance criterion) via exactly this: err == nil here.
+func TestBrowse_DoesNotRetryOnAGenuineEmptyResult(t *testing.T) {
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	var calls int
+	var mu sync.Mutex
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return nil
+	}
+
+	got, err := Browse(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("Browse: unexpected error %v for a genuine empty result", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d candidates, want 0", len(got))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("got %d mdnsQuery calls, want exactly 1 — a clean empty result must not trigger the v4-only retry", calls)
+	}
+}
+
+// TestBrowse_ReturnsErrorWhenBothTheFullAndV4OnlyRetryFail — if even the
+// v4-only retry can't complete a scan (e.g. no usable network interface at
+// all), Browse must still surface an error rather than silently reporting
+// "no peers found," which would look identical to a genuinely empty LAN.
+func TestBrowse_ReturnsErrorWhenBothTheFullAndV4OnlyRetryFail(t *testing.T) {
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	var calls int
+	var mu sync.Mutex
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return errors.New("failed to bind to any multicast udp port")
+	}
+
+	got, err := Browse(context.Background(), 3*time.Second)
+	if err == nil {
+		t.Fatal("expected an error when both the v4+v6 attempt and the v4-only retry fail")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d candidates on a total failure, want 0", len(got))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("got %d mdnsQuery calls, want exactly 2 (v4+v6 attempt, then v4-only retry)", calls)
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// Both legs failed for network reasons, so the wrapped errors must
+		// still be inspectable by a caller (%w, not %v).
+		if !strings.Contains(err.Error(), "failed to bind to any multicast udp port") {
+			t.Fatalf("error %q does not carry the underlying failure", err)
+		}
+	}
+}
+
+// TestBrowse_ReportsCancellationDuringTheV4OnlyRetryAsAContextError — the
+// retry ut-docs#538 added opened a second window in which the caller can
+// give up (manager closes the Tills tab). Cancellation there is still the
+// caller giving up, not a network failure: Browse must surface
+// context.Canceled, exactly as it does when the first attempt is
+// cancelled, rather than reshaping it into a "lan scan failed" error the
+// handler logs and answers 500 to.
+func TestBrowse_ReportsCancellationDuringTheV4OnlyRetryAsAContextError(t *testing.T) {
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	var mu sync.Mutex
+	calls := 0
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 1 {
+			// The real bug's shape: instant failure, nothing collected.
+			return errors.New("write udp6 [::]:57143->[ff02::fb]:5353: sendto: no route to host")
+		}
+		// The retry is in flight when the caller gives up.
+		cancel()
+		time.Sleep(50 * time.Millisecond)
+		return nil
+	}
+
+	got, err := Browse(ctx, 3*time.Second)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got error %v, want context.Canceled — cancelling during the v4-only retry is the caller giving up", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d candidates on a cancelled retry, want 0", len(got))
 	}
 }
