@@ -72,6 +72,92 @@ func TestParseSquare(t *testing.T) {
 	}
 }
 
+// A representative slice of SumUp's real 46-column items-export header
+// (ut-docs#581) — column names only, never real business data (the café's
+// actual export is deliberately kept out of this repo). Item names/prices
+// are synthetic; the (19,7) row on Milchkaffee reproduces the real dine-in
+// vs. takeaway split #512 exists to carry through correctly.
+const sumupCSV = `Item name,Variations,Option set 1,Is variation visible?,Price,Cost price,Tax rate (%),Set up different prices and VAT for takeaway,Takeaway price,Takeaway tax rate,Unit,SKU,Barcode,Category,Item id,Variant id
+Cappuccino,,,,3.20,1.10,19.00,Y,3.20,19.00,pcs,SU-001,,Kaffee,1001,2001
+Käsekuchen,,,,3.80,1.50,7.00,Y,3.80,7.00,pcs,SU-002,,Kuchen & Desserts,1002,2002
+Milchkaffee to go,,,,3.50,1.20,19.00,Y,3.50,7.00,pcs,SU-003,4006381333931,Kaltgetränke,1003,2003
+`
+
+func TestParseSumUp(t *testing.T) {
+	res, err := Parse(strings.NewReader(sumupCSV), 2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if res.Format != "sumup" {
+		t.Errorf("format = %s, want sumup (must not fall through to generic)", res.Format)
+	}
+	if len(res.Items) != 3 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	cappuccino := res.Items[0]
+	if cappuccino.Name != "Cappuccino" || cappuccino.PriceMinor != 320 || cappuccino.Category != "Kaffee" {
+		t.Errorf("cappuccino parsed wrong: %+v", cappuccino)
+	}
+	if !cappuccino.HasTax || cappuccino.TaxRateBP != 1900 || !cappuccino.HasTakeaway || cappuccino.TakeawayRateBP != 1900 {
+		t.Errorf("cappuccino tax (19,19) via \"Tax rate (%%)\" wrong: %+v", cappuccino)
+	}
+	// Umlaut category name must survive intact, and "Tax rate (%)" must be
+	// recognised as the tax column (the whole reason this fixture exists —
+	// it doesn't match the pre-existing synonym set's "tax rate" exact/
+	// bracket-prefix rule).
+	kaesekuchen := res.Items[1]
+	if kaesekuchen.Name != "Käsekuchen" || kaesekuchen.Category != "Kuchen & Desserts" {
+		t.Errorf("umlaut name/category mangled: %+v", kaesekuchen)
+	}
+	if !kaesekuchen.HasTax || kaesekuchen.TaxRateBP != 700 || !kaesekuchen.HasTakeaway || kaesekuchen.TakeawayRateBP != 700 {
+		t.Errorf("käsekuchen tax (7,7) wrong: %+v", kaesekuchen)
+	}
+	// The real (dine-in, takeaway) override case: 19 in store, 7 to go.
+	milchkaffee := res.Items[2]
+	if milchkaffee.Barcode != "4006381333931" || milchkaffee.Category != "Kaltgetränke" {
+		t.Errorf("milchkaffee barcode/category wrong: %+v", milchkaffee)
+	}
+	if !milchkaffee.HasTax || milchkaffee.TaxRateBP != 1900 || !milchkaffee.HasTakeaway || milchkaffee.TakeawayRateBP != 700 {
+		t.Errorf("milchkaffee (19,7) takeaway override not carried through: %+v", milchkaffee)
+	}
+}
+
+func TestDetectFormatSumUpFallbackSignature(t *testing.T) {
+	// A merchant export missing the takeaway-VAT-toggle column (that toggle
+	// is itself optional in a merchant's SumUp account) must still detect
+	// via the "item id"+"variant id" fallback signature, not fall through
+	// to generic.
+	headers := []string{"Item name", "Price", "Tax rate (%)", "SKU", "Item id", "Variant id"}
+	if got := DetectFormat(headers); got != "sumup" {
+		t.Errorf("DetectFormat fallback signature = %s, want sumup", got)
+	}
+}
+
+// Review finding M1 (ut-docs#581, 2026-08-12): an ERP master export whose ID
+// columns merely contain the substrings "item id"/"variant id" (e.g. "Item
+// Identifier", "Parent Item Id") must not be stolen from generic-erp by the
+// SumUp fallback signature — department wins, and the fallback signature
+// itself must be an exact per-header match, not a joined-string substring
+// search.
+func TestDetectFormatGenericERPNotStolenBySumUpFallback(t *testing.T) {
+	cases := [][]string{
+		{"Item Name", "Item ID", "Variant ID", "Price", "Department", "Category", "On Hand"},
+		{"Item Name", "Item Identifier", "Variant Identifier", "Price", "Department"},
+		{"Item Name", "Parent Item Id", "Child Variant Ids", "Price", "Department"},
+	}
+	for _, headers := range cases {
+		if got := DetectFormat(headers); got != "generic-erp" {
+			t.Errorf("DetectFormat(%v) = %s, want generic-erp (department must win over the sumup fallback)", headers, got)
+		}
+	}
+	// The substring-bleed shape without a department column has nothing to
+	// fall back to and must land on generic, not a false-positive sumup.
+	noDept := []string{"Item Name", "Item Identifier", "Variant Identifier", "Price"}
+	if got := DetectFormat(noDept); got != "generic" {
+		t.Errorf("DetectFormat(%v) = %s, want generic", noDept, got)
+	}
+}
+
 func TestParseGenericAndZeroDecimals(t *testing.T) {
 	res, err := Parse(strings.NewReader(genericCSV), 0)
 	if err != nil {
