@@ -42,7 +42,18 @@ const (
 	// the cloud sync response and this key becomes a read-only replica.
 	// Empty/unset means "till" (the only mode this card actually implements).
 	KeyReportRetentionMode = "store.report_retention_mode"
+	// KeyRestorePromptStatus tracks the setup wizard's "restore from
+	// another POS?" step (ut-docs#617): empty/unset means the operator
+	// answered No, or never deferred; RestorePromptStatusDeferred means
+	// they picked "Later" and Settings → Data should offer a resume link
+	// straight into /import until they either use it or dismiss it.
+	KeyRestorePromptStatus = "setup.restore_prompt_status"
 )
+
+// RestorePromptStatusDeferred is the only KeyRestorePromptStatus value the
+// wizard/Settings pair actually branches on (ut-docs#617) — any other value
+// (including empty) is treated as "nothing to resume."
+const RestorePromptStatusDeferred = "deferred"
 
 // ReportRetentionModeTill is the default/fallback report_retention_mode
 // value, and the only mode this card (ADR-0040 card 1) actually prunes for

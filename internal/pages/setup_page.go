@@ -57,9 +57,10 @@ var setupCountries = []setupCountry{
 }
 
 // registerSetup wires the first-boot wizard: language → country (prefills
-// currency/tax) → shop name → admin PIN → done. Every step has a sane
-// default; both routes refuse to run once an operator exists (they are
-// auth-exempt for exactly that window).
+// currency/tax) → shop name → shop type → restore-from-another-POS?
+// (ut-docs#617) → admin PIN → done. Every step has a sane default; both
+// routes refuse to run once an operator exists (they are auth-exempt for
+// exactly that window).
 func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
 
@@ -157,6 +158,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 		_ = r.ParseForm()
+
+		// Restore-from-another-POS step (ut-docs#617): a pure UI/settings
+		// choice, no network call — never blocks setup, offline-first is a
+		// non-issue here by construction. "later" persists a flag so
+		// Settings → Data can offer a resume link; "csv_excel" just changes
+		// where the wizard lands post-setup, straight into the existing
+		// /import flow instead of home. Anything else (including "no" and
+		// the unset default) is a no-op.
+		restoreChoice := strings.TrimSpace(r.PostFormValue("restore_choice"))
 
 		pin, pin2 := r.PostFormValue("pin"), r.PostFormValue("pin_confirm")
 		if auth.ValidatePINFormat(pin) != nil {
@@ -258,8 +268,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, adminID, "user", adminID, "first_boot_setup",
-			map[string]string{"via": "wizard", "country": st.Country, "currency": st.Currency}, now, "")
+			map[string]string{"via": "wizard", "country": st.Country, "currency": st.Currency, "restore_choice": restoreChoice}, now, "")
 		setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
+
+		// Best-effort, same posture as the demo-data seed below: a failed
+		// write here must never block wizard completion.
+		if restoreChoice == "later" {
+			if err := d.Settings.Set(r.Context(), common.KeyRestorePromptStatus, common.RestorePromptStatusDeferred); err != nil {
+				logging.L().Errorf("setup wizard: persist restore-prompt deferred: %v", err)
+			}
+		}
 
 		// Sample-data opt-in (ut-docs#539): checkbox default is unchecked.
 		// Best-effort by design — the same reasoning as offline-first's
@@ -271,6 +289,14 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				logging.L().Errorf("setup wizard: seed demo catalogue: %v", err)
 			}
 		}
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		// ut-docs#617: "csv/excel" lands the new operator straight in the
+		// existing catalog importer instead of home — no detour through
+		// Settings/Catalog navigation. Every other choice keeps today's
+		// behaviour.
+		redirectTo := "/"
+		if restoreChoice == "csv_excel" {
+			redirectTo = "/import"
+		}
+		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 	})
 }

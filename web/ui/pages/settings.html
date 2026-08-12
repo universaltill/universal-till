@@ -312,6 +312,21 @@
   </div>
   <div id="cat-results" class="set-gap-s"></div>
 
+  {{ if .restorePromptDeferred }}
+  <div id="restore-resume-block">
+    <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+    <h3 style="margin:0 0 .3rem">{{ T "settings.data.restore_title" }}</h3>
+    <p class="muted">{{ T "settings.data.restore_help" }}</p>
+    <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+      <a class="btn primary" href="/import" data-testid="restore-resume">{{ T "settings.data.restore_resume_btn" }}</a>
+      <button class="btn secondary" data-testid="restore-dismiss"
+              hx-post="/api/settings/dismiss-restore-prompt"
+              hx-target="#restore-resume-block" hx-swap="outerHTML"
+              hx-disabled-elt="this">{{ T "settings.data.restore_dismiss_btn" }}</button>
+    </div>
+  </div>
+  {{ end }}
+
   {{ if gt .sampleCount 0 }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.demo_title" }}</h3>
