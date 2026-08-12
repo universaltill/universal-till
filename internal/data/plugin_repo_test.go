@@ -236,6 +236,76 @@ func TestPluginRepo_ListExportEntries(t *testing.T) {
 	}
 }
 
+// ListImportEntries mirrors ListExportEntries for type='import' rows
+// (ut-docs#599), additionally unpacking the entities/file_formats
+// declarations PersistManifest folds into config_json.
+func TestPluginRepo_ListImportEntries(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if rows, err := repo.ListImportEntries(ctx); err != nil || len(rows) != 0 {
+		t.Fatalf("expected no import entries when none installed, got %+v err=%v", rows, err)
+	}
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('i1','Speedy Importer','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin i1: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,sort_order,is_active,config_json)
+	                      VALUES('ie1','i1','import','bkp_import','Speedy .bkp Import',1,1,
+	                             '{"entities":["items","categories"],"file_formats":[".bkp"]}')`); err != nil {
+		t.Fatalf("seed import entry: %v", err)
+	}
+	// No config_json at all: still listed, just with no declarations.
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('i2','Bare Importer','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin i2: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,sort_order,is_active)
+	                      VALUES('ie2','i2','import','bare_import','Bare Import',2,1)`); err != nil {
+		t.Fatalf("seed bare import entry: %v", err)
+	}
+	// An entry on an inactive plugin must be excluded.
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('i3','Old Importer','0.1',0)`); err != nil {
+		t.Fatalf("seed plugin i3: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('ie3','i3','import','old_import','Old',1)`); err != nil {
+		t.Fatalf("seed old import entry: %v", err)
+	}
+	// A non-import entry must be excluded too.
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('ee9','i1','export','exp','Exp',1)`); err != nil {
+		t.Fatalf("seed export entry: %v", err)
+	}
+
+	rows, err := repo.ListImportEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListImportEntries: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 import entries, got %d: %+v", len(rows), rows)
+	}
+	byKey := map[string]ImportEntryRow{}
+	for _, r := range rows {
+		byKey[r.Key] = r
+	}
+	bkp, ok := byKey["bkp_import"]
+	if !ok || bkp.PluginID != "i1" || bkp.Label != "Speedy .bkp Import" || bkp.SortOrder != 1 {
+		t.Fatalf("unexpected bkp_import row: %+v (present=%v)", bkp, ok)
+	}
+	if len(bkp.Entities) != 2 || bkp.Entities[0] != "items" || bkp.Entities[1] != "categories" {
+		t.Fatalf("unexpected entities: %+v", bkp.Entities)
+	}
+	if len(bkp.FileFormats) != 1 || bkp.FileFormats[0] != ".bkp" {
+		t.Fatalf("unexpected file_formats: %+v", bkp.FileFormats)
+	}
+	bare, ok := byKey["bare_import"]
+	if !ok || bare.PluginID != "i2" || len(bare.Entities) != 0 || len(bare.FileFormats) != 0 {
+		t.Fatalf("unexpected bare_import row: %+v (present=%v)", bare, ok)
+	}
+	if _, ok := byKey["old_import"]; ok {
+		t.Fatalf("expected the inactive plugin's import entry excluded, got %+v", rows)
+	}
+}
+
 // Upgrade path for plugin settings: values the operator configured must
 // survive a manifest re-apply, dupes from the old NULL-scope_id upsert must
 // collapse, a scope change in the manifest must move the row (keeping its

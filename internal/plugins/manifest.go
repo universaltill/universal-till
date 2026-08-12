@@ -62,6 +62,45 @@ type ManifestEntry struct {
 	TargetAction  string                 `json:"target_action,omitempty"`   // for buttons
 	TriggerEvent  string                 `json:"trigger_event,omitempty"`   // for popups/hooks
 	Config        map[string]interface{} `json:"config,omitempty"`          // arbitrary JSON
+
+	// Entities/FileFormats declare what an import/export entry handles
+	// (ut-docs#599): Entities names the data sets the entry covers (e.g.
+	// "items", "categories", "tax_codes", "stock", "customers", "sales") —
+	// the import dispatcher only forwards entities the entry both declares
+	// here AND holds the matching "<entity>:write" grant for. FileFormats
+	// lists accepted file extensions/formats (e.g. ".bkp", ".csv",
+	// ".xlsx") for pickers/validation. Both optional — every other entry
+	// type simply omits them.
+	Entities    []string `json:"entities,omitempty"`
+	FileFormats []string `json:"file_formats,omitempty"`
+}
+
+// entryConfigJSON renders the config_json blob persisted for one manifest
+// entry: the author's arbitrary Config map, plus the typed Entities/
+// FileFormats declarations folded in under fixed keys ("entities",
+// "file_formats") so they survive into plugin_entries without a schema
+// change and can be read back by data.PluginRepo.ListImportEntries. The
+// typed fields win over same-named Config keys — the declared schema field
+// is the contract, not a config convention. Returns "" when there is
+// nothing to persist (matches the previous behaviour for config-less
+// entries). Used by both PersistManifest and Rollback so the two persist
+// paths cannot drift.
+func entryConfigJSON(e ManifestEntry) string {
+	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 {
+		return ""
+	}
+	m := make(map[string]interface{}, len(e.Config)+2)
+	for k, v := range e.Config {
+		m[k] = v
+	}
+	if len(e.Entities) > 0 {
+		m["entities"] = e.Entities
+	}
+	if len(e.FileFormats) > 0 {
+		m["file_formats"] = e.FileFormats
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
 }
 
 // ManifestSetting represents a configuration key
@@ -431,11 +470,7 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// 2. Insert entries
 	var entryRows []data.PluginEntryRow
 	for _, e := range m.Entries {
-		configJSON := ""
-		if len(e.Config) > 0 {
-			b, _ := json.Marshal(e.Config)
-			configJSON = string(b)
-		}
+		configJSON := entryConfigJSON(e)
 
 		entryRows = append(entryRows, data.PluginEntryRow{
 			ID:            uuid.NewString(),

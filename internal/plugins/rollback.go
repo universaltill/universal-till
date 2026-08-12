@@ -3,7 +3,6 @@ package plugins
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -154,11 +153,7 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	// Re-insert entries from rolled-back manifest (delete+bulk insert)
 	var entryRows []data.PluginEntryRow
 	for _, e := range manifest.Entries {
-		configJSON := ""
-		if len(e.Config) > 0 {
-			b, _ := json.Marshal(e.Config)
-			configJSON = string(b)
-		}
+		configJSON := entryConfigJSON(e)
 		entryRows = append(entryRows, data.PluginEntryRow{
 			ID:            uuid.NewString(),
 			Type:          e.Type,
