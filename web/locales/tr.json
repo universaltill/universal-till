@@ -1160,6 +1160,8 @@
   "orders.btn.cancel": "Siparişi iptal et",
   "orders.err.bad_status": "Bilinmeyen durum",
   "orders.err.not_found": "Sipariş bulunamadı",
+  "orders.print.kitchen_failed": "Mutfak fişi yazdırılamadı",
+  "orders.print.receipt_failed": "Fiş yazdırılamadı",
   "osk.toggle": "Klavye",
   "basket.count_label": "Sepetteki ürün sayısı",
   "notice.dismiss": "Kapat",

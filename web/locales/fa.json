@@ -1160,6 +1160,8 @@
   "orders.btn.cancel": "لغو سفارش",
   "orders.err.bad_status": "وضعیت ناشناخته",
   "orders.err.not_found": "سفارش پیدا نشد",
+  "orders.print.kitchen_failed": "چاپ فیش آشپزخانه ناموفق بود",
+  "orders.print.receipt_failed": "چاپ رسید ناموفق بود",
   "osk.toggle": "صفحه‌کلید",
   "basket.count_label": "تعداد اقلام سبد",
   "notice.dismiss": "بستن",

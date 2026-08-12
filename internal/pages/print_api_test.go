@@ -2,14 +2,17 @@ package pages
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -147,6 +150,283 @@ func TestAsyncPrintGoroutinesFinishBeforeWaitForAsyncWorkReturns(t *testing.T) {
 		if err := os.RemoveAll(dir); err != nil {
 			t.Fatalf("iteration %d: RemoveAll immediately after Close: %v", i, err)
 		}
+	}
+}
+
+// newPrintFlagTestDeps opens a REAL migrated SQLite DB (same harness shape
+// as kitchen_print_test.go — the seedForPages fixture's hand-rolled sales
+// table predates the migration-033/034 columns, so it can't exercise the
+// print-failed flags) and seeds the two FK prerequisites seedReceiptSale
+// relies on (sale_lines.item_id → items, payments.method_id →
+// payment_methods).
+func newPrintFlagTestDeps(t *testing.T) *common.Deps {
+	t.Helper()
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "printflags.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dbase.Close() })
+	// The 'cash' payment_methods row is seeded by 001_init.sql already; only
+	// the item behind sale_lines.item_id needs adding.
+	if _, err := dbase.DB.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','ABC','Apple',120,1)`); err != nil {
+		t.Fatalf("seed prerequisites: %v", err)
+	}
+	return &common.Deps{
+		Cfg:      &config.Config{Theme: "default"},
+		Db:       dbase.DB,
+		Settings: settings.NewStore(dbase.DB),
+	}
+}
+
+// findRecentOrder reads a receipt's row back through the same repo call the
+// /ui/orders poll uses — the surface ut-docs#517a exists for.
+func findRecentOrder(t *testing.T, dp *common.Deps, receiptNo string) data.OrderListEntry {
+	t.Helper()
+	orders, err := data.NewPOSRepo(dp.Db).ListRecentOrders(context.Background(), 50)
+	if err != nil {
+		t.Fatalf("ListRecentOrders: %v", err)
+	}
+	for _, o := range orders {
+		if o.ReceiptNo == receiptNo {
+			return o
+		}
+	}
+	t.Fatalf("receipt %s not in recent orders: %+v", receiptNo, orders)
+	return data.OrderListEntry{}
+}
+
+// ut-docs#517a: a REAL failed print attempt (device transport pointed at a
+// path that cannot be opened — deterministic, no network) must set the
+// sale's kitchen/receipt print-failed flags, and a subsequent REAL
+// successful print (device transport writing to an ordinary temp file —
+// the same code path a USB printer takes) must clear them. This drives the
+// actual printReceiptAsync/printKitchenAsync goroutines against a real
+// migrated DB with a real sales row — not a mocked print result.
+func TestAsyncPrintFailureSetsFlagAndSuccessClears(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	seedReceiptSale(t, dp, "sale-pf", "R-PF1", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+
+	missing := filepath.Join(t.TempDir(), "no-such-dir")
+	if err := dp.Settings.SetMany(ctx, map[string]string{
+		keyPrinterMode:    "device",
+		keyPrinterDevice:  filepath.Join(missing, "receipt-printer"),
+		keyPrinterKitchen: filepath.Join(missing, "kitchen-printer"),
+	}); err != nil {
+		t.Fatalf("seed failing printer settings: %v", err)
+	}
+
+	printReceiptAsync(dp, "R-PF1", "")
+	printKitchenAsync(dp, "R-PF1", "")
+	dp.WaitForAsyncWork()
+
+	entry := findRecentOrder(t, dp, "R-PF1")
+	if entry.KitchenPrintFailedAt == "" {
+		t.Fatal("failed kitchen print must set KitchenPrintFailedAt, got empty")
+	}
+	if entry.ReceiptPrintFailedAt == "" {
+		t.Fatal("failed receipt print must set ReceiptPrintFailedAt, got empty")
+	}
+
+	// A later successful attempt clears the flags — the warning must not
+	// stay stuck after the paper roll is replaced.
+	okDir := t.TempDir()
+	receiptDev := filepath.Join(okDir, "receipt-ok")
+	kitchenDev := filepath.Join(okDir, "kitchen-ok")
+	for _, p := range []string{receiptDev, kitchenDev} {
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatalf("create fake device file: %v", err)
+		}
+	}
+	if err := dp.Settings.SetMany(ctx, map[string]string{
+		keyPrinterDevice:  receiptDev,
+		keyPrinterKitchen: kitchenDev,
+	}); err != nil {
+		t.Fatalf("seed working printer settings: %v", err)
+	}
+
+	printReceiptAsync(dp, "R-PF1", "")
+	printKitchenAsync(dp, "R-PF1", "")
+	dp.WaitForAsyncWork()
+
+	// Sanity: the "printer" files actually received bytes, so this was a
+	// genuine successful print, not the disabled no-op path.
+	for _, p := range []string{receiptDev, kitchenDev} {
+		if fi, err := os.Stat(p); err != nil || fi.Size() == 0 {
+			t.Fatalf("expected print bytes written to %s (err=%v)", p, err)
+		}
+	}
+	entry = findRecentOrder(t, dp, "R-PF1")
+	if entry.KitchenPrintFailedAt != "" {
+		t.Fatalf("successful kitchen print must clear the flag, got %q", entry.KitchenPrintFailedAt)
+	}
+	if entry.ReceiptPrintFailedAt != "" {
+		t.Fatalf("successful receipt print must clear the flag, got %q", entry.ReceiptPrintFailedAt)
+	}
+}
+
+// The MANUAL kitchen reprint (POST /api/print/kitchen) participates too: an
+// operator who fixes the printer and reprints from the till must see the
+// warning clear, and a manual attempt that fails must set it.
+func TestManualKitchenReprintSetsAndClearsPrintFailedFlag(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	mux := http.NewServeMux()
+	registerKitchenPrintAPI(mux, dp)
+	seedReceiptSale(t, dp, "sale-mk", "R-MK1", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+
+	post := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/print/kitchen", strings.NewReader("receipt_no=R-MK1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Failing manual print (unopenable device path) sets the flag.
+	if err := dp.Settings.SetMany(ctx, map[string]string{
+		keyPrinterKitchen: filepath.Join(t.TempDir(), "no-such-dir", "kitchen-printer"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := post(); rec.Code != http.StatusBadGateway {
+		t.Fatalf("failing manual print: status = %d, want 502 (body %q)", rec.Code, rec.Body.String())
+	}
+	if entry := findRecentOrder(t, dp, "R-MK1"); entry.KitchenPrintFailedAt == "" {
+		t.Fatal("failed manual kitchen print must set KitchenPrintFailedAt")
+	}
+
+	// Successful manual print (writable temp-file device) clears it.
+	kitchenDev := filepath.Join(t.TempDir(), "kitchen-ok")
+	if err := os.WriteFile(kitchenDev, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.SetMany(ctx, map[string]string{keyPrinterKitchen: kitchenDev}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := post(); rec.Code != http.StatusOK {
+		t.Fatalf("successful manual print: status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	if entry := findRecentOrder(t, dp, "R-MK1"); entry.KitchenPrintFailedAt != "" {
+		t.Fatalf("successful manual kitchen print must clear the flag, got %q", entry.KitchenPrintFailedAt)
+	}
+}
+
+// Independent review, ut-docs#517a: the failure this feature exists to
+// surface — an out-of-paper / unplugged / hung printer — does NOT fail fast.
+// Both transports block until the print context's own deadline (deviceTransport
+// selects on ctx.Done(), networkTransport hands the deadline to
+// SetWriteDeadline), so printReceipt/printKitchen return their error with that
+// context ALREADY EXPIRED. Recording the failure with it made database/sql drop
+// the write before it reached the DB: no audit row, no ⚠ on /orders, the paid
+// kiosk order silently lost — precisely the reported bug, in the precise case
+// it was reported for. The failure must be written on a fresh context.
+func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	seedReceiptSale(t, dp, "sale-exp", "R-EXP1", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+
+	// A configured, enabled printer — the settings read must succeed, so the
+	// attempt is really made (this is not the "printing off" no-op path).
+	if err := dp.Settings.SetMany(ctx, map[string]string{
+		keyPrinterMode:    "device",
+		keyPrinterDevice:  filepath.Join(t.TempDir(), "receipt-printer"),
+		keyPrinterKitchen: filepath.Join(t.TempDir(), "kitchen-printer"),
+	}); err != nil {
+		t.Fatalf("seed printer settings: %v", err)
+	}
+
+	// Stand in for the hung printer: block until the print budget is spent,
+	// then fail with the context error, exactly as the real transports do.
+	hang := func(ctx context.Context, _ *common.Deps, _ string) error {
+		<-ctx.Done()
+		return fmt.Errorf("printer write: %w", ctx.Err())
+	}
+	restoreTimeout, restoreReceipt, restoreKitchen := printAsyncTimeout, printReceiptFn, printKitchenFn
+	t.Cleanup(func() {
+		printAsyncTimeout, printReceiptFn, printKitchenFn = restoreTimeout, restoreReceipt, restoreKitchen
+	})
+	printAsyncTimeout = 50 * time.Millisecond
+	printReceiptFn, printKitchenFn = hang, hang
+
+	printReceiptAsync(dp, "R-EXP1", "")
+	printKitchenAsync(dp, "R-EXP1", "")
+	dp.WaitForAsyncWork()
+
+	entry := findRecentOrder(t, dp, "R-EXP1")
+	if entry.ReceiptPrintFailedAt == "" {
+		t.Error("a receipt print that hung until its deadline must still flag the sale, got empty")
+	}
+	if entry.KitchenPrintFailedAt == "" {
+		t.Error("a kitchen print that hung until its deadline must still flag the sale, got empty")
+	}
+	// The audit trail must survive the same expiry (it did not before).
+	audits, err := data.NewPOSRepo(dp.Db).ListAudit(ctx, data.AuditFilters{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	var gotReceipt, gotKitchen bool
+	for _, a := range audits {
+		if a.EntityID != "R-EXP1" {
+			continue
+		}
+		switch a.Action {
+		case "print_failed":
+			gotReceipt = true
+		case "kitchen_print_failed":
+			gotKitchen = true
+		}
+	}
+	if !gotReceipt || !gotKitchen {
+		t.Errorf("both print failures must be audited (receipt=%v kitchen=%v)", gotReceipt, gotKitchen)
+	}
+}
+
+// Independent review, ut-docs#517a: the receipt warning must be clearable.
+// A receipt only auto-prints once (at tender), so the journal's reprint is the
+// ONLY later attempt a shop can make — and the shipped manual tells them to
+// make it. Without this, a receipt ⚠ set once stayed on /orders forever, and
+// a permanent warning is a warning nobody reads.
+func TestManualReceiptReprintSetsAndClearsPrintFailedFlag(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	mux := http.NewServeMux()
+	registerPrintAPI(mux, dp)
+	seedReceiptSale(t, dp, "sale-mr", "R-MR1", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+
+	post := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/print/receipt/R-MR1", nil))
+		return rec
+	}
+
+	// Failing reprint (unopenable device path) flags the sale.
+	if err := dp.Settings.SetMany(ctx, map[string]string{
+		keyPrinterMode:   "device",
+		keyPrinterDevice: filepath.Join(t.TempDir(), "no-such-dir", "receipt-printer"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := post(); rec.Code != http.StatusBadGateway {
+		t.Fatalf("failing reprint: status = %d, want 502 (body %q)", rec.Code, rec.Body.String())
+	}
+	if entry := findRecentOrder(t, dp, "R-MR1"); entry.ReceiptPrintFailedAt == "" {
+		t.Fatal("failed manual reprint must set ReceiptPrintFailedAt")
+	}
+
+	// Successful reprint clears it — the operator fixed the printer.
+	dev := filepath.Join(t.TempDir(), "receipt-ok")
+	if err := os.WriteFile(dev, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.SetMany(ctx, map[string]string{keyPrinterDevice: dev}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := post(); rec.Code != http.StatusOK {
+		t.Fatalf("successful reprint: status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	if entry := findRecentOrder(t, dp, "R-MR1"); entry.ReceiptPrintFailedAt != "" {
+		t.Fatalf("successful manual reprint must clear the flag, got %q", entry.ReceiptPrintFailedAt)
 	}
 }
 

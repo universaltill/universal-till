@@ -71,16 +71,22 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 			Status          string
 			StatusUpdatedAt string
 			CreatedAt       string
+			// ut-docs#517a: latest kitchen/receipt print attempt failed —
+			// surfaced as an inline warning next to the status.
+			KitchenPrintFailed bool
+			ReceiptPrintFailed bool
 		}
 		rows := make([]orderRow, 0, len(entries))
 		for _, e := range entries {
 			rows = append(rows, orderRow{
-				ReceiptNo:       e.ReceiptNo,
-				OrderType:       e.OrderType,
-				StatusKey:       orderStatusLabelKey(e.Status),
-				Status:          e.Status,
-				StatusUpdatedAt: e.StatusUpdatedAt,
-				CreatedAt:       e.CreatedAt,
+				ReceiptNo:          e.ReceiptNo,
+				OrderType:          e.OrderType,
+				StatusKey:          orderStatusLabelKey(e.Status),
+				Status:             e.Status,
+				StatusUpdatedAt:    e.StatusUpdatedAt,
+				CreatedAt:          e.CreatedAt,
+				KitchenPrintFailed: e.KitchenPrintFailedAt != "",
+				ReceiptPrintFailed: e.ReceiptPrintFailedAt != "",
 			})
 		}
 		httpx.RenderPartial("ui/partials/orders_list.html", map[string]any{"Orders": rows})(w, r)

@@ -69,21 +69,34 @@ func printKitchen(ctx context.Context, d *common.Deps, receiptNo string) error {
 }
 
 // printKitchenAsync sends a kitchen ticket without ever blocking the caller:
-// fired as a goroutine, a missing printer is a no-op and failures are audited.
+// fired as a goroutine, a missing printer is a no-op and failures are audited
+// AND flagged on the sale (ut-docs#517a) so /orders can surface them.
 // Tracked on d.AsyncWork (ut-docs#425), same reasoning as printReceiptAsync.
 func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
 	d.AsyncWork.Add(1)
 	go func() {
 		defer d.AsyncWork.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()
 		if !printerConfig(ctx, d).KitchenEnabled() {
+			// No attempt (kitchen printing off) — must neither overwrite a
+			// real prior failure nor falsely clear one.
 			return
 		}
-		if err := printKitchen(ctx, d, receiptNo); err != nil {
-			_ = data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, actorID, "sale", receiptNo, "kitchen_print_failed",
+		posRepo := data.NewPOSRepo(d.Db)
+		if err := printKitchenFn(ctx, d, receiptNo); err != nil {
+			// Fresh context: a hung/out-of-paper printer burns the whole
+			// print budget before failing, so ctx is already expired here —
+			// see recordPrintFailureCtx.
+			wctx, wcancel := recordPrintFailureCtx()
+			defer wcancel()
+			_ = posRepo.InsertAudit(wctx, nil, actorID, "sale", receiptNo, "kitchen_print_failed",
 				map[string]any{"error": err.Error()}, time.Now().UTC().Format(time.RFC3339), "")
+			_ = posRepo.SetKitchenPrintFailed(wctx, receiptNo, time.Now().UTC().Format(time.RFC3339))
+			return
 		}
+		// Success clears any stale flag from an earlier failed attempt.
+		_ = posRepo.SetKitchenPrintFailed(ctx, receiptNo, "")
 	}()
 }
 
@@ -115,6 +128,14 @@ func registerKitchenPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		err := printKitchen(ctx, d, receiptNo)
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "kitchen_printed",
 			map[string]any{"ok": err == nil}, time.Now().UTC().Format(time.RFC3339), "")
+		// Keep the /orders warning honest (ut-docs#517a): a failed manual
+		// print flags the sale, a successful one clears a stale flag — so a
+		// manually-fixed printer un-sticks the warning.
+		if err != nil {
+			_ = posRepo.SetKitchenPrintFailed(r.Context(), receiptNo, time.Now().UTC().Format(time.RFC3339))
+		} else {
+			_ = posRepo.SetKitchenPrintFailed(r.Context(), receiptNo, "")
+		}
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "kitchen.print.failed"))
