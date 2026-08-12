@@ -210,6 +210,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		takeawayOverrides := map[string]int{}
 		overridesSet := 0
 		overridesFailed := false
+		overridesPluginDisabled := false
 		if commit {
 			// Opening stock from the source file lands as a "receive"
 			// movement at the default location (same path as the
@@ -459,11 +460,29 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					overridesFailed = true
 				} else if active {
 					overridesSet, overridesFailed = mergeTakeawayOverrides(r.Context(), pluginRepo, takeawayOverrides)
+				} else if _, found, err := pluginRepo.GetPlugin(r.Context(), taxDePluginID, ""); err != nil {
+					// Existence check itself failed — same best-effort
+					// treatment as the PluginActive error branch above: a
+					// plugin-setting hiccup never fails the (already
+					// committed) catalog rows, only the summary line.
+					log.Printf("[import] check %s existence: %v", taxDePluginID, err)
+					overridesFailed = true
+				} else if found {
+					// Installed but disabled (ut-docs#531): distinguish this
+					// from "not installed at all" — a merchant importing
+					// before enabling the plugin gets correct tax codes but
+					// silently no takeaway overrides, and re-enabling later
+					// won't retroactively fix this import's rows.
+					overridesPluginDisabled = true
 				}
+				// found == false (not installed at all): stays silent, per
+				// #512's original design — a shop with no German tax plugin
+				// genuinely has nothing to configure.
 			}
 			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "import",
 				map[string]any{"format": res.Format, "created": created, "warned": warned, "failed": failed, "rows": len(rows),
-					"tax_codes_created": taxCodesCreated, "takeaway_overrides_set": overridesSet},
+					"tax_codes_created": taxCodesCreated, "takeaway_overrides_set": overridesSet,
+					"takeaway_overrides_plugin_disabled": overridesPluginDisabled},
 				time.Now().UTC().Format(time.RFC3339), "")
 		}
 
@@ -475,6 +494,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if overridesFailed {
 				fmt.Fprintf(&b, ` — <span class="row-warn-icon" aria-hidden="true">⚠</span>%s`,
 					T("import.status.tax_overrides_not_saved"))
+			} else if overridesPluginDisabled {
+				fmt.Fprintf(&b, ` — <span class="row-warn-icon" aria-hidden="true">⚠</span>%s`,
+					T("import.status.tax_overrides_plugin_disabled"))
 			}
 			b.WriteString(`</p>`)
 		} else {
