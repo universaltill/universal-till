@@ -12,7 +12,6 @@ package app
 import (
 	"context"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -36,6 +35,16 @@ import (
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/updates"
 )
+
+// pagesInit is a seam over pages.Init: production always calls it exactly as
+// pages.Init behaves, but a test can swap this var for a wrapper that
+// observes the *common.Deps Run receives (e.g. to prove Run's shutdown
+// actually drains deps.AsyncWork — see
+// TestRun_WaitsForAsyncWorkBeforeClosingDatabase in app_test.go) without
+// Run itself needing to export deps. Declared as `var x = pkg.Func` (not
+// spelling out the func type) so this file doesn't need to import net/http
+// just to name pages.Init's return type.
+var pagesInit = pages.Init
 
 // Run boots the till and blocks serving HTTP until ctx is cancelled (or a
 // fatal startup error occurs). Every env var config.Init and its callees
@@ -168,7 +177,7 @@ func Run(ctx context.Context) error {
 		stopBg()
 		drainBackgroundServices(&wg, log, backgroundDrainTimeout, "background services")
 		if deps != nil {
-			drainBackgroundServices(&deps.AsyncWork, log, backgroundDrainTimeout, "async print/kitchen/invoice work")
+			drainBackgroundServices(&deps.AsyncWork, log, asyncWorkDrainTimeout, "async print/kitchen/invoice work")
 		}
 		closeCtx, cancel := context.WithTimeout(context.Background(), wasmCloseTimeout)
 		defer cancel()
@@ -210,8 +219,7 @@ func Run(ctx context.Context) error {
 	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discovery.RoleCheckFromSettings(discoverySettings), listenPort(cfg.ListenAddr))
 	discoveryAdvertiser.Start(bgCtx, &wg)
 
-	var mux http.Handler
-	mux, deps = pages.Init(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
+	mux, deps := pagesInit(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
 
 	supervisor := plugins.NewSupervisor(database.DB)
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
@@ -224,6 +232,19 @@ func Run(ctx context.Context) error {
 // backgroundDrainTimeout bounds how long Run waits for background goroutines
 // to exit before giving up and closing the database anyway.
 const backgroundDrainTimeout = 10 * time.Second
+
+// asyncWorkDrainTimeout bounds how long Run waits for deps.AsyncWork's
+// best-effort print/kitchen/invoice goroutines (ut-docs#513) before giving
+// up and closing the database anyway. Deliberately its OWN, larger bound
+// rather than reusing backgroundDrainTimeout: those goroutines use
+// context.Background() internally (print_api.go's printAsyncTimeout, 15s,
+// plus a further 5s failure-write context on top — see printReceiptAsync),
+// specifically so a slow/unplugged printer's write deadline — not shutdown —
+// governs how long a print attempt gets. A 10s drain bound could not even
+// cover the printer-write attempt itself, let alone the failure-audit write
+// after it, so the exact case this drain exists for (a printer that's slow
+// rather than instantly failing) would still lose its audit row on shutdown.
+const asyncWorkDrainTimeout = 20 * time.Second
 
 // wasmCloseTimeout bounds pluginManager.Close's wait for the wasm runtime's
 // event-channel drainer goroutines (ut-docs#380/#503). Close runs strictly

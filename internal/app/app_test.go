@@ -2,13 +2,19 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 // drainBackgroundServices must not block past wg reaching zero: a fast
@@ -141,13 +147,105 @@ func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
 				"background goroutines were only stopped by the drain giving up, not a real cancel",
 				elapsed, backgroundDrainTimeout)
 		}
+		// "still running" (not the more specific "background services still
+		// running") deliberately catches a timeout on EITHER of Run's two
+		// drains (the background-services wg, or deps.AsyncWork — ut-docs#513)
+		// — pages.Init has already run by the time server.Start's bind fails
+		// here, so both drains execute during this test's shutdown.
 		for _, p := range logging.Recent() {
 			if p.Level == "ERROR" && p.At.After(start) &&
-				strings.Contains(p.Msg, "background services still running") {
+				strings.Contains(p.Msg, "still running") {
 				t.Fatalf("Run's drain hit its timeout on an early startup error: %s", p.Msg)
 			}
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("Run did not return within 30s of an unbindable listen address")
+	}
+}
+
+// TestRun_WaitsForAsyncWorkBeforeClosingDatabase proves the actual wiring
+// ut-docs#513 adds: that Run's own shutdown sequence drains deps.AsyncWork
+// before its deferred database.Close() runs — not just that
+// drainBackgroundServices works correctly for an arbitrary WaitGroup
+// (TestDrainBackgroundServices_WaitsForAsyncWorkLikeAnyOtherWaitGroup above)
+// or that pages.Init hands back the right *common.Deps instance
+// (internal/pages/print_api_test.go's TestInit_ReturnedDepsIsTheSame...).
+// Independent review of an earlier draft of this fix found, by deleting the
+// wiring in app.go's deferred cleanup and re-running the full suite, that
+// every other test in this package and internal/pages stayed green —
+// proving neither of those tests actually exercises Run's own shutdown
+// path. This one does, by racing a controlled AsyncWork goroutine against
+// a real Run() boot-and-shutdown cycle via the pagesInit seam:
+//
+// pagesInit is swapped for a wrapper that, right after the real pages.Init
+// returns, registers an AsyncWork-tracked goroutine sleeping 300ms — long
+// enough that every OTHER shutdown step (server.Start's own graceful stop
+// with no live connections to wait on, the background-services wg drain —
+// everything reacts to bgCtx being cancelled near-instantly) has already
+// finished in the buggy case, so a missing AsyncWork drain reliably loses
+// this race rather than getting lucky — then queries deps.Db directly and
+// reports whatever error it gets. If Run's shutdown drains AsyncWork first
+// (the fix), Run cannot return until that goroutine finishes, so the query
+// always succeeds regardless of the sleep. If the drain is missing (the
+// bug), database.Close() runs while the goroutine is still asleep and its
+// query fails with "sql: database is closed".
+func TestRun_WaitsForAsyncWorkBeforeClosingDatabase(t *testing.T) {
+	t.Setenv("UT_DATA_DIR", t.TempDir())
+	t.Setenv("UT_ENV_FILE", filepath.Join(t.TempDir(), "does-not-exist.env"))
+	t.Setenv("UT_AUTH", "off")
+	t.Setenv("UT_OPEN_BROWSER", "false")
+	t.Setenv("UT_LISTEN_ADDR", "127.0.0.1:0") // OS-assigned free port — a real, successful bind, unlike the early-error test above
+
+	origPagesInit := pagesInit
+	t.Cleanup(func() { pagesInit = origPagesInit })
+
+	initReached := make(chan struct{})
+	asyncQueryErr := make(chan error, 1)
+	pagesInit = func(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, dbConn *sql.DB, catalogRepo *marketplace.CatalogRepository, wg *sync.WaitGroup) (http.Handler, *common.Deps) {
+		handler, deps := origPagesInit(ctx, bgCtx, cfg, pm, dbConn, catalogRepo, wg)
+		deps.AsyncWork.Add(1)
+		go func() {
+			defer deps.AsyncWork.Done()
+			time.Sleep(300 * time.Millisecond)
+			var one int
+			asyncQueryErr <- deps.Db.QueryRow("SELECT 1").Scan(&one)
+		}()
+		close(initReached)
+		return handler, deps
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx) }()
+
+	select {
+	case <-initReached:
+		// pages.Init has returned and the AsyncWork goroutine is registered
+		// (Add happened synchronously before the wrapper returned) — safe to
+		// trigger shutdown now, deterministically, regardless of how long
+		// boot took to get here.
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not reach pages.Init within 30s")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned an error on a clean shutdown: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not return within 30s of ctx cancellation")
+	}
+
+	select {
+	case err := <-asyncQueryErr:
+		if err != nil {
+			t.Fatalf("AsyncWork goroutine's DB query failed after Run returned: %v — "+
+				"database.Close() ran before the goroutine finished, meaning Run's shutdown "+
+				"did not actually wait for deps.AsyncWork", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("AsyncWork goroutine never reported a result after Run returned — it may never have run")
 	}
 }

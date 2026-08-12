@@ -209,7 +209,13 @@ func TestInit_ReturnedDepsIsTheSameInstanceAsyncPrintGoroutinesTrack(t *testing.
 	t.Cleanup(func() { paths.Init("") })
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
-	ctx := context.Background()
+	// Cancelled on cleanup, same pattern as init_test.go's own Init caller:
+	// Init starts several bgCtx-scoped background loops (StartSyncPush/
+	// StartSyncPull/StartCloudSync/StartEODScheduler/
+	// StartAutoUpdateScheduler) that would otherwise keep running against
+	// dbase after this test's own t.Cleanup closes it.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	pm, err := plugins.Init(ctx, cfg, dbase.DB)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
