@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -150,6 +151,140 @@ func TestAsyncPrintGoroutinesFinishBeforeWaitForAsyncWorkReturns(t *testing.T) {
 		if err := os.RemoveAll(dir); err != nil {
 			t.Fatalf("iteration %d: RemoveAll immediately after Close: %v", i, err)
 		}
+	}
+}
+
+// ut-docs#513: app.Run needs to join Deps.AsyncWork into its own shutdown
+// drain, but the *common.Deps app.go can see and the one printReceiptAsync/
+// printKitchenAsync actually track their goroutines on are only the SAME
+// instance if pages.Init hands the caller back the exact *common.Deps it
+// built every handler with — not a copy, not a differently-constructed one.
+// A full app.Run()-level test can't observe this cleanly (Run doesn't export
+// deps, and forcing a real listen+shutdown cycle just to peek at a private
+// field is a bigger, more brittle seam than this bug needs — see the
+// Architect's design notes on this card). This is the honest test within
+// reach instead: boot through the REAL pages.Init entrypoint (not a
+// hand-built *common.Deps + registerPrintAPI like every other test in this
+// file), fire a genuine tender through the resulting mux — which internally
+// calls printReceiptAsync using ITS OWN dp, not a variable this test
+// controls — then call WaitForAsyncWork on the *common.Deps Init returned to
+// the caller. If that's a different instance than the one the handler
+// closed over, the failure-audit row this test forces (device path in a
+// directory that doesn't exist) would not reliably be there yet when this
+// returns, and the test would flake/fail. It doesn't, deterministically,
+// which is the proof this card's fix (threading Init's Deps back to app.go)
+// is wired to the right object.
+func TestInit_ReturnedDepsIsTheSameInstanceAsyncPrintGoroutinesTrack(t *testing.T) {
+	chdirRoot(t)               // templates resolve relative to repo root
+	t.Setenv("UT_AUTH", "off") // no operator session needed to hit /api/pos/*
+
+	// A REAL migrated DB (same reason as newPrintFlagTestDeps above): the
+	// resolver Init wires the cashier engine with queries items/item_barcodes
+	// joined against item_images, a table this file's OTHER hand-rolled
+	// seedForPages fixture doesn't define — fine for tests that hand-build
+	// *common.Deps with a stub resolver, but this test needs a genuine
+	// /api/pos/scan through the real Init-built mux to resolve, which means
+	// the schema has to be the real one.
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "wiring.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { dbase.Close() })
+	// This item's own tax_code_id is unset, but pos.Service falls back to
+	// the config's default tax rate for any line with a zero TaxRateBP
+	// (effectiveTaxRateBP) — so the tender below reads the basket's actual
+	// computed Total rather than assuming the bare item price.
+	if _, err := dbase.DB.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-notax','NOTAX','No-Tax Item',500,1)`); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	if _, err := dbase.DB.Exec(`INSERT INTO item_barcodes (barcode, item_id, is_primary) VALUES ('NOTAX','itm-notax',1)`); err != nil {
+		t.Fatalf("seed item barcode: %v", err)
+	}
+	// Stock at the default location (001_init.sql seeds 'loc_main' itself) —
+	// tender rejects the sale outright over insufficient stock otherwise.
+	if _, err := dbase.DB.Exec(`INSERT INTO inventory (id, item_id, location_id, quantity, updated_at) VALUES ('inv-notax','itm-notax','loc_main',10,datetime('now'))`); err != nil {
+		t.Fatalf("seed inventory: %v", err)
+	}
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	ctx := context.Background()
+	pm, err := plugins.Init(ctx, cfg, dbase.DB)
+	if err != nil {
+		t.Fatalf("init plugins: %v", err)
+	}
+	var wg sync.WaitGroup
+	mux, dp := Init(ctx, ctx, cfg, pm, dbase.DB, nil, &wg)
+
+	// A printer that's guaranteed to fail fast (unopenable device path, no
+	// network dial) so the async goroutine's effect — a print_failed audit
+	// row — is deterministic, same technique as
+	// TestAsyncPrintFailureSetsFlagAndSuccessClears above.
+	missing := filepath.Join(t.TempDir(), "no-such-dir")
+	if err := dp.Settings.SetMany(ctx, map[string]string{
+		keyPrinterMode:    "device",
+		keyPrinterDevice:  filepath.Join(missing, "receipt-printer"),
+		keyPrinterKitchen: filepath.Join(missing, "kitchen-printer"),
+	}); err != nil {
+		t.Fatalf("seed failing printer settings: %v", err)
+	}
+
+	// Scan the tax-free item (barcode "NOTAX" -> itm-notax) — a real
+	// completed sale through the real mux, which is what fires
+	// printReceiptAsync/printKitchenAsync from inside pos_api.go's own dp,
+	// not one this test constructed.
+	scanReq := httptest.NewRequest(http.MethodPost, "/api/pos/scan", strings.NewReader("code=NOTAX&qty=1"))
+	scanReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	scanRec := httptest.NewRecorder()
+	mux.ServeHTTP(scanRec, scanReq)
+	if scanRec.Code != http.StatusOK {
+		t.Fatalf("scan failed: code %d body %s", scanRec.Code, scanRec.Body.String())
+	}
+
+	// Tender the basket's ACTUAL total, not the item's bare price: an item
+	// with no tax_code_id still falls back to the config-wide default tax
+	// rate (pos.Service.effectiveTaxRateBP), so the price alone underpays.
+	total := dp.Engine.Basket().Total.Minor()
+	if total <= 0 {
+		t.Fatalf("expected a positive basket total after scanning NOTAX, got %d", total)
+	}
+	tenderReq := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(
+		fmt.Sprintf(`{"payments":[{"method":"cash","amount":%d}]}`, total)))
+	tenderReq.Header.Set("Content-Type", "application/json")
+	tenderRec := httptest.NewRecorder()
+	mux.ServeHTTP(tenderRec, tenderReq)
+	if tenderRec.Code != http.StatusOK {
+		t.Fatalf("tender failed: code %d body %s", tenderRec.Code, tenderRec.Body.String())
+	}
+
+	var receiptNo string
+	if err := dbase.DB.QueryRowContext(ctx, `SELECT receipt_no FROM sales LIMIT 1`).Scan(&receiptNo); err != nil {
+		t.Fatalf("read receipt_no: %v", err)
+	}
+	if receiptNo == "" {
+		t.Fatal("expected a receipt number from the completed tender")
+	}
+
+	// The crux of the test: wait on the Deps INIT RETURNED TO THE CALLER,
+	// not any internal reference. If this were a different *common.Deps than
+	// the one pos_api.go's tender handler used, the goroutines it started
+	// would be untracked here and this Wait would return immediately with
+	// nothing yet written — racing the assertions below exactly the way
+	// ut-docs#513 describes graceful shutdown racing them today.
+	dp.WaitForAsyncWork()
+
+	var failureRows int
+	if err := dbase.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action IN ('print_failed', 'kitchen_print_failed')`,
+		receiptNo,
+	).Scan(&failureRows); err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if failureRows != 2 {
+		t.Fatalf("want 2 failure-audit rows (print_failed + kitchen_print_failed) immediately after "+
+			"WaitForAsyncWork on Init's returned Deps, got %d — the returned *common.Deps is not the same "+
+			"instance the tender handler's async print goroutines track", failureRows)
 	}
 }
 
