@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -102,6 +103,131 @@ func TestKioskIdleResetEndpoint(t *testing.T) {
 	}
 	if d.CurrentState().KioskIdleResetSeconds != 45 {
 		t.Fatalf("kiosk idle reset = %d, want 45", d.CurrentState().KioskIdleResetSeconds)
+	}
+}
+
+// Window mode (ut-docs#608 scaffold) is manager-gated, validated against the
+// closed enum, and round-trips through runtime state / GET /settings.
+func TestWindowModeEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, &cashUser); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier window-mode = %d, want 403", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"bogus"}}, &mgrUser); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid window-mode = %d, want 400", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("valid window-mode = %d, want 204", rec.Code)
+	}
+	if d.CurrentState().WindowMode != "kiosk" {
+		t.Fatalf("WindowMode = %q, want kiosk", d.CurrentState().WindowMode)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyWindowMode); v != "kiosk" {
+		t.Fatalf("stored %s = %q, want kiosk", common.KeyWindowMode, v)
+	}
+
+	// Round-trips via GET /settings: the freshly saved mode renders as the
+	// selected <option>.
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	if !regexp.MustCompile(`value="kiosk"\s+selected`).MatchString(rec.Body.String()) {
+		t.Fatalf("GET /settings body does not show kiosk as selected window mode:\n%s", rec.Body.String())
+	}
+}
+
+// Launch-on-startup (ut-docs#608 scaffold) is manager-gated, boolean, and
+// round-trips through runtime state.
+func TestLaunchOnStartupEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if rec := postForm(mux, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, &cashUser); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier launch-on-startup = %d, want 403", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/launch-on-startup", url.Values{"enabled": {"not-a-bool"}}, &mgrUser); rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed launch-on-startup = %d, want 400", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("enable launch-on-startup = %d, want 204", rec.Code)
+	}
+	if !d.CurrentState().LaunchOnStartup {
+		t.Fatal("LaunchOnStartup = false, want true")
+	}
+	if rec := postForm(mux, "/api/settings/launch-on-startup", url.Values{"enabled": {"false"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("disable launch-on-startup = %d, want 204", rec.Code)
+	}
+	if d.CurrentState().LaunchOnStartup {
+		t.Fatal("LaunchOnStartup = true, want false")
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyLaunchOnStartup); v != "false" {
+		t.Fatalf("stored %s = %q, want false", common.KeyLaunchOnStartup, v)
+	}
+}
+
+// recordingWindowController is a WindowController test double that records
+// whether ExitToOS was invoked, so exit-to-os tests can assert the hook
+// was (or, for rejected auth, was NOT) reached.
+type recordingWindowController struct{ called bool }
+
+func (r *recordingWindowController) ExitToOS() error {
+	r.called = true
+	return nil
+}
+
+// Exit-to-os (ut-docs#608 scaffold) requires a LIVE manager PIN — an existing
+// manager session (isManagerOrAuthOff) is not enough — mirroring the
+// blank-PIN-lockout fix in shifts_api.go's cash-adjustment/payout handlers.
+func TestExitToOSEndpoint(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	wc := &recordingWindowController{}
+	d.WindowCtl = wc
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	makeReq := func(form url.Values) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = auth.WithUser(req, cashUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Blank PIN: 403, hook never called.
+	if rec := makeReq(url.Values{}); rec.Code != http.StatusForbidden {
+		t.Fatalf("blank PIN = %d, want 403", rec.Code)
+	}
+	if wc.called {
+		t.Fatal("blank PIN must not call the hook")
+	}
+
+	// Wrong PIN: 403, hook never called.
+	if rec := makeReq(url.Values{"manager_pin": {"000000"}}); rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong PIN = %d, want 403", rec.Code)
+	}
+	if wc.called {
+		t.Fatal("wrong PIN must not call the hook")
+	}
+
+	// Correct manager PIN: 204, hook called.
+	if rec := makeReq(url.Values{"manager_pin": {"482913"}}); rec.Code != http.StatusNoContent {
+		t.Fatalf("correct manager PIN = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if !wc.called {
+		t.Fatal("correct manager PIN must call the hook")
 	}
 }
 

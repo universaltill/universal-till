@@ -126,6 +126,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"shopType":              shopType,
 			"shopTypes":             setupShopTypes,
 			"sampleCount":           sampleCount,
+			"windowMode":            st.WindowMode,
+			"launchOnStartup":       st.LaunchOnStartup,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -330,6 +332,82 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		d.SetState(st)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Window mode (ut-docs#608 scaffold): stores/surfaces the till's
+	// window/process display mode. This card does NOT apply it to the OS
+	// window — that's #609 (macOS)/#610 (Windows)/#611 (Linux/Pi).
+	mux.HandleFunc("POST /api/settings/window-mode", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		mode := strings.TrimSpace(r.Form.Get("mode"))
+		switch mode {
+		case "fullscreen", "kiosk", "maximized", "normal":
+		default:
+			http.Error(w, "mode must be one of fullscreen, kiosk, maximized, normal", http.StatusBadRequest)
+			return
+		}
+		st := d.CurrentState()
+		st.WindowMode = mode
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Launch-on-startup (ut-docs#608 scaffold): stores/surfaces the till's
+	// autostart-on-boot preference. Not wired to the OS's actual autostart
+	// mechanism yet — same future-card split as window-mode above.
+	mux.HandleFunc("POST /api/settings/launch-on-startup", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		st := d.CurrentState()
+		st.LaunchOnStartup = b
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Exit to OS window (ut-docs#608 scaffold): a manager-session cookie
+	// alone is NOT enough here (per the product owner's #549 comment thread
+	// — "need someone with a right role... need pin") — this requires a LIVE
+	// PIN, checked the same way as shifts_api.go's cash-adjustment/payout
+	// handlers. A blank manager_pin is rejected BEFORE calling
+	// AuthorizeManager, which would otherwise burn a failed-attempt count
+	// shared device-wide with keypad login (5 failures = 30s lockout) — the
+	// exact blank-PIN lockout burn bug fixed there.
+	mux.HandleFunc("POST /api/settings/exit-to-os", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		pin := strings.TrimSpace(r.Form.Get("manager_pin"))
+		if pin == "" {
+			http.Error(w, "manager PIN required", http.StatusForbidden)
+			return
+		}
+		if _, err := d.AuthSvc.AuthorizeManager(r.Context(), pin); err != nil {
+			http.Error(w, "manager PIN required", http.StatusForbidden)
+			return
+		}
+		if err := d.WindowCtl.ExitToOS(); err != nil {
+			http.Error(w, "could not exit to OS", http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 

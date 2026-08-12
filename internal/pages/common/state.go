@@ -27,6 +27,15 @@ const (
 	KeyOSK               = "display.osk"
 	KeyIdleLock          = "auth.idle_lock_minutes"
 	KeyKioskIdleReset    = "kiosk.idle_reset_seconds"
+	// KeyWindowMode is the till's own window/process display mode (ut-docs#608
+	// scaffold): fullscreen|kiosk|maximized|normal. This card only stores and
+	// surfaces the setting — actually applying it to the OS window is
+	// #609 (macOS)/#610 (Windows)/#611 (Linux/Pi).
+	KeyWindowMode = "display.window_mode"
+	// KeyLaunchOnStartup is the till's autostart-on-boot preference
+	// (ut-docs#608 scaffold) — stored and surfaced only; wiring it into the
+	// OS's actual autostart mechanism is a future per-platform card.
+	KeyLaunchOnStartup = "display.launch_on_startup"
 	// KeyReportRetentionMode is the per-shop report_archive retention
 	// destination (ADR-0040): "till" | "cloud" | "both". Till-writable
 	// locally until card 4 lands, at which point write ownership moves to
@@ -49,6 +58,29 @@ const DefaultIdleLockMinutes = 10
 // from DefaultIdleLockMinutes, which revokes a cashier SESSION; the kiosk
 // route is auth-exempt (no session to revoke).
 const DefaultKioskIdleResetSeconds = 60
+
+// DefaultWindowMode is the till's window-mode default (ut-docs#608 scaffold)
+// until a shop owner picks something else.
+const DefaultWindowMode = "normal"
+
+// validWindowModes is the closed enum KeyWindowMode is allowed to hold.
+var validWindowModes = map[string]bool{
+	"fullscreen": true,
+	"kiosk":      true,
+	"maximized":  true,
+	"normal":     true,
+}
+
+// clampWindowMode returns mode unchanged if it's one of the four valid
+// values, else DefaultWindowMode — used both when loading (defense against
+// corrupt/old stored data) and when saving (defense in depth: the HTTP
+// handler already rejects a bad value, but SaveState has other callers).
+func clampWindowMode(mode string) string {
+	if validWindowModes[mode] {
+		return mode
+	}
+	return DefaultWindowMode
+}
 
 // LoadState pulls settings from the DB-backed settings store with cfg defaults.
 func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) RuntimeState {
@@ -110,6 +142,15 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		}
 	}
 
+	st.WindowMode = clampWindowMode(get(KeyWindowMode, DefaultWindowMode))
+
+	st.LaunchOnStartup = false
+	if v := get(KeyLaunchOnStartup, "false"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			st.LaunchOnStartup = b
+		}
+	}
+
 	return st
 }
 
@@ -153,6 +194,8 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		"pos.allow_negative_inventory": strconv.FormatBool(st.AllowNegativeInventory),
 		KeyIdleLock:                    strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:              strconv.Itoa(st.KioskIdleResetSeconds),
+		KeyWindowMode:                  clampWindowMode(st.WindowMode),
+		KeyLaunchOnStartup:             strconv.FormatBool(st.LaunchOnStartup),
 	}
 	if st.UIScale > 0 {
 		kv[KeyUIScale] = strconv.FormatFloat(st.UIScale, 'f', -1, 64)
