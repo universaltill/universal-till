@@ -594,7 +594,9 @@ func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 // the till bkpMaxDBSize+1 bytes of temp writes and the CPU to inflate them
 // before the streamed byte count notices. Proven by counting bytes read off
 // the archive: an entry of incompressible data far larger than the cap must
-// cost only the central-directory/header reads, not its ~2MB body.
+// cost only the central-directory/local-header reads (~1.1KB measured), not
+// the cap's worth of body the streaming copy would otherwise inflate
+// (~97KB measured at the 64KB test cap — and 1GB at the production one).
 func TestParseBkp_OversizedEntryRejectedWithoutStreamingIt(t *testing.T) {
 	// Incompressible, so the entry's compressed body is ~the same size as
 	// its content — that's what makes the byte count discriminating.
@@ -612,11 +614,13 @@ func TestParseBkp_OversizedEntryRejectedWithoutStreamingIt(t *testing.T) {
 	if !errors.Is(err, ErrBkpTooLarge) {
 		t.Fatalf("err = %v, want ErrBkpTooLarge", err)
 	}
-	// zip.NewReader alone scans up to ~64KB at the tail hunting the
-	// end-of-central-directory record, so the bar is set well above that
-	// and still ~8x below the 2MB body it must not have read.
-	if counting.read > 256<<10 {
-		t.Fatalf("read %d bytes off the archive to reject an over-cap entry — it streamed the entry body instead of rejecting on the declared size", counting.read)
+	// Measured: ~1.1KB when the declared size is rejected up front, ~97KB
+	// when the entry is streamed to the cap first. 16KB sits clearly
+	// between the two — well above the directory/header reads (which vary
+	// a little with the temp filenames baked into the fixture) and well
+	// below anything that implies the body was inflated.
+	if counting.read > 16<<10 {
+		t.Fatalf("read %d bytes off the archive to reject an over-cap entry — it inflated the entry up to the cap instead of rejecting on the declared size", counting.read)
 	}
 }
 
