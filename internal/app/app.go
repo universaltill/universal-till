@@ -12,6 +12,7 @@ package app
 import (
 	"context"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -26,6 +27,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -104,6 +106,17 @@ func Run(ctx context.Context) error {
 	// to actually exit before its deferred database.Close() above runs.
 	// Without this, "Run returned" didn't mean "nothing is still writing to
 	// the data dir" (found 2026-07-30 via a mobile-shutdown CI flake).
+	// deps.AsyncWork (pages.Init's second return value) is joined here too,
+	// via its own drainBackgroundServices call below (ut-docs#513): it's a
+	// SEPARATE WaitGroup tracking best-effort goroutines fired AFTER an HTTP
+	// handler already responded — printReceiptAsync/printKitchenAsync
+	// (ut-docs#425) and the invoice-issue print goroutine — which keep
+	// touching Db/Settings on their own schedule and are never added to wg
+	// itself (they aren't background *services* wg tracks, they're
+	// per-request fire-and-forget work). Without draining it too, the same
+	// "Run returned but something is still writing to the data dir" class of
+	// bug wg's own comment above describes remains open for this second,
+	// disconnected goroutine population.
 	// The two goroutine classes that used to be exempt are covered too since
 	// ut-docs#380: internal/plugins.Supervisor's monitorProcess goroutines are
 	// joined by Supervisor.Shutdown itself (bounded by its ctx, called from
@@ -143,10 +156,20 @@ func Run(ctx context.Context) error {
 	// Manager.Close/WasmRuntime.Close, not assumed).
 	var wg sync.WaitGroup
 	var pluginManager *plugins.Manager
+	// deps is pages.Init's second return value, declared here (not := at its
+	// assignment below) for the same reason as pluginManager above: this
+	// closure references it before it exists yet. Init runs late in Run
+	// (after enroll/plugins/marketplace setup) — an early return before that
+	// point leaves deps nil, so the drain below is guarded rather than
+	// unconditionally taking &deps.AsyncWork against a nil *common.Deps.
+	var deps *common.Deps
 	bgCtx, stopBg := context.WithCancel(ctx)
 	defer func() {
 		stopBg()
-		drainBackgroundServices(&wg, log, backgroundDrainTimeout)
+		drainBackgroundServices(&wg, log, backgroundDrainTimeout, "background services")
+		if deps != nil {
+			drainBackgroundServices(&deps.AsyncWork, log, backgroundDrainTimeout, "async print/kitchen/invoice work")
+		}
 		closeCtx, cancel := context.WithTimeout(context.Background(), wasmCloseTimeout)
 		defer cancel()
 		pluginManager.Close(closeCtx)
@@ -187,7 +210,8 @@ func Run(ctx context.Context) error {
 	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discovery.RoleCheckFromSettings(discoverySettings), listenPort(cfg.ListenAddr))
 	discoveryAdvertiser.Start(bgCtx, &wg)
 
-	mux := pages.Init(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
+	var mux http.Handler
+	mux, deps = pages.Init(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
 
 	supervisor := plugins.NewSupervisor(database.DB)
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
@@ -220,7 +244,13 @@ const wasmCloseTimeout = 5 * time.Second
 // wg.Wait() goroutine above is intentionally leaked — harmless (it only
 // blocks on Wait, touching nothing) — and exits whenever the wedged service
 // eventually does.
-func drainBackgroundServices(wg *sync.WaitGroup, log *logging.Logger, timeout time.Duration) {
+//
+// label identifies which WaitGroup this call is draining in the timeout log
+// line — Run.go joins two independent WaitGroups here (the background-
+// services wg and Deps.AsyncWork, ut-docs#513), and a bare "background
+// services still running" message on the second call would misname exactly
+// the thing an operator needs to know when triaging a stuck shutdown.
+func drainBackgroundServices(wg *sync.WaitGroup, log *logging.Logger, timeout time.Duration, label string) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -229,7 +259,7 @@ func drainBackgroundServices(wg *sync.WaitGroup, log *logging.Logger, timeout ti
 	select {
 	case <-done:
 	case <-time.After(timeout):
-		log.Errorf("shutdown: background services still running %s after cancel — closing database anyway", timeout)
+		log.Errorf("shutdown: %s still running %s after cancel — closing database anyway", label, timeout)
 	}
 }
 

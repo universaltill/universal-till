@@ -23,7 +23,31 @@ func TestDrainBackgroundServices_ReturnsAsSoonAsWgIsDone(t *testing.T) {
 	}()
 
 	start := time.Now()
-	drainBackgroundServices(&wg, logging.L(), 5*time.Second)
+	drainBackgroundServices(&wg, logging.L(), 5*time.Second, "background services")
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("drainBackgroundServices took %s, want well under the 5s timeout", elapsed)
+	}
+}
+
+// Run joins a SECOND, independent WaitGroup the same way (deps.AsyncWork,
+// ut-docs#513) — this proves drainBackgroundServices behaves identically for
+// any caller, not just the wg it happens to be named after, with a distinct
+// label plumbed through to the timeout log line. Deliberately as thin as
+// TestDrainBackgroundServices_ReturnsAsSoonAsWgIsDone above: the drain
+// mechanism itself (return-on-done, timeout-and-log) is already covered by
+// that test and TestDrainBackgroundServices_TimesOutAndLogsWhenWgNeverCompletes
+// below — this only guards that a second, differently-labelled caller works
+// the same way, which is what ut-docs#513 actually adds.
+func TestDrainBackgroundServices_WaitsForAsyncWorkLikeAnyOtherWaitGroup(t *testing.T) {
+	var asyncWork sync.WaitGroup
+	asyncWork.Add(1)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		asyncWork.Done()
+	}()
+
+	start := time.Now()
+	drainBackgroundServices(&asyncWork, logging.L(), 5*time.Second, "async print/kitchen/invoice work")
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("drainBackgroundServices took %s, want well under the 5s timeout", elapsed)
 	}
@@ -39,7 +63,7 @@ func TestDrainBackgroundServices_TimesOutAndLogsWhenWgNeverCompletes(t *testing.
 	t.Cleanup(wg.Done) // let the real goroutine this spawns eventually finish after the test
 
 	start := time.Now()
-	drainBackgroundServices(&wg, logging.L(), 100*time.Millisecond)
+	drainBackgroundServices(&wg, logging.L(), 100*time.Millisecond, "background services")
 	elapsed := time.Since(start)
 	if elapsed < 100*time.Millisecond {
 		t.Fatalf("drainBackgroundServices returned after %s, before its own 100ms timeout elapsed", elapsed)
