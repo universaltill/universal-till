@@ -428,6 +428,23 @@ func installTaxDePlugin(t *testing.T, db *sql.DB) {
 	}
 }
 
+// installTaxDePluginDisabled seeds ut-plugin-tax-de installed but disabled
+// (is_active = 0) — the ut-docs#531 case: a merchant who imports before
+// enabling the plugin, as opposed to never installing it at all.
+func installTaxDePluginDisabled(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+		 VALUES ('com.universaltill.tax-de', '1.0.0', 'German Tax', 'wasm', 'plugin.wasm', 'https://example.invalid/tax-de.zip', 'deadbeef', '0.1.0', '1', datetime('now'))`); err != nil {
+		t.Fatalf("seed tax-de catalog row: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active)
+		 VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 'plugin.wasm', 'wasm', 0)`); err != nil {
+		t.Fatalf("seed disabled tax-de plugin: %v", err)
+	}
+}
+
 // itemTaxPair reads the (rate, takeaway) pair behind one imported item's tax
 // code. takeaway is nil when takeaway_rate_basis_points is NULL.
 func itemTaxPair(t *testing.T, db *sql.DB, sku string) (codeID string, rateBP int, takeawayBP *int) {
@@ -606,6 +623,59 @@ func TestImport_TaxOverridesSkippedWhenPluginNotInstalled(t *testing.T) {
 	audit := lastImportAudit(t, dp.Db)
 	if got, ok := audit["failed"].(float64); !ok || got != 0 {
 		t.Fatalf("audit failed = %v, want 0 — a missing tax plugin is not a row failure", audit["failed"])
+	}
+}
+
+// ut-docs#531: installed-but-disabled must warn distinctly from
+// not-installed-at-all (which stays silent, per TestImport_
+// TaxOverridesSkippedWhenPluginNotInstalled above) — a merchant who
+// imports before enabling the plugin needs to know the overrides step
+// didn't run, not just see nothing.
+func TestImport_TaxOverridesWarnsDistinctlyWhenPluginDisabled(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	installTaxDePluginDisabled(t, dp.Db)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, cafeTaxCSV, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	// Tax codes still land correctly — only the plugin-setting step is affected.
+	_, latteRate, latteTA := itemTaxPair(t, dp.Db, "T1")
+	if latteRate != 1900 || latteTA == nil || *latteTA != 700 {
+		t.Fatalf("Latte pair = (%d,%v), want (1900,&700) even with plugin disabled", latteRate, latteTA)
+	}
+	var n int
+	if err := dp.Db.QueryRow(
+		`SELECT COUNT(*) FROM plugin_settings WHERE key = 'takeaway_rate_overrides'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("plugin disabled: takeaway_rate_overrides must not be written, got %d rows", n)
+	}
+	// The distinct warning fires, not the generic "could not be saved" one
+	// (that's reserved for an actual write failure).
+	if !strings.Contains(resp, "installed but disabled") {
+		t.Fatalf("summary should warn the plugin is installed but disabled, got: %s", resp)
+	}
+	if strings.Contains(resp, "could not be saved") {
+		t.Fatalf("summary should use the disabled-plugin warning, not the generic failure one: %s", resp)
+	}
+	audit := lastImportAudit(t, dp.Db)
+	if got, ok := audit["failed"].(float64); !ok || got != 0 {
+		t.Fatalf("audit failed = %v, want 0 — a disabled tax plugin is not a row failure", audit["failed"])
+	}
+	if got, ok := audit["takeaway_overrides_plugin_disabled"].(bool); !ok || !got {
+		t.Fatalf("audit takeaway_overrides_plugin_disabled = %v, want true", audit["takeaway_overrides_plugin_disabled"])
 	}
 }
 
