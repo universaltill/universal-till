@@ -77,6 +77,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		autoUpdateEnabled, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateEnabled)
 		autoUpdateTime, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateTime)
+		// Sample-data note (ut-docs#539): best-effort — a schema-less test DB
+		// or a query error just renders the page without the note, same
+		// posture as payMethods above.
+		sampleCount, _ := data.NewDemoSeedRepo(d.Db).SampleItemCount(r.Context())
+		shopType, _, _ := d.Settings.Get(r.Context(), common.KeyShopType)
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -118,6 +123,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"IsPrimaryTill":         d.SyncPrimaryURL(r.Context()) == "",
 			"reportRetentionMode":   reportRetentionMode,
 			"reportArchiveCoverage": reportArchiveCoverage,
+			"shopType":              shopType,
+			"shopTypes":             setupShopTypes,
+			"sampleCount":           sampleCount,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -406,6 +414,50 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Shop type (ut-docs#539, taxonomy per ADR-0026) — editable after setup.
+	// Manager-only, same gate as the other store-level settings.
+	mux.HandleFunc("POST /api/settings/shop-type", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		v := strings.TrimSpace(r.Form.Get("shop_type"))
+		if v != "" && !isValidShopType(v) {
+			http.Error(w, "unknown shop type", http.StatusBadRequest)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Remove the opt-in sample catalogue (ut-docs#539). Only untouched demo
+	// items go (never sold, never stock-adjusted — same rule migration 036
+	// applies on upgrade); the response reports removed vs kept. Answers
+	// 200 with the outcome in the fragment — it's an hx-swap target, and
+	// HTMX drops non-2xx bodies (see the enrol handlers above).
+	mux.HandleFunc("POST /api/settings/remove-demo-catalogue", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if !isManagerOrAuthOff(r) {
+			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+			return
+		}
+		removed, kept, err := data.NewDemoSeedRepo(d.Db).RemoveDemoCatalogue(r.Context())
+		if err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		msg := fmt.Sprintf(httpx.T(locale, "settings.data.demo_removed"), removed)
+		if kept > 0 {
+			msg += " " + fmt.Sprintf(httpx.T(locale, "settings.data.demo_kept"), kept)
+		}
+		fmt.Fprintf(w, `<span>✓ %s</span>`, html.EscapeString(msg))
 	})
 
 	// This till's own display name (ut-docs#396) — distinct from a replica's

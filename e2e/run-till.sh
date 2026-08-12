@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Boots a throwaway till for the e2e suite (fresh DB each run, demo catalog
-# seeded by the migrations, auth off so specs drive the UI directly).
+# seeded explicitly below — since ut-docs#539 the migrations no longer seed
+# it — auth off so specs drive the UI directly).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA_DIR="$(mktemp -d)"
@@ -13,6 +14,10 @@ cd "$ROOT"
 # the DB directly (internal/db.Open), not through config/paths, so it's
 # unaffected by the CWD concern below.
 go run ./e2e/seed_faq
+
+# Restores the demo catalogue the specs scan (ut-docs#539 made it opt-in;
+# this runs the same seed the setup wizard's checkbox runs).
+go run ./e2e/seed_demo
 
 # Build once, then run the BINARY (not `go run`) from INSIDE the fresh data
 # dir, not the repo root. `go run` (even with `-C`) ties the process's
