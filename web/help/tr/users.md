@@ -17,3 +17,4 @@ PIN girişli ayrı kasiyer ve yönetici hesapları; kimin ne sattığını ve ç
 2. Herkes kasada kendi PIN'iyle giriş yapar.
 3. Kişi başına çekmece sayımı için vardiyaları açıp kapatın.
 4. İlk kurulum sihirbazının dükkân adı adımı bu kasaya ne ad verileceğini de sorar (tek dokunuşla kabul edebilmeniz için "Kasa 1" olarak önceden doldurulmuştur) — birden fazla kasanız olduğunda işe yarar ve daha sonra Ayarlar'dan değiştirilebilir.
+5. Sihirbaz ayrıca dükkânınızın türünü (kafe, perakende, hizmet, konaklama, pazar tezgâhı veya diğer) ve kasayı denemek için örnek ürünlerden oluşan küçük bir başlangıç kataloğu yüklenip yüklenmeyeceğini sorar. İkisi de isteğe bağlıdır: örnek ürünler hangi işletme türünü seçerseniz seçin aynı genel settir, Katalog'da ÖRNEK rozetiyle işaretlenir ve Ayarlar → Veriler'den istediğiniz zaman kaldırılabilir.

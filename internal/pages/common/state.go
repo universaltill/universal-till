@@ -19,10 +19,14 @@ const (
 	KeyTaxInclusive      = "store.tax_inclusive"
 	KeyTaxRate           = "store.tax_rate"
 	KeyServiceChargeRate = "store.service_charge_rate_pct"
-	KeyUIScale           = "display.ui_scale"
-	KeyOSK               = "display.osk"
-	KeyIdleLock          = "auth.idle_lock_minutes"
-	KeyKioskIdleReset    = "kiosk.idle_reset_seconds"
+	// KeyShopType holds the ADR-0026 shop-type taxonomy value chosen in the
+	// setup wizard (cafe|retail|service|hospitality|market_stall|other) —
+	// ut-docs#539. Optional: empty/missing is fine.
+	KeyShopType       = "shop.type"
+	KeyUIScale        = "display.ui_scale"
+	KeyOSK            = "display.osk"
+	KeyIdleLock       = "auth.idle_lock_minutes"
+	KeyKioskIdleReset = "kiosk.idle_reset_seconds"
 )
 
 // DefaultIdleLockMinutes locks an unattended till after 10 minutes unless

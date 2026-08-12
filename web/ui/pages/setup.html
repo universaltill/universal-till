@@ -23,7 +23,7 @@
     <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}">
-    <main class="setup-card" x-data="{ step: {{ if .errKey }}4{{ else }}1{{ end }}, last: 5,
+    <main class="setup-card" x-data="{ step: {{ if .errKey }}5{{ else }}1{{ end }}, last: 6,
                                        country: '', currency: '', tax: '', taxinc: 'on' }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
@@ -82,8 +82,32 @@
           </div>
         </section>
 
-        <!-- Step 4 · admin PIN -->
+        <!-- Step 4 · shop type + sample-data opt-in (ut-docs#539; taxonomy
+             per ADR-0026 — the same six options the marketing site's
+             solutions pages use, not a new list). The starter catalogue is
+             the same generic one whichever type is chosen. -->
         <section x-show="step === 4" x-cloak>
+          <h1>{{ T "setup.shop_type.title" }}</h1>
+          <p class="muted">{{ T "setup.shop_type.hint" }}</p>
+          <select name="shop_type">
+            <option value="">{{ T "setup.shop_type.choose" }}</option>
+            {{ range .shopTypes }}
+            <option value="{{ . }}">{{ T (printf "setup.shop_type.%s" .) }}</option>
+            {{ end }}
+          </select>
+          <label class="set-row" style="margin-top:.6rem">
+            <input type="checkbox" name="demo_data">
+            {{ T "setup.demo_data.label" }}
+          </label>
+          <p class="muted">{{ T "setup.demo_data.hint" }}</p>
+          <div class="setup-nav">
+            <button type="button" class="btn secondary" @click="step = 3">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 5">{{ T "setup.next" }}</button>
+          </div>
+        </section>
+
+        <!-- Step 5 · admin PIN -->
+        <section x-show="step === 5" x-cloak>
           <h1>{{ T "auth.setup.title" }}</h1>
           <p class="muted">{{ T "auth.setup.hint" }}</p>
           <label>{{ T "auth.setup.pin" }}
@@ -93,17 +117,17 @@
             <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
           </label>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 3">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 5">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 6">{{ T "setup.next" }}</button>
           </div>
         </section>
 
-        <!-- Step 5 · done -->
-        <section x-show="step === 5" x-cloak>
+        <!-- Step 6 · done -->
+        <section x-show="step === 6" x-cloak>
           <h1>{{ T "setup.done.title" }}</h1>
           <p class="muted">{{ T "setup.done.hint" }}</p>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
+            <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
             <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>
           </div>
         </section>
