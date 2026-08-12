@@ -58,6 +58,11 @@ type Deps struct {
 	CatalogRepo *marketplace.CatalogRepository
 	AuthSvc     *auth.Service
 	AI          *ai.Service
+	// WindowCtl is the host-OS hook for the till's own window/process
+	// (ut-docs#608 scaffold) — exiting kiosk/fullscreen to the OS desktop,
+	// and (later) actually applying a window-mode change. NoopWindowController
+	// until #609/#610/#611 wire a real per-platform implementation.
+	WindowCtl WindowController
 
 	// SyncPushNow, when non-nil, nudges the replica journal-push loop
 	// (pages.StartSyncPush) to run one push attempt immediately instead of
@@ -137,6 +142,8 @@ type RuntimeState struct {
 	IdleLockMinutes              int     // idle auto-lock window in minutes (0 = off)
 	OSKMode                      string  // on-screen keyboard: auto|on|off ("" = auto)
 	KioskIdleResetSeconds        int     // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
+	WindowMode                   string  // ut-docs#608 scaffold: fullscreen|kiosk|maximized|normal
+	LaunchOnStartup              bool    // ut-docs#608 scaffold: launch this till on OS boot
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.

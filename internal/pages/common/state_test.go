@@ -76,6 +76,12 @@ func TestLoadState_DefaultsWhenStoreEmpty(t *testing.T) {
 	if st.UIScale != 0 {
 		t.Errorf("UIScale = %v, want 0 (unset) when never configured", st.UIScale)
 	}
+	if st.WindowMode != DefaultWindowMode {
+		t.Errorf("WindowMode = %q, want default %q", st.WindowMode, DefaultWindowMode)
+	}
+	if st.LaunchOnStartup {
+		t.Errorf("LaunchOnStartup = true, want default false")
+	}
 }
 
 func TestLoadState_OverridesFromStore(t *testing.T) {
@@ -93,6 +99,8 @@ func TestLoadState_OverridesFromStore(t *testing.T) {
 		KeyIdleLock:                    "15",
 		KeyOSK:                         "on",
 		KeyKioskIdleReset:              "120",
+		KeyWindowMode:                  "kiosk",
+		KeyLaunchOnStartup:             "true",
 	} {
 		if err := store.Set(ctx, k, v); err != nil {
 			t.Fatalf("seed %s: %v", k, err)
@@ -133,6 +141,29 @@ func TestLoadState_OverridesFromStore(t *testing.T) {
 	}
 	if st.KioskIdleResetSeconds != 120 {
 		t.Errorf("KioskIdleResetSeconds = %d, want 120", st.KioskIdleResetSeconds)
+	}
+	if st.WindowMode != "kiosk" {
+		t.Errorf("WindowMode = %q, want %q", st.WindowMode, "kiosk")
+	}
+	if !st.LaunchOnStartup {
+		t.Errorf("LaunchOnStartup = false, want true")
+	}
+}
+
+// A corrupt/old/unrecognised stored WindowMode value must not be trusted
+// outright — LoadState falls back to DefaultWindowMode rather than
+// propagating an invalid enum value into runtime state.
+func TestLoadState_InvalidStoredWindowModeFallsBackToDefault(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	if err := store.Set(ctx, KeyWindowMode, "not-a-real-mode"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	st := LoadState(ctx, store, baseCfg())
+
+	if st.WindowMode != DefaultWindowMode {
+		t.Errorf("WindowMode = %q from invalid stored value, want default %q", st.WindowMode, DefaultWindowMode)
 	}
 }
 
@@ -333,6 +364,8 @@ func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 		IdleLockMinutes:        20,
 		OSKMode:                "off",
 		KioskIdleResetSeconds:  45,
+		WindowMode:             "fullscreen",
+		LaunchOnStartup:        true,
 	}
 
 	if err := SaveState(ctx, store, want); err != nil {
@@ -421,6 +454,21 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 	}
 	if rate != "20" {
 		t.Fatalf("TaxRatePct = %q after a failed save, want seeded %q", rate, "20")
+	}
+}
+
+// SaveState clamps an invalid WindowMode to the default before writing —
+// defense in depth for callers other than the HTTP handler (which already
+// validates the enum itself).
+func TestSaveState_ClampsInvalidWindowMode(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	if err := SaveState(ctx, store, RuntimeState{WindowMode: "not-a-real-mode"}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if raw, _, _ := store.Get(ctx, KeyWindowMode); raw != DefaultWindowMode {
+		t.Fatalf("stored %s = %q, want clamped default %q", KeyWindowMode, raw, DefaultWindowMode)
 	}
 }
 
