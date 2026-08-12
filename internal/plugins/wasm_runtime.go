@@ -51,6 +51,7 @@ type WasmRuntime struct {
 	timeout    time.Duration
 	netTimeout time.Duration   // wider deadline for plugins holding net:*
 	hasNet     map[string]bool // plugin id → granted net:* permission
+	hasTCP     map[string]bool // plugin id → granted tcp:* permission (raw device transport)
 	db         *sql.DB         // for host functions; set by Sync
 	baseDir    string
 	unsubGen   int // bumped per sync so stale handlers no-op
@@ -79,8 +80,8 @@ func isExportClassEvent(eventType string) bool {
 func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 	w.mu.Lock()
 	timeout := w.timeout
-	if w.hasNet[pluginID] {
-		timeout = w.netTimeout // room for the http_request host call
+	if w.hasNet[pluginID] || w.hasTCP[pluginID] {
+		timeout = w.netTimeout // room for the http_request / tcp_* host calls
 	}
 	w.mu.Unlock()
 	if isExportClassEvent(eventType) && timeout < exportTimeout {
@@ -122,6 +123,7 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 		timeout:    2 * time.Second,
 		netTimeout: 10 * time.Second,
 		hasNet:     map[string]bool{},
+		hasTCP:     map[string]bool{},
 		baseDir:    baseDir,
 	}
 }
@@ -157,10 +159,14 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			delete(w.modules, id)
 			delete(w.versions, id)
 			delete(w.hasNet, id)
+			delete(w.hasTCP, id)
+			// A dropped plugin must never leak an open device socket.
+			tcpConns.CloseAll(id)
 		}
 	}
 	for id := range active {
 		w.hasNet[id] = pluginHasNetPermission(ctx, db, id)
+		w.hasTCP[id] = pluginHasTCPPermission(ctx, db, id)
 	}
 	w.mu.Unlock()
 
