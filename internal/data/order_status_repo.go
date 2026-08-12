@@ -30,12 +30,17 @@ type OrderStatusEvent struct {
 
 // OrderListEntry is one row of the recent-orders list: current status (” =
 // tracking never touched this sale) plus enough context to render a line.
+// The print-failed fields (ut-docs#517a) are ” unless the MOST RECENT
+// kitchen/receipt print attempt failed, in which case they carry its
+// RFC3339 timestamp.
 type OrderListEntry struct {
-	ReceiptNo       string
-	OrderType       string
-	Status          string
-	StatusUpdatedAt string
-	CreatedAt       string
+	ReceiptNo            string
+	OrderType            string
+	Status               string
+	StatusUpdatedAt      string
+	CreatedAt            string
+	KitchenPrintFailedAt string
+	ReceiptPrintFailedAt string
 }
 
 // ApplyOrderStatus is the guarded status write: a transactional
@@ -83,6 +88,29 @@ VALUES (?, ?, ?, ?, ?)
 		return false, true, fmt.Errorf("apply order status: commit: %w", err)
 	}
 	return true, true, nil
+}
+
+// SetKitchenPrintFailed records (at = RFC3339 timestamp) or clears (at = "")
+// the kitchen-print failure flag for a receipt (ut-docs#517a). Called from
+// both the async auto-print path and the manual reprint endpoint, so a later
+// successful retry clears a previously-set flag rather than leaving it
+// stuck. A single-column, single-row write with no read-compare-write (the
+// order-status ladder's reason for a transaction doesn't apply here).
+func (r *POSRepo) SetKitchenPrintFailed(ctx context.Context, receiptNo, at string) error {
+	if _, err := r.db.ExecContext(ctx, `UPDATE sales SET kitchen_print_failed_at = ? WHERE receipt_no = ?`,
+		nullIfEmpty(at), receiptNo); err != nil {
+		return fmt.Errorf("set kitchen print failed: %w", err)
+	}
+	return nil
+}
+
+// SetReceiptPrintFailed is the same for the receipt-print path.
+func (r *POSRepo) SetReceiptPrintFailed(ctx context.Context, receiptNo, at string) error {
+	if _, err := r.db.ExecContext(ctx, `UPDATE sales SET receipt_print_failed_at = ? WHERE receipt_no = ?`,
+		nullIfEmpty(at), receiptNo); err != nil {
+		return fmt.Errorf("set receipt print failed: %w", err)
+	}
+	return nil
 }
 
 // ListOrderStatusEvents returns a receipt's full status history, oldest
@@ -146,7 +174,8 @@ func (r *POSRepo) ListRecentOrders(ctx context.Context, limit int) ([]OrderListE
 		limit = 50
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT receipt_no, COALESCE(order_type, ''), order_status, COALESCE(order_status_updated_at, ''), created_at
+SELECT receipt_no, COALESCE(order_type, ''), order_status, COALESCE(order_status_updated_at, ''), created_at,
+       COALESCE(kitchen_print_failed_at, ''), COALESCE(receipt_print_failed_at, '')
 FROM sales
 WHERE sale_type = 'sale' AND status = 'completed'
 ORDER BY created_at DESC
@@ -159,7 +188,7 @@ LIMIT ?
 	var out []OrderListEntry
 	for rows.Next() {
 		var e OrderListEntry
-		if err := rows.Scan(&e.ReceiptNo, &e.OrderType, &e.Status, &e.StatusUpdatedAt, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ReceiptNo, &e.OrderType, &e.Status, &e.StatusUpdatedAt, &e.CreatedAt, &e.KitchenPrintFailedAt, &e.ReceiptPrintFailedAt); err != nil {
 			return nil, fmt.Errorf("scan recent order: %w", err)
 		}
 		out = append(out, e)

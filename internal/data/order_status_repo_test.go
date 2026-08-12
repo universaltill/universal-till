@@ -175,6 +175,59 @@ func TestLatestOrderStatus_ReturnsNewestEventWithActorName(t *testing.T) {
 	}
 }
 
+// Print-failure flags (ut-docs#517a): SetKitchenPrintFailed /
+// SetReceiptPrintFailed round-trip through ListRecentOrders — set a
+// timestamp and the list shows it; clear with at="" and it reads back
+// empty (SQL NULL, so untouched shops stay unaffected).
+func TestSetPrintFailedFlags_RoundTripAndClear(t *testing.T) {
+	d := openOrderStatusDB(t, "order_status_print_failed.db")
+	seedOrderStatusSale(t, d, "sale-1", "R-0020")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	find := func(receiptNo string) OrderListEntry {
+		t.Helper()
+		orders, err := repo.ListRecentOrders(ctx, 10)
+		if err != nil {
+			t.Fatalf("ListRecentOrders: %v", err)
+		}
+		for _, o := range orders {
+			if o.ReceiptNo == receiptNo {
+				return o
+			}
+		}
+		t.Fatalf("receipt %s not in list: %+v", receiptNo, orders)
+		return OrderListEntry{}
+	}
+
+	// A fresh sale carries no failure flags.
+	if e := find("R-0020"); e.KitchenPrintFailedAt != "" || e.ReceiptPrintFailedAt != "" {
+		t.Fatalf("fresh sale must have empty flags, got %+v", e)
+	}
+
+	if err := repo.SetKitchenPrintFailed(ctx, "R-0020", "2026-08-12T10:00:00Z"); err != nil {
+		t.Fatalf("SetKitchenPrintFailed: %v", err)
+	}
+	if err := repo.SetReceiptPrintFailed(ctx, "R-0020", "2026-08-12T10:01:00Z"); err != nil {
+		t.Fatalf("SetReceiptPrintFailed: %v", err)
+	}
+	if e := find("R-0020"); e.KitchenPrintFailedAt != "2026-08-12T10:00:00Z" || e.ReceiptPrintFailedAt != "2026-08-12T10:01:00Z" {
+		t.Fatalf("flags not round-tripped, got %+v", e)
+	}
+
+	// at="" clears back to NULL — a later successful print must un-stick
+	// the warning, not leave it forever.
+	if err := repo.SetKitchenPrintFailed(ctx, "R-0020", ""); err != nil {
+		t.Fatalf("clear SetKitchenPrintFailed: %v", err)
+	}
+	if err := repo.SetReceiptPrintFailed(ctx, "R-0020", ""); err != nil {
+		t.Fatalf("clear SetReceiptPrintFailed: %v", err)
+	}
+	if e := find("R-0020"); e.KitchenPrintFailedAt != "" || e.ReceiptPrintFailedAt != "" {
+		t.Fatalf("flags must clear to empty, got %+v", e)
+	}
+}
+
 // ListRecentOrders feeds the minimal one-tap list: newest first, includes
 // untracked sales (status ""), excludes returns (kitchen never sees those).
 func TestListRecentOrders(t *testing.T) {

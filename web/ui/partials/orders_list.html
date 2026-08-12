@@ -1,4 +1,7 @@
-<div id="orders">
+{{/* Root re-arms the 15s poll on every swap (ut-docs#517a) — same pattern
+     as pending_pairings.html: the outerHTML swap replaces the element that
+     carried the trigger, so the trigger must travel with the fragment. */}}
+<div id="orders" hx-get="/ui/orders" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML">
   {{ if not .Orders }}
   <p class="muted">{{ T "orders.empty" }}</p>
   {{ else }}
@@ -8,6 +11,11 @@
         <th>{{ T "orders.col.receipt" }}</th>
         <th>{{ T "orders.col.time" }}</th>
         <th>{{ T "orders.col.status" }}</th>
+        {{/* Print-failure warnings (ut-docs#517a). Its own cell, not part of
+             the status cell: the one-tap buttons swap the status cell's
+             innerHTML, which would wipe an inlined warning until the next
+             poll. Header deliberately empty — the ⚠ text explains itself. */}}
+        <th></th>
         <th>{{ T "orders.col.actions" }}</th>
       </tr>
     </thead>
@@ -19,6 +27,13 @@
         <td id="order-status-{{ .ReceiptNo }}">
           <span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span>
           {{ if .StatusUpdatedAt }}<span class="muted">{{ .StatusUpdatedAt }}</span>{{ end }}
+        </td>
+        {{/* One warning per LINE (div, not adjacent spans): a sale can carry
+             both, and inline they run together into a single unreadable
+             "⚠ Kitchen print failed ⚠ Receipt print failed" wrap. */}}
+        <td>
+          {{ if .KitchenPrintFailed }}<div class="muted" title="{{ T "orders.print.kitchen_failed" }}">⚠ {{ T "orders.print.kitchen_failed" }}</div>{{ end }}
+          {{ if .ReceiptPrintFailed }}<div class="muted" title="{{ T "orders.print.receipt_failed" }}">⚠ {{ T "orders.print.receipt_failed" }}</div>{{ end }}
         </td>
         <td>
           {{/* One-tap buttons. A tap that would move the status backward is a
