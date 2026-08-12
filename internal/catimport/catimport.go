@@ -107,7 +107,7 @@ type ImportItem struct {
 
 // Result is a parsed file.
 type Result struct {
-	Format string // loyverse | square | generic | generic-erp
+	Format string // loyverse | square | sumup | generic | generic-erp
 	Items  []ImportItem
 }
 
@@ -128,7 +128,10 @@ var columnSynonyms = map[string][]string{
 	// Tax columns (ut-docs#512): optional, ignored when absent so existing
 	// Loyverse/Square exports are unchanged. "takeaway tax" carries the
 	// off-premises rate where the source distinguishes one (§12 UStG).
-	"tax":          {"tax", "tax %", "tax rate", "vat", "vat %", "vat rate"},
+	// "tax rate (%)" is SumUp's own exact header text (ut-docs#581) — its
+	// parenthesised suffix doesn't match the "tax rate [" bracket-suffix
+	// prefix rule below, so it needs its own literal entry.
+	"tax":          {"tax", "tax %", "tax rate", "tax rate (%)", "vat", "vat %", "vat rate"},
 	"takeaway_tax": {"takeaway tax", "takeaway tax %", "takeaway vat", "takeaway rate", "takeaway tax rate"},
 	// square-specific extras used only for detection / variation naming
 	"variation": {"variation name"},
@@ -162,14 +165,41 @@ func DetectFormat(headers []string) string {
 		return "loyverse"
 	case strings.Contains(joined, "token") && strings.Contains(joined, "variation name"):
 		return "square"
+	case strings.Contains(joined, "set up different prices and vat for takeaway"):
+		// SumUp's items-export (ut-docs#581): this takeaway-VAT-toggle column
+		// name is effectively unique to SumUp.
+		return "sumup"
 	case hasColumn(headers, "department"):
 		// A department axis marks an enterprise/ERP master export (Ansar &c.)
 		// rather than a plain corner-shop catalog. Broad synonym coverage
 		// (stock, department, qty) still flows through the shared parser.
+		// Checked before the sumup fallback below: an ERP master's own ID
+		// columns (e.g. "Item Identifier") must never be mistaken for
+		// SumUp's "Item id"/"Variant id" (ut-docs#581 review finding M1).
 		return "generic-erp"
+	case hasExactHeader(headers, "item id") && hasExactHeader(headers, "variant id"):
+		// Fallback SumUp signature for an export missing the takeaway-toggle
+		// column above (that column is itself optional in a merchant's SumUp
+		// account settings). Exact per-header match, not a substring Contains
+		// on the joined string — "Item Identifier"/"Parent Item Id" must not
+		// collide with this (ut-docs#581 review finding M1).
+		return "sumup"
 	default:
 		return "generic"
 	}
+}
+
+// hasExactHeader reports whether any header, trimmed/lowercased (and with a
+// leading BOM stripped), equals name exactly — stricter than hasColumn's
+// synonym+bracket-suffix matching, for detection signatures that must not
+// substring-match a longer, unrelated header.
+func hasExactHeader(headers []string, name string) bool {
+	for _, h := range headers {
+		if strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF"))) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // hasColumn reports whether the header row carries a column mapping to field.
