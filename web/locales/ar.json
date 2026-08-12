@@ -1192,6 +1192,8 @@
   "orders.btn.cancel": "إلغاء الطلب",
   "orders.err.bad_status": "حالة غير معروفة",
   "orders.err.not_found": "الطلب غير موجود",
+  "orders.print.kitchen_failed": "فشلت طباعة تذكرة المطبخ",
+  "orders.print.receipt_failed": "فشلت طباعة الإيصال",
   "osk.toggle": "لوحة المفاتيح",
   "basket.count_label": "عدد العناصر في السلة",
   "notice.dismiss": "إغلاق",

@@ -266,23 +266,57 @@ func kitchenPrintingEnabled(ctx context.Context, d *common.Deps) bool {
 }
 
 // printKitchenAsync sends kitchen tickets without ever blocking the caller:
-// fired as a goroutine, a missing printer is a no-op and failures are
-// audited (per target, inside printKitchen) — the sale NEVER fails or waits
-// no matter how many targets are down. Tracked on d.AsyncWork (ut-docs#425),
-// same reasoning as printReceiptAsync.
+// fired as a goroutine, a missing printer is a no-op and per-target failures
+// are audited (inside printKitchen, ut-docs#516, each on its own fresh
+// context) — the sale NEVER fails or waits no matter how many targets are
+// down. The /orders warning (ut-docs#517a) is set when the ticket build
+// fails OR any target fails, cleared once every resolved target succeeds;
+// "no attempt" (kitchen printing off everywhere, or nothing resolved to
+// send) must neither overwrite a real prior failure nor falsely clear one.
+// Tracked on d.AsyncWork (ut-docs#425), same reasoning as printReceiptAsync.
 func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
 	d.AsyncWork.Add(1)
 	go func() {
 		defer d.AsyncWork.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()
 		if !kitchenPrintingEnabled(ctx, d) {
+			// No attempt (kitchen printing off everywhere) — must neither
+			// overwrite a real prior failure nor falsely clear one.
 			return
 		}
-		if _, _, err := printKitchen(ctx, d, receiptNo, actorID); err != nil {
-			_ = data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, actorID, "sale", receiptNo, "kitchen_print_failed",
+		posRepo := data.NewPOSRepo(d.Db)
+		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID)
+		if err != nil {
+			// Fresh context: a hung/out-of-paper printer burns the whole
+			// print budget before failing, so ctx is already expired here —
+			// see recordPrintFailureCtx.
+			wctx, wcancel := recordPrintFailureCtx()
+			defer wcancel()
+			_ = posRepo.InsertAudit(wctx, nil, actorID, "sale", receiptNo, "kitchen_print_failed",
 				map[string]any{"error": err.Error()}, time.Now().UTC().Format(time.RFC3339), "")
+			_ = posRepo.SetKitchenPrintFailed(wctx, receiptNo, time.Now().UTC().Format(time.RFC3339))
+			return
 		}
+		if total == 0 {
+			// Nothing resolved to send — not a failure, nothing was attempted.
+			return
+		}
+		if len(failures) > 0 {
+			// Per-target failures are already audited inside printKitchen on
+			// their own fresh per-target context; this just makes the
+			// CURRENT state visible on /orders, also on a fresh context —
+			// the wg.Wait() inside printKitchen can itself run long enough
+			// to expire the outer ctx above (same reasoning as the err!=nil
+			// branch: this loop's whole point is a printer that didn't fail
+			// fast).
+			wctx, wcancel := recordPrintFailureCtx()
+			defer wcancel()
+			_ = posRepo.SetKitchenPrintFailed(wctx, receiptNo, time.Now().UTC().Format(time.RFC3339))
+			return
+		}
+		// Every target succeeded — clear any stale flag from an earlier attempt.
+		_ = posRepo.SetKitchenPrintFailed(ctx, receiptNo, "")
 	}()
 }
 
@@ -315,6 +349,15 @@ func registerKitchenPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		ok := err == nil && len(failures) == 0
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "kitchen_printed",
 			map[string]any{"ok": ok}, time.Now().UTC().Format(time.RFC3339), "")
+		// Keep the /orders warning honest (ut-docs#517a): any failure (total
+		// failure to build tickets, or a partial failure with some stations
+		// down) flags the sale; a fully successful manual print clears a
+		// stale flag, so a manually-fixed printer un-sticks the warning.
+		if ok {
+			_ = posRepo.SetKitchenPrintFailed(r.Context(), receiptNo, "")
+		} else {
+			_ = posRepo.SetKitchenPrintFailed(r.Context(), receiptNo, time.Now().UTC().Format(time.RFC3339))
+		}
 		switch {
 		case err != nil:
 			fail(http.StatusBadGateway, "kitchen.print.failed")
