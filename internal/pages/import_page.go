@@ -265,6 +265,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// genuinely different takeaway rate fragments into its own
 				// override-carrying code.
 				var taxCodeID *string
+				// Candidate override for this row — merged into
+				// takeawayOverrides only once tx.Commit() below actually
+				// lands the item (ut-docs#535), same promote-after-commit
+				// pattern as stockWarning/stockRecorded further down: a row
+				// whose tax pairing resolves fine but whose item insert then
+				// fails must not leave an inert entry for a tax code nothing
+				// ends up using.
+				var pendingOverrideBP *int
 				if it.HasTax {
 					var takeawayBP *int
 					if it.HasTakeaway && it.TakeawayRateBP != it.TaxRateBP {
@@ -283,9 +291,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						taxCodesCreated++
 					}
 					taxCodeID = &id
-					if takeawayBP != nil {
-						takeawayOverrides[id] = *takeawayBP
-					}
+					pendingOverrideBP = takeawayBP
 				}
 				// A parseable takeaway rate with no dine-in rate can't
 				// resolve a (dine-in, takeaway) pair — the item lands on
@@ -382,6 +388,13 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					rows[i].Failed = true
 					failed++
 					continue
+				}
+				// The row's item is now durably committed — only now does
+				// its tax-override candidate (if any) get promoted into the
+				// set that actually gets merged into ut-plugin-tax-de's
+				// setting after the loop (ut-docs#535).
+				if pendingOverrideBP != nil {
+					takeawayOverrides[*taxCodeID] = *pendingOverrideBP
 				}
 				// Row-level warnings accumulate rather than short-circuit —
 				// a barcode attach failure must not also skip the

@@ -898,6 +898,74 @@ BEGIN SELECT RAISE(ABORT, 'simulated tax code insert failure'); END;`); err != n
 	}
 }
 
+// TestImport_FailedItemRowDoesNotContributeTakeawayOverride is ut-docs#535's
+// acceptance test: a row whose tax pairing resolves fine but whose item
+// insert then fails (an unexpected DB-level failure, same failure-injection
+// shape as TestImport_UnexpectedItemInsertFailureRollsBackWholeRow) must not
+// leave an inert entry in ut-plugin-tax-de's takeaway_rate_overrides for a
+// tax code nothing actually ends up using — mirroring how
+// stockWarning/stockRecorded are decided inside the loop but only acted on
+// after tx.Commit() succeeds.
+func TestImport_FailedItemRowDoesNotContributeTakeawayOverride(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	installTaxDePlugin(t, dp.Db)
+	// Force the item insert itself to fail deterministically for one
+	// specific SKU — the row's tax pairing (FindOrCreateTaxCode) runs and
+	// succeeds first, so takeawayOverrides would (pre-fix) already carry
+	// this row's candidate entry by the time the item insert then fails.
+	if _, err := dp.Db.Exec(`
+CREATE TRIGGER import_test_item_fail BEFORE INSERT ON items
+WHEN NEW.sku = 'FORCE-FAIL'
+BEGIN SELECT RAISE(ABORT, 'simulated item insert failure'); END;`); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// A genuine (19,7) dine-in/takeaway pair — the exact shape that
+	// populates takeawayOverrides — on the SKU whose item insert the
+	// trigger above forces to fail.
+	csv := "Name,SKU,Price,Tax rate,Takeaway tax\n" +
+		"Latte,FORCE-FAIL,3.50,19,7\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	audit := lastImportAudit(t, dp.Db)
+	if got, ok := audit["failed"].(float64); !ok || got != 1 {
+		t.Fatalf("audit failed = %v, want 1 (the forced item insert failure)", audit["failed"])
+	}
+	if got, ok := audit["takeaway_overrides_set"].(float64); !ok || got != 0 {
+		t.Fatalf("audit takeaway_overrides_set = %v, want 0 — the only candidate row failed", audit["takeaway_overrides_set"])
+	}
+
+	// The tax code itself may still have been created (FindOrCreateTaxCode
+	// runs, and succeeds, before the item insert) — what must NOT happen is
+	// an inert entry for it in the plugin's takeaway_rate_overrides setting.
+	var raw sql.NullString
+	if err := dp.Db.QueryRow(
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.universaltill.tax-de' AND key = 'takeaway_rate_overrides'`).
+		Scan(&raw); err != nil && err != sql.ErrNoRows {
+		t.Fatalf("query takeaway_rate_overrides: %v", err)
+	}
+	if raw.Valid && raw.String != "" {
+		var overrides map[string]int
+		if err := json.Unmarshal([]byte(raw.String), &overrides); err != nil {
+			t.Fatalf("overrides not valid JSON %q: %v", raw.String, err)
+		}
+		if len(overrides) != 0 {
+			t.Fatalf("overrides = %v, want none — the failed row's tax code must not be merged in", overrides)
+		}
+	}
+}
+
 // lastImportAudit decodes the most recent "catalog"/"import" audit_log row's
 // data_json — the payload the operator's only durable record of a commit
 // depends on once the HTTP response itself is gone.
