@@ -4,11 +4,15 @@
   <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
     <button class="btn primary" hx-post="/api/reports/eod/run" hx-target="#eod-msg" hx-swap="innerHTML">{{ T "reports.eod.run" }}</button>
     <span id="eod-msg" aria-live="polite"></span>
-    <form hx-post="/api/settings/eod" hx-swap="none" style="display:flex; gap:.4rem; align-items:center; margin-inline-start:auto">
+    <form hx-post="/api/settings/eod" hx-swap="none" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin-inline-start:auto">
       <label style="display:flex; gap:.3rem; align-items:center">
         <input type="checkbox" name="enabled" {{ if .EODEnabled }}checked{{ end }}> {{ T "reports.eod.auto" }}
       </label>
       <input type="time" name="time" value="{{ .EODTime }}">
+      <label style="display:flex; gap:.3rem; align-items:center" title="{{ T "reports.business_day_start.help" }}">
+        {{ T "reports.business_day_start.label" }}
+        <input type="time" name="business_day_start" value="{{ .BusinessDayStart }}">
+      </label>
       <button class="btn secondary" type="submit">{{ T "settings.printer.apply" }}</button>
     </form>
   </div>

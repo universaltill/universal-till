@@ -26,6 +26,20 @@ func intArg(args map[string]any, key string, def, min, max int) int {
 	return n
 }
 
+// daysArgWindow reads the bounded "days" tool argument and turns it into a
+// simple rolling [from, to) window ending now — these ask-tool calls only
+// ever need "the last N days", not calendar-period awareness, so this stays
+// separate from parseReportWindow's business-day-boundary logic.
+func daysArgWindow(args map[string]any, key string, def int) (time.Time, time.Time) {
+	days := intArg(args, key, def, 1, 365)
+	// +1s pad: SQL window comparisons truncate to whole seconds, so an
+	// exact-now exclusive upper bound can drop a sale committed in this
+	// same wall-clock second (see reportNow's doc comment in
+	// reports_page.go).
+	to := time.Now().Add(time.Second)
+	return to.Add(-time.Duration(days) * 24 * time.Hour), to
+}
+
 // askTools is the read-only tool surface for "Ask your till"
 // (ai-integration.md §a). Data red-line: identity-free aggregates only —
 // no customer data is wired, and the audit tool returns counts, not payloads.
@@ -42,7 +56,8 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 			Description: "Daily sales totals: per day the number of completed sales, revenue total and tax total (minor units). Returns/refunds are excluded, not netted.",
 			Params:      days,
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
-				return repo.SalesByDay(ctx, intArg(args, "days", 14, 1, 365))
+				from, to := daysArgWindow(args, "days", 14)
+				return repo.SalesByDay(ctx, from, to)
 			},
 		},
 		{
@@ -56,7 +71,8 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 				},
 			},
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
-				return repo.TopItems(ctx, intArg(args, "days", 14, 1, 365), intArg(args, "limit", 10, 1, 50))
+				from, to := daysArgWindow(args, "days", 14)
+				return repo.TopItems(ctx, from, to, intArg(args, "limit", 10, 1, 50))
 			},
 		},
 		{
@@ -64,7 +80,8 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 			Description: "Takings per payment method over a period: method, transaction count, amount taken (minor units).",
 			Params:      days,
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
-				return repo.PaymentBreakdown(ctx, intArg(args, "days", 14, 1, 365))
+				from, to := daysArgWindow(args, "days", 14)
+				return repo.PaymentBreakdown(ctx, from, to)
 			},
 		},
 		{

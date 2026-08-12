@@ -18,6 +18,30 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, or Day-end (EOD) — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals the day and can print for your records.
 
+## Report periods
+
+Next to the top row, pick how you want the period worked out:
+
+- **Custom** — the original rolling window (today, 7/14/30/90 days back from now).
+- **Day / Week / Month / Year** — a real calendar period instead of a rolling
+  count: Day is one trading day, Week is Monday–Sunday, Month is a calendar
+  month, Year is a calendar year. A date picker appears next to the choice so
+  you can look at a past period — e.g. pick Month and a date in July to see
+  July's numbers, even if today is in August.
+- Sales trend, Items, Tax and Payments & channels use whichever period is
+  selected, so they always agree with the numbers at the top. Forecast and
+  Day-end's archive list don't — they show their own fixed windows regardless
+  of the period picker.
+
+## Business day start
+
+By default a report "day" runs midnight to midnight. If you trade past
+midnight — a bar, a late kitchen — that splits one night's takings across
+two report days. Set **Business day starts at** (in the Day-end tab,
+alongside the automatic end-of-day time) to when your trading day actually
+begins, e.g. 06:00, and Day/Week/Month/Year periods line up with your real
+trading day instead of the clock.
+
 ## Cash adjustments & payouts (Shifts)
 
 The Shifts page's "Cash adjustment / payout" form records anything that

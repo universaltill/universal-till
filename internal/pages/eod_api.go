@@ -22,8 +22,21 @@ import (
 const (
 	keyEODEnabled = "reports.eod_enabled"
 	keyEODTime    = "reports.eod_time" // local "HH:MM"
+	// keyReportsBusinessDayStart is the per-till business-day boundary used
+	// by /reports' calendar-aligned period picker (ut-docs#519):
+	// day/week/month/year periods cross over at this local "HH:MM" instead
+	// of naive midnight, so a bar (or any shop trading past midnight) can
+	// push it later and keep one night's takings on a single report day.
+	// Empty/unset defaults to "00:00" (see parseBusinessDayStart in
+	// reports_page.go) — calendar-midnight behavior, unchanged from before
+	// this setting existed. Same settings panel/endpoint as the EOD
+	// schedule below (POST /api/settings/eod), not a new settings page.
+	keyReportsBusinessDayStart = "reports.business_day_start"
 )
 
+// eodTimeRe validates any local "HH:MM" setting this file's settings panel
+// stores — the EOD schedule time AND (ut-docs#519) the business-day-start
+// boundary share it rather than duplicating the pattern.
 var eodTimeRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 
 // eodDateRe guards /api/reports/eod/range's from/to params. Without this, a
@@ -272,7 +285,9 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		_, _ = w.Write(raw)
 	})
 
-	// Schedule settings (manager): enable + local time.
+	// Schedule settings (manager): enable + local time, plus (ut-docs#519)
+	// the reports business-day-start boundary — a sibling field on this
+	// same settings panel/endpoint rather than a new settings page.
 	mux.HandleFunc("POST /api/settings/eod", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
@@ -285,8 +300,14 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "time must be HH:MM", http.StatusBadRequest)
 			return
 		}
+		bizDayStart := strings.TrimSpace(r.Form.Get("business_day_start"))
+		if bizDayStart != "" && !eodTimeRe.MatchString(bizDayStart) {
+			http.Error(w, "business_day_start must be HH:MM", http.StatusBadRequest)
+			return
+		}
 		_ = d.Settings.Set(r.Context(), keyEODEnabled, fmt.Sprintf("%t", enabled))
 		_ = d.Settings.Set(r.Context(), keyEODTime, hhmm)
+		_ = d.Settings.Set(r.Context(), keyReportsBusinessDayStart, bizDayStart)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

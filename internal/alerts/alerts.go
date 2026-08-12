@@ -47,7 +47,12 @@ func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) 
 // default) at the 28-day selling rate.
 func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
 	repo := data.NewPOSRepo(db)
-	rates, err := repo.ItemDailySellRates(ctx, 28)
+	// +1s pad: SQL window comparisons truncate to whole seconds, so an
+	// exact-now exclusive upper bound can drop a sale committed in this
+	// same wall-clock second (see reportNow's doc comment in
+	// internal/pages/reports_page.go).
+	now := time.Now().Add(time.Second)
+	rates, err := repo.ItemDailySellRates(ctx, now.Add(-28*24*time.Hour), now)
 	if err != nil || len(rates) == 0 {
 		return 0, err
 	}

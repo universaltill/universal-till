@@ -84,7 +84,7 @@ func TestPOSRepo_SalesByDay_AggregatesFiltersOrders(t *testing.T) {
 	// Outside the 7-day window: must not appear.
 	b8Sale(t, d, "s5", b8At(time.Now().Add(-9*24*time.Hour)), "completed", "sale", 0, 55555)
 
-	rows, err := repo.SalesByDay(ctx, 7)
+	rows, err := repo.SalesByDay(ctx, winFrom(7), winTo())
 	if err != nil {
 		t.Fatalf("SalesByDay: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestPOSRepo_RefundsByWindow_SumsReturnsFiltersOthers(t *testing.T) {
 	// A completed return outside the 7-day window: must not count.
 	b8Sale(t, d, "r4", old, "completed", "return", 0, 7777)
 
-	total, count, err := repo.RefundsByWindow(ctx, 7)
+	total, count, err := repo.RefundsByWindow(ctx, winFrom(7), winTo())
 	if err != nil {
 		t.Fatalf("RefundsByWindow: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestPOSRepo_SlowItems_AscendingWithFiltersAndLimit(t *testing.T) {
 	b8Sale(t, d, "s4", b8At(time.Now().Add(-40*24*time.Hour)), "completed", "sale", 0, 5)
 	b8Line(t, d, "s4", 1, "itm", "", "OldOnly", 1, 0, 0, 5, 5)
 
-	rows, err := repo.SlowItems(ctx, 30, 2)
+	rows, err := repo.SlowItems(ctx, winFrom(30), winTo(), 2)
 	if err != nil {
 		t.Fatalf("SlowItems: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestPOSRepo_DeadStock_ValueMathAndExclusions(t *testing.T) {
 	b8Sale(t, d, "s4", now, "voided", "sale", 0, 700)
 	b8Line(t, d, "s4", 1, "voidsold", "", "Void thing", 1, 0, 0, 700, 700)
 
-	rows, err := repo.DeadStock(ctx, 30, 10)
+	rows, err := repo.DeadStock(ctx, winFrom(30), winTo(), 10)
 	if err != nil {
 		t.Fatalf("DeadStock: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestPOSRepo_DeadStock_ValueMathAndExclusions(t *testing.T) {
 	}
 
 	// LIMIT applies after the value ordering.
-	top, err := repo.DeadStock(ctx, 30, 1)
+	top, err := repo.DeadStock(ctx, winFrom(30), winTo(), 1)
 	if err != nil {
 		t.Fatalf("DeadStock(limit 1): %v", err)
 	}
@@ -273,7 +273,7 @@ func TestPOSRepo_TaxSummary_BandsReturnsSubtract(t *testing.T) {
 	b8Sale(t, d, "s4", b8At(time.Now().Add(-40*24*time.Hour)), "completed", "sale", 111, 666)
 	b8Line(t, d, "s4", 1, "itm", "", "Ancient", 1, 2000, 111, 555, 666)
 
-	bands, err := repo.TaxSummary(ctx, 30)
+	bands, err := repo.TaxSummary(ctx, winFrom(30), winTo())
 	if err != nil {
 		t.Fatalf("TaxSummary: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestPOSRepo_MarginByItem_CostSourcesOrderingLimit(t *testing.T) {
 	b8Sale(t, d, "s3", b8At(time.Now().Add(-40*24*time.Hour)), "completed", "sale", 0, 300)
 	b8Line(t, d, "s3", 1, "coffee", "", "Coffee", 1, 0, 0, 300, 300)
 
-	rows, err := repo.MarginByItem(ctx, 30, 10)
+	rows, err := repo.MarginByItem(ctx, winFrom(30), winTo(), 10)
 	if err != nil {
 		t.Fatalf("MarginByItem: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestPOSRepo_MarginByItem_CostSourcesOrderingLimit(t *testing.T) {
 		t.Fatalf("shirt = %+v, want revenue 1000 cost 500 (variant cost) margin 500", rows[1])
 	}
 
-	top, err := repo.MarginByItem(ctx, 30, 1)
+	top, err := repo.MarginByItem(ctx, winFrom(30), winTo(), 1)
 	if err != nil {
 		t.Fatalf("MarginByItem(limit 1): %v", err)
 	}
@@ -540,13 +540,13 @@ func TestPOSRepo_SalesByWeekdayAndHour_BucketsLocalTime(t *testing.T) {
 		}
 	}
 
-	byHour, err := repo.SalesByHour(ctx, 7)
+	byHour, err := repo.SalesByHour(ctx, winFrom(7), winTo())
 	if err != nil {
 		t.Fatalf("SalesByHour: %v", err)
 	}
 	check("SalesByHour", byHour, expect("%H", func(tm time.Time) int { return tm.Local().Hour() }))
 
-	byWeekday, err := repo.SalesByWeekday(ctx, 7)
+	byWeekday, err := repo.SalesByWeekday(ctx, winFrom(7), winTo())
 	if err != nil {
 		t.Fatalf("SalesByWeekday: %v", err)
 	}
@@ -586,7 +586,14 @@ func TestPOSRepo_ItemDailySellRates_NetOfReturnsPerDay(t *testing.T) {
 	// Voided apple sale: never counted.
 	seed("s9", "voided", "sale", "apple", "", 100, now)
 
-	rates, err := repo.ItemDailySellRates(ctx, 7)
+	// A single shared "to" (not two independent winTo() calls) keeps the
+	// window's span exactly 7.0*24h — ItemDailySellRates now divides by the
+	// window's own real span rather than a passed-in int, so two
+	// independently-timed "now" instants would drift the divisor by a few
+	// microseconds and turn the exact-value assertions below flaky.
+	sevenDayTo := winTo()
+	sevenDayFrom := sevenDayTo.Add(-7 * 24 * time.Hour)
+	rates, err := repo.ItemDailySellRates(ctx, sevenDayFrom, sevenDayTo)
 	if err != nil {
 		t.Fatalf("ItemDailySellRates: %v", err)
 	}
@@ -609,13 +616,29 @@ func TestPOSRepo_ItemDailySellRates_NetOfReturnsPerDay(t *testing.T) {
 		t.Fatalf("melon sold outside the window and must be absent: %#v", rates)
 	}
 
-	// days <= 0 defaults the window AND the divisor to 28.
-	def, err := repo.ItemDailySellRates(ctx, 0)
+	// The divisor is the window's own span, not a hardcoded count: an
+	// explicit 28-day window (apple's 14 units sold ARE all inside it, same
+	// "now" seed) divides by 28, not 7. A single shared "to" (see the
+	// sevenDayTo comment above) keeps the span exactly 28.0*24h.
+	twentyEightDayTo := winTo()
+	twentyEightDayFrom := twentyEightDayTo.Add(-28 * 24 * time.Hour)
+	def, err := repo.ItemDailySellRates(ctx, twentyEightDayFrom, twentyEightDayTo)
 	if err != nil {
-		t.Fatalf("ItemDailySellRates(0): %v", err)
+		t.Fatalf("ItemDailySellRates(28-day window): %v", err)
 	}
 	if def["apple"] != 14.0/28.0 {
-		t.Fatalf("apple rate with default window = %v, want 0.5", def["apple"])
+		t.Fatalf("apple rate with a 28-day window = %v, want 0.5", def["apple"])
+	}
+
+	// A non-positive span (to <= from) has no meaningful daily rate: empty
+	// map, no error, no divide-by-zero.
+	sameInstant := winTo()
+	zero, err := repo.ItemDailySellRates(ctx, sameInstant, sameInstant)
+	if err != nil {
+		t.Fatalf("ItemDailySellRates(zero-width window): %v", err)
+	}
+	if len(zero) != 0 {
+		t.Fatalf("zero-width window must return an empty map, got %#v", zero)
 	}
 }
 
@@ -628,19 +651,19 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	// (but no sales). Clear inventory so DeadStock's empty path is real.
 	mustExec(t, d, `DELETE FROM inventory`)
 
-	if rows, err := repo.SalesByDay(ctx, 7); err != nil || len(rows) != 0 {
+	if rows, err := repo.SalesByDay(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
 		t.Fatalf("SalesByDay empty = (%v, %v)", rows, err)
 	}
-	if rows, err := repo.SlowItems(ctx, 7, 5); err != nil || len(rows) != 0 {
+	if rows, err := repo.SlowItems(ctx, winFrom(7), winTo(), 5); err != nil || len(rows) != 0 {
 		t.Fatalf("SlowItems empty = (%v, %v)", rows, err)
 	}
-	if rows, err := repo.DeadStock(ctx, 7, 5); err != nil || len(rows) != 0 {
+	if rows, err := repo.DeadStock(ctx, winFrom(7), winTo(), 5); err != nil || len(rows) != 0 {
 		t.Fatalf("DeadStock empty = (%v, %v)", rows, err)
 	}
-	if rows, err := repo.TaxSummary(ctx, 7); err != nil || len(rows) != 0 {
+	if rows, err := repo.TaxSummary(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
 		t.Fatalf("TaxSummary empty = (%v, %v)", rows, err)
 	}
-	if rows, err := repo.MarginByItem(ctx, 7, 5); err != nil || len(rows) != 0 {
+	if rows, err := repo.MarginByItem(ctx, winFrom(7), winTo(), 5); err != nil || len(rows) != 0 {
 		t.Fatalf("MarginByItem empty = (%v, %v)", rows, err)
 	}
 	if total, count, err := repo.DayTotal(ctx, 0); err != nil || total != 0 || count != 0 {
@@ -649,35 +672,35 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if rows, cats, err := repo.SeasonalForecast(ctx, 28, 5); err != nil || len(rows) != 0 || len(cats) != 0 {
 		t.Fatalf("SeasonalForecast empty = (%v, %v, %v)", rows, cats, err)
 	}
-	if rows, err := repo.SalesByWeekday(ctx, 7); err != nil || len(rows) != 0 {
+	if rows, err := repo.SalesByWeekday(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
 		t.Fatalf("SalesByWeekday empty = (%v, %v)", rows, err)
 	}
-	if rows, err := repo.SalesByHour(ctx, 7); err != nil || len(rows) != 0 {
+	if rows, err := repo.SalesByHour(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
 		t.Fatalf("SalesByHour empty = (%v, %v)", rows, err)
 	}
-	if rates, err := repo.ItemDailySellRates(ctx, 7); err != nil || len(rates) != 0 {
+	if rates, err := repo.ItemDailySellRates(ctx, winFrom(7), winTo()); err != nil || len(rates) != 0 {
 		t.Fatalf("ItemDailySellRates empty = (%#v, %v)", rates, err)
 	}
-	if total, count, err := repo.RefundsByWindow(ctx, 7); err != nil || total != 0 || count != 0 {
+	if total, count, err := repo.RefundsByWindow(ctx, winFrom(7), winTo()); err != nil || total != 0 || count != 0 {
 		t.Fatalf("RefundsByWindow empty = (%d, %d, %v)", total, count, err)
 	}
 
 	// A closed DB must surface an error from every report, never a silent
 	// empty result (batch-7 convention; also exercises the query-error wraps).
 	_ = d.Close()
-	if _, err := repo.SalesByDay(ctx, 7); err == nil {
+	if _, err := repo.SalesByDay(ctx, winFrom(7), winTo()); err == nil {
 		t.Fatal("SalesByDay on a closed DB must error")
 	}
-	if _, err := repo.SlowItems(ctx, 7, 5); err == nil {
+	if _, err := repo.SlowItems(ctx, winFrom(7), winTo(), 5); err == nil {
 		t.Fatal("SlowItems on a closed DB must error")
 	}
-	if _, err := repo.DeadStock(ctx, 7, 5); err == nil {
+	if _, err := repo.DeadStock(ctx, winFrom(7), winTo(), 5); err == nil {
 		t.Fatal("DeadStock on a closed DB must error")
 	}
-	if _, err := repo.TaxSummary(ctx, 7); err == nil {
+	if _, err := repo.TaxSummary(ctx, winFrom(7), winTo()); err == nil {
 		t.Fatal("TaxSummary on a closed DB must error")
 	}
-	if _, err := repo.MarginByItem(ctx, 7, 5); err == nil {
+	if _, err := repo.MarginByItem(ctx, winFrom(7), winTo(), 5); err == nil {
 		t.Fatal("MarginByItem on a closed DB must error")
 	}
 	if _, _, err := repo.DayTotal(ctx, 0); err == nil {
@@ -686,16 +709,16 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if _, _, err := repo.SeasonalForecast(ctx, 28, 5); err == nil {
 		t.Fatal("SeasonalForecast on a closed DB must error")
 	}
-	if _, err := repo.SalesByWeekday(ctx, 7); err == nil {
+	if _, err := repo.SalesByWeekday(ctx, winFrom(7), winTo()); err == nil {
 		t.Fatal("SalesByWeekday on a closed DB must error")
 	}
-	if _, err := repo.SalesByHour(ctx, 7); err == nil {
+	if _, err := repo.SalesByHour(ctx, winFrom(7), winTo()); err == nil {
 		t.Fatal("SalesByHour on a closed DB must error")
 	}
-	if _, err := repo.ItemDailySellRates(ctx, 7); err == nil {
+	if _, err := repo.ItemDailySellRates(ctx, winFrom(7), winTo()); err == nil {
 		t.Fatal("ItemDailySellRates on a closed DB must error")
 	}
-	if _, _, err := repo.RefundsByWindow(ctx, 7); err == nil {
+	if _, _, err := repo.RefundsByWindow(ctx, winFrom(7), winTo()); err == nil {
 		t.Fatal("RefundsByWindow on a closed DB must error")
 	}
 }
