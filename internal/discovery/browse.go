@@ -81,7 +81,15 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 	if v4Err == nil || len(v4Candidates) > 0 {
 		return v4Candidates, nil
 	}
-	return nil, fmt.Errorf("lan scan failed (v4+v6: %v; v4-only retry: %v)", err, v4Err)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// Same reasoning as the pre-retry check above, for the retry's own
+		// window: cancelling during the second attempt is still the caller
+		// giving up, and must stay reported as context.Canceled /
+		// DeadlineExceeded rather than being reshaped into a "lan scan
+		// failed" network error the handler would log and 500 on.
+		return nil, ctxErr
+	}
+	return nil, fmt.Errorf("lan scan failed (v4+v6: %w; v4-only retry: %w)", err, v4Err)
 }
 
 // browseOnce runs exactly one mdns.Query scan and reports whatever
