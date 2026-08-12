@@ -31,9 +31,12 @@ Varsayılan olarak bir rapor "günü" gece yarısından gece yarısına kadar s�
 
 ## Rapor saklama
 
-Arşivlenen her gün sonu raporu en az **10 yıl** saklanır — bu yasal bir
-kayıttır, Veri yönetimi'ndeki "İşlem geçmişini temizle" sıfırlama
-düğmesinin kaldırabileceği bir şey değildir.
+Arşivlenen her gün sonu raporu **10 yıl** saklanır — bu yasal bir kayıttır,
+Veri yönetimi'ndeki "İşlem geçmişini temizle" sıfırlama düğmesinin
+kaldırabileceği bir şey değildir. Bir rapor 10. yılını doldurduğunda, arka
+planda otomatik ve kalıcı olarak silinir — manuel bir adım veya onay
+istemi yoktur, bu yüzden daha uzun süre saklamanız gereken her şeyi bundan
+önce dışa aktarın.
 
 Ayarlar → Rapor saklama'da raporların nerede tutulacağını seçin:
 

@@ -645,7 +645,7 @@
   "settings.data.help": "Test sırasında yaptığınız deneme satışlarını temizleyin, böylece gerçek satışa temiz bir sayfadan başlayın. Ürünleriniz, kullanıcılarınız ve ayarlarınız korunur.",
   "settings.data.reset_btn": "İşlem geçmişini temizle",
   "settings.data.reset_clearing": "temizleniyor…",
-  "settings.data.reset_confirm_dialog": "TÜM satışlar, vardiyalar ve faturalar kalıcı olarak silinsin mi? Katalog, kullanıcılar ve ayarlar korunur. Bu işlem geri alınamaz.",
+  "settings.data.reset_confirm_dialog": "TÜM satışlar, vardiyalar ve faturalar kalıcı olarak silinsin mi? Katalog, kullanıcılar, ayarlar ve arşivlenmiş raporlar korunur. Bu işlem geri alınamaz.",
   "settings.data.reset_confirm_required": "onaylamak için RESET yazın",
   "settings.data.search_btn": "Ara",
   "settings.data.title": "Veri yönetimi",

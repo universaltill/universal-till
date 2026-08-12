@@ -645,7 +645,7 @@
   "settings.data.help": "Clear the practice sales made while testing so you can start real trading from a clean slate. Your products, users and settings are kept.",
   "settings.data.reset_btn": "Clear transaction history",
   "settings.data.reset_clearing": "clearing…",
-  "settings.data.reset_confirm_dialog": "Permanently clear ALL sales, shifts and invoices? The catalog, users and settings are kept. This cannot be undone.",
+  "settings.data.reset_confirm_dialog": "Permanently clear ALL sales, shifts and invoices? The catalog, users, settings and archived reports are kept. This cannot be undone.",
   "settings.data.reset_confirm_required": "type RESET to confirm",
   "settings.data.search_btn": "Search",
   "settings.data.title": "Data management",

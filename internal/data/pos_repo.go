@@ -1604,13 +1604,29 @@ VALUES (?, ?, ?, ?) ON CONFLICT (kind, period) DO NOTHING`,
 	return n > 0, nil
 }
 
-// ArchivedReportRow lists an archived report for the Reports page.
+// ArchivedReportRow lists an archived report for the Reports page and the
+// retention export (ADR-0040 §7). JSON tags are snake_case per this repo's
+// API convention -- the export handler is the one consumer that actually
+// marshals this to JSON; the Reports page reads the Go fields directly.
 type ArchivedReportRow struct {
-	ID        string
-	Kind      string
-	Period    string
-	Content   string
-	CreatedAt string
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Period    string `json:"period"`
+	Content   string `json:"content_json"`
+	CreatedAt string `json:"created_at"`
+}
+
+// formatArchiveTimestamp converts report_archive.created_at (SQLite
+// `datetime('now')`, "YYYY-MM-DD HH:MM:SS", implicitly UTC) to ISO-8601
+// (CLAUDE.md's API format rule) for both the Reports page and the export.
+// Falls back to the raw value on an unexpected format rather than blanking
+// it -- a slightly-off timestamp is better than a silently dropped one.
+func formatArchiveTimestamp(raw string) string {
+	t, err := time.Parse("2006-01-02 15:04:05", raw)
+	if err != nil {
+		return raw
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // ListArchivedReports returns recent archived reports, newest first.
@@ -1628,6 +1644,7 @@ FROM report_archive ORDER BY period DESC LIMIT ?`, limit)
 		if err := rows.Scan(&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan report: %w", err)
 		}
+		a.CreatedAt = formatArchiveTimestamp(a.CreatedAt)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -1701,12 +1718,17 @@ FROM report_archive WHERE period BETWEEN ? AND ? ORDER BY period`, from, to)
 		return nil, fmt.Errorf("archived reports in range: %w", err)
 	}
 	defer rows.Close()
-	var out []ArchivedReportRow
+	// []ArchivedReportRow{}, not var-declared nil: this slice is JSON-
+	// encoded directly by the export handler, and an empty (not nil) slice
+	// marshals to "[]", not "null" -- a real, previously-shipped bug this
+	// repo's review process caught before merge (ADR-0040 card 1 review).
+	out := []ArchivedReportRow{}
 	for rows.Next() {
 		var a ArchivedReportRow
 		if err := rows.Scan(&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan report: %w", err)
 		}
+		a.CreatedAt = formatArchiveTimestamp(a.CreatedAt)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -2426,6 +2448,17 @@ func (r *POSRepo) DistinctAuditEntityTypes(ctx context.Context) ([]string, error
 // all-or-nothing by design (it cannot cherry-pick individual sales, so it
 // can't be used to hide specific takings) and records an audit entry with how
 // many sales were removed. Manager-gated at the handler.
+//
+// Known consequence of the report_archive exclusion above (ADR-0040
+// Consequences section flags this explicitly as needing a check at
+// implementation time — this is that check, not yet a full fix): if an EOD
+// report was already generated for today BEFORE this reset runs,
+// generateEOD's own (kind, period) idempotency means today's EOD cannot be
+// regenerated afterward with the post-reset figures — the pre-reset
+// (test-data) report for today survives permanently. A manager doing a
+// go-live reset on the same day test EOD reports were run should reset
+// before generating any further EOD reports that day; there is no
+// automatic reconciliation. See settings.data.reset_confirm_dialog.
 func (r *POSRepo) ResetTransactionHistory(ctx context.Context, actorID string) (int64, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
