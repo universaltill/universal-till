@@ -197,7 +197,14 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
 		t.Fatalf("rewind order_status_events table: %v", err)
 	}
-	// Migration 034 adds two more sales columns -- same problem again
+// Migration 034 creates three tables -- same non-idempotent-replay
+	// problem, drop them too (ut-docs#516).
+	for _, tbl := range []string{"item_station_routes", "category_station_routes", "kitchen_stations"} {
+		if _, err := d.DB.Exec(`DROP TABLE ` + tbl); err != nil {
+			t.Fatalf("rewind %s table: %v", tbl, err)
+		}
+	}
+	// Migration 035 adds two more sales columns -- same problem again
 	// (ut-docs#517).
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN kitchen_print_failed_at`); err != nil {
 		t.Fatalf("rewind sales.kitchen_print_failed_at column: %v", err)
@@ -209,7 +216,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 023 and its followers (027-034)
+	d, err = Open(path) // re-applies 023 and its followers (027-035)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +265,14 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
 		t.Fatalf("rewind order_status_events table: %v", err)
 	}
-	// Same for 034's print-failure columns (ut-docs#517).
+// Migration 034 creates three tables -- same non-idempotent-replay
+	// problem, drop them too (ut-docs#516).
+	for _, tbl := range []string{"item_station_routes", "category_station_routes", "kitchen_stations"} {
+		if _, err := d.DB.Exec(`DROP TABLE ` + tbl); err != nil {
+			t.Fatalf("rewind %s table: %v", tbl, err)
+		}
+	}
+	// Same for 035's print-failure columns (ut-docs#517).
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN kitchen_print_failed_at`); err != nil {
 		t.Fatalf("rewind sales.kitchen_print_failed_at column: %v", err)
 	}
@@ -269,7 +283,7 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 031 through 034
+	d, err = Open(path) // re-applies 031 through 035
 	if err != nil {
 		t.Fatal(err)
 	}
