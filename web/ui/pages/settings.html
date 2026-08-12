@@ -107,8 +107,111 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
+
+  <div class="set-divider">
+    <!-- ut-docs#608 scaffold: stores/surfaces the setting only — no OS
+         window-manager call yet, see the pending-note copy below. Real
+         platform implementations land in #609/#610/#611. -->
+    <form id="window-mode-form" hx-post="/api/settings/window-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+      {{ $windowMode := .windowMode }}
+      <label class="set-row">{{ T "settings.display.window_mode_label" }}
+        <select name="mode">
+          <option value="normal"     {{ if eq $windowMode "normal" }}selected{{ end }}>{{ T "settings.display.window_mode_normal" }}</option>
+          <option value="maximized"  {{ if eq $windowMode "maximized" }}selected{{ end }}>{{ T "settings.display.window_mode_maximized" }}</option>
+          <option value="fullscreen" {{ if eq $windowMode "fullscreen" }}selected{{ end }}>{{ T "settings.display.window_mode_fullscreen" }}</option>
+          <option value="kiosk"      {{ if eq $windowMode "kiosk" }}selected{{ end }}>{{ T "settings.display.window_mode_kiosk" }}</option>
+        </select>
+        <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+      </label>
+      <p class="muted">{{ T "settings.display.window_mode_pending_note" }}</p>
+      <span id="window-mode-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
+    </form>
+
+    <div class="set-gap">
+      <label class="set-row">
+        <input type="checkbox" id="launch-on-startup-cb" {{ if .launchOnStartup }}checked{{ end }}>
+        {{ T "settings.display.launch_on_startup_label" }}
+      </label>
+      <p class="muted">{{ T "settings.display.launch_on_startup_pending_note" }}</p>
+      <span id="launch-on-startup-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
+    </div>
+
+    <div class="set-gap">
+      <h3 style="margin:0 0 .3rem">{{ T "settings.display.exit_to_os_title" }}</h3>
+      <p class="muted">{{ T "settings.display.exit_to_os_help" }}</p>
+      <form id="exit-to-os-form" class="set-row">
+        <label>{{ T "settings.display.exit_to_os_pin_label" }}
+          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
+        </label>
+        <button class="btn secondary" type="submit" id="exit-to-os-btn">{{ T "settings.display.exit_to_os_btn" }}</button>
+        <span id="exit-to-os-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
+      </form>
+    </div>
+  </div>
   {{ end }}
 </div>
+
+<script>
+(function () {
+  var form = document.getElementById('window-mode-form');
+  if (!form) return;
+  var msg = document.getElementById('window-mode-msg');
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  form.addEventListener('htmx:afterRequest', function (ev) {
+    if (ev.detail.successful) { msg.textContent = '✓ ' + T.saved; }
+  });
+})();
+(function () {
+  var cb = document.getElementById('launch-on-startup-cb');
+  if (!cb) return;
+  var msg = document.getElementById('launch-on-startup-msg');
+  var T = {
+    saved: "{{ T "settings.display.change_saved" }}",
+    saveFailed: "{{ T "settings.error.save_failed" }}"
+  };
+  cb.addEventListener('change', function () {
+    var enabled = cb.checked;
+    msg.textContent = '';
+    fetch('/api/settings/launch-on-startup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ enabled: enabled ? 'true' : 'false' }).toString()
+    }).then(function (r) {
+      if (r.ok) { msg.textContent = '✓ ' + T.saved; }
+      else { cb.checked = !enabled; msg.textContent = '✗ ' + T.saveFailed; }
+    }).catch(function () { cb.checked = !enabled; msg.textContent = '✗ ' + T.saveFailed; });
+  });
+})();
+(function () {
+  var form = document.getElementById('exit-to-os-form');
+  if (!form) return;
+  var msg = document.getElementById('exit-to-os-msg');
+  var btn = document.getElementById('exit-to-os-btn');
+  var T = {
+    success: "{{ T "settings.display.exit_to_os_success" }}",
+    error: "{{ T "settings.display.exit_to_os_error" }}"
+  };
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var pin = form.querySelector('[name="manager_pin"]').value;
+    btn.disabled = true; msg.textContent = '';
+    fetch('/api/settings/exit-to-os', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ manager_pin: pin }).toString()
+    }).then(function (r) {
+      btn.disabled = false;
+      if (r.ok) {
+        msg.textContent = '✓ ' + T.success;
+        form.querySelector('[name="manager_pin"]').value = '';
+      } else {
+        msg.textContent = '✗ ' + T.error;
+      }
+    }).catch(function () { btn.disabled = false; msg.textContent = '✗ ' + T.error; });
+  });
+})();
+</script>
+
 {{ if and .isManager .payMethods }}
 <div class="card">
   <h2>{{ T "settings.payments.title" }} {{ helpLink "payments" }}</h2>
