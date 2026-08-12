@@ -18,3 +18,5 @@ The whole till speaks English, Türkçe, فارسی and العربية — inclu
 2. Settings → Display: adjust the UI scale for your screen.
 3. The on-screen keyboard pops up automatically on touch screens (or force it on/off in Display settings).
 4. Settings → Tills: give this till its own name (e.g. "Front Counter") so it's easy to tell apart from other tills — shown on the Tills page and defaults to "Till 1" until you set one.
+5. Settings → Shop type: the kind of business you picked in the setup wizard (café, retail, service trade, hospitality, market stall or other) — change it here any time.
+6. Settings → Data → Sample data: if you loaded the starter catalogue of sample items during setup, remove it here with one tap. Sample items you already sold or stock-adjusted are kept (your sales history stays intact) — the till tells you how many it removed and how many it kept.

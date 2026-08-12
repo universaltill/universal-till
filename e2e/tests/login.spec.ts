@@ -93,13 +93,21 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await storeName.fill('E2E Test Shop');
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
 
-    // Step 4 · admin PIN.
+    // Step 4 · shop type + sample-data opt-in (ut-docs#539). Pick a type;
+    // leave the sample-data checkbox at its unchecked default — the auth
+    // project is "a genuinely fresh install", and a fresh install must end
+    // up with an empty catalogue unless the operator opts in.
+    await page.locator('select[name=shop_type]').selectOption('cafe');
+    await expect(page.locator('input[name=demo_data]:visible')).not.toBeChecked();
+    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
+
+    // Step 5 · admin PIN.
     await expect(page.locator('input[name=pin]')).toHaveAttribute('autocomplete', /^off-/);
     await page.locator('input[name=pin]').fill('482913');
     await page.locator('input[name=pin_confirm]').fill('482913');
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click();
 
-    // Step 5 · finish — real form submit, real redirect to the till.
+    // Step 6 · finish — real form submit, real redirect to the till.
     await Promise.all([
       page.waitForURL((u) => !u.pathname.includes('/setup')),
       page.locator('button[type=submit]', { hasText: 'Start selling' }).click(),

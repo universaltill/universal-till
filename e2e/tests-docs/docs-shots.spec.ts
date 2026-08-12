@@ -134,6 +134,7 @@ async function ensureOperator(page: Page) {
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // country
     await page.locator('input[name=store_name]').fill('Demo Shop');
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // shop name
+    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // shop type + demo data (ut-docs#539, both optional)
     await page.locator('input[name=pin]').fill(ADMIN_PIN);
     await page.locator('input[name=pin_confirm]').fill(ADMIN_PIN);
     await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // PIN

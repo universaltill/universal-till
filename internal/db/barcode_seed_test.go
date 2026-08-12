@@ -3,7 +3,20 @@ package db
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/data/seeddata"
 )
+
+// seedDemoCatalogue restores the opt-in demo catalogue into a freshly
+// opened DB. Since migration 036 (ut-docs#539) a fresh install has NO demo
+// rows — these barcode-checksum guards now validate the seeddata asset the
+// opt-in path inserts, not a boot-time seed.
+func seedDemoCatalogue(t *testing.T, d *DB) {
+	t.Helper()
+	if _, err := d.DB.Exec(seeddata.DemoCatalogueSQL); err != nil {
+		t.Fatalf("seed demo catalogue: %v", err)
+	}
+}
 
 // ut-docs#17: the seeded item_barcodes rows carried no valid EAN-13 check
 // digit, so a printed scanner-test sheet had to be rendered as Code 128 (an
@@ -15,6 +28,7 @@ func TestSeedItemBarcodesValidEAN13(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
+	seedDemoCatalogue(t, d)
 
 	rows, err := d.DB.Query(`SELECT barcode FROM item_barcodes`)
 	if err != nil {
@@ -57,6 +71,7 @@ func TestSeedVariantBarcodesValidEAN13(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
+	seedDemoCatalogue(t, d)
 
 	rows, err := d.DB.Query(`SELECT barcode FROM variant_barcodes`)
 	if err != nil {
@@ -99,6 +114,7 @@ func TestSeedShortcutButtonsValidEAN13(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
+	seedDemoCatalogue(t, d)
 
 	rows, err := d.DB.Query(`SELECT barcode FROM shortcut_buttons`)
 	if err != nil {
@@ -142,6 +158,14 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	d, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A pre-023 till still has the demo catalogue from its own 001 run (036
+	// removes it only when untouched) — restore it, and give itm001 real
+	// trading history so 036's replay below must keep it (ut-docs#539).
+	seedDemoCatalogue(t, d)
+	if _, err := d.DB.Exec(`INSERT INTO stock_movements (id, item_id, variant_id, location_id, type, quantity)
+		VALUES ('sm-023', 'itm001', NULL, 'loc_main', 'adjust', 1)`); err != nil {
+		t.Fatalf("touch itm001: %v", err)
 	}
 	if _, err := d.DB.Exec(`UPDATE item_barcodes SET barcode = '5000000000011' WHERE barcode = '5000000000012'`); err != nil {
 		t.Fatalf("simulate pre-023 broken checksum: %v", err)
@@ -197,7 +221,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
 		t.Fatalf("rewind order_status_events table: %v", err)
 	}
-// Migration 034 creates three tables -- same non-idempotent-replay
+	// Migration 034 creates three tables -- same non-idempotent-replay
 	// problem, drop them too (ut-docs#516).
 	for _, tbl := range []string{"item_station_routes", "category_station_routes", "kitchen_stations"} {
 		if _, err := d.DB.Exec(`DROP TABLE ` + tbl); err != nil {
@@ -212,7 +236,12 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN receipt_print_failed_at`); err != nil {
 		t.Fatalf("rewind sales.receipt_print_failed_at column: %v", err)
 	}
-	// Migration 036 adds report_archive.cloud_acked_at -- same problem
+	// Migration 036 adds items.is_sample_data -- same problem again
+	// (ut-docs#539).
+	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind items.is_sample_data column: %v", err)
+	}
+	// Migration 037 adds report_archive.cloud_acked_at -- same problem
 	// again (ut-docs#571).
 	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
 		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
@@ -221,7 +250,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 023 and its followers (027-036)
+	d, err = Open(path) // re-applies 023 and its followers (027-037)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,6 +277,14 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Same as the 023 upgrade test above: restore the catalogue a pre-031
+	// till would have, and touch itm001 so 036's replay keeps it (its
+	// shortcut_buttons row rides on the item via ON DELETE CASCADE).
+	seedDemoCatalogue(t, d)
+	if _, err := d.DB.Exec(`INSERT INTO stock_movements (id, item_id, variant_id, location_id, type, quantity)
+		VALUES ('sm-031', 'itm001', NULL, 'loc_main', 'adjust', 1)`); err != nil {
+		t.Fatalf("touch itm001: %v", err)
+	}
 	if _, err := d.DB.Exec(`UPDATE shortcut_buttons SET barcode = '2000010000017' WHERE barcode = '2000010000012'`); err != nil {
 		t.Fatalf("simulate pre-031 broken checksum: %v", err)
 	}
@@ -270,7 +307,7 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
 		t.Fatalf("rewind order_status_events table: %v", err)
 	}
-// Migration 034 creates three tables -- same non-idempotent-replay
+	// Migration 034 creates three tables -- same non-idempotent-replay
 	// problem, drop them too (ut-docs#516).
 	for _, tbl := range []string{"item_station_routes", "category_station_routes", "kitchen_stations"} {
 		if _, err := d.DB.Exec(`DROP TABLE ` + tbl); err != nil {
@@ -284,8 +321,11 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN receipt_print_failed_at`); err != nil {
 		t.Fatalf("rewind sales.receipt_print_failed_at column: %v", err)
 	}
-	// Migration 036 adds report_archive.cloud_acked_at -- same problem
-	// again (ut-docs#571).
+	// Same for 036's items.is_sample_data column (ut-docs#539).
+	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind items.is_sample_data column: %v", err)
+	}
+	// Same for 037's report_archive.cloud_acked_at column (ut-docs#571).
 	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
 		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
 	}
@@ -293,7 +333,7 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 031 through 036
+	d, err = Open(path) // re-applies 031 through 037
 	if err != nil {
 		t.Fatal(err)
 	}

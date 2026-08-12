@@ -99,7 +99,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`DROP TABLE order_status_events`); err != nil {
 		t.Fatalf("rewind order_status_events table: %v", err)
 	}
-// Migration 034 creates three tables -- same non-idempotent-replay
+	// Migration 034 creates three tables -- same non-idempotent-replay
 	// problem, drop them too (ut-docs#516).
 	for _, tbl := range []string{"item_station_routes", "category_station_routes", "kitchen_stations"} {
 		if _, err := d.DB.Exec(`DROP TABLE ` + tbl); err != nil {
@@ -114,7 +114,12 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN receipt_print_failed_at`); err != nil {
 		t.Fatalf("rewind sales.receipt_print_failed_at column: %v", err)
 	}
-	// Migration 036 adds report_archive.cloud_acked_at -- same problem
+	// Migration 036 adds items.is_sample_data -- same problem again
+	// (ut-docs#539).
+	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind items.is_sample_data column: %v", err)
+	}
+	// Migration 037 adds report_archive.cloud_acked_at -- same problem
 	// again (ut-docs#571).
 	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
 		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
