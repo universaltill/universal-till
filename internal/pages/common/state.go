@@ -22,11 +22,11 @@ const (
 	// KeyShopType holds the ADR-0026 shop-type taxonomy value chosen in the
 	// setup wizard (cafe|retail|service|hospitality|market_stall|other) —
 	// ut-docs#539. Optional: empty/missing is fine.
-	KeyShopType          = "shop.type"
-	KeyUIScale           = "display.ui_scale"
-	KeyOSK               = "display.osk"
-	KeyIdleLock          = "auth.idle_lock_minutes"
-	KeyKioskIdleReset    = "kiosk.idle_reset_seconds"
+	KeyShopType       = "shop.type"
+	KeyUIScale        = "display.ui_scale"
+	KeyOSK            = "display.osk"
+	KeyIdleLock       = "auth.idle_lock_minutes"
+	KeyKioskIdleReset = "kiosk.idle_reset_seconds"
 	// KeyWindowMode is the till's own window/process display mode (ut-docs#608
 	// scaffold): fullscreen|kiosk|maximized|normal. This card only stores and
 	// surfaces the setting — actually applying it to the OS window is
