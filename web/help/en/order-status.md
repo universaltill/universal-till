@@ -23,5 +23,7 @@ Mark each order's progress — preparing, ready, collected — with one tap, so 
 
 ## Notes
 
+- The list refreshes itself every few seconds — new orders (including ones placed on the self-order kiosk) appear without reloading the page.
+- If a kitchen ticket or receipt could not be printed — a printer out of paper, unplugged, or offline — the order shows a ⚠ warning next to its status, so a paid order (for example from the self-order kiosk) is never silently lost. A kitchen ⚠ means the kitchen never received the ticket: fix the printer and pass the order to them yourself. A receipt ⚠ clears as soon as you fix the printer and reprint that receipt from the order's page in the Journal.
 - Everything here works fully offline, like the rest of the till.
 - This screen is the foundation for what's coming next: a kitchen display, customer pagers and order-tracking will all follow the same statuses.
