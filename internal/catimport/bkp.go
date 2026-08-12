@@ -45,10 +45,11 @@ var (
 	ErrBkpChecksumMismatch = errors.New("bkp: backup.db checksum recorded in meta.inf does not match the archive contents")
 	// ErrBkpTooLarge is returned when meta.inf declares an uncompressed size
 	// past bkpMaxMetaSize (checked before it's read into memory), or
-	// backup.db's actual streamed byte count exceeds bkpMaxDBSize (checked
-	// as it's written, so an oversized entry is never fully decompressed
-	// into memory first: ut-docs#594) — a zip-bomb guard (review finding,
-	// ut-docs#511, 2026-08-09).
+	// backup.db exceeds bkpMaxDBSize — the latter checked both on its
+	// declared size (a cheap fast reject) and, authoritatively, on the
+	// actual byte count streamed to the temp file, so an oversized entry is
+	// never fully decompressed into memory first (ut-docs#594). A zip-bomb
+	// guard (review finding, ut-docs#511, 2026-08-09).
 	ErrBkpTooLarge = errors.New("bkp: archive entry declares an uncompressed size that is too large")
 )
 
@@ -59,12 +60,13 @@ var (
 // readZipEntry) regardless.
 const bkpMaxMetaSize = 200 << 20 // 200MB
 
-// bkpMaxDBSize bounds backup.db, enforced on BYTES ACTUALLY WRITTEN while
-// streaming to the temp file (see ParseBkp), so a truthfully-declared but
-// enormous entry is rejected before being fully decompressed into memory —
-// not on the archive's declared UncompressedSize64 up front (ut-docs#594).
-// A var, not a const, so tests can lower it to exercise the cap without
-// needing gigantic fixtures.
+// bkpMaxDBSize bounds backup.db. It is enforced authoritatively on BYTES
+// ACTUALLY WRITTEN while streaming to the temp file (see ParseBkp), so an
+// enormous entry is rejected as it expands rather than after being fully
+// decompressed into memory (ut-docs#594), with a cheap declared-size fast
+// reject in front of it so a zip bomb doesn't get a gigabyte of temp writes
+// out of the till first. A var, not a const, so tests can lower it to
+// exercise the cap without needing gigantic fixtures.
 //
 // A real multi-year speedy kasse export can run into the hundreds of MB:
 // the pilot café's own backup.db was 270MB (68,838 receipts / 159,408
@@ -109,6 +111,22 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 	if metaFile.UncompressedSize64 > bkpMaxMetaSize {
 		return Result{}, ErrBkpTooLarge
 	}
+	// backup.db's declared size is a sound FAST REJECT (review finding,
+	// ut-docs#594): archive/zip refuses to read an entry whose declared
+	// UncompressedSize64 doesn't match its real decompressed length in
+	// either direction (verified against the stdlib — see the streaming
+	// comment below), so "declares more than the cap" always means "really
+	// is more than the cap": no valid archive is ever wrongly rejected
+	// here. Without this, a crafted zip bomb — a few MB compressed,
+	// truthfully declaring gigabytes — would have bkpMaxDBSize+1 bytes
+	// (1GB) actually decompressed and written to the till's storage before
+	// the byte-count check below rejected it, which is precisely the attack
+	// the original guard (ut-docs#511) was added to stop for free. The
+	// streamed byte count below stays the authoritative check; this is the
+	// cheap gate in front of it.
+	if dbFile.UncompressedSize64 > uint64(bkpMaxDBSize) {
+		return Result{}, ErrBkpTooLarge
+	}
 
 	metaBytes, err := readZipEntry(metaFile)
 	if err != nil {
@@ -127,17 +145,21 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 	// into the hundreds of MB, and this importer targets low-memory Android
 	// till hardware. Hash on the fly (for validateBkpMeta below) rather than
 	// hashing a fully-buffered []byte, and cap on bytes ACTUALLY WRITTEN via
-	// io.LimitReader rather than pre-checking the archive's declared
-	// UncompressedSize64 (as the original 200MB guard did): archive/zip
-	// itself already refuses to let a genuinely mismatched declared/actual
-	// size be read at all (it surfaces as a format error, confirmed against
-	// the stdlib directly — there's no way to smuggle more real bytes
-	// through than the header declares), so a pre-check would only ever
-	// catch what the byte-count enforcement below catches anyway. Enforcing
-	// on the copy itself is simply the one mechanism needed instead of two,
-	// and — the actual point of ut-docs#594 — it means a truthfully-declared
-	// but enormous entry never gets fully decompressed into memory before
-	// being rejected.
+	// io.LimitReader — this is the AUTHORITATIVE cap check, so an entry that
+	// somehow expands past the cap is cut off mid-stream rather than being
+	// fully decompressed into memory first, which is the actual point of
+	// ut-docs#594. (The declared-size gate further up is only the cheap fast
+	// reject in front of this one.)
+	//
+	// The two can't disagree, because archive/zip refuses to let a
+	// mismatched declared/actual size be read AT ALL — verified directly
+	// against the stdlib's checksumReader (go1.25 archive/zip/reader.go):
+	// reading past the declared size fails mid-read with zip.ErrFormat, and
+	// reaching the real EOF short of the declared size fails with
+	// io.ErrUnexpectedEOF, both discarding that Read's bytes. There is no
+	// way to smuggle more (or fewer) real bytes through an entry than its
+	// header declares, so the declared size is trustworthy once the entry
+	// reads cleanly — which is exactly what makes the fast reject sound.
 	//
 	// The cap is checked as "bkpMaxDBSize+1": io.Copy drains the limited
 	// reader to its EOF either way, so a backup.db at or under the cap still

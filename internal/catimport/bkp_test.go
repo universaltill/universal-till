@@ -4,12 +4,14 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/flate"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -421,12 +423,20 @@ func withBkpMaxDBSize(t *testing.T, n int64) {
 	t.Cleanup(func() { bkpMaxDBSize = orig })
 }
 
-// buildBkpZipWithMismatchedBackupDBSize writes backup.db via zip.Writer's
-// raw entry API (CreateRaw), declaring an UncompressedSize64 that does NOT
-// match the real content — see TestParseBkp_MismatchedDeclaredSizeRejected
-// for what this actually proves. meta.inf still goes through the normal
-// zw.Create path.
+// buildBkpZipWithMismatchedBackupDBSize writes backup.db declaring an
+// UncompressedSize64 that does NOT match the real content — see
+// TestParseBkp_MismatchedDeclaredSizeRejected for what this proves.
 func buildBkpZipWithMismatchedBackupDBSize(t *testing.T, dbBytes []byte, liedUncompressedSize uint64, metaBytes []byte) []byte {
+	t.Helper()
+	return buildBkpZipRawBackupDB(t, dbBytes, liedUncompressedSize, crc32.ChecksumIEEE(dbBytes), metaBytes)
+}
+
+// buildBkpZipRawBackupDB writes backup.db via zip.Writer's raw entry API
+// (CreateRaw), so the test controls the recorded UncompressedSize64 and
+// CRC32 independently of the bytes actually stored — the only way to build
+// the corrupt-header fixtures ParseBkp's guards are supposed to catch.
+// meta.inf still goes through the normal zw.Create path.
+func buildBkpZipRawBackupDB(t *testing.T, dbBytes []byte, declaredSize uint64, declaredCRC32 uint32, metaBytes []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -446,9 +456,9 @@ func buildBkpZipWithMismatchedBackupDBSize(t *testing.T, dbBytes []byte, liedUnc
 	fh := &zip.FileHeader{
 		Name:               "backup.db",
 		Method:             zip.Deflate,
-		UncompressedSize64: liedUncompressedSize,
+		UncompressedSize64: declaredSize,
 		CompressedSize64:   uint64(compressed.Len()),
-		CRC32:              crc32.ChecksumIEEE(dbBytes),
+		CRC32:              declaredCRC32,
 	}
 	rw, err := zw.CreateRaw(fh)
 	if err != nil {
@@ -547,7 +557,10 @@ func TestParseBkp_MismatchedDeclaredSizeRejected(t *testing.T) {
 		claimed uint64
 	}{
 		{"declares far less than the real content", 10},
-		{"declares far more than the real content", 5 << 30},
+		// Deliberately kept UNDER bkpMaxDBSize: a claim over the cap would
+		// be short-circuited by ParseBkp's declared-size fast reject, and
+		// this test is about what archive/zip itself does, not that gate.
+		{"declares far more than the real content", 64 << 20},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -557,6 +570,73 @@ func TestParseBkp_MismatchedDeclaredSizeRejected(t *testing.T) {
 				t.Fatal("ParseBkp accepted a backup.db whose declared size doesn't match its real content — want a rejection")
 			}
 		})
+	}
+}
+
+// countingReaderAt counts the bytes ParseBkp actually pulls out of the
+// uploaded archive, so a test can tell "rejected after streaming the whole
+// entry" apart from "rejected without ever touching the entry body".
+type countingReaderAt struct {
+	inner io.ReaderAt
+	read  int64
+}
+
+func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	n, err := c.inner.ReadAt(p, off)
+	c.read += int64(n)
+	return n, err
+}
+
+// TestParseBkp_OversizedEntryRejectedWithoutStreamingIt is the zip-bomb
+// half of the cap (review finding, ut-docs#594): an over-cap backup.db must
+// be rejected on its declared size, BEFORE its body is decompressed and
+// written to the till's storage — otherwise a few-MB crafted upload costs
+// the till bkpMaxDBSize+1 bytes of temp writes and the CPU to inflate them
+// before the streamed byte count notices. Proven by counting bytes read off
+// the archive: an entry of incompressible data far larger than the cap must
+// cost only the central-directory/header reads, not its ~2MB body.
+func TestParseBkp_OversizedEntryRejectedWithoutStreamingIt(t *testing.T) {
+	// Incompressible, so the entry's compressed body is ~the same size as
+	// its content — that's what makes the byte count discriminating.
+	body := make([]byte, 2<<20)
+	if _, err := rand.Read(body); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	withBkpMaxDBSize(t, 64<<10)
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": body,
+		"meta.inf":  []byte(validMetaInfNoChecksums),
+	})
+	counting := &countingReaderAt{inner: bytes.NewReader(zipBytes)}
+	_, err := ParseBkp(counting, int64(len(zipBytes)), 2)
+	if !errors.Is(err, ErrBkpTooLarge) {
+		t.Fatalf("err = %v, want ErrBkpTooLarge", err)
+	}
+	// zip.NewReader alone scans up to ~64KB at the tail hunting the
+	// end-of-central-directory record, so the bar is set well above that
+	// and still ~8x below the 2MB body it must not have read.
+	if counting.read > 256<<10 {
+		t.Fatalf("read %d bytes off the archive to reject an over-cap entry — it streamed the entry body instead of rejecting on the declared size", counting.read)
+	}
+}
+
+// TestParseBkp_CorruptBackupDBCRCRejected pins the guarantee ut-docs#594's
+// streaming rewrite had to preserve: backup.db no longer goes through
+// readZipEntry, so nothing but the io.Copy below reaching the entry's real
+// EOF makes archive/zip verify its CRC32. A backup.db whose recorded CRC32
+// doesn't match its bytes must still be refused — silently importing a
+// corrupt till backup is the one outcome this importer must never produce.
+func TestParseBkp_CorruptBackupDBCRCRejected(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	// Truthful declared size, deliberately wrong CRC32 — so the only thing
+	// that can catch it is archive/zip's checksum verification at EOF.
+	zipBytes := buildBkpZipRawBackupDB(t, dbBytes, uint64(len(dbBytes)),
+		crc32.ChecksumIEEE(dbBytes)+1, []byte(validMetaInfNoChecksums))
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if !errors.Is(err, zip.ErrChecksum) {
+		t.Fatalf("err = %v, want zip.ErrChecksum — the streamed copy must still trigger archive/zip's CRC32 check", err)
 	}
 }
 
