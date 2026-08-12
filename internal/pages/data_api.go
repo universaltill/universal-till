@@ -67,24 +67,67 @@ type exportResponse struct {
 	Error      string `json:"error,omitempty"`
 }
 
+// importRequestPayload is the event payload the resolved import-type
+// plugin receives on "import.requested.ask" (EventBus.AskPlugin) —
+// exportRequestPayload's counterpart for ut-docs#599. Deliberately tiny:
+// FileHandle is a plugin-scoped handle into the host's staged-file
+// registry (plugins.OpenImportFile), NEVER the file bytes — the guest
+// pulls the content itself in bounded chunks via the import_file_size/
+// import_file_read/import_file_close host functions (ADR-0001 amendment
+// 2026-08-12), so a hundreds-of-MB upload is never marshaled through the
+// JSON event envelope.
+type importRequestPayload struct {
+	EntryKey string `json:"entry_key"`
+	// Entities is the resolved set for this run: requested ∩ declared ∩
+	// granted "<entity>:write" (never more than the entry's manifest
+	// declares, never an entity the plugin lacks the write grant for).
+	Entities   []string `json:"entities"`
+	FileHandle int32    `json:"file_handle"`
+	FileName   string   `json:"file_name"`
+	FileSize   int64    `json:"file_size"`
+}
+
+// importResponse is the JSON a plugin writes to stdout to answer
+// "import.requested.ask" — exportResponse's counterpart. Counts maps an
+// entity name to how many records the plugin reports it parsed/would
+// import for that entity; Error carries the reason when OK is false.
+type importResponse struct {
+	OK      bool           `json:"ok"`
+	Message string         `json:"message,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	Counts  map[string]int `json:"counts,omitempty"`
+}
+
+// maxImportFileSize bounds POST /api/data/import's staged upload. Enforced
+// authoritatively on BYTES ACTUALLY WRITTEN while streaming to the temp
+// file, with a cheap declared-size fast reject in front (the multipart
+// header's Size), mirroring catimport's bkpMaxDBSize shape — and, like it,
+// a var (not a const) so tests can lower it instead of uploading gigantic
+// fixtures. 1GB matches bkpMaxDBSize's rationale: the one real input on
+// hand (a speedy kasse .bkp) is 270MB, so 1GB leaves comfortable headroom.
+var maxImportFileSize int64 = 1 << 30 // 1GB
+
+// dataAPIRespond writes the { "data": …, "error": null|"…" } envelope
+// universal-till/CLAUDE.md mandates (ut-docs#387): on success msg lands
+// under data.message with error:null, on failure data is null and error
+// carries msg. Shared by /api/data/* handlers (data_api.go,
+// import_dispatch.go).
+func dataAPIRespond(w http.ResponseWriter, status int, ok bool, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if ok {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"message": msg}, "error": nil})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
+}
+
 // registerDataAPI wires the manager-gated Data-management actions. Clearing
 // test data before go-live is all-or-nothing and audited (it cannot cherry-pick
 // individual sales). More operations (customer erasure, catalog cleanup) build
 // on this pattern.
 func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
-	// respond writes the { "data": …, "error": null|"…" } envelope
-	// universal-till/CLAUDE.md mandates (ut-docs#387): on success msg lands
-	// under data.message with error:null, on failure data is null and error
-	// carries msg.
-	respond := func(w http.ResponseWriter, status int, ok bool, msg string) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		if ok {
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"message": msg}, "error": nil})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
-	}
+	respond := dataAPIRespond
 
 	mux.HandleFunc("POST /api/data/reset-transactions", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
@@ -371,4 +414,8 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		respond(w, http.StatusOK, true, msg)
 	})
+
+	// POST /api/data/import — the import-type counterpart (ut-docs#599),
+	// kept in its own file to spare this one more bulk.
+	registerImportDispatch(mux, d)
 }

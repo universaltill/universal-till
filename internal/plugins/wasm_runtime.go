@@ -162,6 +162,9 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			delete(w.hasTCP, id)
 			// A dropped plugin must never leak an open device socket.
 			tcpConns.CloseAll(id)
+			// ... nor a staged import file — CloseAll here also removes
+			// the temp file from disk (ut-docs#599).
+			importFiles.CloseAll(id)
 		}
 	}
 	for id := range active {

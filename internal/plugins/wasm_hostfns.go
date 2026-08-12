@@ -88,6 +88,9 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostTCPWrite).Export("tcp_write").
 		NewFunctionBuilder().WithFunc(hostTCPRead).Export("tcp_read").
 		NewFunctionBuilder().WithFunc(hostTCPClose).Export("tcp_close").
+		NewFunctionBuilder().WithFunc(hostImportFileSize).Export("import_file_size").
+		NewFunctionBuilder().WithFunc(hostImportFileRead).Export("import_file_read").
+		NewFunctionBuilder().WithFunc(hostImportFileClose).Export("import_file_close").
 		Instantiate(ctx)
 	return err
 }
