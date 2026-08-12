@@ -205,6 +205,218 @@ func TestSetupWizardBlankTillNameDoesNotErrorAndDefaultsOnRead(t *testing.T) {
 	}
 }
 
+// getSetup issues a bare GET /setup, optionally carrying a ut_lang cookie —
+// used by the detection tests below to simulate a fresh first visit (no
+// cookie) vs. a repeat visit (cookie already set from an earlier pick).
+func getSetup(mux *http.ServeMux, query, langCookie string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/setup"+query, nil)
+	if langCookie != "" {
+		req.AddCookie(&http.Cookie{Name: "ut_lang", Value: langCookie})
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// ut-docs#590: a genuinely first visit (no ?lang=, no ut_lang cookie) with an
+// OS locale/timezone that resolves to a language this till actually ships
+// (tr is a core locale) redirects through the existing ?lang= mechanism —
+// the same one the step-1 flag buttons already use — rather than rendering
+// silently in a language nobody chose.
+func TestSetupWizardRedirectsToDetectedAvailableLanguage(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	withOSLocale(t, "tr_TR.UTF-8", "Europe/Istanbul")
+
+	rec := getSetup(mux, "", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup?lang=tr" {
+		t.Fatalf("GET /setup (tr_TR, Europe/Istanbul): code=%d loc=%q, want 303 -> /setup?lang=tr",
+			rec.Code, rec.Header().Get("Location"))
+	}
+
+	// Following the redirect, the country step is pre-filled from the same
+	// detection (Turkey, by timezone) — still freely changeable.
+	rec = getSetup(mux, "?lang=tr", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=tr: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"country: 'TR'", "currency: 'TRY'", "tax: '20'", "taxinc: 'on'"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /setup?lang=tr body missing %q (country prefill)", want)
+		}
+	}
+}
+
+// The English case is the same redirect path (en is a core locale) — this
+// pins that "already the default" doesn't get special-cased into skipping
+// the redirect, since that would leave the ut_lang cookie unset and detection
+// would silently re-run (and re-decide) on every subsequent load.
+func TestSetupWizardRedirectsToDetectedEnglishAndPrefillsGB(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	withOSLocale(t, "en_GB.UTF-8", "Europe/London")
+
+	rec := getSetup(mux, "", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup?lang=en" {
+		t.Fatalf("GET /setup (en_GB, Europe/London): code=%d loc=%q, want 303 -> /setup?lang=en",
+			rec.Code, rec.Header().Get("Location"))
+	}
+
+	rec = getSetup(mux, "?lang=en", "")
+	body := rec.Body.String()
+	for _, want := range []string{"country: 'GB'", "currency: 'GBP'", "tax: '20'", "taxinc: 'on'"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /setup?lang=en body missing %q (country prefill)", want)
+		}
+	}
+}
+
+// A German till (real field case, ut-docs#589's own motivating example) has
+// no redirect to take — "de" isn't one of the locales this till ships today
+// (core is ar/en/fa/tr only) — so it renders directly, in English, with a
+// plain "de is coming soon" note rather than silently landing on English
+// with no explanation. The country step still detects Germany correctly,
+// independent of the language gap.
+func TestSetupWizardGermanLanguageUnavailableCountryStillDetected(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	withOSLocale(t, "de_DE.UTF-8", "Europe/Berlin")
+
+	rec := getSetup(mux, "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup (de_DE, Europe/Berlin): code=%d, want 200 (no available-language redirect)", rec.Code)
+	}
+	body := rec.Body.String()
+	// Assert on the note's own marker, not on the bare string "de": the page
+	// already renders `name="code"` for the join step, so a bare
+	// strings.Contains(body, "de") can never fail and would pass even with
+	// the note removed entirely.
+	if !strings.Contains(body, `data-detected-lang="de"`) {
+		t.Error("GET /setup body should carry the coming-soon note naming the detected 'de' locale")
+	}
+	for _, want := range []string{"country: 'DE'", "currency: 'EUR'", "tax: '19'", "taxinc: 'on'"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /setup body missing %q (country prefill)", want)
+		}
+	}
+	// Recorded for ut-docs#589's child 3 (auto-file a board ticket for a
+	// missing language) to act on later.
+	if v, ok, _ := d.Settings.Get(t.Context(), "setup.detected_lang_unavailable"); !ok || v != "de" {
+		t.Errorf("setup.detected_lang_unavailable = %q ok=%v, want \"de\"", v, ok)
+	}
+}
+
+// Neither the language nor the timezone/locale region resolves to anything
+// this wizard knows — the graceful-fallback path: render in English (the
+// existing bare default), no country prefilled (a blank/placeholder select,
+// never a guess), and the coming-soon note names whatever was detected.
+func TestSetupWizardUnknownLocaleNoCountryGuessed(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	withOSLocale(t, "ja_JP.UTF-8", "Asia/Tokyo")
+
+	rec := getSetup(mux, "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup (ja_JP, Asia/Tokyo): code=%d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-detected-lang="ja"`) {
+		t.Error("GET /setup body should carry the coming-soon note naming the detected 'ja' locale")
+	}
+	if strings.Contains(body, "country: 'DE'") || strings.Contains(body, "country: 'GB'") ||
+		strings.Contains(body, "country: 'TR'") {
+		t.Error("GET /setup should not have guessed a country for an unmapped timezone/locale")
+	}
+	if !strings.Contains(body, "country: ''") {
+		t.Error("GET /setup should leave the country unset (blank), not guess one")
+	}
+}
+
+// Detection only ever drives the FIRST visit — an explicit ?lang= query
+// (the step-1 buttons' own mechanism) or a cookie from an earlier visit both
+// mean a choice already happened, so re-detecting would be a nag, not a
+// default. Country detection stays independent and still applies.
+func TestSetupWizardDetectionSkippedOnceAChoiceExists(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	withOSLocale(t, "de_DE.UTF-8", "Europe/Berlin")
+
+	// Explicit ?lang= present: no redirect loop, no coming-soon note, even
+	// though the underlying OS locale (de) would trigger one on a bare visit.
+	rec := getSetup(mux, "?lang=fa", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=fa: code=%d", rec.Code)
+	}
+	// The marker, not the locale key: T resolves the key, so the key string
+	// itself never appears in rendered output and asserting its absence can
+	// never fail.
+	if strings.Contains(rec.Body.String(), "data-detected-lang=") {
+		t.Error("an explicit ?lang= must not also show the detected-language note")
+	}
+	// Country detection is unaffected by the language cookie/query state.
+	if !strings.Contains(rec.Body.String(), "country: 'DE'") {
+		t.Error("country prefill should still apply alongside an explicit ?lang=")
+	}
+
+	// A cookie from an earlier visit: same — no redirect, no note.
+	rec = getSetup(mux, "", "en")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup with existing ut_lang cookie: code=%d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "data-detected-lang=") {
+		t.Error("a repeat visit (cookie already set) must not re-show the detected-language note")
+	}
+}
+
+// Review finding: a failed POST (mistyped/mismatched PIN) re-renders the same
+// wizard template, and the country step's hidden currency/tax_rate_pct inputs
+// are bound to the same x-data. Detection must NOT re-run on that path — the
+// operator has already picked a country, and re-detecting silently replaced
+// their deliberate "France, 20%" with the detected "Germany, 19%", which the
+// retry would then save without ever showing them the country step again.
+func TestSetupWizardPINErrorRerenderKeepsOperatorCountryNotDetected(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	withOSLocale(t, "de_DE.UTF-8", "Europe/Berlin") // detection would say DE / 19%
+
+	form := url.Values{
+		"pin": {"1234"}, "pin_confirm": {"9999"}, // mismatch → error re-render
+		"country": {"FR"}, "currency": {"EUR"}, "tax_rate_pct": {"20"}, "tax_inclusive": {"on"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	for _, want := range []string{"country: 'FR'", "currency: 'EUR'", "tax: '20'"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("PIN-error re-render missing %q — the operator's own country pick must survive", want)
+		}
+	}
+	for _, unwanted := range []string{"country: 'DE'", "tax: '19'"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("PIN-error re-render contains %q — detection must not overwrite a submitted choice", unwanted)
+		}
+	}
+}
+
+// The same path with no country submitted at all must fall back to the
+// wizard's pre-#590 blank/tax-inclusive-on defaults, not to detection.
+func TestSetupWizardPINErrorRerenderWithNoCountryStaysBlank(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	withOSLocale(t, "de_DE.UTF-8", "Europe/Berlin")
+
+	form := url.Values{"pin": {"12"}, "pin_confirm": {"12"}} // too short → error re-render
+	req := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "country: ''") || !strings.Contains(body, "taxinc: 'on'") {
+		t.Error("PIN-error re-render with no submitted country should stay blank with taxinc on")
+	}
+	if strings.Contains(body, "country: 'DE'") {
+		t.Error("PIN-error re-render must not detect a country the operator never chose")
+	}
+}
+
 // GET /setup and POST /api/setup both refuse to run once an operator with a PIN
 // exists — the wizard window is exactly first boot.
 func TestSetupWizardRefusesAfterFirstBoot(t *testing.T) {
