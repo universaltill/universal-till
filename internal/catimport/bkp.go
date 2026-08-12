@@ -185,6 +185,12 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 	if closeErr != nil {
 		return Result{}, fmt.Errorf("close temp backup.db: %w", closeErr)
 	}
+	// Backstop, deliberately kept even though the declared-size gate above
+	// pre-empts it for every archive archive/zip will actually read (a
+	// mutation test confirmed no test in this package fails if this branch
+	// is removed — that's expected, not missing coverage). It is what makes
+	// the bound hold on the bytes themselves rather than on a header field,
+	// so the guarantee survives anything the fast reject can't see.
 	if written > bkpMaxDBSize {
 		return Result{}, ErrBkpTooLarge
 	}
