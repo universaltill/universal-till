@@ -1526,6 +1526,70 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 	return res, rows.Err()
 }
 
+// ImportEntryRow is a plugin-provided import handler (plugin_entries
+// type='import'). The manager-gated /api/data/import dispatcher
+// (internal/pages/import_dispatch.go, ut-docs#599) resolves Key to this
+// row, then asks PluginID specifically (EventBus.AskPlugin(
+// "import.requested.ask", ...) — never a broadcast Ask, same rule as
+// ExportEntryRow above) to consume the staged upload. Entities/FileFormats
+// are the entry's own manifest declarations (ManifestEntry.Entities /
+// .FileFormats), persisted inside config_json by
+// plugins.PersistManifest/Rollback and unpacked here so callers get typed
+// slices rather than raw JSON.
+type ImportEntryRow struct {
+	PluginID    string
+	Key         string
+	Label       string
+	SortOrder   int
+	Entities    []string
+	FileFormats []string
+}
+
+// ListImportEntries returns active import entries from active plugins —
+// the /api/data/import dispatcher resolves its entry_key against this.
+func (r *PluginRepo) ListImportEntries(ctx context.Context) ([]ImportEntryRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+    p.id,
+    pe.key,
+    pe.label,
+    pe.sort_order,
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'import' AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.plugin_id, pe.key
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_import_entries", err)
+	}
+	defer rows.Close()
+	var res []ImportEntryRow
+	for rows.Next() {
+		var row ImportEntryRow
+		var configJSON string
+		if err := rows.Scan(&row.PluginID, &row.Key, &row.Label, &row.SortOrder, &configJSON); err != nil {
+			return nil, pluginObs.wrap("list_import_entries", err)
+		}
+		if configJSON != "" {
+			// Unpack the persisted declarations; a malformed config_json
+			// (hand-edited DB, legacy row) just yields empty slices — the
+			// dispatcher then finds no declared entities and 400s cleanly
+			// rather than this listing failing wholesale.
+			var cfg struct {
+				Entities    []string `json:"entities"`
+				FileFormats []string `json:"file_formats"`
+			}
+			if err := json.Unmarshal([]byte(configJSON), &cfg); err == nil {
+				row.Entities = cfg.Entities
+				row.FileFormats = cfg.FileFormats
+			}
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
 // ThemeRow is a UI theme provided by an installed plugin (plugin_entries
 // type='theme'). ConfigJSON carries the theme config, e.g. {"css":"assets/theme.css"}.
 type ThemeRow struct {
