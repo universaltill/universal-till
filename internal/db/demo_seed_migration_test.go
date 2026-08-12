@@ -104,14 +104,19 @@ func TestDemoCatalogueUpgradeKeepsTouchedItems(t *testing.T) {
 		t.Fatalf("insert stock movement: %v", err)
 	}
 
-	// Rewind the ledger so only 036 replays on reopen, and undo its
-	// non-idempotent DDL (ALTER TABLE ADD COLUMN), same pattern as the 022/
-	// 023 upgrade tests in this package.
+	// Rewind the ledger so 036 and its follower replay on reopen, and undo
+	// their non-idempotent DDL (ALTER TABLE ADD COLUMN), same pattern as the
+	// 022/023 upgrade tests in this package.
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 36`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
 	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind is_sample_data column: %v", err)
+	}
+	// Migration 037 adds report_archive.cloud_acked_at -- same non-idempotent
+	// replay problem (ut-docs#571).
+	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
+		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
@@ -224,6 +229,11 @@ func TestDemoCatalogueUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	}
 	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind is_sample_data column: %v", err)
+	}
+	// Migration 037 adds report_archive.cloud_acked_at -- same non-idempotent
+	// replay problem (ut-docs#571).
+	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
+		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)

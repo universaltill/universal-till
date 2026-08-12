@@ -42,6 +42,28 @@ alongside the automatic end-of-day time) to when your trading day actually
 begins, e.g. 06:00, and Day/Week/Month/Year periods line up with your real
 trading day instead of the clock.
 
+## Report retention
+
+Every archived end-of-day report is kept for **10 years** — this is a legal
+record, not something the "Clear transaction history" reset button in Data
+management can remove. Once a report passes its 10-year anniversary, it is
+automatically and permanently deleted in the background — there is no
+manual step and no confirmation prompt, so export anything you need to keep
+longer before then.
+
+In Settings → Report Retention, choose where reports are kept:
+
+- **This till only** — works today, no extra setup. Report archives are
+  small (a few KB per closed day), so keeping 10 years of them won't fill a
+  modern till's disk.
+- **Cloud only** / **Till + cloud** — shown for a future release once cloud
+  storage and a shop subscription are available; not selectable yet.
+
+The same page shows **how far back your records go** (earliest to latest
+archived report, and how many) and an **export** button — pick a date
+range and download the matching reports as CSV or JSON, e.g. to hand to an
+auditor.
+
 ## Cash adjustments & payouts (Shifts)
 
 The Shifts page's "Cash adjustment / payout" form records anything that

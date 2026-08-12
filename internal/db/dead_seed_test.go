@@ -119,11 +119,16 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind items.is_sample_data column: %v", err)
 	}
+	// Migration 037 adds report_archive.cloud_acked_at -- same problem
+	// again (ut-docs#571).
+	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
+		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 022 and its followers (027-035)
+	d, err = Open(path) // re-applies 022 and its followers (027-036)
 	if err != nil {
 		t.Fatal(err)
 	}

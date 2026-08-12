@@ -215,6 +215,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerBackupAPI(mux, dp)
 	registerDataAPI(mux, dp)
 	registerEODAPI(mux, dp)
+	registerReportArchiveAPI(mux, dp) // ADR-0040 card 1: report retention mode + archive export
 	registerImport(mux, dp)
 	registerReceiptDesigner(mux, dp)
 	registerPluginSettings(mux, dp)
