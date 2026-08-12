@@ -4,14 +4,19 @@
   <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
     <button class="btn primary" hx-post="/api/reports/eod/run" hx-target="#eod-msg" hx-swap="innerHTML">{{ T "reports.eod.run" }}</button>
     <span id="eod-msg" aria-live="polite"></span>
-    <form hx-post="/api/settings/eod" hx-swap="none" style="display:flex; gap:.4rem; align-items:center; margin-inline-start:auto">
+    <form hx-post="/api/settings/eod" hx-swap="none" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin-inline-start:auto">
       <label style="display:flex; gap:.3rem; align-items:center">
         <input type="checkbox" name="enabled" {{ if .EODEnabled }}checked{{ end }}> {{ T "reports.eod.auto" }}
       </label>
       <input type="time" name="time" value="{{ .EODTime }}">
-      <button class="btn secondary" type="submit">{{ T "settings.printer.apply" }}</button>
+      <label style="display:flex; gap:.3rem; align-items:center" title="{{ T "reports.business_day_start.hint" }}">
+        {{ T "reports.business_day_start.label" }}
+        <input type="time" name="business_day_start" value="{{ .BusinessDayStart }}">
+      </label>
+      <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
     </form>
   </div>
+  <p class="muted" style="font-size:.85rem; margin:.4rem 0 0">{{ T "reports.business_day_start.hint" }}</p>
   {{ if .EODRows }}
   <table class="table" style="margin-top:.6rem">
     <thead><tr><th>{{ T "reports.day" }}</th><th>{{ T "reports.sales" }}</th><th>{{ T "reports.eod.net" }}</th><th></th></tr></thead>

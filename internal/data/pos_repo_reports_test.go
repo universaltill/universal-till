@@ -35,7 +35,8 @@ VALUES('line2','sale2',1,'itm1','Apple','SKU1',99,100,0,0,9900,9900)`); err != n
 		t.Fatal(err)
 	}
 
-	items, err := dbx.repo.TopItems(ctx, 7, 10)
+	start, end := lastDays(7)
+	items, err := dbx.repo.TopItems(ctx, start, end, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,8 @@ func TestPeriodComparison(t *testing.T) {
 	// filters sale_type='sale').
 	seedLifecycleSale(t, dbx, "return-current", "R4", "return", "completed", relDays(-1), 50, 0)
 
-	current, yearAgo, err := dbx.repo.PeriodComparison(ctx, 7)
+	start, end := lastDays(7)
+	current, yearAgo, err := dbx.repo.PeriodComparison(ctx, start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,8 @@ func TestPaymentBreakdown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	breakdown, err := dbx.repo.PaymentBreakdown(ctx, 7)
+	start, end := lastDays(7)
+	breakdown, err := dbx.repo.PaymentBreakdown(ctx, start, end)
 	if err != nil {
 		t.Fatal(err)
 	}

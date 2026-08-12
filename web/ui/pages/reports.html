@@ -2,15 +2,36 @@
 <div class="page-head">
   <h1>{{ T "reports.title" }}
     {{ if .RunningOut }}<a class="chip chip-warn" href="/inventory" style="text-decoration:none">⚠ {{ .RunningOut }} {{ T "inventory.running_out" }}</a>{{ end }}</h1>
-  <form method="get" action="/reports" style="display:flex; gap:.4rem; align-items:center">
-    <select name="days" onchange="this.form.submit()">
-      <option value="1"  {{ if eq .Days 1 }}selected{{ end }}>{{ T "reports.today" }}</option>
-      <option value="7"  {{ if eq .Days 7 }}selected{{ end }}>7 {{ T "reports.days" }}</option>
-      <option value="14" {{ if eq .Days 14 }}selected{{ end }}>14 {{ T "reports.days" }}</option>
-      <option value="30" {{ if eq .Days 30 }}selected{{ end }}>30 {{ T "reports.days" }}</option>
-      <option value="90" {{ if eq .Days 90 }}selected{{ end }}>90 {{ T "reports.days" }}</option>
-    </select>
-  </form>
+  {{/* Two independent single-param forms (ut-docs#519): the period form
+       submits only ?period=…, the days form only ?days=…, so whichever the
+       operator touches last wins outright — the two modes never mix. */}}
+  <div style="display:flex; gap:.4rem; align-items:center">
+    <form method="get" action="/reports">
+      <label class="muted" style="font-size:.85rem">{{ T "reports.period.label" }}
+        <select name="period" onchange="this.form.submit()">
+          <option value="" {{ if eq .Period "" }}selected{{ end }}>{{ T "reports.period.rolling" }}</option>
+          <option value="day" {{ if eq .Period "day" }}selected{{ end }}>{{ T "reports.period.day" }}</option>
+          <option value="week" {{ if eq .Period "week" }}selected{{ end }}>{{ T "reports.period.week" }}</option>
+          <option value="month" {{ if eq .Period "month" }}selected{{ end }}>{{ T "reports.period.month" }}</option>
+          <option value="year" {{ if eq .Period "year" }}selected{{ end }}>{{ T "reports.period.year" }}</option>
+        </select>
+      </label>
+    </form>
+    <form method="get" action="/reports">
+      <select name="days" onchange="this.form.submit()">
+        {{/* A calendar period (.Days == 0) leaves this select with nothing
+             of its own selected — without an explicit placeholder, browsers
+             default to showing the first real option ("Today"), which reads
+             as if two conflicting windows were active at once. */}}
+        <option value="" disabled {{ if eq .Days 0 }}selected{{ end }}>—</option>
+        <option value="1"  {{ if eq .Days 1 }}selected{{ end }}>{{ T "reports.today" }}</option>
+        <option value="7"  {{ if eq .Days 7 }}selected{{ end }}>7 {{ T "reports.days" }}</option>
+        <option value="14" {{ if eq .Days 14 }}selected{{ end }}>14 {{ T "reports.days" }}</option>
+        <option value="30" {{ if eq .Days 30 }}selected{{ end }}>30 {{ T "reports.days" }}</option>
+        <option value="90" {{ if eq .Days 90 }}selected{{ end }}>90 {{ T "reports.days" }}</option>
+      </select>
+    </form>
+  </div>
 </div>
 
 <div class="report-cards">
@@ -50,13 +71,13 @@
 {{/* On-demand report tabs (ut-docs#401): each tab's queries only run when
      the operator clicks it — nothing below fetches on page load. */}}
 <div class="report-tabs" style="margin-top:1rem; display:flex; gap:.4rem; flex-wrap:wrap">
-  <button class="btn secondary" hx-get="/ui/reports/tab/sales-trend?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.sales_trend" }}</button>
-  <button class="btn secondary" hx-get="/ui/reports/tab/items?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.items" }}</button>
-  <button class="btn secondary" hx-get="/ui/reports/tab/tax?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.tax" }}</button>
-  <button class="btn secondary" hx-get="/ui/reports/tab/forecast?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.forecast" }}</button>
-  <button class="btn secondary" hx-get="/ui/reports/tab/payments?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.payments" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/sales-trend?days={{ .Days }}&period={{ .Period }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.sales_trend" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/items?days={{ .Days }}&period={{ .Period }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.items" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/tax?days={{ .Days }}&period={{ .Period }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.tax" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/forecast?days={{ .Days }}&period={{ .Period }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.forecast" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/payments?days={{ .Days }}&period={{ .Period }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.payments" }}</button>
   {{ if .IsManager }}
-  <button class="btn secondary" hx-get="/ui/reports/tab/eod?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.eod" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/eod?days={{ .Days }}&period={{ .Period }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.eod" }}</button>
   {{ end }}
 </div>
 <div id="report-tab-panel" style="margin-top:1rem"></div>

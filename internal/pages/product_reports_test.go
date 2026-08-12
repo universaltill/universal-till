@@ -4,9 +4,11 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/reportperiod"
 )
 
 // Slow-sellers and dead-stock queries: an item that sold once is a slow
@@ -43,7 +45,8 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	ctx := context.Background()
 
 	// db.Open seeds the demo catalog, so assert on OUR rows, not exact lists.
-	slow, err := repo.SlowItems(ctx, 30, 100)
+	start, end := reportperiod.RollingWindow(30, time.Now())
+	slow, err := repo.SlowItems(ctx, start, end, 100)
 	if err != nil {
 		t.Fatalf("slow: %v", err)
 	}
@@ -60,7 +63,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 		t.Fatalf("Seller missing from slow list: %+v", slow)
 	}
 
-	dead, err := repo.DeadStock(ctx, 30, 1000)
+	dead, err := repo.DeadStock(ctx, start, end, 1000)
 	if err != nil {
 		t.Fatalf("dead: %v", err)
 	}
@@ -89,7 +92,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	          VALUES ('s2','R2','completed','sale',300,0,300, datetime('now','-1 days'))`)
 	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, variant_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
 	          VALUES ('l2','s2',1,'v-b','Shelf Warmer Var',2,300,0,0,0,600,600)`)
-	dead2, err := repo.DeadStock(ctx, 30, 1000)
+	dead2, err := repo.DeadStock(ctx, start, end, 1000)
 	if err != nil {
 		t.Fatalf("dead2: %v", err)
 	}
@@ -108,11 +111,12 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 
 	// Busy-times buckets: our one sale lands in exactly one weekday bucket
 	// and one hour bucket, and totals carry through.
-	wd, err := repo.SalesByWeekday(ctx, 30)
+	start, end = reportperiod.RollingWindow(30, time.Now())
+	wd, err := repo.SalesByWeekday(ctx, start, end)
 	if err != nil {
 		t.Fatalf("weekday: %v", err)
 	}
-	hr, err := repo.SalesByHour(ctx, 30)
+	hr, err := repo.SalesByHour(ctx, start, end)
 	if err != nil {
 		t.Fatalf("hour: %v", err)
 	}
@@ -134,7 +138,8 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	}
 
 	// Tax summary: both sales carry 0bp tax; net = 100+600, tax = 0, one band.
-	bands, err := repo.TaxSummary(ctx, 30)
+	start, end = reportperiod.RollingWindow(30, time.Now())
+	bands, err := repo.TaxSummary(ctx, start, end)
 	if err != nil {
 		t.Fatalf("tax: %v", err)
 	}
@@ -155,7 +160,8 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	if got, err := data.NewCatalogRepo(d).ItemCostPrice(ctx, "it-a"); err != nil || got != 40 {
 		t.Fatalf("cost roundtrip = %d %v", got, err)
 	}
-	margins, err := repo.MarginByItem(ctx, 30, 100)
+	start, end = reportperiod.RollingWindow(30, time.Now())
+	margins, err := repo.MarginByItem(ctx, start, end, 100)
 	if err != nil {
 		t.Fatalf("margins: %v", err)
 	}

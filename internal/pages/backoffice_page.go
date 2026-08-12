@@ -2,11 +2,13 @@ package pages
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/reportperiod"
 )
 
 // registerBackofficePage serves the manager dashboard a back-office device
@@ -29,7 +31,8 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 
 		var weekTotal int64
 		var weekCount int
-		if daily, err := repo.SalesByDay(r.Context(), 7); err == nil {
+		weekStart, weekEnd := reportperiod.RollingWindow(7, time.Now())
+		if daily, err := repo.SalesByDay(r.Context(), weekStart, weekEnd); err == nil {
 			for _, day := range daily {
 				weekTotal += day.Total
 				weekCount += day.Count

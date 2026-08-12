@@ -22,6 +22,12 @@ import (
 const (
 	keyEODEnabled = "reports.eod_enabled"
 	keyEODTime    = "reports.eod_time" // local "HH:MM"
+	// keyBusinessDayStart is when the shop's business day begins, local
+	// "HH:MM" (default "00:00" when unset) — a late-night venue sets this
+	// past midnight so one night's takings aren't split across two report
+	// days. Consumed by the calendar report periods (ut-docs#519) via
+	// reportBusinessDayStart in reports_page.go.
+	keyBusinessDayStart = "reports.business_day_start"
 )
 
 var eodTimeRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
@@ -285,8 +291,16 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "time must be HH:MM", http.StatusBadRequest)
 			return
 		}
+		// Business-day start (ut-docs#519): empty clears back to the 00:00
+		// default; anything else must be a valid HH:MM.
+		dayStart := strings.TrimSpace(r.Form.Get("business_day_start"))
+		if dayStart != "" && !eodTimeRe.MatchString(dayStart) {
+			http.Error(w, "business_day_start must be HH:MM", http.StatusBadRequest)
+			return
+		}
 		_ = d.Settings.Set(r.Context(), keyEODEnabled, fmt.Sprintf("%t", enabled))
 		_ = d.Settings.Set(r.Context(), keyEODTime, hhmm)
+		_ = d.Settings.Set(r.Context(), keyBusinessDayStart, dayStart)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

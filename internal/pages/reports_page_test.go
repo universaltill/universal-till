@@ -519,7 +519,9 @@ func TestReportsPage_TabNavWiredToFragmentRoutes(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod"} {
-		want := `hx-get="/ui/reports/tab/` + name + `?days=30"`
+		// Tabs inherit the page's window mode: days for the rolling window
+		// plus the (empty here) calendar period (ut-docs#519).
+		want := `hx-get="/ui/reports/tab/` + name + `?days=30&period="`
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected the tab nav to contain %s, got: %s", want, body)
 		}

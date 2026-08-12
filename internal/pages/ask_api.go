@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/reportperiod"
 )
 
 // intArg reads a bounded integer tool argument (JSON numbers arrive as
@@ -42,7 +43,8 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 			Description: "Daily sales totals: per day the number of completed sales, revenue total and tax total (minor units). Returns/refunds are excluded, not netted.",
 			Params:      days,
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
-				return repo.SalesByDay(ctx, intArg(args, "days", 14, 1, 365))
+				start, end := reportperiod.RollingWindow(intArg(args, "days", 14, 1, 365), time.Now())
+				return repo.SalesByDay(ctx, start, end)
 			},
 		},
 		{
@@ -56,7 +58,8 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 				},
 			},
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
-				return repo.TopItems(ctx, intArg(args, "days", 14, 1, 365), intArg(args, "limit", 10, 1, 50))
+				start, end := reportperiod.RollingWindow(intArg(args, "days", 14, 1, 365), time.Now())
+				return repo.TopItems(ctx, start, end, intArg(args, "limit", 10, 1, 50))
 			},
 		},
 		{
@@ -64,7 +67,8 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 			Description: "Takings per payment method over a period: method, transaction count, amount taken (minor units).",
 			Params:      days,
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
-				return repo.PaymentBreakdown(ctx, intArg(args, "days", 14, 1, 365))
+				start, end := reportperiod.RollingWindow(intArg(args, "days", 14, 1, 365), time.Now())
+				return repo.PaymentBreakdown(ctx, start, end)
 			},
 		},
 		{

@@ -24,7 +24,8 @@ func TestSalesByDay_ExcludesReturns(t *testing.T) {
 	b8Sale(t, d, "rs2", now, "completed", "return", 30, 300) // must not appear
 	b8Sale(t, d, "rs3", now, "voided", "sale", 0, 99999)     // must not appear
 
-	daily, err := repo.SalesByDay(ctx, 7)
+	start, end := lastDays(7)
+	daily, err := repo.SalesByDay(ctx, start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,8 @@ func TestTopItems_ExcludesReturns(t *testing.T) {
 	b8Sale(t, d, "rt2", now, "completed", "return", 0, 200)
 	b8Line(t, d, "rt2", 1, "ri-a", "", "Widget", 1, 0, 0, 200, 200)
 
-	top, err := repo.TopItems(ctx, 7, 10)
+	start, end := lastDays(7)
+	top, err := repo.TopItems(ctx, start, end, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +80,8 @@ func TestDeadStock_ReturnDoesNotCountAsSold(t *testing.T) {
 	b8Sale(t, d, "rd1", now, "completed", "return", 0, 400)
 	b8Line(t, d, "rd1", 1, "rd-a", "", "Name rd-a", 1, 0, 0, 400, 400)
 
-	dead, err := repo.DeadStock(ctx, 30, 10)
+	start, end := lastDays(30)
+	dead, err := repo.DeadStock(ctx, start, end, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +120,8 @@ func TestWindowReports_ExcludeReturns_DeptTillPayments(t *testing.T) {
 	b8Line(t, d, "wr2", 1, "ri-b", "", "Gadget", 1, 0, 0, 200, 200)
 	mustExec(t, d, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('wrp2','wr2','cash',200,'GBP',0,?)`, when)
 
-	dept, err := repo.SalesByDepartment(ctx, 7)
+	start, end := lastDays(7)
+	dept, err := repo.SalesByDepartment(ctx, start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +129,7 @@ func TestWindowReports_ExcludeReturns_DeptTillPayments(t *testing.T) {
 		t.Fatalf("SalesByDepartment = %+v, want one row qty 1 / revenue 500", dept)
 	}
 
-	tills, err := repo.SalesByTill(ctx, 7)
+	tills, err := repo.SalesByTill(ctx, start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +145,7 @@ func TestWindowReports_ExcludeReturns_DeptTillPayments(t *testing.T) {
 		t.Fatalf("DepartmentsForDay = %+v, want one row qty 1 / revenue 500", day)
 	}
 
-	pay, err := repo.PaymentBreakdown(ctx, 7)
+	pay, err := repo.PaymentBreakdown(ctx, start, end)
 	if err != nil {
 		t.Fatal(err)
 	}

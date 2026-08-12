@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -49,7 +50,10 @@ func TestSalesByDepartment_RollsSubcategoriesToDepartment(t *testing.T) {
 	line("l4", "mystery", 1, 999)
 
 	repo := data.NewPOSRepo(d.DB)
-	rows, err := repo.SalesByDepartment(context.Background(), 30)
+	// The fixture rows were written moments ago (created_at DEFAULT
+	// datetime('now')) — bracket "now" explicitly so the exclusive upper
+	// bound can't race the insert second.
+	rows, err := repo.SalesByDepartment(context.Background(), time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("SalesByDepartment: %v", err)
 	}
@@ -101,7 +105,7 @@ func TestSalesByTill_GroupsByRegister(t *testing.T) {
 	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total, till_id) VALUES ('b','RB','completed',1500,1500,'')`)
 	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total, till_id) VALUES ('c','RC','completed',9000,9000,'t2')`)
 
-	rows, err := data.NewPOSRepo(d.DB).SalesByTill(context.Background(), 30)
+	rows, err := data.NewPOSRepo(d.DB).SalesByTill(context.Background(), time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("SalesByTill: %v", err)
 	}

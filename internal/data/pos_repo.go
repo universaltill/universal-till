@@ -688,6 +688,34 @@ type DeptSales struct {
 	Revenue    int64   `json:"revenue"`
 }
 
+// sqliteUTC formats an instant the way SQLite's datetime() emits timestamps
+// ("YYYY-MM-DD HH:MM:SS", UTC) — the bind format for the explicit
+// [start, end) report windows (ut-docs#519). created_at itself is written
+// RFC3339 ("...THH:MM:SSZ") by the app's InsertSale path, so the COLUMN side
+// of every window comparison must be normalized through datetime(): a raw
+// string compare degrades on the boundary's calendar day, where 'T' (0x54)
+// sorts after ' ' (0x20) — the PeriodComparison trap, confirmed live via
+// sqlite3 CLI 2026-07-29. That wrapper is also what already made
+// idx_sales_created unusable for the report queries (see the
+// seasonalWindowQuery note); windows are unchanged in that regard.
+func sqliteUTC(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }
+
+// sqliteUTCEnd formats an EXCLUSIVE end bound. created_at is stored at
+// whole-second granularity, so a sub-second end instant (e.g. the rolling
+// window's end = time.Now()) must round UP to the next second — truncating
+// would make a sale completed in the same second as the report query
+// string-compare equal to the bound and drop out of its own window. The old
+// day-count queries had no upper bound at all; rounding up preserves their
+// "a sale that just happened is already on the report" behavior. Calendar
+// windows have whole-second boundaries, where this is a no-op and the bound
+// stays strictly exclusive.
+func sqliteUTCEnd(t time.Time) string {
+	if ns := t.Nanosecond(); ns > 0 {
+		t = t.Add(time.Second - time.Duration(ns))
+	}
+	return sqliteUTC(t)
+}
+
 // deptRootsCTE maps every category id to its top-level (department) category by
 // walking parent_id up to the root. Shared by the day and window queries.
 const deptRootsCTE = `
@@ -698,9 +726,9 @@ WITH RECURSIVE dept_roots(id, root_name) AS (
 )`
 
 // SalesByDepartment aggregates completed-sale revenue by department for the
-// last N days. Items with no category (or since-deleted) roll up to
+// [start, end) window. Items with no category (or since-deleted) roll up to
 // "Uncategorized". Variant lines resolve through their parent item.
-func (r *POSRepo) SalesByDepartment(ctx context.Context, days int) ([]DeptSales, error) {
+func (r *POSRepo) SalesByDepartment(ctx context.Context, start, end time.Time) ([]DeptSales, error) {
 	rows, err := r.db.QueryContext(ctx, deptRootsCTE+`
 SELECT COALESCE(dr.root_name, '') AS department,
        SUM(sl.quantity) AS qty,
@@ -710,9 +738,10 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants iv ON iv.id = sl.variant_id
 LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
 LEFT JOIN dept_roots dr ON dr.id = it.category_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
 GROUP BY department
-ORDER BY revenue DESC`, fmt.Sprintf("-%d days", days))
+ORDER BY revenue DESC`, sqliteUTC(start), sqliteUTCEnd(end))
 	if err != nil {
 		return nil, fmt.Errorf("sales by department: %w", err)
 	}
@@ -738,19 +767,20 @@ type TillSales struct {
 	Revenue int64  `json:"revenue"`
 }
 
-// SalesByTill aggregates completed-sale revenue per till for the last N days.
-// sales.till_id is ” for the primary till / pre-sync history (ADR-0011 D3);
-// that rolls up under an empty id, which the UI labels "This till". Named
-// replicas resolve through the tills table.
-func (r *POSRepo) SalesByTill(ctx context.Context, days int) ([]TillSales, error) {
+// SalesByTill aggregates completed-sale revenue per till for the [start, end)
+// window. sales.till_id is ” for the primary till / pre-sync history
+// (ADR-0011 D3); that rolls up under an empty id, which the UI labels "This
+// till". Named replicas resolve through the tills table.
+func (r *POSRepo) SalesByTill(ctx context.Context, start, end time.Time) ([]TillSales, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT s.till_id, COALESCE(t.name, '') AS name,
        COUNT(*) AS cnt, COALESCE(SUM(s.total), 0) AS revenue
 FROM sales s
 LEFT JOIN tills t ON t.id = s.till_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
 GROUP BY s.till_id
-ORDER BY revenue DESC`, fmt.Sprintf("-%d days", days))
+ORDER BY revenue DESC`, sqliteUTC(start), sqliteUTCEnd(end))
 	if err != nil {
 		return nil, fmt.Errorf("sales by till: %w", err)
 	}
@@ -796,15 +826,16 @@ ORDER BY revenue DESC`, day)
 	return out, rows.Err()
 }
 
-// SalesByDay aggregates completed sales per day for the last N days.
+// SalesByDay aggregates completed sales per day for the [start, end) window.
 // Returns are excluded, matching DayTotal on the same dashboard (and
 // SlowItems/busyBuckets); TaxSummary is the fiscal view and nets them.
-func (r *POSRepo) SalesByDay(ctx context.Context, days int) ([]DailySales, error) {
+func (r *POSRepo) SalesByDay(ctx context.Context, start, end time.Time) ([]DailySales, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT date(created_at) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0)
 FROM sales
-WHERE status = 'completed' AND sale_type = 'sale' AND created_at >= datetime('now', ?)
-GROUP BY day ORDER BY day DESC`, fmt.Sprintf("-%d days", days))
+WHERE status = 'completed' AND sale_type = 'sale'
+  AND datetime(created_at) >= ? AND datetime(created_at) < ?
+GROUP BY day ORDER BY day DESC`, sqliteUTC(start), sqliteUTCEnd(end))
 	if err != nil {
 		return nil, fmt.Errorf("sales by day: %w", err)
 	}
@@ -820,30 +851,32 @@ GROUP BY day ORDER BY day DESC`, fmt.Sprintf("-%d days", days))
 	return out, rows.Err()
 }
 
-// RefundsByWindow sums completed returns for the last N days — the
+// RefundsByWindow sums completed returns for the [start, end) window — the
 // counterpart SalesByDay excludes (SalesByDay's own doc comment), so
 // callers that show gross-of-returns revenue can still surface refunds
 // alongside it (e.g. /reports' Refunds/Net KPIs).
-func (r *POSRepo) RefundsByWindow(ctx context.Context, days int) (total int64, count int, err error) {
+func (r *POSRepo) RefundsByWindow(ctx context.Context, start, end time.Time) (total int64, count int, err error) {
 	err = r.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(total), 0), COUNT(*)
 FROM sales
-WHERE status = 'completed' AND sale_type = 'return' AND created_at >= datetime('now', ?)`,
-		fmt.Sprintf("-%d days", days)).Scan(&total, &count)
+WHERE status = 'completed' AND sale_type = 'return'
+  AND datetime(created_at) >= ? AND datetime(created_at) < ?`,
+		sqliteUTC(start), sqliteUTCEnd(end)).Scan(&total, &count)
 	if err != nil {
 		return 0, 0, fmt.Errorf("refunds by window: %w", err)
 	}
 	return total, count, nil
 }
 
-// TopItems returns the best sellers by revenue for the last N days.
-func (r *POSRepo) TopItems(ctx context.Context, days, limit int) ([]TopItem, error) {
+// TopItems returns the best sellers by revenue for the [start, end) window.
+func (r *POSRepo) TopItems(ctx context.Context, start, end time.Time, limit int) ([]TopItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sl.name_snapshot, SUM(sl.quantity), COALESCE(SUM(sl.total_after_tax), 0) AS revenue
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
-GROUP BY sl.name_snapshot ORDER BY revenue DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
+GROUP BY sl.name_snapshot ORDER BY revenue DESC LIMIT ?`, sqliteUTC(start), sqliteUTCEnd(end), limit)
 	if err != nil {
 		return nil, fmt.Errorf("top items: %w", err)
 	}
@@ -861,13 +894,14 @@ GROUP BY sl.name_snapshot ORDER BY revenue DESC LIMIT ?`, fmt.Sprintf("-%d days"
 
 // SlowItems mirrors TopItems but ascending: the WORST sellers that still had
 // at least one sale in the window — candidates for delisting or promotion.
-func (r *POSRepo) SlowItems(ctx context.Context, days, limit int) ([]TopItem, error) {
+func (r *POSRepo) SlowItems(ctx context.Context, start, end time.Time, limit int) ([]TopItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sl.name_snapshot, SUM(sl.quantity) AS qty, COALESCE(SUM(sl.total_after_tax), 0) AS revenue
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
-GROUP BY sl.name_snapshot HAVING qty > 0 ORDER BY revenue ASC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
+GROUP BY sl.name_snapshot HAVING qty > 0 ORDER BY revenue ASC LIMIT ?`, sqliteUTC(start), sqliteUTCEnd(end), limit)
 	if err != nil {
 		return nil, fmt.Errorf("slow items: %w", err)
 	}
@@ -892,9 +926,9 @@ type DeadStockRow struct {
 	StockValue int64 // qty × base_price, minor units
 }
 
-// DeadStock lists active items with on-hand stock and ZERO sales in the last
-// N days, most tied-up value first.
-func (r *POSRepo) DeadStock(ctx context.Context, days, limit int) ([]DeadStockRow, error) {
+// DeadStock lists active items with on-hand stock and ZERO sales in the
+// [start, end) window, most tied-up value first.
+func (r *POSRepo) DeadStock(ctx context.Context, start, end time.Time, limit int) ([]DeadStockRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.name, COALESCE(i.sku, ''), SUM(inv.quantity) AS qty,
        CAST(SUM(inv.quantity) * i.base_price AS INTEGER) AS value
@@ -907,9 +941,9 @@ WHERE i.is_active = 1 AND inv.quantity > 0
     LEFT JOIN item_variants v ON v.id = sl.variant_id
     WHERE s.status = 'completed' AND s.sale_type = 'sale'
       AND COALESCE(NULLIF(sl.item_id, ''), v.item_id) IS NOT NULL
-      AND s.created_at >= datetime('now', ?)
+      AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
   )
-GROUP BY i.id ORDER BY value DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+GROUP BY i.id ORDER BY value DESC LIMIT ?`, sqliteUTC(start), sqliteUTCEnd(end), limit)
 	if err != nil {
 		return nil, fmt.Errorf("dead stock: %w", err)
 	}
@@ -931,24 +965,26 @@ type PeriodTotals struct {
 	Count int
 }
 
-// PeriodComparison returns totals for the last N days vs the SAME N days one
-// year earlier — the honest year-over-year comparison (empty year-ago data
-// simply reports zeros; the page hides the card until there is history).
-func (r *POSRepo) PeriodComparison(ctx context.Context, days int) (current, yearAgo PeriodTotals, err error) {
-	// created_at is stored as RFC3339 ("...THH:MM:SSZ"); datetime('now', ...)
-	// produces SQLite's own format ("... HH:MM:SS", space, no suffix). Both
-	// sides must go through datetime(...) or a same-calendar-day comparison
+// PeriodComparison returns totals for the [start, end) window vs the SAME
+// window one CALENDAR year earlier (AddDate(-1,0,0), not -365*24h — a raw
+// day-count drifts a day across a leap February) — the honest year-over-year
+// comparison (empty year-ago data simply reports zeros; the page hides the
+// card until there is history).
+func (r *POSRepo) PeriodComparison(ctx context.Context, start, end time.Time) (current, yearAgo PeriodTotals, err error) {
+	// created_at is stored as RFC3339 ("...THH:MM:SSZ") while the binds are
+	// SQLite-canonical ("... HH:MM:SS", space, no suffix). The column side
+	// must go through datetime(...) or a same-calendar-day comparison
 	// becomes a raw string compare where 'T' sorts after ' ', silently
 	// dropping every same-day sale out of the "current period" upper bound.
 	q := `SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales
 WHERE status = 'completed' AND sale_type = 'sale'
-  AND datetime(created_at) >= datetime('now', ?) AND datetime(created_at) < datetime('now', ?)`
-	if err = r.db.QueryRowContext(ctx, q, fmt.Sprintf("-%d days", days), "+0 days").
+  AND datetime(created_at) >= ? AND datetime(created_at) < ?`
+	if err = r.db.QueryRowContext(ctx, q, sqliteUTC(start), sqliteUTCEnd(end)).
 		Scan(&current.Count, &current.Total); err != nil {
 		return current, yearAgo, fmt.Errorf("current period: %w", err)
 	}
 	if err = r.db.QueryRowContext(ctx, q,
-		fmt.Sprintf("-%d days", days+365), fmt.Sprintf("-%d days", 365)).
+		sqliteUTC(start.AddDate(-1, 0, 0)), sqliteUTCEnd(end.AddDate(-1, 0, 0))).
 		Scan(&yearAgo.Count, &yearAgo.Total); err != nil {
 		return current, yearAgo, fmt.Errorf("year-ago period: %w", err)
 	}
@@ -963,17 +999,18 @@ type TaxBand struct {
 	Tax    int64 // tax collected, minor units
 }
 
-// TaxSummary groups completed sales' lines by tax rate for the last N days.
-// Returns reduce the figures (sale_type='return' lines subtract).
-func (r *POSRepo) TaxSummary(ctx context.Context, days int) ([]TaxBand, error) {
+// TaxSummary groups completed sales' lines by tax rate for the [start, end)
+// window. Returns reduce the figures (sale_type='return' lines subtract).
+func (r *POSRepo) TaxSummary(ctx context.Context, start, end time.Time) ([]TaxBand, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sl.tax_rate_bp,
        COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.total_before_tax ELSE sl.total_before_tax END), 0),
        COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.tax_amount ELSE sl.tax_amount END), 0)
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.created_at >= datetime('now', ?)
-GROUP BY sl.tax_rate_bp ORDER BY sl.tax_rate_bp DESC`, fmt.Sprintf("-%d days", days))
+WHERE s.status = 'completed'
+  AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
+GROUP BY sl.tax_rate_bp ORDER BY sl.tax_rate_bp DESC`, sqliteUTC(start), sqliteUTCEnd(end))
 	if err != nil {
 		return nil, fmt.Errorf("tax summary: %w", err)
 	}
@@ -998,10 +1035,10 @@ type MarginRow struct {
 	Margin  int64
 }
 
-// MarginByItem computes per-item margin (revenue − qty×cost) for the last N
-// days, using the variant's cost when present, else the item's. Lines with no
-// known cost are excluded — honest numbers only.
-func (r *POSRepo) MarginByItem(ctx context.Context, days, limit int) ([]MarginRow, error) {
+// MarginByItem computes per-item margin (revenue − qty×cost) for the
+// [start, end) window, using the variant's cost when present, else the
+// item's. Lines with no known cost are excluded — honest numbers only.
+func (r *POSRepo) MarginByItem(ctx context.Context, start, end time.Time, limit int) ([]MarginRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sl.name_snapshot,
        COALESCE(SUM(sl.total_after_tax), 0) AS revenue,
@@ -1011,10 +1048,10 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants v ON v.id = sl.variant_id
 LEFT JOIN items i ON i.id = COALESCE(NULLIF(sl.item_id, ''), v.item_id)
 WHERE s.status = 'completed' AND s.sale_type = 'sale'
-  AND s.created_at >= datetime('now', ?)
+  AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
   AND COALESCE(v.cost_price, i.cost_price) IS NOT NULL
 GROUP BY sl.name_snapshot
-ORDER BY (revenue - cost) DESC LIMIT ?`, fmt.Sprintf("-%d days", days), limit)
+ORDER BY (revenue - cost) DESC LIMIT ?`, sqliteUTC(start), sqliteUTCEnd(end), limit)
 	if err != nil {
 		return nil, fmt.Errorf("margins: %w", err)
 	}
@@ -1352,24 +1389,25 @@ type BusySlot struct {
 	Total int64 // revenue, minor units
 }
 
-// SalesByWeekday buckets completed sales by local weekday over the last N
-// days — "which days are busiest" for staffing decisions.
-func (r *POSRepo) SalesByWeekday(ctx context.Context, days int) ([]BusySlot, error) {
-	return r.busyBuckets(ctx, days, `CAST(strftime('%w', s.created_at, 'localtime') AS INTEGER)`)
+// SalesByWeekday buckets completed sales by local weekday over the
+// [start, end) window — "which days are busiest" for staffing decisions.
+func (r *POSRepo) SalesByWeekday(ctx context.Context, start, end time.Time) ([]BusySlot, error) {
+	return r.busyBuckets(ctx, start, end, `CAST(strftime('%w', s.created_at, 'localtime') AS INTEGER)`)
 }
 
-// SalesByHour buckets completed sales by local hour of day over the last N days.
-func (r *POSRepo) SalesByHour(ctx context.Context, days int) ([]BusySlot, error) {
-	return r.busyBuckets(ctx, days, `CAST(strftime('%H', s.created_at, 'localtime') AS INTEGER)`)
+// SalesByHour buckets completed sales by local hour of day over the
+// [start, end) window.
+func (r *POSRepo) SalesByHour(ctx context.Context, start, end time.Time) ([]BusySlot, error) {
+	return r.busyBuckets(ctx, start, end, `CAST(strftime('%H', s.created_at, 'localtime') AS INTEGER)`)
 }
 
-func (r *POSRepo) busyBuckets(ctx context.Context, days int, bucketExpr string) ([]BusySlot, error) {
+func (r *POSRepo) busyBuckets(ctx context.Context, start, end time.Time, bucketExpr string) ([]BusySlot, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT `+bucketExpr+` AS slot, COUNT(*), COALESCE(SUM(s.total), 0)
 FROM sales s
 WHERE s.status = 'completed' AND s.sale_type = 'sale'
-  AND s.created_at >= datetime('now', ?)
-GROUP BY slot ORDER BY slot`, fmt.Sprintf("-%d days", days))
+  AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
+GROUP BY slot ORDER BY slot`, sqliteUTC(start), sqliteUTCEnd(end))
 	if err != nil {
 		return nil, fmt.Errorf("busy buckets: %w", err)
 	}
@@ -1385,14 +1423,16 @@ GROUP BY slot ORDER BY slot`, fmt.Sprintf("-%d days", days))
 	return out, rows.Err()
 }
 
-// PaymentBreakdown sums applied payments per method for the last N days.
-func (r *POSRepo) PaymentBreakdown(ctx context.Context, days int) ([]MethodTotal, error) {
+// PaymentBreakdown sums applied payments per method for the [start, end)
+// window.
+func (r *POSRepo) PaymentBreakdown(ctx context.Context, start, end time.Time) ([]MethodTotal, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id, COUNT(*), COALESCE(SUM(p.amount - p.change_given), 0) AS applied
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.created_at >= datetime('now', ?)
-GROUP BY p.method_id ORDER BY applied DESC`, fmt.Sprintf("-%d days", days))
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND datetime(s.created_at) >= ? AND datetime(s.created_at) < ?
+GROUP BY p.method_id ORDER BY applied DESC`, sqliteUTC(start), sqliteUTCEnd(end))
 	if err != nil {
 		return nil, fmt.Errorf("payment breakdown: %w", err)
 	}

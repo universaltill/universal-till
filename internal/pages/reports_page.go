@@ -1,26 +1,55 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/reportperiod"
 )
 
-// parseReportDays reads the shared ?days= window for /reports and its tab
-// fragments: 1..365, anything else (missing, garbage, out of range) falls
-// back to the 14-day default rather than erroring or hammering the DB with
-// an unbounded window.
-func parseReportDays(r *http.Request) int {
-	days := 14
+// reportBusinessDayStart reads the shop's business-day-start setting
+// (keyBusinessDayStart, local "HH:MM" — see eod_api.go) as an offset from
+// local midnight. Empty, unset or invalid values fall back to 0 (calendar
+// midnight), the documented default.
+func reportBusinessDayStart(ctx context.Context, d *common.Deps) time.Duration {
+	v, _, _ := d.Settings.Get(ctx, keyBusinessDayStart)
+	v = strings.TrimSpace(v)
+	if !eodTimeRe.MatchString(v) {
+		return 0
+	}
+	h, _ := strconv.Atoi(v[:2])
+	m, _ := strconv.Atoi(v[3:])
+	return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute
+}
+
+// parseReportWindow reads the shared report window for /reports and its tab
+// fragments. ?period=day|week|month|year selects a calendar-aligned window
+// via reportperiod.Window; anything else (missing, unrecognized) falls back
+// to the legacy ?days= rolling window (1..365, defaulting to 14) via
+// reportperiod.RollingWindow. Also returns the resolved `days` int (for the
+// existing rolling-days <select>'s selected-option state) and the resolved
+// `period` string (for the new period <select>'s selected-option state and
+// for propagating into each tab's hx-get URL).
+func parseReportWindow(r *http.Request, dayStart time.Duration) (start, end time.Time, days int, period string) {
+	now := time.Now()
+	if k, ok := reportperiod.ParseKind(r.URL.Query().Get("period")); ok {
+		start, end = reportperiod.Window(k, now, time.Local, dayStart)
+		return start, end, 0, string(k)
+	}
+	days = 14
 	if v, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && v > 0 && v <= 365 {
 		days = v
 	}
-	return days
+	start, end = reportperiod.RollingWindow(days, now)
+	return start, end, days, ""
 }
 
 func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
@@ -30,10 +59,10 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 	// ut-docs#401) moved behind /ui/reports/tab/{name} and only run when
 	// the operator opens that tab.
 	mux.HandleFunc("/reports", func(w http.ResponseWriter, r *http.Request) {
-		days := parseReportDays(r)
+		start, end, days, period := parseReportWindow(r, reportBusinessDayStart(r.Context(), d))
 		repo := data.NewPOSRepo(d.Db)
-		daily, _ := repo.SalesByDay(r.Context(), days)
-		curPeriod, lastYear, _ := repo.PeriodComparison(r.Context(), days)
+		daily, _ := repo.SalesByDay(r.Context(), start, end)
+		curPeriod, lastYear, _ := repo.PeriodComparison(r.Context(), start, end)
 		yoyPct := 0
 		if lastYear.Total > 0 {
 			yoyPct = int((curPeriod.Total - lastYear.Total) * 100 / lastYear.Total)
@@ -61,7 +90,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			grandTax += dd.TaxTotal
 			grandCount += dd.Count
 		}
-		grandRefunds, _, _ := repo.RefundsByWindow(r.Context(), days)
+		grandRefunds, _, _ := repo.RefundsByWindow(r.Context(), start, end)
 		grandNet := grandTotal - grandRefunds
 
 		httpx.Render("ui/pages/reports.html", map[string]any{
@@ -71,6 +100,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"CanAsk":       aiService(r.Context(), d).CanAsk() && isManagerOrAuthOff(r),
 			"IsManager":    isManagerOrAuthOff(r),
 			"Days":         days,
+			"Period":       period,
 			"YoYHas":       lastYear.Count > 0,
 			"YoYNow":       curPeriod.Total,
 			"YoYThen":      lastYear.Total,
@@ -89,13 +119,13 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 	// the /ui/ namespace is denylisted from manual route coverage — the
 	// enclosing /reports topic covers these fragments).
 	mux.HandleFunc("/ui/reports/tab/{name}", func(w http.ResponseWriter, r *http.Request) {
-		days := parseReportDays(r)
+		start, end, _, _ := parseReportWindow(r, reportBusinessDayStart(r.Context(), d))
 		repo := data.NewPOSRepo(d.Db)
 		switch r.PathValue("name") {
 		case "sales-trend":
-			daily, _ := repo.SalesByDay(r.Context(), days)
-			byWeekday, _ := repo.SalesByWeekday(r.Context(), days)
-			byHour, _ := repo.SalesByHour(r.Context(), days)
+			daily, _ := repo.SalesByDay(r.Context(), start, end)
+			byWeekday, _ := repo.SalesByWeekday(r.Context(), start, end)
+			byHour, _ := repo.SalesByHour(r.Context(), start, end)
 			// Normalize to bar widths (busiest = 100%) so the template stays dumb.
 			type busyBar struct {
 				Label string
@@ -141,10 +171,10 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"HourBars":    hourBars,
 			})(w, r)
 		case "items":
-			top, _ := repo.TopItems(r.Context(), days, 10)
-			slow, _ := repo.SlowItems(r.Context(), days, 10)
-			dead, _ := repo.DeadStock(r.Context(), days, 10)
-			margins, _ := repo.MarginByItem(r.Context(), days, 10)
+			top, _ := repo.TopItems(r.Context(), start, end, 10)
+			slow, _ := repo.SlowItems(r.Context(), start, end, 10)
+			dead, _ := repo.DeadStock(r.Context(), start, end, 10)
+			margins, _ := repo.MarginByItem(r.Context(), start, end, 10)
 			httpx.RenderPartial("ui/partials/reports_tab_items.html", map[string]any{
 				"Top":       top,
 				"Slow":      slow,
@@ -152,7 +182,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"Margins":   margins,
 			})(w, r)
 		case "tax":
-			taxBands, _ := repo.TaxSummary(r.Context(), days)
+			taxBands, _ := repo.TaxSummary(r.Context(), start, end)
 			type taxRow struct {
 				Rate string
 				Net  int64
@@ -184,11 +214,11 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"SeasonalCats": seasonalCats,
 			})(w, r)
 		case "payments":
-			methods, _ := repo.PaymentBreakdown(r.Context(), days)
-			departments, _ := repo.SalesByDepartment(r.Context(), days)
+			methods, _ := repo.PaymentBreakdown(r.Context(), start, end)
+			departments, _ := repo.SalesByDepartment(r.Context(), start, end)
 			// Per-till breakdown is only meaningful once a shop runs more than one
 			// register (department stores) — hide it for single-till shops.
-			tills, _ := repo.SalesByTill(r.Context(), days)
+			tills, _ := repo.SalesByTill(r.Context(), start, end)
 			if len(tills) < 2 {
 				tills = nil
 			}
@@ -211,7 +241,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				Sales  int
 			}
 			var eodRows []eodRow
-			var eodEnabled, eodTime string
+			var eodEnabled, eodTime, businessDayStart string
 			if isManager {
 				archived, _ := repo.ListArchivedReports(r.Context(), 14)
 				for _, a := range archived {
@@ -225,12 +255,14 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				}
 				eodEnabled, _, _ = d.Settings.Get(r.Context(), keyEODEnabled)
 				eodTime, _, _ = d.Settings.Get(r.Context(), keyEODTime)
+				businessDayStart, _, _ = d.Settings.Get(r.Context(), keyBusinessDayStart)
 			}
 			httpx.RenderPartial("ui/partials/reports_tab_eod.html", map[string]any{
-				"IsManager":  isManager,
-				"EODRows":    eodRows,
-				"EODEnabled": eodEnabled == "true",
-				"EODTime":    eodTime,
+				"IsManager":        isManager,
+				"EODRows":          eodRows,
+				"EODEnabled":       eodEnabled == "true",
+				"EODTime":          eodTime,
+				"BusinessDayStart": businessDayStart,
 			})(w, r)
 		default:
 			http.NotFound(w, r)

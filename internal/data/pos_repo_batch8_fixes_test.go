@@ -69,7 +69,8 @@ func TestMarginByItem_VariantWithoutOwnCostFallsBackToItemCost(t *testing.T) {
 	b8Sale(t, d, "sale-fix", now, "completed", "sale", 0, 600)
 	b8Line(t, d, "sale-fix", 1, "", "v-fix", "Fix Parent Large", 2, 0, 0, 600, 600)
 
-	rows, err := repo.MarginByItem(ctx, 30, 10)
+	start, end := lastDays(30)
+	rows, err := repo.MarginByItem(ctx, start, end, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

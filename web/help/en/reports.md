@@ -18,6 +18,31 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, or Day-end (EOD) — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals the day and can print for your records.
 
+## Choosing the period
+
+Two selectors at the top set the window every report on the page uses:
+
+- **Period** picks a calendar period — the current day, week (starting
+  Monday), month or year. "This month" means the calendar month you're in,
+  not the last 30 days.
+- The **rolling window** (Today / 7 / 14 / 30 / 90 days) counts back from
+  right now instead. Choosing "Rolling window" under Period switches back
+  to this mode.
+
+Whichever you change last wins, and the tabs below follow the same window.
+
+**Business day starts at** (in the Day-end tab, managers only) sets when
+your business day begins — default midnight. A venue trading past midnight
+can set it later (say 04:00): a sale rung up at 01:30 then still counts
+toward the night before rather than starting a new day, so picking "Day"
+covers the whole trading night.
+
+It decides which period a sale falls into. The day-by-day table in Sales
+trend still lists each sale under its own calendar date, so a night that
+runs past midnight appears there as two dated rows even though the period
+totals above cover it as one. It applies to the calendar periods only; the
+rolling window and the end-of-day report are unaffected.
+
 ## Cash adjustments & payouts (Shifts)
 
 The Shifts page's "Cash adjustment / payout" form records anything that
