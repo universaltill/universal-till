@@ -16,6 +16,16 @@ import (
 
 func relDays(d int) string { return time.Now().AddDate(0, 0, d).UTC().Format(time.RFC3339) }
 
+// winTo/winFrom give tests a simple rolling [from, to) window ending now,
+// matching the exact "last N days" semantics the old `days int` parameter
+// had — used across this package's report tests to convert to the repo's
+// explicit from/to signature (ut-docs#519) with minimal churn. The +1s pad
+// mirrors reportNow() in internal/pages/reports_page.go: window
+// comparisons truncate to whole seconds, so an exact-now exclusive upper
+// bound can otherwise drop a row seeded in this same wall-clock second.
+func winTo() time.Time           { return time.Now().Add(time.Second) }
+func winFrom(days int) time.Time { return winTo().Add(-time.Duration(days) * 24 * time.Hour) }
+
 func TestTopItems(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
@@ -35,7 +45,7 @@ VALUES('line2','sale2',1,'itm1','Apple','SKU1',99,100,0,0,9900,9900)`); err != n
 		t.Fatal(err)
 	}
 
-	items, err := dbx.repo.TopItems(ctx, 7, 10)
+	items, err := dbx.repo.TopItems(ctx, winFrom(7), winTo(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,17 +74,22 @@ func TestPeriodComparison(t *testing.T) {
 	// less than "now", silently dropping every sale from today out of the
 	// current-period bucket. Confirmed live via sqlite3 CLI 2026-07-29.
 	seedLifecycleSale(t, dbx, "sale-earlier-today", "R5", "sale", "completed", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), 40, 0)
-	// A year-ago-equivalent sale: 367 days ago falls inside the
-	// [-(days+365), -365) window when days=7 (i.e. between 372 and 365 days
-	// ago).
-	seedLifecycleSale(t, dbx, "sale-year-ago", "R2", "sale", "completed", relDays(-367), 300, 0)
+	// A year-ago-equivalent sale: PeriodComparison shifts [from, to) back
+	// one CALENDAR year via AddDate (leap-year correct, not naive "-365
+	// days"), so seed a point safely inside that shifted window's midpoint
+	// rather than a fixed day-count literal that could land outside it on
+	// a leap-year boundary.
+	from7, to7 := winFrom(7), winTo()
+	yearAgoFrom, yearAgoTo := from7.AddDate(-1, 0, 0), to7.AddDate(-1, 0, 0)
+	yearAgoMid := yearAgoFrom.Add(yearAgoTo.Sub(yearAgoFrom) / 2)
+	seedLifecycleSale(t, dbx, "sale-year-ago", "R2", "sale", "completed", yearAgoMid.UTC().Format(time.RFC3339), 300, 0)
 	// Neither period: 30 days ago.
 	seedLifecycleSale(t, dbx, "sale-neither", "R3", "sale", "completed", relDays(-30), 999, 0)
 	// A return in the current window must not count (PeriodComparison
 	// filters sale_type='sale').
 	seedLifecycleSale(t, dbx, "return-current", "R4", "return", "completed", relDays(-1), 50, 0)
 
-	current, yearAgo, err := dbx.repo.PeriodComparison(ctx, 7)
+	current, yearAgo, err := dbx.repo.PeriodComparison(ctx, from7, to7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +118,7 @@ func TestPaymentBreakdown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	breakdown, err := dbx.repo.PaymentBreakdown(ctx, 7)
+	breakdown, err := dbx.repo.PaymentBreakdown(ctx, winFrom(7), winTo())
 	if err != nil {
 		t.Fatal(err)
 	}

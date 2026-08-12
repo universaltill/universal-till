@@ -331,3 +331,44 @@ func TestPostSettingsEOD_ValidatesTimeFormat(t *testing.T) {
 		t.Fatalf("expected 204 disabling with no time, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ut-docs#519: business_day_start is a sibling field on this SAME
+// settings panel/endpoint, validated with the same eodTimeRe pattern as the
+// EOD schedule time above.
+func TestPostSettingsEOD_BusinessDayStart_ValidatesAndPersists(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("business_day_start=not-a-time"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a malformed business_day_start, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("business_day_start=06:00"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for a valid business_day_start, got %d: %s", rec.Code, rec.Body.String())
+	}
+	val, _, err := dp.Settings.Get(t.Context(), keyReportsBusinessDayStart)
+	if err != nil || val != "06:00" {
+		t.Fatalf("expected business_day_start persisted, got %q err=%v", val, err)
+	}
+
+	// Blank is allowed (never configured / cleared back to the default).
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("business_day_start="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for a blank business_day_start, got %d: %s", rec.Code, rec.Body.String())
+	}
+	val, _, err = dp.Settings.Get(t.Context(), keyReportsBusinessDayStart)
+	if err != nil || val != "" {
+		t.Fatalf("expected business_day_start cleared, got %q err=%v", val, err)
+	}
+}
