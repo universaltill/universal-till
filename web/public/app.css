@@ -1255,7 +1255,7 @@ body.login-screen {
 .setup-dot { inline-size: .6rem; block-size: .6rem; border-radius: 50%; background: var(--border); }
 .setup-dot.active { background: var(--accent); }
 .setup-langs { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
-.setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; }
+.setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; flex-wrap: wrap; }
 [x-cloak] { display: none !important; }
 
 /* Bottom status bar: always-visible version + live connectivity. Bookends the

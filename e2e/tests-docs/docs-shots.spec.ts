@@ -129,18 +129,26 @@ async function ensureInvoiceSeller(page: Page) {
 async function ensureOperator(page: Page) {
   await page.goto('/');
   if (page.url().includes('/setup')) {
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // language
+    // ut-docs#617 inserted a new step 5 whose default panel has no "Next"
+    // button at all (No / Yes / Later instead) — the old flat click
+    // sequence of bare `.setup-nav button:visible` presses would have
+    // hunted for a "Next" that isn't there at that point. Scoped to each
+    // numbered section (data-step, set on every <section> in setup.html)
+    // rather than trying to keep the flat sequence in sync by count.
+    const step = (n: number) => page.locator(`[data-step="${n}"]`);
+    await step(1).locator('.setup-nav button', { hasText: 'Next' }).click(); // language
     await page.locator('select[name=country]').selectOption('GB');
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // country
+    await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
     await page.locator('input[name=store_name]').fill('Demo Shop');
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // shop name
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // shop type + demo data (ut-docs#539, both optional)
-    await page.locator('input[name=pin]').fill(ADMIN_PIN);
-    await page.locator('input[name=pin_confirm]').fill(ADMIN_PIN);
-    await page.locator('.setup-nav button:visible', { hasText: 'Next' }).click(); // PIN
+    await step(3).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name
+    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type + demo data (ut-docs#539, both optional)
+    await step(5).locator('.setup-nav button.primary', { hasText: 'No' }).click(); // restore from another POS? (ut-docs#617) — No, starting fresh
+    await step(6).locator('input[name=pin]').fill(ADMIN_PIN);
+    await step(6).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
+    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
     await Promise.all([
       page.waitForURL((u) => !u.pathname.includes('/setup')),
-      page.locator('button[type=submit]', { hasText: 'Start selling' }).click(),
+      step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
     ]);
   } else if (page.url().includes('/login')) {
     for (const d of ADMIN_PIN.split('')) {

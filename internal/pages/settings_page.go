@@ -83,6 +83,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// posture as payMethods above.
 		sampleCount, _ := data.NewDemoSeedRepo(d.Db).SampleItemCount(r.Context())
 		shopType, _, _ := d.Settings.Get(r.Context(), common.KeyShopType)
+		// Restore-from-another-POS resume prompt (ut-docs#617): only shown
+		// when the wizard's "Later" choice left it deferred; best-effort
+		// like shopType above, same posture.
+		restorePromptStatus, _, _ := d.Settings.Get(r.Context(), common.KeyRestorePromptStatus)
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -126,6 +130,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"reportArchiveCoverage": reportArchiveCoverage,
 			"shopType":              shopType,
 			"shopTypes":             setupShopTypes,
+			"restorePromptDeferred": restorePromptStatus == common.RestorePromptStatusDeferred,
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
 			"launchOnStartup":       st.LaunchOnStartup,
@@ -558,6 +563,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			msg += " " + fmt.Sprintf(httpx.T(locale, "settings.data.demo_kept"), kept)
 		}
 		fmt.Fprintf(w, `<span>✓ %s</span>`, html.EscapeString(msg))
+	})
+
+	// Dismiss the "restore from another POS?" resume prompt (ut-docs#617)
+	// without importing anything — an explicit "no thanks," not just
+	// ignoring it forever. hx-swap="outerHTML" on the whole block, so an
+	// empty 200 body removes it; 204 wouldn't swap (see remove-demo-
+	// catalogue's comment above on why 2xx-with-body is used for hx-swap
+	// targets).
+	mux.HandleFunc("POST /api/settings/dismiss-restore-prompt", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), common.KeyRestorePromptStatus, ""); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	})
 
 	// This till's own display name (ut-docs#396) — distinct from a replica's
