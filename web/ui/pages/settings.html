@@ -390,6 +390,95 @@
 })();
 </script>
 <div class="card">
+  <h2>🗄️ {{ T "settings.retention.title" }} {{ helpLink "reports" }}</h2>
+  <p class="muted">{{ T "settings.retention.help" }}</p>
+  <form hx-post="/api/settings/report-retention" hx-swap="none" hx-on::after-request="window.location.reload()">
+    {{ $mode := .reportRetentionMode }}
+    <label>{{ T "settings.retention.mode_label" }}
+      <select name="mode">
+        <option value="till"  {{ if eq $mode "till" }}selected{{ end }}>{{ T "settings.retention.mode_till" }}</option>
+        <option value="cloud" disabled {{ if eq $mode "cloud" }}selected{{ end }}>{{ T "settings.retention.mode_cloud" }} ({{ T "settings.retention.mode_coming_soon" }})</option>
+        <option value="both"  disabled {{ if eq $mode "both" }}selected{{ end }}>{{ T "settings.retention.mode_both" }} ({{ T "settings.retention.mode_coming_soon" }})</option>
+      </select>
+    </label>
+    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+  </form>
+  <p class="muted">{{ T "settings.retention.capacity_advisory" }}</p>
+  <p>
+    {{ if eq .reportArchiveCoverage.Count 0 }}
+    {{ T "settings.retention.coverage_none" }}
+    {{ else }}
+    {{ T "settings.retention.coverage_label" }}: {{ .reportArchiveCoverage.Earliest }} – {{ .reportArchiveCoverage.Latest }} ({{ .reportArchiveCoverage.Count }})
+    {{ end }}
+  </p>
+
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.retention.export_title" }}</h3>
+  <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+    <label>{{ T "settings.retention.export_from_label" }}
+      <input type="date" id="retention-export-from">
+    </label>
+    <label>{{ T "settings.retention.export_to_label" }}
+      <input type="date" id="retention-export-to">
+    </label>
+    <label>{{ T "settings.retention.export_format_label" }}
+      <select id="retention-export-format">
+        <option value="csv">CSV</option>
+        <option value="json">JSON</option>
+      </select>
+    </label>
+    <button class="btn secondary" id="retention-export-run-btn" data-testid="retention-export">{{ T "settings.retention.export_run_btn" }}</button>
+    <span id="retention-export-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+  </div>
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById('retention-export-run-btn');
+  if (!btn) return;
+  var msg = document.getElementById('retention-export-msg');
+  var from = document.getElementById('retention-export-from');
+  var to = document.getElementById('retention-export-to');
+  var format = document.getElementById('retention-export-format');
+  var T = {
+    pickDatesRequired: "{{ T "settings.retention.export_pick_dates_required" }}",
+    downloaded: "{{ T "settings.retention.export_downloaded" }}"
+  };
+  btn.addEventListener('click', function () {
+    if (!from.value || !to.value) { msg.textContent = '✗ ' + T.pickDatesRequired; return; }
+    btn.disabled = true; msg.textContent = '⏳ …';
+    fetch('/api/reports/archive/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ from: from.value, to: to.value, format: format.value }).toString()
+    }).then(function (r) {
+      // Same file-vs-JSON-status convention as the Data card's export
+      // above: Content-Disposition: attachment marks the file branch, not
+      // Content-Type -- a CSV or JSON export file both legitimately carry
+      // a Content-Type that could otherwise be confused with a status
+      // response.
+      var cd = r.headers.get('Content-Disposition') || '';
+      if (cd.indexOf('attachment') !== -1) {
+        var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
+        var filename = m ? m[1] : 'report-archive.bin';
+        return r.blob().then(function (blob) {
+          btn.disabled = false; msg.textContent = '✓ ' + T.downloaded + ' ' + filename;
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url; a.download = filename;
+          document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(url);
+        });
+      }
+      return r.text().then(function (t) {
+        btn.disabled = false;
+        msg.textContent = '✗ ' + (t || ('HTTP ' + r.status));
+      });
+    }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+  });
+})();
+</script>
+<div class="card">
   <h2>{{ T "settings.printer.title" }} {{ helpLink "printing" }}</h2>
   <p class="muted">{{ T "settings.printer.help" }}</p>
   <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="window.location.reload()">

@@ -414,6 +414,99 @@ func TestArchiveReport_IdempotentPerKindAndPeriod(t *testing.T) {
 	}
 }
 
+// ADR-0040 card 1: till-mode age-based prune, coverage summary and the
+// bounded-range export fetch.
+
+func TestPruneReportArchiveOlderThan_DeletesOnlyRowsBeforeCutoff(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	for _, p := range []string{"2015-06-01", "2015-12-31", "2016-01-01", "2026-01-01"} {
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`)); err != nil {
+			t.Fatalf("seed archive %s: %v", p, err)
+		}
+	}
+
+	n, err := dbx.repo.PruneReportArchiveOlderThan(ctx, "2016-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("expected 2 rows pruned (strictly before cutoff), got %d", n)
+	}
+
+	reports, err := dbx.repo.ListArchivedReports(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 2 {
+		t.Fatalf("expected 2 rows remaining, got %d: %+v", len(reports), reports)
+	}
+	for _, r := range reports {
+		if r.Period < "2016-01-01" {
+			t.Fatalf("row before cutoff survived prune: %+v", r)
+		}
+	}
+
+	// A second run at the same cutoff is idempotent -- nothing left to prune.
+	n, err = dbx.repo.PruneReportArchiveOlderThan(ctx, "2016-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 rows pruned on the second run, got %d", n)
+	}
+}
+
+func TestReportArchiveCoverage_EmptyAndPopulated(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	cov, err := dbx.repo.ReportArchiveCoverage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cov.Count != 0 || cov.Earliest != "" || cov.Latest != "" {
+		t.Fatalf("expected zero-value coverage on an empty archive, got %+v", cov)
+	}
+
+	for _, p := range []string{"2024-03-01", "2025-01-15", "2023-11-30"} {
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`)); err != nil {
+			t.Fatalf("seed archive %s: %v", p, err)
+		}
+	}
+
+	cov, err = dbx.repo.ReportArchiveCoverage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cov.Count != 3 || cov.Earliest != "2023-11-30" || cov.Latest != "2025-01-15" {
+		t.Fatalf("expected earliest=2023-11-30 latest=2025-01-15 count=3, got %+v", cov)
+	}
+}
+
+func TestArchivedReportsInRange_BoundedAndOrdered(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	for _, p := range []string{"2026-01-05", "2026-01-01", "2026-01-10", "2025-12-31"} {
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{"p":"`+p+`"}`)); err != nil {
+			t.Fatalf("seed archive %s: %v", p, err)
+		}
+	}
+
+	rows, err := dbx.repo.ArchivedReportsInRange(ctx, "2026-01-01", "2026-01-09")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows in range, got %d: %+v", len(rows), rows)
+	}
+	if rows[0].Period != "2026-01-01" || rows[1].Period != "2026-01-05" {
+		t.Fatalf("expected rows ordered by period, got %+v", rows)
+	}
+}
+
 func TestEndOfDay_AggregatesSalesReturnsAndMethods(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()

@@ -29,6 +29,26 @@ Gün, reyon ve ödeme türüne göre satış toplamları; en çok/yavaş satanla
 
 Varsayılan olarak bir rapor "günü" gece yarısından gece yarısına kadar sürer. Gece yarısından sonra da satış yapıyorsanız — bir bar, geç saatlere kadar açık bir mutfak — bu, bir gecelik hasılatı iki rapor gününe böler. "İşletme günü şu saatte başlar" ayarını (Gün sonu sekmesinde, otomatik gün sonu saatinin yanında) işletme gününüzün gerçekten başladığı saate, örneğin 06:00'ya ayarlayın; böylece Gün/Hafta/Ay/Yıl dönemleri saatin değil gerçek işletme gününüzün sınırlarını izler.
 
+## Rapor saklama
+
+Arşivlenen her gün sonu raporu en az **10 yıl** saklanır — bu yasal bir
+kayıttır, Veri yönetimi'ndeki "İşlem geçmişini temizle" sıfırlama
+düğmesinin kaldırabileceği bir şey değildir.
+
+Ayarlar → Rapor saklama'da raporların nerede tutulacağını seçin:
+
+- **Yalnızca bu kasa** — bugün itibarıyla çalışır, ek bir kuruluma gerek
+  yoktur. Rapor arşivleri küçüktür (kapanan her gün için birkaç KB), bu
+  yüzden 10 yıllık bir arşiv modern bir kasanın diskini doldurmaz.
+- **Yalnızca bulut** / **Kasa + bulut** — bulut depolama ve bir mağaza
+  aboneliği kullanılabilir hale geldiğinde gelecek bir sürüm için
+  gösterilir; henüz seçilemez.
+
+Aynı sayfa **kayıtlarınızın ne kadar geriye gittiğini** (en eski ve en
+yeni arşivlenmiş rapor ile sayıları) ve bir **dışa aktar** düğmesi
+gösterir — bir tarih aralığı seçin ve eşleşen raporları CSV veya JSON
+olarak indirin, örneğin bir denetçiye vermek için.
+
 ## Nakit düzeltmeleri ve çıkışları (Vardiyalar)
 
 Vardiyalar sayfasındaki "Nakit düzeltme / çıkış" formu, bir satış dışında

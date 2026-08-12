@@ -87,12 +87,13 @@ func TestHelpHrefMapping(t *testing.T) {
 	}
 }
 
-// /settings is one route claimed by one topic (display), but five other
-// topics with real content — backups, claim, payments, printing, updates —
-// document SECTIONS of that same page. Those can't claim the route (the
-// duplicate-route guard exists precisely to forbid that), so the page carries
-// explicit {{ helpLink "…" }} hints next to its section headings instead.
-// This pins that each renders and points at the right topic.
+// /settings is one route claimed by one topic (display), but several other
+// topics with real content — backups, claim, payments, printing, updates,
+// reports (ADR-0040 report retention card, ut-docs#571) — document SECTIONS
+// of that same page. Those can't claim the route (the duplicate-route guard
+// exists precisely to forbid that), so the page carries explicit
+// {{ helpLink "…" }} hints next to its section headings instead. This pins
+// that each renders and points at the right topic.
 func TestSettingsSectionsCarryExplicitHelpLinks(t *testing.T) {
 	chdirRoot(t)
 	// The payments/backups/printer cards are manager-gated; auth-off (the same
@@ -127,7 +128,7 @@ func TestSettingsSectionsCarryExplicitHelpLinks(t *testing.T) {
 		t.Fatalf("GET /settings: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, id := range []string{"claim", "updates", "payments", "backups", "printing"} {
+	for _, id := range []string{"claim", "updates", "payments", "backups", "printing", "reports"} {
 		if !strings.Contains(body, `href="/help/`+id+`"`) {
 			t.Errorf("settings page is missing the explicit help link for the %q topic", id)
 		}

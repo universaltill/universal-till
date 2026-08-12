@@ -23,7 +23,18 @@ const (
 	KeyOSK               = "display.osk"
 	KeyIdleLock          = "auth.idle_lock_minutes"
 	KeyKioskIdleReset    = "kiosk.idle_reset_seconds"
+	// KeyReportRetentionMode is the per-shop report_archive retention
+	// destination (ADR-0040): "till" | "cloud" | "both". Till-writable
+	// locally until card 4 lands, at which point write ownership moves to
+	// the cloud sync response and this key becomes a read-only replica.
+	// Empty/unset means "till" (the only mode this card actually implements).
+	KeyReportRetentionMode = "store.report_retention_mode"
 )
+
+// ReportRetentionModeTill is the default/fallback report_retention_mode
+// value, and the only mode this card (ADR-0040 card 1) actually prunes for
+// -- "cloud"/"both" are visible-but-inert until card 4 wires the cloud side.
+const ReportRetentionModeTill = "till"
 
 // DefaultIdleLockMinutes locks an unattended till after 10 minutes unless
 // configured otherwise (docs: pos-auth.md idle auto-lock).

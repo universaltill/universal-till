@@ -1644,6 +1644,74 @@ func (r *POSRepo) HasArchivedReport(ctx context.Context, kind, period string) (b
 	return n > 0, nil
 }
 
+// PruneReportArchiveOlderThan deletes report_archive rows whose period is
+// strictly before cutoff (ADR-0040 §2, till-mode age-based retention).
+// period is stored "YYYY-MM-DD" (see generateEOD), which sorts and
+// range-compares correctly as plain text, so cutoff is the same format and
+// no date parsing happens here. A single DELETE statement, never
+// read-then-delete, so a prune can't race an in-flight archive write.
+// Returns the number of rows removed.
+func (r *POSRepo) PruneReportArchiveOlderThan(ctx context.Context, cutoff string) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM report_archive WHERE period < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune report archive: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// ReportArchiveCoverage summarizes how far back the shop's report archive
+// goes, for the settings page's "records held from X to Y" display
+// (ADR-0040 §7).
+type ReportArchiveCoverage struct {
+	Earliest string
+	Latest   string
+	Count    int
+}
+
+// ReportArchiveCoverage returns the earliest/latest archived period and the
+// total row count. MIN/MAX are NULL on an empty table, which would fail a
+// plain string Scan -- sql.NullString handles that, and the zero-value
+// Coverage{} (empty strings, Count 0) is what the caller renders as "no
+// archived reports yet".
+func (r *POSRepo) ReportArchiveCoverage(ctx context.Context) (ReportArchiveCoverage, error) {
+	var cov ReportArchiveCoverage
+	var earliest, latest sql.NullString
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT MIN(period), MAX(period), COUNT(*) FROM report_archive`,
+	).Scan(&earliest, &latest, &cov.Count); err != nil {
+		return cov, fmt.Errorf("report archive coverage: %w", err)
+	}
+	cov.Earliest = earliest.String
+	cov.Latest = latest.String
+	return cov, nil
+}
+
+// ArchivedReportsInRange returns archived reports with period in [from, to]
+// (inclusive), oldest first -- the bounded fetch behind the settings-page
+// export (ADR-0040 §7). Reuses ArchivedReportRow; the caller is responsible
+// for bounding the [from, to] span before calling this (no row-count/date-
+// span limit is enforced here, same division of responsibility as
+// data_api.go's export handler).
+func (r *POSRepo) ArchivedReportsInRange(ctx context.Context, from, to string) ([]ArchivedReportRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, kind, period, content_json, created_at
+FROM report_archive WHERE period BETWEEN ? AND ? ORDER BY period`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("archived reports in range: %w", err)
+	}
+	defer rows.Close()
+	var out []ArchivedReportRow
+	for rows.Next() {
+		var a ArchivedReportRow
+		if err := rows.Scan(&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan report: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // SaleExists reports whether a sale id is already recorded (sync idempotency).
 func (r *POSRepo) SaleExists(ctx context.Context, saleID string) (bool, error) {
 	var n int
@@ -2349,11 +2417,15 @@ func (r *POSRepo) DistinctAuditEntityTypes(ctx context.Context) ([]string, error
 }
 
 // ResetTransactionHistory permanently clears ALL transactional data — sales,
-// payments, invoices, shifts, held sales, stock movements and report archives —
-// for a clean start after testing (go-live). It KEEPS the catalog, users,
-// settings and tills. It is all-or-nothing by design (it cannot cherry-pick
-// individual sales, so it can't be used to hide specific takings) and records
-// an audit entry with how many sales were removed. Manager-gated at the handler.
+// payments, invoices, shifts, held sales and stock movements — for a clean
+// start after testing (go-live). It KEEPS the catalog, users, settings and
+// tills. report_archive is explicitly EXCLUDED (ADR-0040 §9): once a shop has
+// configured a retention mode, the report archive is a retained legal record,
+// not transactional/test data this button is meant to clear, so a manager
+// wipe here must never be able to destroy the retained window. It is
+// all-or-nothing by design (it cannot cherry-pick individual sales, so it
+// can't be used to hide specific takings) and records an audit entry with how
+// many sales were removed. Manager-gated at the handler.
 func (r *POSRepo) ResetTransactionHistory(ctx context.Context, actorID string) (int64, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2383,7 +2455,6 @@ func (r *POSRepo) ResetTransactionHistory(ctx context.Context, actorID string) (
 		`DELETE FROM held_sales`,
 		`DELETE FROM shifts`,
 		`DELETE FROM stock_movements`,
-		`DELETE FROM report_archive`,
 	} {
 		if _, err := tx.ExecContext(ctx, s); err != nil {
 			return 0, fmt.Errorf("reset (%s): %w", s, err)
