@@ -2,6 +2,7 @@ package pages
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -51,7 +52,15 @@ func discoverPrimariesHandler(gate apiGate) http.HandlerFunc {
 		}
 		candidates, err := discoveryBrowse(r.Context(), discoverBrowseTimeout)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Never put the raw driver/network error in the response
+			// (ut-docs#303's standing rule, and ut-docs#538's own AC): log
+			// it server-side where a real diagnosis needs it, and give the
+			// client a generic marker — the UI's own "tills.discovery.error"
+			// i18n string is what the operator actually sees (fetch's
+			// .then(r => r.json()) fails to parse this plain-text body and
+			// falls into the page's .catch(), same as before this change).
+			log.Printf("[discovery] LAN scan failed: %v", err)
+			http.Error(w, "discovery scan failed", http.StatusInternalServerError)
 			return
 		}
 		if candidates == nil {
