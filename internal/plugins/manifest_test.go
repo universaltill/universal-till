@@ -3,12 +3,15 @@ package plugins
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 func TestParseManifest_Valid(t *testing.T) {
@@ -319,6 +322,90 @@ func TestPersistManifest(t *testing.T) {
 	}
 	if permCount != 2 {
 		t.Errorf("expected 2 ungranteed permissions, got %d", permCount)
+	}
+}
+
+// TestPersistManifest_ImportEntryDeclarationsRoundtrip covers ut-docs#599's
+// manifest half: an import entry's entities/file_formats declarations
+// (ManifestEntry.Entities/.FileFormats) parse from plugin.json, survive
+// PersistManifest (folded into plugin_entries.config_json alongside any
+// author config), and come back typed from data.PluginRepo.ListImportEntries
+// — which is where the /api/data/import dispatcher reads them.
+func TestPersistManifest_ImportEntryDeclarationsRoundtrip(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	manifestJSON := `{
+		"id": "com.test.importer",
+		"name": "Speedy Importer",
+		"version": "1.0.0",
+		"entrypoint": "./plugin.wasm",
+		"runtime": "wasm",
+		"entries": [
+			{
+				"type": "import",
+				"key": "bkp",
+				"label": "Speedy .bkp Import",
+				"entities": ["items", "categories", "tax_codes"],
+				"file_formats": [".bkp"],
+				"config": {"vendor": "speedy"}
+			},
+			{
+				"type": "export",
+				"key": "csv",
+				"label": "CSV Export"
+			}
+		]
+	}`
+	m, err := ParseManifest(strings.NewReader(manifestJSON))
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	// The fields are optional: the export entry declares neither and must
+	// parse (and persist) fine without them.
+	if len(m.Entries[1].Entities) != 0 || len(m.Entries[1].FileFormats) != 0 {
+		t.Fatalf("entry without declarations must have empty slices, got %+v", m.Entries[1])
+	}
+	if got := m.Entries[0].Entities; len(got) != 3 || got[0] != "items" {
+		t.Fatalf("parsed entities = %+v", got)
+	}
+	if got := m.Entries[0].FileFormats; len(got) != 1 || got[0] != ".bkp" {
+		t.Fatalf("parsed file_formats = %+v", got)
+	}
+
+	if err := PersistManifest(context.Background(), db, m, InstallOptions{}); err != nil {
+		t.Fatalf("PersistManifest: %v", err)
+	}
+
+	rows, err := data.NewPluginRepo(db).ListImportEntries(context.Background())
+	if err != nil {
+		t.Fatalf("ListImportEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 import entry (the export entry excluded), got %+v", rows)
+	}
+	r := rows[0]
+	if r.PluginID != "com.test.importer" || r.Key != "bkp" {
+		t.Fatalf("unexpected row: %+v", r)
+	}
+	if len(r.Entities) != 3 || r.Entities[0] != "items" || r.Entities[1] != "categories" || r.Entities[2] != "tax_codes" {
+		t.Fatalf("entities did not roundtrip: %+v", r.Entities)
+	}
+	if len(r.FileFormats) != 1 || r.FileFormats[0] != ".bkp" {
+		t.Fatalf("file_formats did not roundtrip: %+v", r.FileFormats)
+	}
+
+	// The author's own config keys must survive the fold-in untouched.
+	var configJSON string
+	if err := db.QueryRow(`SELECT config_json FROM plugin_entries WHERE plugin_id = 'com.test.importer' AND key = 'bkp'`).Scan(&configJSON); err != nil {
+		t.Fatalf("read config_json: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		t.Fatalf("parse config_json %q: %v", configJSON, err)
+	}
+	if cfg["vendor"] != "speedy" {
+		t.Fatalf("author config key lost in fold-in: %q", configJSON)
 	}
 }
 
