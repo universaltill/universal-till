@@ -149,3 +149,44 @@ func TestCleanupObsoleteItems(t *testing.T) {
 		t.Fatalf("cleanup not audited: %v", err)
 	}
 }
+
+// An obsolete item carrying a kitchen-station override must still clean up
+// (code review, ut-docs#516): item_station_routes has no pre-delete step in
+// CleanupObsoleteItems, so this only works because 034_kitchen_stations.sql
+// gives both routing tables ON DELETE CASCADE — without it this reproduces
+// a raw "FOREIGN KEY constraint failed" for the whole batch.
+func TestCleanupObsoleteItems_ItemWithKitchenStationRouteCascades(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cleanup-station.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	x := func(q string, a ...any) {
+		if _, err := d.DB.Exec(q, a...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('obs2','Old Grill Item',100,0)`)
+
+	repo := data.NewPOSRepo(d.DB)
+	stationID, err := repo.CreateKitchenStation(context.Background(), "Grill", "g:9100")
+	if err != nil {
+		t.Fatalf("CreateKitchenStation: %v", err)
+	}
+	if err := repo.SetItemStationRoutes(context.Background(), "obs2", []string{stationID}); err != nil {
+		t.Fatalf("SetItemStationRoutes: %v", err)
+	}
+
+	n, err := repo.CleanupObsoleteItems(context.Background(), "")
+	if err != nil {
+		t.Fatalf("cleanup must not fail on an item with a station route: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("want 1 item cleaned up, got %d", n)
+	}
+	var routeCount int
+	d.DB.QueryRow(`SELECT count(*) FROM item_station_routes WHERE item_id='obs2'`).Scan(&routeCount)
+	if routeCount != 0 {
+		t.Fatalf("station route must cascade-delete with its item, got %d rows left", routeCount)
+	}
+}

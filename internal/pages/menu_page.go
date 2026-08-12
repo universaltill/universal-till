@@ -17,21 +17,22 @@ type menuTile struct {
 
 // iconFor maps a nav route to a touch-friendly emoji glyph.
 var iconFor = map[string]string{
-	"/":             "🧾",
-	"/designer":     "🎨",
-	"/inventory":    "📦",
-	"/shifts":       "🕒",
-	"/journal":      "📒",
-	"/reports":      "📊",
-	"/settings":     "⚙️",
-	"/plugins":      "🧩",
-	"/catalog":      "🏷️",
-	"/help":         "❓",
-	"/users":        "👤",
-	"/locations":    "📍",
-	"/translations": "🌐",
-	"/tills":        "🖥️",
-	"/report-issue": "🐞",
+	"/":                 "🧾",
+	"/designer":         "🎨",
+	"/inventory":        "📦",
+	"/shifts":           "🕒",
+	"/journal":          "📒",
+	"/reports":          "📊",
+	"/settings":         "⚙️",
+	"/plugins":          "🧩",
+	"/catalog":          "🏷️",
+	"/help":             "❓",
+	"/users":            "👤",
+	"/locations":        "📍",
+	"/kitchen-stations": "🍳",
+	"/translations":     "🌐",
+	"/tills":            "🖥️",
+	"/report-issue":     "🐞",
 }
 
 func registerMenu(mux *http.ServeMux, d *common.Deps) {
@@ -52,6 +53,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		if isManagerOrAuthOff(r) {
 			add("/users", "users.title")
 			add("/locations", "locations.title")
+			add("/kitchen-stations", "kitchenstations.title")
 			add("/translations", "translations.title")
 			add("/report-issue", "issuereport.title")
 		}

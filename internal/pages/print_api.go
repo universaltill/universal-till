@@ -184,8 +184,36 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	return doc, nil
 }
 
+// Test seams for the "printer hung until the deadline" regression
+// (TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired). Production always runs
+// the real functions with the real 15s budget; a test shortens the budget and
+// substitutes a print that blocks until the budget runs out, which is the one
+// sequence that used to lose the failure silently. Vars, not consts/direct
+// calls, purely for that — nothing outside _test.go ever reassigns them.
+var (
+	printAsyncTimeout = 15 * time.Second
+	printReceiptFn    = printReceipt
+	printKitchenFn    = printKitchen
+)
+
+// recordPrintFailureCtx returns the short-lived context used to WRITE a print
+// failure down (audit row + the /orders warning flag, ut-docs#517a).
+//
+// It deliberately does not inherit the print attempt's own context. A printer
+// that is out of paper, unplugged mid-write or hung does not fail fast: both
+// transports block until the print context's deadline (deviceTransport selects
+// on ctx.Done(); networkTransport hands the deadline to SetWriteDeadline), so
+// by the time printReceipt/printKitchen returns that error, its context is
+// already expired — and every write made with it would be dropped by
+// database/sql before touching the DB. Reusing it would silently lose exactly
+// the failures this feature exists to surface.
+func recordPrintFailureCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 5*time.Second)
+}
+
 // printReceiptAsync prints a completed sale without ever blocking checkout:
-// fired as a goroutine after tender, failures are logged + audited only.
+// fired as a goroutine after tender, failures are logged + audited and
+// flagged on the sale (ut-docs#517a) so /orders can surface them.
 // Tracked on d.AsyncWork (ut-docs#425) so a caller tearing down shared state
 // (a test closing Db, graceful shutdown) can wait for it to actually finish
 // instead of racing it — see AsyncWork's doc comment on common.Deps.
@@ -193,17 +221,25 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 	d.AsyncWork.Add(1)
 	go func() {
 		defer d.AsyncWork.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()
 		cfg := printerConfig(ctx, d)
 		if !cfg.Enabled() || !cfg.AutoPrint {
+			// No attempt (printing off/manual) — must neither overwrite a
+			// real prior failure nor falsely clear one.
 			return
 		}
-		if err := printReceipt(ctx, d, receiptNo); err != nil {
-			posRepo := data.NewPOSRepo(d.Db)
-			_ = posRepo.InsertAudit(ctx, nil, actorID, "sale", receiptNo, "print_failed",
+		posRepo := data.NewPOSRepo(d.Db)
+		if err := printReceiptFn(ctx, d, receiptNo); err != nil {
+			wctx, wcancel := recordPrintFailureCtx()
+			defer wcancel()
+			_ = posRepo.InsertAudit(wctx, nil, actorID, "sale", receiptNo, "print_failed",
 				map[string]any{"error": err.Error()}, time.Now().UTC().Format(time.RFC3339), "")
+			_ = posRepo.SetReceiptPrintFailed(wctx, receiptNo, time.Now().UTC().Format(time.RFC3339))
+			return
 		}
+		// Success clears any stale flag from an earlier failed attempt.
+		_ = posRepo.SetReceiptPrintFailed(ctx, receiptNo, "")
 	}()
 }
 
@@ -364,6 +400,17 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "receipt_reprint",
 			map[string]any{"ok": err == nil}, now, "")
+		// Keep the /orders warning honest (ut-docs#517a), same as the manual
+		// kitchen reprint. Without this the receipt warning would be
+		// UNCLEARABLE: a receipt only auto-prints once, at tender, so the
+		// reprint here is the only later attempt a shop can make — and the
+		// manual tells them to make it ("Fix the printer and print that
+		// order again — a successful print clears the warning").
+		if err != nil {
+			_ = posRepo.SetReceiptPrintFailed(r.Context(), receiptNo, now)
+		} else {
+			_ = posRepo.SetReceiptPrintFailed(r.Context(), receiptNo, "")
+		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
