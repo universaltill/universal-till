@@ -28,8 +28,15 @@ import (
 	"github.com/universaltill/universal-till/web/locales"
 )
 
-// Init builds the page mux. bgCtx and wg belong to app.Run's background-
-// service drain. bgCtx (not ctx) is load-bearing for anything joined on wg:
+// Init builds the page mux and returns the *common.Deps instance it wired
+// every handler with, so app.Run can join Deps.AsyncWork (best-effort
+// print/kitchen/invoice goroutines started after a request already
+// responded, ut-docs#425) into its own shutdown drain — without this, Deps
+// was constructed and kept entirely inside Init, and Run's deferred
+// database.Close() had no way to wait for those goroutines to actually
+// finish touching Db first (ut-docs#513). bgCtx and wg belong to app.Run's
+// background-service drain. bgCtx (not ctx) is load-bearing for anything
+// joined on wg:
 // app.Run's stopBg() cancels ONLY bgCtx, so a wg-joined loop hung off ctx
 // would never be signalled on the return paths where the caller's ctx is
 // still live (an early startup error, server.Start's own bind failure) and
@@ -48,7 +55,7 @@ import (
 // real "send on closed channel" panic (ut-docs#503). app.Run calls
 // Manager.Close from its own deferred cleanup instead, strictly after this
 // wg's drain has joined everything, publishers included.
-func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository, wg *sync.WaitGroup) http.Handler {
+func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, db *sql.DB, catalogRepo *marketplace.CatalogRepository, wg *sync.WaitGroup) (http.Handler, *common.Deps) {
 	log := logging.L()
 	mux := http.NewServeMux()
 
@@ -309,7 +316,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSetup(mux, dp, authSvc)
 	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
-		return mux
+		return mux, dp
 	}
-	return auth.Middleware(mux, authSvc)
+	return auth.Middleware(mux, authSvc), dp
 }

@@ -92,6 +92,19 @@ type Deps struct {
 	// background effect to have settled before tearing down shared state
 	// (tests closing Db, graceful shutdown) call WaitForAsyncWork first —
 	// same shape as WasmRuntime's own wg/Close (ut-docs#380).
+	//
+	// Known sharp edge, not yet fixed (ut-docs#513 code review, 2026-08-12):
+	// since app.Run's shutdown now calls WaitForAsyncWork in production
+	// (previously test-only), sync.WaitGroup's own documented misuse case
+	// is reachable there — Add taking the counter 0→1 concurrently with an
+	// in-flight Wait panics ("WaitGroup misuse: Add called concurrently
+	// with Wait"). server.Start bounds its own graceful shutdown at a fixed
+	// timeout but does not kill still-running handlers past it, so a
+	// tender/invoice handler still executing when that bound elapses could
+	// call AsyncWork.Add(1) just as the drain's Wait sees the counter hit
+	// zero. Narrow (only reachable on an already-degraded shutdown path)
+	// and not yet guarded — a "refuse new Add once shutdown has begun" flag
+	// would close it; tracked as a follow-up rather than fixed inline here.
 	AsyncWork sync.WaitGroup
 }
 
