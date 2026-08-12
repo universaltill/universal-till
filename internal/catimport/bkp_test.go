@@ -3,11 +3,15 @@ package catimport
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -406,6 +410,237 @@ func TestParseBkp_ChecksumMatchPasses(t *testing.T) {
 	}
 	if len(res.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+}
+
+// withBkpMaxDBSize lowers the package var for the duration of the test —
+// avoids needing gigantic (100s-of-MB) fixtures to exercise the size-cap
+// boundary in a fast unit test.
+func withBkpMaxDBSize(t *testing.T, n int64) {
+	t.Helper()
+	orig := bkpMaxDBSize
+	bkpMaxDBSize = n
+	t.Cleanup(func() { bkpMaxDBSize = orig })
+}
+
+// buildBkpZipWithMismatchedBackupDBSize writes backup.db declaring an
+// UncompressedSize64 that does NOT match the real content — see
+// TestParseBkp_MismatchedDeclaredSizeRejected for what this proves.
+func buildBkpZipWithMismatchedBackupDBSize(t *testing.T, dbBytes []byte, liedUncompressedSize uint64, metaBytes []byte) []byte {
+	t.Helper()
+	return buildBkpZipRawBackupDB(t, dbBytes, liedUncompressedSize, crc32.ChecksumIEEE(dbBytes), metaBytes)
+}
+
+// buildBkpZipRawBackupDB writes backup.db via zip.Writer's raw entry API
+// (CreateRaw), so the test controls the recorded UncompressedSize64 and
+// CRC32 independently of the bytes actually stored — the only way to build
+// the corrupt-header fixtures ParseBkp's guards are supposed to catch.
+// meta.inf still goes through the normal zw.Create path.
+func buildBkpZipRawBackupDB(t *testing.T, dbBytes []byte, declaredSize uint64, declaredCRC32 uint32, metaBytes []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	var compressed bytes.Buffer
+	fw, err := flate.NewWriter(&compressed, flate.DefaultCompression)
+	if err != nil {
+		t.Fatalf("flate writer: %v", err)
+	}
+	if _, err := fw.Write(dbBytes); err != nil {
+		t.Fatalf("flate write: %v", err)
+	}
+	if err := fw.Close(); err != nil {
+		t.Fatalf("flate close: %v", err)
+	}
+
+	fh := &zip.FileHeader{
+		Name:               "backup.db",
+		Method:             zip.Deflate,
+		UncompressedSize64: declaredSize,
+		CompressedSize64:   uint64(compressed.Len()),
+		CRC32:              declaredCRC32,
+	}
+	rw, err := zw.CreateRaw(fh)
+	if err != nil {
+		t.Fatalf("create raw backup.db entry: %v", err)
+	}
+	if _, err := rw.Write(compressed.Bytes()); err != nil {
+		t.Fatalf("write raw backup.db entry: %v", err)
+	}
+
+	w, err := zw.Create("meta.inf")
+	if err != nil {
+		t.Fatalf("create meta.inf entry: %v", err)
+	}
+	if _, err := w.Write(metaBytes); err != nil {
+		t.Fatalf("write meta.inf entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// ut-docs#594: a real speedy kasse backup can run into the hundreds of MB
+// (the pilot café's own backup.db was 270MB) — well past the original
+// 200MB cap, which made the importer unable to read the one real input it
+// will ever be given. Rather than committing a real 270MB fixture, this
+// pins the raised production constant itself as a regression guard: nobody
+// can silently shrink it back below what this real customer needed without
+// this test failing.
+func TestBkpMaxDBSizeIsRaisedPastOriginalCap(t *testing.T) {
+	const realPilotBackupSize = 270 << 20 // the actual café backup.db, ut-docs#594
+	if bkpMaxDBSize <= realPilotBackupSize {
+		t.Fatalf("bkpMaxDBSize = %d bytes, must be well above the real pilot backup (%d bytes)",
+			bkpMaxDBSize, realPilotBackupSize)
+	}
+}
+
+// The cap is enforced on bytes actually streamed to the temp file, not on
+// backup.db's declared size — an accurately-declared (via the normal
+// zw.Create path, so no lying involved) entry that's simply larger than the
+// cap must still be rejected.
+func TestParseBkp_BackupDBOverCapRejected(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	// A fresh SQLite file already carries page-size overhead (several KB) —
+	// no need to synthesize thousands of rows to exceed a tiny test cap.
+	withBkpMaxDBSize(t, 50)
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(validMetaInfNoChecksums),
+	})
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if !errors.Is(err, ErrBkpTooLarge) {
+		t.Fatalf("err = %v, want ErrBkpTooLarge (backup.db is %d bytes, cap is 50)", err, len(dbBytes))
+	}
+}
+
+// A backup.db at or under the cap must still import normally — the cap
+// isn't just a one-way trap.
+func TestParseBkp_BackupDBUnderCapImportsFine(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	withBkpMaxDBSize(t, int64(len(dbBytes))) // exactly at the boundary
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(validMetaInfNoChecksums),
+	})
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp at the exact cap boundary: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+}
+
+// TestParseBkp_MismatchedDeclaredSizeRejected checks the premise behind
+// enforcing the cap on bytes actually copied rather than pre-checking
+// backup.db's declared UncompressedSize64 (see ParseBkp's own comment):
+// archive/zip itself already refuses to read an entry whose declared size
+// doesn't match its real decompressed length — confirmed here directly
+// against the stdlib, both directions (declares far less than real, and far
+// more). There's no way to smuggle more or fewer real bytes past it than
+// the header claims, so a declared-size pre-check would never catch
+// anything the streamed byte-count enforcement doesn't already catch on its
+// own; a mismatched header just surfaces as a corrupt-archive read error
+// either way, which ParseBkp must — and does — handle without panicking.
+func TestParseBkp_MismatchedDeclaredSizeRejected(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	cases := []struct {
+		name    string
+		claimed uint64
+	}{
+		{"declares far less than the real content", 10},
+		// Deliberately kept UNDER bkpMaxDBSize: a claim over the cap would
+		// be short-circuited by ParseBkp's declared-size fast reject, and
+		// this test is about what archive/zip itself does, not that gate.
+		{"declares far more than the real content", 64 << 20},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			zipBytes := buildBkpZipWithMismatchedBackupDBSize(t, dbBytes, tc.claimed, []byte(validMetaInfNoChecksums))
+			_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+			if err == nil {
+				t.Fatal("ParseBkp accepted a backup.db whose declared size doesn't match its real content — want a rejection")
+			}
+		})
+	}
+}
+
+// countingReaderAt counts the bytes ParseBkp actually pulls out of the
+// uploaded archive, so a test can tell "rejected after streaming the whole
+// entry" apart from "rejected without ever touching the entry body".
+type countingReaderAt struct {
+	inner io.ReaderAt
+	read  int64
+}
+
+func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	n, err := c.inner.ReadAt(p, off)
+	c.read += int64(n)
+	return n, err
+}
+
+// TestParseBkp_OversizedEntryRejectedWithoutStreamingIt is the zip-bomb
+// half of the cap (review finding, ut-docs#594): an over-cap backup.db must
+// be rejected on its declared size, BEFORE its body is decompressed and
+// written to the till's storage — otherwise a few-MB crafted upload costs
+// the till bkpMaxDBSize+1 bytes of temp writes and the CPU to inflate them
+// before the streamed byte count notices. Proven by counting bytes read off
+// the archive: an entry of incompressible data far larger than the cap must
+// cost only the central-directory/local-header reads (~1.1KB measured), not
+// the cap's worth of body the streaming copy would otherwise inflate
+// (~97KB measured at the 64KB test cap — and 1GB at the production one).
+func TestParseBkp_OversizedEntryRejectedWithoutStreamingIt(t *testing.T) {
+	// Incompressible, so the entry's compressed body is ~the same size as
+	// its content — that's what makes the byte count discriminating.
+	body := make([]byte, 2<<20)
+	if _, err := rand.Read(body); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	withBkpMaxDBSize(t, 64<<10)
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": body,
+		"meta.inf":  []byte(validMetaInfNoChecksums),
+	})
+	counting := &countingReaderAt{inner: bytes.NewReader(zipBytes)}
+	_, err := ParseBkp(counting, int64(len(zipBytes)), 2)
+	if !errors.Is(err, ErrBkpTooLarge) {
+		t.Fatalf("err = %v, want ErrBkpTooLarge", err)
+	}
+	// Measured: ~1.1KB when the declared size is rejected up front, ~97KB
+	// when the entry is streamed to the cap first. 16KB sits clearly
+	// between the two — well above the directory/header reads (which vary
+	// a little with the temp filenames baked into the fixture) and well
+	// below anything that implies the body was inflated.
+	if counting.read > 16<<10 {
+		t.Fatalf("read %d bytes off the archive to reject an over-cap entry — it inflated the entry up to the cap instead of rejecting on the declared size", counting.read)
+	}
+}
+
+// TestParseBkp_CorruptBackupDBCRCRejected pins the guarantee ut-docs#594's
+// streaming rewrite had to preserve: backup.db no longer goes through
+// readZipEntry, so nothing but the io.Copy below reaching the entry's real
+// EOF makes archive/zip verify its CRC32. A backup.db whose recorded CRC32
+// doesn't match its bytes must still be refused — silently importing a
+// corrupt till backup is the one outcome this importer must never produce.
+func TestParseBkp_CorruptBackupDBCRCRejected(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	// Truthful declared size, deliberately wrong CRC32 — so the only thing
+	// that can catch it is archive/zip's checksum verification at EOF.
+	zipBytes := buildBkpZipRawBackupDB(t, dbBytes, uint64(len(dbBytes)),
+		crc32.ChecksumIEEE(dbBytes)+1, []byte(validMetaInfNoChecksums))
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if !errors.Is(err, zip.ErrChecksum) {
+		t.Fatalf("err = %v, want zip.ErrChecksum — the streamed copy must still trigger archive/zip's CRC32 check", err)
 	}
 }
 
