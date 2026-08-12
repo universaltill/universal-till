@@ -12,6 +12,9 @@ type ItemInput struct {
 	IsWeighed   bool
 	Description string
 	IsActive    bool
+	// IsSampleData marks rows inserted by the opt-in demo catalogue seed
+	// (ut-docs#539) so the UI can badge them.
+	IsSampleData bool
 }
 
 type VariantInput struct {

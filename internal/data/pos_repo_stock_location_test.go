@@ -147,13 +147,17 @@ func TestStockLocationInUse(t *testing.T) {
 		t.Fatal("brand-new location must not be reported in-use")
 	}
 
-	// loc_main is seeded by 001_init.sql's demo data with real inventory rows.
+	// A location with an inventory row counts as in-use. (Until ut-docs#539
+	// this leaned on 001's demo seed; the catalogue is opt-in now, so seed
+	// the item + balance explicitly.)
+	mustExec(t, d, `INSERT INTO items (id, name, base_price) VALUES ('itm-t49', 'Test Item', 100)`)
+	mustExec(t, d, `INSERT INTO inventory (id, item_id, variant_id, location_id, quantity) VALUES ('inv-t49', 'itm-t49', NULL, 'loc_main', 5)`)
 	inUse, err = repo.StockLocationInUse(ctx, "loc_main")
 	if err != nil {
 		t.Fatalf("StockLocationInUse(loc_main): %v", err)
 	}
 	if !inUse {
-		t.Fatal("loc_main has seeded inventory and must be reported in-use")
+		t.Fatal("loc_main has an inventory row and must be reported in-use")
 	}
 
 	// A location referenced only by a register must also count as in-use.
@@ -178,7 +182,7 @@ func TestStockLocationInUse(t *testing.T) {
 		t.Fatalf("create via-movement: %v", err)
 	}
 	mustExec(t, d, `INSERT INTO stock_movements (id, item_id, variant_id, location_id, type, quantity, created_at)
-		VALUES ('mv-t49', 'itm001', NULL, ?, 'adjust', 1, datetime('now'))`, viaMovementID)
+		VALUES ('mv-t49', 'itm-t49', NULL, ?, 'adjust', 1, datetime('now'))`, viaMovementID)
 	inUse, err = repo.StockLocationInUse(ctx, viaMovementID)
 	if err != nil {
 		t.Fatalf("StockLocationInUse(via movement): %v", err)

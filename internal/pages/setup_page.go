@@ -9,6 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -22,6 +23,20 @@ type setupCountry struct {
 	Currency     string
 	TaxRatePct   int
 	TaxInclusive bool
+}
+
+// setupShopTypes is the ADR-0026 shop-type taxonomy (café, retail, service
+// trade, hospitality, market stall/pop-up, other) — reused verbatim, not a
+// new list (ut-docs#539). Labels are the setup.shop_type.* locale keys.
+var setupShopTypes = []string{"cafe", "retail", "service", "hospitality", "market_stall", "other"}
+
+func isValidShopType(v string) bool {
+	for _, t := range setupShopTypes {
+		if v == t {
+			return true
+		}
+	}
+	return false
 }
 
 var setupCountries = []setupCountry{
@@ -51,6 +66,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	renderWizard := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		httpx.RenderPartial("ui/pages/setup.html", map[string]any{
 			"countries": setupCountries,
+			"shopTypes": setupShopTypes,
 			"errKey":    errKey,
 		})(w, r)
 	}
@@ -135,6 +151,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				return
 			}
 		}
+		// Shop type (ut-docs#539, taxonomy per ADR-0026): optional, only a
+		// known value is persisted — a garbage/absent value just leaves the
+		// key unset, nothing else depends on it being present.
+		if v := strings.TrimSpace(r.Form.Get("shop_type")); v != "" && isValidShopType(v) {
+			if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
+				http.Error(w, "setup failed", http.StatusInternalServerError)
+				return
+			}
+		}
 		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
 			return
@@ -169,6 +194,17 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		_ = posRepo.InsertAudit(r.Context(), nil, adminID, "user", adminID, "first_boot_setup",
 			map[string]string{"via": "wizard", "country": st.Country, "currency": st.Currency}, now, "")
 		setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
+
+		// Sample-data opt-in (ut-docs#539): checkbox default is unchecked.
+		// Best-effort by design — the same reasoning as offline-first's
+		// "checkout is never blocked by the network" extends to first boot:
+		// a failed sample seed must never block wizard completion, so log
+		// and continue rather than erroring after setup already succeeded.
+		if r.Form.Get("demo_data") == "on" {
+			if err := data.NewDemoSeedRepo(d.Db).SeedDemoCatalogue(r.Context()); err != nil {
+				logging.L().Errorf("setup wizard: seed demo catalogue: %v", err)
+			}
+		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
 }
