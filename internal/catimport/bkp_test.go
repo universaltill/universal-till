@@ -3,11 +3,13 @@ package catimport
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"strings"
 	"testing"
@@ -406,6 +408,155 @@ func TestParseBkp_ChecksumMatchPasses(t *testing.T) {
 	}
 	if len(res.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+}
+
+// withBkpMaxDBSize lowers the package var for the duration of the test —
+// avoids needing gigantic (100s-of-MB) fixtures to exercise the size-cap
+// boundary in a fast unit test.
+func withBkpMaxDBSize(t *testing.T, n int64) {
+	t.Helper()
+	orig := bkpMaxDBSize
+	bkpMaxDBSize = n
+	t.Cleanup(func() { bkpMaxDBSize = orig })
+}
+
+// buildBkpZipWithMismatchedBackupDBSize writes backup.db via zip.Writer's
+// raw entry API (CreateRaw), declaring an UncompressedSize64 that does NOT
+// match the real content — see TestParseBkp_MismatchedDeclaredSizeRejected
+// for what this actually proves. meta.inf still goes through the normal
+// zw.Create path.
+func buildBkpZipWithMismatchedBackupDBSize(t *testing.T, dbBytes []byte, liedUncompressedSize uint64, metaBytes []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	var compressed bytes.Buffer
+	fw, err := flate.NewWriter(&compressed, flate.DefaultCompression)
+	if err != nil {
+		t.Fatalf("flate writer: %v", err)
+	}
+	if _, err := fw.Write(dbBytes); err != nil {
+		t.Fatalf("flate write: %v", err)
+	}
+	if err := fw.Close(); err != nil {
+		t.Fatalf("flate close: %v", err)
+	}
+
+	fh := &zip.FileHeader{
+		Name:               "backup.db",
+		Method:             zip.Deflate,
+		UncompressedSize64: liedUncompressedSize,
+		CompressedSize64:   uint64(compressed.Len()),
+		CRC32:              crc32.ChecksumIEEE(dbBytes),
+	}
+	rw, err := zw.CreateRaw(fh)
+	if err != nil {
+		t.Fatalf("create raw backup.db entry: %v", err)
+	}
+	if _, err := rw.Write(compressed.Bytes()); err != nil {
+		t.Fatalf("write raw backup.db entry: %v", err)
+	}
+
+	w, err := zw.Create("meta.inf")
+	if err != nil {
+		t.Fatalf("create meta.inf entry: %v", err)
+	}
+	if _, err := w.Write(metaBytes); err != nil {
+		t.Fatalf("write meta.inf entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// ut-docs#594: a real speedy kasse backup can run into the hundreds of MB
+// (the pilot café's own backup.db was 270MB) — well past the original
+// 200MB cap, which made the importer unable to read the one real input it
+// will ever be given. Rather than committing a real 270MB fixture, this
+// pins the raised production constant itself as a regression guard: nobody
+// can silently shrink it back below what this real customer needed without
+// this test failing.
+func TestBkpMaxDBSizeIsRaisedPastOriginalCap(t *testing.T) {
+	const realPilotBackupSize = 270 << 20 // the actual café backup.db, ut-docs#594
+	if bkpMaxDBSize <= realPilotBackupSize {
+		t.Fatalf("bkpMaxDBSize = %d bytes, must be well above the real pilot backup (%d bytes)",
+			bkpMaxDBSize, realPilotBackupSize)
+	}
+}
+
+// The cap is enforced on bytes actually streamed to the temp file, not on
+// backup.db's declared size — an accurately-declared (via the normal
+// zw.Create path, so no lying involved) entry that's simply larger than the
+// cap must still be rejected.
+func TestParseBkp_BackupDBOverCapRejected(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	// A fresh SQLite file already carries page-size overhead (several KB) —
+	// no need to synthesize thousands of rows to exceed a tiny test cap.
+	withBkpMaxDBSize(t, 50)
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(validMetaInfNoChecksums),
+	})
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if !errors.Is(err, ErrBkpTooLarge) {
+		t.Fatalf("err = %v, want ErrBkpTooLarge (backup.db is %d bytes, cap is 50)", err, len(dbBytes))
+	}
+}
+
+// A backup.db at or under the cap must still import normally — the cap
+// isn't just a one-way trap.
+func TestParseBkp_BackupDBUnderCapImportsFine(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	withBkpMaxDBSize(t, int64(len(dbBytes))) // exactly at the boundary
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(validMetaInfNoChecksums),
+	})
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp at the exact cap boundary: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+}
+
+// TestParseBkp_MismatchedDeclaredSizeRejected checks the premise behind
+// enforcing the cap on bytes actually copied rather than pre-checking
+// backup.db's declared UncompressedSize64 (see ParseBkp's own comment):
+// archive/zip itself already refuses to read an entry whose declared size
+// doesn't match its real decompressed length — confirmed here directly
+// against the stdlib, both directions (declares far less than real, and far
+// more). There's no way to smuggle more or fewer real bytes past it than
+// the header claims, so a declared-size pre-check would never catch
+// anything the streamed byte-count enforcement doesn't already catch on its
+// own; a mismatched header just surfaces as a corrupt-archive read error
+// either way, which ParseBkp must — and does — handle without panicking.
+func TestParseBkp_MismatchedDeclaredSizeRejected(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	cases := []struct {
+		name    string
+		claimed uint64
+	}{
+		{"declares far less than the real content", 10},
+		{"declares far more than the real content", 5 << 30},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			zipBytes := buildBkpZipWithMismatchedBackupDBSize(t, dbBytes, tc.claimed, []byte(validMetaInfNoChecksums))
+			_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+			if err == nil {
+				t.Fatal("ParseBkp accepted a backup.db whose declared size doesn't match its real content — want a rejection")
+			}
+		})
 	}
 }
 
