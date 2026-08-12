@@ -39,7 +39,7 @@
 
       <form method="post" action="/api/setup">
         <!-- Step 1 · language (reloads with the chosen locale) -->
-        <section x-show="step === 1" x-cloak.important>
+        <section x-show="step === 1" x-cloak.important data-step="1">
           <h1>{{ T "setup.language.title" }}</h1>
           <!-- ut-docs#590: the OS locale was detected but isn't one of the
                languages this till ships today (core files + installed
@@ -62,7 +62,7 @@
         </section>
 
         <!-- Step 2 · country → prefills currency + tax (all editable later) -->
-        <section x-show="step === 2" x-cloak>
+        <section x-show="step === 2" x-cloak data-step="2">
           <h1>{{ T "setup.country.title" }}</h1>
           <p class="muted">{{ T "setup.country.hint" }}</p>
           <select name="country" x-model="country"
@@ -83,7 +83,7 @@
         </section>
 
         <!-- Step 3 · shop name -->
-        <section x-show="step === 3" x-cloak>
+        <section x-show="step === 3" x-cloak data-step="3">
           <h1>{{ T "setup.store.title" }}</h1>
           <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}">
           <label>{{ T "setup.till_name.title" }}
@@ -99,7 +99,7 @@
              per ADR-0026 — the same six options the marketing site's
              solutions pages use, not a new list). The starter catalogue is
              the same generic one whichever type is chosen. -->
-        <section x-show="step === 4" x-cloak>
+        <section x-show="step === 4" x-cloak data-step="4">
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
           <select name="shop_type">
@@ -125,36 +125,45 @@
              CSV/Excel, straight into the existing /import flow) plus an
              honest "no named-system plugins yet" note rather than a
              fabricated vendor list; "Later" is resumable from Settings →
-             Data (settings.html). -->
-        <section x-show="step === 5" x-cloak x-data="{ choice: '' }">
+             Data (settings.html).
+             Review (B1): `choice` used to double as BOTH the panel
+             selector and the answer, so the CSV/Excel sub-panel
+             (x-show="choice === 'ask'") hid itself the instant its own
+             radio set choice to 'csv_excel' — the one button that could
+             carry that answer forward became enabled at exactly the
+             moment its container vanished, with no way back in (the
+             radio was already checked, so re-tapping it fired no
+             `change`). `asking` now owns which panel is shown; `choice`
+             only ever holds the answer. -->
+        <section x-show="step === 5" x-cloak data-step="5" x-data="{ asking: false, choice: '' }">
           <h1>{{ T "setup.restore.title" }}</h1>
           <p class="muted">{{ T "setup.restore.hint" }}</p>
           <input type="hidden" name="restore_choice" :value="choice">
-          <div x-show="choice !== 'ask'">
+          <div x-show="!asking">
             <div class="setup-nav">
               <button type="button" class="btn primary" @click="choice = 'no'; step = 6">{{ T "setup.restore.no" }}</button>
-              <button type="button" class="btn secondary" @click="choice = 'ask'" style="margin-top:.4rem">{{ T "setup.restore.yes" }}</button>
+              <button type="button" class="btn secondary" @click="asking = true" style="margin-top:.4rem">{{ T "setup.restore.yes" }}</button>
               <button type="button" class="btn secondary" @click="choice = 'later'; step = 6" style="margin-top:.4rem">{{ T "setup.restore.later" }}</button>
             </div>
             <div class="setup-nav">
               <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
             </div>
           </div>
-          <div x-show="choice === 'ask'">
+          <div x-show="asking">
             <label class="set-row">
-              <input type="radio" name="restore_source" value="csv_excel" @change="choice = 'csv_excel'">
+              <input type="radio" value="csv_excel" @change="choice = 'csv_excel'">
               {{ T "setup.restore.csv_excel" }}
             </label>
             <p class="muted">{{ T "setup.restore.no_plugins_yet" }}</p>
             <div class="setup-nav">
-              <button type="button" class="btn secondary" @click="choice = ''">{{ T "setup.back" }}</button>
+              <button type="button" class="btn secondary" @click="asking = false; choice = ''">{{ T "setup.back" }}</button>
               <button type="button" class="btn primary" :disabled="choice !== 'csv_excel'" @click="step = 6">{{ T "setup.next" }}</button>
             </div>
           </div>
         </section>
 
         <!-- Step 6 · admin PIN -->
-        <section x-show="step === 6" x-cloak>
+        <section x-show="step === 6" x-cloak data-step="6">
           <h1>{{ T "auth.setup.title" }}</h1>
           <p class="muted">{{ T "auth.setup.hint" }}</p>
           <label>{{ T "auth.setup.pin" }}
@@ -170,7 +179,7 @@
         </section>
 
         <!-- Step 7 · done -->
-        <section x-show="step === 7" x-cloak>
+        <section x-show="step === 7" x-cloak data-step="7">
           <h1>{{ T "setup.done.title" }}</h1>
           <p class="muted">{{ T "setup.done.hint" }}</p>
           <div class="setup-nav">

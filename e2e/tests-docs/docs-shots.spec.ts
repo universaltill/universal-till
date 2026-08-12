@@ -129,16 +129,13 @@ async function ensureInvoiceSeller(page: Page) {
 async function ensureOperator(page: Page) {
   await page.goto('/');
   if (page.url().includes('/setup')) {
-    // Scoped to each numbered section rather than a bare `.setup-nav
-    // button:visible` — every step's own advance button shares the same
-    // "Next" label (T "setup.next"), and x-show only toggles CSS display
-    // rather than removing the other steps' buttons from the DOM, so an
-    // unscoped locator is matching against N simultaneously-present
-    // same-text buttons and relying on :visible alone to disambiguate
-    // (ut-docs#617 review: this became flaky once a 6th step joined the
-    // pool, timing out on a stale resolution instead of the current
-    // step's own button).
-    const step = (n: number) => page.locator(`section[x-show="step === ${n}"]`);
+    // ut-docs#617 inserted a new step 5 whose default panel has no "Next"
+    // button at all (No / Yes / Later instead) — the old flat click
+    // sequence of bare `.setup-nav button:visible` presses would have
+    // hunted for a "Next" that isn't there at that point. Scoped to each
+    // numbered section (data-step, set on every <section> in setup.html)
+    // rather than trying to keep the flat sequence in sync by count.
+    const step = (n: number) => page.locator(`[data-step="${n}"]`);
     await step(1).locator('.setup-nav button', { hasText: 'Next' }).click(); // language
     await page.locator('select[name=country]').selectOption('GB');
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
