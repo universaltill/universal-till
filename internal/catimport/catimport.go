@@ -350,15 +350,138 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 	return res, nil
 }
 
+// normalizeDecimalComma rewrites a price string that uses a German/European
+// decimal comma ("3,50", "1.234,50") into plain dot-decimal form, and leaves
+// every other string alone (or strips repeated separators as thousands
+// grouping — see below). It generalises the heuristic parseBkpSalesPrice
+// (bkp.go, ut-docs#511) proved on the .bkp path, now shared by ParsePrice
+// (ut-docs#586). decimals is the currency's minor-unit exponent (0 for
+// JPY/IRR/IRT/IQD/AFN, 2 for most others) — needed because a lone separator
+// followed by exactly 3 digits is genuinely ambiguous between "decimal
+// point, 3-decimal currency" and "thousands separator, whole-number
+// currency," and the two must not be resolved the same way:
+//
+//   - No separator at all → returned unchanged, so no-separator ("12000")
+//     inputs are byte-identical to before.
+//   - Both ',' and '.' present → whichever appears LAST is the decimal
+//     point, the other is a thousands separator — always unambiguous
+//     regardless of digit count. So "3,50", "1.234,50" mean decimal comma
+//     (strip '.', turn ',' into '.'), while "£1,234.50" keeps the existing
+//     comma-as-thousands behaviour.
+//   - Only one separator KIND, but it repeats ("1,234,567", "1.234.567") →
+//     that can only be thousands grouping, never a decimal point — stripped
+//     entirely. (Review finding #2, ut-docs#586: the naive last-wins rule
+//     turned a repeated comma into multi-dot garbage and hard-errored a
+//     previously-valid English thousands-grouped price.)
+//   - Exactly one separator, followed by exactly 3 digits and nothing else
+//     (the accepted ambiguity: e.g. "2,900" could mean the thousands-
+//     grouped €2,900.00, or the decimal-comma €2.90) → resolved by
+//     decimals: a zero-decimal currency can never have a genuine
+//     fractional part, so it's always the thousands-grouped reading there
+//     ("12,000" with decimals=0 is 12000, not 12 — review finding #1,
+//     ut-docs#586: the till ships five zero-decimal currencies, and the
+//     naive rule silently under-parsed a plain thousands-grouped
+//     IRR/IRT/IQD/AFN/JPY price by 1000x, the same class of silent
+//     money-corruption defect this card exists to fix, just pointed at a
+//     different set of shops). A non-zero-decimals currency keeps the
+//     decimal-comma reading, consistent with the German sources
+//     `parseBkpSalesPrice` was built for.
+//   - Exactly one separator, followed by any other digit count (1-2, or
+//     4+) → unambiguously a decimal point (comma) or unchanged (dot,
+//     matching ParsePrice's original default).
+//
+// Known accepted residual edge case, inherited from the same tradeoff
+// `parseBkpSalesPrice` already accepted: a malformed trailing separator
+// with nothing after it (e.g. "3.50,") still resolves as a decimal point
+// with an empty fraction rather than erroring — rare enough in real
+// exports not to be worth its own branch.
+func normalizeDecimalComma(s string, decimals int) string {
+	commaCount := strings.Count(s, ",")
+	dotCount := strings.Count(s, ".")
+	lastComma := strings.LastIndexByte(s, ',')
+	lastDot := strings.LastIndexByte(s, '.')
+
+	switch {
+	case commaCount == 0 && dotCount == 0:
+		return s
+	case commaCount > 0 && dotCount > 0:
+		if lastComma > lastDot {
+			s = strings.ReplaceAll(s, ".", "")
+			return strings.ReplaceAll(s, ",", ".")
+		}
+		return strings.ReplaceAll(s, ",", "")
+	case commaCount > 1 || dotCount > 1:
+		// Repeated separator, one kind only: this can only be thousands
+		// grouping IF the group after the last separator is a clean 3
+		// digits — genuine grouping always looks like that ("1,234,567",
+		// "1.234.567", Indian "1,23,456"). Anything else sharing the same
+		// separator character is not grouping — a German date
+		// ("12.05.2026", last group "2026", 4 digits) or column-mapping
+		// garbage ("1.2.3", last group "3", 1 digit) — and must NOT be
+		// silently squashed into a huge number (review finding N2,
+		// ut-docs#586 round 2: stripping unconditionally turned
+		// "12.05.2026" into a silent €12,052,026.00). Leave the
+		// separators in place instead: strconv.ParseFloat can't parse a
+		// multi-dot or any-comma string, so this reliably falls through
+		// to ParsePrice's existing "unparseable price" error — the same
+		// fail-loud outcome this shape already had before ut-docs#586.
+		sep, last := byte(','), strings.LastIndexByte(s, ',')
+		if dotCount > 1 {
+			sep, last = '.', strings.LastIndexByte(s, '.')
+		}
+		if trailingDigits(s[last+1:]) == 3 {
+			return strings.ReplaceAll(s, string(sep), "")
+		}
+		return s
+	default:
+		// Exactly one separator, of one kind. The digit run immediately
+		// following it (before any trailing currency symbol/code, e.g.
+		// "12,000 IRR" or "1,200 ﷼" — review finding N1, ut-docs#586
+		// round 2: checking the whole untrimmed tail for "exactly 3
+		// digits" failed the instant anything followed the digits, which
+		// is exactly how this product's own zero-decimal currencies
+		// render — FormatMoney puts IRR/IRT/IQD/AFN's symbol *after* the
+		// grouped number) is what decides the ambiguous-3-digit case.
+		sep, last := byte(','), lastComma
+		if dotCount == 1 {
+			sep, last = '.', lastDot
+		}
+		if trailingDigits(s[last+1:]) == 3 && decimals == 0 {
+			return strings.ReplaceAll(s, string(sep), "")
+		}
+		if sep == ',' {
+			return strings.ReplaceAll(s, ",", ".")
+		}
+		return s // sole '.', not the ambiguous case: unchanged (existing default)
+	}
+}
+
+// trailingDigits returns the length of the run of ASCII digits at the start
+// of s — used by normalizeDecimalComma to find how many digits immediately
+// follow a separator, stopping at the first non-digit (a currency symbol,
+// code, or trailing junk) rather than requiring the whole remainder of the
+// string to be digits.
+func trailingDigits(s string) int {
+	n := 0
+	for n < len(s) && s[n] >= '0' && s[n] <= '9' {
+		n++
+	}
+	return n
+}
+
 // ParsePrice converts a human price string ("£1,234.50", "1.40", "12000")
-// into minor units using the shop currency's decimal places.
+// into minor units using the shop currency's decimal places. German
+// decimal-comma notation ("3,50", "1.234,50") is handled too (ut-docs#586)
+// via normalizeDecimalComma's separator-disambiguation heuristic — see its
+// doc comment, including the accepted "2,900" ambiguity and how it's
+// resolved differently for zero-decimal currencies.
 func ParsePrice(s string, decimals int) (int64, error) {
 	clean := strings.Map(func(r rune) rune {
 		if (r >= '0' && r <= '9') || r == '.' || r == '-' {
 			return r
 		}
 		return -1 // strips symbols, spaces, thousands separators
-	}, s)
+	}, normalizeDecimalComma(s, decimals))
 	if clean == "" || clean == "-" {
 		return 0, fmt.Errorf("empty price")
 	}

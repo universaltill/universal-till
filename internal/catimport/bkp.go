@@ -224,44 +224,17 @@ func collapseWhitespace(s string) string {
 
 // parseBkpSalesPrice converts a raw SalesPrice cell (whatever textual or
 // numeric shape modernc.org/sqlite handed back — see BkpProductRow's doc
-// comment) into minor units. Unlike the CSV path's ParsePrice — built for
-// machine-generated Loyverse/Square/generic exports that always use a
-// plain '.' decimal point — a bkp export can carry a German-formatted
+// comment) into minor units. A bkp export can carry a German-formatted
 // decimal comma ("2,90") if SalesPrice is ever TEXT-typed in the source
 // (review finding, ut-docs#511, 2026-08-09: SQLite is dynamically typed
 // regardless of a column's declared affinity, so a REAL column can still
-// hold a comma-formatted string). Silently running "2,90" through
-// ParsePrice's comma-as-thousands-separator stripping produces "290" —
-// a 100x price error on exactly the German till this feature exists to
-// serve — so this wrapper normalises the separator first.
-//
-// Heuristic: whichever of ',' or '.' appears LAST in the string is treated
-// as the decimal point; the other, if present, is stripped as a thousands
-// separator. A string with only one kind of separator uses it as the
-// decimal point outright — covers plain "2.90", German "2,90", and
-// thousands-grouped "1.234,50" / "1,234.50" alike. The one accepted
-// ambiguity (documented, not silently wrong): a three-digit group with no
-// other separator, e.g. "2,900", could mean either €2,900.00 or a
-// thousands-grouped €2.90 — treated as the decimal-comma case (€2.90) per
-// this heuristic, consistent with the German source this format is for.
-// This whole function is exercised only by bkp.go — the CSV path's
-// ParsePrice and its own comma-as-thousands-separator behaviour
-// (documented on ParsePrice itself) are unchanged.
+// hold a comma-formatted string). The last-separator-wins heuristic this
+// function pioneered for that case now lives in catimport.go's
+// normalizeDecimalComma, which ParsePrice itself calls (ut-docs#586) — so
+// this is just a TrimSpace wrapper. See normalizeDecimalComma's doc comment
+// for the heuristic and its one accepted "2,900" ambiguity.
 func parseBkpSalesPrice(raw string, currencyDecimals int) (int64, error) {
-	s := strings.TrimSpace(raw)
-	lastComma := strings.LastIndexByte(s, ',')
-	lastDot := strings.LastIndexByte(s, '.')
-	if lastComma > lastDot {
-		// Comma is the decimal point (German/European style) — strip '.'
-		// thousands separators, then use the comma as the decimal point.
-		s = strings.ReplaceAll(s, ".", "")
-		s = strings.ReplaceAll(s, ",", ".")
-	} else {
-		// '.' is the decimal point, or there's no separator at all — strip
-		// any ',' thousands separators (ParsePrice's existing behaviour).
-		s = strings.ReplaceAll(s, ",", "")
-	}
-	return ParsePrice(s, currencyDecimals)
+	return ParsePrice(strings.TrimSpace(raw), currencyDecimals)
 }
 
 // readZipEntry reads one zip.File fully into memory. Reaching EOF is what
