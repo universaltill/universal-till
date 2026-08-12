@@ -336,6 +336,128 @@ func TestParseTaxRateBP(t *testing.T) {
 	}
 }
 
+// TestParsePrice is ParsePrice's first direct unit test (ut-docs#586 —
+// previously it was only exercised indirectly through CSV-level tests).
+// The German decimal-comma cases are the bug under fix: "3,50" used to
+// parse as 35000 (comma stripped as a thousands separator, 100x too high)
+// and "1.234,50" as 123 (thousands dot misread as the decimal point). The
+// zero-decimal-currency and repeated-thousands-separator cases are a
+// second-round fix (independent review, ut-docs#586, finding #1/#2): a
+// naive last-separator-wins reading silently under-parsed a plain
+// thousands-grouped JPY/IRR/IRT/IQD/AFN price by 1000x, and turned a
+// repeated English thousands comma into a hard error.
+func TestParsePrice(t *testing.T) {
+	cases := []struct {
+		in       string
+		decimals int
+		want     int64
+		wantErr  bool
+	}{
+		// German decimal-comma notation (the original ut-docs#586 fix).
+		{"3,50", 2, 350, false},
+		{"1.234,50", 2, 123450, false},
+		// Regression: existing English thousands-comma behaviour.
+		{"£1,234.50", 2, 123450, false},
+		// Regression: existing plain dot-decimal behaviour.
+		{"1.40", 2, 140, false},
+		// Regression: plain integer, zero-decimal currency.
+		{"12000", 0, 12000, false},
+		// Zero-decimal currency, comma-thousands (review finding #1): a
+		// currency with no fractional part can never have a genuine
+		// decimal comma, so "12,000" IRR/IRT/IQD/AFN/JPY must read as
+		// twelve thousand, not twelve.
+		{"12,000", 0, 12000, false},
+		{"980,000", 0, 980000, false},
+		{"1,200", 0, 1200, false},
+		// The same 3-digit shape on a currency that DOES have decimals
+		// keeps the decimal-comma reading (the accepted ambiguity):
+		// "2,900" reads as €2.900 ≈ €2.90, i.e. 290 minor units at
+		// decimals=2.
+		{"2,900", 2, 290, false},
+		// Repeated thousands separator, one kind only (review finding #2):
+		// can only be grouping, never a decimal point.
+		{"1,234,567", 0, 1234567, false},
+		{"12,345,678", 2, 1234567800, false},
+		// Indian-style grouping (2-then-3 digit groups) still resolves as
+		// thousands — the last group is what decides, not group count.
+		{"1,23,456", 0, 123456, false},
+		// Round-2 review finding N1: a zero-decimal currency's own
+		// rendering puts the symbol/code AFTER the grouped number
+		// (FormatMoney does this for IRR/IRT/IQD/AFN — "12,000 ریال").
+		// The ambiguity check must look at the digit run right after the
+		// separator, not demand the whole remainder be digits, or these
+		// silently reinstate the 1000x bug the fix exists to remove.
+		{"12,000 IRR", 0, 12000, false},
+		{"12,000 ریال", 0, 12000, false},
+		{"¥12,000", 0, 12000, false},
+		// Round-2 review finding N2: a repeated separator that is NOT
+		// clean 3-digit grouping must still fail loudly, not silently
+		// squash into an absurd value. "12.05.2026" is a German date
+		// leaking into a price column; "1.2.3" is column-mapping garbage.
+		{"12.05.2026", 2, 0, true},
+		{"1.2.3", 2, 0, true},
+		// Error path must be untouched.
+		{"abc", 2, 0, true},
+	}
+	for _, c := range cases {
+		got, err := ParsePrice(c.in, c.decimals)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("ParsePrice(%q, %d) = %d, want error", c.in, c.decimals, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParsePrice(%q, %d): unexpected error %v", c.in, c.decimals, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("ParsePrice(%q, %d) = %d, want %d", c.in, c.decimals, got, c.want)
+		}
+	}
+}
+
+// TestNormalizeDecimalComma pins the separator-disambiguation heuristic
+// itself: the documented accepted ambiguity ("2,900" reads as decimal-comma
+// 2.900 for a non-zero-decimals currency, not thousands-grouped 2900 — see
+// normalizeDecimalComma's doc comment), its currency-aware resolution for
+// zero-decimal currencies, repeated-separator thousands grouping, and the
+// no-separator fast path that must leave existing dot-only/no-separator
+// inputs byte-identical.
+func TestNormalizeDecimalComma(t *testing.T) {
+	cases := []struct {
+		in       string
+		decimals int
+		want     string
+	}{
+		{"1.40", 2, "1.40"},          // no comma: unchanged
+		{"12000", 0, "12000"},        // no separator: unchanged
+		{"", 2, ""},                  // empty: unchanged
+		{"3,50", 2, "3.50"},          // comma-only: decimal comma
+		{"1.234,50", 2, "1234.50"},   // German thousands + decimal comma
+		{"£1,234.50", 2, "£1234.50"}, // dot last: comma is thousands
+		{"2,900", 2, "2.900"},        // accepted ambiguity, decimals>0: decimal comma wins
+		{"2,900", 0, "2900"},         // same shape, decimals=0: thousands wins (finding #1)
+		{"12,000", 0, "12000"},       // zero-decimal currency thousands grouping
+		{"1,234,567", 0, "1234567"},  // repeated comma: always thousands (finding #2)
+		{"1.234.567", 2, "1234567"},  // repeated dot: always thousands
+		// Round-2 finding N1: trailing symbol/code after the digits must
+		// not block the ambiguity check.
+		{"12,000 IRR", 0, "12000 IRR"},
+		{"¥12,000", 0, "¥12000"},
+		// Round-2 finding N2: repeated separator whose last group ISN'T
+		// clean 3-digit grouping is left untouched, so downstream parsing
+		// fails loudly instead of guessing.
+		{"12.05.2026", 2, "12.05.2026"},
+		{"1.2.3", 2, "1.2.3"},
+	}
+	for _, c := range cases {
+		if got := normalizeDecimalComma(c.in, c.decimals); got != c.want {
+			t.Errorf("normalizeDecimalComma(%q, %d) = %q, want %q", c.in, c.decimals, got, c.want)
+		}
+	}
+}
+
 func TestParseRejectsHeaderlessGarbage(t *testing.T) {
 	if _, err := Parse(strings.NewReader("a,b,c\n1,2,3\n"), 2); err == nil {
 		t.Fatal("no name column must be an error")
