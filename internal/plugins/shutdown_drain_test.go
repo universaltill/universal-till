@@ -86,7 +86,10 @@ func TestSupervisor_Shutdown_WaitsForMonitorProcessGoroutines(t *testing.T) {
 // audit still drains cleanly and promptly.
 func TestSupervisor_Shutdown_AfterCrashRestartCycleDrainsCleanly(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	// t.Cleanup, not defer: registered before the Shutdown drain below, so
+	// (LIFO) it runs AFTER it — db must not close until the crash-loop
+	// monitor has actually been told to stop (see the drain note below).
+	t.Cleanup(func() { db.Close() })
 	// See the note in the test above: ":memory:" is per-connection, and the
 	// crash/restart monitors audit concurrently with this test's polling query.
 	db.SetMaxOpenConns(1)
@@ -111,6 +114,17 @@ func TestSupervisor_Shutdown_AfterCrashRestartCycleDrainsCleanly(t *testing.T) {
 	if err := supervisor.StartPlugin(ctx, "com.test.crashloop", scriptPath, []string{}, policy); err != nil {
 		t.Fatalf("StartPlugin failed: %v", err)
 	}
+	// Drain via t.Cleanup, registered right after the crash-loop starts, so
+	// it still runs even if the polling loop below hits its deadline and
+	// t.Fatal's (ut-docs#509): without this, a t.Fatal here unwound the test
+	// via runtime.Goexit before the explicit Shutdown call further down was
+	// ever reached, leaking the still-restarting monitor goroutine into
+	// whichever test runs next in the same `go test` process — closed-DB
+	// audit writes from the leaked crash loop then starved the shared
+	// logger's mutex for minutes. Calling Shutdown twice (once here, once
+	// explicitly below on the success path) is safe: the second call finds
+	// an already-empty process map and an already-drained WaitGroup.
+	t.Cleanup(func() { _ = supervisor.Shutdown(ctx) })
 
 	// Wait for the full cycle: crash -> restart -> crash -> restart-limit.
 	deadline := time.Now().Add(10 * time.Second)
@@ -199,7 +213,9 @@ func TestSupervisor_Shutdown_TimesOutLoudlyOnWedgedMonitor(t *testing.T) {
 // ut-docs#380 added (Shutdown never even reached it).
 func TestSupervisor_Shutdown_DoesNotBlockOnMonitorProcessRestartBackoff(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	// t.Cleanup, not defer — see the sibling crash-restart test above for why:
+	// registered before the Shutdown drain below so it runs after it.
+	t.Cleanup(func() { db.Close() })
 	db.SetMaxOpenConns(1)
 	setupAuditLog(t, db)
 
@@ -224,6 +240,11 @@ func TestSupervisor_Shutdown_DoesNotBlockOnMonitorProcessRestartBackoff(t *testi
 	if err := supervisor.StartPlugin(ctx, "com.test.backoffblock", scriptPath, []string{}, policy); err != nil {
 		t.Fatalf("StartPlugin failed: %v", err)
 	}
+	// Drain via t.Cleanup — see ut-docs#509 and the sibling crash-restart
+	// test's comment above: without this, a t.Fatal in the polling loop
+	// below (a 30s-backoff crash loop, here) leaks the still-sleeping
+	// monitor goroutine into whichever test runs next.
+	t.Cleanup(func() { _ = supervisor.Shutdown(ctx) })
 
 	// Wait for the crash to be audited: monitorProcess has released s.mu and
 	// is now inside (or about to enter) its 30s backoff sleep.
