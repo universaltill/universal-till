@@ -85,25 +85,39 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// logs (ut-docs#189 review).
 			logging.L().Errorf("list export entries: %v", exportEntriesErr)
 		}
+		// ADR-0040 (ut-docs#571 card 1): the current retention mode
+		// (defaulting to "till", same fallback the prune step itself uses)
+		// and how far back the archive goes, for the new Report Retention
+		// card. Non-fatal on error, same reasoning as exportEntries above.
+		reportRetentionMode, _, _ := d.Settings.Get(r.Context(), common.KeyReportRetentionMode)
+		if reportRetentionMode == "" {
+			reportRetentionMode = common.ReportRetentionModeTill
+		}
+		reportArchiveCoverage, coverageErr := data.NewPOSRepo(d.Db).ReportArchiveCoverage(r.Context())
+		if coverageErr != nil {
+			logging.L().Errorf("report archive coverage: %v", coverageErr)
+		}
 		data := map[string]any{
-			"title":             "Settings",
-			"theme":             st.Theme,
-			"themes":            availableThemes(r.Context(), d),
-			"settings":          st,
-			"settingsMap":       all,
-			"menuItems":         d.MenuSnapshot(),
-			"uiScale":           strconv.FormatFloat(scale, 'f', -1, 64),
-			"isManager":         isManagerOrAuthOff(r),
-			"printer":           printerConfig(r.Context(), d),
-			"backups":           listBackupsForUI(d),
-			"payMethods":        payMethods,
-			"payDefault":        payDefault,
-			"payFees":           feeRows,
-			"exportEntries":     exportEntries,
-			"autoUpdateEnabled": autoUpdateEnabled == "true",
-			"autoUpdateTime":    autoUpdateTime,
-			"TillName":          tillNameOrDefault(r.Context(), d, locale),
-			"IsPrimaryTill":     d.SyncPrimaryURL(r.Context()) == "",
+			"title":                 "Settings",
+			"theme":                 st.Theme,
+			"themes":                availableThemes(r.Context(), d),
+			"settings":              st,
+			"settingsMap":           all,
+			"menuItems":             d.MenuSnapshot(),
+			"uiScale":               strconv.FormatFloat(scale, 'f', -1, 64),
+			"isManager":             isManagerOrAuthOff(r),
+			"printer":               printerConfig(r.Context(), d),
+			"backups":               listBackupsForUI(d),
+			"payMethods":            payMethods,
+			"payDefault":            payDefault,
+			"payFees":               feeRows,
+			"exportEntries":         exportEntries,
+			"autoUpdateEnabled":     autoUpdateEnabled == "true",
+			"autoUpdateTime":        autoUpdateTime,
+			"TillName":              tillNameOrDefault(r.Context(), d, locale),
+			"IsPrimaryTill":         d.SyncPrimaryURL(r.Context()) == "",
+			"reportRetentionMode":   reportRetentionMode,
+			"reportArchiveCoverage": reportArchiveCoverage,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})

@@ -212,11 +212,16 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN receipt_print_failed_at`); err != nil {
 		t.Fatalf("rewind sales.receipt_print_failed_at column: %v", err)
 	}
+	// Migration 036 adds report_archive.cloud_acked_at -- same problem
+	// again (ut-docs#571).
+	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
+		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 023 and its followers (027-035)
+	d, err = Open(path) // re-applies 023 and its followers (027-036)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,11 +284,16 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE sales DROP COLUMN receipt_print_failed_at`); err != nil {
 		t.Fatalf("rewind sales.receipt_print_failed_at column: %v", err)
 	}
+	// Migration 036 adds report_archive.cloud_acked_at -- same problem
+	// again (ut-docs#571).
+	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
+		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 031 through 035
+	d, err = Open(path) // re-applies 031 through 036
 	if err != nil {
 		t.Fatal(err)
 	}
