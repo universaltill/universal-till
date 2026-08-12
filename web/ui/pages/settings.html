@@ -112,7 +112,7 @@
     <!-- ut-docs#608 scaffold: stores/surfaces the setting only — no OS
          window-manager call yet, see the pending-note copy below. Real
          platform implementations land in #609/#610/#611. -->
-    <form hx-post="/api/settings/window-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+    <form id="window-mode-form" hx-post="/api/settings/window-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
       {{ $windowMode := .windowMode }}
       <label class="set-row">{{ T "settings.display.window_mode_label" }}
         <select name="mode">
@@ -124,6 +124,7 @@
         <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
       </label>
       <p class="muted">{{ T "settings.display.window_mode_pending_note" }}</p>
+      <span id="window-mode-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
     </form>
 
     <div class="set-gap">
@@ -152,10 +153,22 @@
 
 <script>
 (function () {
+  var form = document.getElementById('window-mode-form');
+  if (!form) return;
+  var msg = document.getElementById('window-mode-msg');
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  form.addEventListener('htmx:afterRequest', function (ev) {
+    if (ev.detail.successful) { msg.textContent = '✓ ' + T.saved; }
+  });
+})();
+(function () {
   var cb = document.getElementById('launch-on-startup-cb');
   if (!cb) return;
   var msg = document.getElementById('launch-on-startup-msg');
-  var T = { saveFailed: "{{ T "settings.error.save_failed" }}" };
+  var T = {
+    saved: "{{ T "settings.display.change_saved" }}",
+    saveFailed: "{{ T "settings.error.save_failed" }}"
+  };
   cb.addEventListener('change', function () {
     var enabled = cb.checked;
     msg.textContent = '';
@@ -164,7 +177,8 @@
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ enabled: enabled ? 'true' : 'false' }).toString()
     }).then(function (r) {
-      if (!r.ok) { cb.checked = !enabled; msg.textContent = '✗ ' + T.saveFailed; }
+      if (r.ok) { msg.textContent = '✓ ' + T.saved; }
+      else { cb.checked = !enabled; msg.textContent = '✗ ' + T.saveFailed; }
     }).catch(function () { cb.checked = !enabled; msg.textContent = '✗ ' + T.saveFailed; });
   });
 })();

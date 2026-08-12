@@ -231,6 +231,90 @@ func TestExitToOSEndpoint(t *testing.T) {
 	}
 }
 
+// TestExitToOSEndpoint_NilWindowCtlDoesNotPanic: newFullAuthDeps (like most
+// test-Deps helpers predating ut-docs#608) doesn't set WindowCtl, and
+// nothing forces every future caller to remember it — same convention as
+// Deps.OrderStatus (deps.go), whose handlers nil-check rather than trust
+// every construction site. Exercises the handler's fallback to
+// common.NoopWindowController with a real manager PIN, not just a build-time
+// nil check.
+func TestExitToOSEndpoint_NilWindowCtlDoesNotPanic(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	if d.WindowCtl != nil {
+		t.Fatal("test assumes newFullAuthDeps leaves WindowCtl unset")
+	}
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os",
+		strings.NewReader(url.Values{"manager_pin": {"482913"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req) // must not panic
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("nil WindowCtl, correct PIN = %d, want 204 (fallback to NoopWindowController): %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestExitToOSBlankPINRejectedWithoutBurningLockoutBudget mirrors
+// shifts_api_test.go's TestRecordCashAdjustment_BlankManagerPINRejectedWithoutBurningLockoutBudget:
+// the blank-PIN pre-check exists specifically so a blank submission never
+// reaches AuthorizeManager, which would otherwise burn a failed-attempt
+// count shared device-wide with keypad login (5 failures = 30s lockout).
+// A single blank attempt can't distinguish "pre-checked" from "checked and
+// happened to 403 anyway" — this test sends one MORE than the lockout
+// budget, then proves a correct PIN still works immediately after.
+func TestExitToOSBlankPINRejectedWithoutBurningLockoutBudget(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	wc := &recordingWindowController{}
+	d.WindowCtl = wc
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	makeReq := func(form url.Values) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = auth.WithUser(req, cashUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 6 blank-PIN submissions — one more than the device-wide 5-failure
+	// lockout budget. Every one must be a plain 403, never 429.
+	for i := 0; i < 6; i++ {
+		if rec := makeReq(url.Values{}); rec.Code != http.StatusForbidden {
+			t.Fatalf("blank PIN attempt %d: expected 403, got %d: %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	// The correct PIN must still work immediately — proof the blank
+	// attempts never touched the lockout counter.
+	if rec := makeReq(url.Values{"manager_pin": {"482913"}}); rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 with the correct PIN after blank attempts, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !wc.called {
+		t.Fatal("correct manager PIN must call the hook")
+	}
+}
+
 // Telemetry opt-in is manager-gated and stored as a string flag.
 func TestTelemetryEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)

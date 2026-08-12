@@ -3,6 +3,7 @@ package pages
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"math"
@@ -389,10 +390,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// alone is NOT enough here (per the product owner's #549 comment thread
 	// — "need someone with a right role... need pin") — this requires a LIVE
 	// PIN, checked the same way as shifts_api.go's cash-adjustment/payout
-	// handlers. A blank manager_pin is rejected BEFORE calling
-	// AuthorizeManager, which would otherwise burn a failed-attempt count
-	// shared device-wide with keypad login (5 failures = 30s lockout) — the
-	// exact blank-PIN lockout burn bug fixed there.
+	// handlers, INCLUDING that its PIN check stays live under UT_AUTH=off —
+	// deliberately NOT mirroring those handlers' `auth.Disabled(...)` bypass.
+	// The whole point of this endpoint is the live-PIN gate itself (there's
+	// no "positive amount, no PIN needed" case here to bypass toward), and
+	// the product owner's requirement was for a PIN check that can't be
+	// switched off. Cost today is zero (the hook is a no-op stub), but this
+	// means the action can't be exercised under this repo's UT_AUTH=off
+	// dev/e2e convention until a real manager PIN is seeded — expected, not
+	// a bug. A blank manager_pin is rejected BEFORE calling AuthorizeManager,
+	// which would otherwise burn a failed-attempt count shared device-wide
+	// with keypad login (5 failures = 30s lockout) — the exact blank-PIN
+	// lockout burn bug fixed there (see
+	// TestExitToOSBlankPINRejectedWithoutBurningLockoutBudget below).
 	mux.HandleFunc("POST /api/settings/exit-to-os", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		pin := strings.TrimSpace(r.Form.Get("manager_pin"))
@@ -401,10 +411,22 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if _, err := d.AuthSvc.AuthorizeManager(r.Context(), pin); err != nil {
-			http.Error(w, "manager PIN required", http.StatusForbidden)
+			status := http.StatusForbidden
+			if errors.Is(err, auth.ErrLockedOut) {
+				status = http.StatusTooManyRequests
+			}
+			http.Error(w, "manager PIN required", status)
 			return
 		}
-		if err := d.WindowCtl.ExitToOS(); err != nil {
+		// WindowCtl is set in pages.Init (common.NoopWindowController until
+		// #609/#610/#611 wire a real one); nil-checked here so bare-Deps
+		// tests/helpers that predate this field stay valid, same convention
+		// as Deps.OrderStatus.
+		wc := d.WindowCtl
+		if wc == nil {
+			wc = common.NoopWindowController{}
+		}
+		if err := wc.ExitToOS(); err != nil {
 			http.Error(w, "could not exit to OS", http.StatusInternalServerError)
 			return
 		}

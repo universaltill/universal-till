@@ -658,6 +658,7 @@
   "settings.data.title": "Data management",
   "settings.data.warn": "This permanently deletes ALL sales, shifts and invoices (not only test ones) and cannot be undone — it is a one-time reset before going live. The action itself is recorded in the audit log.",
   "settings.display.apply": "Apply",
+  "settings.display.change_saved": "Saved.",
   "settings.display.default": "default",
   "settings.display.exit_to_os_btn": "Exit to OS",
   "settings.display.exit_to_os_error": "Incorrect PIN or not authorized.",

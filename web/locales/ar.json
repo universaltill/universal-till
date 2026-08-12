@@ -658,6 +658,7 @@
   "settings.data.title": "إدارة البيانات",
   "settings.data.warn": "يحذف هذا نهائياً كل المبيعات والورديات والفواتير (وليس التجريبية فقط) ولا يمكن التراجع عنه — إنه إعادة ضبط لمرة واحدة قبل الانطلاق. ويُسجَّل هذا الإجراء نفسه في سجل التدقيق.",
   "settings.display.apply": "تطبيق",
+  "settings.display.change_saved": "تم الحفظ.",
   "settings.display.default": "افتراضي",
   "settings.display.exit_to_os_btn": "الخروج إلى نظام التشغيل",
   "settings.display.exit_to_os_error": "رمز خاطئ أو غير مخوّل.",

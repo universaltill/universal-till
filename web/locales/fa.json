@@ -658,6 +658,7 @@
   "settings.data.title": "مدیریت داده‌ها",
   "settings.data.warn": "این کار همهٔ فروش‌ها، وردیف‌ها و فاکتورها (نه فقط موارد آزمایشی) را برای همیشه حذف می‌کند و قابل بازگشت نیست — یک بازنشانی یک‌باره پیش از راه‌اندازی واقعی است. خودِ این اقدام در گزارش حسابرسی ثبت می‌شود.",
   "settings.display.apply": "اعمال",
+  "settings.display.change_saved": "ذخیره شد.",
   "settings.display.default": "پیش‌فرض",
   "settings.display.exit_to_os_btn": "خروج به سیستم‌عامل",
   "settings.display.exit_to_os_error": "پین نادرست یا عدم مجوز.",
