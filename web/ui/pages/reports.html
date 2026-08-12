@@ -1,8 +1,20 @@
 {{ define "content" }}
+{{ $period := .Period }}
 <div class="page-head">
   <h1>{{ T "reports.title" }}
     {{ if .RunningOut }}<a class="chip chip-warn" href="/inventory" style="text-decoration:none">⚠ {{ .RunningOut }} {{ T "inventory.running_out" }}</a>{{ end }}</h1>
-  <form method="get" action="/reports" style="display:flex; gap:.4rem; align-items:center">
+  <form method="get" action="/reports" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+    <select name="period" onchange="this.form.submit()">
+      <option value=""      {{ if not $period }}selected{{ end }}>{{ T "reports.period.custom" }}</option>
+      <option value="day"   {{ if eq $period "day" }}selected{{ end }}>{{ T "reports.period.day" }}</option>
+      <option value="week"  {{ if eq $period "week" }}selected{{ end }}>{{ T "reports.period.week" }}</option>
+      <option value="month" {{ if eq $period "month" }}selected{{ end }}>{{ T "reports.period.month" }}</option>
+      <option value="year"  {{ if eq $period "year" }}selected{{ end }}>{{ T "reports.period.year" }}</option>
+    </select>
+    {{ if $period }}
+    <input type="date" name="anchor" value="{{ .Anchor }}" onchange="this.form.submit()" aria-label="{{ T "reports.period.anchor" }}">
+    {{ if .PeriodLabel }}<span class="muted">{{ T .PeriodLabel }}</span>{{ end }}
+    {{ else }}
     <select name="days" onchange="this.form.submit()">
       <option value="1"  {{ if eq .Days 1 }}selected{{ end }}>{{ T "reports.today" }}</option>
       <option value="7"  {{ if eq .Days 7 }}selected{{ end }}>7 {{ T "reports.days" }}</option>
@@ -10,6 +22,7 @@
       <option value="30" {{ if eq .Days 30 }}selected{{ end }}>30 {{ T "reports.days" }}</option>
       <option value="90" {{ if eq .Days 90 }}selected{{ end }}>90 {{ T "reports.days" }}</option>
     </select>
+    {{ end }}
   </form>
 </div>
 
@@ -48,15 +61,20 @@
 {{ end }}
 
 {{/* On-demand report tabs (ut-docs#401): each tab's queries only run when
-     the operator clicks it — nothing below fetches on page load. */}}
+     the operator clicks it — nothing below fetches on page load. The tab
+     fragment endpoint reads the exact same ?period/?anchor/?days params
+     parseReportWindow does, so a tab shows the same window as the header
+     KPIs (ut-docs#519). */}}
+{{ $qs := printf "days=%d" .Days }}
+{{ if $period }}{{ $qs = printf "period=%s&anchor=%s" $period .Anchor }}{{ end }}
 <div class="report-tabs" style="margin-top:1rem; display:flex; gap:.4rem; flex-wrap:wrap">
-  <button class="btn secondary" hx-get="/ui/reports/tab/sales-trend?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.sales_trend" }}</button>
-  <button class="btn secondary" hx-get="/ui/reports/tab/items?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.items" }}</button>
-  <button class="btn secondary" hx-get="/ui/reports/tab/tax?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.tax" }}</button>
-  <button class="btn secondary" hx-get="/ui/reports/tab/forecast?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.forecast" }}</button>
-  <button class="btn secondary" hx-get="/ui/reports/tab/payments?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.payments" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/sales-trend?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.sales_trend" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/items?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.items" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/tax?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.tax" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/forecast?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.forecast" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/payments?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.payments" }}</button>
   {{ if .IsManager }}
-  <button class="btn secondary" hx-get="/ui/reports/tab/eod?days={{ .Days }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.eod" }}</button>
+  <button class="btn secondary" hx-get="/ui/reports/tab/eod?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML">{{ T "reports.tab.eod" }}</button>
   {{ end }}
 </div>
 <div id="report-tab-panel" style="margin-top:1rem"></div>

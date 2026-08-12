@@ -4,10 +4,23 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 )
+
+// win30 is the [from, to) window equivalent to the old days=30 rolling
+// window, ending now — used to convert these tests to the repo's explicit
+// from/to signature (ut-docs#519) with the exact same coverage. The +1s pad
+// mirrors reportNow() in internal/pages/reports_page.go: window comparisons
+// truncate to whole seconds, so an exact-now exclusive upper bound can
+// otherwise drop a row this test just inserted (via the schema's own
+// datetime('now') default) in the same wall-clock second.
+func win30() (time.Time, time.Time) {
+	to := time.Now().Add(time.Second)
+	return to.Add(-30 * 24 * time.Hour), to
+}
 
 // SalesByDepartment must roll each sold item up to its TOP-LEVEL category (the
 // department), so a subcategory's sales count toward its parent department, and
@@ -49,7 +62,8 @@ func TestSalesByDepartment_RollsSubcategoriesToDepartment(t *testing.T) {
 	line("l4", "mystery", 1, 999)
 
 	repo := data.NewPOSRepo(d.DB)
-	rows, err := repo.SalesByDepartment(context.Background(), 30)
+	from, to := win30()
+	rows, err := repo.SalesByDepartment(context.Background(), from, to)
 	if err != nil {
 		t.Fatalf("SalesByDepartment: %v", err)
 	}
@@ -101,7 +115,8 @@ func TestSalesByTill_GroupsByRegister(t *testing.T) {
 	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total, till_id) VALUES ('b','RB','completed',1500,1500,'')`)
 	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total, till_id) VALUES ('c','RC','completed',9000,9000,'t2')`)
 
-	rows, err := data.NewPOSRepo(d.DB).SalesByTill(context.Background(), 30)
+	from, to := win30()
+	rows, err := data.NewPOSRepo(d.DB).SalesByTill(context.Background(), from, to)
 	if err != nil {
 		t.Fatalf("SalesByTill: %v", err)
 	}

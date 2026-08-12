@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -501,6 +503,90 @@ func TestReportsTabs_DaysParamHonored(t *testing.T) {
 	}
 }
 
+// ut-docs#519: ?period=month&anchor=... resolves a real calendar month
+// end-to-end, independent of the rolling ?days= window — a sale from three
+// months ago (outside any sane ?days= value) must still show up when its
+// own month is anchored, and a sale just outside that month must not.
+func TestReportsTabs_PeriodMonthAnchorSelectsCalendarMonth(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('jul1','SKU-jul','July Only Item',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	// Inside July 2026: the 15th at noon.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s-jul','R-JUL','completed','sale','GBP',100,0,0,100,'2026-07-15 12:00:00')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('s-jul-l1','s-jul',1,'jul1','July Only Item',1,100,0,0,0,100,100)`); err != nil {
+		t.Fatal(err)
+	}
+	// Just outside July: August 1st, 00:00:00 (the exclusive boundary itself).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s-aug','R-AUG','completed','sale','GBP',100,0,0,100,'2026-08-01 00:00:00')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('s-aug-l1','s-aug',1,'jul1','July Only Item',1,100,0,0,0,100,100)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "items", "?period=month&anchor=2026-07-15")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "July Only Item") {
+		t.Fatalf("expected July's own sale inside the anchored month, got: %s", body)
+	}
+	// Only ONE of the two sales (qty 1) should count, not both — the August
+	// row (sitting exactly on the exclusive month boundary) must not leak
+	// in and double the quantity to ×2.
+	if strings.Contains(body, "×2") {
+		t.Fatalf("expected qty 1 (July only, August excluded at the boundary), got a doubled ×2: %s", body)
+	}
+}
+
+// ut-docs#519: the reports.business_day_start setting shifts a "day"
+// period's boundary — a sale just after midnight but before the configured
+// boundary counts toward the PREVIOUS business day, not "today".
+func TestReportsPage_BusinessDayStart_ShiftsDayPeriodBoundary(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if err := dp.Settings.Set(ctx, keyReportsBusinessDayStart, "06:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A sale at 02:00 local "today" — with a 06:00 boundary this belongs to
+	// YESTERDAY's business day, so anchor=yesterday (period=day) must show
+	// it and anchor=today (i.e. no anchor, "now") must not.
+	twoAM := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 2, 0, 0, 0, time.Local)
+	if twoAM.After(time.Now()) {
+		// Guard: only meaningful if "now" is actually past 02:00 local.
+		t.Skip("test needs to run after 02:00 local time")
+	}
+	yesterday := twoAM.AddDate(0, 0, -1).Format("2006-01-02")
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('lt1','SKU-lt','Late Night Item',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s-lt','R-LT','completed','sale','GBP',100,0,0,100,?)`,
+		twoAM.UTC().Format("2006-01-02 15:04:05")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('s-lt-l1','s-lt',1,'lt1','Late Night Item',1,100,0,0,0,100,100)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "items", "?period=day&anchor="+yesterday)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Late Night Item") {
+		t.Fatalf("02:00 sale with a 06:00 business-day boundary must count toward the PREVIOUS business day, got: %s", rec.Body.String())
+	}
+}
+
 func TestReportsTabs_UnknownNameReturns404(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newReportsPageTestDeps(t)
@@ -534,5 +620,64 @@ func TestReportsPage_TabNavWiredToFragmentRoutes(t *testing.T) {
 		if strings.Contains(line, "/ui/reports/tab/") && strings.Contains(line, "hx-trigger") {
 			t.Fatalf("expected no explicit hx-trigger on tab buttons (click is the default; load would defeat deferral), got: %s", line)
 		}
+	}
+}
+
+// ut-docs#519 review finding (blocking): the picker's date input and the
+// tab buttons' ?anchor= query string used to be computed by two independent
+// functions (reportAnchorParam vs. parseReportWindow's own internal
+// anchorDate) that could disagree once a business-day boundary was
+// configured — the picker showing one date while every tab silently queried
+// a different (often not-yet-started, empty) window. Both now read the same
+// resolved reportWindow.Anchor, so this asserts they can never drift apart
+// again, independent of what the actual date happens to be.
+func TestReportsPage_PickerAnchorMatchesTabQueryStringAnchor(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+
+	rec := getReportsPage(t, mux, "?period=day")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	m := regexp.MustCompile(`name="anchor" value="([^"]+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("expected the picker's anchor date input, got: %s", body)
+	}
+	pickerAnchor := m[1]
+
+	tabM := regexp.MustCompile(`/ui/reports/tab/items\?period=day&amp;anchor=([0-9-]+)`).FindStringSubmatch(body)
+	if tabM == nil {
+		t.Fatalf("expected the items tab's hx-get to carry period=day&anchor=..., got: %s", body)
+	}
+	tabAnchor := tabM[1]
+
+	if pickerAnchor != tabAnchor {
+		t.Fatalf("picker anchor %q and tab query-string anchor %q must agree — a mismatch means clicking a tab queries a different window than the KPIs above it", pickerAnchor, tabAnchor)
+	}
+}
+
+// ut-docs#519 review finding (blocking): the eod tab's business_day_start
+// setting was validated and saved on write, but never read back on render —
+// the input always showed blank, so saving the Day-end settings panel for
+// any reason (even just toggling the auto-run checkbox) silently wiped the
+// boundary back to midnight the next time the form posted its blank field.
+func TestReportsTabs_EOD_BusinessDayStartRoundTrips(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if err := dp.Settings.Set(ctx, keyReportsBusinessDayStart, "06:30"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "eod", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="business_day_start" value="06:30"`) {
+		t.Fatalf("expected the saved business_day_start to round-trip into the rendered field, got: %s", body)
 	}
 }

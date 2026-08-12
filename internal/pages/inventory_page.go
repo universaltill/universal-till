@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -29,8 +30,13 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 	posRepo := data.NewPOSRepo(d.Db)
 	rawLevels, _ := posRepo.ListStockLevels(ctx)
 	// Sell-rate prediction (28-day average): "this item runs out in ~N
-	// days at the current rate". Best-effort — no history, no column.
-	rates, _ := posRepo.ItemDailySellRates(ctx, 28)
+	// days at the current rate". Best-effort — no history, no column. The
+	// +1s pad keeps a sale committed in this SAME wall-clock second inside
+	// the window: SQL comparisons truncate to whole seconds, so an
+	// exact-now exclusive upper bound can otherwise drop it (see
+	// reportNow's doc comment in reports_page.go).
+	sellRateNow := time.Now().Add(time.Second)
+	rates, _ := posRepo.ItemDailySellRates(ctx, sellRateNow.Add(-28*24*time.Hour), sellRateNow)
 
 	// coverBufferDays is the safety-stock buffer added on top of the
 	// effective warn window (LowStockItem.EffectiveWarnDays — the item's
