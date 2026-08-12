@@ -22,6 +22,101 @@ import (
 // (TestEODDue, TestBuildEODDoc) — only adding what that file doesn't
 // cover: direct regex verification and the no-sales-yet footer case.
 
+// ADR-0040 §2 / ut-docs#571 card 1: pure logic behind the report_archive
+// retention prune step hosted on StartEODScheduler's own tick.
+
+func TestReportPruneDue(t *testing.T) {
+	cases := []struct {
+		today, lastPruneDay string
+		want                bool
+	}{
+		{"2026-08-12", "", true},            // never run yet today
+		{"2026-08-12", "2026-08-11", true},  // last run was a previous day
+		{"2026-08-12", "2026-08-12", false}, // already ran today
+		{"2026-01-01", "2025-12-31", true},  // year boundary
+	}
+	for _, c := range cases {
+		if got := reportPruneDue(c.today, c.lastPruneDay); got != c.want {
+			t.Errorf("reportPruneDue(%q, %q) = %v, want %v", c.today, c.lastPruneDay, got, c.want)
+		}
+	}
+}
+
+func TestReportRetentionCutoff_TenYearsBackFormattedAsPeriod(t *testing.T) {
+	now := time.Date(2026, 8, 12, 15, 4, 5, 0, time.UTC)
+	got := reportRetentionCutoff(now)
+	want := "2016-08-12"
+	if got != want {
+		t.Fatalf("reportRetentionCutoff(%v) = %q, want %q", now, got, want)
+	}
+}
+
+// pruneReportArchive is the actual (non-goroutine) step StartEODScheduler
+// calls each tick — testable directly without driving the 30s ticker loop.
+
+func TestPruneReportArchive_TillModePastCutoffDeletesOldRows(t *testing.T) {
+	dp := newEODTestDeps(t)
+	repo := data.NewPOSRepo(dp.Db)
+
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`)); err != nil {
+		t.Fatalf("seed old archive: %v", err)
+	}
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2026-01-01", []byte(`{}`)); err != nil {
+		t.Fatalf("seed recent archive: %v", err)
+	}
+	// Default mode is till (unset) — explicit here for clarity.
+	if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, "till"); err != nil {
+		t.Fatal(err)
+	}
+
+	lastPruneDay := ""
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	pruneReportArchive(t.Context(), dp, repo, now, &lastPruneDay)
+
+	if lastPruneDay != "2026-08-12" {
+		t.Fatalf("expected lastPruneDay updated to today, got %q", lastPruneDay)
+	}
+	reports, err := repo.ListArchivedReports(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || reports[0].Period != "2026-01-01" {
+		t.Fatalf("expected only the recent report to survive, got %+v", reports)
+	}
+
+	// A second call the same day is a no-op (gated by lastPruneDay) — seed
+	// another old row and confirm it's NOT pruned until a new day.
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2011-01-01", []byte(`{}`)); err != nil {
+		t.Fatalf("seed another old archive: %v", err)
+	}
+	pruneReportArchive(t.Context(), dp, repo, now, &lastPruneDay)
+	if has, _ := repo.HasArchivedReport(t.Context(), "eod", "2011-01-01"); !has {
+		t.Fatal("expected the second same-day call to be a no-op (gated), but the row was pruned")
+	}
+}
+
+func TestPruneReportArchive_CloudModeIsNoOpThisCard(t *testing.T) {
+	dp := newEODTestDeps(t)
+	repo := data.NewPOSRepo(dp.Db)
+
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`)); err != nil {
+		t.Fatalf("seed old archive: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, "cloud"); err != nil {
+		t.Fatal(err)
+	}
+
+	lastPruneDay := ""
+	pruneReportArchive(t.Context(), dp, repo, time.Now(), &lastPruneDay)
+
+	if has, err := repo.HasArchivedReport(t.Context(), "eod", "2010-01-01"); err != nil || !has {
+		t.Fatalf("cloud mode must not prune anything in this card, got has=%v err=%v", has, err)
+	}
+	if lastPruneDay == "" {
+		t.Fatal("expected lastPruneDay still advanced (gate applies regardless of mode) even though nothing was pruned")
+	}
+}
+
 func TestEodTimeRegex(t *testing.T) {
 	valid := []string{"00:00", "09:05", "23:59", "21:00"}
 	invalid := []string{"24:00", "9:05", "23:60", "abc", "", "23:5"}
@@ -146,6 +241,7 @@ func newEODAPITestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	dp := newEODTestDeps(t)
 	mux := http.NewServeMux()
 	registerEODAPI(mux, dp)
+	registerReportArchiveAPI(mux, dp)
 	return mux, dp
 }
 
@@ -370,5 +466,156 @@ func TestPostSettingsEOD_BusinessDayStart_ValidatesAndPersists(t *testing.T) {
 	val, _, err = dp.Settings.Get(t.Context(), keyReportsBusinessDayStart)
 	if err != nil || val != "" {
 		t.Fatalf("expected business_day_start cleared, got %q err=%v", val, err)
+	}
+}
+
+// --- ADR-0040 §1/§7 / ut-docs#571 card 1: report retention mode + export ---
+
+func TestPostSettingsReportRetention_RequiresManager(t *testing.T) {
+	mux, _ := newEODAPITestMux(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode=till"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+func TestPostSettingsReportRetention_AcceptsTillPersists(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode=till"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for mode=till, got %d: %s", rec.Code, rec.Body.String())
+	}
+	val, _, err := dp.Settings.Get(t.Context(), common.KeyReportRetentionMode)
+	if err != nil || val != "till" {
+		t.Fatalf("expected report_retention_mode=till persisted, got %q err=%v", val, err)
+	}
+}
+
+// This card (ut-docs#571 card 1) implements NO cloud gate at all -- selecting
+// cloud/both must be rejected outright with a 400, not silently accepted, per
+// the card's explicit scope carve-out.
+func TestPostSettingsReportRetention_RejectsCloudAndBoth(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+
+	for _, mode := range []string{"cloud", "both", "bogus", ""} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode="+mode))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("mode=%q: expected 400, got %d: %s", mode, rec.Code, rec.Body.String())
+		}
+		val, _, err := dp.Settings.Get(t.Context(), common.KeyReportRetentionMode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if val == mode && mode != "" {
+			t.Fatalf("mode=%q: must not have been persisted", mode)
+		}
+	}
+}
+
+func TestPostReportArchiveExport_RequiresManager(t *testing.T) {
+	mux, _ := newEODAPITestMux(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from=2026-01-01&to=2026-01-31&format=json"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+func TestPostReportArchiveExport_ValidatesFromTo(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newEODAPITestMux(t)
+
+	cases := []struct{ name, body string }{
+		{"missing from", "to=2026-01-31&format=json"},
+		{"missing to", "from=2026-01-01&format=json"},
+		{"from after to", "from=2026-02-01&to=2026-01-01&format=json"},
+		{"garbage from", "from=not-a-date&to=2026-01-31&format=json"},
+		{"bad format", "from=2026-01-01&to=2026-01-31&format=xml"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader(c.body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d: %s", c.name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestPostReportArchiveExport_JSONAndCSVDownloads(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+
+	if _, _, err := generateEOD(t.Context(), dp, "2026-01-15"); err != nil {
+		t.Fatalf("setup: generateEOD: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from=2026-01-01&to=2026-01-31&format=json"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("json export: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") {
+		t.Fatalf("json export: expected attachment Content-Disposition, got %q", cd)
+	}
+	var rows []data.ArchivedReportRow
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("json export: expected a JSON array body: %v (%s)", err, rec.Body.String())
+	}
+	if len(rows) != 1 || rows[0].Period != "2026-01-15" {
+		t.Fatalf("json export: expected the seeded 2026-01-15 report, got %+v", rows)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from=2026-01-01&to=2026-01-31&format=csv"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("csv export: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cd = rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") {
+		t.Fatalf("csv export: expected attachment Content-Disposition, got %q", cd)
+	}
+	if !strings.Contains(rec.Body.String(), "2026-01-15") {
+		t.Fatalf("csv export: expected the seeded period in the CSV body, got %s", rec.Body.String())
+	}
+}
+
+func TestPostReportArchiveExport_EmptyRangeStillDownloadsEmptyFile(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newEODAPITestMux(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from=2099-01-01&to=2099-01-31&format=json"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a valid but empty range, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var rows []data.ArchivedReportRow
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("expected a JSON array (possibly empty) body: %v (%s)", err, rec.Body.String())
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected zero rows for an unmatched range, got %+v", rows)
 	}
 }

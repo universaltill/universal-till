@@ -28,6 +28,9 @@ func TestResetTransactionHistoryClearsSalesKeepsCatalog(t *testing.T) {
 	x(`INSERT INTO payments (id, sale_id, method_id, amount) VALUES ('p1','s1','cash',100)`)
 	x(`INSERT INTO invoices (id, series, invoice_no, display_no, sale_id, customer_name, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by)
 	   VALUES ('inv1','A',1,'A-1','s1','Cust','{}',100,0,100,'[]','2026-01-01T00:00:00Z','u1')`)
+	// ADR-0040 §9: report_archive is a retained legal record, not
+	// transactional/test data -- a reset must NOT touch it.
+	x(`INSERT INTO report_archive (id, kind, period, content_json) VALUES ('ra1','eod','2026-01-01','{"net":100}')`)
 
 	count := func(tbl string) int {
 		var c int
@@ -52,6 +55,11 @@ func TestResetTransactionHistoryClearsSalesKeepsCatalog(t *testing.T) {
 	}
 	if c := count("items"); c != itemsBefore {
 		t.Fatalf("catalog must survive, items %d -> %d", itemsBefore, c)
+	}
+	// ADR-0040 §9: report_archive is a retained legal record and must
+	// survive a transaction-history reset regardless of retention mode.
+	if c := count("report_archive"); c != 1 {
+		t.Fatalf("report_archive must survive a reset (retained legal record, ADR-0040 §9), got %d row(s)", c)
 	}
 	var action string
 	if err := d.DB.QueryRow(`SELECT action FROM audit_log WHERE action='transaction_history_reset'`).Scan(&action); err != nil {

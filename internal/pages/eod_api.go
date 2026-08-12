@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"mime"
@@ -139,6 +140,70 @@ func eodDue(now time.Time, enabled bool, hhmm string, alreadyDone bool) bool {
 	return nowHM >= hhmm
 }
 
+// reportPruneDue is the pure once-per-calendar-day gate for the
+// report_archive age-based prune step hosted on StartEODScheduler's own
+// tick (ADR-0040 §2, ut-docs#571 card 1). Unlike eodDue, the prune has no
+// DB-backed idempotency marker of its own (there's no "already archived
+// today" row to check) — StartEODScheduler's closure tracks lastPruneDay
+// in-memory instead; an extra run after a process restart on the same day
+// is harmless because the delete itself is naturally idempotent.
+func reportPruneDue(today, lastPruneDay string) bool {
+	return today != lastPruneDay
+}
+
+// reportRetentionCutoff is "now minus 10 years" formatted to match
+// report_archive.period's "YYYY-MM-DD" text format (ADR-0040 §2, till mode).
+func reportRetentionCutoff(now time.Time) string {
+	return now.AddDate(-10, 0, 0).Format("2006-01-02")
+}
+
+// pruneReportArchive runs the till-mode age-based prune once per calendar
+// day. Mode "cloud"/"both" is a pure no-op here (card 4 wires those, per
+// ADR-0040's follow-up cards) — this card only implements till-mode
+// pruning, and never invents a cloud delete predicate it can't actually
+// honor yet. lastPruneDay is only advanced past a run that either (a) had
+// nothing to do (non-till mode) or (b) actually pruned successfully — a
+// transient DB error is retried on the next tick rather than silently
+// skipped for the rest of the day.
+func pruneReportArchive(ctx context.Context, d *common.Deps, repo *data.POSRepo, now time.Time, lastPruneDay *string) {
+	today := now.Format("2006-01-02")
+	if !reportPruneDue(today, *lastPruneDay) {
+		return
+	}
+	mode, _, _ := d.Settings.Get(ctx, common.KeyReportRetentionMode)
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = common.ReportRetentionModeTill
+	}
+	if mode != common.ReportRetentionModeTill {
+		// cloud/both: nothing to prune yet (no cloud_acked_at is ever set by
+		// this card) — mark today handled so the scheduler doesn't re-check
+		// every tick, then move on.
+		*lastPruneDay = today
+		return
+	}
+	cutoff := reportRetentionCutoff(now)
+	n, err := repo.PruneReportArchiveOlderThan(ctx, cutoff)
+	if err != nil {
+		logging.L().Errorf("report archive prune: %v", err)
+		return
+	}
+	*lastPruneDay = today
+	logging.L().Infof("report archive pruned: %d row(s) older than %s", n, cutoff)
+	if n > 0 {
+		// This permanently destroys rows ADR-0040 itself designates a
+		// retained legal record -- unlike a manager-triggered action (e.g.
+		// ResetTransactionHistory), it's fully automatic, so the audit
+		// trail is the only record that it happened at all. Best-effort:
+		// the rows are already gone either way, so a failed audit write
+		// logs but doesn't retry/block the scheduler.
+		if err := repo.InsertAudit(ctx, nil, "system", "report_archive", cutoff, "report_archive_pruned",
+			map[string]any{"rows_deleted": n, "cutoff": cutoff}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			logging.L().Errorf("report archive prune: audit write failed: %v", err)
+		}
+	}
+}
+
 // StartEODScheduler runs the background end-of-day loop (docs: G30). Lives
 // in pages because the printer/settings plumbing is here. wg registers the
 // loop with app.Run's shutdown drain (ut-docs#153) — the caller must pass
@@ -148,6 +213,7 @@ func StartEODScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) 
 	go func() {
 		defer wg.Done()
 		repo := data.NewPOSRepo(d.Db)
+		lastPruneDay := ""
 		check := func() {
 			get := func(key string) string {
 				v, _, _ := d.Settings.Get(ctx, key)
@@ -177,6 +243,7 @@ func StartEODScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) 
 				return
 			case <-ticker.C:
 				check()
+				pruneReportArchive(ctx, d, repo, time.Now(), &lastPruneDay)
 			}
 		}
 	}()
@@ -309,5 +376,125 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Settings.Set(r.Context(), keyEODTime, hhmm)
 		_ = d.Settings.Set(r.Context(), keyReportsBusinessDayStart, bizDayStart)
 		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// maxReportArchiveExportRangeDays bounds POST /api/reports/archive/export's
+// [from, to] span. report_archive rows are small (one JSON blob per closed
+// day, per ADR-0040 §3's own capacity sizing — "tens of MB over ten
+// years"), and the whole point of this export is letting a shop hand an
+// auditor its full retained window in one go, so the bound here is the
+// retention window itself (~10 years) rather than data_api.go's 366-day
+// bound, which exists to cap a much heavier per-sale-row payload.
+const maxReportArchiveExportRangeDays = 3660
+
+const maxReportArchiveExportRange = maxReportArchiveExportRangeDays * 24 * time.Hour
+
+// registerReportArchiveAPI mounts the report-retention-mode setting and the
+// report_archive date-range export (ADR-0040 §1/§7, ut-docs#571 card 1).
+// Coverage (earliest/latest/count) is read server-side into the settings
+// page's own template data (settings_page.go) rather than a separate
+// endpoint here, to keep the surface small.
+func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
+	repo := data.NewPOSRepo(d.Db)
+
+	// Mode setting: only "till" is accepted. This card (ADR-0040 card 1)
+	// implements no cloud gate at all — nothing uploads or acks a report
+	// yet — so silently accepting "cloud"/"both" here would tell the shop
+	// their reports are protected by a mechanism that doesn't exist. The
+	// UI renders cloud/both as visible-but-disabled for the same reason;
+	// this is the server-side half of that guarantee.
+	mux.HandleFunc("POST /api/settings/report-retention", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		mode := strings.TrimSpace(r.Form.Get("mode"))
+		if mode != common.ReportRetentionModeTill {
+			http.Error(w, "cloud/both report retention isn't implemented yet — only till is available", http.StatusBadRequest)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), common.KeyReportRetentionMode, mode); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Bounded date-range export of the archive (ADR-0040 §7) — a shop
+	// handing an auditor its retained reports. CSV: one row per archived
+	// report (id/kind/period/created_at plus the report body as a JSON-
+	// text column, keeping the shape simple rather than flattening each
+	// report kind's own fields). JSON: the same rows as an array.
+	mux.HandleFunc("POST /api/reports/archive/export", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		from := strings.TrimSpace(r.Form.Get("from"))
+		to := strings.TrimSpace(r.Form.Get("to"))
+		format := strings.TrimSpace(r.Form.Get("format"))
+		if !eodDateRe.MatchString(from) || !eodDateRe.MatchString(to) {
+			http.Error(w, "from and to must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if from > to {
+			http.Error(w, "from must not be after to", http.StatusBadRequest)
+			return
+		}
+		if format != "csv" && format != "json" {
+			http.Error(w, "format must be csv or json", http.StatusBadRequest)
+			return
+		}
+		fromDate, err := time.Parse("2006-01-02", from)
+		if err != nil {
+			http.Error(w, "from must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		toDate, err := time.Parse("2006-01-02", to)
+		if err != nil {
+			http.Error(w, "to must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		// ut-docs#229's precedent: reject an over-wide range before ever
+		// touching the repo layer, same shape as data_api.go's export.
+		if toDate.Sub(fromDate) > maxReportArchiveExportRange {
+			http.Error(w, fmt.Sprintf("date range exceeds the %d-day maximum", maxReportArchiveExportRangeDays), http.StatusBadRequest)
+			return
+		}
+
+		rows, err := repo.ArchivedReportsInRange(r.Context(), from, to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if format == "json" {
+			filename := fmt.Sprintf("report-archive-%s-to-%s.json", from, to)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(rows)
+			return
+		}
+
+		filename := fmt.Sprintf("report-archive-%s-to-%s.csv", from, to)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+		w.WriteHeader(http.StatusOK)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"id", "kind", "period", "created_at", "content_json"})
+		for _, row := range rows {
+			_ = cw.Write([]string{row.ID, row.Kind, row.Period, row.CreatedAt, row.Content})
+		}
+		cw.Flush()
+		if err := cw.Error(); err != nil {
+			// Headers and a 200 are already on the wire -- nothing left to
+			// do for the client, but this must not vanish silently: a
+			// truncated CSV under a 200 is worse than an ignored error.
+			logging.L().Errorf("report archive export: csv write: %v", err)
+		}
 	})
 }
