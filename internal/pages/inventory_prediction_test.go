@@ -60,7 +60,7 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 	}
 
 	// Sanity: repo rate ≈ 2/day.
-	rates, err := data.NewPOSRepo(d).ItemDailySellRates(context.Background(), 28)
+	rates, err := data.NewPOSRepo(d).ItemDailySellRates(context.Background(), pagesWinFrom(28), pagesWinTo())
 	if err != nil {
 		t.Fatalf("rates: %v", err)
 	}

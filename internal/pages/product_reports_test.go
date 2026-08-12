@@ -4,10 +4,23 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 )
+
+// pagesWinTo/pagesWinFrom give this package's report tests a simple rolling
+// [from, to) window ending now, matching the exact "last N days" semantics
+// the old `days int` parameter had — used to convert to the repo's explicit
+// from/to signature (ut-docs#519) with minimal churn. The +1s pad mirrors
+// reportNow() in reports_page.go: window comparisons truncate to whole
+// seconds, so an exact-now exclusive upper bound can otherwise drop a row
+// seeded (via SQL datetime('now')) in this same wall-clock second.
+func pagesWinTo() time.Time { return time.Now().Add(time.Second) }
+func pagesWinFrom(days int) time.Time {
+	return pagesWinTo().Add(-time.Duration(days) * 24 * time.Hour)
+}
 
 // Slow-sellers and dead-stock queries: an item that sold once is a slow
 // seller (not dead); an item with stock and no sales is dead stock (value =
@@ -43,7 +56,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	ctx := context.Background()
 
 	// db.Open seeds the demo catalog, so assert on OUR rows, not exact lists.
-	slow, err := repo.SlowItems(ctx, 30, 100)
+	slow, err := repo.SlowItems(ctx, pagesWinFrom(30), pagesWinTo(), 100)
 	if err != nil {
 		t.Fatalf("slow: %v", err)
 	}
@@ -60,7 +73,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 		t.Fatalf("Seller missing from slow list: %+v", slow)
 	}
 
-	dead, err := repo.DeadStock(ctx, 30, 1000)
+	dead, err := repo.DeadStock(ctx, pagesWinFrom(30), pagesWinTo(), 1000)
 	if err != nil {
 		t.Fatalf("dead: %v", err)
 	}
@@ -89,7 +102,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	          VALUES ('s2','R2','completed','sale',300,0,300, datetime('now','-1 days'))`)
 	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, variant_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
 	          VALUES ('l2','s2',1,'v-b','Shelf Warmer Var',2,300,0,0,0,600,600)`)
-	dead2, err := repo.DeadStock(ctx, 30, 1000)
+	dead2, err := repo.DeadStock(ctx, pagesWinFrom(30), pagesWinTo(), 1000)
 	if err != nil {
 		t.Fatalf("dead2: %v", err)
 	}
@@ -98,7 +111,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 			t.Fatal("item sold via a variant must not be dead stock")
 		}
 	}
-	rates, err := repo.ItemDailySellRates(ctx, 30)
+	rates, err := repo.ItemDailySellRates(ctx, pagesWinFrom(30), pagesWinTo())
 	if err != nil {
 		t.Fatalf("rates: %v", err)
 	}
@@ -108,11 +121,11 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 
 	// Busy-times buckets: our one sale lands in exactly one weekday bucket
 	// and one hour bucket, and totals carry through.
-	wd, err := repo.SalesByWeekday(ctx, 30)
+	wd, err := repo.SalesByWeekday(ctx, pagesWinFrom(30), pagesWinTo())
 	if err != nil {
 		t.Fatalf("weekday: %v", err)
 	}
-	hr, err := repo.SalesByHour(ctx, 30)
+	hr, err := repo.SalesByHour(ctx, pagesWinFrom(30), pagesWinTo())
 	if err != nil {
 		t.Fatalf("hour: %v", err)
 	}
@@ -134,7 +147,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	}
 
 	// Tax summary: both sales carry 0bp tax; net = 100+600, tax = 0, one band.
-	bands, err := repo.TaxSummary(ctx, 30)
+	bands, err := repo.TaxSummary(ctx, pagesWinFrom(30), pagesWinTo())
 	if err != nil {
 		t.Fatalf("tax: %v", err)
 	}
@@ -155,7 +168,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	if got, err := data.NewCatalogRepo(d).ItemCostPrice(ctx, "it-a"); err != nil || got != 40 {
 		t.Fatalf("cost roundtrip = %d %v", got, err)
 	}
-	margins, err := repo.MarginByItem(ctx, 30, 100)
+	margins, err := repo.MarginByItem(ctx, pagesWinFrom(30), pagesWinTo(), 100)
 	if err != nil {
 		t.Fatalf("margins: %v", err)
 	}

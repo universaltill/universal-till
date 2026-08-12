@@ -2,6 +2,7 @@ package pages
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -29,7 +30,12 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 
 		var weekTotal int64
 		var weekCount int
-		if daily, err := repo.SalesByDay(r.Context(), 7); err == nil {
+		// +1s pad: SQL window comparisons truncate to whole seconds, so an
+		// exact-now exclusive upper bound can drop a sale committed in this
+		// same wall-clock second (see reportNow's doc comment in
+		// reports_page.go).
+		weekNow := time.Now().Add(time.Second)
+		if daily, err := repo.SalesByDay(r.Context(), weekNow.Add(-7*24*time.Hour), weekNow); err == nil {
 			for _, day := range daily {
 				weekTotal += day.Total
 				weekCount += day.Count
