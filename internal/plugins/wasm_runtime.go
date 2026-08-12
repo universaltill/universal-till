@@ -67,16 +67,39 @@ type WasmRuntime struct {
 // tax.rate.ask (which keeps its existing 2s timeout, unchanged by this).
 const exportTimeout = 30 * time.Second
 
+// importTimeout is the deadline granted to import.requested.ask
+// (ut-docs#599, review finding F1): a guest streaming a staged file through
+// import_file_read is bounded by DISK throughput, not the small
+// value-returning-hook shape exportTimeout was sized for. The one real
+// input this card exists for is a 270MB speedy kasse .bkp backup — at the
+// ~10MB/s chunked-read throughput measured against the real WASM guest
+// fixture in review, that alone is ~27s on fast dev hardware, "far worse
+// on Pi-class" (till hardware). exportTimeout (30s) would have made the
+// mechanism this card built practically unusable at the size it was built
+// for — a guest killed by WithCloseOnContextDone mid-stream, not a clean
+// "too large" rejection. A generous fixed floor, not a size-derived one:
+// simpler, and the size cap (maxImportFileSize, import_dispatch.go) is
+// what actually bounds worst case, not this deadline.
+const importTimeout = 5 * time.Minute
+
 // isExportClassEvent reports whether eventType is in the export/report
 // event class that needs exportTimeout rather than the default deadline.
 func isExportClassEvent(eventType string) bool {
 	return eventType == "export.requested.ask"
 }
 
+// isImportClassEvent reports whether eventType is the import dispatch event
+// that needs importTimeout rather than the default deadline (ut-docs#599).
+func isImportClassEvent(eventType string) bool {
+	return eventType == "import.requested.ask"
+}
+
 // timeoutFor picks the deadline HandleEvent gives eventType for pluginID:
 // the net:* permission widening applies as before, then the export/report
-// class floor is applied on top (never narrows a wider net timeout, only
-// ensures export-class events get at least exportTimeout).
+// or import class floor is applied on top (never narrows a wider net
+// timeout, only ensures a data-transfer-class event gets at least its own
+// floor — import's floor is far larger than export's, so these are checked
+// as two separate floors rather than one shared "data transfer class").
 func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 	w.mu.Lock()
 	timeout := w.timeout
@@ -86,6 +109,9 @@ func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 	w.mu.Unlock()
 	if isExportClassEvent(eventType) && timeout < exportTimeout {
 		timeout = exportTimeout
+	}
+	if isImportClassEvent(eventType) && timeout < importTimeout {
+		timeout = importTimeout
 	}
 	return timeout
 }
