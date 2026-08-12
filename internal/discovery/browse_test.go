@@ -6,6 +6,7 @@ import (
 	"net"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -347,5 +348,52 @@ func TestBrowse_ReturnsErrorWhenBothTheFullAndV4OnlyRetryFail(t *testing.T) {
 	defer mu.Unlock()
 	if calls != 2 {
 		t.Fatalf("got %d mdnsQuery calls, want exactly 2 (v4+v6 attempt, then v4-only retry)", calls)
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// Both legs failed for network reasons, so the wrapped errors must
+		// still be inspectable by a caller (%w, not %v).
+		if !strings.Contains(err.Error(), "failed to bind to any multicast udp port") {
+			t.Fatalf("error %q does not carry the underlying failure", err)
+		}
+	}
+}
+
+// TestBrowse_ReportsCancellationDuringTheV4OnlyRetryAsAContextError — the
+// retry ut-docs#538 added opened a second window in which the caller can
+// give up (manager closes the Tills tab). Cancellation there is still the
+// caller giving up, not a network failure: Browse must surface
+// context.Canceled, exactly as it does when the first attempt is
+// cancelled, rather than reshaping it into a "lan scan failed" error the
+// handler logs and answers 500 to.
+func TestBrowse_ReportsCancellationDuringTheV4OnlyRetryAsAContextError(t *testing.T) {
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	var mu sync.Mutex
+	calls := 0
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 1 {
+			// The real bug's shape: instant failure, nothing collected.
+			return errors.New("write udp6 [::]:57143->[ff02::fb]:5353: sendto: no route to host")
+		}
+		// The retry is in flight when the caller gives up.
+		cancel()
+		time.Sleep(50 * time.Millisecond)
+		return nil
+	}
+
+	got, err := Browse(ctx, 3*time.Second)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got error %v, want context.Canceled — cancelling during the v4-only retry is the caller giving up", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d candidates on a cancelled retry, want 0", len(got))
 	}
 }
