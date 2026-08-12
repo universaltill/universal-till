@@ -3,8 +3,8 @@ package plugins
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +54,28 @@ func clampTCPTimeoutMs(ms, maxMs uint32) time.Duration {
 		ms = maxMs
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// effectiveDeadline returns the earlier of "now + timeout" and ctx's own
+// deadline, if it has one. Review finding B1 (ut-docs#542): a guest-supplied
+// timeout alone can outlive the wasm event's own deadline (10s for a plugin
+// holding tcp:/net:, per timeoutFor) — a blocked device call must never run
+// longer than the event itself is allowed to, or a Blocking event (e.g. a
+// payment.*.authorize tender call) freezes checkout for as long as the
+// per-call timeout permits instead of the shorter event deadline.
+func effectiveDeadline(ctx context.Context, timeout time.Duration) time.Time {
+	d := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(d) {
+		return ctxDeadline
+	}
+	return d
+}
+
+// tcpAddr formats a host:port pair via net.JoinHostPort so an IPv6 literal
+// (e.g. "::1", "fe80::1") is bracketed correctly — a plain fmt.Sprintf
+// "%s:%d" breaks on any host containing a colon (review finding N1).
+func tcpAddr(host string, port uint32) string {
+	return net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10))
 }
 
 // tcpConnRegistry tracks open device connections by (pluginID, handle).
@@ -152,12 +174,18 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 	// permission (tcp:<host>:<port>) or the wildcard (tcp:*). Configurable
 	// terminal plugins learn their device address from install-time settings,
 	// so they declare tcp:* and are review-gated accordingly (like net:*).
-	if err := CheckPermission(ctx, s.db, s.pluginID, fmt.Sprintf("tcp:%s:%d", host, port)); err != nil {
+	if err := CheckPermission(ctx, s.db, s.pluginID, "tcp:"+tcpAddr(host, port)); err != nil {
 		if err2 := CheckPermission(ctx, s.db, s.pluginID, "tcp:*"); err2 != nil {
 			return hostErrDenied
 		}
 	}
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), clampTCPTimeoutMs(timeoutMs, maxTCPDialTimeoutMs))
+	// DialContext, not DialTimeout (review finding B1): the guest's own
+	// timeout is clamped as before, but the dial must ALSO give up the
+	// moment ctx's event deadline expires, or a dial that's about to time
+	// out anyway can still outlive the event that's supposed to bound it.
+	dialCtx, cancel := context.WithTimeout(ctx, clampTCPTimeoutMs(timeoutMs, maxTCPDialTimeoutMs))
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", tcpAddr(host, port))
 	if err != nil {
 		logging.L().Infof("[wasm:%s] tcp open %s:%d failed: %v", s.pluginID, host, port, err)
 		return hostErrInternal
@@ -186,7 +214,9 @@ func hostTCPWrite(ctx context.Context, m api.Module, handle int32, ptr, length u
 	if !ok {
 		return hostErrInvalid
 	}
-	_ = conn.SetWriteDeadline(time.Now().Add(tcpWriteTimeout))
+	// effectiveDeadline (review finding B1): the fixed 10s write deadline
+	// must not outlive ctx's own (shorter) event deadline.
+	_ = conn.SetWriteDeadline(effectiveDeadline(ctx, tcpWriteTimeout))
 	n, err := conn.Write(buf)
 	if err != nil {
 		logging.L().Infof("[wasm:%s] tcp write handle %d failed: %v", s.pluginID, handle, err)
@@ -215,7 +245,12 @@ func hostTCPRead(ctx context.Context, m api.Module, handle int32, dstPtr, dstCap
 	if bufCap > tcpReadBufCap {
 		bufCap = tcpReadBufCap
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(clampTCPTimeoutMs(timeoutMs, maxTCPReadTimeoutMs)))
+	// effectiveDeadline (review finding B1): the actual cause of the 25s
+	// checkout freeze the review measured — a guest-clamped 30s read
+	// deadline outliving the plugin's real 10s event deadline. Clamping by
+	// ctx here is what makes HandleEvent's own timeout actually bound this
+	// call, matching hostHTTPRequest's ctx-bound http.NewRequestWithContext.
+	_ = conn.SetReadDeadline(effectiveDeadline(ctx, clampTCPTimeoutMs(timeoutMs, maxTCPReadTimeoutMs)))
 	buf := make([]byte, bufCap)
 	n, err := conn.Read(buf)
 	if err != nil && n == 0 {

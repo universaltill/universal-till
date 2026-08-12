@@ -92,6 +92,13 @@ func newTCPTestRuntime(t *testing.T, guest, pluginID string) *WasmRuntime {
 	if err := w.load(pluginID, "1.0.0", guest); err != nil {
 		t.Fatalf("load: %v", err)
 	}
+	// tcpConns is a package-level registry (it must outlive per-event module
+	// instances), so a test's handles and handle-counter otherwise leak into
+	// the NEXT run of the same test under -count=2/-shuffle (review finding
+	// N5) since every test here reuses the same literal pluginID. Reset this
+	// plugin's slice of the shared registry on both ends of the test.
+	tcpConns.CloseAll(pluginID)
+	t.Cleanup(func() { tcpConns.CloseAll(pluginID) })
 	return w
 }
 
@@ -447,6 +454,29 @@ func TestTCPConnRegistryMaxHandles(t *testing.T) {
 	r.CloseAll("plugin.max")
 }
 
+// Review finding N1 (ut-docs#542): a plain fmt.Sprintf("%s:%d", host, port)
+// breaks on any host containing a colon -- every IPv6 literal. tcpAddr must
+// bracket correctly (net.JoinHostPort's job), and must leave IPv4/hostnames
+// unchanged since existing permission grants and docs use the bare form.
+func TestTCPAddr(t *testing.T) {
+	cases := []struct {
+		host string
+		port uint32
+		want string
+	}{
+		{"127.0.0.1", 20007, "127.0.0.1:20007"},
+		{"terminal.local", 8080, "terminal.local:8080"},
+		{"::1", 20007, "[::1]:20007"},
+		{"fe80::1", 20007, "[fe80::1]:20007"},
+		{"2001:db8::5", 443, "[2001:db8::5]:443"},
+	}
+	for _, c := range cases {
+		if got := tcpAddr(c.host, c.port); got != c.want {
+			t.Errorf("tcpAddr(%q, %d) = %q, want %q", c.host, c.port, got, c.want)
+		}
+	}
+}
+
 // tcp timeouts are clamped to sane bounds so a plugin can neither pass 0
 // (block forever semantics) nor an hour.
 func TestClampTCPTimeout(t *testing.T) {
@@ -461,5 +491,58 @@ func TestClampTCPTimeout(t *testing.T) {
 	}
 	if got := clampTCPTimeoutMs(999999, maxTCPReadTimeoutMs); got != 30*time.Second {
 		t.Errorf("read clamp(999999) = %v, want 30s cap", got)
+	}
+}
+
+// Review finding B1 (ut-docs#542): a guest-requested read timeout LONGER
+// than the plugin's own EVENT deadline must not let the host call outlive
+// the event. HandleEvent's Blocking events are dispatched synchronously
+// from the cashier's tender request (a payment.*.authorize call reaches
+// here) — a device that never answers must freeze checkout for at most
+// the event's own deadline, never for whatever the guest happened to ask
+// tcp_read for. Silent fixture (accepts, never writes) + a read timeout
+// (25s) deliberately longer than the tcp:-widened event deadline (10s)
+// reproduces exactly what the independent review measured pre-fix:
+// HandleEvent took ~25.03s. With effectiveDeadline in place it must
+// return bounded by the event deadline instead (module killed at ctx
+// expiry is an expected, not a failing, outcome here).
+func TestHostTCPReadDoesNotOutliveEventDeadline(t *testing.T) {
+	guest := buildTCPGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.tcpdeadline"
+
+	host, port, _, _ := startTCPFixture(t, nil) // accepts, never writes
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, fmt.Sprintf("tcp:%s:%d", host, port))
+
+	w := newTCPTestRuntime(t, guest, pluginID)
+	w.mu.Lock()
+	w.db = d
+	w.hasTCP[pluginID] = true // event deadline widens to w.netTimeout
+	eventDeadline := w.netTimeout
+	w.mu.Unlock()
+
+	payload, err := json.Marshal(map[string]any{
+		"mode": "readtimeout", "host": host, "port": port,
+		"connect_timeout_ms": 2000,
+		"read_timeout_ms":    25000, // longer than eventDeadline on purpose
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	ev := Event{ID: "ev1", Type: "test.tcp", Timestamp: time.Now(), Payload: payload}
+
+	start := time.Now()
+	// Any error here (e.g. the module being killed at the event deadline)
+	// is an expected outcome of the fix, not a test failure -- the only
+	// thing this test asserts is elapsed wall-clock time.
+	_, _ = w.HandleEvent(context.Background(), pluginID, ev)
+	elapsed := time.Since(start)
+
+	slack := 3 * time.Second // process/CI overhead only, nowhere near 25s
+	if elapsed > eventDeadline+slack {
+		t.Fatalf("HandleEvent took %v for a guest read_timeout_ms of 25000, want bounded by the %v event deadline (+%v slack) -- B1 regression", elapsed, eventDeadline, slack)
 	}
 }
