@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -44,11 +45,51 @@ var mdnsQuery = mdns.Query
 // button), never as a background/ambient browser (ADR-0033 part 1 scope;
 // the click-to-select flow itself is a separate future card, #185 — this
 // only surfaces read-only results).
+//
+// A partial failure is not reported as a total one (ut-docs#538): a real
+// LAN with no usable IPv6 multicast route ("write udp6 …: sendto: no
+// route to host") used to make Browse discard every IPv4 peer it had
+// already found, because hashicorp/mdns's own client.query() sends the v4
+// leg then the v6 leg of one probe packet from a single sendQuery call and
+// returns the v6 leg's error immediately — before it ever listens for a
+// response (see the vendored client.go). So a v4+v6 attempt that fails
+// this way has collected nothing to fall back on by itself; Browse
+// recovers by retrying once with IPv6 disabled, which is exactly the
+// scan the operator's own `dns-sd`/`avahi-browse` diagnosis proved works.
 func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
+	candidates, err := browseOnce(ctx, timeout, false)
+	if err == nil {
+		return candidates, nil
+	}
+	if len(candidates) > 0 {
+		// The query errored, but real responses had already been collected
+		// before it did — don't throw away peers a shop operator can
+		// actually use over a transport-level hiccup on the other leg.
+		return candidates, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// Cancelled mid-scan (e.g. the manager closed the Tills tab) — this
+		// is the caller giving up, not a network failure to retry through.
+		return nil, ctxErr
+	}
+
+	v4Candidates, v4Err := browseOnce(ctx, timeout, true)
+	if v4Err == nil || len(v4Candidates) > 0 {
+		return v4Candidates, nil
+	}
+	return nil, fmt.Errorf("lan scan failed (v4+v6: %v; v4-only retry: %v)", err, v4Err)
+}
+
+// browseOnce runs exactly one mdns.Query scan and reports whatever
+// candidates it collected alongside whatever error mdnsQuery returned —
+// both, independently; the caller (Browse) decides what a given
+// combination means. disableIPv6 lets Browse retry with the IPv6 leg of
+// the query turned off (see Browse's doc comment).
+func browseOnce(ctx context.Context, timeout time.Duration, disableIPv6 bool) ([]Candidate, error) {
 	entries := make(chan *mdns.ServiceEntry, 32)
 	var mu sync.Mutex
 	candidates := make([]Candidate, 0)
@@ -74,6 +115,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 	params := mdns.DefaultParams(ServiceName)
 	params.Timeout = timeout
 	params.Entries = entries
+	params.DisableIPv6 = disableIPv6
 
 	queryErr := make(chan error, 1)
 	go func() {
@@ -100,9 +142,9 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 	select {
 	case err := <-queryErr:
 		<-collected
-		if err != nil {
-			return nil, err
-		}
+		mu.Lock()
+		defer mu.Unlock()
+		return candidates, err
 	case <-ctx.Done():
 		// mdns.Query has no cancellation hook of its own; its query
 		// goroutine keeps running until `timeout` elapses on its own and
@@ -111,10 +153,6 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 		// goroutines now unwind on their own once it returns.
 		return nil, ctx.Err()
 	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	return candidates, nil
 }
 
 // candidateFromEntry extracts a Candidate from an mDNS answer's TXT

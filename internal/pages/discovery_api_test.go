@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -143,5 +144,29 @@ func TestDiscoverPrimariesAPI_SurfacesBrowseErrorAs500(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 when Browse fails, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDiscoverPrimariesAPI_NeverLeaksRawErrorText — ut-docs#538, and the
+// same standing rule #303 already fixed elsewhere: a raw driver/network
+// error must never reach the operator-facing response body. The handler
+// must log the real error server-side and respond with a generic message.
+func TestDiscoverPrimariesAPI_NeverLeaksRawErrorText(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newDiscoveryAPITestDeps(t)
+	mux := http.NewServeMux()
+	registerDiscoveryAPI(mux, dp)
+	rawErr := errors.New("write udp6 [::]:57143->[ff02::fb]:5353: sendto: no route to host")
+	stubBrowse(t, nil, rawErr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/discover-primaries", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when Browse fails, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); strings.Contains(body, "sendto") || strings.Contains(body, "udp6") {
+		t.Fatalf("response body leaks the raw driver error: %s", body)
 	}
 }
