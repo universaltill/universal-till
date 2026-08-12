@@ -209,6 +209,20 @@
   </div>
   <div id="cat-results" class="set-gap-s"></div>
 
+  {{ if gt .sampleCount 0 }}
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.data.demo_title" }}</h3>
+  <p class="muted">{{ printf (T "settings.data.demo_present") .sampleCount }}</p>
+  <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+    <button class="btn secondary" data-testid="demo-remove"
+            hx-post="/api/settings/remove-demo-catalogue"
+            hx-confirm="{{ T "settings.data.demo_confirm" }}"
+            hx-target="#demo-remove-msg" hx-swap="innerHTML"
+            hx-disabled-elt="this">{{ T "settings.data.demo_remove_btn" }}</button>
+    <span id="demo-remove-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+  </div>
+  {{ end }}
+
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.export.title" }}</h3>
   <p class="muted">{{ T "settings.data.export.help" }}</p>
@@ -520,6 +534,20 @@
     <button class="btn" type="submit">{{ T "settings.currency.apply" }}</button>
   </form>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
+</div>
+<div class="card">
+  <h2>{{ T "settings.shop_type.title" }}</h2>
+  <p class="muted">{{ T "settings.shop_type.help" }}</p>
+  <form hx-post="/api/settings/shop-type" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+    {{ $stype := .shopType }}
+    <select name="shop_type">
+      <option value="">—</option>
+      {{ range .shopTypes }}
+      <option value="{{ . }}" {{ if eq . $stype }}selected{{ end }}>{{ T (printf "setup.shop_type.%s" .) }}</option>
+      {{ end }}
+    </select>
+    <button class="btn" type="submit">{{ T "common.save" }}</button>
+  </form>
 </div>
 <div class="card settings-wide">
   <h2>{{ T "settings.all" }}</h2>

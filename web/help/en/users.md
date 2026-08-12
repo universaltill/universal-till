@@ -18,3 +18,4 @@ Separate cashier and manager accounts with PIN login, and shift tracking so you 
 2. Each person signs in with their PIN on the till.
 3. Open and close shifts to track drawer counts per person.
 4. The first-boot setup wizard's shop name step also asks what to call this till (pre-filled with "Till 1" so you can accept it with one tap) — helpful once you have more than one till, and changeable later from Settings.
+5. The wizard also asks what kind of shop this is (café, retail, service trade, hospitality, market stall or other) and whether to load a small starter catalogue of sample items so you can try the till out. Both are optional: the sample items are the same generic set whichever shop type you pick, they're marked with a SAMPLE badge in the Catalog, and you can remove them any time from Settings → Data.
