@@ -1288,6 +1288,7 @@
   "import.status.tax_unparseable": "نسبة الضريبة \"%s\" لم تُستورد: تعذرت قراءتها كنسبة مئوية",
   "import.status.tax_code_failed": "تعذر إنشاء رمز الضريبة",
   "import.status.tax_overrides_not_saved": "تعذر حفظ نسب ضريبة التيك أواي في إعدادات إضافة الضريبة",
+  "import.status.tax_overrides_plugin_disabled": "إضافة الضريبة مثبّتة لكنها معطّلة — قم بتفعيلها وأعد تشغيل هذا الاستيراد لتطبيق نسب ضريبة التيك أواي",
   "import.status.tax_takeaway_only": "أُدخلت نسبة ضريبة التيك أواي بدون نسبة ضريبة داخل المتجر — استُورد المنتج بالنسبة الافتراضية للماكينة",
   "import.status.source_deleted": "أُزيل من ملف المصدر",
   "import.status.not_sellable": "ليس صنفًا قابلًا للبيع (مفتاح نوع الطلب)",
