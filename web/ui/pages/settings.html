@@ -292,6 +292,32 @@
   </div>
 
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.data.archives_title" }}</h3>
+  <p class="muted">{{ T "settings.data.archives_help" }}</p>
+  <div id="reset-archives">
+    {{ if .resetBatches }}
+    <table class="table">
+      <thead><tr><th>{{ T "settings.data.archive_date_col" }}</th><th>{{ T "settings.data.archive_sales_col" }}</th><th></th></tr></thead>
+      <tbody>
+        {{ range .resetBatches }}
+        <tr>
+          <td>{{ .CreatedAt }}</td>
+          <td>{{ .SalesCount }}</td>
+          <td style="display:flex; gap:.3rem">
+            <input type="text" placeholder="{{ T "settings.data.archives_restore_confirm_ph" }}" style="width:9rem">
+            <button class="btn secondary" data-restore-batch="{{ .ID }}" data-testid="archive-restore">{{ T "settings.data.archives_restore_btn" }}</button>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <p class="muted">{{ T "settings.data.archives_empty" }}</p>
+    {{ end }}
+  </div>
+  <span id="archives-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.gdpr_title" }}</h3>
   <p class="muted">{{ T "settings.data.gdpr_help" }}</p>
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
@@ -396,6 +422,48 @@
       msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       if (r.ok) inp.value = '';
     }); }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+  });
+})();
+(function () {
+  var box = document.getElementById('reset-archives');
+  if (!box) return;
+  var msg = document.getElementById('archives-msg');
+  var T = {
+    confirmRequired: "{{ T "settings.data.archives_restore_confirm_required" }}",
+    restoring: "{{ T "settings.data.archives_restoring" }}",
+    confirmDialog: "{{ T "settings.data.archives_restore_confirm_dialog" }}",
+    conflict: "{{ T "settings.data.archives_restore_conflict" }}",
+    referencesRemoved: "{{ T "settings.data.archives_restore_references_removed" }}",
+    empty: "{{ T "settings.data.archives_empty" }}"
+  };
+  box.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-restore-batch]');
+    if (!b) return;
+    var row = b.closest('tr');
+    var inp = row.querySelector('input');
+    if (inp.value.trim() !== 'RESTORE') { msg.textContent = '✗ ' + T.confirmRequired; return; }
+    if (!confirm(T.confirmDialog)) return;
+    b.disabled = true; msg.textContent = '⏳ ' + T.restoring;
+    fetch('/api/data/reset-archives/' + encodeURIComponent(b.getAttribute('data-restore-batch')) + '/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
+    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+      b.disabled = false;
+      if (r.status === 409) { msg.textContent = '✗ ' + T.conflict; return; }
+      if (r.status === 422) { msg.textContent = '✗ ' + T.referencesRemoved; return; }
+      msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+      if (r.ok) {
+        row.remove();
+        // Last row gone: swap the now-headers-only table for the same
+        // empty-state text the server renders when .resetBatches is empty,
+        // instead of leaving a dangling ARCHIVED/SALES header over nothing.
+        var tbody = box.querySelector('tbody');
+        if (tbody && !tbody.children.length) {
+          box.innerHTML = '<p class="muted">' + T.empty + '</p>';
+        }
+      }
+    }); }).catch(function (e) { b.disabled = false; msg.textContent = '✗ ' + e; });
   });
 })();
 (function () {
