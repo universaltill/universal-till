@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"sync"
 
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -71,12 +73,33 @@ type pluginTaxRateAsker struct {
 	mu    sync.Mutex
 	gen   uint64 // bus generation the cache was filled under
 	cache map[taxRateAskPayload]taxAskAnswer
+	// brokenGen/brokenKnown/broken memoize the ut-docs#368 fail-closed
+	// check ("is an active plugin registered for tax.rate.ask sitting in
+	// install_state='broken'?") for one bus generation — it runs on every
+	// non-override answer, per line per recompute, and must not cost a DB
+	// query each time on the common no-tax-plugin till. WasmRuntime.Sync
+	// bumps the generation AFTER flipping install states, so a cached
+	// verdict can never outlive the state it was read under.
+	brokenGen   uint64
+	brokenKnown bool
+	broken      bool
 }
 
-func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (int, bool) {
+// AskTaxRateBP answers (rate, ok, blocked) for one line. blocked=true is
+// the ut-docs#368 fail-closed signal: no working plugin produced an answer
+// AND an active plugin registered for tax.rate.ask (a manifest-registration
+// fact from plugin_hooks — independent of whether it's currently loaded,
+// which is exactly why it still answers while the plugin can't subscribe)
+// is broken right now. The caller must treat that as "this line cannot be
+// rung up", never as the plain "no opinion" fallback.
+func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (int, bool, bool) {
 	bus := plugins.SharedBus(a.db)
+	gen := bus.Generation()
 	if !bus.HasSubscribers(taxRateAskEvent) {
-		return 0, false
+		// Nobody CAN answer. Distinguish "no tax plugin exists" (sell
+		// normally at base rates) from "the tax plugin exists but its
+		// binary is broken" (fail closed).
+		return 0, false, a.taxAuthorityBroken(gen)
 	}
 	payload := taxRateAskPayload{
 		ItemID:    l.ItemID,
@@ -84,7 +107,6 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 		TaxRateBP: l.TaxRateBP,
 		OrderType: orderType,
 	}
-	gen := bus.Generation()
 
 	a.mu.Lock()
 	if a.gen != gen || a.cache == nil {
@@ -93,7 +115,10 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 	}
 	if ans, hit := a.cache[payload]; hit {
 		a.mu.Unlock()
-		return ans.rateBP, ans.ok
+		if ans.ok {
+			return ans.rateBP, true, false
+		}
+		return 0, false, a.taxAuthorityBroken(gen)
 	}
 	a.mu.Unlock()
 
@@ -102,7 +127,10 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 	// Concurrent recomputes may double-ask the same payload; that's benign.
 	resp, ok, err := bus.Ask(context.Background(), taxRateAskEvent, payload)
 	if err != nil {
-		return 0, false // transient failure: decline now, retry next recompute
+		// transient failure: decline now, retry next recompute — but still
+		// fail closed if a registered tax plugin is broken (a second,
+		// working plugin erroring doesn't clear the broken one's block).
+		return 0, false, a.taxAuthorityBroken(gen)
 	}
 	ans := taxAskAnswer{}
 	if ok {
@@ -112,7 +140,7 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 			// merchant can't see. Decline this recompute WITHOUT caching so
 			// the next one retries — unlike a clean empty-response decline,
 			// which is a deterministic answer and cacheable.
-			return 0, false
+			return 0, false, a.taxAuthorityBroken(gen)
 		}
 		if parsed.RateBP > 0 {
 			ans = taxAskAnswer{rateBP: parsed.RateBP, ok: true}
@@ -127,5 +155,37 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 		a.cache[payload] = ans
 	}
 	a.mu.Unlock()
-	return ans.rateBP, ans.ok
+	if ans.ok {
+		return ans.rateBP, true, false
+	}
+	return 0, false, a.taxAuthorityBroken(gen)
+}
+
+// taxAuthorityBroken reports whether an ACTIVE plugin registered for
+// tax.rate.ask is currently install_state='broken' (ut-docs#368), memoized
+// per bus generation. A DB error fails OPEN (not blocked) but is logged —
+// it is uncached, so the very next ask retries; wedging checkout on a
+// bookkeeping read would trade one failure mode for another, and a DB that
+// can't answer a COUNT can't record a sale either.
+func (a *pluginTaxRateAsker) taxAuthorityBroken(gen uint64) bool {
+	a.mu.Lock()
+	if a.brokenKnown && a.brokenGen == gen {
+		v := a.broken
+		a.mu.Unlock()
+		return v
+	}
+	a.mu.Unlock()
+
+	broken, err := data.NewPluginRepo(a.db).HasBrokenActivePluginForEvent(context.Background(), taxRateAskEvent)
+	if err != nil {
+		// Fail open, but never silently (round-2 review MINOR): a
+		// persistent read failure here disables the whole fail-closed
+		// protection, and with no signal nobody would ever know.
+		logging.L().Errorf("tax fail-closed check (ut-docs#368): broken-plugin read failed — failing open for this ask: %v", err)
+		return false
+	}
+	a.mu.Lock()
+	a.brokenGen, a.brokenKnown, a.broken = gen, true, broken
+	a.mu.Unlock()
+	return broken
 }

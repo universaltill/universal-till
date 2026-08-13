@@ -101,6 +101,68 @@ func TestInstallStatusRepo_Get(t *testing.T) {
 	}
 }
 
+// ut-docs#368 (second Opus review round, NEW BLOCKER): several install-flow
+// call sites Save lifecycle-only records (Requested / a classified Failure)
+// without knowing the plugin's ID or name — for a listing that ALREADY has a
+// successfully-installed plugin on record, a full-column upsert let that
+// blank plugin_id clobber the stored one, and convergePluginSet's prune loop
+// (which requires a non-blank plugin_id) could then never uninstall the
+// plugin from a replica again. Identity fields, once learned, must survive a
+// partial update; a non-blank incoming value still overwrites normally.
+func TestInstallStatusRepo_UpsertBlankIdentityDoesNotClobber(t *testing.T) {
+	dbo, err := db.Open(filepath.Join(t.TempDir(), "install-identity.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbo.Close()
+	ctx := context.Background()
+	repo := NewInstallStatusRepo(dbo.DB)
+
+	if err := repo.Upsert(ctx, InstallStatusRow{
+		ListingID: "listing-1", PluginID: "com.example.tax", PluginName: "Tax Plugin",
+		CurrentVersion: "1.0.0", State: "active", UpdatedAt: "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A failed re-fetch attempt writes lifecycle fields only — blank identity.
+	if err := repo.Upsert(ctx, InstallStatusRow{
+		ListingID: "listing-1", State: "failed",
+		MessageKey: "plugins.install.error.retryable", Retryable: true,
+		UpdatedAt: "2026-01-02T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := repo.Get(ctx, "listing-1")
+	if err != nil || !ok {
+		t.Fatalf("Get: ok=%v err=%v", ok, err)
+	}
+	if got.PluginID != "com.example.tax" {
+		t.Fatalf("blank plugin_id must not clobber the stored one: got %q, want %q", got.PluginID, "com.example.tax")
+	}
+	if got.PluginName != "Tax Plugin" {
+		t.Fatalf("blank plugin_name must not clobber the stored one: got %q, want %q", got.PluginName, "Tax Plugin")
+	}
+	// Lifecycle fields still update normally.
+	if got.State != "failed" || got.MessageKey != "plugins.install.error.retryable" || !got.Retryable {
+		t.Fatalf("lifecycle fields must still overwrite: got %+v", got)
+	}
+
+	// A NON-blank incoming identity still overwrites (e.g. a listing re-keyed
+	// to a successor plugin ID by a later successful install).
+	if err := repo.Upsert(ctx, InstallStatusRow{
+		ListingID: "listing-1", PluginID: "com.example.tax2", PluginName: "Tax Plugin v2",
+		CurrentVersion: "2.0.0", State: "active", UpdatedAt: "2026-01-03T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = repo.Get(ctx, "listing-1")
+	if got.PluginID != "com.example.tax2" || got.PluginName != "Tax Plugin v2" {
+		t.Fatalf("non-blank identity must still overwrite: got %+v", got)
+	}
+}
+
 func TestSettingsRepo_All(t *testing.T) {
 	dbo, err := db.Open(filepath.Join(t.TempDir(), "settings.db"))
 	if err != nil {

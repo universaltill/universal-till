@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -19,11 +20,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // ut-docs#460: plugin install/uninstall on the primary propagates to
@@ -94,6 +98,48 @@ func (m *fakeMarketplace) publishVersion(t *testing.T, listingID, pluginID, vers
 	}
 	l.releases[version] = fakeMktRelease{artifact: artifact, manifest: manifest, checksum: sha256Hex(artifact)}
 	l.latest = version
+}
+
+// publishWasmTaxVersion publishes a signed runtime:"wasm" TAX plugin release
+// (ut-docs#368): its manifest registers the tax.rate.ask hook and requests
+// events:receive, and its binary is a real compiled wasip1 module (wasmBin)
+// so the recovered plugin actually answers asks through the real wazero
+// runtime, not a stub.
+func (m *fakeMarketplace) publishWasmTaxVersion(t *testing.T, listingID, pluginID, version string, wasmBin []byte) {
+	t.Helper()
+	manifest := &plugins.Manifest{
+		ID:            pluginID,
+		Name:          "Sync Tax Plugin " + pluginID,
+		Version:       version,
+		Entrypoint:    "./plugin.wasm",
+		Executable:    "plugin.wasm",
+		Runtime:       "wasm",
+		CanonicalType: "tax",
+		DeviceArch:    "any",
+		Hooks:         []plugins.ManifestHook{{Event: "tax.rate.ask", Action: "tax.rate"}},
+		Permissions:   []string{"events:receive"},
+	}
+	artifact := signedFakeMktArtifactWithBinary(t, m.privateKey, manifest, "plugin.wasm", wasmBin)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.listings[listingID]
+	if l == nil {
+		l = &fakeMktListing{releases: map[string]fakeMktRelease{}}
+		m.listings[listingID] = l
+	}
+	l.releases[version] = fakeMktRelease{artifact: artifact, manifest: manifest, checksum: sha256Hex(artifact)}
+	l.latest = version
+}
+
+// unpublish removes every release of a listing, so any further download-token
+// request for it 404s — a marketplace that can no longer serve the plugin
+// (delisted, region-blocked, or simply gone). Used to drive the broken-plugin
+// re-fetch backoff (ut-docs#368 round-2 review): a re-fetch that can never
+// succeed must not hammer the marketplace every 30s forever.
+func (m *fakeMarketplace) unpublish(listingID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.listings, listingID)
 }
 
 // publishMismatchedRelease publishes a release keyed under requestedVersion
@@ -223,6 +269,14 @@ func (m *fakeMarketplace) config() config.MarketplaceConfig {
 // checks) and packs manifest.json + an executable stub into a .tar.gz.
 func signedFakeMktArtifact(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest) []byte {
 	t.Helper()
+	return signedFakeMktArtifactWithBinary(t, privateKey, manifest, "plugin-bin", []byte("binary"))
+}
+
+// signedFakeMktArtifactWithBinary is signedFakeMktArtifact with the packed
+// binary's name and content under the caller's control — the wasm tax
+// fixture (ut-docs#368) ships a real compiled module as plugin.wasm.
+func signedFakeMktArtifactWithBinary(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest, binName string, binData []byte) []byte {
+	t.Helper()
 	canonical := *manifest
 	canonical.Signature = ""
 	canonicalBytes, err := json.Marshal(canonical)
@@ -244,7 +298,7 @@ func signedFakeMktArtifact(t *testing.T, privateKey ed25519.PrivateKey, manifest
 		mode int64
 	}{
 		{"manifest.json", manifestBytes, 0o644},
-		{"plugin-bin", []byte("binary"), 0o755},
+		{binName, binData, 0o755},
 	} {
 		if err := tarWriter.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.data))}); err != nil {
 			t.Fatalf("write tar header: %v", err)
@@ -1124,6 +1178,187 @@ func TestSyncPullTick_RolledBackPluginStaysPrunableAfterPrimaryRemovesIt(t *test
 	}
 }
 
+// BLOCKER (ut-docs#368 round-2 review): markBroken used to demote the broken
+// plugin's install-status record to InstallStateFailed. That record's State
+// tracks the INSTALL lifecycle — Failed means "the install attempt itself
+// failed" (the store page renders a retry affordance and treats the plugin
+// as NOT installed) — and convergePluginSet's prune loop only ever prunes an
+// Active record. So once a plugin went broken, a later legitimate removal on
+// the primary could never be pruned on the replica (record Failed, not
+// Active), and replicas reject manual uninstall too: the plugin became
+// permanently un-removable on that till. A plugin that installed fine and
+// broke at LOAD time is still installed — its record must stay Active, with
+// plugins.install_state='broken' as the broken condition's single source of
+// truth. Analogous to
+// TestSyncPullTick_RolledBackPluginStaysPrunableAfterPrimaryRemovesIt above.
+func TestSyncPullTick_BrokenPluginStaysPrunableAfterPrimaryRemovesIt(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	primary := newSyncPluginsPrimary(t, mkt)
+	guest := buildTaxAskGuest(t)
+	mkt.publishWasmTaxVersion(t, "listing-tax", "com.test.sync-tax", "1.0.0", guest)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	ctx := t.Context()
+
+	primary.install(t, "listing-tax")
+
+	// The replica "joined": every DB row landed, no file did — the boot-time
+	// wasm Sync marks the plugin broken.
+	seedJoinSnapshotTaxPlugin(t, replica.dp, "listing-tax", "com.test.sync-tax")
+	replica.dp.Pm.Wasm.Sync(ctx, replica.dp.Db)
+	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "broken" {
+		t.Fatalf("precondition: expected install_state 'broken' after the failed load, got %q", got)
+	}
+	// The install-status record must STAY Active while broken: install
+	// lifecycle (did it ever install?) ≠ load health (can it run right now?).
+	if state, ok := installStatusState(t, replica.dp, "listing-tax"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("a broken-but-installed plugin's install-status record must stay Active (State=Failed breaks the prune loop), got (%q, %v)", state, ok)
+	}
+
+	// The shop owner removes the plugin on the primary before the replica
+	// ever manages to heal.
+	primary.uninstall(t, "com.test.sync-tax")
+
+	replica.tick(t, client)
+
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-tax"); ok {
+		t.Fatalf("expected the broken plugin pruned once the primary removed it, but it's still installed at %q", v)
+	}
+	if _, ok := installStatusState(t, replica.dp, "listing-tax"); ok {
+		t.Fatalf("expected the replica's install-status record cleared by the prune")
+	}
+}
+
+// BLOCKER (ut-docs#368 second independent review round): a FAILED marketplace
+// re-fetch attempt is a second route into the exact failure mode the round-1
+// BLOCKER fix closed. cloudInstallPluginVersion Saves lifecycle-only records
+// (Requested, then a classified Failure) that don't carry PluginID, and the
+// full-column upsert blanked the plugin_id the original successful install
+// had stored — leaving the record {State:failed, PluginID:""}. The prune loop
+// requires State==Active AND PluginID!="", so a broken plugin whose re-fetch
+// keeps failing (e.g. delisted, marketplace down, or a binary that installs
+// but can never load here — exactly what sits in shouldRefetchBroken's
+// backoff long-term) could NEVER be uninstalled from the replica once the
+// primary removed it. The record must keep the original install's identity
+// AND stay Active across a failed re-fetch: the failed attempt uninstalled
+// nothing, so the originally-installed plugin is still on this till.
+func TestSyncPullTick_BrokenPluginStaysPrunableAfterFailedRefetch(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	primary := newSyncPluginsPrimary(t, mkt)
+	guest := buildTaxAskGuest(t)
+	mkt.publishWasmTaxVersion(t, "listing-tax", "com.test.sync-tax", "1.0.0", guest)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	ctx := t.Context()
+
+	primary.install(t, "listing-tax")
+
+	// The replica "joined": every DB row landed (including an Active
+	// install-status record with the correct PluginID), no file did — the
+	// boot-time wasm Sync marks the plugin broken.
+	seedJoinSnapshotTaxPlugin(t, replica.dp, "listing-tax", "com.test.sync-tax")
+	replica.dp.Pm.Wasm.Sync(ctx, replica.dp.Db)
+	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "broken" {
+		t.Fatalf("precondition: expected install_state 'broken' after the failed load, got %q", got)
+	}
+
+	// The marketplace can no longer serve this listing, so the sync tick's
+	// re-fetch attempt FAILS (same shape as an unreachable marketplace or a
+	// binary that keeps failing to load after a "successful" download).
+	mkt.unpublish("listing-tax")
+	replica.tick(t, client)
+
+	// The failed attempt must not have blanked the record's PluginID, nor
+	// demoted its State: the plugin from the original successful install is
+	// still on this till — nothing was uninstalled.
+	rec, ok, err := plugins.NewInstallStatusStore(replica.dp.Db).Get(ctx, "listing-tax")
+	if err != nil || !ok {
+		t.Fatalf("read install status after failed re-fetch: ok=%v err=%v", ok, err)
+	}
+	if rec.PluginID != "com.test.sync-tax" {
+		t.Fatalf("a failed re-fetch must not blank the record's PluginID (prune loop needs it), got %+v", rec)
+	}
+	if rec.State != plugins.InstallStateActive {
+		t.Fatalf("a failed re-fetch of a still-installed plugin must leave the record Active (prune loop only prunes Active), got %+v", rec)
+	}
+
+	// The shop owner removes the plugin on the primary. The replica must
+	// still be able to prune it despite the earlier failed re-fetch.
+	primary.uninstall(t, "com.test.sync-tax")
+	replica.tick(t, client)
+
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-tax"); ok {
+		t.Fatalf("expected the plugin pruned once the primary removed it, but it's still installed at %q (BLOCKER re-opens via a failed re-fetch)", v)
+	}
+	if _, ok := installStatusState(t, replica.dp, "listing-tax"); ok {
+		t.Fatalf("expected the replica's install-status record cleared by the prune")
+	}
+}
+
+// MAJOR (ut-docs#368 round-2 review): a broken plugin whose re-fetch can
+// never succeed (here: the marketplace no longer serves the listing; the
+// same shape as a binary that installs fine but can never load on this
+// device) must not hit the marketplace on every 30s tick forever. After
+// brokenRefetchMaxAttempts consecutive attempts without an observed heal,
+// the loop backs off to one attempt every brokenRefetchBackoffTicks ticks —
+// degraded cadence, not a permanent stop — and logs that automatic recovery
+// is not progressing.
+func TestSyncPullTick_BrokenPluginRefetchBacksOffAfterRepeatedFailures(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	primary := newSyncPluginsPrimary(t, mkt)
+	guest := buildTaxAskGuest(t)
+	mkt.publishWasmTaxVersion(t, "listing-tax", "com.test.sync-tax", "1.0.0", guest)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	primary.install(t, "listing-tax")
+	seedJoinSnapshotTaxPlugin(t, replica.dp, "listing-tax", "com.test.sync-tax")
+	replica.dp.Pm.Wasm.Sync(t.Context(), replica.dp.Db)
+	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "broken" {
+		t.Fatalf("precondition: expected install_state 'broken', got %q", got)
+	}
+
+	// The marketplace can no longer serve this listing: every re-fetch fails.
+	mkt.unpublish("listing-tax")
+
+	base := mkt.downloadTokenHits()
+	for i := 0; i < brokenRefetchMaxAttempts; i++ {
+		replica.tick(t, client)
+	}
+	if got := mkt.downloadTokenHits() - base; got != brokenRefetchMaxAttempts {
+		t.Fatalf("expected one marketplace attempt per tick up to the cap (%d), got %d", brokenRefetchMaxAttempts, got)
+	}
+
+	// Past the cap: the next brokenRefetchBackoffTicks-1 ticks skip the
+	// marketplace entirely...
+	for i := 0; i < brokenRefetchBackoffTicks-1; i++ {
+		replica.tick(t, client)
+	}
+	if got := mkt.downloadTokenHits() - base; got != brokenRefetchMaxAttempts {
+		t.Fatalf("expected no marketplace attempts while backing off, got %d total (cap %d)", got, brokenRefetchMaxAttempts)
+	}
+	// ...but the cadence degrades rather than stopping for good: the
+	// brokenRefetchBackoffTicks-th tick since the cap attempts once more.
+	replica.tick(t, client)
+	if got := mkt.downloadTokenHits() - base; got != brokenRefetchMaxAttempts+1 {
+		t.Fatalf("expected exactly one slower-cadence retry after %d skipped ticks, got %d total", brokenRefetchBackoffTicks-1, got)
+	}
+	// The degradation is logged distinctly from the normal in-progress retry.
+	found := false
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, "automatic recovery is not progressing") && strings.Contains(p.Msg, "listing-tax") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a distinct 'automatic recovery is not progressing' log line; recent: %+v", logging.Recent())
+	}
+}
+
 // The reload-and-rebuild sequence (Pm.Reload + Menu reassignment) now fires
 // from the background sync-pull goroutine every 30s as well as from HTTP
 // handlers — Deps.ReloadPlugins must serialize it (PluginMu) so concurrent
@@ -1202,4 +1437,219 @@ func TestReloadPlugins_ConcurrentReadersSurviveRace(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+}
+
+// --- ut-docs#368: join-snapshot row without bytes ---------------------------
+
+// buildTaxAskGuest compiles the wasip1 tax-answering test guest once per
+// test. The build runs from THIS package's directory (cwd may have been
+// moved to the repo root by chdirRoot).
+func buildTaxAskGuest(t *testing.T) []byte {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	out := filepath.Join(t.TempDir(), "taxask.wasm")
+	cmd := exec.Command("go", "build", "-o", out, "./testdata/taxask_guest")
+	cmd.Dir = filepath.Dir(file)
+	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build wasip1 tax guest: %v\n%s", err, raw)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read built guest: %v", err)
+	}
+	return raw
+}
+
+// seedJoinSnapshotTaxPlugin plants on the replica exactly what a join
+// snapshot produces for a marketplace-installed wasm tax plugin: every DB
+// row (registry, hooks, permission grant, install-status bookkeeping) at
+// the primary's version — and NO file on disk.
+func seedJoinSnapshotTaxPlugin(t *testing.T, dp *common.Deps, listingID, pluginID string) {
+	t.Helper()
+	ctx := t.Context()
+	if _, err := dp.Db.ExecContext(ctx, `
+INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+VALUES (?, '1.0.0', ?, 'wasm', './plugin.wasm', 'https://mkt/pkg', 'deadbeef', '0.1.0', '1.0', '2026-01-01T00:00:00Z')`,
+		pluginID, "Sync Tax Plugin "+pluginID); err != nil {
+		t.Fatalf("seed plugin_catalog: %v", err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `
+INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level)
+VALUES (?, ?, '1.0.0', 'installed', './plugin.wasm', 'wasm', 1, 'trusted')`,
+		pluginID, "Sync Tax Plugin "+pluginID); err != nil {
+		t.Fatalf("seed plugins: %v", err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `
+INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+VALUES (?, ?, 'tax.rate.ask', 'tax.rate', 1)`, "hook-"+pluginID, pluginID); err != nil {
+		t.Fatalf("seed plugin_hooks: %v", err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `
+INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+VALUES (?, ?, 'events:receive', 1)`, "perm-"+pluginID, pluginID); err != nil {
+		t.Fatalf("seed plugin_permissions: %v", err)
+	}
+	if err := plugins.NewInstallStatusStore(dp.Db).Save(ctx, plugins.InstallStatusRecord{
+		ListingID: listingID, PluginID: pluginID, PluginName: "Sync Tax Plugin " + pluginID,
+		CurrentVersion: "1.0.0", State: plugins.InstallStateActive,
+	}); err != nil {
+		t.Fatalf("seed install status: %v", err)
+	}
+}
+
+// pluginInstallState reads a plugin's install_state straight from the row.
+func pluginInstallState(t *testing.T, dp *common.Deps, pluginID string) string {
+	t.Helper()
+	var state string
+	if err := dp.Db.QueryRowContext(t.Context(),
+		`SELECT COALESCE(install_state, '') FROM plugins WHERE id = ?`, pluginID).Scan(&state); err != nil {
+		t.Fatalf("read install_state: %v", err)
+	}
+	return state
+}
+
+// pluginsPageBody renders GET /plugins for dp and returns the body — the
+// Alpine JSON payload inside it carries each plugin's "state", which drives
+// the Broken ⚠ chip.
+func pluginsPageBody(t *testing.T, dp *common.Deps) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	registerPluginsPage(mux, dp)
+	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugins: %d (%s)", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
+// The full ut-docs#368 story on the real two-till harness: a replica's join
+// snapshot registers a wasm tax plugin whose FILE never arrived (rows, not
+// bytes). Boot-time Sync must mark it broken (visible state + a real tally,
+// not a silent continue); a checkout on a line the plugin owns must fail
+// CLOSED with a translated message (never silently fall back to the base
+// rate — that's mis-taxed sales); and one ordinary sync tick must self-heal
+// the till end to end: verified re-install from the marketplace, row back
+// to 'installed', tax answering again, Broken chip gone.
+func TestSyncPullTick_JoinSnapshotBrokenTaxPluginFailsClosedThenSelfHeals(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	primary := newSyncPluginsPrimary(t, mkt)
+	guest := buildTaxAskGuest(t)
+	mkt.publishWasmTaxVersion(t, "listing-tax", "com.test.sync-tax", "1.0.0", guest)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	ctx := t.Context()
+
+	// The primary installs the tax plugin for real (its own files, its own
+	// tree) — this is what puts the listing in the primary's registry dump.
+	primary.install(t, "listing-tax")
+
+	// The replica "joined": every DB row landed, no file did.
+	seedJoinSnapshotTaxPlugin(t, replica.dp, "listing-tax", "com.test.sync-tax")
+	if replica.hasPluginFiles("com.test.sync-tax") {
+		t.Fatal("precondition: the replica must have NO plugin files")
+	}
+
+	// (1) Boot-time load: Sync marks it broken and counts the failure.
+	start := time.Now()
+	replica.dp.Pm.Wasm.Sync(ctx, replica.dp.Db)
+	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "broken" {
+		t.Fatalf("expected install_state 'broken' after the failed load, got %q", got)
+	}
+	// The install-status record stays Active while broken (round-2 review
+	// BLOCKER): its State tracks the install lifecycle, and this plugin DID
+	// install — plugins.install_state='broken' alone carries the load
+	// failure. Demoting it to Failed made the plugin permanently unprunable
+	// (see TestSyncPullTick_BrokenPluginStaysPrunableAfterPrimaryRemovesIt).
+	if state, ok := installStatusState(t, replica.dp, "listing-tax"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("expected the install-status record left Active while broken, got (%q, %v)", state, ok)
+	}
+	foundTally := false
+	for _, p := range logging.Recent() {
+		if p.At.After(start.Add(-time.Second)) && strings.Contains(p.Msg, "wasm sync:") &&
+			strings.Contains(p.Msg, "1 failed") && strings.Contains(p.Msg, "com.test.sync-tax") {
+			foundTally = true
+			break
+		}
+	}
+	if !foundTally {
+		t.Fatal("expected the wasm sync tally to count and name the failed load")
+	}
+	// The Broken chip's data is on the plugins page.
+	if body := pluginsPageBody(t, replica.dp); !strings.Contains(body, `"state":"broken"`) {
+		t.Fatalf("expected the plugins page payload to carry state broken, got: %s", body)
+	}
+
+	// (2) Checkout on a line whose tax code that plugin owns: blocked with
+	// the translated message, and NO sale recorded. The item is a real
+	// catalog row — sale_lines FKs items, and the post-heal checkout below
+	// must complete for real.
+	itemID, err := data.NewCatalogRepo(replica.dp.Db).CreateItem(ctx, catalogtypes.ItemInput{
+		Name: "Taxed Widget", BasePrice: 1000, IsActive: true,
+	})
+	if err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, stubResolver{
+		"TAXED": {SKU: "TAXED", Name: "Taxed Widget", Qty: 1, PriceCents: 1000, ItemID: itemID, TaxCodeID: "tax_std", TaxRateBP: 2000},
+	})
+	engine.SetTaxRateAsker(&pluginTaxRateAsker{db: replica.dp.Db})
+	replica.dp.Engine = engine
+	posMux := http.NewServeMux()
+	registerPOSAPI(posMux, replica.dp)
+	if _, err := engine.Scan("TAXED"); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	salesBefore := countSalesRows(t, replica.dp)
+	rec := posPostForm(posMux, "/api/pos/tender", "method=cash&amount=0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected the toast-rendered basket (200), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "tax plugin is being repaired") {
+		t.Fatalf("expected the translated tax-unavailable message, got: %s", body)
+	}
+	if got := countSalesRows(t, replica.dp); got != salesBefore {
+		t.Fatalf("a blocked checkout must record NO sale (silent base-rate fallback is the bug): %d -> %d", salesBefore, got)
+	}
+
+	// (3) One ordinary sync tick self-heals: verified re-fetch from the
+	// marketplace, pinned to the primary's version.
+	hitsBefore := mkt.downloadTokenHits()
+	replica.tick(t, client)
+	if mkt.downloadTokenHits() != hitsBefore+1 {
+		t.Fatalf("expected exactly one marketplace re-download to heal the broken plugin, hits %d -> %d",
+			hitsBefore, mkt.downloadTokenHits())
+	}
+	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "installed" {
+		t.Fatalf("expected install_state back to 'installed' after the healing tick, got %q", got)
+	}
+	if state, ok := installStatusState(t, replica.dp, "listing-tax"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("expected the install-status record back to Active, got (%q, %v)", state, ok)
+	}
+	if !replica.hasPluginFiles("com.test.sync-tax") {
+		t.Fatal("expected the plugin's files re-fetched into the replica's own tree")
+	}
+	// The Broken chip is gone.
+	if body := pluginsPageBody(t, replica.dp); strings.Contains(body, `"state":"broken"`) {
+		t.Fatalf("expected no broken state on the plugins page after heal, got: %s", body)
+	}
+
+	// (4) Tax resumes working normally: the REAL wasm module answers the
+	// ask (900bp override), and the same checkout now completes.
+	rate, ok, blocked := (&pluginTaxRateAsker{db: replica.dp.Db}).AskTaxRateBP(
+		pos.BasketLine{ItemID: "itm-taxed", TaxCodeID: "tax_std", TaxRateBP: 2000}, "")
+	if !ok || rate != 900 || blocked {
+		t.Fatalf("expected the healed plugin's real answer (900,true,false), got (%d,%v,blocked=%v)", rate, ok, blocked)
+	}
+	rec = posPostForm(posMux, "/api/pos/tender", "method=cash&amount=0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected the checkout to complete after heal, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := countSalesRows(t, replica.dp); got != salesBefore+1 {
+		t.Fatalf("expected the sale recorded after heal: %d -> %d", salesBefore, got)
+	}
 }

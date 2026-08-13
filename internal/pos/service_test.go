@@ -149,12 +149,12 @@ type fakeTaxAsker struct {
 	takeawayRateByTaxCode map[string]int
 }
 
-func (f fakeTaxAsker) AskTaxRateBP(l BasketLine, orderType string) (int, bool) {
+func (f fakeTaxAsker) AskTaxRateBP(l BasketLine, orderType string) (int, bool, bool) {
 	if orderType != OrderTypeTakeaway {
-		return 0, false
+		return 0, false, false
 	}
 	bp, ok := f.takeawayRateByTaxCode[l.TaxCodeID]
-	return bp, ok
+	return bp, ok, false
 }
 
 // TestOrderTypeTaxSwitching verifies core has NO built-in tax-rate opinion

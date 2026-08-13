@@ -111,6 +111,35 @@ type Deps struct {
 	// and not yet guarded — a "refuse new Add once shutdown has begun" flag
 	// would close it; tracked as a follow-up rather than fixed inline here.
 	AsyncWork sync.WaitGroup
+
+	// BrokenRefetchMu guards BrokenRefetch below.
+	BrokenRefetchMu sync.Mutex
+	// BrokenRefetch tracks consecutive marketplace re-fetch attempts per
+	// locally-broken plugin listing (pages.convergePluginSet, ut-docs#368
+	// round-2 review): a plugin broken for a reason a re-fetch can never fix
+	// (e.g. a binary that installs fine but can never load on this device)
+	// must not hammer the marketplace every 30s forever, so past a small
+	// attempt cap the loop degrades to a much slower retry cadence. Lazily
+	// initialized under BrokenRefetchMu; in-memory only BY DESIGN — the
+	// count is retry-policy bookkeeping, not till state, and a restart
+	// granting a fresh burst of attempts is exactly the manual-recovery
+	// affordance an operator restarting the till would expect.
+	BrokenRefetch map[string]*BrokenRefetchState
+}
+
+// BrokenRefetchState is one listing's broken-plugin re-fetch bookkeeping —
+// see Deps.BrokenRefetch.
+type BrokenRefetchState struct {
+	// Version the attempts were counted against; the primary moving the
+	// listing to a different version resets the count (a new version is a
+	// genuinely new thing to try, not the same doomed fetch again).
+	Version string
+	// Attempts is the count of consecutive re-fetch attempts without an
+	// observed heal.
+	Attempts int
+	// TicksSkipped counts sync ticks skipped since the last attempt, once
+	// past the attempt cap.
+	TicksSkipped int
 }
 
 // WaitForAsyncWork blocks until every in-flight best-effort background

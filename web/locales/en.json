@@ -1316,5 +1316,10 @@
   "help.search.none": "Nothing matched. Try a shorter word, or pick a topic from the list.",
   "help.pick.topic": "Pick a topic on the left, or search for what you need.",
   "help.untranslated": "This topic hasn't been translated yet — showing the English version.",
-  "help.open": "Help for this page"
+  "help.open": "Help for this page",
+  "plugins.manage.broken": "Broken",
+  "plugins.status.broken_binary": "This plugin's files are missing or unreadable on this till. Store-installed plugins are reinstalled automatically; a plugin imported from a file must be re-imported on this till.",
+  "pos.toast.tax_unavailable": "Cannot complete the sale: the tax rate for \"%s\" is unavailable while its tax plugin is being repaired. Remove the item or try again in a moment.",
+  "pos.toast.tax_unavailable_all": "Checkout is unavailable — the tax plugin is being repaired. Try again shortly.",
+  "selforder.checkout.tax_unavailable": "Some items can't be ordered here right now — please pay at the counter."
 }

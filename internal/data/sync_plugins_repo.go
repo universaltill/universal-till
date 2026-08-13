@@ -82,17 +82,21 @@ ORDER BY s.listing_id`)
 	return bundle, nil
 }
 
-// InstalledPluginVersion reports whether a plugin is installed locally and
-// at which version — the replica-side half of the plugin-set diff.
-func (r *SyncPluginsRepo) InstalledPluginVersion(ctx context.Context, pluginID string) (string, bool, error) {
-	var version string
-	err := r.db.QueryRowContext(ctx,
-		`SELECT version FROM plugins WHERE id = ?`, pluginID).Scan(&version)
+// InstalledPluginVersion reports whether a plugin is installed locally, at
+// which version, and in which install lifecycle state — the replica-side
+// half of the plugin-set diff. The state matters because a row can claim
+// the right version while the plugin's FILES are gone or unloadable
+// (install_state='broken', ut-docs#368 — exactly what a join snapshot's
+// rows-without-bytes produce): convergePluginSet must treat that as local
+// drift, not as "already converged".
+func (r *SyncPluginsRepo) InstalledPluginVersion(ctx context.Context, pluginID string) (version, installState string, installed bool, err error) {
+	err = r.db.QueryRowContext(ctx,
+		`SELECT version, COALESCE(install_state, '') FROM plugins WHERE id = ?`, pluginID).Scan(&version, &installState)
 	if err == sql.ErrNoRows {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("installed plugin version %s: %w", pluginID, err)
+		return "", "", false, fmt.Errorf("installed plugin version %s: %w", pluginID, err)
 	}
-	return version, true, nil
+	return version, installState, true, nil
 }

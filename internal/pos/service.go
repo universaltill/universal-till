@@ -70,23 +70,36 @@ const OrderTypeTakeaway = "takeaway"
 // rate — e.g. a country-specific order-type VAT switch (Germany's §12 UStG:
 // some items tax differently for takeaway than dine-in). ok=false means the
 // plugin has no opinion on this line; the line's own configured rate is
-// used, same as when no asker is set at all. Wired from internal/pages via
-// Service.SetTaxRateAsker, calling into the plugin event bus — internal/pos
-// itself never talks to the plugin subsystem, keeping this package's only
-// dependency on "what a country's tax rules are" as a pluggable interface.
+// used, same as when no asker is set at all. blocked=true (ut-docs#368)
+// means the AUTHORITY for this line's rate exists but is unavailable right
+// now — a registered tax plugin whose binary is broken — which is NOT "no
+// opinion": the caller must refuse to complete a sale for that line rather
+// than silently fall back to the base rate (fail closed on tax). ok and
+// blocked are mutually exclusive: an actual answer proves the authority is
+// working. Wired from internal/pages via Service.SetTaxRateAsker, calling
+// into the plugin event bus — internal/pos itself never talks to the plugin
+// subsystem, keeping this package's only dependency on "what a country's
+// tax rules are" as a pluggable interface.
 type TaxRateAsker interface {
-	AskTaxRateBP(l BasketLine, orderType string) (bp int, ok bool)
+	AskTaxRateBP(l BasketLine, orderType string) (bp int, ok bool, blocked bool)
 }
 
 // effectiveTaxRateBP resolves the basis points to actually charge for one
 // line under the current order type: ask the installed TaxRateAsker (if
 // any) first, then fall back to the line's own configured rate — the same
-// plain default as before any tax plugin existed.
-func (s *Service) effectiveTaxRateBP(l BasketLine) int {
+// plain default as before any tax plugin existed. blocked reports the
+// asker's fail-closed signal (ut-docs#368); the fallback rate is still
+// computed so the live basket preview keeps rendering — blocking a sale is
+// the TENDER path's job (it must not complete while any line is blocked),
+// not this display computation's.
+func (s *Service) effectiveTaxRateBP(l BasketLine) (int, bool) {
+	blocked := false
 	if s.taxAsker != nil {
-		if bp, ok := s.taxAsker.AskTaxRateBP(l, s.orderType); ok {
-			return bp
+		bp, ok, askerBlocked := s.taxAsker.AskTaxRateBP(l, s.orderType)
+		if ok {
+			return bp, false
 		}
+		blocked = askerBlocked
 	}
 	standard := l.TaxRateBP
 	if standard == 0 {
@@ -95,7 +108,7 @@ func (s *Service) effectiveTaxRateBP(l BasketLine) int {
 	if standard == 0 {
 		standard = 2000 // default to 20% if unconfigured
 	}
-	return standard
+	return standard, blocked
 }
 
 func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
@@ -436,7 +449,7 @@ func (s *Service) recomputeTotals() {
 	var tax, total money.Money
 	for i := range s.lines {
 		l := &s.lines[i]
-		rateBP := s.effectiveTaxRateBP(*l)
+		rateBP, _ := s.effectiveTaxRateBP(*l)
 		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, s.cfg.TaxInclusive)
 		tax = tax.Add(lineTax)
 		total = total.Add(lineTotal)
@@ -475,8 +488,13 @@ func (s *Service) OrderType() string {
 // under the sale's current order type — the single source of truth callers
 // (recomputeTotals' live preview, and the tender handler recording the final
 // sale) must both use, so what a cashier sees pre-payment matches what gets
-// recorded/receipted.
-func (s *Service) EffectiveLineTaxRateBP(l BasketLine) int {
+// recorded/receipted. blocked=true (ut-docs#368) means the line's tax
+// authority — a registered tax plugin — is broken right now: the tender
+// path must refuse to complete a sale containing this line rather than
+// record it at the fallback rate (fail closed on tax; the rest of the
+// basket, lines whose rate needs no broken authority, stays sellable once
+// the blocked line is removed).
+func (s *Service) EffectiveLineTaxRateBP(l BasketLine) (rateBP int, blocked bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.effectiveTaxRateBP(l)

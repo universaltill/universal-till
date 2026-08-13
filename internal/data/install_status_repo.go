@@ -28,6 +28,18 @@ func NewInstallStatusRepo(db *sql.DB) *InstallStatusRepo {
 	return &InstallStatusRepo{db: db}
 }
 
+// Upsert writes a listing's install-status row. Lifecycle fields (state,
+// versions, message, retryable) always overwrite; the IDENTITY fields
+// plugin_id and plugin_name overwrite only when the incoming value is
+// non-blank. Several install-flow call sites save lifecycle-only records
+// (a Requested marker, a classified failure) before/without knowing which
+// plugin the listing resolves to — a blank identity there means "not known
+// at this call site", never "forget it". Letting it clobber a stored
+// identity broke replica pruning permanently: convergePluginSet's prune
+// loop needs the record's plugin_id to uninstall a listing the primary
+// removed (ut-docs#368, second review round BLOCKER). SQLite's COALESCE
+// only special-cases NULL — these columns arrive as '' — hence the
+// explicit CASE. Rows are only ever forgotten wholesale (DeleteForPlugin).
 func (r *InstallStatusRepo) Upsert(ctx context.Context, row InstallStatusRow) error {
 	retryable := 0
 	if row.Retryable {
@@ -39,8 +51,8 @@ INSERT INTO plugin_install_status
      state, message_key, retryable, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(listing_id) DO UPDATE SET
-    plugin_id = excluded.plugin_id,
-    plugin_name = excluded.plugin_name,
+    plugin_id = CASE WHEN excluded.plugin_id != '' THEN excluded.plugin_id ELSE plugin_id END,
+    plugin_name = CASE WHEN excluded.plugin_name != '' THEN excluded.plugin_name ELSE plugin_name END,
     target_version = excluded.target_version,
     current_version = excluded.current_version,
     state = excluded.state,

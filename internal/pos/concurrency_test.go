@@ -99,7 +99,7 @@ func TestServiceConcurrentMutations(t *testing.T) {
 		s.SetConfig(Config{TaxRateBasisPoints: 2000, TaxInclusive: i%2 == 0})
 		_ = s.Config()
 		_ = s.OrderType()
-		_ = s.EffectiveLineTaxRateBP(BasketLine{TaxRateBP: 700})
+		_, _ = s.EffectiveLineTaxRateBP(BasketLine{TaxRateBP: 700})
 		if _, err := s.Tender(money.FromMinor(100), "card"); err != nil {
 			t.Errorf("Tender: %v", err)
 		}

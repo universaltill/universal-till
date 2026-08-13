@@ -22,6 +22,17 @@ func NewPluginRepo(db *sql.DB) *PluginRepo {
 
 var pluginObs = newRepoObservability("plugin")
 
+// Plugin install lifecycle states as stored in plugins.install_state (the
+// column comment in 001_init.sql lists installed|disabled|broken|installing|
+// uninstalling). Only the two that code branches on across packages are
+// named; 'broken' means the row is registered but the plugin's on-disk
+// binary could not be loaded (ut-docs#368 — the state a join snapshot's
+// row-without-bytes lands in until the sync loop re-fetches the files).
+const (
+	PluginStateInstalled = "installed"
+	PluginStateBroken    = "broken"
+)
+
 func (r *PluginRepo) InstallPlugin(ctx context.Context, tx *sql.Tx, id string) error {
 	var err error
 	done := pluginObs.trace("install_plugin")
@@ -405,6 +416,49 @@ SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1
 	return version, true, nil
 }
 
+// UpdatePluginInstallState flips ONLY the install lifecycle state of one
+// plugin (is_active and version are untouched, unlike SetPluginState).
+// WasmRuntime.Sync uses it to mark a registered-but-unloadable plugin
+// 'broken' and to flip it back to 'installed' on a later successful load
+// (ut-docs#368) — both directions must be visible in the row, not just in
+// the log.
+func (r *PluginRepo) UpdatePluginInstallState(ctx context.Context, pluginID, state string) error {
+	_, err := r.db.ExecContext(ctx, `
+UPDATE plugins
+SET install_state = ?, updated_at = ?
+WHERE id = ?
+`, state, time.Now().UTC().Format(time.RFC3339), pluginID)
+	if err != nil {
+		return pluginObs.wrapf("update_install_state", "update install state %s", err, pluginID)
+	}
+	return nil
+}
+
+// HasBrokenActivePluginForEvent reports whether any ACTIVE plugin whose
+// manifest-registered hook events (plugin_hooks — written at install time,
+// independent of whether the plugin is currently loaded) include event
+// currently sits in install_state='broken'. This is the tax fail-closed
+// check (ut-docs#368): a broken tax plugin cannot subscribe to the event
+// bus, so "no subscribers" alone cannot distinguish "no tax plugin was ever
+// installed" from "the plugin that owns this event is broken right now" —
+// this manifest-registration query can.
+func (r *PluginRepo) HasBrokenActivePluginForEvent(ctx context.Context, event string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM plugins p
+JOIN plugin_hooks h ON h.plugin_id = p.id
+WHERE p.is_active = 1
+  AND p.install_state = 'broken'
+  AND h.is_active = 1
+  AND h.event = ?
+`, event).Scan(&n)
+	if err != nil {
+		return false, pluginObs.wrap("has_broken_for_event", err)
+	}
+	return n > 0, nil
+}
+
 // SetPluginState toggles active flag and install state for a specific version.
 func (r *PluginRepo) SetPluginState(ctx context.Context, pluginID, version, installState string, active bool) error {
 	val := 0
@@ -737,6 +791,9 @@ type InstalledPluginRow struct {
 	Runtime    string
 	Entrypoint string
 	IsActive   bool
+	// InstallState is the plugins.install_state lifecycle value —
+	// WasmRuntime.Sync keys its broken/heal transitions on it (ut-docs#368).
+	InstallState string
 }
 
 // MenuEntryRow represents a plugin menu entry with aggregated permissions.
@@ -918,7 +975,7 @@ ORDER BY name COLLATE NOCASE
 
 func (r *PluginRepo) ListInstalledPlugins(ctx context.Context) ([]InstalledPluginRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, version, COALESCE(author, ''), COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active
+SELECT id, name, version, COALESCE(author, ''), COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active, COALESCE(install_state, '')
 FROM plugins
 WHERE is_active = 1
 `)
@@ -929,7 +986,7 @@ WHERE is_active = 1
 	var res []InstalledPluginRow
 	for rows.Next() {
 		var p InstalledPluginRow
-		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author, &p.Runtime, &p.Entrypoint, &p.IsActive); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author, &p.Runtime, &p.Entrypoint, &p.IsActive, &p.InstallState); err != nil {
 			return nil, pluginObs.wrap("list_installed", err)
 		}
 		res = append(res, p)
