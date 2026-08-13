@@ -90,9 +90,17 @@ function routedTopics() {
   return out;
 }
 
+// Dotfiles are skipped so the surface hash is a property of the REPO, not of
+// the machine that generated it. macOS drops `.DS_Store` into any browsed
+// directory; it is gitignored, so it exists in a developer's web/public but
+// never in CI's checkout — and hashing it made `make docs-shots` on a Mac
+// emit a manifest CI would then reject with "the app surface changed", with
+// no visible cause in the diff (ut-docs#659). No shipped asset or template
+// is a dotfile, so nothing real is excluded.
 function walkFiles(dir) {
   const out = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name.startsWith('.')) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) out.push(...walkFiles(p));
     else if (e.isFile()) out.push(p);

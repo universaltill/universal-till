@@ -116,8 +116,18 @@ def registered_routes(path):
 def surface_files(screenshotted_routes):
     files = []
     for base, want_go in (("web/ui", False), ("web/public", False), ("internal/pages", True)):
-        for root, _, names in os.walk(base):
+        for root, dirs, names in os.walk(base):
+            # Skip dotfiles/dot-dirs so the surface hash is a property of the
+            # REPO, not of the machine computing it. macOS drops `.DS_Store`
+            # into any browsed directory; it is gitignored, so it exists in a
+            # developer's tree but never in CI's checkout — hashing it made a
+            # Mac-generated manifest fail here with "the app surface changed"
+            # and no visible cause in the diff (ut-docs#659). Must stay in
+            # lockstep with e2e/tests-docs/lib.js's walkFiles.
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
             for n in names:
+                if n.startswith("."):
+                    continue
                 p = os.path.join(root, n).replace(os.sep, "/")
                 if want_go:
                     if not p.endswith(".go") or p.endswith("_test.go"):
