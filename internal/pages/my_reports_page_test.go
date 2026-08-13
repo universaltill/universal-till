@@ -8,9 +8,22 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
+
+// withTempIssueReportsPendingDir points issuereport.PendingDir at a fresh
+// temp dir for the test's duration — same convention as cloudsync's and
+// issuereport's own withTempPendingDir — so a still-pending bundle
+// (ut-docs#637) can be arranged without touching this repo's real
+// ./data/issue-reports/pending.
+func withTempIssueReportsPendingDir(t *testing.T) {
+	t.Helper()
+	orig := issuereport.PendingDir
+	issuereport.PendingDir = t.TempDir()
+	t.Cleanup(func() { issuereport.PendingDir = orig })
+}
 
 // seedIssueReportsSent creates the retained-reports table, column-identical
 // to internal/db/migrations/032_issue_reports_sent.sql — same fixture
@@ -36,6 +49,12 @@ func seedIssueReportsSent(t *testing.T, db *sql.DB) {
 func newMyReportsTestMux(t *testing.T) (*http.ServeMux, *sql.DB) {
 	t.Helper()
 	chdirRoot(t)
+	// ut-docs#637 review: registerMyReportsPage now also reads
+	// issuereport.Pending() (local disk), so every test built on this
+	// helper needs its own isolated PendingDir — otherwise a test run from
+	// a checkout that has ever captured a real bug report locally would
+	// pick up ./data/issue-reports/pending's actual contents.
+	withTempIssueReportsPendingDir(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
@@ -156,5 +175,137 @@ func TestMyReportsPage_ManagerGate(t *testing.T) {
 	rec := getMyReports(t, mux)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 without a manager session, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#637: a bundle that has never uploaded (no issue_reports_sent row
+// at all yet) must still show up — as "pending", not invisible. Before this
+// fix, the page only ever read issue_reports_sent, so a bundle that never
+// reached the cloud simply never appeared anywhere on /my-reports.
+func TestMyReportsPage_PendingBundleShowsAsPending(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newMyReportsTestMux(t)
+	if _, err := issuereport.Save("still waiting to upload", "", []byte("a"), nil, nil); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	rec := getMyReports(t, mux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Saved here, waiting to send") {
+		t.Fatalf("expected the translated pending status, got: %s", body)
+	}
+	if !strings.Contains(body, "still waiting to upload") {
+		t.Fatalf("expected the note text, got: %s", body)
+	}
+	if strings.Contains(body, "Couldn&#39;t send") {
+		t.Fatalf("a merely-pending bundle must not render as failing: %s", body)
+	}
+}
+
+// After crossing issuereport.UploadFailingThreshold, a bundle presents as
+// "failing" with its (translated, non-actionable) reason — the core
+// ut-docs#637 acceptance criterion: "a till that can never upload surfaces
+// a problem rather than retrying silently forever."
+func TestMyReportsPage_FailingBundleShowsReasonAfterThreshold(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newMyReportsTestMux(t)
+	id, err := issuereport.Save("cloud unreachable for a while", "", []byte("a"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for i := 0; i < issuereport.UploadFailingThreshold; i++ {
+		if _, err := issuereport.RecordUploadFailure(id, issuereport.UploadFailReasonOther); err != nil {
+			t.Fatalf("RecordUploadFailure #%d: %v", i, err)
+		}
+	}
+
+	rec := getMyReports(t, mux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Couldn&#39;t send") {
+		t.Fatalf("expected the translated failing status, got: %s", body)
+	}
+	if !strings.Contains(body, "Couldn&#39;t reach the cloud after several tries") {
+		t.Fatalf("expected the translated 'other' failure reason, got: %s", body)
+	}
+}
+
+// A bundle failing below the threshold stays "pending" — a single blip (or
+// a few, on a shop that's briefly offline) is normal and must not alarm
+// anyone.
+func TestMyReportsPage_BelowThresholdStaysPending(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newMyReportsTestMux(t)
+	id, err := issuereport.Save("just offline for a bit", "", []byte("a"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for i := 0; i < issuereport.UploadFailingThreshold-1; i++ {
+		if _, err := issuereport.RecordUploadFailure(id, issuereport.UploadFailReasonOther); err != nil {
+			t.Fatalf("RecordUploadFailure #%d: %v", i, err)
+		}
+	}
+
+	rec := getMyReports(t, mux)
+	body := rec.Body.String()
+	if strings.Contains(body, "Couldn&#39;t send") {
+		t.Fatalf("a bundle below UploadFailingThreshold must not render as failing: %s", body)
+	}
+	if !strings.Contains(body, "Saved here, waiting to send") {
+		t.Fatalf("expected the translated pending status, got: %s", body)
+	}
+}
+
+// The "not registered" reason is exempt from the threshold: it can't
+// self-resolve by waiting, so a single recorded failure is enough to flag
+// it — unlike a generic network blip.
+func TestMyReportsPage_NotRegisteredFailsImmediately(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newMyReportsTestMux(t)
+	id, err := issuereport.Save("till was never enrolled", "", []byte("a"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := issuereport.RecordUploadFailure(id, issuereport.UploadFailReasonNotRegistered); err != nil {
+		t.Fatalf("RecordUploadFailure: %v", err)
+	}
+
+	rec := getMyReports(t, mux)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Couldn&#39;t send") {
+		t.Fatalf("expected the translated failing status after a single not-registered failure, got: %s", body)
+	}
+	if !strings.Contains(body, "finish enrolling it") {
+		t.Fatalf("expected the translated not-registered reason, got: %s", body)
+	}
+}
+
+// Sent (uploaded) and still-pending rows are read from two different
+// sources and built in two separate passes — they must still merge into one
+// newest-captured-first list, not two blocks.
+func TestMyReportsPage_SentAndPendingRowsSortedTogether(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, db := newMyReportsTestMux(t)
+	if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status) VALUES ('rep-old', 'oldest, already sent', '2026-08-01T10:00:00Z', 'sent')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := issuereport.Save("newest, still pending", "", []byte("a"), nil, nil); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	rec := getMyReports(t, mux)
+	body := rec.Body.String()
+	oldIdx := strings.Index(body, "oldest, already sent")
+	newIdx := strings.Index(body, "newest, still pending")
+	if oldIdx == -1 || newIdx == -1 {
+		t.Fatalf("both rows must render: %s", body)
+	}
+	if newIdx > oldIdx {
+		t.Fatalf("expected the newer pending row before the older sent row, got: %s", body)
 	}
 }
