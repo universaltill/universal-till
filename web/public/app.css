@@ -81,6 +81,10 @@ body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex
   font-size: .75rem; font-weight: 600; background: var(--surface-2);
   color: var(--muted); border: 1px solid var(--border);
 }
+/* A tag flagging something that needs attention (e.g. a failing bug-report
+   upload, ut-docs#637) — same warn tint .sync-chip.warn already uses below,
+   reused here rather than inventing a second warning color. */
+.tag.warn { background: rgba(217, 119, 6, .12); color: var(--warning); border-color: var(--warning); }
 
 /* ---------- Top navigation ---------- */
 .nav {

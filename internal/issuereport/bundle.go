@@ -57,7 +57,51 @@ type Meta struct {
 	// MaxSentFailCount (ut-docs#446). Omitted from JSON — and so zero — for
 	// every bundle saved before this field existed.
 	SentFailCount int `json:"sent_fail_count,omitempty"`
+	// UploadFailCount counts consecutive failed cloud-upload attempts (the
+	// uploadIssueReport call itself failing — offline, misconfigured,
+	// unregistered) — distinct from SentFailCount above, which only counts
+	// after a successful upload. Never capped or acted on by cloudsync
+	// itself (the upload keeps retrying unboundedly, per offline-first —
+	// ADR-0003); it exists purely so /my-reports (ut-docs#637) can tell a
+	// bundle that's merely waiting for connectivity from one that has been
+	// failing for a while. Reset implicitly: once the upload eventually
+	// succeeds the bundle is discarded outright, so a persisted nonzero
+	// count only ever exists on a still-pending bundle. See
+	// RecordUploadFailure and UploadFailingThreshold.
+	UploadFailCount int `json:"upload_fail_count,omitempty"`
+	// UploadFailReason is a coarse, translatable classification of the most
+	// recent upload failure — one of UploadFailReasonNotRegistered or
+	// UploadFailReasonOther, never the raw error text (which can contain a
+	// URL/host, isn't translated, and isn't meant for a shop owner to read
+	// verbatim).
+	UploadFailReason string `json:"upload_fail_reason,omitempty"`
 }
+
+// UploadFailingThreshold is how many consecutive cloud-upload failures (of
+// the kind that can plausibly self-resolve, e.g. the shop being briefly
+// offline) a bundle tolerates before /my-reports (ut-docs#637) presents it
+// as "failing" rather than merely "pending". A single failure is normal —
+// this till is offline-first and a bundle just sits pending until
+// connectivity returns; only a *run* of failures across several cloudsync
+// ticks (2-minute cadence — see cloudsync's tickIntervalNS — so this is
+// roughly 10 minutes) is worth flagging to the shop owner.
+// UploadFailReasonNotRegistered is exempted from this threshold; see its
+// own doc.
+const UploadFailingThreshold = 5
+
+// UploadFailReasonNotRegistered classifies an upload failure caused by this
+// till not being enrolled in the marketplace yet (uploadIssueReport's "not
+// registered" error). Unlike a network hiccup this cannot self-resolve by
+// merely waiting — it needs the shop owner to finish enrolment — so a
+// bundle failing for this reason is presented as failing immediately;
+// UploadFailingThreshold does not apply to it.
+const UploadFailReasonNotRegistered = "not_registered"
+
+// UploadFailReasonOther is every other upload failure reason (network
+// trouble, a non-2xx response, a locally-missing attachment) — expected to
+// self-resolve once the shop reconnects, so it only counts toward
+// UploadFailingThreshold rather than failing immediately.
+const UploadFailReasonOther = "other"
 
 // MaxSentFailCount caps how many SaveSent failures a bundle tolerates
 // before the till gives up on local retention and discards it (ut-docs#446)
@@ -269,6 +313,37 @@ func RecordSentFailure(id string) (int, error) {
 	delete(sentFailFallback.counts, id)
 	sentFailFallback.mu.Unlock()
 	return meta.SentFailCount, nil
+}
+
+// RecordUploadFailure increments and persists a bundle's UploadFailCount and
+// records its most recent failure's reason (UploadFailReasonNotRegistered or
+// UploadFailReasonOther). Called each time uploadIssueReport fails for a
+// pending bundle. Unlike RecordSentFailure, nothing here is capped or gates
+// a destructive action — the upload itself keeps retrying unboundedly per
+// offline-first (ADR-0003); this count only decides how the bundle is
+// *presented* on /my-reports. So, unlike RecordSentFailure, this
+// deliberately has no in-memory fallback for a failing write: undercounting
+// here only delays when a stuck report gets flagged as failing, it never
+// loses data or leaves a retry loop unbounded.
+//
+// An unknown/unreadable bundle id (already discarded, or its meta.json is
+// corrupt) is a real error, same distinction RecordSentFailure makes.
+func RecordUploadFailure(id, reason string) (int, error) {
+	path := filepath.Join(PendingDir, id, "meta.json")
+	mb, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("issuereport: read meta for %s: %w", id, err)
+	}
+	var meta Meta
+	if err := json.Unmarshal(mb, &meta); err != nil {
+		return 0, fmt.Errorf("issuereport: decode meta for %s: %w", id, err)
+	}
+	meta.UploadFailCount++
+	meta.UploadFailReason = reason
+	if err := writeMeta(path, meta); err != nil {
+		return 0, fmt.Errorf("issuereport: persist upload-fail count for %s: %w", id, err)
+	}
+	return meta.UploadFailCount, nil
 }
 
 // writeMeta is overridable in tests that need to simulate the durable write
