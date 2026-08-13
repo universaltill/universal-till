@@ -45,8 +45,11 @@ trading day instead of the clock.
 ## Report retention
 
 Every archived end-of-day report is kept for **10 years** — this is a legal
-record, not something the "Clear transaction history" reset button in Data
-management can remove. Once a report passes its 10-year anniversary, it is
+record, and the "Clear transaction history" reset button in Data management
+never touches it. (That button no longer destroys anything at all: it moves
+your transaction history into a reset archive, and an archived batch can be
+restored from Settings → Data as long as the till has not traded since the
+reset.) Once a report passes its 10-year anniversary, it is
 automatically and permanently deleted in the background — there is no
 manual step and no confirmation prompt, so export anything you need to keep
 longer before then.
