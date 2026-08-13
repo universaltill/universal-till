@@ -317,6 +317,7 @@ erDiagram
         string address
         string loyalty_no
         string created_at
+        boolean is_sample_data
     }
 
     users {
@@ -606,9 +607,9 @@ erDiagram
 
 ## Promotions
 
-- Table: `promotions(code TEXT PK, type TEXT CHECK type IN ('amount','percent') DEFAULT 'amount', value INTEGER, description TEXT, starts_at TEXT, ends_at TEXT, customer_id TEXT FK customers.id, is_active INTEGER)`
+- Table: `promotions(code TEXT PK, type TEXT CHECK type IN ('amount','percent') DEFAULT 'amount', value INTEGER, description TEXT, starts_at TEXT, ends_at TEXT, customer_id TEXT FK customers.id, is_active INTEGER, is_sample_data INTEGER)`
 - Purpose: store coupon/promotion codes redeemable at checkout; `value` is minor units for `type='amount'` or basis points (e.g., 1000 = 10%) for `type='percent'`; optional `customer_id` for targeted promos; `starts_at`/`ends_at` bound validity.
-- Seeds (001_init.sql): PROMO50 (50p), PROMO500 (£5), DISC10 (10% off) — respecting `type`.
+- Seeds (001_init.sql): PROMO50 (50p), PROMO500 (£5), DISC10 (10% off) — respecting `type`. **Opt-in as of migration 038 (ut-docs#567)**, same as the demo catalogue (migration 036): not present on a fresh install unless the setup wizard's sample-data checkbox is ticked, flagged `is_sample_data = 1` when seeded, removable from Settings → Data alongside the demo customers and catalogue. `customers` gets the same `is_sample_data` column and the same opt-in/removal treatment for its 3 seeded demo rows (Alice Carter/Ben Singh/Chloe Martin).
 - Usage: POS scan/discount endpoint checks active promotions (optionally matching customer) before applying barcode prefixes; basket carries `customer_id` for targeted promos.
 - Constraints: no negative amounts; inactive/expired codes ignored; percent promos should cap discounts to avoid negative totals.
 

@@ -78,10 +78,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		autoUpdateEnabled, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateEnabled)
 		autoUpdateTime, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateTime)
-		// Sample-data note (ut-docs#539): best-effort — a schema-less test DB
-		// or a query error just renders the page without the note, same
-		// posture as payMethods above.
-		sampleCount, _ := data.NewDemoSeedRepo(d.Db).SampleItemCount(r.Context())
+		// Sample-data note (ut-docs#539, extended to customers/promos by
+		// ut-docs#567): best-effort — a schema-less test DB or a query
+		// error just renders the page without the note, same posture as
+		// payMethods above. Combined across catalogue items + customers +
+		// promo codes, since "Remove sample data" now clears all three
+		// together and the note should describe what the button actually
+		// does.
+		demoSeedRepo := data.NewDemoSeedRepo(d.Db)
+		sampleItemCount, _ := demoSeedRepo.SampleItemCount(r.Context())
+		sampleCustomerPromoCount, _ := demoSeedRepo.SampleCustomerPromoCount(r.Context())
+		sampleCount := sampleItemCount + sampleCustomerPromoCount
 		shopType, _, _ := d.Settings.Get(r.Context(), common.KeyShopType)
 		// Restore-from-another-POS resume prompt (ut-docs#617): only shown
 		// when the wizard's "Later" choice left it deferred; best-effort
@@ -541,11 +548,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	// Remove the opt-in sample catalogue (ut-docs#539). Only untouched demo
-	// items go (never sold, never stock-adjusted — same rule migration 036
-	// applies on upgrade); the response reports removed vs kept. Answers
-	// 200 with the outcome in the fragment — it's an hx-swap target, and
-	// HTMX drops non-2xx bodies (see the enrol handlers above).
+	// Remove all opt-in sample data (ut-docs#539, extended to customers/
+	// promo codes by ut-docs#567): the catalogue AND the 3 demo customers
+	// AND the 3 demo promo codes together, so the button's copy matches
+	// what it actually removes. Only untouched rows go in each category
+	// (never sold/stock-adjusted for items; never sold-to or targeted by a
+	// promotion for customers; never targeted at a customer for promo
+	// codes — see remove_demo_customers_promos.sql's header for why that
+	// last rule differs from the other two). The response reports combined
+	// removed vs kept. Answers 200 with the outcome in the fragment — it's
+	// an hx-swap target, and HTMX drops non-2xx bodies (see the enrol
+	// handlers above).
 	mux.HandleFunc("POST /api/settings/remove-demo-catalogue", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -553,11 +566,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
-		removed, kept, err := data.NewDemoSeedRepo(d.Db).RemoveDemoCatalogue(r.Context())
+		seedRepo := data.NewDemoSeedRepo(d.Db)
+		removedItems, keptItems, err := seedRepo.RemoveDemoCatalogue(r.Context())
 		if err != nil {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}
+		removedCustPromo, keptCustPromo, err := seedRepo.RemoveDemoCustomersPromos(r.Context())
+		if err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		removed := removedItems + removedCustPromo
+		kept := keptItems + keptCustPromo
 		msg := fmt.Sprintf(httpx.T(locale, "settings.data.demo_removed"), removed)
 		if kept > 0 {
 			msg += " " + fmt.Sprintf(httpx.T(locale, "settings.data.demo_kept"), kept)
