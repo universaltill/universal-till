@@ -95,6 +95,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// when the wizard's "Later" choice left it deferred; best-effort
 		// like shopType above, same posture.
 		restorePromptStatus, _, _ := d.Settings.Get(r.Context(), common.KeyRestorePromptStatus)
+		// Country base-plugin auto-install (ut-docs#591): whatever the setup
+		// wizard's own attempt and the background retry haven't installed
+		// yet, so the merchant can see it's happening (or failing) and
+		// dismiss it — best-effort like everything else on this page, a
+		// read error just renders with nothing pending.
+		pendingBasePlugins, _ := loadPendingBasePlugins(r.Context(), d)
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -180,6 +186,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"shopType":              shopType,
 			"shopTypes":             setupShopTypes,
 			"restorePromptDeferred": restorePromptStatus == common.RestorePromptStatusDeferred,
+			"pendingBasePlugins":    pendingBasePluginViews(pendingBasePlugins),
 			"resetBatches":          resetBatches,
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
@@ -641,6 +648,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := d.Settings.Set(r.Context(), common.KeyRestorePromptStatus, ""); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	})
+
+	// Dismiss one still-pending country base-plugin auto-install
+	// (ut-docs#591) without installing it — "a merchant can decline/remove
+	// anything auto-installed" for the not-yet-installed case. hx-swap
+	// "outerHTML" on the chip itself, same reasoning as the restore-prompt
+	// dismiss above: an empty 200 body removes just that chip.
+	mux.HandleFunc("POST /api/settings/dismiss-pending-base-plugin", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		canonicalType := strings.TrimSpace(r.Form.Get("canonical_type"))
+		localeVal := strings.TrimSpace(r.Form.Get("locale"))
+		if err := dismissPendingBasePlugin(r.Context(), d, canonicalType, localeVal); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
