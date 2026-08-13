@@ -51,6 +51,13 @@ export default defineConfig({
         // manual is taken at the same size.
         viewport: { width: 1024, height: 600 },
         trace: 'retain-on-failure',
+        // Set by scripts/docs-shots.sh only when resolve-chromium.sh found a
+        // pre-installed browser worth reusing (ut-docs#622) — unset (and so
+        // this is a no-op) on any machine that ran the normal
+        // `playwright install --with-deps chromium` path.
+        ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+          ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } }
+          : {}),
       },
     },
   ],
