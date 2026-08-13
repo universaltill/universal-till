@@ -284,6 +284,130 @@ func TestStockForExport(t *testing.T) {
 	}
 }
 
+// TestStockForExport_VariantScoped is the ut-docs#240 fix: variant-scoped
+// inventory (inventory.item_id NULL, variant_id set — see the CHECK
+// constraint in 001_init.sql) used to be silently dropped by
+// ListStockLevels' INNER JOIN items, which StockForExport reshapes
+// unchanged. It must now appear as its own row, distinguishable from an
+// item-level row by a populated VariantID/VariantName, carrying the
+// variant's own SKU (not the parent's), without duplicating or double-
+// counting the parent item's own stock row.
+func TestStockForExport_VariantScoped(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbx.d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-parent', 'SKU-PARENT', 'Fizzy Drink', 200, 5, 1)`)
+	mustExec(`INSERT INTO item_variants(id, item_id, sku, name, price, is_active) VALUES('var-330', 'itm-parent', 'SKU-330', '330ml', 200, 1)`)
+	// Inactive variant must not leak into the export, mirroring the
+	// inactive-item filter already covered by TestStockForExport.
+	mustExec(`INSERT INTO item_variants(id, item_id, sku, name, price, is_active) VALUES('var-off', 'itm-parent', 'SKU-OFF-V', '1L (discontinued)', 200, 0)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity) VALUES('inv-parent', 'itm-parent', NULL, 'loc1', 4)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity) VALUES('inv-var', NULL, 'var-330', 'loc1', 12)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity) VALUES('inv-var-off', NULL, 'var-off', 'loc1', 99)`)
+
+	got, err := dbx.repo.StockForExport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 1 item row + 1 active variant row, got %+v", got)
+	}
+
+	var itemRow, variantRow *ExportStockRow
+	for i := range got {
+		if got[i].VariantID == "" {
+			itemRow = &got[i]
+		} else {
+			variantRow = &got[i]
+		}
+	}
+	if itemRow == nil || itemRow.ItemID != "itm-parent" || itemRow.CurrentQty != 4 {
+		t.Fatalf("unexpected item-level row: %+v", got)
+	}
+	if variantRow == nil {
+		t.Fatalf("variant-scoped row missing entirely: %+v", got)
+	}
+	if variantRow.ItemID != "itm-parent" || variantRow.Name != "Fizzy Drink" {
+		t.Fatalf("variant row not identifiable against its parent item: %+v", variantRow)
+	}
+	if variantRow.VariantID != "var-330" || variantRow.VariantName != "330ml" {
+		t.Fatalf("unexpected variant identity fields: %+v", variantRow)
+	}
+	if variantRow.SKU != "SKU-330" {
+		t.Fatalf("variant row must carry its own SKU, not the parent's: %+v", variantRow)
+	}
+	if variantRow.CurrentQty != 12 {
+		t.Fatalf("unexpected variant qty: %+v", variantRow)
+	}
+	if variantRow.LocationID != "loc1" || variantRow.LocationName != "Main" {
+		t.Fatalf("unexpected variant location fields: %+v", variantRow)
+	}
+}
+
+// TestStockForExport_VariantScoped_InactiveParent covers the half of the
+// active-filter TestStockForExport_VariantScoped's fixture never exercises:
+// an ACTIVE variant whose PARENT item is inactive. variantStockForExport's
+// WHERE clause requires both i.is_active AND v.is_active, but a fixture
+// with only an inactive *variant* (the existing test) can't prove the
+// i.is_active half is actually wired up — a mutation deleting it would
+// still pass. This must fail against that mutation.
+func TestStockForExport_VariantScoped_InactiveParent(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbx.d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-inactive-parent', 'SKU-IP', 'Discontinued Line', 200, 5, 0)`)
+	mustExec(`INSERT INTO item_variants(id, item_id, sku, name, price, is_active) VALUES('var-ip', 'itm-inactive-parent', 'SKU-IP-V', '500ml', 200, 1)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity) VALUES('inv-var-ip', NULL, 'var-ip', 'loc1', 7)`)
+
+	got, err := dbx.repo.StockForExport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no rows for a variant whose parent item is inactive, got %+v", got)
+	}
+}
+
+// TestStockForExport_VariantScoped_NullSKU covers a variant with no SKU
+// (item_variants.sku is a nullable, unique column — see 001_init.sql), which
+// TestStockForExport_VariantScoped's fixture doesn't exercise: it must scan
+// cleanly into an empty string rather than erroring on a NULL-into-string
+// scan.
+func TestStockForExport_VariantScoped_NullSKU(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbx.d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-nosku', 'SKU-PARENT2', 'Mug', 500, 5, 1)`)
+	mustExec(`INSERT INTO item_variants(id, item_id, sku, name, price, is_active) VALUES('var-nosku', 'itm-nosku', NULL, 'Blue', 500, 1)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity) VALUES('inv-var-nosku', NULL, 'var-nosku', 'loc1', 3)`)
+
+	got, err := dbx.repo.StockForExport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected exactly the one variant row, got %+v", got)
+	}
+	if got[0].VariantID != "var-nosku" || got[0].SKU != "" {
+		t.Fatalf("expected empty SKU for a variant with no SKU, got %+v", got[0])
+	}
+}
+
 func TestStockForExport_Empty(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
