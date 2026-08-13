@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -701,6 +702,126 @@ func TestPfandRueckgabe_NoOpenShiftRejected(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 with no open shift, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPfandRueckgabe_TwoRegistersPaysOutOnThisTillsOwnShift is the
+// ut-docs#268 acceptance-criteria regression test: on a two-register shop
+// with two CONCURRENT open shifts, a Pfandrückgabe payout must land on the
+// shift of THIS till's own register (till.register_id), not "whichever
+// shift was opened most recently anywhere". Register B's shift is opened
+// LAST on purpose — it is exactly the one the old CurrentOpenShift
+// heuristic would pick, so this test fails against the old code.
+func TestPfandRueckgabe_TwoRegistersPaysOutOnThisTillsOwnShift(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	for _, ins := range []string{
+		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
+		`INSERT INTO registers(id,name,is_active) VALUES('regB','Back Till',1)`,
+	} {
+		if _, err := dp.Db.ExecContext(ctx, ins); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Open register A's shift FIRST, then register B's — the most recent
+	// open shift anywhere is B's.
+	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"regA","cashier_id":"user1","opening_cash":5000}`); rec.Code != http.StatusOK {
+		t.Fatalf("open shift on regA: %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"regB","cashier_id":"user2","opening_cash":6000}`); rec.Code != http.StatusOK {
+		t.Fatalf("open shift on regB: %d: %s", rec.Code, rec.Body.String())
+	}
+	// The stored opened_at is second-granular RFC3339, so two back-to-back
+	// opens can tie; force B's to sort strictly last, the way a real later
+	// opening would.
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE shifts SET opened_at='2099-01-01T09:00:00Z' WHERE register_id='regB'`); err != nil {
+		t.Fatal(err)
+	}
+	var shiftA, shiftB string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE register_id='regA'`).Scan(&shiftA); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE register_id='regB'`).Scan(&shiftB); err != nil {
+		t.Fatal(err)
+	}
+
+	// THIS till is register A — the persistent identity ut-docs#268 adds.
+	if err := dp.Settings.Set(ctx, pos.SettingsKeyTillRegisterID, "regA"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/pfandrueckgabe", strings.NewReader(`{"amount":500}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The payout must be recorded against register A's shift specifically.
+	var gotShiftID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT json_extract(data_json,'$.shift_id') FROM audit_log WHERE action='cash_adjustment'`).Scan(&gotShiftID); err != nil {
+		t.Fatal(err)
+	}
+	if gotShiftID != shiftA {
+		t.Fatalf("payout landed on shift %q, expected THIS till's own register A shift %q (register B's concurrent shift is %q)", gotShiftID, shiftA, shiftB)
+	}
+
+	// And the accounting agrees: A's expected cash reflects the payout
+	// (5000-500), B's is untouched (6000).
+	recA := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftA+`","closing_cash":4500}`)
+	if recA.Code != http.StatusOK || !strings.Contains(recA.Body.String(), `"expected_cash":4500`) {
+		t.Fatalf("expected regA close with expected_cash=4500, got %d: %s", recA.Code, recA.Body.String())
+	}
+	recB := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftB+`","closing_cash":6000}`)
+	if recB.Code != http.StatusOK || !strings.Contains(recB.Body.String(), `"expected_cash":6000`) {
+		t.Fatalf("expected regB close with expected_cash=6000 (untouched by the payout), got %d: %s", recB.Code, recB.Body.String())
+	}
+}
+
+// A multi-register shop where this till has never been told which register
+// it is: a write must fail loudly (409 pointing at Settings), never guess —
+// the "no register identity yet" upgrade-path decision from ut-docs#268.
+func TestPfandRueckgabe_AmbiguousRegisterIdentityConflicts(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	for _, ins := range []string{
+		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
+		`INSERT INTO registers(id,name,is_active) VALUES('regB','Back Till',1)`,
+	} {
+		if _, err := dp.Db.ExecContext(ctx, ins); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"regA","cashier_id":"user1","opening_cash":5000}`); rec.Code != http.StatusOK {
+		t.Fatalf("open shift on regA: %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/pfandrueckgabe", strings.NewReader(`{"amount":500}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for an unset register identity on a multi-register shop, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Settings") {
+		t.Fatalf("expected the error to point staff at Settings, got %s", rec.Body.String())
+	}
+	// Nothing recorded.
+	var n int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='cash_adjustment'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("expected no cash adjustment recorded, got %d", n)
 	}
 }
 

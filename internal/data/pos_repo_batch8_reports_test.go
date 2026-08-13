@@ -29,6 +29,27 @@ func b8OpenDB(t *testing.T, name string) *db.DB {
 // b8At renders a time in the RFC3339 format production writes to created_at.
 func b8At(tm time.Time) string { return tm.UTC().Format("2006-01-02T15:04:05Z") }
 
+// b8ExpectedDay computes the SalesByDay grouping key for tm directly via
+// SQLite's own date(...,'localtime',hh,mm) modifiers — the same
+// production query uses (pos_repo.go's SalesByDay) — rather than a Go
+// .UTC().Format(...) literal, so the assertion holds in every host
+// timezone, not just the one the test happened to be written under
+// (independent review finding, ut-docs#559: a hardcoded expected date
+// only holds for host UTC offsets in roughly [-19:30, +2:30), and one
+// pre-existing test in this file computed its expectation via .UTC()
+// even though the query it exercises now groups by local time). Mirrors
+// the ctrlSlot control-query idiom TestPOSRepo_SalesByWeekdayAndHour_
+// BucketsLocalTime already uses below.
+func b8ExpectedDay(t *testing.T, d *db.DB, tm time.Time, hh, mm int) string {
+	t.Helper()
+	var day string
+	if err := d.DB.QueryRow(`SELECT date(?, 'localtime', ?, ?)`,
+		b8At(tm), fmt.Sprintf("%d hours", -hh), fmt.Sprintf("%d minutes", -mm)).Scan(&day); err != nil {
+		t.Fatalf("control day query: %v", err)
+	}
+	return day
+}
+
 // b8Sale inserts a sale row. subtotal mirrors total (discounts irrelevant here).
 func b8Sale(t *testing.T, d *db.DB, id, createdAt, status, saleType string, taxTotal, total int64) {
 	t.Helper()
@@ -71,8 +92,8 @@ func TestPOSRepo_SalesByDay_AggregatesFiltersOrders(t *testing.T) {
 
 	tNew := time.Now().Add(-2 * time.Hour)
 	tOld := time.Now().Add(-72 * time.Hour)
-	dayNew := tNew.UTC().Format("2006-01-02") // query groups by date() of the stored UTC string
-	dayOld := tOld.UTC().Format("2006-01-02")
+	dayNew := b8ExpectedDay(t, d, tNew, 0, 0) // hh=mm=0: query groups by local-midnight date
+	dayOld := b8ExpectedDay(t, d, tOld, 0, 0)
 
 	// Two completed sales on the recent day: totals 1000+250, tax 100+25.
 	b8Sale(t, d, "s1", b8At(tNew), "completed", "sale", 100, 1000)
@@ -84,7 +105,7 @@ func TestPOSRepo_SalesByDay_AggregatesFiltersOrders(t *testing.T) {
 	// Outside the 7-day window: must not appear.
 	b8Sale(t, d, "s5", b8At(time.Now().Add(-9*24*time.Hour)), "completed", "sale", 0, 55555)
 
-	rows, err := repo.SalesByDay(ctx, winFrom(7), winTo())
+	rows, err := repo.SalesByDay(ctx, winFrom(7), winTo(), 0, 0)
 	if err != nil {
 		t.Fatalf("SalesByDay: %v", err)
 	}
@@ -100,6 +121,76 @@ func TestPOSRepo_SalesByDay_AggregatesFiltersOrders(t *testing.T) {
 	}
 	if rows[1].Count != 1 || rows[1].Total != 700 || rows[1].TaxTotal != 70 {
 		t.Fatalf("old day = %+v, want count 1 total 700 tax 70", rows[1])
+	}
+}
+
+// TestPOSRepo_SalesByDay_BusinessDayBoundary_MergesTradingNight is the exact
+// reproduction from ut-docs#559: a trading night spanning a 04:00
+// business-day boundary must be ONE row, not split across two raw UTC
+// calendar dates. Pre-fix, date(created_at) truncated the raw stored UTC
+// string with no boundary shift at all, so 23:30 and 01:30 landed on two
+// different calendar dates and produced two rows (confirmed by running this
+// exact scenario against the unfixed 2-arg query: got 2 rows, one per UTC
+// calendar date — see the code review for the pasted failure output).
+func TestPOSRepo_SalesByDay_BusinessDayBoundary_MergesTradingNight(t *testing.T) {
+	d := b8OpenDB(t, "salesbyday-boundary.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	// 23:30 UTC one calendar date, 01:30 UTC the next — same trading night,
+	// both before the 04:00 business-day boundary rolls over.
+	t1 := time.Date(2026, 8, 12, 23, 30, 0, 0, time.UTC)
+	t2 := time.Date(2026, 8, 13, 1, 30, 0, 0, time.UTC)
+	b8Sale(t, d, "n1", b8At(t1), "completed", "sale", 100, 1000)
+	b8Sale(t, d, "n2", b8At(t2), "completed", "sale", 50, 500)
+
+	from := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+
+	rows, err := repo.SalesByDay(ctx, from, to, 4, 0)
+	if err != nil {
+		t.Fatalf("SalesByDay: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("one trading night spanning the business-day boundary must be ONE row, got %d: %+v", len(rows), rows)
+	}
+	got := rows[0]
+	if got.Count != 2 || got.Total != 1500 || got.TaxTotal != 150 {
+		t.Fatalf("merged night = %+v, want count 2 total 1500 tax 150", got)
+	}
+	wantDay := b8ExpectedDay(t, d, t1, 4, 0) // both sales belong to the business day t1 started
+	if got.Day != wantDay {
+		t.Fatalf("merged night's business day = %q, want %q (both sales belong to the business day that started at 04:00)", got.Day, wantDay)
+	}
+}
+
+// TestPOSRepo_SalesByDay_DefaultBoundary_NoRegressionInUTC pins hh=mm=0 (the
+// default, unset business_day_start) as a no-op vs. the pre-#559 query when
+// the host timezone is UTC: two sales on two different UTC calendar dates
+// must still land in two separate rows, exactly as before this fix.
+func TestPOSRepo_SalesByDay_DefaultBoundary_NoRegressionInUTC(t *testing.T) {
+	d := b8OpenDB(t, "salesbyday-default-noregression.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	t1 := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	b8Sale(t, d, "u1", b8At(t1), "completed", "sale", 100, 1000)
+	b8Sale(t, d, "u2", b8At(t2), "completed", "sale", 50, 500)
+
+	from := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+
+	rows, err := repo.SalesByDay(ctx, from, to, 0, 0)
+	if err != nil {
+		t.Fatalf("SalesByDay: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("default hh=mm=0 in a UTC host must keep splitting on calendar-local-midnight: got %d rows: %+v", len(rows), rows)
+	}
+	want1, want2 := b8ExpectedDay(t, d, t2, 0, 0), b8ExpectedDay(t, d, t1, 0, 0) // DESC: newest first
+	if rows[0].Day != want1 || rows[1].Day != want2 {
+		t.Fatalf("wrong day order/values: got [%s, %s], want [%s, %s]", rows[0].Day, rows[1].Day, want1, want2)
 	}
 }
 
@@ -651,7 +742,7 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	// (but no sales). Clear inventory so DeadStock's empty path is real.
 	mustExec(t, d, `DELETE FROM inventory`)
 
-	if rows, err := repo.SalesByDay(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
+	if rows, err := repo.SalesByDay(ctx, winFrom(7), winTo(), 0, 0); err != nil || len(rows) != 0 {
 		t.Fatalf("SalesByDay empty = (%v, %v)", rows, err)
 	}
 	if rows, err := repo.SlowItems(ctx, winFrom(7), winTo(), 5); err != nil || len(rows) != 0 {
@@ -688,7 +779,7 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	// A closed DB must surface an error from every report, never a silent
 	// empty result (batch-7 convention; also exercises the query-error wraps).
 	_ = d.Close()
-	if _, err := repo.SalesByDay(ctx, winFrom(7), winTo()); err == nil {
+	if _, err := repo.SalesByDay(ctx, winFrom(7), winTo(), 0, 0); err == nil {
 		t.Fatal("SalesByDay on a closed DB must error")
 	}
 	if _, err := repo.SlowItems(ctx, winFrom(7), winTo(), 5); err == nil {
