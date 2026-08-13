@@ -315,6 +315,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerLocations(mux, dp)
 	registerPromotions(mux, dp)      // promo-code admin: create/edit/deactivate/list (ut-docs#634)
 	registerKitchenStations(mux, dp) // kitchen station routing (ut-docs#516)
+	registerCountrySettings(mux, dp) // per-country defaults (ut-docs#659)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)
 	if authDisabled {

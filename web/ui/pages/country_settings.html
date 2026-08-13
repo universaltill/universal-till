@@ -1,0 +1,86 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "countrysettings.title" }}</h1>
+</div>
+
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+<p class="muted">{{ T "countrysettings.intro" }}</p>
+
+<div class="users-layout">
+  <div class="card users-list">
+    <div style="overflow-x:auto">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "countrysettings.col.country" }}</th>
+          <th>{{ T "countrysettings.col.currency" }}</th>
+          <th>{{ T "countrysettings.col.symbol" }}</th>
+          <th>{{ T "countrysettings.col.tax" }}</th>
+          <th>{{ T "countrysettings.col.retention" }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .countries }}
+        {{/* One row IS the edit form — the values are only shown as inputs, so
+             a read-only column never disagrees with the field beside it. */}}
+        <tr>
+          <td>
+            {{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}
+            <span class="muted" dir="ltr">{{ .Code }}</span>
+            {{ if not .IsBuiltin }}<br /><span class="muted">{{ T "countrysettings.custom" }}</span>{{ end }}
+          </td>
+          <td>
+            <input form="cs-{{ .Code }}" type="text" name="currency" value="{{ .Currency }}" dir="ltr" size="4" maxlength="8" />
+          </td>
+          <td>
+            <input form="cs-{{ .Code }}" type="text" name="currency_symbol" value="{{ .CurrencySymbol }}" dir="ltr" size="2" maxlength="4" />
+          </td>
+          <td>
+            <input form="cs-{{ .Code }}" type="number" name="tax_rate_pct" value="{{ .TaxRatePct }}" min="0" step="0.01" dir="ltr" size="5" />
+            <label>
+              <input form="cs-{{ .Code }}" type="checkbox" name="tax_inclusive" value="1" {{ if .TaxInclusive }}checked{{ end }} />
+              {{ T "countrysettings.tax.inclusive" }}
+            </label>
+          </td>
+          <td>
+            <input form="cs-{{ .Code }}" type="number" name="archive_min_days" value="{{ .ArchiveMinDays }}" min="{{ $.floorDays }}" step="1" dir="ltr" size="6" />
+          </td>
+          <td class="users-actions">
+            <form id="cs-{{ .Code }}" method="post" action="/api/country-settings">
+              <input type="hidden" name="code" value="{{ .Code }}" />
+              <button type="submit" class="btn secondary">{{ T "countrysettings.save" }}</button>
+            </form>
+            <form method="post" action="/api/country-settings/{{ .Code }}/delete">
+              <button type="submit" class="btn secondary">
+                {{ if .IsBuiltin }}{{ T "countrysettings.reset" }}{{ else }}{{ T "countrysettings.delete" }}{{ end }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="card users-form">
+    <h3>{{ T "countrysettings.new.title" }}</h3>
+    <form method="post" action="/api/country-settings" autocomplete="off">
+      <label>{{ T "countrysettings.col.country" }} <input type="text" name="code" maxlength="8" required dir="ltr" /></label>
+      <label>{{ T "countrysettings.col.currency" }} <input type="text" name="currency" maxlength="8" dir="ltr" /></label>
+      <label>{{ T "countrysettings.col.symbol" }} <input type="text" name="currency_symbol" maxlength="4" dir="ltr" /></label>
+      <label>{{ T "countrysettings.col.tax" }} <input type="number" name="tax_rate_pct" min="0" step="0.01" value="0" dir="ltr" /></label>
+      <label class="users-inline">
+        <input type="checkbox" name="tax_inclusive" value="1" checked />
+        {{ T "countrysettings.tax.inclusive" }}
+      </label>
+      <label>{{ T "countrysettings.col.retention" }} <input type="number" name="archive_min_days" min="{{ .floorDays }}" step="1" value="{{ .floorDays }}" dir="ltr" /></label>
+      <p class="muted">{{ T "countrysettings.retention_help" }}</p>
+      <button type="submit" class="btn primary" style="width:100%">{{ T "countrysettings.new.submit" }}</button>
+    </form>
+    <p class="muted">{{ T "countrysettings.delete_help" }}</p>
+  </div>
+</div>
+{{ end }}

@@ -51,6 +51,36 @@ func TestReportRetentionCutoff_TenYearsBackFormattedAsPeriod(t *testing.T) {
 	}
 }
 
+// ut-docs#659 review finding B2: reportRetentionCutoff (calendar years) and
+// data.GlobalArchiveMinDays (a fixed day count, ADR-0040's single global
+// floor enforced by country_settings.go's Upsert) are two independent
+// spellings of "10 years" with nothing tying them together before this
+// test. Pins the relationship that actually matters: the till never prunes
+// a report_archive row sooner than the floor promises. Checked across a
+// spread of "now" dates so a single-year sample can't hide a case where
+// leap days push the calendar window *under* 3650 (they can't, by
+// construction — every 10-year span contains at least 2 leap days — but
+// this asserts it rather than assuming it).
+func TestReportRetentionCutoffNeverShorterThanGlobalArchiveMinDays(t *testing.T) {
+	for _, now := range []time.Time{
+		time.Date(2021, 3, 1, 0, 0, 0, 0, time.UTC),  // spans leap years 2020, 2024
+		time.Date(2026, 8, 12, 15, 4, 5, 0, time.UTC), // spans leap years 2020, 2024
+		time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),   // 2100 is NOT a Gregorian leap year
+		time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC),   // spans leap years 1996, 2000
+	} {
+		cutoff, err := time.Parse("2006-01-02", reportRetentionCutoff(now))
+		if err != nil {
+			t.Fatalf("reportRetentionCutoff(%v) did not parse as a period: %v", now, err)
+		}
+		spanDays := int64(now.Sub(cutoff).Hours() / 24)
+		if spanDays < data.GlobalArchiveMinDays {
+			t.Errorf("now=%v: retention window is only %d days, want >= GlobalArchiveMinDays (%d) -- "+
+				"the till would prune a row before the country_settings floor promises it's kept",
+				now, spanDays, data.GlobalArchiveMinDays)
+		}
+	}
+}
+
 // pruneReportArchive is the actual (non-goroutine) step StartEODScheduler
 // calls each tick — testable directly without driving the 30s ticker loop.
 
