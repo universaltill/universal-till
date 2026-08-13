@@ -29,8 +29,14 @@ e2e-seed:
 # rewrites web/help/img/manifest.json — the freshness record
 # scripts/ci/guard-docs-shots.sh checks in CI. Run this and commit the result
 # whenever a screen or a routed topic changes.
+#
+# Delegates to e2e/scripts/docs-shots.sh, which reuses a pre-installed
+# Chromium when one is smoke-tested launchable (ut-docs#622) instead of
+# always running `playwright install --with-deps chromium` — a cold cloud
+# pipeline session can't download a browser, so without this the target was
+# simply unrunnable there.
 docs-shots:
-	cd e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test --config=playwright.docs.config.ts && node tests-docs/write-manifest.js
+	bash e2e/scripts/docs-shots.sh
 
 e2e:
 	@set -e; \
