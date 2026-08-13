@@ -685,9 +685,32 @@ VALUES (?, ?, ?, ?, ?)`,
 // If the existing value isn't valid JSON, it is left completely untouched
 // and an error is returned — a hand-edited value that fails to parse must
 // never be silently overwritten by whatever this merge would have written.
+//
+// Read/write scope note (found in ut-docs#532's review, pre-existing and
+// preserved rather than introduced by this method): the read prefers the
+// most specific scope present (register beats user beats global — same
+// preference GetPluginSetting itself uses), but the write always targets
+// scope='global', matching UpsertPluginSetting/UpsertPluginSettingScoped's
+// own global-only default. On a key that only ever has a global-scope row
+// (true today for ut-plugin-tax-de's takeaway_rate_overrides) this is
+// inert; a future caller with a register/user-scoped row on the same key
+// would see the merge read that row but write the result to a *different*
+// global row, silently diverging from what GetPluginSetting reports back.
+// Tracked as a follow-up rather than fixed here, to keep this fix scoped
+// to the atomicity bug it was opened for.
+//
+// Owns its own transaction (BeginTx, not an injectable tx like
+// InstallPlugin's executor(tx) pattern) — matches settings_repo.go's
+// GetOrCreate precedent. A future caller invoking this while already
+// holding a write transaction on the same DB will block for
+// busy_timeout(5000ms) and then fail with SQLITE_BUSY rather than nest.
 func (r *PluginRepo) MergeAdditiveJSONMapSetting(ctx context.Context, pluginID, key string, newEntries map[string]int) (added int, err error) {
 	done := pluginObs.trace("merge_additive_json_map_setting")
 	defer func() { done(err) }()
+
+	if len(newEntries) == 0 {
+		return 0, nil
+	}
 
 	tx, txErr := r.db.BeginTx(ctx, nil)
 	if txErr != nil {
