@@ -821,17 +821,28 @@ ORDER BY revenue DESC`, day)
 	return out, rows.Err()
 }
 
-// SalesByDay aggregates completed sales per day over [from, to).
+// SalesByDay aggregates completed sales per day over [from, to). day is
+// grouped by the shop's LOCAL business day, not the raw stored UTC calendar
+// date: created_at is converted to local time ('localtime', the same
+// process/host timezone time.Local resolves to in this single-process till,
+// consistent with businessDateFor's own design in reports_page.go) and then
+// shifted back by the configured business-day-start hh:mm (parseBusinessDayStart)
+// before truncating to a date — so a trading night that spans local midnight
+// or the configured boundary collapses into one row instead of two
+// (ut-docs#559). hh=mm=0 (the default, calendar-local-midnight) is a no-op
+// vs. the previous query when the host timezone is UTC.
 // Returns are excluded, matching DayTotal on the same dashboard (and
 // SlowItems/busyBuckets); TaxSummary is the fiscal view and nets them.
-func (r *POSRepo) SalesByDay(ctx context.Context, from, to time.Time) ([]DailySales, error) {
+func (r *POSRepo) SalesByDay(ctx context.Context, from, to time.Time, hh, mm int) ([]DailySales, error) {
 	fromStr, toStr := windowArgs(from, to)
+	hourMod := fmt.Sprintf("%d hours", -hh)
+	minMod := fmt.Sprintf("%d minutes", -mm)
 	rows, err := r.db.QueryContext(ctx, `
-SELECT date(created_at) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0)
+SELECT date(created_at, 'localtime', ?, ?) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0)
 FROM sales
 WHERE status = 'completed' AND sale_type = 'sale'
   AND datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
-GROUP BY day ORDER BY day DESC`, fromStr, toStr)
+GROUP BY day ORDER BY day DESC`, hourMod, minMod, fromStr, toStr)
 	if err != nil {
 		return nil, fmt.Errorf("sales by day: %w", err)
 	}

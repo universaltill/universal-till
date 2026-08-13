@@ -56,10 +56,15 @@ var reportPeriodLabels = map[string]string{
 // default to show — callers must read Anchor from here rather than
 // recomputing "today" themselves, or they drift from the boundary this
 // window was actually resolved against (ut-docs#519 review finding).
+// Hour/Minute are the same resolved business-day-start hh:mm used to build
+// From/To (parseBusinessDayStart) — callers needing SalesByDay's grouping to
+// agree with this window's own boundary (ut-docs#559) read them from here
+// rather than re-parsing the setting a second time.
 type reportWindow struct {
-	From, To time.Time
-	Label    string
-	Anchor   string
+	From, To     time.Time
+	Label        string
+	Anchor       string
+	Hour, Minute int
 }
 
 // parseBusinessDayStart parses a "reports.business_day_start" setting value
@@ -116,7 +121,7 @@ func parseReportWindow(r *http.Request, businessDayStart string) reportWindow {
 	if !ok {
 		to := reportNow()
 		from := to.AddDate(0, 0, -parseReportDays(r))
-		return reportWindow{From: from, To: to, Anchor: anchorStr}
+		return reportWindow{From: from, To: to, Anchor: anchorStr, Hour: hh, Minute: mm}
 	}
 
 	at := func(y int, m time.Month, d int) time.Time {
@@ -145,7 +150,7 @@ func parseReportWindow(r *http.Request, businessDayStart string) reportWindow {
 		to = from.AddDate(1, 0, 0)
 	}
 
-	return reportWindow{From: from, To: to, Label: label, Anchor: anchorStr}
+	return reportWindow{From: from, To: to, Label: label, Anchor: anchorStr, Hour: hh, Minute: mm}
 }
 
 // reportPeriodParam resolves the ?period= value /reports' picker should
@@ -170,7 +175,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		bizDayStart, _, _ := d.Settings.Get(r.Context(), keyReportsBusinessDayStart)
 		window := parseReportWindow(r, bizDayStart)
 		repo := data.NewPOSRepo(d.Db)
-		daily, _ := repo.SalesByDay(r.Context(), window.From, window.To)
+		daily, _ := repo.SalesByDay(r.Context(), window.From, window.To, window.Hour, window.Minute)
 		curPeriod, lastYear, _ := repo.PeriodComparison(r.Context(), window.From, window.To)
 		yoyPct := 0
 		if lastYear.Total > 0 {
@@ -240,7 +245,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		repo := data.NewPOSRepo(d.Db)
 		switch r.PathValue("name") {
 		case "sales-trend":
-			daily, _ := repo.SalesByDay(r.Context(), window.From, window.To)
+			daily, _ := repo.SalesByDay(r.Context(), window.From, window.To, window.Hour, window.Minute)
 			byWeekday, _ := repo.SalesByWeekday(r.Context(), window.From, window.To)
 			byHour, _ := repo.SalesByHour(r.Context(), window.From, window.To)
 			// Normalize to bar widths (busiest = 100%) so the template stays dumb.
