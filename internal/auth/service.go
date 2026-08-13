@@ -271,6 +271,15 @@ func (s *Service) ChangeOwnPIN(ctx context.Context, userID, currentPIN, newPIN s
 	return s.repo.RevokeUserSessions(ctx, userID)
 }
 
+// Can reports whether u's role is granted the given action, per
+// role_permissions. This is additive groundwork (#554, split of #520):
+// no call site consumes it yet, so it can't yet change any till's
+// behavior — the seed data exactly mirrors today's IsManager gate until
+// a later card (#555) points real call sites at it.
+func (s *Service) Can(ctx context.Context, u User, action string) (bool, error) {
+	return s.repo.HasPermission(ctx, u.Role, action)
+}
+
 // NeedsFirstBoot reports whether no operator can log in yet, which switches
 // /login into the one-time "set admin PIN" flow.
 func (s *Service) NeedsFirstBoot(ctx context.Context) (bool, error) {
