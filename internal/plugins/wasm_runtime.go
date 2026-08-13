@@ -202,6 +202,15 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	bus := SharedBus(db)
 	bus.ResetSubscribers()
 
+	// ut-docs#368: a load failure used to `continue` silently — a joined
+	// replica whose plugins row arrived in the snapshot with no file on disk
+	// looked healthy while tax silently fell back to base rates. Failures
+	// are now tallied, flipped to install_state='broken' (visible on the
+	// plugins page and to the tax fail-closed check), and flipped back to
+	// 'installed' on a later successful load — self-heal must be visible.
+	var loaded, failed []string
+	stateChanged := false
+
 	for _, row := range rows {
 		if row.Runtime != "wasm" || !row.IsActive {
 			continue
@@ -210,7 +219,17 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			strings.TrimPrefix(row.Entrypoint, "./"))
 		if err := w.load(row.ID, row.Version, modPath); err != nil {
 			logging.L().Errorf("wasm load %s: %v", row.ID, err)
+			failed = append(failed, row.ID)
+			if markBroken(ctx, repo, row) {
+				stateChanged = true
+			}
 			continue
+		}
+		loaded = append(loaded, row.ID)
+		if row.InstallState == data.PluginStateBroken {
+			if markHealed(ctx, repo, row) {
+				stateChanged = true
+			}
 		}
 		events, err := repo.ListPluginHookEvents(ctx, row.ID)
 		if err != nil || len(events) == 0 {
@@ -260,6 +279,105 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		}()
 		logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
 	}
+
+	if stateChanged {
+		// Install-state flips change what cached ".ask" answers (and the
+		// tax fail-closed broken check, tax_hook.go) may assume — bump AFTER
+		// the DB writes so no caller can cache pre-flip state under the
+		// post-flip generation.
+		bus.BumpGeneration()
+	}
+	if len(failed) > 0 {
+		// Recovery differs by provenance (ut-docs#368 round-2 review): a
+		// marketplace-installed plugin (it has an install-status record,
+		// keyed by listing) is re-fetched automatically by the multi-till
+		// sync loop, while a file-imported one has NO listing to re-fetch
+		// from and stays broken until someone re-imports the plugin file on
+		// THIS till — the tally must say which is which, not promise
+		// self-heal for both.
+		selfHeal, reimport := partitionBrokenByRecovery(ctx, db, failed)
+		note := ""
+		if len(selfHeal) > 0 {
+			note += fmt.Sprintf("; %v will be re-fetched from the marketplace automatically by the sync loop", selfHeal)
+		}
+		if len(reimport) > 0 {
+			// Number-agnostic phrasing: the slice may hold one ID or several,
+			// so no bare plural verb ("have") that reads wrong for one.
+			note += fmt.Sprintf("; %v: no marketplace listing to re-fetch from (file import) — re-import the plugin file on this till to recover", reimport)
+		}
+		logging.L().Errorf("wasm sync: %d plugins loaded, %d failed %v — failed plugins are marked 'broken' until their files are restored%s",
+			len(loaded), len(failed), failed, note)
+	} else if len(loaded) > 0 {
+		logging.L().Infof("wasm sync: %d plugins loaded (0 failed)", len(loaded))
+	}
+}
+
+// markBroken flips a wasm plugin whose module failed to load to
+// install_state='broken' (ut-docs#368). It deliberately does NOT touch the
+// plugin's install-status record: that record's State tracks the INSTALL
+// lifecycle (Requested/Downloading/Installing/Active/Failed — Failed means
+// "the install attempt itself failed", and the store page renders it as
+// not-installed with a retry affordance), while a plugin that installed
+// fine and later broke at LOAD time is still installed. Demoting the record
+// to Failed also broke convergePluginSet's prune loop (sync_admin.go),
+// which only prunes Active records — a broken plugin removed on the primary
+// became permanently un-uninstallable on its replicas (round-2 review
+// BLOCKER). plugins.install_state='broken' is the single source of truth
+// for the broken condition: the plugins-page chip and the tax fail-closed
+// check (HasBrokenActivePluginForEvent) both read it directly. Reports
+// whether any state actually changed (an already-broken plugin is left
+// alone).
+func markBroken(ctx context.Context, repo *data.PluginRepo, row data.InstalledPluginRow) bool {
+	if row.InstallState == data.PluginStateBroken {
+		return false
+	}
+	if err := repo.UpdatePluginInstallState(ctx, row.ID, data.PluginStateBroken); err != nil {
+		logging.L().Errorf("wasm sync: mark %s broken: %v", row.ID, err)
+		return false
+	}
+	return true
+}
+
+// markHealed is markBroken's inverse: a previously-broken plugin whose
+// module just loaded flips back to 'installed' — recovery must be as
+// visible as the failure was. Like markBroken, it leaves the install-status
+// record alone (markBroken never changed it).
+func markHealed(ctx context.Context, repo *data.PluginRepo, row data.InstalledPluginRow) bool {
+	if err := repo.UpdatePluginInstallState(ctx, row.ID, data.PluginStateInstalled); err != nil {
+		logging.L().Errorf("wasm sync: heal %s: %v", row.ID, err)
+		return false
+	}
+	logging.L().Infof("wasm sync: %s recovered — its module loaded again, install_state flipped back to 'installed'", row.ID)
+	return true
+}
+
+// partitionBrokenByRecovery splits the failed plugin IDs by how they can
+// recover: a plugin with an install-status record (marketplace install,
+// keyed by listing) is re-fetched automatically by the sync loop; one
+// without (file import) has no listing to re-fetch from and needs a manual
+// re-import on this till. On a read error everything is reported in the
+// self-heal bucket — the common case — rather than wrongly telling an
+// operator to re-import a store plugin.
+func partitionBrokenByRecovery(ctx context.Context, db *sql.DB, failed []string) (selfHeal, reimport []string) {
+	records, err := NewInstallStatusStore(db).List(ctx)
+	if err != nil {
+		logging.L().Errorf("wasm sync: list install-status records: %v", err)
+		return failed, nil
+	}
+	listed := map[string]bool{}
+	for _, rec := range records {
+		if rec.PluginID != "" {
+			listed[rec.PluginID] = true
+		}
+	}
+	for _, id := range failed {
+		if listed[id] {
+			selfHeal = append(selfHeal, id)
+		} else {
+			reimport = append(reimport, id)
+		}
+	}
+	return selfHeal, reimport
 }
 
 // Close stops the per-plugin event-channel drainer goroutines Sync started —

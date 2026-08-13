@@ -64,7 +64,7 @@ func TestAskTaxRateBP_CachesPerPayload(t *testing.T) {
 	// recomputeTotals asks once per line per recompute, so a repeated
 	// payload MUST be answered from cache, not by re-running the plugin.
 	for i := 0; i < 3; i++ {
-		rate, ok := asker.AskTaxRateBP(line, "eat_in")
+		rate, ok, _ := asker.AskTaxRateBP(line, "eat_in")
 		if !ok || rate != 500 {
 			t.Fatalf("ask %d: got (%d,%v), want (500,true)", i, rate, ok)
 		}
@@ -74,7 +74,7 @@ func TestAskTaxRateBP_CachesPerPayload(t *testing.T) {
 	}
 
 	// A different order type is a different payload — must reach the plugin.
-	if _, ok := asker.AskTaxRateBP(line, "takeaway"); !ok {
+	if _, ok, _ := asker.AskTaxRateBP(line, "takeaway"); !ok {
 		t.Fatal("takeaway ask should still resolve")
 	}
 	if calls != 2 {
@@ -111,7 +111,7 @@ func TestAskTaxRateBP_NoOpinionAnswerIsCachedToo(t *testing.T) {
 	// plugin declines most items must not pay that boot per line per
 	// recompute either.
 	for i := 0; i < 3; i++ {
-		if rate, ok := asker.AskTaxRateBP(line, "eat_in"); ok || rate != 0 {
+		if rate, ok, _ := asker.AskTaxRateBP(line, "eat_in"); ok || rate != 0 {
 			t.Fatalf("ask %d: got (%d,%v), want (0,false)", i, rate, ok)
 		}
 	}
@@ -146,7 +146,7 @@ func TestAskTaxRateBP_PluginReloadInvalidatesCache(t *testing.T) {
 	line := pos.BasketLine{ItemID: "itm1", TaxCodeID: "tax_std", TaxRateBP: 2000}
 
 	subscribe(500)
-	if rate, _ := asker.AskTaxRateBP(line, "eat_in"); rate != 500 {
+	if rate, _, _ := asker.AskTaxRateBP(line, "eat_in"); rate != 500 {
 		t.Fatalf("v1 answer: got %d, want 500", rate)
 	}
 
@@ -154,7 +154,7 @@ func TestAskTaxRateBP_PluginReloadInvalidatesCache(t *testing.T) {
 	// fresh subscription. The old answer must not survive the reload.
 	bus.ResetSubscribers()
 	subscribe(1250)
-	if rate, _ := asker.AskTaxRateBP(line, "eat_in"); rate != 1250 {
+	if rate, _, _ := asker.AskTaxRateBP(line, "eat_in"); rate != 1250 {
 		t.Fatalf("post-reload answer: got %d, want 1250 (stale cache?)", rate)
 	}
 }
@@ -190,11 +190,11 @@ func TestAskTaxRateBP_HandlerErrorIsNotCached(t *testing.T) {
 
 	// A transient failure declines this recompute but must NOT be pinned:
 	// the next recompute retries the plugin.
-	if _, ok := asker.AskTaxRateBP(line, "eat_in"); ok {
+	if _, ok, _ := asker.AskTaxRateBP(line, "eat_in"); ok {
 		t.Fatal("failed ask should decline")
 	}
 	fail = false
-	if rate, ok := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != 500 {
+	if rate, ok, _ := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != 500 {
 		t.Fatalf("recovered ask: got (%d,%v), want (500,true)", rate, ok)
 	}
 	if calls != 2 {
@@ -231,7 +231,7 @@ func TestAskTaxRateBP_PluginSettingsSaveInvalidatesCache(t *testing.T) {
 
 	asker := &pluginTaxRateAsker{db: dp.Db}
 	line := pos.BasketLine{ItemID: "itm1", TaxCodeID: "tax_std", TaxRateBP: 2000}
-	if rate, _ := asker.AskTaxRateBP(line, "eat_in"); rate != 2000 {
+	if rate, _, _ := asker.AskTaxRateBP(line, "eat_in"); rate != 2000 {
 		t.Fatalf("pre-save answer: got %d, want 2000", rate)
 	}
 
@@ -245,7 +245,7 @@ func TestAskTaxRateBP_PluginSettingsSaveInvalidatesCache(t *testing.T) {
 		t.Fatalf("settings save: code %d body %s", rec.Code, rec.Body.String())
 	}
 
-	if rate, _ := asker.AskTaxRateBP(line, "eat_in"); rate != 1250 {
+	if rate, _, _ := asker.AskTaxRateBP(line, "eat_in"); rate != 1250 {
 		t.Fatalf("post-save answer: got %d, want 1250 (stale cache — settings save must invalidate)", rate)
 	}
 }
@@ -283,7 +283,7 @@ func TestAskTaxRateBP_PermissionRevokeStopsCachedOverride(t *testing.T) {
 
 	asker := &pluginTaxRateAsker{db: db}
 	line := pos.BasketLine{ItemID: "itm1", TaxCodeID: "tax_std", TaxRateBP: 2000}
-	if rate, ok := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != 500 {
+	if rate, ok, _ := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != 500 {
 		t.Fatalf("pre-revoke: got (%d,%v), want (500,true)", rate, ok)
 	}
 
@@ -293,7 +293,7 @@ func TestAskTaxRateBP_PermissionRevokeStopsCachedOverride(t *testing.T) {
 		t.Fatalf("revoke: code %d body %s", rec.Code, rec.Body.String())
 	}
 
-	if rate, ok := asker.AskTaxRateBP(line, "eat_in"); ok || rate != 0 {
+	if rate, ok, _ := asker.AskTaxRateBP(line, "eat_in"); ok || rate != 0 {
 		t.Fatalf("post-revoke: got (%d,%v), want (0,false) — revoked plugin's cached override survived", rate, ok)
 	}
 }
@@ -328,11 +328,11 @@ func TestAskTaxRateBP_UnparseableAnswerIsNotCached(t *testing.T) {
 
 	asker := &pluginTaxRateAsker{db: db}
 	line := pos.BasketLine{ItemID: "itm1", TaxCodeID: "tax_std", TaxRateBP: 2000}
-	if _, ok := asker.AskTaxRateBP(line, "eat_in"); ok {
+	if _, ok, _ := asker.AskTaxRateBP(line, "eat_in"); ok {
 		t.Fatal("garbage answer should decline")
 	}
 	garbage = false
-	if rate, ok := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != 500 {
+	if rate, ok, _ := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != 500 {
 		t.Fatalf("recovered ask: got (%d,%v), want (500,true) — garbage answer was pinned", rate, ok)
 	}
 	if calls != 2 {
@@ -369,7 +369,7 @@ func TestAskTaxRateBP_OverflowAndConcurrency(t *testing.T) {
 	// Overflow: one more distinct payload than the cache holds.
 	for i := 0; i < taxAskCacheMax+1; i++ {
 		line := pos.BasketLine{ItemID: fmt.Sprintf("itm-%d", i), TaxCodeID: "tax_std", TaxRateBP: i + 1}
-		if rate, ok := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != i+2 {
+		if rate, ok, _ := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != i+2 {
 			t.Fatalf("ask %d: got (%d,%v), want (%d,true)", i, rate, ok, i+2)
 		}
 	}
@@ -381,7 +381,7 @@ func TestAskTaxRateBP_OverflowAndConcurrency(t *testing.T) {
 			defer wg.Done()
 			line := pos.BasketLine{ItemID: "itm-hot", TaxCodeID: "tax_std", TaxRateBP: 100}
 			for i := 0; i < 50; i++ {
-				if rate, ok := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != 101 {
+				if rate, ok, _ := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != 101 {
 					t.Errorf("concurrent ask: got (%d,%v), want (101,true)", rate, ok)
 					return
 				}

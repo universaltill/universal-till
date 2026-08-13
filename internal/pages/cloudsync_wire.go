@@ -143,6 +143,42 @@ func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (
 func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string) (string, error) {
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 
+	// One read of the listing's existing record feeds two protections below:
+	// the ut-docs#495 prior-good snapshot for pinned upgrades, and the
+	// failed-attempt handling (ut-docs#368 second review round) that must
+	// know whether a successfully-installed plugin is already on record.
+	prior, hadPrior, priorErr := statusStore.Get(ctx, listingID)
+	priorInstalled := priorErr == nil && hadPrior &&
+		prior.State == plugins.InstallStateActive && prior.PluginID != ""
+
+	// saveFailed records a failed install attempt. When this listing already
+	// has a successfully-installed plugin on record (a pinned upgrade or a
+	// broken-plugin re-fetch, not a fresh install), the record stays ACTIVE,
+	// carrying the prior install's identity and version: the failed attempt
+	// uninstalled nothing — that plugin is still on this till — and a record
+	// demoted to Failed (or one whose blank PluginID clobbered the stored
+	// one) is invisible to convergePluginSet's prune loop, which only prunes
+	// Active records with a non-blank PluginID. That made a plugin whose
+	// re-fetch keeps failing permanently un-removable from a replica even
+	// after the shop owner removed it on the primary (ut-docs#368 second
+	// review round BLOCKER — the same failure mode markBroken's round-1 fix
+	// closed, via a second route). The failure MessageKey still lands on the
+	// record so the attempt's outcome stays visible, mirroring the
+	// rolled-back version-mismatch branch below.
+	saveFailed := func(messageKey string, retryable bool) {
+		rec := plugins.InstallStatusRecord{
+			ListingID: listingID, State: plugins.InstallStateFailed,
+			MessageKey: messageKey, Retryable: retryable,
+		}
+		if priorInstalled {
+			rec.State = plugins.InstallStateActive
+			rec.PluginID = prior.PluginID
+			rec.PluginName = prior.PluginName
+			rec.CurrentVersion = prior.CurrentVersion
+		}
+		_ = statusStore.Save(ctx, rec)
+	}
+
 	// ut-docs#495: a pinned (upgrade) install can fail the version-mismatch
 	// check below, by which point Install has already overwritten this
 	// listing's plugins-table row. Capture "the version that was good before
@@ -153,21 +189,18 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 	// entirely.
 	var priorGood plugins.InstallStatusRecord
 	var hasPriorGood bool
-	if version != "" {
-		if prior, ok, err := statusStore.Get(ctx, listingID); err == nil && ok &&
-			prior.State == plugins.InstallStateActive && prior.PluginID != "" && prior.CurrentVersion != "" {
-			priorGood = prior
-			hasPriorGood = true
-			sourcePath := filepath.Join(paths.Plugins(), prior.PluginID, prior.CurrentVersion)
-			if err := plugins.NewRollbackManager(d.Db, paths.Plugins()).StoreVersion(prior.PluginID, prior.CurrentVersion, sourcePath); err != nil {
-				logging.L().Warnf("plugin sync: failed to snapshot %s@%s before pinned install (rollback to it won't be possible if this mismatches): %v",
-					prior.PluginID, prior.CurrentVersion, err)
-				// Don't rely on Rollback's own os.Stat failure as the safety
-				// net for a snapshot that was never actually taken — that
-				// safety is accidental, living in the callee, not a decision
-				// made here.
-				hasPriorGood = false
-			}
+	if version != "" && priorInstalled && prior.CurrentVersion != "" {
+		priorGood = prior
+		hasPriorGood = true
+		sourcePath := filepath.Join(paths.Plugins(), prior.PluginID, prior.CurrentVersion)
+		if err := plugins.NewRollbackManager(d.Db, paths.Plugins()).StoreVersion(prior.PluginID, prior.CurrentVersion, sourcePath); err != nil {
+			logging.L().Warnf("plugin sync: failed to snapshot %s@%s before pinned install (rollback to it won't be possible if this mismatches): %v",
+				prior.PluginID, prior.CurrentVersion, err)
+			// Don't rely on Rollback's own os.Stat failure as the safety
+			// net for a snapshot that was never actually taken — that
+			// safety is accidental, living in the callee, not a decision
+			// made here.
+			hasPriorGood = false
 		}
 	}
 
@@ -179,10 +212,7 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 	if err != nil {
-		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-			ListingID: listingID, State: plugins.InstallStateFailed,
-			MessageKey: "plugins.install.error.configuration",
-		})
+		saveFailed("plugins.install.error.configuration", false)
 		return "", err
 	}
 	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
@@ -198,10 +228,7 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 	})
 	if err != nil {
 		failure := plugins.ClassifyInstallError(err)
-		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-			ListingID: listingID, State: plugins.InstallStateFailed,
-			MessageKey: failure.MessageKey, Retryable: failure.Retryable,
-		})
+		saveFailed(failure.MessageKey, failure.Retryable)
 		return "", err
 	}
 	// ut-docs#479: a pinned request (version != "") must come back AS that
