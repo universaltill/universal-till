@@ -246,6 +246,14 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
 		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
 	}
+	// Migration 038 adds customers/promotions.is_sample_data -- same
+	// non-idempotent replay problem (ut-docs#567).
+	if _, err := d.DB.Exec(`ALTER TABLE customers DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind customers.is_sample_data column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -328,6 +336,14 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	// Same for 037's report_archive.cloud_acked_at column (ut-docs#571).
 	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
 		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
+	}
+	// Migration 038 adds customers/promotions.is_sample_data -- same
+	// non-idempotent replay problem (ut-docs#567).
+	if _, err := d.DB.Exec(`ALTER TABLE customers DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind customers.is_sample_data column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)

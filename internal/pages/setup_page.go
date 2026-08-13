@@ -279,14 +279,19 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			}
 		}
 
-		// Sample-data opt-in (ut-docs#539): checkbox default is unchecked.
-		// Best-effort by design — the same reasoning as offline-first's
-		// "checkout is never blocked by the network" extends to first boot:
-		// a failed sample seed must never block wizard completion, so log
-		// and continue rather than erroring after setup already succeeded.
+		// Sample-data opt-in (ut-docs#539, extended to customers/promos by
+		// ut-docs#567): checkbox default is unchecked. Best-effort by
+		// design — the same reasoning as offline-first's "checkout is
+		// never blocked by the network" extends to first boot: a failed
+		// sample seed must never block wizard completion, so log and
+		// continue rather than erroring after setup already succeeded.
 		if r.Form.Get("demo_data") == "on" {
-			if err := data.NewDemoSeedRepo(d.Db).SeedDemoCatalogue(r.Context()); err != nil {
+			seedRepo := data.NewDemoSeedRepo(d.Db)
+			if err := seedRepo.SeedDemoCatalogue(r.Context()); err != nil {
 				logging.L().Errorf("setup wizard: seed demo catalogue: %v", err)
+			}
+			if err := seedRepo.SeedDemoCustomersPromos(r.Context()); err != nil {
+				logging.L().Errorf("setup wizard: seed demo customers/promos: %v", err)
 			}
 		}
 		// ut-docs#617: "csv/excel" lands the new operator straight in the

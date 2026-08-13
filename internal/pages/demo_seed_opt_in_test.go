@@ -70,12 +70,21 @@ func TestSetupWizardShopTypeAndDemoOptIn(t *testing.T) {
 		t.Fatalf("shop.type = %q ok=%v, want cafe", v, ok)
 	}
 	// The checkbox seeded the sample catalogue, flagged as such.
-	n, err := data.NewDemoSeedRepo(d.Db).SampleItemCount(t.Context())
+	seedRepo := data.NewDemoSeedRepo(d.Db)
+	n, err := seedRepo.SampleItemCount(t.Context())
 	if err != nil {
 		t.Fatalf("SampleItemCount: %v", err)
 	}
 	if n != 50 {
 		t.Fatalf("sample items after opt-in setup = %d, want 50", n)
+	}
+	// ut-docs#567: the same checkbox also seeds the demo customers/promos.
+	custPromo, err := seedRepo.SampleCustomerPromoCount(t.Context())
+	if err != nil {
+		t.Fatalf("SampleCustomerPromoCount: %v", err)
+	}
+	if custPromo != 6 {
+		t.Fatalf("sample customers/promos after opt-in setup = %d, want 6", custPromo)
 	}
 }
 
@@ -105,6 +114,15 @@ func TestSetupWizardNoDemoByDefaultAndInvalidShopTypeIgnored(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("items after default (unchecked) setup = %d, want 0", n)
+	}
+	// ut-docs#567: unchecked also leaves the demo customers/promos unseeded.
+	for _, table := range []string{"customers", "promotions"} {
+		if err := d.Db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("%s after default (unchecked) setup = %d, want 0", table, n)
+		}
 	}
 }
 
@@ -209,11 +227,59 @@ func TestSettingsRemoveDemoCatalogueEndpoint(t *testing.T) {
 	body := rec.Body.String()
 	// Tight on purpose (ut-docs#539 review, N4): a bare Contains(body, "1")
 	// is trivially satisfied by the "1" inside "49" and asserts nothing.
-	if !strings.Contains(body, "Removed 49 sample item") || !strings.Contains(body, "1 could not be removed") {
+	// "sample record" not "sample item" since ut-docs#567: the copy covers
+	// customers/promo codes too now, not just catalogue items — this test's
+	// DB only seeded the catalogue, so the combined removed/kept totals are
+	// still exactly the catalogue's own 49/1.
+	if !strings.Contains(body, "Removed 49 sample record") || !strings.Contains(body, "1 could not be removed") {
 		t.Errorf("removal response %q does not report removed=49 kept=1", body)
 	}
 	if n, _ := repo.SampleItemCount(t.Context()); n != 1 {
 		t.Fatalf("sample items after removal = %d, want 1 (the sold one)", n)
+	}
+}
+
+// ut-docs#567: the Settings "Remove sample data" endpoint removes demo
+// customers/promo codes too, not just the catalogue, and reports the
+// combined removed/kept count across all three.
+func TestSettingsRemoveDemoCatalogueEndpointCoversCustomersPromos(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCustomersPromos(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Sell to one demo customer so removal has to keep it.
+	if _, err := d.Db.Exec(`INSERT INTO sales (id, receipt_no, customer_id, subtotal, total) VALUES ('s-1', 'R-1', 'cust-001', 120, 120)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cashier: forbidden, nothing removed.
+	postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &cashUser)
+	if n, _ := repo.SampleCustomerPromoCount(t.Context()); n != 6 {
+		t.Fatalf("cashier attempt removed sample customers/promos (count=%d)", n)
+	}
+
+	// Manager: removal runs, response reports the combined count, and only
+	// the touched customer survives.
+	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager remove: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// Catalogue (0 seeded here, so 0/0) + customers/promos (5 removed, 1
+	// kept: cust-001 survives, cust-002/cust-003/PROMO50/PROMO500/DISC10 go).
+	if !strings.Contains(body, "Removed 5 sample record") || !strings.Contains(body, "1 could not be removed") {
+		t.Errorf("removal response %q does not report removed=5 kept=1", body)
+	}
+	if n, _ := repo.SampleCustomerPromoCount(t.Context()); n != 1 {
+		t.Fatalf("sample customers/promos after removal = %d, want 1 (the sold-to customer)", n)
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM customers WHERE id = 'cust-001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("sold-to demo customer cust-001 was removed")
 	}
 }
 
