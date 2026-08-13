@@ -159,6 +159,30 @@ full independent review completed, TDD claims re-verified twice (once by
 the reviewer, once by re-running the reviewer's own regression tests
 myself after applying the fix).
 
+## CI finding after the PR opened
+
+`build`'s `guard-docs-shots.sh` step failed: the `web/help/*/plugins.md`
+manual topics changed (the new "Broken" state paragraph) and `plugins.html`
+changed, both correctly flagged as needing regenerated screenshots — this
+was a genuine gap, not a false positive (unlike the precedent in
+ut-docs#620, there really is a visible surface change here, even though
+the specific `plugins.png` shot itself turned out pixel-identical since
+the demo seed data has no broken plugin to show the chip on).
+
+This cloud session type can't normally run `make docs-shots` (tracked
+separately as ut-docs#620/#622 — the pre-installed Chromium cache is
+revision 1194, `e2e/package-lock.json` pins a version expecting 1228).
+Worked around it by temporarily pointing the docs config's
+`launchOptions.executablePath` at the pre-installed browser
+(`/opt/pw-browsers/chromium`) for this one run, then reverting that config
+change before committing — only the regenerated screenshots + manifest are
+in the diff, no environment-specific hack landed in the checked-in config.
+All 68 topic×locale screenshots regenerated and passed; the only pixel
+diffs anywhere were `alerts`/`designer` (4 locales each), and inspecting
+both old and new confirmed the sole difference is a live boot-time log
+timestamp in a "Recent problems" panel — benign drift, unrelated to this
+PR or the browser-revision workaround.
+
 ## Deferred / follow-up
 
 - ut-docs#628 — install-state constant consistency, chip color
