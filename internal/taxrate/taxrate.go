@@ -1,12 +1,10 @@
 // Package taxrate holds tiny, dependency-free helpers for basis-point tax
-// rates shared across packages that would otherwise import-cycle.
-//
-// internal/pages imports both internal/data and internal/catimport;
-// internal/catimport already imports internal/data (for ReadBkpProducts) —
-// so internal/data cannot depend on internal/catimport, and neither is a
-// natural home for a pure-formatting helper anyway. This package has no
-// imports of its own beyond the standard library, so any of them can
-// depend on it without creating a cycle (ut-docs#533).
+// rates. Neither internal/data nor internal/catimport is a natural home for
+// a pure-formatting helper shared between internal/pages callers of both —
+// and internal/catimport already imports internal/data (for
+// ReadBkpProducts), so internal/data specifically cannot depend on it. This
+// package has no imports of its own beyond the standard library, so any of
+// them can depend on it without creating a cycle (ut-docs#533).
 package taxrate
 
 import (
