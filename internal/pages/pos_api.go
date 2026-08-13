@@ -458,6 +458,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		var saleLines []pos.SaleLineInput
+		var blockedLines []pos.BasketLine
 		for _, l := range lines {
 			// Single source of truth with the live basket preview
 			// (Service.recomputeTotals) — same order-type-aware resolution,
@@ -468,22 +469,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// tax plugin is broken right now (install_state='broken'),
 				// so its true rate is unknowable; recording it at the base
 				// rate would be silently-wrong tax, not a degraded sale.
-				// Narrow, per-line block: the operator removes the named
-				// line (the rest of the basket stays sellable) or retries
-				// after the sync loop's self-heal (~30s tick). Same toast
-				// shape as the insufficient-stock rejection below — never
-				// a modal blocker (offline-first UI rules).
-				locale := httpx.ResolveLocale(w, r)
-				funcs := httpx.FuncsFor(locale)
-				log.Printf("tender rejected: tax authority for line %q (tax code %q) is broken (ut-docs#368 fail-closed)", l.Name, l.TaxCodeID)
-				b := d.Engine.Basket()
-				b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.tax_unavailable"), l.Name)
-				b.ToastLevel = "error"
-				basketView, _ := ui.NewBasketView(funcs)
-				w.Header().Set("Content-Type", "text/html")
-				w.WriteHeader(http.StatusOK)
-				_ = basketView.Render(w, b)
-				return
+				// Collect ALL blocked lines before answering — how many are
+				// blocked decides what the honest message is (below).
+				blockedLines = append(blockedLines, l)
+				continue
 			}
 			// Qty is int; convert to float64 for REAL support
 			saleLines = append(saleLines, pos.SaleLineInput{
@@ -499,6 +488,37 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				LocationID:         locID,
 				Modifiers:          l.Modifiers,
 			})
+		}
+		if len(blockedLines) > 0 {
+			// The block is only per-line when exactly ONE line is blocked:
+			// the asker can't know which lines a broken plugin WOULD have
+			// answered for (any tax.rate.ask subscriber may answer any
+			// line), so when the till's only tax authority is broken EVERY
+			// line blocks — and "remove the item" would just move the same
+			// block to the next item (round-2 review of ut-docs#368: the
+			// message must not overclaim a granularity the architecture
+			// can't deliver). One blocked line → name it, removing it really
+			// does let the rest complete; several → say checkout is
+			// unavailable until the plugin recovers (self-heal ~30s tick for
+			// marketplace installs). Same toast shape as the
+			// insufficient-stock rejection below — never a modal blocker
+			// (offline-first UI rules).
+			locale := httpx.ResolveLocale(w, r)
+			funcs := httpx.FuncsFor(locale)
+			msg := httpx.T(locale, "pos.toast.tax_unavailable_all")
+			if len(blockedLines) == 1 {
+				msg = fmt.Sprintf(httpx.T(locale, "pos.toast.tax_unavailable"), blockedLines[0].Name)
+			}
+			log.Printf("tender rejected: tax authority broken for %d of %d basket lines, first %q (tax code %q) (ut-docs#368 fail-closed)",
+				len(blockedLines), len(lines), blockedLines[0].Name, blockedLines[0].TaxCodeID)
+			b := d.Engine.Basket()
+			b.ToastMessage = msg
+			b.ToastLevel = "error"
+			basketView, _ := ui.NewBasketView(funcs)
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			_ = basketView.Render(w, b)
+			return
 		}
 
 		var payments []pos.PaymentInput

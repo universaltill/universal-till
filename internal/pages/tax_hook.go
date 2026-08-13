@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -162,9 +163,10 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 
 // taxAuthorityBroken reports whether an ACTIVE plugin registered for
 // tax.rate.ask is currently install_state='broken' (ut-docs#368), memoized
-// per bus generation. A DB error fails OPEN (not blocked) — it is uncached,
-// so the very next ask retries; wedging checkout on a bookkeeping read
-// would trade one failure mode for another.
+// per bus generation. A DB error fails OPEN (not blocked) but is logged —
+// it is uncached, so the very next ask retries; wedging checkout on a
+// bookkeeping read would trade one failure mode for another, and a DB that
+// can't answer a COUNT can't record a sale either.
 func (a *pluginTaxRateAsker) taxAuthorityBroken(gen uint64) bool {
 	a.mu.Lock()
 	if a.brokenKnown && a.brokenGen == gen {
@@ -176,6 +178,10 @@ func (a *pluginTaxRateAsker) taxAuthorityBroken(gen uint64) bool {
 
 	broken, err := data.NewPluginRepo(a.db).HasBrokenActivePluginForEvent(context.Background(), taxRateAskEvent)
 	if err != nil {
+		// Fail open, but never silently (round-2 review MINOR): a
+		// persistent read failure here disables the whole fail-closed
+		// protection, and with no signal nobody would ever know.
+		logging.L().Errorf("tax fail-closed check (ut-docs#368): broken-plugin read failed — failing open for this ask: %v", err)
 		return false
 	}
 	a.mu.Lock()

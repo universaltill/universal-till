@@ -131,6 +131,17 @@ func (m *fakeMarketplace) publishWasmTaxVersion(t *testing.T, listingID, pluginI
 	l.latest = version
 }
 
+// unpublish removes every release of a listing, so any further download-token
+// request for it 404s — a marketplace that can no longer serve the plugin
+// (delisted, region-blocked, or simply gone). Used to drive the broken-plugin
+// re-fetch backoff (ut-docs#368 round-2 review): a re-fetch that can never
+// succeed must not hammer the marketplace every 30s forever.
+func (m *fakeMarketplace) unpublish(listingID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.listings, listingID)
+}
+
 // publishMismatchedRelease publishes a release keyed under requestedVersion
 // (so a pinned download-token request for requestedVersion resolves to it)
 // whose signed manifest actually declares actualVersion — a validly signed
@@ -1167,6 +1178,120 @@ func TestSyncPullTick_RolledBackPluginStaysPrunableAfterPrimaryRemovesIt(t *test
 	}
 }
 
+// BLOCKER (ut-docs#368 round-2 review): markBroken used to demote the broken
+// plugin's install-status record to InstallStateFailed. That record's State
+// tracks the INSTALL lifecycle — Failed means "the install attempt itself
+// failed" (the store page renders a retry affordance and treats the plugin
+// as NOT installed) — and convergePluginSet's prune loop only ever prunes an
+// Active record. So once a plugin went broken, a later legitimate removal on
+// the primary could never be pruned on the replica (record Failed, not
+// Active), and replicas reject manual uninstall too: the plugin became
+// permanently un-removable on that till. A plugin that installed fine and
+// broke at LOAD time is still installed — its record must stay Active, with
+// plugins.install_state='broken' as the broken condition's single source of
+// truth. Analogous to
+// TestSyncPullTick_RolledBackPluginStaysPrunableAfterPrimaryRemovesIt above.
+func TestSyncPullTick_BrokenPluginStaysPrunableAfterPrimaryRemovesIt(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	primary := newSyncPluginsPrimary(t, mkt)
+	guest := buildTaxAskGuest(t)
+	mkt.publishWasmTaxVersion(t, "listing-tax", "com.test.sync-tax", "1.0.0", guest)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	ctx := t.Context()
+
+	primary.install(t, "listing-tax")
+
+	// The replica "joined": every DB row landed, no file did — the boot-time
+	// wasm Sync marks the plugin broken.
+	seedJoinSnapshotTaxPlugin(t, replica.dp, "listing-tax", "com.test.sync-tax")
+	replica.dp.Pm.Wasm.Sync(ctx, replica.dp.Db)
+	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "broken" {
+		t.Fatalf("precondition: expected install_state 'broken' after the failed load, got %q", got)
+	}
+	// The install-status record must STAY Active while broken: install
+	// lifecycle (did it ever install?) ≠ load health (can it run right now?).
+	if state, ok := installStatusState(t, replica.dp, "listing-tax"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("a broken-but-installed plugin's install-status record must stay Active (State=Failed breaks the prune loop), got (%q, %v)", state, ok)
+	}
+
+	// The shop owner removes the plugin on the primary before the replica
+	// ever manages to heal.
+	primary.uninstall(t, "com.test.sync-tax")
+
+	replica.tick(t, client)
+
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-tax"); ok {
+		t.Fatalf("expected the broken plugin pruned once the primary removed it, but it's still installed at %q", v)
+	}
+	if _, ok := installStatusState(t, replica.dp, "listing-tax"); ok {
+		t.Fatalf("expected the replica's install-status record cleared by the prune")
+	}
+}
+
+// MAJOR (ut-docs#368 round-2 review): a broken plugin whose re-fetch can
+// never succeed (here: the marketplace no longer serves the listing; the
+// same shape as a binary that installs fine but can never load on this
+// device) must not hit the marketplace on every 30s tick forever. After
+// brokenRefetchMaxAttempts consecutive attempts without an observed heal,
+// the loop backs off to one attempt every brokenRefetchBackoffTicks ticks —
+// degraded cadence, not a permanent stop — and logs that automatic recovery
+// is not progressing.
+func TestSyncPullTick_BrokenPluginRefetchBacksOffAfterRepeatedFailures(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	primary := newSyncPluginsPrimary(t, mkt)
+	guest := buildTaxAskGuest(t)
+	mkt.publishWasmTaxVersion(t, "listing-tax", "com.test.sync-tax", "1.0.0", guest)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	primary.install(t, "listing-tax")
+	seedJoinSnapshotTaxPlugin(t, replica.dp, "listing-tax", "com.test.sync-tax")
+	replica.dp.Pm.Wasm.Sync(t.Context(), replica.dp.Db)
+	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "broken" {
+		t.Fatalf("precondition: expected install_state 'broken', got %q", got)
+	}
+
+	// The marketplace can no longer serve this listing: every re-fetch fails.
+	mkt.unpublish("listing-tax")
+
+	base := mkt.downloadTokenHits()
+	for i := 0; i < brokenRefetchMaxAttempts; i++ {
+		replica.tick(t, client)
+	}
+	if got := mkt.downloadTokenHits() - base; got != brokenRefetchMaxAttempts {
+		t.Fatalf("expected one marketplace attempt per tick up to the cap (%d), got %d", brokenRefetchMaxAttempts, got)
+	}
+
+	// Past the cap: the next brokenRefetchBackoffTicks-1 ticks skip the
+	// marketplace entirely...
+	for i := 0; i < brokenRefetchBackoffTicks-1; i++ {
+		replica.tick(t, client)
+	}
+	if got := mkt.downloadTokenHits() - base; got != brokenRefetchMaxAttempts {
+		t.Fatalf("expected no marketplace attempts while backing off, got %d total (cap %d)", got, brokenRefetchMaxAttempts)
+	}
+	// ...but the cadence degrades rather than stopping for good: the
+	// brokenRefetchBackoffTicks-th tick since the cap attempts once more.
+	replica.tick(t, client)
+	if got := mkt.downloadTokenHits() - base; got != brokenRefetchMaxAttempts+1 {
+		t.Fatalf("expected exactly one slower-cadence retry after %d skipped ticks, got %d total", brokenRefetchBackoffTicks-1, got)
+	}
+	// The degradation is logged distinctly from the normal in-progress retry.
+	found := false
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, "automatic recovery is not progressing") && strings.Contains(p.Msg, "listing-tax") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a distinct 'automatic recovery is not progressing' log line; recent: %+v", logging.Recent())
+	}
+}
+
 // The reload-and-rebuild sequence (Pm.Reload + Menu reassignment) now fires
 // from the background sync-pull goroutine every 30s as well as from HTTP
 // handlers — Deps.ReloadPlugins must serialize it (PluginMu) so concurrent
@@ -1368,8 +1493,13 @@ func TestSyncPullTick_JoinSnapshotBrokenTaxPluginFailsClosedThenSelfHeals(t *tes
 	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "broken" {
 		t.Fatalf("expected install_state 'broken' after the failed load, got %q", got)
 	}
-	if state, ok := installStatusState(t, replica.dp, "listing-tax"); !ok || state != string(plugins.InstallStateFailed) {
-		t.Fatalf("expected a Failed install-status record while broken, got (%q, %v)", state, ok)
+	// The install-status record stays Active while broken (round-2 review
+	// BLOCKER): its State tracks the install lifecycle, and this plugin DID
+	// install — plugins.install_state='broken' alone carries the load
+	// failure. Demoting it to Failed made the plugin permanently unprunable
+	// (see TestSyncPullTick_BrokenPluginStaysPrunableAfterPrimaryRemovesIt).
+	if state, ok := installStatusState(t, replica.dp, "listing-tax"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("expected the install-status record left Active while broken, got (%q, %v)", state, ok)
 	}
 	foundTally := false
 	for _, p := range logging.Recent() {
