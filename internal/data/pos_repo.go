@@ -1959,16 +1959,22 @@ FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`).Scan(
 // CurrentOpenShiftForRegister returns the open shift for ONE register, if it
 // has one — the register-scoped resolution ut-docs#268 requires for write
 // paths, instead of CurrentOpenShift's "most recent across any register"
-// heuristic. A register has at most one open shift by construction
-// (pos.OpenShift blocks a second), so LIMIT 1 is defensive only, matching the
-// sibling FindOpenShiftForRegister's style.
+// heuristic. pos.OpenShift guards against opening a second shift for the
+// same register, but that guard is a non-transactional read-then-write
+// (FindOpenShiftForRegister runs before the insert's own transaction), and
+// there is no unique index enforcing it at the DB level (independent
+// review finding, ut-docs#268 round 2) — so two shifts open for one
+// register, however unlikely, isn't impossible. ORDER BY + LIMIT 1 mirrors
+// the CurrentOpenShift sibling so that if it ever happens, this resolves
+// to the same (newest) shift a manager looking at CurrentOpenShift's own
+// display would see, rather than an arbitrary row.
 func (r *POSRepo) CurrentOpenShiftForRegister(ctx context.Context, registerID string) (ShiftSummary, bool, error) {
 	var s ShiftSummary
 	var closedAt, note sql.NullString
 	var closing, expected sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
 SELECT id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note
-FROM shifts WHERE register_id = ? AND closed_at IS NULL LIMIT 1`, registerID).Scan(
+FROM shifts WHERE register_id = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`, registerID).Scan(
 		&s.ID, &s.RegisterID, &s.CashierID, &s.OpenedAt, &closedAt, &s.OpeningCash, &closing, &expected, &note)
 	if err == sql.ErrNoRows {
 		return ShiftSummary{}, false, nil
