@@ -95,6 +95,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// when the wizard's "Later" choice left it deferred; best-effort
 		// like shopType above, same posture.
 		restorePromptStatus, _, _ := d.Settings.Get(r.Context(), common.KeyRestorePromptStatus)
+		// Country base-plugin auto-install (ut-docs#591): whatever the setup
+		// wizard's own attempt and the background retry haven't installed
+		// yet, so the merchant can see it's happening (or failing) and
+		// dismiss it — best-effort like everything else on this page, a
+		// read error just renders with nothing pending.
+		pendingBasePlugins, _ := loadPendingBasePlugins(r.Context(), d)
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -137,6 +143,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			resetBatches = append(resetBatches, resetBatchView{ID: b.ID, CreatedAt: display, SalesCount: b.SalesCount})
 		}
+		// This till's register identity for the Tills card's picker
+		// (ut-docs#268). Ambiguous is a normal state here — a
+		// multi-register shop where nobody has picked yet renders the
+		// dropdown unselected — and any other resolution error is
+		// best-effort like the other queries above, never a failed page.
+		tillRegisterID := ""
+		if resolved, resolveErr := pos.ResolveTillRegisterID(r.Context(), d.Db, d.Settings); resolveErr == nil {
+			tillRegisterID = resolved
+		} else if !errors.Is(resolveErr, pos.ErrRegisterIdentityAmbiguous) {
+			logging.L().Errorf("resolve till register: %v", resolveErr)
+		}
+		// Listed AFTER resolving, so a register the resolver just
+		// self-created on an empty shop shows up as an option too.
+		registers, registersErr := data.NewPOSRepo(d.Db).ListRegisters(r.Context())
+		if registersErr != nil {
+			logging.L().Errorf("list registers: %v", registersErr)
+		}
 		data := map[string]any{
 			"title":                 "Settings",
 			"theme":                 st.Theme,
@@ -155,12 +178,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"autoUpdateEnabled":     autoUpdateEnabled == "true",
 			"autoUpdateTime":        autoUpdateTime,
 			"TillName":              tillNameOrDefault(r.Context(), d, locale),
+			"TillRegisterID":        tillRegisterID,
+			"registers":             registers,
 			"IsPrimaryTill":         d.SyncPrimaryURL(r.Context()) == "",
 			"reportRetentionMode":   reportRetentionMode,
 			"reportArchiveCoverage": reportArchiveCoverage,
 			"shopType":              shopType,
 			"shopTypes":             setupShopTypes,
 			"restorePromptDeferred": restorePromptStatus == common.RestorePromptStatusDeferred,
+			"pendingBasePlugins":    pendingBasePluginViews(pendingBasePlugins),
 			"resetBatches":          resetBatches,
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
@@ -628,6 +654,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	})
 
+	// Dismiss one still-pending country base-plugin auto-install
+	// (ut-docs#591) without installing it — "a merchant can decline/remove
+	// anything auto-installed" for the not-yet-installed case. hx-swap
+	// "outerHTML" on the chip itself, same reasoning as the restore-prompt
+	// dismiss above: an empty 200 body removes just that chip.
+	mux.HandleFunc("POST /api/settings/dismiss-pending-base-plugin", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		canonicalType := strings.TrimSpace(r.Form.Get("canonical_type"))
+		localeVal := strings.TrimSpace(r.Form.Get("locale"))
+		if err := dismissPendingBasePlugin(r.Context(), d, canonicalType, localeVal); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	})
+
 	// This till's own display name (ut-docs#396) — distinct from a replica's
 	// own sync.till_name — shown in Settings and on the /tills page.
 	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
@@ -644,6 +690,45 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "could not save", http.StatusInternalServerError)
 				return
 			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// This till's own register identity (ut-docs#268) — the register a
+	// shift-scoped WRITE (e.g. a Pfandrückgabe payout) resolves against,
+	// persisted under till.register_id via pos.ResolveTillRegisterID's
+	// settings key. An id that isn't an active register is rejected rather
+	// than persisted: garbage here would silently misroute payouts later.
+	mux.HandleFunc("POST /api/settings/till-register", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("register_id"))
+		if id == "" {
+			http.Error(w, "register_id required", http.StatusBadRequest)
+			return
+		}
+		regs, err := data.NewPOSRepo(d.Db).ListRegisters(r.Context())
+		if err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		valid := false
+		for _, reg := range regs {
+			if reg.ID == id {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			http.Error(w, "unknown register", http.StatusBadRequest)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), pos.SettingsKeyTillRegisterID, id); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

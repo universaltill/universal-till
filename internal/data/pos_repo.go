@@ -1967,6 +1967,40 @@ FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`).Scan(
 	return s, true, nil
 }
 
+// CurrentOpenShiftForRegister returns the open shift for ONE register, if it
+// has one — the register-scoped resolution ut-docs#268 requires for write
+// paths, instead of CurrentOpenShift's "most recent across any register"
+// heuristic. pos.OpenShift guards against opening a second shift for the
+// same register, but that guard is a non-transactional read-then-write
+// (FindOpenShiftForRegister runs before the insert's own transaction), and
+// there is no unique index enforcing it at the DB level (independent
+// review finding, ut-docs#268 round 2) — so two shifts open for one
+// register, however unlikely, isn't impossible. ORDER BY + LIMIT 1 mirrors
+// the CurrentOpenShift sibling so that if it ever happens, this resolves
+// to the same (newest) shift a manager looking at CurrentOpenShift's own
+// display would see, rather than an arbitrary row.
+func (r *POSRepo) CurrentOpenShiftForRegister(ctx context.Context, registerID string) (ShiftSummary, bool, error) {
+	var s ShiftSummary
+	var closedAt, note sql.NullString
+	var closing, expected sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note
+FROM shifts WHERE register_id = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`, registerID).Scan(
+		&s.ID, &s.RegisterID, &s.CashierID, &s.OpenedAt, &closedAt, &s.OpeningCash, &closing, &expected, &note)
+	if err == sql.ErrNoRows {
+		return ShiftSummary{}, false, nil
+	}
+	if err != nil {
+		return ShiftSummary{}, false, fmt.Errorf("current open shift for register: %w", err)
+	}
+	s.Open = true
+	s.ClosedAt = closedAt.String
+	s.ClosingCash = closing.Int64
+	s.Expected = expected.Int64
+	s.Note = note.String
+	return s, true, nil
+}
+
 // ListRecentShifts returns the latest shifts, newest first.
 func (r *POSRepo) ListRecentShifts(ctx context.Context, limit int) ([]ShiftSummary, error) {
 	if limit <= 0 {
@@ -2849,6 +2883,132 @@ LIMIT 1
 		pType = "amount"
 	}
 	return pType, value, true
+}
+
+// isUniqueViolation reports whether err is a SQLite UNIQUE constraint
+// failure. Same string-matching approach as isForeignKeyViolation in
+// reset_archive_repo.go -- modernc.org/sqlite (this project's driver)
+// doesn't export a typed error the way mattn/go-sqlite3 does.
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
+// ErrPromotionCodeExists is returned by CreatePromotion when the code is
+// already taken (promotions.code is the PRIMARY KEY) -- callers should
+// present this distinctly (e.g. "?err=code_exists") rather than a generic
+// failure.
+var ErrPromotionCodeExists = errors.New("promotion code already exists")
+
+// PromotionInput is the editable shape of a promo code -- everything except
+// the code itself (the PRIMARY KEY, immutable once created). Value is a raw
+// int64 at rest: minor currency units when Type is "amount", basis points
+// when Type is "percent" (1% = 100) -- matching FindActivePromo's own
+// interpretation in pos_api.go. Money-boundary conversion for the "amount"
+// case happens at the UI-form layer (promotions_page.go), not here.
+type PromotionInput struct {
+	Type        string
+	Value       int64
+	Description string
+	StartsAt    string
+	EndsAt      string
+	CustomerID  string
+}
+
+// CreatePromotion adds a new, active promo code. Real merchant-created rows
+// are never sample data -- is_sample_data (migration 038) is left at its
+// column default (0) here, deliberately untouched.
+func (r *POSRepo) CreatePromotion(ctx context.Context, code string, in PromotionInput) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO promotions (code, type, value, description, starts_at, ends_at, customer_id, is_active)
+VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+		strings.TrimSpace(code), in.Type, in.Value, nullIfEmpty(in.Description),
+		nullIfEmpty(in.StartsAt), nullIfEmpty(in.EndsAt), nullIfEmpty(in.CustomerID))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrPromotionCodeExists
+		}
+		return fmt.Errorf("create promotion: %w", err)
+	}
+	return nil
+}
+
+// UpdatePromotion edits an existing promotion's type/value/description/
+// dates/customer target. The code (PRIMARY KEY) is the promo's identity and
+// is never rewritten here.
+func (r *POSRepo) UpdatePromotion(ctx context.Context, code string, in PromotionInput) error {
+	res, err := r.db.ExecContext(ctx, `
+UPDATE promotions SET type = ?, value = ?, description = ?, starts_at = ?, ends_at = ?, customer_id = ?
+WHERE code = ?`,
+		in.Type, in.Value, nullIfEmpty(in.Description), nullIfEmpty(in.StartsAt),
+		nullIfEmpty(in.EndsAt), nullIfEmpty(in.CustomerID), strings.TrimSpace(code))
+	if err != nil {
+		return fmt.Errorf("update promotion: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("update promotion: %s not found", code)
+	}
+	return nil
+}
+
+// SetPromotionActive soft-deactivates/reactivates a promo code -- mirrors
+// SetStockLocationActive/SetUserActive's pattern. The row is never hard-
+// deleted so redemption history is preserved; a deactivated code simply
+// stops matching FindActivePromo's `is_active = 1` filter.
+func (r *POSRepo) SetPromotionActive(ctx context.Context, code string, active bool) error {
+	v := 0
+	if active {
+		v = 1
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE promotions SET is_active = ? WHERE code = ?`, v, strings.TrimSpace(code))
+	if err != nil {
+		return fmt.Errorf("set promotion active: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("set promotion active: %s not found", code)
+	}
+	return nil
+}
+
+// PromotionAdmin is a promo code as the promotions management page needs
+// it: every row (active and inactive), unlike FindActivePromo's active-
+// only, in-window, checkout-time lookup.
+type PromotionAdmin struct {
+	Code        string
+	Type        string
+	Value       int64
+	Description string
+	StartsAt    string
+	EndsAt      string
+	CustomerID  string
+	IsActive    bool
+}
+
+// ListPromotionsForAdmin returns every promo code (active and inactive),
+// active-first then alphabetical, for the promotions management page.
+// FindActivePromo's own query is separate and untouched by this addition.
+func (r *POSRepo) ListPromotionsForAdmin(ctx context.Context) ([]PromotionAdmin, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT code, type, value, COALESCE(description,''), COALESCE(starts_at,''), COALESCE(ends_at,''), COALESCE(customer_id,''), is_active
+FROM promotions
+ORDER BY is_active DESC, code ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list promotions for admin: %w", err)
+	}
+	defer rows.Close()
+	var out []PromotionAdmin
+	for rows.Next() {
+		var p PromotionAdmin
+		var active int
+		if err := rows.Scan(&p.Code, &p.Type, &p.Value, &p.Description, &p.StartsAt, &p.EndsAt, &p.CustomerID, &active); err != nil {
+			return nil, fmt.Errorf("scan promotion admin: %w", err)
+		}
+		p.IsActive = active == 1
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate promotions for admin: %w", err)
+	}
+	return out, nil
 }
 
 // EnsureStockLocation returns an existing location id or creates a default one.

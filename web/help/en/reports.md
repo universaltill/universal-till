@@ -76,3 +76,10 @@ that **removes** cash needs a manager PIN, whichever type is selected —
 the same approval a refund or a bottle-deposit (Pfandrückgabe) payout
 needs, since it's the same risk (cash leaving the drawer unapproved).
 Adding cash (a positive amount, e.g. a float top-up) doesn't need one.
+
+A bottle-deposit (Pfandrückgabe) payout is recorded against **this till's
+own register's** open shift — even when another register's shift is open
+at the same time, it never lands on the other drawer. On a shop with more
+than one register, the till has to know which register it is first: set
+"This till's register" in Settings → Tills, or the payout is refused with
+a message pointing you there.

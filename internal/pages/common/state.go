@@ -48,6 +48,15 @@ const (
 	// they picked "Later" and Settings → Data should offer a resume link
 	// straight into /import until they either use it or dismiss it.
 	KeyRestorePromptStatus = "setup.restore_prompt_status"
+	// KeyPendingBasePlugins holds the JSON list of still-pending country
+	// base-plugin auto-installs (ut-docs#591): populated by the setup wizard
+	// the instant a country with a setupBasePlugins entry is confirmed,
+	// before any network attempt, and drained entry-by-entry as each
+	// resolves+installs (wizard's own best-effort attempt, then the
+	// background retry). Empty/unset means nothing pending. A merchant can
+	// also drop an entry from Settings without installing it — this is a
+	// helpful default, not a lock-in.
+	KeyPendingBasePlugins = "setup.pending_base_plugins"
 )
 
 // RestorePromptStatusDeferred is the only KeyRestorePromptStatus value the

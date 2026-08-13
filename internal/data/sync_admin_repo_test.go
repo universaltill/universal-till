@@ -140,6 +140,64 @@ func TestAdminDumpApplyRoundTrip(t *testing.T) {
 	}
 }
 
+// ut-docs#268 round 2 (independent review): sync.till_register_id is this
+// till's own register identity (pos.ResolveTillRegisterID) and must NEVER
+// travel between tills — a bare "till."-prefixed key would have been
+// missed by PerTillSettingPrefixes entirely (till.name is the deliberate,
+// documented exception; a same-shaped register-identity key is not), and
+// the first version of this key shipped without the "sync." prefix,
+// caught here before merge. A primary and a replica each pick their OWN
+// register from the same shop-wide registers table, and an admin pull in
+// either direction must leave both untouched.
+func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// Same shop-wide registers table on both sides (as a real admin sync
+	// would produce), but each till has resolved a DIFFERENT one as its
+	// own.
+	for _, d := range []*db.DB{primary, replica} {
+		mustExec(t, d, `INSERT INTO registers (id, name, is_active) VALUES ('regA', 'Front Till', 1)`)
+		mustExec(t, d, `INSERT INTO registers (id, name, is_active) VALUES ('regB', 'Back Till', 1)`)
+	}
+	mustExec(t, primary, `INSERT INTO settings (key, value) VALUES ('sync.till_register_id', 'regA')`)
+	mustExec(t, replica, `INSERT INTO settings (key, value) VALUES ('sync.till_register_id', 'regB')`)
+
+	repo := NewSyncAdminRepo(primary.DB)
+	bundle, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["settings"] {
+		if rec["key"] == "sync.till_register_id" {
+			t.Fatal("till register identity leaked into the admin dump")
+		}
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var v string
+	if err := replica.QueryRow(`SELECT value FROM settings WHERE key = 'sync.till_register_id'`).Scan(&v); err != nil || v != "regB" {
+		t.Fatalf("replica's own register identity clobbered by an admin pull from the primary: got %q, want regB (err=%v)", v, err)
+	}
+
+	// And the reverse direction: applying the REPLICA's bundle (e.g. after
+	// a promotion) must not clobber whichever till receives it either —
+	// defense in depth (ApplyAdmin's own per-till skip), not just DumpAdmin.
+	replicaBundle, err := NewSyncAdminRepo(replica.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump replica: %v", err)
+	}
+	if err := NewSyncAdminRepo(primary.DB).ApplyAdmin(ctx, wireTrip(t, replicaBundle)); err != nil {
+		t.Fatalf("apply to primary: %v", err)
+	}
+	if err := primary.QueryRow(`SELECT value FROM settings WHERE key = 'sync.till_register_id'`).Scan(&v); err != nil || v != "regA" {
+		t.Fatalf("primary's own register identity clobbered by an admin pull from a replica: got %q, want regA (err=%v)", v, err)
+	}
+}
+
 // ut-docs#405: the shop's till roster now syncs like any other admin
 // table, but bearer_hash is that row's sync-auth secret and must never
 // leave the primary — redactCols strips it out of the dump, and migration
