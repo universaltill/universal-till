@@ -150,7 +150,7 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("ListResetBatches = %+v, want one batch %s with 2 sales", batches, batchID)
 	}
 
-	restored, err := repo.RestoreResetBatch(ctx, batchID)
+	restored, err := repo.RestoreResetBatch(ctx, batchID, "")
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
@@ -213,6 +213,48 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+// Independent review, ut-docs#187: seedFullSale's one invoice has no credit
+// note, so the invoices self-FK two-phase archive/restore ordering
+// (original_invoice_id) was previously exercised by neither existing test —
+// a real gap, since credit notes are a live, GoBD-relevant document type.
+func TestResetThenRestoreRoundTrip_CreditNote(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore-credit-note.db")
+	x(`INSERT INTO items (id, name, base_price) VALUES ('i1','Widget',100)`)
+	x(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s1','R1',100,100)`)
+	x(`INSERT INTO invoices (id, series, invoice_no, display_no, sale_id, customer_name, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by)
+	   VALUES ('inv1','A',1,'A-1','s1','Cust','{}',100,0,100,'[]','2026-01-01T00:00:00Z','u1')`)
+	x(`INSERT INTO invoices (id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by)
+	   VALUES ('cn1','A',2,'A-2','credit_note','s1','inv1','Cust','{}',100,0,100,'[]','2026-01-02T00:00:00Z','u1')`)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if c := count("invoices"); c != 0 {
+		t.Fatalf("invoices not cleared: %d", c)
+	}
+	var archived int
+	if err := d.DB.QueryRow(`SELECT count(*) FROM invoices_archive WHERE reset_batch_id = ?`, batchID).Scan(&archived); err != nil || archived != 2 {
+		t.Fatalf("invoices_archive: got %d err=%v, want 2 (original + credit note)", archived, err)
+	}
+
+	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if c := count("invoices"); c != 2 {
+		t.Fatalf("invoices after restore: %d, want 2", c)
+	}
+	var kind, orig string
+	if err := d.DB.QueryRow(`SELECT kind, original_invoice_id FROM invoices WHERE id='cn1'`).Scan(&kind, &orig); err != nil {
+		t.Fatalf("restored credit note: %v", err)
+	}
+	if kind != "credit_note" || orig != "inv1" {
+		t.Fatalf("restored credit note: kind=%q original_invoice_id=%q, want credit_note/inv1", kind, orig)
+	}
+}
+
 func TestRestoreRefusesWhenShopHasTradedSinceReset(t *testing.T) {
 	d, x, count := resetTestDB(t, "traded.db")
 	seedFullSale(t, x)
@@ -227,7 +269,7 @@ func TestRestoreRefusesWhenShopHasTradedSinceReset(t *testing.T) {
 	// (and would collide on receipt numbering — ADR-0042 §2).
 	x(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('post1','R1',999,999)`)
 
-	_, err = repo.RestoreResetBatch(ctx, batchID)
+	_, err = repo.RestoreResetBatch(ctx, batchID, "")
 	if !errors.Is(err, data.ErrShopHasTradedSinceReset) {
 		t.Fatalf("restore after trading: err=%v, want ErrShopHasTradedSinceReset", err)
 	}
@@ -244,9 +286,52 @@ func TestRestoreRefusesWhenShopHasTradedSinceReset(t *testing.T) {
 	}
 }
 
+// Independent review, ut-docs#187: reset empties the live sale_lines table,
+// so CleanupObsoleteItems / "Remove sample data" / a future catalog action
+// that decides an item is safe to delete by checking for LIVE sale_lines
+// rows can legitimately remove an item an ARCHIVED batch still references —
+// the archive is invisible to that check. Restoring afterward must not
+// crash with a raw FK error; it must refuse cleanly, roll back, and leave
+// the archive intact for a human to sort out (there is no delete-archive
+// action yet to lose it to).
+func TestRestoreRefusesWhenArchiveReferencesRemovedItem(t *testing.T) {
+	d, x, count := resetTestDB(t, "item-removed.db")
+	seedFullSale(t, x)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	// Simulate "Remove sample data" / catalog cleanup: with sale_lines now
+	// empty, nothing live references item i1 anymore, so it gets deleted —
+	// exactly what those actions do today.
+	x(`DELETE FROM items WHERE id = 'i1'`)
+
+	_, err = repo.RestoreResetBatch(ctx, batchID, "")
+	if !errors.Is(err, data.ErrArchiveReferencesRemoved) {
+		t.Fatalf("restore after item removed: err=%v, want ErrArchiveReferencesRemoved", err)
+	}
+	// Refused, not partially applied: live tables stay empty, the archive
+	// and batch header survive untouched for the next attempt (or a human).
+	for _, tbl := range resetTables {
+		if c := count(tbl); c != 0 {
+			t.Fatalf("refused restore must leave %s empty, got %d", tbl, c)
+		}
+	}
+	var archivedSales int
+	if err := d.DB.QueryRow(`SELECT count(*) FROM sales_archive WHERE reset_batch_id = ?`, batchID).Scan(&archivedSales); err != nil || archivedSales != 2 {
+		t.Fatalf("archive must survive a refused restore: %d err=%v, want 2", archivedSales, err)
+	}
+	if c := count("reset_batches"); c != 1 {
+		t.Fatalf("reset_batches must keep the refused batch, got %d", c)
+	}
+}
+
 func TestRestoreNonexistentBatchReturnsNotFound(t *testing.T) {
 	d, _, _ := resetTestDB(t, "notfound.db")
-	_, err := data.NewPOSRepo(d.DB).RestoreResetBatch(context.Background(), "no-such-batch")
+	_, err := data.NewPOSRepo(d.DB).RestoreResetBatch(context.Background(), "no-such-batch", "")
 	if !errors.Is(err, data.ErrResetBatchNotFound) {
 		t.Fatalf("restore of unknown batch: err=%v, want ErrResetBatchNotFound", err)
 	}

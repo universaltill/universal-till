@@ -177,8 +177,11 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// ADR-0042 §2: restore one archived reset batch, whole-batch only,
-	// refusing (409) if the till has traded since the reset. Gated exactly
-	// like reset itself: manager + its own typed confirmation.
+	// refusing (409) if the till has traded since the reset, or (422) if
+	// the batch references a catalog/customer record removed after the
+	// reset (independent review, ut-docs#187 — see
+	// data.ErrArchiveReferencesRemoved's doc comment). Gated exactly like
+	// reset itself: manager + its own typed confirmation.
 	mux.HandleFunc("POST /api/data/reset-archives/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		if !isManagerOrAuthOff(r) {
 			respond(w, http.StatusForbidden, false, "manager only")
@@ -189,13 +192,15 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, false, "type RESTORE to confirm")
 			return
 		}
-		n, err := data.NewPOSRepo(d.Db).RestoreResetBatch(r.Context(), r.PathValue("id"))
+		n, err := data.NewPOSRepo(d.Db).RestoreResetBatch(r.Context(), r.PathValue("id"), auth.UserID(r))
 		if err != nil {
 			switch {
 			case errors.Is(err, data.ErrResetBatchNotFound):
 				respond(w, http.StatusNotFound, false, "reset archive batch not found")
 			case errors.Is(err, data.ErrShopHasTradedSinceReset):
 				respond(w, http.StatusConflict, false, "the till has traded since this reset — the archived batch can no longer be restored automatically")
+			case errors.Is(err, data.ErrArchiveReferencesRemoved):
+				respond(w, http.StatusUnprocessableEntity, false, "this archive references a product, stock location or customer that was removed or erased after the reset and can no longer be restored automatically")
 			default:
 				respond(w, http.StatusInternalServerError, false, err.Error())
 			}

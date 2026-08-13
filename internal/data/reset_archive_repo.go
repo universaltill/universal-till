@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,39 @@ var ErrShopHasTradedSinceReset = errors.New("the till has traded since this rese
 // ErrResetBatchNotFound is returned by RestoreResetBatch for an unknown (or
 // already-restored — a restored batch stops existing) batch id.
 var ErrResetBatchNotFound = errors.New("reset archive batch not found")
+
+// ErrArchiveReferencesRemoved is returned by RestoreResetBatch when the
+// archived rows reference a catalog or customer record that no longer
+// exists. Found in independent review (ut-docs#187): reset empties the
+// live transaction tables, and three OTHER Data-management actions on the
+// same Settings card — CleanupObsoleteItems, the demo-data "Remove sample
+// data" seed, and EraseCustomer — decide what's safe to remove/anonymise
+// by checking whether any LIVE sale/stock-movement still references a
+// row. Right after a reset those checks see nothing (the real references
+// are sitting in the archive, invisible to them) and proceed, so an item
+// or customer an archived batch still points to can vanish before the
+// batch is ever restored. Restoring would then violate a live FK
+// (sale_lines.item_id -> items, sales.customer_id -> customers, etc) —
+// this turns that into a clean, named refusal instead of a raw
+// "FOREIGN KEY constraint failed" surfacing to a shop owner. The
+// transaction is rolled back (nothing partially restored); the archive
+// and reset_batches row are untouched, matching ErrShopHasTradedSinceReset's
+// no-op-on-refusal behavior. See ADR-0042 Consequences: this is a known,
+// stated gap in that ADR's own "every archived row is recoverable" claim,
+// not a silent one — a deeper fix (teach those three predicates to also
+// check the archive tables) is tracked separately, not attempted here.
+var ErrArchiveReferencesRemoved = errors.New("this archive references a product, stock location or customer that was removed or erased after the reset (e.g. by \"Remove sample data\", catalog cleanup or a GDPR erasure) and can no longer be restored automatically")
+
+// isForeignKeyViolation reports whether err is a SQLite foreign-key
+// constraint failure. modernc.org/sqlite (this project's driver) doesn't
+// export a typed error the way mattn/go-sqlite3 does, and no other code in
+// this repo yet parses driver errors -- string matching on SQLite's own
+// stable "FOREIGN KEY constraint failed" text is the least-fragile option
+// available without adding a driver-specific type dependency for one call
+// site.
+func isForeignKeyViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "FOREIGN KEY constraint failed")
+}
 
 // ResetBatch is one reset event's archive header, for the Settings → Data
 // list (newest first).
@@ -143,7 +177,7 @@ VALUES (?, ?, ?, ?)`, batchID, now, nullIfEmpty(actorID), count); err != nil {
 	}
 
 	if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_history_reset",
-		map[string]any{"sales_deleted": count, "batch_id": batchID}, now, ""); err != nil {
+		map[string]any{"sales_archived": count, "batch_id": batchID}, now, ""); err != nil {
 		return 0, "", err
 	}
 	if err := tx.Commit(); err != nil {
@@ -158,7 +192,7 @@ func (r *POSRepo) ListResetBatches(ctx context.Context) ([]ResetBatch, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, created_at, COALESCE(actor_id, ''), sales_count
 FROM reset_batches
-ORDER BY created_at DESC, id DESC`)
+ORDER BY created_at DESC, id DESC LIMIT 200`)
 	if err != nil {
 		return nil, fmt.Errorf("list reset batches: %w", err)
 	}
@@ -177,12 +211,15 @@ ORDER BY created_at DESC, id DESC`)
 // RestoreResetBatch moves every archived row of one reset batch back into
 // its live table, deletes the archived copies and the batch header (a
 // restored batch stops existing as an archive and cannot be restored twice
-// — ADR-0042 §2), and audits the restore. It returns how many sales were
-// restored. Before touching anything it refuses with
+// — ADR-0042 §2), and audits the restore under actorID. It returns how many
+// sales were restored. Before touching anything it refuses with
 // ErrShopHasTradedSinceReset unless sales, held_sales, shifts AND
-// stock_movements are all empty, and with ErrResetBatchNotFound for an
-// unknown batch id. Manager-gated at the handler.
-func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID string) (int64, error) {
+// stock_movements are all empty, with ErrResetBatchNotFound for an unknown
+// batch id, and — discovered in independent review — with
+// ErrArchiveReferencesRemoved if a row in the batch points at a catalog/
+// customer record removed after the reset (see that error's doc comment).
+// Manager-gated at the handler.
+func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID string) (int64, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -220,11 +257,17 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID string) (int64,
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO invoices (`+t.cols+`) SELECT `+t.cols+` FROM invoices_archive WHERE reset_batch_id = ? AND original_invoice_id IS NULL`,
 				batchID); err != nil {
+				if isForeignKeyViolation(err) {
+					return 0, fmt.Errorf("restore batch %q: invoices: %w", batchID, ErrArchiveReferencesRemoved)
+				}
 				return 0, fmt.Errorf("restore: invoices: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO invoices (`+t.cols+`) SELECT `+t.cols+` FROM invoices_archive WHERE reset_batch_id = ? AND original_invoice_id IS NOT NULL`,
 				batchID); err != nil {
+				if isForeignKeyViolation(err) {
+					return 0, fmt.Errorf("restore batch %q: credit notes: %w", batchID, ErrArchiveReferencesRemoved)
+				}
 				return 0, fmt.Errorf("restore: credit notes: %w", err)
 			}
 		} else {
@@ -232,6 +275,9 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID string) (int64,
 				`INSERT INTO %s (%s) SELECT %s FROM %s_archive WHERE reset_batch_id = ?`,
 				t.live, t.cols, t.cols, t.live), batchID)
 			if err != nil {
+				if isForeignKeyViolation(err) {
+					return 0, fmt.Errorf("restore batch %q: %s: %w", batchID, t.live, ErrArchiveReferencesRemoved)
+				}
 				return 0, fmt.Errorf("restore: %s: %w", t.live, err)
 			}
 			if t.live == "sales" {
@@ -248,7 +294,7 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID string) (int64,
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := r.InsertAudit(ctx, tx, "", "system", "transactions", "transaction_history_restored",
+	if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_history_restored",
 		map[string]any{"batch_id": batchID, "sales_restored": restored}, now, ""); err != nil {
 		return 0, err
 	}

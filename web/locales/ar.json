@@ -663,6 +663,7 @@
   "settings.data.archives_restore_confirm_ph": "اكتب RESTORE",
   "settings.data.archives_restore_confirm_required": "اكتب RESTORE للتأكيد",
   "settings.data.archives_restore_conflict": "أجرى هذا الجهاز معاملات منذ إعادة الضبط — لم يعد بالإمكان استعادة الدفعة المؤرشفة تلقائياً.",
+  "settings.data.archives_restore_references_removed": "تشير هذه الأرشيفة إلى منتج أو موقع مخزون أو عميل تمت إزالته أو محوه بعد إعادة الضبط (مثلاً عبر \"إزالة بيانات العينة\" أو تنظيف الكتالوج أو محو بيانات عميل) ولم يعد بالإمكان استعادتها تلقائياً.",
   "settings.data.archives_restoring": "جارٍ الاستعادة…",
   "settings.data.archives_title": "أرشيفات إعادة الضبط",
   "settings.data.reset_btn": "مسح سجل المعاملات",

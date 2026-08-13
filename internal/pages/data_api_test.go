@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -264,6 +266,82 @@ func TestResetArchivesRestore_NotFoundAndConflict(t *testing.T) {
 	}
 	if live != 1 || archived != 1 {
 		t.Fatalf("after refused restore: live=%d archived=%d, want 1/1", live, archived)
+	}
+}
+
+// newRealDBDataAPIDeps wires registerDataAPI over a REAL migrated database
+// (internal/db.Open), not the seedForPages fixture: that fixture's
+// hand-rolled sale_lines table (ui_smoke_test.go) declares only the sale_id
+// FK, not item_id -> items — the exact fixture-drift trap the tester skill
+// warns about (identical to the demo_seed_opt_in_test.go precedent this
+// mirrors). TestResetArchivesRestore_ReferencesRemovedItem below needs the
+// REAL FK to be enforced to mean anything.
+func newRealDBDataAPIDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
+	t.Helper()
+	dbo, err := db.Open(filepath.Join(t.TempDir(), "reset-archive-real.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { dbo.Close() })
+	dp := &common.Deps{
+		Db:       dbo.DB,
+		Settings: settings.NewStore(dbo.DB),
+		Cfg:      &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}},
+		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+	}
+	mux := http.NewServeMux()
+	registerDataAPI(mux, dp)
+	return mux, dp
+}
+
+// Independent review, ut-docs#187: with sale_lines emptied by reset, an
+// item-cleanup action (catalog cleanup / "Remove sample data") sees no live
+// reference and deletes the item an archived batch still points to. Restore
+// must then refuse with 422, not a raw 500 carrying a SQL error string.
+func TestResetArchivesRestore_ReferencesRemovedItem(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newRealDBDataAPIDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('itm-reset187','SKU-RESET187','Widget',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('l1','s1',1,'itm-reset187','Widget',1,100,0,0,100,100)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var batchID string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&batchID); err != nil {
+		t.Fatal(err)
+	}
+	// sale_lines is empty now, so the item looks unreferenced and safe to
+	// remove — exactly what "Remove sample data"/catalog cleanup do.
+	if _, err := dp.Db.ExecContext(t.Context(), `DELETE FROM items WHERE id='itm-reset187'`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = postForm(mux, "/api/data/reset-archives/"+batchID+"/restore", url.Values{"confirm": {"RESTORE"}}, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("restore after item removed: expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	if s, _ := body["error"].(string); s == "" {
+		t.Fatalf("422 must carry a clear error message, got %+v", body)
+	}
+	// Refusal touches nothing: live tables stay empty, archive intact.
+	var live, archived int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales_archive`).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if live != 0 || archived != 1 {
+		t.Fatalf("after refused restore: live=%d archived=%d, want 0/1", live, archived)
 	}
 }
 

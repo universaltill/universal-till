@@ -663,6 +663,7 @@
   "settings.data.archives_restore_confirm_ph": "بنویسید RESTORE",
   "settings.data.archives_restore_confirm_required": "برای تأیید بنویسید RESTORE",
   "settings.data.archives_restore_conflict": "این صندوق از زمان بازنشانی تراکنش داشته است — دیگر نمی‌توان دستهٔ بایگانی‌شده را به‌طور خودکار بازیابی کرد.",
+  "settings.data.archives_restore_references_removed": "این بایگانی به محصول، مکان موجودی یا مشتری‌ای اشاره دارد که پس از بازنشانی حذف یا پاک شده است (مثلاً با «حذف داده‌های نمونه»، پاک‌سازی کاتالوگ یا حذف اطلاعات مشتری) و دیگر نمی‌توان آن را به‌طور خودکار بازیابی کرد.",
   "settings.data.archives_restoring": "در حال بازیابی…",
   "settings.data.archives_title": "بایگانی بازنشانی‌ها",
   "settings.data.reset_btn": "پاک‌کردن تاریخچهٔ تراکنش",
