@@ -133,11 +133,11 @@ is prefilled with.
   the English and Arabic captures were inspected directly, not just counted
   as passing.
 
-## Pre-existing failures on `main` — NOT from this change
+## Pre-existing failures — NOT from this change, and NOT a red `main`
 
-`go test ./... -race` reports six failures. All six reproduce identically on
-a clean stash of `main`, verified by stashing this branch and re-running the
-same test names:
+`go test ./...` reports six failures locally. All six reproduce identically
+on a clean stash of `main`, verified by stashing this branch and re-running
+the same test names:
 
 - `TestFirstBootSetupThenLogin`
 - `TestSetupWizardRendersShopTypeStep`
@@ -146,8 +146,27 @@ same test names:
 - `TestInventoryReplicaBannerNeverLinksAcrossDevices`
 - `TestCatalogReplicaBannerNeverLinksAcrossDevices` (`internal/pages/catalog`)
 
-Filed separately — `main` is currently red and that should not be discovered
-one card at a time.
+**First read of this was wrong** — "main is red" — and CI contradicted it:
+`ci` was green on `main` at 17:22 today. Chased it down rather than leaving
+two incompatible facts standing.
+
+Actual cause: they depend on the developer's **OS locale**. ut-docs#590 gave
+`GET /setup` a language-detection redirect (`setup_page.go:137`); these tests
+request `/setup` with no `?lang=` and no cookie and expect a rendered page,
+but on a machine with a locale set they get `303 → /setup?lang=en`.
+Demonstrated directly:
+
+```
+LANG= LC_ALL= go test -run TestSetupPageRendersDiscoveryAffordance   → ok
+LANG=en_GB.UTF-8 go test -run TestSetupPageRendersDiscoveryAffordance → FAIL
+```
+
+CI passes because the runner container has no `LANG`, so detection never
+fires. `setup_detect.go` already exposes `osLocaleEnv`/`osTimezoneName` as
+(its own words) "swappable seams" — these tests just don't use them.
+
+Filed as ut-docs#662 with the root cause and the fix, not as a vague
+"tests are failing".
 
 ## Independent review status
 
