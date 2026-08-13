@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -26,6 +27,26 @@ type journalSale struct {
 	OriginalSaleID string          `json:"original_sale_id,omitempty"`
 }
 
+// missingJournalFields names which of the fields applyJournal treats as
+// required are empty, for a diagnosable rejection -- "" means none missing.
+// id is checked too (defense in depth against any malformed payload, not
+// just a version-skewed one) even though id/"id" survives a version skew
+// unharmed (see the comment on applyJournal) -- it can still be legitimately
+// empty on a badly-formed or adversarial request.
+func missingJournalFields(s data.SaleDetail) string {
+	var missing []string
+	if s.ID == "" {
+		missing = append(missing, "id")
+	}
+	if s.ReceiptNo == "" {
+		missing = append(missing, "receipt_no")
+	}
+	if s.SaleType == "" {
+		missing = append(missing, "sale_type")
+	}
+	return strings.Join(missing, ", ")
+}
+
 // buildJournal packages one local sale for pushing.
 func buildJournal(ctx context.Context, repo *data.POSRepo, receiptNo string) (journalSale, bool, error) {
 	detail, found, err := repo.GetSaleDetail(ctx, receiptNo)
@@ -42,6 +63,23 @@ func buildJournal(ctx context.Context, repo *data.POSRepo, receiptNo string) (jo
 // applyJournal replays a journaled sale on the primary. Returns
 // applied=false when the sale already exists (idempotent).
 func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalSale) (bool, error) {
+	// Guards the corruption path the snake_case wire-format rename opens
+	// (ut-docs#262): Go's json.Unmarshal matches a tagged field's incoming
+	// key case-insensitively, so a field whose OLD (PascalCase, untagged)
+	// name and NEW (snake_case) tag differ only by case -- like "ID" vs
+	// "id" -- still decodes fine from a stale peer. ReceiptNo/"receipt_no"
+	// and SaleType/"sale_type" do NOT survive that (the underscore makes
+	// them different strings, not just different case), so those are the
+	// two fields that actually go silently empty across a version skew,
+	// and are the ones load-bearing here -- NOT Sale.ID, which decodes
+	// correctly either way and is included below only for correlation.
+	// Reject loudly instead of applying a malformed/skewed sale. See
+	// reference/contracts/pos-lan-sync-journal.md for the compatibility
+	// guarantee this enforces (no cross-version peers; primary upgrades
+	// first).
+	if missing := missingJournalFields(j.Sale); missing != "" {
+		return false, fmt.Errorf("invalid journal entry (sale id %q): missing %s", j.Sale.ID, missing)
+	}
 	repo := data.NewPOSRepo(d.Db)
 	if exists, err := repo.SaleExists(ctx, j.Sale.ID); err != nil || exists {
 		return false, err
