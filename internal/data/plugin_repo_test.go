@@ -306,6 +306,76 @@ func TestPluginRepo_ListImportEntries(t *testing.T) {
 	}
 }
 
+// TestPluginRepo_ListExportEntries_Entities is ListExportEntries' ut-docs#600
+// counterpart to TestPluginRepo_ListImportEntries above: export entries can
+// now declare Entities (config_json, same column/shape import entries
+// already use) so the /api/data/export dispatcher can gate a catalog-entity
+// ledger (e.g. "items") on both a declared entity AND a permission grant,
+// mirroring how ImportEntryRow.Entities already resolves an import's
+// declared set. Structurally mirrors TestPluginRepo_ListImportEntries:
+// a declared-entities row, a bare (no config_json) row, an inactive-plugin
+// row excluded, and a non-export-type row excluded.
+func TestPluginRepo_ListExportEntries_Entities(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('e1','Catalog Exporter','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin e1: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,sort_order,is_active,config_json)
+	                      VALUES('ee1','e1','export','catalog_export','Catalog Export',1,1,
+	                             '{"entities":["items"]}')`); err != nil {
+		t.Fatalf("seed export entry: %v", err)
+	}
+	// No config_json at all: still listed, just with no declarations —
+	// today's Sales/Stock-only entries (pre-ut-docs#600) look like this.
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('e2','Bare Exporter','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin e2: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,sort_order,is_active)
+	                      VALUES('ee2','e2','export','bare_export','Bare Export',2,1)`); err != nil {
+		t.Fatalf("seed bare export entry: %v", err)
+	}
+	// An entry on an inactive plugin must be excluded.
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('e3','Old Exporter','0.1',0)`); err != nil {
+		t.Fatalf("seed plugin e3: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('ee3','e3','export','old_export','Old',1)`); err != nil {
+		t.Fatalf("seed old export entry: %v", err)
+	}
+	// A non-export/report entry must be excluded too.
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,is_active) VALUES('ie9','e1','import','imp','Imp',1)`); err != nil {
+		t.Fatalf("seed import entry: %v", err)
+	}
+
+	rows, err := repo.ListExportEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListExportEntries: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 export entries, got %d: %+v", len(rows), rows)
+	}
+	byKey := map[string]ExportEntryRow{}
+	for _, r := range rows {
+		byKey[r.Key] = r
+	}
+	catalog, ok := byKey["catalog_export"]
+	if !ok || catalog.PluginID != "e1" || catalog.Label != "Catalog Export" || catalog.SortOrder != 1 {
+		t.Fatalf("unexpected catalog_export row: %+v (present=%v)", catalog, ok)
+	}
+	if len(catalog.Entities) != 1 || catalog.Entities[0] != "items" {
+		t.Fatalf("unexpected entities: %+v", catalog.Entities)
+	}
+	bare, ok := byKey["bare_export"]
+	if !ok || bare.PluginID != "e2" || len(bare.Entities) != 0 {
+		t.Fatalf("unexpected bare_export row: %+v (present=%v)", bare, ok)
+	}
+	if _, ok := byKey["old_export"]; ok {
+		t.Fatalf("expected the inactive plugin's export entry excluded, got %+v", rows)
+	}
+}
+
 // Upgrade path for plugin settings: values the operator configured must
 // survive a manifest re-apply, dupes from the old NULL-scope_id upsert must
 // collapse, a scope change in the manifest must move the row (keeping its

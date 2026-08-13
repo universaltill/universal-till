@@ -50,6 +50,34 @@ func seedExportPluginWithPermissions(t *testing.T, db *sql.DB, pluginID, key, la
 	}
 }
 
+// seedExportPluginWithEntities is seedExportPluginWithPermissions' ut-docs#600
+// counterpart: an export entry that additionally DECLARES a catalog-entity
+// set (config_json, the same column/shape ImportEntryRow.Entities already
+// reads — ut-docs#599) and is optionally granted "catalog:read". Kept as a
+// separate helper rather than widening seedExportPluginWithPermissions'
+// signature, so every existing sales/stock call site stays untouched.
+func seedExportPluginWithEntities(t *testing.T, db *sql.DB, pluginID, key, label string, entities []string, catalogRead bool) {
+	t.Helper()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	entitiesJSON, err := json.Marshal(map[string][]string{"entities": entities})
+	if err != nil {
+		t.Fatalf("marshal entities: %v", err)
+	}
+	mustExec(`INSERT INTO plugins (id, name, version, is_active) VALUES (?, ?, '1.0.0', 1)`, pluginID, pluginID)
+	mustExec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order, config_json)
+	          VALUES (?, ?, ?, ?, 'export', 1, 0, ?)`, pluginID+"-e", pluginID, key, label, string(entitiesJSON))
+	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'events:receive', 1)`, pluginID+"-p", pluginID)
+	mustExec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES (?, ?, 'export.requested.ask', 'export', 1)`, pluginID+"-h", pluginID)
+	if catalogRead {
+		mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'catalog:read', 1)`, pluginID+"-p-cat", pluginID)
+	}
+}
+
 // exportErrorEnvelope decodes /api/data/export's failure envelope --
 // { "data": null, "error": "…" } (universal-till/CLAUDE.md, ut-docs#387) --
 // and returns the error string, failing the test if data isn't null.
@@ -631,6 +659,150 @@ func TestExportDispatch_PayloadIncludesVariantStockData(t *testing.T) {
 	}
 	if itemRow == nil {
 		t.Fatalf("expected at least one item-level row in the payload, got %+v", payload.Stock)
+	}
+}
+
+// TestExportDispatch_PayloadIncludesItemsData is the ut-docs#600 counterpart
+// to TestExportDispatch_PayloadIncludesStockData: an export entry that
+// DECLARES the "items" entity (config_json, mirroring #599's import-side
+// Entities pattern) and holds catalog:read receives the full catalog
+// (data.CatalogRepo.ExportRows — the same rows GET /api/catalog/export's
+// hardcoded CSV writer already reads) in the dispatched payload's new
+// "items" field.
+func TestExportDispatch_PayloadIncludesItemsData(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp3", "catalog_csv", "Catalog Export", []string{"items"}, true)
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-exp','SKU-EXP','Export Widget',999,2,1)`)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp3", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Items []struct {
+			Name string `json:"Name"`
+			SKU  string `json:"SKU"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	var got *struct {
+		Name string `json:"Name"`
+		SKU  string `json:"SKU"`
+	}
+	for i := range payload.Items {
+		if payload.Items[i].SKU == "SKU-EXP" {
+			got = &payload.Items[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected itm-exp (SKU-EXP) in items payload, got %+v", payload.Items)
+	}
+	if got.Name != "Export Widget" {
+		t.Fatalf("unexpected item row: %+v", got)
+	}
+}
+
+// TestExportDispatch_OmitsItemsWithoutCatalogReadPermission proves items
+// gating is independent of the entity declaration: an entry that declares
+// "items" but was NOT granted catalog:read must not receive the catalog,
+// mirroring TestExportDispatch_OmitsSalesWithoutSalesReadPermission's
+// per-ledger-gates-independently shape.
+func TestExportDispatch_OmitsItemsWithoutCatalogReadPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp4", "catalog_csv", "Catalog Export", []string{"items"}, false)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp4", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (missing catalog:read must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.Items != nil && string(payload.Items) != "null" {
+		t.Fatalf("expected items omitted (null) without catalog:read, got %s", payload.Items)
+	}
+}
+
+// TestExportDispatch_OmitsItemsWhenEntityNotDeclared is the axis
+// TestExportDispatch_OmitsItemsWithoutCatalogReadPermission doesn't cover:
+// a plugin granted catalog:read but whose entry does NOT declare "items" in
+// its Entities must still not receive the catalog — this is the actual
+// ut-docs#600 parity gap (export entries never had an entity declaration to
+// check at all, so a permission grant alone used to be the only gate; now a
+// permission grant with no matching declared entity must still omit).
+func TestExportDispatch_OmitsItemsWhenEntityNotDeclared(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp5", "catalog_csv", "Catalog Export", nil, true)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp5", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.Items != nil && string(payload.Items) != "null" {
+		t.Fatalf("expected items omitted (null) without a declared \"items\" entity, got %s", payload.Items)
 	}
 }
 

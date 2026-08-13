@@ -1545,12 +1545,19 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 // dispatcher (internal/pages/data_api.go) resolves Key to this row, then
 // asks PluginID specifically (EventBus.AskPlugin("export.requested.ask",
 // ...) — never a broadcast Ask, which would let a different installed
-// plugin answer on this entry's behalf) to produce the export.
+// plugin answer on this entry's behalf) to produce the export. Entities is
+// the entry's own manifest declaration (ManifestEntry.Entities), persisted
+// inside config_json exactly like ImportEntryRow.Entities (ut-docs#600,
+// mirroring #599's import-side pattern) — it's what lets the dispatcher
+// gate a catalog-entity ledger (e.g. "items") on both a declared entity AND
+// a permission grant, rather than every export entry silently being asked
+// for every ledger it happens to hold read access to.
 type ExportEntryRow struct {
 	PluginID  string
 	Key       string
 	Label     string
 	SortOrder int
+	Entities  []string
 }
 
 // ListExportEntries returns active export/report entries from active
@@ -1562,7 +1569,8 @@ SELECT
     p.id,
     pe.key,
     pe.label,
-    pe.sort_order
+    pe.sort_order,
+    COALESCE(pe.config_json, '')
 FROM plugin_entries pe
 JOIN plugins p ON p.id = pe.plugin_id
 WHERE pe.type IN ('export', 'report') AND pe.is_active = 1 AND p.is_active = 1
@@ -1575,8 +1583,21 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 	var res []ExportEntryRow
 	for rows.Next() {
 		var row ExportEntryRow
-		if err := rows.Scan(&row.PluginID, &row.Key, &row.Label, &row.SortOrder); err != nil {
+		var configJSON string
+		if err := rows.Scan(&row.PluginID, &row.Key, &row.Label, &row.SortOrder, &configJSON); err != nil {
 			return nil, pluginObs.wrap("list_export_entries", err)
+		}
+		if configJSON != "" {
+			// Same unpack shape as ListImportEntries: a malformed
+			// config_json (hand-edited DB, legacy row) just yields an empty
+			// Entities — the dispatcher then finds no declared entity and
+			// omits the ledger rather than this listing failing wholesale.
+			var cfg struct {
+				Entities []string `json:"entities"`
+			}
+			if err := json.Unmarshal([]byte(configJSON), &cfg); err == nil {
+				row.Entities = cfg.Entities
+			}
 		}
 		res = append(res, row)
 	}
