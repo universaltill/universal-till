@@ -330,6 +330,8 @@
   "kitchen.print.no_receipt": "هیچ سفارشی انتخاب نشده است",
   "kitchen.print.off": "چاپگر آشپزخانه پیکربندی نشده است",
   "kitchen.print.partial": "چاپ برخی تذکره‌های آشپزخانه ناموفق بود",
+  "kitchen.ticket.order_label": "سفارش",
+  "kitchen.ticket.station_default": "آشپزخانه",
   "menu.back_to_sale": "بازگشت به فروش",
   "modifiers.add_to_cart": "افزودن به سبد خرید",
   "modifiers.cancel": "لغو",
