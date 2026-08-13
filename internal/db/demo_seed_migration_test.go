@@ -48,13 +48,16 @@ func TestDemoCatalogueRemovedOnFreshInstall(t *testing.T) {
 		}
 	}
 
-	// 001's sample customers/promotions are out of this card's scope
-	// (catalogue only) — they must be untouched.
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM customers`).Scan(&n); err != nil {
-		t.Fatalf("count customers: %v", err)
-	}
-	if n != 3 {
-		t.Errorf("fresh install: customers has %d rows, want 3 (036 is catalogue-only)", n)
+	// 001's sample customers/promotions are migration 036's out-of-scope
+	// note (catalogue only) — migration 038 (ut-docs#567) closes that gap,
+	// so on a fresh install they're gone too, same as the catalogue.
+	for table, want := range map[string]int{"customers": 0, "promotions": 0} {
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != want {
+			t.Errorf("fresh install: %s has %d rows, want %d (038 must remove the demo customers/promos)", table, n, want)
+		}
 	}
 
 	// The is_sample_data column exists and defaults to 0 for new rows.
@@ -117,6 +120,14 @@ func TestDemoCatalogueUpgradeKeepsTouchedItems(t *testing.T) {
 	// replay problem (ut-docs#571).
 	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
 		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
+	}
+	// Migration 038 adds customers/promotions.is_sample_data -- same
+	// non-idempotent replay problem (ut-docs#567).
+	if _, err := d.DB.Exec(`ALTER TABLE customers DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind customers.is_sample_data column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
@@ -235,6 +246,14 @@ func TestDemoCatalogueUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
 		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
 	}
+	// Migration 038 adds customers/promotions.is_sample_data -- same
+	// non-idempotent replay problem (ut-docs#567).
+	if _, err := d.DB.Exec(`ALTER TABLE customers DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind customers.is_sample_data column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +271,200 @@ func TestDemoCatalogueUpgradeRemovesAllWhenUntouched(t *testing.T) {
 		}
 		if n != 0 {
 			t.Errorf("untouched upgrade: %s has %d rows, want 0", table, n)
+		}
+	}
+}
+
+// ut-docs#567: migration 038 gives the 3 demo customers + 3 demo promo
+// codes the same opt-in treatment 036 gave the catalogue. Upgrade path: an
+// existing till whose 001 seeded them long ago, and that actually used one
+// of each kind. 038 must keep every touched customer (sold-to, or targeted
+// by a promotion) and every touched promotion (targeted at a customer),
+// and remove only the untouched rest.
+func TestDemoCustomersPromosUpgradeKeepsTouchedRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m038-upgrade.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconstruct the pre-038 state: the full demo customers/promos present
+	// (038 already ran on this fresh file, so re-seed them), plus real
+	// usage: cust-001 sold-to, PROMO50 targeted at cust-002, DISC10 edited
+	// (independent review, ut-docs#567 F3 — customization without
+	// targeting must also count as touched).
+	if _, err := d.DB.Exec(seeddata.DemoCustomersPromosSQL); err != nil {
+		t.Fatalf("re-seed demo customers/promos: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, customer_id, subtotal, total) VALUES ('sale-038', 'R-038', 'cust-001', 120, 120)`); err != nil {
+		t.Fatalf("insert sale: %v", err)
+	}
+	if _, err := d.DB.Exec(`UPDATE promotions SET customer_id = 'cust-002' WHERE code = 'PROMO50'`); err != nil {
+		t.Fatalf("target PROMO50: %v", err)
+	}
+	if _, err := d.DB.Exec(`UPDATE promotions SET value = 1500, description = 'Summer 15% sale' WHERE code = 'DISC10'`); err != nil {
+		t.Fatalf("customize DISC10: %v", err)
+	}
+
+	// Rewind the ledger so 038 and its follower replay on reopen, and undo
+	// its non-idempotent DDL (ALTER TABLE ADD COLUMN), same pattern as the
+	// 036 upgrade tests above.
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 38`); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE customers DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind customers.is_sample_data column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err = Open(path) // replays 038 against the simulated pre-038 till
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	// cust-001 (sold) and cust-002 (targeted by PROMO50) survive, flagged;
+	// cust-003 is gone.
+	assertIDs(t, d, "customers", []string{"cust-001", "cust-002"})
+	var flag int
+	for _, id := range []string{"cust-001", "cust-002"} {
+		if err := d.DB.QueryRow(`SELECT is_sample_data FROM customers WHERE id = ?`, id).Scan(&flag); err != nil {
+			t.Fatal(err)
+		}
+		if flag != 1 {
+			t.Errorf("customer %s is_sample_data = %d, want 1 (038 marks legacy demo rows)", id, flag)
+		}
+	}
+
+	// PROMO50 (now targeted) and DISC10 (now customized) survive; PROMO500
+	// alone is gone.
+	var codes []string
+	rows, err := d.DB.Query(`SELECT code FROM promotions ORDER BY code`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		codes = append(codes, c)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if want := "DISC10,PROMO50"; strings.Join(codes, ",") != want {
+		t.Errorf("surviving promotions = %v, want [%s]", codes, want)
+	}
+	var disc10Desc string
+	if err := d.DB.QueryRow(`SELECT description FROM promotions WHERE code = 'DISC10'`).Scan(&disc10Desc); err != nil {
+		t.Fatal(err)
+	}
+	if disc10Desc != "Summer 15% sale" {
+		t.Errorf("DISC10.description = %q after 038, want the customized value intact", disc10Desc)
+	}
+
+	// The trading history and the real targeting are intact.
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM sales WHERE id = 'sale-038'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("sale-038 missing after 038, want it intact")
+	}
+	var targetedCustomer string
+	if err := d.DB.QueryRow(`SELECT customer_id FROM promotions WHERE code = 'PROMO50'`).Scan(&targetedCustomer); err != nil {
+		t.Fatal(err)
+	}
+	if targetedCustomer != "cust-002" {
+		t.Errorf("PROMO50.customer_id = %q after 038, want cust-002 (targeting must survive)", targetedCustomer)
+	}
+}
+
+// A shop that never touched anything upgrades to a completely clean set —
+// the exact fresh-install outcome, reached via the upgrade path.
+func TestDemoCustomersPromosUpgradeRemovesAllWhenUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m038-upgrade-clean.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(seeddata.DemoCustomersPromosSQL); err != nil {
+		t.Fatalf("re-seed demo customers/promos: %v", err)
+	}
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 38`); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE customers DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind customers.is_sample_data column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var n int
+	for _, table := range []string{"customers", "promotions"} {
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Errorf("untouched upgrade: %s has %d rows, want 0", table, n)
+		}
+	}
+}
+
+// Migration 038 embeds the two shared seeddata scripts VERBATIM — same
+// drift guard as TestMigration036MatchesSeedData, scoped to customers/
+// promos.
+func TestMigration038MatchesSeedData(t *testing.T) {
+	migs, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m038 string
+	for _, m := range migs {
+		if m.Version == 38 {
+			m038 = m.SQL
+		}
+	}
+	if m038 == "" {
+		t.Fatal("migration 038 not found")
+	}
+	if !strings.Contains(m038, seeddata.DemoCustomersPromosIDsSQL) {
+		t.Error("038 does not contain seeddata/demo_customers_promos_ids.sql verbatim — regenerate the migration from the shared assets")
+	}
+	if !strings.Contains(m038, seeddata.RemoveDemoCustomersPromosSQL) {
+		t.Error("038 does not contain seeddata/remove_demo_customers_promos.sql verbatim — regenerate the migration from the shared assets")
+	}
+	for _, id := range seeddata.DemoCustomerIDs {
+		if !strings.Contains(seeddata.DemoCustomersPromosIDsSQL, "('"+id+"')") {
+			t.Errorf("seeddata.DemoCustomerIDs has %s but demo_customers_promos_ids.sql does not list it", id)
+		}
+		if !strings.Contains(seeddata.DemoCustomersPromosSQL, "'"+id+"'") {
+			t.Errorf("seeddata.DemoCustomerIDs has %s but demo_customers_promos.sql does not insert it", id)
+		}
+	}
+	for _, code := range seeddata.DemoPromoCodes {
+		if !strings.Contains(seeddata.DemoCustomersPromosIDsSQL, "('"+code+"')") {
+			t.Errorf("seeddata.DemoPromoCodes has %s but demo_customers_promos_ids.sql does not list it", code)
+		}
+		if !strings.Contains(seeddata.DemoCustomersPromosSQL, "'"+code+"'") {
+			t.Errorf("seeddata.DemoPromoCodes has %s but demo_customers_promos.sql does not insert it", code)
 		}
 	}
 }

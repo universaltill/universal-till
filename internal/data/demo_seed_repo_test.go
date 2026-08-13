@@ -156,6 +156,267 @@ func TestRemoveDemoCatalogueEmpty(t *testing.T) {
 	}
 }
 
+// ut-docs#567: the 3 demo customers + 3 demo promo codes get the same
+// opt-in treatment ut-docs#539 gave the demo catalogue.
+func TestSeedDemoCustomersPromos(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+
+	// Post-038 fresh install: nothing there yet.
+	if n, err := repo.SampleCustomerPromoCount(ctx); err != nil || n != 0 {
+		t.Fatalf("SampleCustomerPromoCount before seed = %d, %v; want 0, nil", n, err)
+	}
+
+	if err := repo.SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatalf("SeedDemoCustomersPromos: %v", err)
+	}
+
+	for table, want := range map[string]int{"customers": 3, "promotions": 3} {
+		var n int
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != want {
+			t.Errorf("after seed: %s = %d rows, want %d", table, n, want)
+		}
+	}
+	for table := range map[string]int{"customers": 0, "promotions": 0} {
+		var unflagged int
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM ` + table + ` WHERE is_sample_data != 1`).Scan(&unflagged); err != nil {
+			t.Fatal(err)
+		}
+		if unflagged != 0 {
+			t.Errorf("%d seeded %s rows are not flagged is_sample_data = 1", unflagged, table)
+		}
+	}
+	if n, err := repo.SampleCustomerPromoCount(ctx); err != nil || n != 6 {
+		t.Fatalf("SampleCustomerPromoCount after seed = %d, %v; want 6, nil", n, err)
+	}
+
+	// Idempotent: seeding again must neither fail nor duplicate.
+	if err := repo.SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatalf("second SeedDemoCustomersPromos: %v", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM customers`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Errorf("after re-seed: customers = %d, want 3 (INSERT OR IGNORE must not duplicate)", n)
+	}
+}
+
+// The Settings "Remove sample data" action, customer/promo half: removes
+// every untouched demo customer/promo and reports removed vs kept. A demo
+// customer is kept once actually sold-to or targeted by any promotion; a
+// demo promo is kept once targeted at a specific customer (see
+// remove_demo_customers_promos.sql for why the promo rule differs).
+func TestRemoveDemoCustomersPromos(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Touch three of the six rows, each via a DIFFERENT signal so each rule
+	// is independently exercised: cust-001 sold-to (sales.customer_id),
+	// cust-002 targeted by a real (non-demo) promotion
+	// (promotions.customer_id), PROMO50 targeted at cust-001 — a customer
+	// already kept for its own reason, so PROMO50's own removability can't
+	// be confused with "did targeting this promo save a customer."
+	// cust-003, PROMO500 and DISC10 are left completely untouched.
+	if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, customer_id, subtotal, total) VALUES ('s-1', 'R-1', 'cust-001', 120, 120)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO promotions (code, type, value, description, is_active, customer_id) VALUES ('REAL10', 'amount', 100, 'loyalty perk', 1, 'cust-002')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`UPDATE promotions SET customer_id = 'cust-001' WHERE code = 'PROMO50'`); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCustomersPromos(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCustomersPromos: %v", err)
+	}
+	// Removed: cust-003, PROMO500, DISC10 = 3. Kept: cust-001 (sold),
+	// cust-002 (targeted by REAL10), PROMO50 (now targeted at cust-001) = 3.
+	if removed != 3 || kept != 3 {
+		t.Fatalf("RemoveDemoCustomersPromos = removed %d, kept %d; want 3, 3", removed, kept)
+	}
+
+	for _, id := range []string{"cust-001", "cust-002"} {
+		var n int
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM customers WHERE id = ?`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("touched customer %s was removed", id)
+		}
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM customers WHERE id = 'cust-003'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Error("untouched customer cust-003 was kept")
+	}
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code = 'PROMO50'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Error("PROMO50 (now targeted at a customer) was removed")
+	}
+	for _, code := range []string{"PROMO500", "DISC10"} {
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code = ?`, code).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("untouched promo %s was kept", code)
+		}
+	}
+	// The non-demo REAL10 promotion, and its targeting, is untouched by any
+	// of this — it's not is_sample_data.
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code = 'REAL10'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Error("non-demo promotion REAL10 was removed")
+	}
+
+	// Running removal again is a no-op that reports the same kept count.
+	removed, kept, err = repo.RemoveDemoCustomersPromos(ctx)
+	if err != nil {
+		t.Fatalf("second RemoveDemoCustomersPromos: %v", err)
+	}
+	if removed != 0 || kept != 3 {
+		t.Fatalf("second RemoveDemoCustomersPromos = removed %d, kept %d; want 0, 3", removed, kept)
+	}
+}
+
+// Independent review (ut-docs#567, F2): a demo customer referenced only by
+// a HELD (parked) sale — not yet in the sales table — must still be kept.
+// Without this, removal could delete a customer a parked basket still
+// points at, and tendering that sale later would FK-fail (checkout must
+// never break — the till's own non-negotiable).
+func TestRemoveDemoCustomersPromosKeepsHeldSaleCustomer(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Mirrors pos.SnapshotPayload's real shape (internal/pos/hold.go) just
+	// enough to exercise the LIKE match — only customer_id matters here.
+	payload := `{"lines":[],"customer_id":"cust-001","customer_name":"Alice Carter","total":0}`
+	if _, err := d.DB.Exec(`INSERT INTO held_sales (id, label, payload) VALUES ('h-1', 'Table 4', ?)`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCustomersPromos(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCustomersPromos: %v", err)
+	}
+	// Kept: cust-001 (held sale). Removed: cust-002, cust-003, PROMO50,
+	// PROMO500, DISC10 = 5.
+	if removed != 5 || kept != 1 {
+		t.Fatalf("RemoveDemoCustomersPromos = removed %d, kept %d; want 5, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM customers WHERE id = 'cust-001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("customer referenced only by a held sale was removed")
+	}
+}
+
+// Independent review (ut-docs#567, F3): a demo promotion the shop has
+// genuinely customized (edited value/description, without necessarily
+// targeting a specific customer) must be kept, not just one with
+// customer_id set — there is no promotions management UI, so customer_id
+// is not the only way a shop could rely on a promo.
+func TestRemoveDemoCustomersPromosKeepsCustomizedPromotion(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.DB.Exec(`UPDATE promotions SET value = 1500, description = 'Summer 15% sale' WHERE code = 'DISC10'`); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCustomersPromos(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCustomersPromos: %v", err)
+	}
+	// Kept: DISC10 (customized), plus every customer (none touched, but
+	// DISC10 no longer counts toward "removed" either way since it's kept).
+	// Removed: cust-001/002/003, PROMO50, PROMO500 = 5.
+	if removed != 5 || kept != 1 {
+		t.Fatalf("RemoveDemoCustomersPromos = removed %d, kept %d; want 5, 1", removed, kept)
+	}
+	var desc string
+	if err := d.DB.QueryRow(`SELECT description FROM promotions WHERE code = 'DISC10'`).Scan(&desc); err != nil {
+		t.Fatal("customized DISC10 was removed:", err)
+	}
+	if desc != "Summer 15% sale" {
+		t.Fatalf("DISC10.description = %q, want the customized value intact", desc)
+	}
+}
+
+// Removing when nothing was ever seeded reports zeros, not an error.
+func TestRemoveDemoCustomersPromosEmpty(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	removed, kept, err := NewDemoSeedRepo(d.DB).RemoveDemoCustomersPromos(context.Background())
+	if err != nil {
+		t.Fatalf("RemoveDemoCustomersPromos on empty DB: %v", err)
+	}
+	if removed != 0 || kept != 0 {
+		t.Fatalf("RemoveDemoCustomersPromos on empty DB = removed %d, kept %d; want 0, 0", removed, kept)
+	}
+}
+
+// An operator's own customer/promotion is never counted or touched, even if
+// it clashes with nothing — only is_sample_data = 1 rows are.
+func TestRemoveDemoCustomersPromosLeavesOwnRecordsAlone(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if _, err := d.DB.Exec(`INSERT INTO customers (id, name) VALUES ('own-cust', 'My Own Customer')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO promotions (code, type, value, is_active) VALUES ('OWNCODE', 'amount', 100, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatal(err)
+	}
+	removed, kept, err := repo.RemoveDemoCustomersPromos(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 6 || kept != 0 {
+		t.Fatalf("RemoveDemoCustomersPromos = removed %d, kept %d; want 6, 0", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM customers WHERE id = 'own-cust'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("operator's own customer was removed by the sample-data cleanup")
+	}
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code = 'OWNCODE'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("operator's own promotion was removed by the sample-data cleanup")
+	}
+}
+
 // An operator's own item is never counted or touched by the sample-data
 // paths, even if it clashes with nothing — only is_sample_data = 1 rows are.
 func TestRemoveDemoCatalogueLeavesOwnItemsAlone(t *testing.T) {
