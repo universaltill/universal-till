@@ -670,6 +670,88 @@ VALUES (?, ?, ?, ?, ?)`,
 	return nil
 }
 
+// MergeAdditiveJSONMapSetting atomically merges newEntries into a JSON
+// object (string key -> int value) stored as one global-scope plugin
+// setting, adding only keys not already present — an existing entry (e.g. a
+// merchant's hand-set override) always wins over a newly discovered one.
+// Runs the read, merge and write inside a single transaction: the DSN's
+// _txlock=immediate (ut-docs#311) makes BeginTx take the write lock at
+// BEGIN, so a second concurrent caller cannot start its own read until the
+// first has committed its write — closing the lost-update race a separate
+// GetPluginSetting + UpsertPluginSetting pair leaves open, where both calls
+// can read the same starting value and the second write clobbers the
+// first's additions (ut-docs#532).
+//
+// If the existing value isn't valid JSON, it is left completely untouched
+// and an error is returned — a hand-edited value that fails to parse must
+// never be silently overwritten by whatever this merge would have written.
+func (r *PluginRepo) MergeAdditiveJSONMapSetting(ctx context.Context, pluginID, key string, newEntries map[string]int) (added int, err error) {
+	done := pluginObs.trace("merge_additive_json_map_setting")
+	defer func() { done(err) }()
+
+	tx, txErr := r.db.BeginTx(ctx, nil)
+	if txErr != nil {
+		err = pluginObs.wrap("merge_additive_json_map_setting", txErr)
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	existing := map[string]int{}
+	var raw string
+	scanErr := tx.QueryRowContext(ctx, `
+SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ?
+ORDER BY CASE scope WHEN 'register' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1`,
+		pluginID, key).Scan(&raw)
+	switch {
+	case scanErr != nil && !errors.Is(scanErr, sql.ErrNoRows):
+		err = pluginObs.wrap("merge_additive_json_map_setting", scanErr)
+		return 0, err
+	case scanErr == nil && strings.TrimSpace(raw) != "":
+		if jsonErr := json.Unmarshal([]byte(raw), &existing); jsonErr != nil {
+			err = fmt.Errorf("existing value for %s/%s is not valid JSON: %w", pluginID, key, jsonErr)
+			return 0, err
+		}
+	}
+
+	for id, v := range newEntries {
+		if _, ok := existing[id]; ok {
+			continue
+		}
+		existing[id] = v
+		added++
+	}
+	if added == 0 {
+		return 0, nil
+	}
+
+	merged, marshalErr := json.Marshal(existing)
+	if marshalErr != nil {
+		err = fmt.Errorf("marshal merged value for %s/%s: %w", pluginID, key, marshalErr)
+		return 0, err
+	}
+
+	res, execErr := tx.ExecContext(ctx, `
+UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
+WHERE plugin_id = ? AND key = ? AND scope = 'global'`, string(merged), pluginID, key)
+	if execErr != nil {
+		err = pluginObs.wrap("merge_additive_json_map_setting", execErr)
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, insErr := tx.ExecContext(ctx, `
+INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
+VALUES (?, ?, ?, ?, 'global')`, uuid.NewString(), pluginID, key, string(merged)); insErr != nil {
+			err = pluginObs.wrap("merge_additive_json_map_setting", insErr)
+			return 0, err
+		}
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = pluginObs.wrap("merge_additive_json_map_setting", commitErr)
+		return 0, err
+	}
+	return added, nil
+}
+
 // PluginActive reports whether a plugin is installed and enabled.
 func (r *PluginRepo) PluginActive(ctx context.Context, pluginID string) (bool, error) {
 	var n int
