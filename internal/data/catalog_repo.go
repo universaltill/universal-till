@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
 type CatalogRepo struct {
@@ -365,9 +366,9 @@ ORDER BY id LIMIT 1`, rateBP, nullableIntPtr(takeawayBP)).Scan(&id)
 	// name constraint can still trip on a pre-existing manual code or a
 	// concurrent import creating the identical pair — retry the lookup
 	// before giving up, rather than failing a row that has a valid answer.
-	name := fmt.Sprintf("Imported %s%%", bpToPercentString(rateBP))
+	name := fmt.Sprintf("Imported %s%%", taxrate.FormatPercent(rateBP))
 	if takeawayBP != nil {
-		name = fmt.Sprintf("Imported %s%% (takeaway %s%%)", bpToPercentString(rateBP), bpToPercentString(*takeawayBP))
+		name = fmt.Sprintf("Imported %s%% (takeaway %s%%)", taxrate.FormatPercent(rateBP), taxrate.FormatPercent(*takeawayBP))
 	}
 	id = uuid.NewString()
 	_, insErr := r.db.ExecContext(ctx, `
@@ -380,20 +381,6 @@ VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
 		return id, false, nil
 	}
 	return "", false, fmt.Errorf("create tax code: %w", insErr)
-}
-
-// bpToPercentString renders basis points as a plain percent string
-// (1900 → "19", 1950 → "19.5") — hundredths of a percent, a fixed scale of
-// its own, deliberately NOT money/minorToDecimal formatting.
-func bpToPercentString(bp int) string {
-	sign := ""
-	if bp < 0 {
-		sign, bp = "-", -bp
-	}
-	if bp%100 == 0 {
-		return fmt.Sprintf("%s%d", sign, bp/100)
-	}
-	return sign + strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0")
 }
 
 // ExportRow is one catalog line for the CSV export (G22b — the

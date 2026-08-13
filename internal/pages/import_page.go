@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
 // Catalog import (docs: architecture/catalog-import.md, G22a): upload a
@@ -603,9 +604,9 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	for _, e := range rows {
 		tax, takeaway := "", ""
 		if e.HasTax {
-			tax = bpToPercent(e.TaxRateBP)
+			tax = taxrate.FormatPercent(e.TaxRateBP)
 			if e.HasTakeaway {
-				takeaway = bpToPercent(e.TakeawayRateBP)
+				takeaway = taxrate.FormatPercent(e.TakeawayRateBP)
 			}
 		}
 		_ = cw.Write([]string{
@@ -724,21 +725,6 @@ func translateTaxIssue(T func(string) string, code, raw string) string {
 		log.Printf("[import] unrecognised tax issue reason code %q", code)
 		return T("import.status.unknown_issue")
 	}
-}
-
-// bpToPercent renders basis points as a plain percent string ("19", "19.5")
-// — the exact shape ParseTaxRateBP reads back. Deliberately NOT
-// minorToDecimal: basis points are hundredths of a percent, a fixed scale of
-// their own, not money decimals.
-func bpToPercent(bp int) string {
-	sign := ""
-	if bp < 0 {
-		sign, bp = "-", -bp
-	}
-	if bp%100 == 0 {
-		return fmt.Sprintf("%s%d", sign, bp/100)
-	}
-	return sign + strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0")
 }
 
 // minorToDecimal renders minor units as a plain decimal ("1.20") — the
