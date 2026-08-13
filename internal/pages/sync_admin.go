@@ -357,10 +357,13 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 // Steady state is NOT a no-op: an Unchanged poll only means the PRIMARY's
 // set hasn't moved — it says nothing about local drift (a failed reload,
 // anything that slips past the replica guards). The local half of this
-// diff is DB-row based (InstalledPluginVersion reads the plugins table),
-// so it CANNOT detect a plugin whose row survives but whose files were
-// deleted out from under it — that's ut-docs#368's failure mode, a
-// separate still-open card, not covered here. The last-applied bundle
+// diff reads the plugins table (InstalledPluginVersion): both the version
+// AND the install lifecycle state — a row that claims the right version
+// while its FILES are missing/unloadable is flipped to
+// install_state='broken' by WasmRuntime.Sync and treated as drift here
+// (ut-docs#368: a join snapshot writes rows, never bytes — this is how
+// such a plugin heals within one tick instead of hiding behind a
+// version-only diff forever). The last-applied bundle
 // rows are persisted locally
 // (sync.plugins_bundle, alongside sync.plugins_version), and on an
 // Unchanged response the same diff/converge loop re-runs against that
@@ -443,30 +446,43 @@ func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, p
 // convergePluginSet makes this till's marketplace-installed plugin set match
 // the given primary registry rows — the shared diff loop of both the
 // changed-bundle and steady-state (cached rows) paths of syncPullPlugins.
-// Returns true only if every needed install/uninstall succeeded.
+// "Match" covers install state, not just version: a locally-broken plugin at
+// the otherwise-correct version (row present, binary missing/unloadable —
+// ut-docs#368) is reconverged through the same verified re-fetch as a
+// version mismatch. Returns true only if every needed install/uninstall
+// succeeded.
 func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSyncRow) bool {
 	repo := data.NewSyncPluginsRepo(d.Db)
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 	converged := true
 
-	// Installs/updates: listing active on the primary, missing or at a
-	// different version locally → re-fetch from the marketplace (verified),
-	// pinned to the PRIMARY's version — not the marketplace's latest — so a
-	// primary deliberately held behind latest doesn't fork its replicas.
+	// Installs/updates: listing active on the primary, missing, at a
+	// different version locally, or locally BROKEN (right version, files
+	// missing/unloadable — ut-docs#368) → re-fetch from the marketplace
+	// (verified), pinned to the PRIMARY's version — not the marketplace's
+	// latest — so a primary deliberately held behind latest doesn't fork
+	// its replicas. The broken case rides the exact same Ed25519-verified
+	// cloudInstallPluginVersion path as a version mismatch: zero new
+	// transfer mechanism, the install simply re-lands the files and flips
+	// the row back to 'installed'.
 	inPrimary := make(map[string]bool, len(rows))
 	for _, row := range rows {
 		if row.ListingID == "" || row.PluginID == "" {
 			continue // defense in depth; DumpActivePlugins already filters these
 		}
 		inPrimary[row.ListingID] = true
-		version, installed, err := repo.InstalledPluginVersion(ctx, row.PluginID)
+		version, installState, installed, err := repo.InstalledPluginVersion(ctx, row.PluginID)
 		if err != nil {
 			logging.L().Errorf("plugin sync: read local state for %s: %v", row.PluginID, err)
 			converged = false
 			continue
 		}
-		if installed && version == row.Version {
+		if installed && version == row.Version && installState != data.PluginStateBroken {
 			continue
+		}
+		if installed && installState == data.PluginStateBroken {
+			logging.L().Warnf("plugin sync: %s (%s@%s) is broken locally (registered but not loadable) — re-fetching from the marketplace",
+				row.PluginName, row.ListingID, row.Version)
 		}
 		if _, err := cloudInstallPluginVersion(ctx, d, row.ListingID, row.Version); err != nil {
 			logging.L().Warnf("plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",

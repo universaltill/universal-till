@@ -202,6 +202,15 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	bus := SharedBus(db)
 	bus.ResetSubscribers()
 
+	// ut-docs#368: a load failure used to `continue` silently — a joined
+	// replica whose plugins row arrived in the snapshot with no file on disk
+	// looked healthy while tax silently fell back to base rates. Failures
+	// are now tallied, flipped to install_state='broken' (visible on the
+	// plugins page and to the tax fail-closed check), and flipped back to
+	// 'installed' on a later successful load — self-heal must be visible.
+	var loaded, failed []string
+	stateChanged := false
+
 	for _, row := range rows {
 		if row.Runtime != "wasm" || !row.IsActive {
 			continue
@@ -210,7 +219,17 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			strings.TrimPrefix(row.Entrypoint, "./"))
 		if err := w.load(row.ID, row.Version, modPath); err != nil {
 			logging.L().Errorf("wasm load %s: %v", row.ID, err)
+			failed = append(failed, row.ID)
+			if markBroken(ctx, repo, db, row) {
+				stateChanged = true
+			}
 			continue
+		}
+		loaded = append(loaded, row.ID)
+		if row.InstallState == data.PluginStateBroken {
+			if markHealed(ctx, repo, db, row) {
+				stateChanged = true
+			}
 		}
 		events, err := repo.ListPluginHookEvents(ctx, row.ID)
 		if err != nil || len(events) == 0 {
@@ -260,6 +279,86 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		}()
 		logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
 	}
+
+	if stateChanged {
+		// Install-state flips change what cached ".ask" answers (and the
+		// tax fail-closed broken check, tax_hook.go) may assume — bump AFTER
+		// the DB writes so no caller can cache pre-flip state under the
+		// post-flip generation.
+		bus.BumpGeneration()
+	}
+	if len(failed) > 0 {
+		logging.L().Errorf("wasm sync: %d plugins loaded, %d failed %v — failed plugins are marked 'broken' until their files are restored (the multi-till sync loop re-fetches marketplace installs automatically)",
+			len(loaded), len(failed), failed)
+	} else if len(loaded) > 0 {
+		logging.L().Infof("wasm sync: %d plugins loaded (0 failed)", len(loaded))
+	}
+}
+
+// markBroken flips a wasm plugin whose module failed to load to
+// install_state='broken' and, when the plugin was installed from a
+// marketplace listing, mirrors that onto its install-status record so the
+// store page shows the failure too (ut-docs#368). Reports whether any state
+// actually changed (an already-broken plugin is left alone).
+func markBroken(ctx context.Context, repo *data.PluginRepo, db *sql.DB, row data.InstalledPluginRow) bool {
+	if row.InstallState == data.PluginStateBroken {
+		return false
+	}
+	if err := repo.UpdatePluginInstallState(ctx, row.ID, data.PluginStateBroken); err != nil {
+		logging.L().Errorf("wasm sync: mark %s broken: %v", row.ID, err)
+		return false
+	}
+	store := NewInstallStatusStore(db)
+	if rec, ok := installStatusRecordForPlugin(ctx, store, row.ID); ok {
+		rec.State = InstallStateFailed
+		rec.MessageKey = "plugins.status.broken_binary"
+		rec.Retryable = true
+		if err := store.Save(ctx, rec); err != nil {
+			logging.L().Errorf("wasm sync: record broken status for %s: %v", row.ID, err)
+		}
+	}
+	return true
+}
+
+// markHealed is markBroken's inverse: a previously-broken plugin whose
+// module just loaded flips back to 'installed' (and its listing's
+// install-status record back to Active) — recovery must be as visible as
+// the failure was.
+func markHealed(ctx context.Context, repo *data.PluginRepo, db *sql.DB, row data.InstalledPluginRow) bool {
+	if err := repo.UpdatePluginInstallState(ctx, row.ID, data.PluginStateInstalled); err != nil {
+		logging.L().Errorf("wasm sync: heal %s: %v", row.ID, err)
+		return false
+	}
+	logging.L().Infof("wasm sync: %s recovered — its module loaded again, install_state flipped back to 'installed'", row.ID)
+	store := NewInstallStatusStore(db)
+	if rec, ok := installStatusRecordForPlugin(ctx, store, row.ID); ok {
+		rec.State = InstallStateActive
+		rec.MessageKey = ""
+		rec.Retryable = false
+		rec.CurrentVersion = row.Version
+		if err := store.Save(ctx, rec); err != nil {
+			logging.L().Errorf("wasm sync: record healed status for %s: %v", row.ID, err)
+		}
+	}
+	return true
+}
+
+// installStatusRecordForPlugin finds the install-status record (keyed by
+// listing id) that points at pluginID. ok=false for file-imported plugins,
+// which never have one — they still flip install_state, they just have no
+// store-page status surface to mirror it onto.
+func installStatusRecordForPlugin(ctx context.Context, store *InstallStatusStore, pluginID string) (InstallStatusRecord, bool) {
+	records, err := store.List(ctx)
+	if err != nil {
+		logging.L().Errorf("wasm sync: list install-status records: %v", err)
+		return InstallStatusRecord{}, false
+	}
+	for _, rec := range records {
+		if rec.PluginID == pluginID {
+			return rec, true
+		}
+	}
+	return InstallStatusRecord{}, false
 }
 
 // Close stops the per-plugin event-channel drainer goroutines Sync started —
