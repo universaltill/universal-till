@@ -330,6 +330,8 @@
   "kitchen.print.no_receipt": "No order selected",
   "kitchen.print.off": "No kitchen printer configured",
   "kitchen.print.partial": "Some kitchen tickets failed to print",
+  "kitchen.ticket.order_label": "ORDER",
+  "kitchen.ticket.station_default": "KITCHEN",
   "menu.back_to_sale": "Back to sale",
   "modifiers.add_to_cart": "Add to cart",
   "modifiers.cancel": "Cancel",

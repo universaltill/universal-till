@@ -70,6 +70,43 @@ func TestRenderKitchenTicketTextMirrors(t *testing.T) {
 	}
 }
 
+// TestRenderKitchenTicketBlankOrderTypePrintsNothing covers ut-docs#261's
+// product decision: dine-in (OrderType == "") prints NO order-type line at
+// all -- not "DINE-IN", not an empty line, nothing -- distinguishing it
+// from a translated-but-empty string would be a real regression this test
+// must catch.
+func TestRenderKitchenTicketBlankOrderTypePrintsNothing(t *testing.T) {
+	tk := sampleTicket()
+	tk.OrderType = ""
+
+	out := RenderKitchenTicket(tk)
+	if bytes.Contains(out, []byte("TAKEAWAY")) {
+		t.Error("blank OrderType must not print the previous ticket's order type")
+	}
+	// The dashed separator must follow directly after the order/table/
+	// timestamp block with nothing extra in between -- i.e. exactly the
+	// same line count as a ticket with no OrderType field at all.
+	withType := bytes.Count(RenderKitchenTicket(sampleTicket()), []byte("\n"))
+	withoutType := bytes.Count(out, []byte("\n"))
+	if withoutType != withType-1 {
+		t.Errorf("blank OrderType should drop exactly one line, got %d lines vs %d with a type set", withoutType, withType)
+	}
+
+	txt := RenderKitchenTicketText(tk)
+	if strings.Contains(txt, "TAKEAWAY") {
+		t.Error("preview text: blank OrderType must not print the previous ticket's order type")
+	}
+	// Line-count check mirrored for the text-preview path too (review
+	// finding, ut-docs#261): the byte path's guard alone doesn't prove the
+	// text path also skips the line entirely rather than printing a blank
+	// centered row — bytes.Contains("TAKEAWAY") above would pass either way.
+	withTypeTxt := strings.Count(RenderKitchenTicketText(sampleTicket()), "\n")
+	withoutTypeTxt := strings.Count(txt, "\n")
+	if withoutTypeTxt != withTypeTxt-1 {
+		t.Errorf("preview text: blank OrderType should drop exactly one line, got %d lines vs %d with a type set", withoutTypeTxt, withTypeTxt)
+	}
+}
+
 // ut-docs#376: RenderKitchenTicketText's center() helper must center on
 // rune count, not byte length — a multi-byte station/table name (e.g. an
 // ä/ö/ü/ß or ar/fa/tr string) would otherwise pad as if it were one column

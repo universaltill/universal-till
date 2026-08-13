@@ -330,6 +330,8 @@
   "kitchen.print.no_receipt": "Sipariş seçilmedi",
   "kitchen.print.off": "Mutfak yazıcısı yapılandırılmadı",
   "kitchen.print.partial": "Bazı mutfak fişleri yazdırılamadı",
+  "kitchen.ticket.order_label": "SİPARİŞ",
+  "kitchen.ticket.station_default": "MUTFAK",
   "menu.back_to_sale": "Satışa dön",
   "modifiers.add_to_cart": "Sepete ekle",
   "modifiers.cancel": "İptal",
