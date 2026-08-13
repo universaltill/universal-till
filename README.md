@@ -79,6 +79,12 @@ AI assistant, a webhook/ERP connector, and a help/FAQ plugin. One-click
 install from the in-app store
 (`ut-cloud`), Ed25519-signature verified before anything runs.
 
+Picking Germany or Spain in the first-boot setup wizard auto-installs that
+country's free language pack in the background — for every merchant,
+subscribed or not — through this same verified install path, offline-tolerant
+(it just retries once the network's back). No marketplace hunting required;
+declining/removing it is one tap in Settings.
+
 Categories the taxonomy supports and welcomes contributions for: more
 payment processors (Square, PayPal, regional providers), marketplaces
 (eBay, Amazon, Shopify), delivery services (Uber Eats, DoorDash,

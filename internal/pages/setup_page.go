@@ -279,6 +279,13 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			}
 		}
 
+		// Country base-plugin auto-install (ut-docs#591): best-effort, same
+		// posture as restoreChoice/demo-data above — persists the pending
+		// list before any network attempt, then makes one short-timeout
+		// synchronous attempt; either way this never blocks or fails the
+		// wizard's own response. A no-op for a country with nothing mapped.
+		installBasePluginsForSetup(r.Context(), d, st.Country)
+
 		// Sample-data opt-in (ut-docs#539, extended to customers/promos by
 		// ut-docs#567): checkbox default is unchecked. Best-effort by
 		// design — the same reasoning as offline-first's "checkout is
