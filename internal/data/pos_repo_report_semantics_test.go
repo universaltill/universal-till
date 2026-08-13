@@ -24,7 +24,7 @@ func TestSalesByDay_ExcludesReturns(t *testing.T) {
 	b8Sale(t, d, "rs2", now, "completed", "return", 30, 300) // must not appear
 	b8Sale(t, d, "rs3", now, "voided", "sale", 0, 99999)     // must not appear
 
-	daily, err := repo.SalesByDay(ctx, winFrom(7), winTo())
+	daily, err := repo.SalesByDay(ctx, winFrom(7), winTo(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
