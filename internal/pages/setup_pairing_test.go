@@ -421,6 +421,10 @@ func TestSetupPairStatusExpiresAfterTTL(t *testing.T) {
 // (not replacing) the manual-code form (mirror of
 // TestSetupPageLoadsHTMXForTheJoinForm's template assertions).
 func TestSetupPageRendersDiscoveryAffordance(t *testing.T) {
+	// ut-docs#662: hermetic against the developer machine's real OS locale —
+	// otherwise ut-docs#590's /setup detection redirect fires on any machine
+	// with a locale set and this test never even reaches the wizard.
+	withOSLocale(t, "", "")
 	mux, _, _ := newFullAuthDeps(t)
 
 	rec := httptest.NewRecorder()

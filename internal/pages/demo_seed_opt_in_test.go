@@ -151,6 +151,10 @@ func TestSetupWizardDemoSeedFailureDoesNotBlockSetup(t *testing.T) {
 // The wizard template carries the new step: shop-type select (all six
 // ADR-0026 options) and the demo-data checkbox, unchecked by default.
 func TestSetupWizardRendersShopTypeStep(t *testing.T) {
+	// ut-docs#662: hermetic against the developer machine's real OS locale —
+	// otherwise ut-docs#590's /setup detection redirect fires on any machine
+	// with a locale set and this test never even reaches the wizard.
+	withOSLocale(t, "", "")
 	mux, _ := newRealDBDeps(t)
 	req := httptest.NewRequest(http.MethodGet, "/setup", nil)
 	rec := httptest.NewRecorder()
