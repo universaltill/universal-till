@@ -501,7 +501,7 @@ func TestAuthRepo_RevokeUserSessions(t *testing.T) {
 	}
 }
 
-// TestAuthRepo_HasPermission covers migration 038's seed grants (#554):
+// TestAuthRepo_HasPermission covers migration 039's seed grants (#554):
 // manager/admin/super_admin get every catalog action, cashier gets none,
 // and an action outside the catalog is denied for everyone rather than
 // erroring — "no row" means denied, not "unknown."
