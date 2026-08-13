@@ -135,6 +135,33 @@ func registerZZGuardTestBackoffice(mux *http.ServeMux) {
 expect_fail "a new file registering a screenshotted route without a method prefix (/backoffice)"
 clear_fixture "ScreenshottedRouteNoMethod"
 
+# Dotfiles must NOT be part of the surface (ut-docs#659). macOS drops a
+# gitignored `.DS_Store` into any directory the Finder has browsed, so a
+# developer's tree holds files CI's checkout never has. While those counted,
+# `make docs-shots` on a Mac wrote a manifest whose surface_sha256 CI
+# recomputed differently, and CI failed with "the app surface changed" against
+# a diff in which nothing relevant had changed — no visible cause, and the
+# obvious "just run make docs-shots again" does not fix it.
+#
+# Covers a dotfile in each surface root plus one inside a dot-DIRECTORY, since
+# the fix has to prune both. Must stay in lockstep with
+# e2e/tests-docs/lib.js's walkFiles(), which writes the manifest.
+dotfile_fixtures=(
+  "web/public/.ut-guard-fixture-dotfile"
+  "web/ui/.ut-guard-fixture-dotfile"
+  "${FIXTURE_DIR}/.ut-guard-fixture-dotfile.go"
+  "web/public/.ut-guard-fixture-dir/planted.css"
+)
+mkdir -p "web/public/.ut-guard-fixture-dir"
+for f in "${dotfile_fixtures[@]}"; do
+  fixtures+=("${f}")
+  printf 'planted by guard-docs-shots_test.sh\n' >"${f}"
+done
+expect_pass "gitignored dotfiles planted in the surface roots (.DS_Store class)"
+for f in "${dotfile_fixtures[@]}"; do rm -f "${f}"; done
+rmdir "web/public/.ut-guard-fixture-dir" 2>/dev/null || true
+fixtures=()
+
 if [[ ${FAIL_COUNT} -gt 0 ]]; then
   echo "${FAIL_COUNT} failure(s)" >&2
   exit 1
