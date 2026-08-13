@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -429,6 +430,42 @@ func TestUploadPendingIssueReportsKeepsBundleWhenSaveSentFails(t *testing.T) {
 	}
 }
 
+// ut-docs#637 review: a bundle that failed to upload on earlier ticks, then
+// succeeds, but then hits a SaveSent failure (so it survives for retry, same
+// shape as the test above) must NOT keep presenting its earlier upload
+// failure — the report did, in fact, reach the cloud this tick.
+func TestUploadPendingIssueReportsClearsUploadFailStateOnceUploadSucceeds(t *testing.T) {
+	withTempPendingDir(t)
+	brokenDB := testDB(t) // settings table only — SaveSent must fail
+	id, err := issuereport.Save("flaky then fine, but SaveSent fails", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := issuereport.RecordUploadFailure(id, issuereport.UploadFailReasonOther); err != nil {
+		t.Fatalf("RecordUploadFailure (setup): %v", err)
+	}
+	bundles, err := issuereport.Pending()
+	if err != nil || len(bundles) != 1 || bundles[0].Meta.UploadFailCount != 1 {
+		t.Fatalf("setup: Pending: %v, bundles=%+v", err, bundles)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(10 << 20)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), brokenDB)
+
+	remaining, err := issuereport.Pending()
+	if err != nil || len(remaining) != 1 || remaining[0].Meta.ID != id {
+		t.Fatalf("bundle must stay pending after a failed SaveSent: %v (%d)", err, len(remaining))
+	}
+	if remaining[0].Meta.UploadFailCount != 0 || remaining[0].Meta.UploadFailReason != "" {
+		t.Fatalf("upload-fail state must be cleared once the upload itself succeeds, got count=%d reason=%q", remaining[0].Meta.UploadFailCount, remaining[0].Meta.UploadFailReason)
+	}
+}
+
 // The core ut-docs#446 fix: a bundle whose cloud upload keeps succeeding but
 // whose local retained-record save keeps failing (e.g. disk full, DB briefly
 // read-only) must NOT be re-uploaded forever. After issuereport.MaxSentFailCount
@@ -503,6 +540,105 @@ func TestUploadPendingIssueReportsUploadFailureIsNeverCapped(t *testing.T) {
 	}
 	if remaining[0].Meta.SentFailCount != 0 {
 		t.Fatalf("SentFailCount = %d, want 0 — an upload failure must never touch the SaveSent failure counter", remaining[0].Meta.SentFailCount)
+	}
+}
+
+// ut-docs#637: a bundle whose upload fails because this till isn't
+// registered must be classified as UploadFailReasonNotRegistered — the one
+// reason that can't self-resolve by waiting, so /my-reports flags it
+// immediately rather than waiting out UploadFailingThreshold.
+func TestUploadPendingIssueReportsClassifiesNotRegistered(t *testing.T) {
+	withTempPendingDir(t)
+	d := openMigratedDB(t, "issue_reports_unregistered.db")
+	id, err := issuereport.Save("till never enrolled", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// An empty config's Marketplace fields are all unset — uploadIssueReport
+	// returns errNotRegistered before any network call.
+	uploadPendingIssueReports(context.Background(), &config.Config{}, d.DB)
+
+	remaining, err := issuereport.Pending()
+	if err != nil || len(remaining) != 1 || remaining[0].Meta.ID != id {
+		t.Fatalf("Pending: %v (%d)", err, len(remaining))
+	}
+	if remaining[0].Meta.UploadFailReason != issuereport.UploadFailReasonNotRegistered {
+		t.Fatalf("UploadFailReason = %q, want %q", remaining[0].Meta.UploadFailReason, issuereport.UploadFailReasonNotRegistered)
+	}
+	if remaining[0].Meta.UploadFailCount != 1 {
+		t.Fatalf("UploadFailCount = %d, want 1", remaining[0].Meta.UploadFailCount)
+	}
+}
+
+// A generic upload failure (server error, network trouble) classifies as
+// UploadFailReasonOther and accumulates across ticks — the count
+// /my-reports compares against issuereport.UploadFailingThreshold.
+func TestUploadPendingIssueReportsClassifiesOtherAndAccumulates(t *testing.T) {
+	withTempPendingDir(t)
+	d := openMigratedDB(t, "issue_reports_other_fail.db")
+	id, err := issuereport.Save("cloud keeps 500ing", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < 3; i++ {
+		uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), d.DB)
+	}
+
+	remaining, err := issuereport.Pending()
+	if err != nil || len(remaining) != 1 || remaining[0].Meta.ID != id {
+		t.Fatalf("Pending: %v (%d)", err, len(remaining))
+	}
+	if remaining[0].Meta.UploadFailReason != issuereport.UploadFailReasonOther {
+		t.Fatalf("UploadFailReason = %q, want %q", remaining[0].Meta.UploadFailReason, issuereport.UploadFailReasonOther)
+	}
+	if remaining[0].Meta.UploadFailCount != 3 {
+		t.Fatalf("UploadFailCount = %d, want 3 (one per tick)", remaining[0].Meta.UploadFailCount)
+	}
+}
+
+// A bundle that eventually uploads successfully is discarded outright — its
+// UploadFailCount from earlier failed ticks doesn't linger anywhere to be
+// misread, because there's no bundle left to read it from.
+func TestUploadPendingIssueReportsSuccessAfterFailuresLeavesNoUploadFailCount(t *testing.T) {
+	withTempPendingDir(t)
+	d := openMigratedDB(t, "issue_reports_recovers.db")
+	id, err := issuereport.Save("flaky then fine", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var fail atomic.Bool
+	fail.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = r.ParseMultipartForm(10 << 20)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), d.DB)
+	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), d.DB)
+	fail.Store(false)
+	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), d.DB)
+
+	remaining, err := issuereport.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("bundle %q still pending after a successful upload, want it discarded: %+v", id, remaining)
+	}
+	sent, err := data.NewIssueReportsRepo(d.DB).ListSent(context.Background(), 10)
+	if err != nil || len(sent) != 1 || sent[0].ID != id {
+		t.Fatalf("ListSent: %v %+v", err, sent)
 	}
 }
 

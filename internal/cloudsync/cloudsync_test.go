@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -607,6 +608,81 @@ func TestTickPropagatesSyncFailure(t *testing.T) {
 	err := Tick(context.Background(), testCfg(srv.URL), testDB(t), Hooks{})
 	if err == nil {
 		t.Fatal("want error on 500 sync response")
+	}
+}
+
+// ut-docs#637, the headline regression test at the real entry point (not
+// the unexported uploadPendingIssueReports helper): an unregistered till is
+// exactly one of the two cases the ticket names as needing to surface as
+// failing, and Tick's own early "not registered" return used to sit AFTER
+// the issue-report upload call, not before it — so on a real till this path
+// never ran at all. Drive it through Tick itself so a regression here (the
+// upload call sliding back below the early return) fails this test, not
+// just a narrower unit test that bypasses the guard.
+func TestTickUploadsIssueReportsEvenWhenUnregistered(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := issuereport.Save("till was never enrolled", "", []byte("a"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := Tick(context.Background(), &config.Config{}, testDB(t), Hooks{}); err != nil {
+		t.Fatalf("unregistered tick should still no-op with a nil error, got %v", err)
+	}
+
+	bundles, err := issuereport.Pending()
+	if err != nil || len(bundles) != 1 || bundles[0].Meta.ID != id {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.UploadFailReason != issuereport.UploadFailReasonNotRegistered {
+		t.Fatalf("UploadFailReason = %q, want %q — a single Tick on an unregistered till must classify and record this", bundles[0].Meta.UploadFailReason, issuereport.UploadFailReasonNotRegistered)
+	}
+	if bundles[0].Meta.UploadFailCount != 1 {
+		t.Fatalf("UploadFailCount = %d, want 1", bundles[0].Meta.UploadFailCount)
+	}
+}
+
+// The other case the ticket names: a registered till whose /v1/stores/sync
+// call is failing (misconfigured/unreachable cloud). Tick returns pushSync's
+// error, but the issue-report upload — a wholly separate cloud endpoint —
+// must still have been attempted on the same tick, not skipped because sync
+// failed first.
+func TestTickUploadsIssueReportsEvenWhenSyncFails(t *testing.T) {
+	withTempPendingDir(t)
+	d := openMigratedDB(t, "issue_reports_sync_fails.db")
+	id, err := issuereport.Save("sync is down but reports still go", "", []byte("a"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/stores/sync", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/v1/stores/issue-reports", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(10 << 20)
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	err = Tick(context.Background(), testCfg(srv.URL), d.DB, Hooks{})
+	if err == nil {
+		t.Fatal("want Tick to still propagate the /v1/stores/sync failure")
+	}
+
+	// The report itself must have gone through on this same tick, despite
+	// Tick ultimately erroring — the two are unrelated cloud calls.
+	remaining, perr := issuereport.Pending()
+	if perr != nil {
+		t.Fatalf("Pending: %v", perr)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("bundle %q still pending, want it uploaded (and discarded) despite the sync failure: %+v", id, remaining)
+	}
+	sent, err := data.NewIssueReportsRepo(d.DB).ListSent(context.Background(), 10)
+	if err != nil || len(sent) != 1 || sent[0].ID != id {
+		t.Fatalf("ListSent: %v %+v", err, sent)
 	}
 }
 

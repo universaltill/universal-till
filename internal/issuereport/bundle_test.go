@@ -445,6 +445,125 @@ func TestRecordSentFailureFallsBackToMemoryWhenWriteFails(t *testing.T) {
 	}
 }
 
+// RecordUploadFailure (ut-docs#637) durably increments the bundle's
+// upload-fail count and records the reason — same persistence contract as
+// RecordSentFailure, but a distinct counter and no cap.
+func TestRecordUploadFailureIncrementsAndPersistsReason(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("cloud unreachable", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	for want := 1; want <= 3; want++ {
+		got, err := RecordUploadFailure(id, UploadFailReasonOther)
+		if err != nil {
+			t.Fatalf("RecordUploadFailure #%d: %v", want, err)
+		}
+		if got != want {
+			t.Fatalf("RecordUploadFailure #%d = %d, want %d", want, got, want)
+		}
+	}
+
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.UploadFailCount != 3 {
+		t.Fatalf("Meta.UploadFailCount = %d, want 3", bundles[0].Meta.UploadFailCount)
+	}
+	if bundles[0].Meta.UploadFailReason != UploadFailReasonOther {
+		t.Fatalf("Meta.UploadFailReason = %q, want %q", bundles[0].Meta.UploadFailReason, UploadFailReasonOther)
+	}
+	// SentFailCount (a different counter, for a different failure) must be
+	// untouched by this call.
+	if bundles[0].Meta.SentFailCount != 0 {
+		t.Fatalf("Meta.SentFailCount = %d, want 0 — RecordUploadFailure must never touch it", bundles[0].Meta.SentFailCount)
+	}
+}
+
+// The reason is overwritten by the latest failure, not accumulated — only
+// the most recent classification matters for how /my-reports presents it.
+func TestRecordUploadFailureReasonReflectsMostRecentCall(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("reason changes", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := RecordUploadFailure(id, UploadFailReasonOther); err != nil {
+		t.Fatalf("RecordUploadFailure (other): %v", err)
+	}
+	if _, err := RecordUploadFailure(id, UploadFailReasonNotRegistered); err != nil {
+		t.Fatalf("RecordUploadFailure (not_registered): %v", err)
+	}
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.UploadFailReason != UploadFailReasonNotRegistered {
+		t.Fatalf("Meta.UploadFailReason = %q, want %q", bundles[0].Meta.UploadFailReason, UploadFailReasonNotRegistered)
+	}
+	if bundles[0].Meta.UploadFailCount != 2 {
+		t.Fatalf("Meta.UploadFailCount = %d, want 2 (count still accumulates across reason changes)", bundles[0].Meta.UploadFailCount)
+	}
+}
+
+// Same distinction RecordSentFailure makes: an unknown bundle id is a real
+// error, not a silent zero.
+func TestRecordUploadFailureUnknownIDErrors(t *testing.T) {
+	withTempPendingDir(t)
+	if _, err := RecordUploadFailure("does-not-exist", UploadFailReasonOther); err == nil {
+		t.Fatal("expected an error for an unknown bundle id")
+	}
+}
+
+// ClearUploadFailure (ut-docs#637 review) resets a bundle's recorded
+// upload-fail state back to zero — needed for the case where an upload
+// succeeds but the bundle survives anyway (its SaveSent step then fails),
+// so a since-recovered bundle doesn't keep presenting a stale reason.
+func TestClearUploadFailureResetsState(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("cloud comes back eventually", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := RecordUploadFailure(id, UploadFailReasonOther); err != nil {
+			t.Fatalf("RecordUploadFailure #%d: %v", i, err)
+		}
+	}
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 || bundles[0].Meta.UploadFailCount != 3 {
+		t.Fatalf("setup: Pending: %v, bundles=%+v", err, bundles)
+	}
+
+	if err := ClearUploadFailure(id); err != nil {
+		t.Fatalf("ClearUploadFailure: %v", err)
+	}
+
+	bundles, err = Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending after clear: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.UploadFailCount != 0 {
+		t.Fatalf("UploadFailCount = %d, want 0", bundles[0].Meta.UploadFailCount)
+	}
+	if bundles[0].Meta.UploadFailReason != "" {
+		t.Fatalf("UploadFailReason = %q, want empty", bundles[0].Meta.UploadFailReason)
+	}
+}
+
+// A bundle that's already gone (discarded by the time ClearUploadFailure
+// runs, or never existed) is a legitimate no-op, not an error — the caller
+// always calls this right after its own successful upload of that exact id,
+// so "already gone" just means a concurrent path got there first.
+func TestClearUploadFailureOnMissingBundleIsNoop(t *testing.T) {
+	withTempPendingDir(t)
+	if err := ClearUploadFailure("does-not-exist"); err != nil {
+		t.Fatalf("ClearUploadFailure on a missing bundle should be a no-op, got: %v", err)
+	}
+}
+
 // writeMetaAtomic itself: a successful write leaves valid content and no
 // leftover temp file behind.
 func TestWriteMetaAtomicLeavesNoTempFileBehind(t *testing.T) {
