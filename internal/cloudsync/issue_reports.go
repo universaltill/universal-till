@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -18,6 +19,13 @@ import (
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
 )
+
+// errNotRegistered is uploadIssueReport's sentinel for "this till isn't
+// enrolled in the marketplace yet" — a sentinel (not just a string) so the
+// upload-failure classification below (ut-docs#637) can tell it apart from
+// every other failure reliably, via errors.Is, rather than string-matching
+// an error message that's free to change wording later.
+var errNotRegistered = errors.New("not registered")
 
 // uploadPendingIssueReports pushes any locally-saved, not-yet-uploaded
 // bug-report bundles (ADR-0022) to the cloud. Best-effort: a bundle that
@@ -54,6 +62,18 @@ func uploadPendingIssueReports(ctx context.Context, cfg *config.Config, db *sql.
 	repo := data.NewIssueReportsRepo(db)
 	for _, b := range bundles {
 		if err := uploadIssueReport(ctx, cfg, b); err != nil {
+			// ut-docs#637: classify and persist the failure so /my-reports can
+			// eventually present this bundle as failing rather than merely
+			// pending, without changing the retry itself — still unbounded,
+			// per offline-first (ADR-0003). A failure to record the count is
+			// only logged, never treated as reason to skip the retry.
+			reason := issuereport.UploadFailReasonOther
+			if errors.Is(err, errNotRegistered) {
+				reason = issuereport.UploadFailReasonNotRegistered
+			}
+			if _, rerr := issuereport.RecordUploadFailure(b.Meta.ID, reason); rerr != nil {
+				logging.L().Warnf("cloudsync: issue report %s upload-fail count not recorded: %v", b.Meta.ID, rerr)
+			}
 			logging.L().Warnf("cloudsync: issue report %s not uploaded (will retry): %v", b.Meta.ID, err)
 			continue
 		}
@@ -147,7 +167,7 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
 	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
-		return fmt.Errorf("not registered")
+		return errNotRegistered
 	}
 
 	body := &bytes.Buffer{}

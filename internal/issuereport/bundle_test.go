@@ -445,6 +445,78 @@ func TestRecordSentFailureFallsBackToMemoryWhenWriteFails(t *testing.T) {
 	}
 }
 
+// RecordUploadFailure (ut-docs#637) durably increments the bundle's
+// upload-fail count and records the reason — same persistence contract as
+// RecordSentFailure, but a distinct counter and no cap.
+func TestRecordUploadFailureIncrementsAndPersistsReason(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("cloud unreachable", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	for want := 1; want <= 3; want++ {
+		got, err := RecordUploadFailure(id, UploadFailReasonOther)
+		if err != nil {
+			t.Fatalf("RecordUploadFailure #%d: %v", want, err)
+		}
+		if got != want {
+			t.Fatalf("RecordUploadFailure #%d = %d, want %d", want, got, want)
+		}
+	}
+
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.UploadFailCount != 3 {
+		t.Fatalf("Meta.UploadFailCount = %d, want 3", bundles[0].Meta.UploadFailCount)
+	}
+	if bundles[0].Meta.UploadFailReason != UploadFailReasonOther {
+		t.Fatalf("Meta.UploadFailReason = %q, want %q", bundles[0].Meta.UploadFailReason, UploadFailReasonOther)
+	}
+	// SentFailCount (a different counter, for a different failure) must be
+	// untouched by this call.
+	if bundles[0].Meta.SentFailCount != 0 {
+		t.Fatalf("Meta.SentFailCount = %d, want 0 — RecordUploadFailure must never touch it", bundles[0].Meta.SentFailCount)
+	}
+}
+
+// The reason is overwritten by the latest failure, not accumulated — only
+// the most recent classification matters for how /my-reports presents it.
+func TestRecordUploadFailureReasonReflectsMostRecentCall(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("reason changes", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := RecordUploadFailure(id, UploadFailReasonOther); err != nil {
+		t.Fatalf("RecordUploadFailure (other): %v", err)
+	}
+	if _, err := RecordUploadFailure(id, UploadFailReasonNotRegistered); err != nil {
+		t.Fatalf("RecordUploadFailure (not_registered): %v", err)
+	}
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.UploadFailReason != UploadFailReasonNotRegistered {
+		t.Fatalf("Meta.UploadFailReason = %q, want %q", bundles[0].Meta.UploadFailReason, UploadFailReasonNotRegistered)
+	}
+	if bundles[0].Meta.UploadFailCount != 2 {
+		t.Fatalf("Meta.UploadFailCount = %d, want 2 (count still accumulates across reason changes)", bundles[0].Meta.UploadFailCount)
+	}
+}
+
+// Same distinction RecordSentFailure makes: an unknown bundle id is a real
+// error, not a silent zero.
+func TestRecordUploadFailureUnknownIDErrors(t *testing.T) {
+	withTempPendingDir(t)
+	if _, err := RecordUploadFailure("does-not-exist", UploadFailReasonOther); err == nil {
+		t.Fatal("expected an error for an unknown bundle id")
+	}
+}
+
 // writeMetaAtomic itself: a successful write leaves valid content and no
 // leftover temp file behind.
 func TestWriteMetaAtomicLeavesNoTempFileBehind(t *testing.T) {

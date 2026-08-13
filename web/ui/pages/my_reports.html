@@ -1,8 +1,9 @@
 {{ define "content" }}
-<!-- "My reports" (ut-docs#348): every bug report this till has uploaded,
-     with the last-known cloud status. Rendered entirely from the local
-     issue_reports_sent table — no network call on this page, offline just
-     means the statuses shown are the last ones cloudsync pulled down.
+<!-- "My reports" (ut-docs#348): every bug report this till has captured,
+     uploaded or not — uploaded rows carry the last-known cloud status, and
+     a still-pending/failing row (ut-docs#637) is shown from local disk
+     state alone. No network call on this page, offline just means the
+     statuses shown are the last ones cloudsync pulled down.
      Logical CSS properties only (RTL locales mirror for free). -->
 <div class="page-head">
   <h1>{{ T "issuereport.my_reports.title" }}</h1>
@@ -36,7 +37,10 @@
             </div>
           </td>
           <td>
-            <span class="tag">{{ T .StatusKey }}</span>
+            <span class="tag{{ if .Failing }} warn{{ end }}">{{ T .StatusKey }}</span>
+            {{ if .FailReasonKey }}
+            <div class="muted" style="font-size:.82rem;margin-block-start:.25rem">{{ T .FailReasonKey }}</div>
+            {{ end }}
             {{ if .GithubIssueURL }}
             <div style="margin-block-start:.25rem">
               <a href="{{ .GithubIssueURL }}" target="_blank" rel="noopener">{{ T "issuereport.my_reports.view_on_github" }}</a>
