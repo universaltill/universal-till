@@ -544,6 +544,10 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 			converged = false
 			continue
 		}
+		// A plugin pruned while in the broken-re-fetch backoff would
+		// otherwise leave its stale attempt counter behind forever — the
+		// healthy-reconvergence path is the only other place that clears it.
+		clearBrokenRefetch(d, listingID)
 		logging.L().Infof("plugin sync: uninstalled %s to follow the primary", rec.PluginID)
 	}
 	return converged

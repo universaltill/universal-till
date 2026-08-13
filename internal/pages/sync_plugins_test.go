@@ -1230,6 +1230,73 @@ func TestSyncPullTick_BrokenPluginStaysPrunableAfterPrimaryRemovesIt(t *testing.
 	}
 }
 
+// BLOCKER (ut-docs#368 second independent review round): a FAILED marketplace
+// re-fetch attempt is a second route into the exact failure mode the round-1
+// BLOCKER fix closed. cloudInstallPluginVersion Saves lifecycle-only records
+// (Requested, then a classified Failure) that don't carry PluginID, and the
+// full-column upsert blanked the plugin_id the original successful install
+// had stored — leaving the record {State:failed, PluginID:""}. The prune loop
+// requires State==Active AND PluginID!="", so a broken plugin whose re-fetch
+// keeps failing (e.g. delisted, marketplace down, or a binary that installs
+// but can never load here — exactly what sits in shouldRefetchBroken's
+// backoff long-term) could NEVER be uninstalled from the replica once the
+// primary removed it. The record must keep the original install's identity
+// AND stay Active across a failed re-fetch: the failed attempt uninstalled
+// nothing, so the originally-installed plugin is still on this till.
+func TestSyncPullTick_BrokenPluginStaysPrunableAfterFailedRefetch(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	primary := newSyncPluginsPrimary(t, mkt)
+	guest := buildTaxAskGuest(t)
+	mkt.publishWasmTaxVersion(t, "listing-tax", "com.test.sync-tax", "1.0.0", guest)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	ctx := t.Context()
+
+	primary.install(t, "listing-tax")
+
+	// The replica "joined": every DB row landed (including an Active
+	// install-status record with the correct PluginID), no file did — the
+	// boot-time wasm Sync marks the plugin broken.
+	seedJoinSnapshotTaxPlugin(t, replica.dp, "listing-tax", "com.test.sync-tax")
+	replica.dp.Pm.Wasm.Sync(ctx, replica.dp.Db)
+	if got := pluginInstallState(t, replica.dp, "com.test.sync-tax"); got != "broken" {
+		t.Fatalf("precondition: expected install_state 'broken' after the failed load, got %q", got)
+	}
+
+	// The marketplace can no longer serve this listing, so the sync tick's
+	// re-fetch attempt FAILS (same shape as an unreachable marketplace or a
+	// binary that keeps failing to load after a "successful" download).
+	mkt.unpublish("listing-tax")
+	replica.tick(t, client)
+
+	// The failed attempt must not have blanked the record's PluginID, nor
+	// demoted its State: the plugin from the original successful install is
+	// still on this till — nothing was uninstalled.
+	rec, ok, err := plugins.NewInstallStatusStore(replica.dp.Db).Get(ctx, "listing-tax")
+	if err != nil || !ok {
+		t.Fatalf("read install status after failed re-fetch: ok=%v err=%v", ok, err)
+	}
+	if rec.PluginID != "com.test.sync-tax" {
+		t.Fatalf("a failed re-fetch must not blank the record's PluginID (prune loop needs it), got %+v", rec)
+	}
+	if rec.State != plugins.InstallStateActive {
+		t.Fatalf("a failed re-fetch of a still-installed plugin must leave the record Active (prune loop only prunes Active), got %+v", rec)
+	}
+
+	// The shop owner removes the plugin on the primary. The replica must
+	// still be able to prune it despite the earlier failed re-fetch.
+	primary.uninstall(t, "com.test.sync-tax")
+	replica.tick(t, client)
+
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-tax"); ok {
+		t.Fatalf("expected the plugin pruned once the primary removed it, but it's still installed at %q (BLOCKER re-opens via a failed re-fetch)", v)
+	}
+	if _, ok := installStatusState(t, replica.dp, "listing-tax"); ok {
+		t.Fatalf("expected the replica's install-status record cleared by the prune")
+	}
+}
+
 // MAJOR (ut-docs#368 round-2 review): a broken plugin whose re-fetch can
 // never succeed (here: the marketplace no longer serves the listing; the
 // same shape as a binary that installs fine but can never load on this
