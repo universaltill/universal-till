@@ -301,7 +301,9 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			note += fmt.Sprintf("; %v will be re-fetched from the marketplace automatically by the sync loop", selfHeal)
 		}
 		if len(reimport) > 0 {
-			note += fmt.Sprintf("; %v have no marketplace listing (file import) — re-import the plugin file on this till to recover", reimport)
+			// Number-agnostic phrasing: the slice may hold one ID or several,
+			// so no bare plural verb ("have") that reads wrong for one.
+			note += fmt.Sprintf("; %v: no marketplace listing to re-fetch from (file import) — re-import the plugin file on this till to recover", reimport)
 		}
 		logging.L().Errorf("wasm sync: %d plugins loaded, %d failed %v — failed plugins are marked 'broken' until their files are restored%s",
 			len(loaded), len(failed), failed, note)

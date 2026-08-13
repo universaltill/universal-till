@@ -75,12 +75,22 @@ func TestWasmSync_MarksMissingBinaryBrokenAndHealsOnRecovery(t *testing.T) {
 	if rec, ok, _ := statusStore.Get(ctx, "listing-broken"); !ok || rec.State != InstallStateActive || rec.MessageKey != "" {
 		t.Fatalf("expected the install-status record untouched (Active, no message) while broken, got %+v (ok=%v)", rec, ok)
 	}
-	// The tally names the failure instead of pretending everything loaded.
+	// The tally names the failure instead of pretending everything loaded —
+	// and, for a MARKETPLACE-installed plugin (this one has a listing-linked
+	// install-status record), says it will self-heal via the sync loop's
+	// re-fetch, NOT that it needs a manual file re-import (ut-docs#368
+	// round-2: recovery differs by provenance and the tally must say which).
 	foundTally := false
 	for _, p := range logging.Recent() {
 		if p.At.After(start.Add(-time.Second)) && strings.Contains(p.Msg, "wasm sync:") &&
 			strings.Contains(p.Msg, "1 failed") && strings.Contains(p.Msg, pluginID) {
 			foundTally = true
+			if !strings.Contains(p.Msg, "re-fetched from the marketplace automatically") {
+				t.Fatalf("marketplace-installed broken plugin's tally must say it self-heals via the marketplace re-fetch, got: %q", p.Msg)
+			}
+			if strings.Contains(p.Msg, "re-import the plugin file") {
+				t.Fatalf("marketplace-installed broken plugin's tally must not tell the operator to re-import a file, got: %q", p.Msg)
+			}
 			break
 		}
 	}
@@ -140,6 +150,7 @@ func TestWasmSync_BrokenWithoutListingSkipsStatusStore(t *testing.T) {
 		t.Fatalf("set entrypoint: %v", err)
 	}
 
+	start := time.Now()
 	w.Sync(ctx, db)
 	defer SharedBus(db).ResetSubscribers()
 
@@ -156,5 +167,32 @@ func TestWasmSync_BrokenWithoutListingSkipsStatusStore(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("no listing: expected no install-status records, got %+v", records)
+	}
+
+	// A FILE-IMPORTED broken plugin has no listing to re-fetch from — the
+	// tally must send the operator to a manual re-import, and must not
+	// promise the marketplace self-heal it can never get (ut-docs#368
+	// round-2: recovery differs by provenance and the tally must say which).
+	// The phrasing must also read correctly for this single-ID bucket — no
+	// bare plural verb like "[id] have no marketplace listing".
+	foundTally := false
+	for _, p := range logging.Recent() {
+		if p.At.After(start.Add(-time.Second)) && strings.Contains(p.Msg, "wasm sync:") &&
+			strings.Contains(p.Msg, "1 failed") && strings.Contains(p.Msg, pluginID) {
+			foundTally = true
+			if !strings.Contains(p.Msg, "re-import the plugin file") {
+				t.Fatalf("file-imported broken plugin's tally must tell the operator to re-import the plugin file, got: %q", p.Msg)
+			}
+			if strings.Contains(p.Msg, "re-fetched from the marketplace automatically") {
+				t.Fatalf("file-imported broken plugin's tally must not promise a marketplace self-heal, got: %q", p.Msg)
+			}
+			if strings.Contains(p.Msg, "] have no marketplace listing") {
+				t.Fatalf("tally phrasing must be number-agnostic (single plugin + plural verb), got: %q", p.Msg)
+			}
+			break
+		}
+	}
+	if !foundTally {
+		t.Fatalf("expected a wasm sync tally log naming the failed plugin; recent logs: %+v", logging.Recent())
 	}
 }
