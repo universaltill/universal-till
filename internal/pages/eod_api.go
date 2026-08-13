@@ -151,8 +151,17 @@ func reportPruneDue(today, lastPruneDay string) bool {
 	return today != lastPruneDay
 }
 
-// reportRetentionCutoff is "now minus 10 years" formatted to match
+// reportRetentionCutoff is "now minus 10 calendar years" formatted to match
 // report_archive.period's "YYYY-MM-DD" text format (ADR-0040 §2, till mode).
+// Deliberately calendar years (AddDate), not a fixed day count: 10 calendar
+// years always spans at least data.GlobalArchiveMinDays (3650) days — every
+// 10-year span contains 2 or 3 leap days, so this window is always a few
+// days *more* generous than the country_settings floor, never less.
+// TestReportRetentionCutoffNeverShorterThanGlobalArchiveMinDays (below)
+// pins that relationship so the two can't silently drift the other way
+// (ut-docs#659 review finding B2 — GlobalArchiveMinDays and this cutoff
+// used to be two independently-spelled "10 years" with nothing tying them
+// together).
 func reportRetentionCutoff(now time.Time) string {
 	return now.AddDate(-10, 0, 0).Format("2006-01-02")
 }
@@ -384,11 +393,13 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 // day, per ADR-0040 §3's own capacity sizing — "tens of MB over ten
 // years"), and the whole point of this export is letting a shop hand an
 // auditor its full retained window in one go, so the bound here is the
-// retention window itself (~10 years) rather than data_api.go's 366-day
-// bound, which exists to cap a much heavier per-sale-row payload.
-const maxReportArchiveExportRangeDays = 3660
+// retention floor (data.GlobalArchiveMinDays — the same single source of
+// truth reportRetentionCutoff above and the country_settings floor both
+// use) plus 10 days' slack, rather than data_api.go's 366-day bound, which
+// exists to cap a much heavier per-sale-row payload.
+const maxReportArchiveExportRangeDays = data.GlobalArchiveMinDays + 10
 
-const maxReportArchiveExportRange = maxReportArchiveExportRangeDays * 24 * time.Hour
+const maxReportArchiveExportRange = time.Duration(maxReportArchiveExportRangeDays) * 24 * time.Hour
 
 // registerReportArchiveAPI mounts the report-retention-mode setting and the
 // report_archive date-range export (ADR-0040 §1/§7, ut-docs#571 card 1).
