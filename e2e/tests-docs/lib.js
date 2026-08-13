@@ -14,9 +14,25 @@
 //                           (recursive) — the CSS/JS that actually paints
 //                           the templates, e.g. app.css's statusbar colors,
 //                           which docs-shots.spec.ts's mask relies on
-//                           PLUS every *.go under internal/pages/ (recursive)
-//                           excluding *_test.go — the app surface that could
-//                           change what a screenshot shows.
+//                           PLUS every *.go under internal/pages/ (recursive,
+//                           excluding *_test.go) EXCEPT a file whose ONLY
+//                           registered mux routes are all unscreenshotted
+//                           (ut-docs#620) — it registers at least one route
+//                           but none is any topic's routes[0], the one URL
+//                           docs-shots.spec.ts actually visits for that
+//                           topic (e.g. import_page.go registers /import,
+//                           catalog's routes[1], not any topic's routes[0]).
+//                           A file with ZERO route registrations (a shared
+//                           helper like init.go's baseMenu or themes.go's
+//                           availableThemes) is KEPT, not excluded — it can
+//                           still feed a screenshotted page's template data
+//                           without registering a route itself (proven in
+//                           review: excluding route-less files missed a
+//                           real menu-tile change). A file that registers
+//                           ANY screenshotted route is hashed as a whole
+//                           file, not split by function — see the code
+//                           review for why finer granularity was rejected
+//                           as unsafe.
 //                           web/locales/**/*.json is deliberately excluded —
 //                           see the matching note in guard-docs-shots.sh.
 //   surface_sha256        = sha256 of the UTF-8 concatenation of one line per
@@ -84,12 +100,36 @@ function walkFiles(dir) {
   return out;
 }
 
+// ServeMux route registrations, e.g. mux.HandleFunc("GET /reports", ...) or
+// the method-prefix-less mux.HandleFunc("/backoffice", ...) form — both are
+// in real use in this package. Must stay in lockstep with
+// scripts/ci/guard-docs-shots.sh's own copy of this regex.
+const ROUTE_CALL_RE = /mux\.(?:HandleFunc|Handle)\(\s*"(?:[A-Z]+\s+)?([^"]*)"/g;
+
+function registeredRoutes(fileContent) {
+  const routes = new Set();
+  let m;
+  const re = new RegExp(ROUTE_CALL_RE);
+  while ((m = re.exec(fileContent))) routes.add(m[1]);
+  return routes;
+}
+
 function surfaceFiles() {
   const ui = walkFiles(path.join(repoRoot, 'web', 'ui'));
   const publicAssets = walkFiles(path.join(repoRoot, 'web', 'public'));
-  const pages = walkFiles(path.join(repoRoot, 'internal', 'pages')).filter(
-    (p) => p.endsWith('.go') && !p.endsWith('_test.go'),
-  );
+  const screenshotted = new Set(routedTopics().map((t) => t.route));
+  const pages = walkFiles(path.join(repoRoot, 'internal', 'pages'))
+    .filter((p) => p.endsWith('.go') && !p.endsWith('_test.go'))
+    .filter((p) => {
+      const routes = registeredRoutes(fs.readFileSync(p, 'utf8'));
+      // Exclude ONLY a file that registers routes and none of them is
+      // screenshotted. A file with NO route registrations at all is kept
+      // — it may be a shared helper feeding a screenshotted page's
+      // template data without registering any route itself.
+      if (routes.size === 0) return true;
+      for (const r of routes) if (screenshotted.has(r)) return true;
+      return false;
+    });
   return ui
     .concat(publicAssets, pages)
     .map((p) => path.relative(repoRoot, p).split(path.sep).join('/'))
@@ -122,7 +162,9 @@ function buildManifest() {
       'checked by scripts/ci/guard-docs-shots.sh. Do not edit by hand.',
     algorithm:
       'sha256; surface_sha256 = sha256 of concat of "<sha256(file)>  <relpath>\\n" ' +
-      'for the sorted fileset (web/ui/** + non-test internal/pages/**.go); ' +
+      'for the sorted fileset (web/ui/** + non-test internal/pages/**.go, ' +
+      'excluding a file whose only registered routes are all ' +
+      'unscreenshotted, ut-docs#620); ' +
       'topic hashes = sha256 of the topic markdown (en fallback). ' +
       'Full spec in e2e/tests-docs/lib.js.',
     surface_sha256: surfaceHash(),
