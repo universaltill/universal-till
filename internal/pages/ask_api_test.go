@@ -99,7 +99,7 @@ func TestAskTools_RunFunctionsCallRealRepoMethodsWithParsedArgs(t *testing.T) {
 
 	repo := data.NewPOSRepo(db)
 	tools := map[string]ai.AskTool{}
-	for _, tool := range askTools(repo) {
+	for _, tool := range askTools(repo, 0, 0) {
 		tools[tool.Name] = tool
 	}
 	for _, name := range []string{"sales_by_day", "top_items", "payment_breakdown", "stock_levels", "till_activity_summary"} {
@@ -216,7 +216,7 @@ func TestStockLevelsToolReturnsSnakeCaseJSON(t *testing.T) {
 	_, _, db := newAskAPITestDeps(t)
 	repo := data.NewPOSRepo(db)
 	var stockLevels ai.AskTool
-	for _, tool := range askTools(repo) {
+	for _, tool := range askTools(repo, 0, 0) {
 		if tool.Name == "stock_levels" {
 			stockLevels = tool
 		}
@@ -278,7 +278,7 @@ func TestReportsAITools_ReturnSnakeCaseJSON(t *testing.T) {
 
 	repo := data.NewPOSRepo(db)
 	tools := map[string]ai.AskTool{}
-	for _, tool := range askTools(repo) {
+	for _, tool := range askTools(repo, 0, 0) {
 		tools[tool.Name] = tool
 	}
 

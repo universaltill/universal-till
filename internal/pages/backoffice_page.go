@@ -35,7 +35,13 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 		// same wall-clock second (see reportNow's doc comment in
 		// reports_page.go).
 		weekNow := time.Now().Add(time.Second)
-		if daily, err := repo.SalesByDay(r.Context(), weekNow.Add(-7*24*time.Hour), weekNow); err == nil {
+		// 0, 0 (calendar-local-midnight grouping): this widget only sums
+		// day.Total/day.Count across every returned row for a weekly
+		// aggregate — it never displays the per-row Day label — so which
+		// boundary the rows are grouped by cannot change the sum over this
+		// fixed [from, to) window (a sum over any partition of the same
+		// window is identical). Unaffected by ut-docs#559, not just unfixed.
+		if daily, err := repo.SalesByDay(r.Context(), weekNow.Add(-7*24*time.Hour), weekNow, 0, 0); err == nil {
 			for _, day := range daily {
 				weekTotal += day.Total
 				weekCount += day.Count

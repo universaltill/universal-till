@@ -43,7 +43,10 @@ func daysArgWindow(args map[string]any, key string, def int) (time.Time, time.Ti
 // askTools is the read-only tool surface for "Ask your till"
 // (ai-integration.md §a). Data red-line: identity-free aggregates only —
 // no customer data is wired, and the audit tool returns counts, not payloads.
-func askTools(repo *data.POSRepo) []ai.AskTool {
+// hh, mm is the shop's resolved business-day-start (parseBusinessDayStart),
+// so sales_by_day's grouping agrees with /reports' own boundary (ut-docs#559)
+// instead of always grouping on local midnight.
+func askTools(repo *data.POSRepo, hh, mm int) []ai.AskTool {
 	days := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -57,7 +60,7 @@ func askTools(repo *data.POSRepo) []ai.AskTool {
 			Params:      days,
 			Run: func(ctx context.Context, args map[string]any) (any, error) {
 				from, to := daysArgWindow(args, "days", 14)
-				return repo.SalesByDay(ctx, from, to)
+				return repo.SalesByDay(ctx, from, to, hh, mm)
 			},
 		},
 		{
@@ -138,7 +141,9 @@ func registerAskAPI(mux *http.ServeMux, d *common.Deps) {
 			CurrencyDecimals: cur.Decimals,
 			Locale:           locale,
 		}
-		text, err := svc.Ask(r.Context(), question, shop, askTools(posRepo))
+		bizDayStart, _, _ := d.Settings.Get(r.Context(), keyReportsBusinessDayStart)
+		hh, mm := parseBusinessDayStart(bizDayStart)
+		text, err := svc.Ask(r.Context(), question, shop, askTools(posRepo, hh, mm))
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "ai", "-", "ai_ask",
 			map[string]any{"question": question, "ok": err == nil}, now, "")
