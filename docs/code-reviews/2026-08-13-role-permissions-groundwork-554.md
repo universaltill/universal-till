@@ -1,5 +1,22 @@
 # Code review: role_permissions schema + Auth.Can groundwork (ut-docs#554)
 
+## Post-merge addendum: migration renumbered 038 → 039
+
+This PR (#313) and PR #311 (ut-docs#567, "demo customers/promos opt-in
+treatment") both branched before the other existed and each independently
+claimed migration version 038 — under different filenames
+(`038_role_permissions.sql` vs `038_demo_customers_promos_opt_in.sql`), so
+git's merge never saw a conflict. Both merged to `main` minutes apart;
+`main`'s CI immediately went red on both workflow runs with
+`constraint failed: UNIQUE constraint failed: schema_migrations.version`.
+Fixed same-session: `038_role_permissions.sql` renamed to
+`039_role_permissions.sql` (039 was free), doc comments updated, full
+gate re-run, PR opened and merged, `main`'s CI re-verified green. The
+review content below (everything shipped, findings, verification) still
+describes the actual code — only the file's version number changed. See
+`ut-docs#629`/`#630` for the standing collision-guard gap this is another
+instance of.
+
 ## What shipped
 
 Split (a) of #520 — foundational infra only, no call-site migration yet.
