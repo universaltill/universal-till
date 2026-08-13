@@ -482,6 +482,45 @@ WHERE plugin_id = ? AND event = ? AND is_active = 1
 	return count > 0, nil
 }
 
+// BrokenHookPluginRow identifies an active plugin whose install_state is
+// 'broken' (its files are missing or failed to load — ut-docs#368) and whose
+// manifest registers an active hook for a given event. Consumers use it to
+// fail closed: a hook the broken plugin is registered for must not silently
+// fall back to a default answer while the plugin can't run.
+type BrokenHookPluginRow struct {
+	ID   string
+	Name string
+}
+
+// ListBrokenPluginsForHook returns the active-but-broken plugins registered
+// for event. This is a MANIFEST-registration check (plugin_hooks rows),
+// deliberately independent of whether the plugin is currently subscribed on
+// the event bus — a broken plugin never subscribes, which is exactly the
+// state this query exists to detect (ut-docs#368).
+func (r *PluginRepo) ListBrokenPluginsForHook(ctx context.Context, event string) ([]BrokenHookPluginRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT DISTINCT p.id, p.name
+FROM plugins p
+JOIN plugin_hooks h ON h.plugin_id = p.id
+WHERE h.event = ? AND h.is_active = 1
+  AND p.is_active = 1 AND p.install_state = 'broken'
+ORDER BY p.name COLLATE NOCASE
+`, event)
+	if err != nil {
+		return nil, pluginObs.wrap("list_broken_for_hook", err)
+	}
+	defer rows.Close()
+	var res []BrokenHookPluginRow
+	for rows.Next() {
+		var row BrokenHookPluginRow
+		if err := rows.Scan(&row.ID, &row.Name); err != nil {
+			return nil, pluginObs.wrap("list_broken_for_hook", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
 // Permission helpers
 
 func (r *PluginRepo) CheckPermission(ctx context.Context, pluginID, permission string) (granted bool, exists bool, err error) {
@@ -737,6 +776,12 @@ type InstalledPluginRow struct {
 	Runtime    string
 	Entrypoint string
 	IsActive   bool
+	// InstallState is the plugins-table lifecycle literal
+	// (installed|disabled|broken|installing|uninstalling — 001_init.sql).
+	// The wasm runtime uses it to flip a plugin whose binary fails to load
+	// to 'broken' and back to 'installed' on a later successful load
+	// (ut-docs#368).
+	InstallState string
 }
 
 // MenuEntryRow represents a plugin menu entry with aggregated permissions.
@@ -918,7 +963,7 @@ ORDER BY name COLLATE NOCASE
 
 func (r *PluginRepo) ListInstalledPlugins(ctx context.Context) ([]InstalledPluginRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, version, COALESCE(author, ''), COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active
+SELECT id, name, version, COALESCE(author, ''), COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active, COALESCE(install_state, 'installed')
 FROM plugins
 WHERE is_active = 1
 `)
@@ -929,7 +974,7 @@ WHERE is_active = 1
 	var res []InstalledPluginRow
 	for rows.Next() {
 		var p InstalledPluginRow
-		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author, &p.Runtime, &p.Entrypoint, &p.IsActive); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author, &p.Runtime, &p.Entrypoint, &p.IsActive, &p.InstallState); err != nil {
 			return nil, pluginObs.wrap("list_installed", err)
 		}
 		res = append(res, p)

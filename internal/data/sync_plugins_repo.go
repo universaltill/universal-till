@@ -82,17 +82,22 @@ ORDER BY s.listing_id`)
 	return bundle, nil
 }
 
-// InstalledPluginVersion reports whether a plugin is installed locally and
-// at which version — the replica-side half of the plugin-set diff.
-func (r *SyncPluginsRepo) InstalledPluginVersion(ctx context.Context, pluginID string) (string, bool, error) {
-	var version string
-	err := r.db.QueryRowContext(ctx,
-		`SELECT version FROM plugins WHERE id = ?`, pluginID).Scan(&version)
+// InstalledPluginVersion reports whether a plugin is installed locally, at
+// which version, and in which install state — the replica-side half of the
+// plugin-set diff. The install state matters because a matching version is
+// NOT proof the plugin is healthy: a row can survive with its files deleted
+// out from under it (ut-docs#368's join-snapshot gap), which the wasm
+// runtime marks install_state='broken' — and the converge loop treats that
+// as drift to heal even though the version already matches the primary's.
+func (r *SyncPluginsRepo) InstalledPluginVersion(ctx context.Context, pluginID string) (version, installState string, installed bool, err error) {
+	err = r.db.QueryRowContext(ctx,
+		`SELECT version, COALESCE(install_state, 'installed') FROM plugins WHERE id = ?`, pluginID).
+		Scan(&version, &installState)
 	if err == sql.ErrNoRows {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("installed plugin version %s: %w", pluginID, err)
+		return "", "", false, fmt.Errorf("installed plugin version %s: %w", pluginID, err)
 	}
-	return version, true, nil
+	return version, installState, true, nil
 }

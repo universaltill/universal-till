@@ -31,6 +31,7 @@
           <span class="tag" x-show="p.enabled" style="background:rgba(34,197,94,.2); color:#15803d">{{ T "plugins.manage.enabled" }}</span>
           <span class="tag" x-show="!p.enabled" style="background:rgba(148,163,184,.3); color:#475569">{{ T "plugins.manage.disabled" }}</span>
           <span class="tag" x-text="p.trust"></span>
+          <span class="tag" x-show="p.state === 'broken'" style="background:rgba(239,68,68,.2); color:#b91c1c" title="{{ T "plugins.status.broken_binary" }}">{{ T "plugins.manage.state.broken" }}</span>
           <span class="tag" x-show="p.hasUpdate" style="background:rgba(251,146,60,.25); color:#c2410c" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
         </div>
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">

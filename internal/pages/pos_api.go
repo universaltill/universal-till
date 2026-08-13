@@ -458,11 +458,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		var saleLines []pos.SaleLineInput
+		taxBlocked := false
 		for _, l := range lines {
 			// Single source of truth with the live basket preview
 			// (Service.recomputeTotals) — same order-type-aware resolution,
 			// so what the cashier saw pre-payment is what gets recorded.
-			taxBP := d.Engine.EffectiveLineTaxRateBP(l)
+			taxBP, lineTaxBlocked := d.Engine.EffectiveLineTaxRateBP(l)
+			taxBlocked = taxBlocked || lineTaxBlocked
 			// Qty is int; convert to float64 for REAL support
 			saleLines = append(saleLines, pos.SaleLineInput{
 				ItemID:             l.ItemID,
@@ -477,6 +479,39 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				LocationID:         locID,
 				Modifiers:          l.Modifiers,
 			})
+		}
+
+		// Fail closed (ut-docs#368, product decision 2026-08-13): a line
+		// whose tax code is owned by a registered-but-broken tax plugin must
+		// never be sold with a silently substituted default/last-known rate.
+		// Reject the tender BEFORE any payment is authorized, on the same
+		// cashier-facing surface the insufficient-stock rejection uses: a
+		// persistent error toast on the basket, naming the broken plugin.
+		// Scoped per line — a basket without such a line tenders normally.
+		if taxBlocked {
+			locale := httpx.ResolveLocale(w, r)
+			funcs := httpx.FuncsFor(locale)
+			b := d.Engine.Basket()
+			// Review finding (2026-08-13): a lookup error (or, in principle,
+			// zero rows if state ever drifted) must never render as an empty
+			// "Tax plugin  is broken" toast — fall back to a translated
+			// generic noun so the message still reads grammatically.
+			names := httpx.T(locale, "pos.toast.tax_blocked_unnamed_plugin")
+			if rows, err := data.NewPluginRepo(d.Db).ListBrokenPluginsForHook(r.Context(), taxRateAskEvent); err == nil && len(rows) > 0 {
+				var nn []string
+				for _, row := range rows {
+					nn = append(nn, row.Name)
+				}
+				names = strings.Join(nn, ", ")
+			}
+			log.Printf("tender rejected: tax blocked by broken tax plugin(s) %q (ut-docs#368 fail-closed)", names)
+			b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.tax_blocked"), names)
+			b.ToastLevel = "error"
+			basketView, _ := ui.NewBasketView(funcs)
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			_ = basketView.Render(w, b)
+			return
 		}
 
 		var payments []pos.PaymentInput

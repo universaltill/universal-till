@@ -74,19 +74,33 @@ const OrderTypeTakeaway = "takeaway"
 // Service.SetTaxRateAsker, calling into the plugin event bus — internal/pos
 // itself never talks to the plugin subsystem, keeping this package's only
 // dependency on "what a country's tax rules are" as a pluggable interface.
+//
+// blocked=true (ut-docs#368, fail-closed decision 2026-08-13) means a tax
+// plugin IS registered for this hook but currently cannot run (its binary
+// is missing/unverified/failed to load — install_state 'broken'), so "no
+// opinion" cannot be trusted: the line's rate might silently fall back to
+// its base rate while a sibling till charges the plugin's rate. A blocked
+// line must not be sold until the plugin is restored; blocked is scoped per
+// line (the asker judges each payload), never till-wide. ok and blocked are
+// mutually exclusive: a real answer from a healthy plugin is never blocked.
 type TaxRateAsker interface {
-	AskTaxRateBP(l BasketLine, orderType string) (bp int, ok bool)
+	AskTaxRateBP(l BasketLine, orderType string) (bp int, ok bool, blocked bool)
 }
 
 // effectiveTaxRateBP resolves the basis points to actually charge for one
 // line under the current order type: ask the installed TaxRateAsker (if
 // any) first, then fall back to the line's own configured rate — the same
-// plain default as before any tax plugin existed.
-func (s *Service) effectiveTaxRateBP(l BasketLine) int {
+// plain default as before any tax plugin existed. blocked reports the
+// asker's fail-closed verdict (see TaxRateAsker): the returned rate is then
+// only a display fallback for the live preview — callers on the tender path
+// must refuse to finalize a blocked line, never record the fallback rate.
+func (s *Service) effectiveTaxRateBP(l BasketLine) (bp int, blocked bool) {
 	if s.taxAsker != nil {
-		if bp, ok := s.taxAsker.AskTaxRateBP(l, s.orderType); ok {
-			return bp
+		bp, ok, askBlocked := s.taxAsker.AskTaxRateBP(l, s.orderType)
+		if ok {
+			return bp, false
 		}
+		blocked = askBlocked
 	}
 	standard := l.TaxRateBP
 	if standard == 0 {
@@ -95,7 +109,7 @@ func (s *Service) effectiveTaxRateBP(l BasketLine) int {
 	if standard == 0 {
 		standard = 2000 // default to 20% if unconfigured
 	}
-	return standard
+	return standard, blocked
 }
 
 func NewServiceWithResolver(cfg Config, r PriceResolver) *Service {
@@ -145,9 +159,15 @@ type BasketLine struct {
 	// if the item has none and it's using the shop's global default rate) —
 	// passed to TaxRateAsker so a tax plugin can distinguish item categories
 	// without core needing to know what any of them mean.
-	TaxCodeID string                  `json:"-"`
-	IsWeighed bool                    `json:"-"`
-	Modifiers []data.SelectedModifier `json:"modifiers,omitempty"` // ADR-0020: chosen customizations, already folded into PriceCents
+	TaxCodeID string `json:"-"`
+	// TaxBlocked (ut-docs#368) marks a line whose tax rate cannot currently
+	// be resolved because a registered tax plugin is broken (see
+	// TaxRateAsker's blocked verdict). Set by recomputeTotals so the live
+	// basket surfaces it; the tender path independently re-checks via
+	// EffectiveLineTaxRateBP and refuses to finalize such a line.
+	TaxBlocked bool                    `json:"taxBlocked,omitempty"`
+	IsWeighed  bool                    `json:"-"`
+	Modifiers  []data.SelectedModifier `json:"modifiers,omitempty"` // ADR-0020: chosen customizations, already folded into PriceCents
 }
 
 // ModifierSignature is a stable key for two lines' modifier selections —
@@ -436,7 +456,12 @@ func (s *Service) recomputeTotals() {
 	var tax, total money.Money
 	for i := range s.lines {
 		l := &s.lines[i]
-		rateBP := s.effectiveTaxRateBP(*l)
+		rateBP, taxBlocked := s.effectiveTaxRateBP(*l)
+		// The blocked flag is per line (ut-docs#368): the rest of the basket
+		// keeps previewing normally. basket.Lines was copied above, so the
+		// published copy needs the flag written explicitly too.
+		l.TaxBlocked = taxBlocked
+		s.basket.Lines[i].TaxBlocked = taxBlocked
 		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, s.cfg.TaxInclusive)
 		tax = tax.Add(lineTax)
 		total = total.Add(lineTotal)
@@ -475,8 +500,11 @@ func (s *Service) OrderType() string {
 // under the sale's current order type — the single source of truth callers
 // (recomputeTotals' live preview, and the tender handler recording the final
 // sale) must both use, so what a cashier sees pre-payment matches what gets
-// recorded/receipted.
-func (s *Service) EffectiveLineTaxRateBP(l BasketLine) int {
+// recorded/receipted. blocked=true (ut-docs#368) means the line's tax is
+// owned by a registered-but-broken tax plugin: the returned rate is only a
+// display fallback and the caller MUST NOT finalize a sale containing this
+// line (fail closed, per-line — the rest of the basket stays sellable).
+func (s *Service) EffectiveLineTaxRateBP(l BasketLine) (bp int, blocked bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.effectiveTaxRateBP(l)

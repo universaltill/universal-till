@@ -882,3 +882,84 @@ func TestSelfOrderShop_HasPinGatedExitLink(t *testing.T) {
 		t.Fatalf("self-order shop screen missing the discreet exit affordance styling: %s", body)
 	}
 }
+
+// ut-docs#368 (fail-closed decision 2026-08-13): the anonymous kiosk
+// checkout must refuse a basket containing a line whose tax is owned by a
+// registered-but-broken tax plugin — same rule as the cashier tender, with
+// a customer-appropriate message on the payment picker — and never record
+// the sale at a silently substituted base rate.
+func TestSelfOrderShop_CheckoutRejectsTaxBlockedLineFailClosed(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	// A registered tax plugin whose binary failed to load (what
+	// WasmRuntime.Sync records): broken, hook registered, never subscribed.
+	for _, q := range []string{
+		`INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+		   VALUES ('com.test.tax-broken', '1.0.0', 'Broken Tax Plugin', 'wasm', './plugin.wasm', 'file://x', 'deadbeef', '0.0.1', '1.0', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active, install_state)
+		   VALUES ('com.test.tax-broken', 'Broken Tax Plugin', '1.0.0', './plugin.wasm', 'wasm', 1, 'broken')`,
+		`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+		   VALUES ('hook-tax-368k', 'com.test.tax-broken', 'tax.rate.ask', 'tax.rate', 1)`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("seed broken tax plugin: %v", err)
+		}
+	}
+	bus := plugins.SharedBus(d.DB)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+	// Production wiring (init.go): the kiosk engine gets the same
+	// plugin-backed asker as the cashier's.
+	dp.KioskEngine.SetTaxRateAsker(&pluginTaxRateAsker{db: d.DB})
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	post("/api/self-order/scan", "code=5000001")
+
+	rec := post("/api/self-order/checkout", "method=card")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for a tax-blocked kiosk checkout, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// The payment picker re-renders with the customer-facing error toast
+	// (selforder.checkout.tax_blocked through the picker's ErrKey slot).
+	if !strings.Contains(rec.Body.String(), "toast-error") {
+		t.Fatalf("expected an error toast on the payment picker, got: %s", rec.Body.String())
+	}
+	var sales int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&sales); err != nil {
+		t.Fatal(err)
+	}
+	if sales != 0 {
+		t.Fatalf("a tax-blocked kiosk checkout must not record a sale, found %d", sales)
+	}
+	if len(dp.KioskEngine.Basket().Lines) != 1 {
+		t.Fatal("a rejected kiosk checkout must leave the basket intact")
+	}
+
+	// Restored plugin (state flipped back + generation bump, what a
+	// successful WasmRuntime.Sync does): the same checkout completes.
+	if _, err := d.DB.Exec(`UPDATE plugins SET install_state = 'installed' WHERE id = 'com.test.tax-broken'`); err != nil {
+		t.Fatal(err)
+	}
+	bus.ResetSubscribers()
+	rec = post("/api/self-order/checkout", "method=card")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected the healed kiosk to check out normally, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM sales WHERE status = 'completed'`).Scan(&sales); err != nil {
+		t.Fatal(err)
+	}
+	if sales != 1 {
+		t.Fatalf("expected exactly one completed sale after the heal, got %d", sales)
+	}
+}

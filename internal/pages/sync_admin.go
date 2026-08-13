@@ -357,11 +357,14 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 // Steady state is NOT a no-op: an Unchanged poll only means the PRIMARY's
 // set hasn't moved — it says nothing about local drift (a failed reload,
 // anything that slips past the replica guards). The local half of this
-// diff is DB-row based (InstalledPluginVersion reads the plugins table),
-// so it CANNOT detect a plugin whose row survives but whose files were
-// deleted out from under it — that's ut-docs#368's failure mode, a
-// separate still-open card, not covered here. The last-applied bundle
-// rows are persisted locally
+// diff reads the plugins table (InstalledPluginVersion) — both the version
+// AND the install_state: a plugin whose row survives but whose files were
+// deleted out from under it (ut-docs#368's failure mode, e.g. a join
+// snapshot copying DB rows without binaries) is flipped to
+// install_state='broken' by WasmRuntime.Sync when its load fails, and
+// convergePluginSet treats broken-at-the-right-version as drift to heal —
+// the same verified marketplace re-fetch as a version mismatch. The
+// last-applied bundle rows are persisted locally
 // (sync.plugins_bundle, alongside sync.plugins_version), and on an
 // Unchanged response the same diff/converge loop re-runs against that
 // cached row set every tick. The `?have=` fingerprint still saves the
@@ -449,24 +452,35 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 	converged := true
 
-	// Installs/updates: listing active on the primary, missing or at a
-	// different version locally → re-fetch from the marketplace (verified),
-	// pinned to the PRIMARY's version — not the marketplace's latest — so a
-	// primary deliberately held behind latest doesn't fork its replicas.
+	// Installs/updates: listing active on the primary, missing, at a
+	// different version locally, or marked broken (files gone/unloadable
+	// even at the matching version, ut-docs#368) → re-fetch from the
+	// marketplace (verified), pinned to the PRIMARY's version — not the
+	// marketplace's latest — so a primary deliberately held behind latest
+	// doesn't fork its replicas.
 	inPrimary := make(map[string]bool, len(rows))
 	for _, row := range rows {
 		if row.ListingID == "" || row.PluginID == "" {
 			continue // defense in depth; DumpActivePlugins already filters these
 		}
 		inPrimary[row.ListingID] = true
-		version, installed, err := repo.InstalledPluginVersion(ctx, row.PluginID)
+		version, installState, installed, err := repo.InstalledPluginVersion(ctx, row.PluginID)
 		if err != nil {
 			logging.L().Errorf("plugin sync: read local state for %s: %v", row.PluginID, err)
 			converged = false
 			continue
 		}
-		if installed && version == row.Version {
+		// A matching version is only "already right locally" when the plugin
+		// is actually healthy: install_state 'broken' means the row survived
+		// but its files didn't (ut-docs#368's join-snapshot gap, marked by
+		// WasmRuntime.Sync on the failed load) — re-fetch from the
+		// marketplace exactly like a version mismatch, same verified path.
+		if installed && version == row.Version && installState != "broken" {
 			continue
+		}
+		if installed && installState == "broken" {
+			logging.L().Warnf("plugin sync: %s (%s@%s) is marked broken locally — re-installing from the marketplace to heal it",
+				row.PluginName, row.ListingID, version)
 		}
 		if _, err := cloudInstallPluginVersion(ctx, d, row.ListingID, row.Version); err != nil {
 			logging.L().Warnf("plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",

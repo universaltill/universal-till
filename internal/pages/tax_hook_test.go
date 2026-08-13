@@ -23,7 +23,7 @@ func TestAskTaxRateBP_NoSubscribers(t *testing.T) {
 	plugins.SharedBus(db).ResetSubscribers()
 
 	asker := &pluginTaxRateAsker{db: db}
-	rate, ok := asker.AskTaxRateBP(pos.BasketLine{
+	rate, ok, blocked := asker.AskTaxRateBP(pos.BasketLine{
 		ItemID:    "itm1",
 		TaxCodeID: "tax_std",
 		TaxRateBP: 2000,
@@ -34,5 +34,8 @@ func TestAskTaxRateBP_NoSubscribers(t *testing.T) {
 	}
 	if rate != 0 {
 		t.Fatalf("expected rate 0 when declining, got %d", rate)
+	}
+	if blocked {
+		t.Fatalf("no plugin registered at all must not read as blocked (ut-docs#368 blocks only a registered-but-broken plugin)")
 	}
 }

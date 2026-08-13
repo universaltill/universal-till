@@ -154,9 +154,33 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 	}
 }
 
+// Plugins-table install_state literals this runtime writes (the full enum is
+// installed|disabled|broken|installing|uninstalling — 001_init.sql). A load
+// failure flips a plugin to broken; a later successful load flips it back.
+const (
+	pluginInstallStateInstalled = "installed"
+	pluginInstallStateBroken    = "broken"
+)
+
+// brokenBinaryMessageKey is the i18n message key recorded on a plugin's
+// marketplace install-status row when its installed binary is missing or
+// fails to load (ut-docs#368) — the plugin store surfaces it like any other
+// install failure.
+const brokenBinaryMessageKey = "plugins.status.broken_binary"
+
 // Sync loads modules for the given active wasm plugins and subscribes each to
 // the trigger_events its own entries declare. Called from Manager.Reload;
 // failures are logged, never fatal — checkout must not depend on a plugin.
+//
+// ut-docs#368: a load failure is no longer just a log line. A replica that
+// inherited a plugin's DB rows without its binary (the join-snapshot gap)
+// used to boot "believing" the plugin was installed while it silently never
+// ran — for a tax plugin that means two tills in one shop computing
+// different tax for the same item. Now every failed load flips the plugin's
+// install_state to 'broken' (surfaced on the plugins page and consumed by
+// the tax fail-closed path and the sync converge loop), and a later
+// successful load of a previously-broken plugin flips it back to
+// 'installed' — self-healing must be as visible as breaking.
 func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	if w == nil {
 		return
@@ -202,6 +226,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	bus := SharedBus(db)
 	bus.ResetSubscribers()
 
+	loadedCount, failedCount := 0, 0
 	for _, row := range rows {
 		if row.Runtime != "wasm" || !row.IsActive {
 			continue
@@ -209,8 +234,14 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		modPath := filepath.Join(w.baseDir, row.ID, row.Version,
 			strings.TrimPrefix(row.Entrypoint, "./"))
 		if err := w.load(row.ID, row.Version, modPath); err != nil {
+			failedCount++
 			logging.L().Errorf("wasm load %s: %v", row.ID, err)
+			markWasmPluginBroken(ctx, db, repo, row)
 			continue
+		}
+		loadedCount++
+		if row.InstallState == pluginInstallStateBroken {
+			markWasmPluginHealed(ctx, db, repo, row)
 		}
 		events, err := repo.ListPluginHookEvents(ctx, row.ID)
 		if err != nil || len(events) == 0 {
@@ -259,6 +290,97 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			}
 		}()
 		logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
+	}
+	if failedCount > 0 {
+		// Loud, tallied, and in the Problems ring (logging.Recent feeds it):
+		// a plugin the DB says is installed is NOT running (ut-docs#368).
+		logging.L().Errorf("wasm sync: %d of %d wasm plugin(s) failed to load and are marked broken", failedCount, loadedCount+failedCount)
+		// Review finding (2026-08-13): bus.ResetSubscribers() above already
+		// bumped the generation for THIS sync pass, before the broken flips
+		// on line ~238 landed — so a taxAskAnswer cache/broken-lookup filled
+		// against that generation (e.g. a recompute racing this Sync) could
+		// memoize "nothing broken" against the generation this sync settles
+		// on, with no further bump to invalidate it once the flip is durable
+		// (guaranteed whenever the broken plugin is the last one Sync
+		// processes, since a broken plugin never reaches Subscribe — which
+		// is the only other thing that bumps generation in this loop).
+		// Bump once more now that every flip this pass made is committed, so
+		// a consumer reading the bus AFTER Sync returns never observes a
+		// generation that predates the broken state it's about to ask about.
+		bus.BumpGeneration()
+	}
+}
+
+// markWasmPluginBroken records a failed load (ut-docs#368): the plugins-table
+// row flips to install_state 'broken' (keeping its active flag, so the next
+// Sync still retries it and a restored binary self-heals), and the plugin's
+// marketplace install-status record — when one exists, i.e. the plugin came
+// from the marketplace — is marked failed with the broken-binary message so
+// the plugin store's bookkeeping shows it too. Best-effort: bookkeeping
+// failures are logged, never fatal (checkout must not depend on this).
+func markWasmPluginBroken(ctx context.Context, db *sql.DB, repo *data.PluginRepo, row data.InstalledPluginRow) {
+	if row.InstallState != pluginInstallStateBroken {
+		if err := repo.SetPluginState(ctx, row.ID, row.Version, pluginInstallStateBroken, row.IsActive); err != nil {
+			logging.L().Errorf("wasm sync: mark %s broken: %v", row.ID, err)
+			return
+		}
+	}
+	syncInstallStatusForPlugin(ctx, db, row.ID, InstallStateFailed)
+}
+
+// markWasmPluginHealed is markWasmPluginBroken's inverse: a previously-broken
+// plugin loaded successfully (its files were reinstalled or restored), so the
+// row flips back to 'installed' and a failed install-status record this
+// runtime wrote is restored to active — self-healing must be visible, with
+// no leftover broken chip.
+func markWasmPluginHealed(ctx context.Context, db *sql.DB, repo *data.PluginRepo, row data.InstalledPluginRow) {
+	if err := repo.SetPluginState(ctx, row.ID, row.Version, pluginInstallStateInstalled, row.IsActive); err != nil {
+		logging.L().Errorf("wasm sync: mark %s healed: %v", row.ID, err)
+		return
+	}
+	logging.L().Infof("wasm sync: previously-broken plugin %s loaded successfully, marked installed again", row.ID)
+	syncInstallStatusForPlugin(ctx, db, row.ID, InstallStateActive)
+}
+
+// syncInstallStatusForPlugin mirrors a broken/healed flip onto the plugin's
+// marketplace install-status record (keyed by listing_id — found via its
+// stored PluginID; file-imported plugins have no record and are skipped,
+// install_state alone is their visible signal). To InstallStateFailed it
+// stamps the broken-binary message; back to InstallStateActive it only
+// touches a record failed with that same message, so an unrelated install
+// failure's bookkeeping is never overwritten.
+func syncInstallStatusForPlugin(ctx context.Context, db *sql.DB, pluginID string, to InstallLifecycleState) {
+	store := NewInstallStatusStore(db)
+	records, err := store.List(ctx)
+	if err != nil {
+		logging.L().Errorf("wasm sync: list install-status records for %s: %v", pluginID, err)
+		return
+	}
+	for _, rec := range records {
+		if rec.PluginID != pluginID {
+			continue
+		}
+		switch to {
+		case InstallStateFailed:
+			if rec.State == InstallStateFailed && rec.MessageKey == brokenBinaryMessageKey {
+				continue // already recorded
+			}
+			rec.State = InstallStateFailed
+			rec.MessageKey = brokenBinaryMessageKey
+			rec.Retryable = true
+		case InstallStateActive:
+			if rec.State != InstallStateFailed || rec.MessageKey != brokenBinaryMessageKey {
+				continue // not our mark — leave other flows' bookkeeping alone
+			}
+			rec.State = InstallStateActive
+			rec.MessageKey = ""
+			rec.Retryable = false
+		default:
+			continue
+		}
+		if err := store.Save(ctx, rec); err != nil {
+			logging.L().Errorf("wasm sync: update install-status record %s for %s: %v", rec.ListingID, pluginID, err)
+		}
 	}
 }
 

@@ -84,7 +84,41 @@ func (m *fakeMarketplace) publishVersion(t *testing.T, listingID, pluginID, vers
 		CanonicalType: "page",
 		DeviceArch:    runtime.GOOS + "/" + runtime.GOARCH,
 	}
-	artifact := signedFakeMktArtifact(t, m.privateKey, manifest)
+	artifact := signedFakeMktArtifact(t, m.privateKey, manifest, "plugin-bin", []byte("binary"))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.listings[listingID]
+	if l == nil {
+		l = &fakeMktListing{releases: map[string]fakeMktRelease{}}
+		m.listings[listingID] = l
+	}
+	l.releases[version] = fakeMktRelease{artifact: artifact, manifest: manifest, checksum: sha256Hex(artifact)}
+	l.latest = version
+}
+
+// minimalWasmArtifactModule is the smallest valid wasm binary (magic +
+// version, no sections) — enough for WasmRuntime.Sync's CompileModule step
+// to succeed, which is all the ut-docs#368 tests need from a "real" module.
+var minimalWasmArtifactModule = []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+
+// publishWasmVersion is publishVersion for a runtime:"wasm" plugin: the
+// signed bundle carries a compilable plugin.wasm module, so the replica's
+// wasm load path (WasmRuntime.Sync — the layer that detects ut-docs#368's
+// missing-binary failure mode and marks the row broken/healed) can be
+// exercised against a genuinely installed marketplace plugin.
+func (m *fakeMarketplace) publishWasmVersion(t *testing.T, listingID, pluginID, version string) {
+	t.Helper()
+	manifest := &plugins.Manifest{
+		ID:            pluginID,
+		Name:          "Sync Test Wasm Plugin " + pluginID,
+		Version:       version,
+		Entrypoint:    "./plugin.wasm",
+		Executable:    "plugin.wasm",
+		Runtime:       "wasm",
+		CanonicalType: "tax",
+		DeviceArch:    runtime.GOOS + "/" + runtime.GOARCH,
+	}
+	artifact := signedFakeMktArtifact(t, m.privateKey, manifest, "plugin.wasm", minimalWasmArtifactModule)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.listings[listingID]
@@ -114,7 +148,7 @@ func (m *fakeMarketplace) publishMismatchedRelease(t *testing.T, listingID, plug
 		CanonicalType: "page",
 		DeviceArch:    runtime.GOOS + "/" + runtime.GOARCH,
 	}
-	artifact := signedFakeMktArtifact(t, m.privateKey, manifest)
+	artifact := signedFakeMktArtifact(t, m.privateKey, manifest, "plugin-bin", []byte("binary"))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.listings[listingID]
@@ -220,8 +254,9 @@ func (m *fakeMarketplace) config() config.MarketplaceConfig {
 }
 
 // signedFakeMktArtifact signs the manifest (same canonical form the verifier
-// checks) and packs manifest.json + an executable stub into a .tar.gz.
-func signedFakeMktArtifact(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest) []byte {
+// checks) and packs manifest.json + the given binary (an executable stub for
+// runtime "go", a compilable module for runtime "wasm") into a .tar.gz.
+func signedFakeMktArtifact(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest, binName string, binData []byte) []byte {
 	t.Helper()
 	canonical := *manifest
 	canonical.Signature = ""
@@ -244,7 +279,7 @@ func signedFakeMktArtifact(t *testing.T, privateKey ed25519.PrivateKey, manifest
 		mode int64
 	}{
 		{"manifest.json", manifestBytes, 0o644},
-		{"plugin-bin", []byte("binary"), 0o755},
+		{binName, binData, 0o755},
 	} {
 		if err := tarWriter.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.data))}); err != nil {
 			t.Fatalf("write tar header: %v", err)
@@ -425,6 +460,18 @@ func pluginInstalledVersion(t *testing.T, dp *common.Deps, pluginID string) (str
 		return "", false
 	}
 	return version, true
+}
+
+// pluginInstallState reads the plugins-table lifecycle state for pluginID
+// (installed|disabled|broken|…) — ut-docs#368's broken/healed flips.
+func pluginInstallState(t *testing.T, dp *common.Deps, pluginID string) string {
+	t.Helper()
+	var state string
+	if err := dp.Db.QueryRowContext(t.Context(),
+		`SELECT COALESCE(install_state, 'installed') FROM plugins WHERE id = ?`, pluginID).Scan(&state); err != nil {
+		t.Fatalf("read install_state for %s: %v", pluginID, err)
+	}
+	return state
 }
 
 func installStatusState(t *testing.T, dp *common.Deps, listingID string) (string, bool) {
@@ -876,6 +923,101 @@ func TestSyncPullTick_HealsLocalDriftOnUnchangedPoll(t *testing.T) {
 	}
 	if versionAfter, _, _ := replica.dp.Settings.Get(ctx, "sync.plugins_version"); versionAfter != versionBefore {
 		t.Fatalf("healing local drift must not move the pull fingerprint (%q -> %q)", versionBefore, versionAfter)
+	}
+}
+
+// ut-docs#368: THIS card's exact failure mode — a plugin's DB row says the
+// right version but its on-disk files are gone (a joined replica inherits
+// the primary's plugin rows in the join snapshot but never the binaries).
+// Pre-#368 the wasm load failed with one log line and nothing else, and the
+// converge loop's "already right locally" check (version equality alone)
+// never re-triggered a fetch. Now: the boot-time load path
+// (WasmRuntime.Sync) flips the row to install_state='broken' and tallies
+// the failure; one converge tick treats broken-at-the-matching-version as
+// drift and re-installs from the marketplace (the same Ed25519-verified
+// path as a version mismatch); and the till fully recovers — row back to
+// 'installed', files present, install-status record active, no leftovers.
+// (The checkout-side fail-closed block for the broken plugin's tax lines is
+// pinned at the pos/pages layer: TestBlockedTaxVerdictMarksOnlyOwnedLines,
+// TestAskTaxRateBP_BrokenRegisteredPluginBlocks.)
+func TestSyncPullTick_ReinstallsBrokenPluginAtMatchingVersion(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	mkt.publishWasmVersion(t, "listing-wasm", "com.test.sync-wasm", "1.0.0")
+	primary := newSyncPluginsPrimary(t, mkt)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	primary.install(t, "listing-wasm")
+	replica.tick(t, client)
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-wasm"); !ok || v != "1.0.0" {
+		t.Fatalf("precondition: replica should have converged to 1.0.0, got (%q, %v)", v, ok)
+	}
+	if !replica.hasPluginFiles("com.test.sync-wasm") {
+		t.Fatalf("precondition: replica should have the plugin's files")
+	}
+
+	// The failure mode: delete ONLY the replica's on-disk files, directly —
+	// NOT via cloudRemovePlugin, which would also clear the DB row. This is
+	// the DB-row-without-binary state a join snapshot leaves behind.
+	if err := os.RemoveAll(filepath.Join(replica.dataDir, "plugins", "com.test.sync-wasm")); err != nil {
+		t.Fatalf("delete replica plugin files: %v", err)
+	}
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-wasm"); !ok || v != "1.0.0" {
+		t.Fatalf("precondition: the DB row must survive the file deletion, got (%q, %v)", v, ok)
+	}
+
+	// The boot-time load path detects it. A FRESH runtime, as a till booting
+	// from the join snapshot would have — the long-lived runtime in dp.Pm
+	// still holds the module compiled in memory from the earlier converge
+	// (a running till keeps serving until restart; the gap bites at boot).
+	withPaths(replica.dataDir, func() {
+		w := plugins.NewWasmRuntime(filepath.Join(replica.dataDir, "plugins"))
+		w.Sync(t.Context(), replica.dp.Db)
+	})
+	if state := pluginInstallState(t, replica.dp, "com.test.sync-wasm"); state != "broken" {
+		t.Fatalf("expected install_state 'broken' after the failed load, got %q", state)
+	}
+	if state, ok := installStatusState(t, replica.dp, "listing-wasm"); !ok || state != string(plugins.InstallStateFailed) {
+		t.Fatalf("expected the marketplace install-status record marked failed, got (%q, %v)", state, ok)
+	}
+
+	// One converge tick heals it. The primary's set is UNCHANGED (matching
+	// fingerprint), so this exercises the steady-state reconcile path: the
+	// version already matches — only the broken state marks the drift.
+	before := mkt.downloadTokenHits()
+	replica.tick(t, client)
+
+	if mkt.downloadTokenHits() != before+1 {
+		t.Fatalf("expected exactly one marketplace re-download to heal the broken plugin, hits %d -> %d",
+			before, mkt.downloadTokenHits())
+	}
+	if v, ok := pluginInstalledVersion(t, replica.dp, "com.test.sync-wasm"); !ok || v != "1.0.0" {
+		t.Fatalf("expected the plugin re-installed at 1.0.0, got (%q, %v)", v, ok)
+	}
+	if state := pluginInstallState(t, replica.dp, "com.test.sync-wasm"); state != "installed" {
+		t.Fatalf("expected install_state back to 'installed' after the heal, got %q", state)
+	}
+	if !replica.hasPluginFiles("com.test.sync-wasm") {
+		t.Fatalf("expected the plugin's files restored in the replica's tree")
+	}
+	if state, ok := installStatusState(t, replica.dp, "listing-wasm"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("expected the install-status record active again (no leftover broken bookkeeping), got (%q, %v)", state, ok)
+	}
+	// A fresh boot-time load now succeeds and keeps the healthy state.
+	withPaths(replica.dataDir, func() {
+		w := plugins.NewWasmRuntime(filepath.Join(replica.dataDir, "plugins"))
+		w.Sync(t.Context(), replica.dp.Db)
+	})
+	if state := pluginInstallState(t, replica.dp, "com.test.sync-wasm"); state != "installed" {
+		t.Fatalf("expected install_state to stay 'installed' after a healthy boot load, got %q", state)
+	}
+
+	// Steady state after the heal: no further re-download.
+	before = mkt.downloadTokenHits()
+	replica.tick(t, client)
+	if mkt.downloadTokenHits() != before {
+		t.Fatalf("expected no marketplace re-download once healed, hits %d -> %d", before, mkt.downloadTokenHits())
 	}
 }
 
