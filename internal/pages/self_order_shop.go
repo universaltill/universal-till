@@ -308,7 +308,17 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to prepare sale", http.StatusInternalServerError)
 			return
 		}
-		saleLines, total := kioskSaleLinesAndTotal(d, locID)
+		saleLines, total, taxBlocked := kioskSaleLinesAndTotal(d, locID)
+		if taxBlocked {
+			// ut-docs#368 — same fail-closed rule as the cashier tender
+			// path: a basket line whose registered tax plugin is broken
+			// must not be rung up at a silently-wrong base rate. The
+			// anonymous customer can't repair anything, so the message
+			// points them to the counter.
+			w.WriteHeader(http.StatusConflict)
+			renderKioskPaymentPicker(w, r, d, methods, "selforder.checkout.tax_unavailable")
+			return
+		}
 		if !total.IsPositive() {
 			w.WriteHeader(http.StatusBadRequest)
 			renderKioskPaymentPicker(w, r, d, methods, "selforder.checkout.invalid_method")
@@ -378,13 +388,19 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 // basket. Kiosk sales never carry a sale-level discount (no UI surfaces one
 // to an anonymous customer), so this is deliberately simpler than the
 // cashier path, which also honors a client- or basket-supplied discount.
-func kioskSaleLinesAndTotal(d *common.Deps, locID string) ([]pos.SaleLineInput, money.Money) {
+func kioskSaleLinesAndTotal(d *common.Deps, locID string) ([]pos.SaleLineInput, money.Money, bool) {
 	var saleLines []pos.SaleLineInput
 	subtotal, taxTotal := money.Zero, money.Zero
 	for _, l := range d.KioskEngine.Lines() {
 		// Same resolution as the cashier tender handler (pos_api.go) —
-		// required by this function's own invariant above.
-		taxBP := d.KioskEngine.EffectiveLineTaxRateBP(l)
+		// required by this function's own invariant above. taxBlocked is
+		// the same ut-docs#368 fail-closed signal the cashier path honors:
+		// a line whose registered tax plugin is broken must not be sold at
+		// a silently-wrong base rate on this surface either.
+		taxBP, taxBlocked := d.KioskEngine.EffectiveLineTaxRateBP(l)
+		if taxBlocked {
+			return nil, money.Zero, true
+		}
 		saleLines = append(saleLines, pos.SaleLineInput{
 			ItemID:             l.ItemID,
 			VariantID:          l.VariantID,
@@ -411,7 +427,7 @@ func kioskSaleLinesAndTotal(d *common.Deps, locID string) ([]pos.SaleLineInput, 
 	if total.IsNegative() {
 		total = money.Zero
 	}
-	return saleLines, total
+	return saleLines, total, false
 }
 
 func renderKioskCart(w http.ResponseWriter, r *http.Request, d *common.Deps) {

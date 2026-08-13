@@ -462,7 +462,29 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// Single source of truth with the live basket preview
 			// (Service.recomputeTotals) — same order-type-aware resolution,
 			// so what the cashier saw pre-payment is what gets recorded.
-			taxBP := d.Engine.EffectiveLineTaxRateBP(l)
+			taxBP, taxBlocked := d.Engine.EffectiveLineTaxRateBP(l)
+			if taxBlocked {
+				// ut-docs#368 — fail closed on tax: this line's registered
+				// tax plugin is broken right now (install_state='broken'),
+				// so its true rate is unknowable; recording it at the base
+				// rate would be silently-wrong tax, not a degraded sale.
+				// Narrow, per-line block: the operator removes the named
+				// line (the rest of the basket stays sellable) or retries
+				// after the sync loop's self-heal (~30s tick). Same toast
+				// shape as the insufficient-stock rejection below — never
+				// a modal blocker (offline-first UI rules).
+				locale := httpx.ResolveLocale(w, r)
+				funcs := httpx.FuncsFor(locale)
+				log.Printf("tender rejected: tax authority for line %q (tax code %q) is broken (ut-docs#368 fail-closed)", l.Name, l.TaxCodeID)
+				b := d.Engine.Basket()
+				b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.tax_unavailable"), l.Name)
+				b.ToastLevel = "error"
+				basketView, _ := ui.NewBasketView(funcs)
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_ = basketView.Render(w, b)
+				return
+			}
 			// Qty is int; convert to float64 for REAL support
 			saleLines = append(saleLines, pos.SaleLineInput{
 				ItemID:             l.ItemID,
