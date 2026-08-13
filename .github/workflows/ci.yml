@@ -84,13 +84,30 @@ jobs:
         # This runner's own container has no LANG, which is exactly what let
         # ut-docs#662's OS-locale-detection redirect (ut-docs#590) hide 4
         # failing tests from CI while they failed on every real developer
-        # machine. Re-running once with a locale set catches the whole class
-        # of "only breaks off this specific runner" bug, not just this one.
+        # machine. Re-running with a locale set catches this class of "only
+        # breaks off this specific runner" bug in the one package it can
+        # actually occur in today (internal/pages owns every OS-locale
+        # touchpoint in this repo — see setup_detect.go).
+        #
+        # Deliberately scoped to internal/pages/..., NOT the full `go test
+        # ./...` a second time (ut-docs#674, found same-day): running the
+        # entire suite twice in one job triggered a real CI failure in the
+        # unrelated internal/plugins package — a 600s test-binary timeout
+        # with goroutines blocked on internal/logging's mutex, consistent
+        # with two full-suite runs contending over shared resources
+        # (stdout/logger, WASM runtime processes) in the same job rather
+        # than any actual bug in internal/plugins. main had 15 consecutive
+        # green runs before this step was widened to the whole tree, and
+        # failed on the very next merge after. If a locale-dependent bug
+        # ever surfaces outside internal/pages, that's the point to widen
+        # this scope again -- deliberately, with the same resource-
+        # contention risk in mind, not by reflex.
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
           LANG: en_GB.UTF-8
           LC_ALL: en_GB.UTF-8
+        run: go test ./internal/pages/...
         run: go test ./...
 
   e2e:
