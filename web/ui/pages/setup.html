@@ -69,7 +69,7 @@
                   @change="const o = $event.target.selectedOptions[0]; currency = o.dataset.currency || currency; tax = o.dataset.tax ?? tax; taxinc = o.dataset.taxinc || taxinc;">
             <option value="">{{ T "setup.country.choose" }}</option>
             {{ range .countries }}
-            <option value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}">{{ T .NameKey }}</option>
+            <option value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</option>
             {{ end }}
           </select>
           <input type="hidden" name="currency" :value="currency">
