@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -630,39 +629,15 @@ const taxDePluginID = "com.universaltill.tax-de"
 // object, tax_code_id → takeaway basis points). Add-only: a key already
 // present — a merchant's hand-set override — is never overwritten, and an
 // existing value that doesn't parse as JSON is left completely untouched
-// (clobbering a hand-edit would be worse than skipping). Returns how many
-// entries were added and whether the step failed; failure is the caller's
-// summary-line warning, never a row failure.
+// (clobbering a hand-edit would be worse than skipping). The read-modify-
+// write itself runs atomically inside the repo (ut-docs#532) — two imports
+// committing close together can no longer race and silently drop one
+// other's entry. Returns how many entries were added and whether the step
+// failed; failure is the caller's summary-line warning, never a row failure.
 func mergeTakeawayOverrides(ctx context.Context, pluginRepo *data.PluginRepo, discovered map[string]int) (added int, failed bool) {
-	existing := map[string]int{}
-	raw, found, err := pluginRepo.GetPluginSetting(ctx, taxDePluginID, "takeaway_rate_overrides")
+	added, err := pluginRepo.MergeAdditiveJSONMapSetting(ctx, taxDePluginID, "takeaway_rate_overrides", discovered)
 	if err != nil {
-		log.Printf("[import] read takeaway_rate_overrides: %v", err)
-		return 0, true
-	}
-	if found && strings.TrimSpace(raw) != "" {
-		if err := json.Unmarshal([]byte(raw), &existing); err != nil {
-			log.Printf("[import] takeaway_rate_overrides is not valid JSON, leaving it untouched: %v", err)
-			return 0, true
-		}
-	}
-	for id, bp := range discovered {
-		if _, ok := existing[id]; ok {
-			continue
-		}
-		existing[id] = bp
-		added++
-	}
-	if added == 0 {
-		return 0, false
-	}
-	merged, err := json.Marshal(existing)
-	if err != nil {
-		log.Printf("[import] marshal takeaway_rate_overrides: %v", err)
-		return 0, true
-	}
-	if err := pluginRepo.UpsertPluginSetting(ctx, taxDePluginID, "takeaway_rate_overrides", string(merged)); err != nil {
-		log.Printf("[import] write takeaway_rate_overrides: %v", err)
+		log.Printf("[import] merge takeaway_rate_overrides: %v", err)
 		return 0, true
 	}
 	return added, false
