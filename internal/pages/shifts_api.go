@@ -396,7 +396,20 @@ func PfandRueckgabe(dp *common.Deps) http.HandlerFunc {
 			actorID = approver.ID
 		}
 
-		current, hasOpen, err := data.NewPOSRepo(dp.Db).CurrentOpenShift(ctx)
+		// A payout is a WRITE against a shift, so it resolves against THIS
+		// till's own register identity — never "whichever shift was opened
+		// most recently anywhere", the heuristic that paid deposits out of
+		// another register's drawer on a two-register shop (ut-docs#268).
+		registerID, err := pos.ResolveTillRegisterID(ctx, dp.Db, dp.Settings)
+		if err != nil {
+			if errors.Is(err, pos.ErrRegisterIdentityAmbiguous) {
+				respondAdjustmentError(w, r, http.StatusConflict, "this till's register is not set — choose it in Settings > Tills before recording a payout")
+				return
+			}
+			respondAdjustmentError(w, r, http.StatusInternalServerError, err.Error())
+			return
+		}
+		current, hasOpen, err := data.NewPOSRepo(dp.Db).CurrentOpenShiftForRegister(ctx, registerID)
 		if err != nil {
 			respondAdjustmentError(w, r, http.StatusInternalServerError, err.Error())
 			return

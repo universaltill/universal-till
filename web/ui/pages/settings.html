@@ -732,6 +732,21 @@
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
   </form>
   {{ end }}
+  <!-- This till's register identity (ut-docs#268): which register's shift a
+       payout (e.g. Pfandrückgabe) lands on. Unlike the till-name field above,
+       this renders on primary AND replica — every till processes its own
+       local payouts, so its register identity matters everywhere. -->
+  <form hx-post="/api/settings/till-register" hx-swap="none"
+        hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+    <label>{{ T "settings.tills.register_label" }}
+      <select name="register_id" required>
+        {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
+        {{ range .registers }}<option value="{{ .ID }}"{{ if eq .ID $.TillRegisterID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
+      </select>
+    </label>
+    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    <p class="muted">{{ T "settings.tills.register_help" }}</p>
+  </form>
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
 </div>

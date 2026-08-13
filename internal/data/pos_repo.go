@@ -821,17 +821,28 @@ ORDER BY revenue DESC`, day)
 	return out, rows.Err()
 }
 
-// SalesByDay aggregates completed sales per day over [from, to).
+// SalesByDay aggregates completed sales per day over [from, to). day is
+// grouped by the shop's LOCAL business day, not the raw stored UTC calendar
+// date: created_at is converted to local time ('localtime', the same
+// process/host timezone time.Local resolves to in this single-process till,
+// consistent with businessDateFor's own design in reports_page.go) and then
+// shifted back by the configured business-day-start hh:mm (parseBusinessDayStart)
+// before truncating to a date — so a trading night that spans local midnight
+// or the configured boundary collapses into one row instead of two
+// (ut-docs#559). hh=mm=0 (the default, calendar-local-midnight) is a no-op
+// vs. the previous query when the host timezone is UTC.
 // Returns are excluded, matching DayTotal on the same dashboard (and
 // SlowItems/busyBuckets); TaxSummary is the fiscal view and nets them.
-func (r *POSRepo) SalesByDay(ctx context.Context, from, to time.Time) ([]DailySales, error) {
+func (r *POSRepo) SalesByDay(ctx context.Context, from, to time.Time, hh, mm int) ([]DailySales, error) {
 	fromStr, toStr := windowArgs(from, to)
+	hourMod := fmt.Sprintf("%d hours", -hh)
+	minMod := fmt.Sprintf("%d minutes", -mm)
 	rows, err := r.db.QueryContext(ctx, `
-SELECT date(created_at) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0)
+SELECT date(created_at, 'localtime', ?, ?) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0)
 FROM sales
 WHERE status = 'completed' AND sale_type = 'sale'
   AND datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
-GROUP BY day ORDER BY day DESC`, fromStr, toStr)
+GROUP BY day ORDER BY day DESC`, hourMod, minMod, fromStr, toStr)
 	if err != nil {
 		return nil, fmt.Errorf("sales by day: %w", err)
 	}
@@ -1947,6 +1958,40 @@ FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`).Scan(
 	}
 	if err != nil {
 		return ShiftSummary{}, false, fmt.Errorf("current open shift: %w", err)
+	}
+	s.Open = true
+	s.ClosedAt = closedAt.String
+	s.ClosingCash = closing.Int64
+	s.Expected = expected.Int64
+	s.Note = note.String
+	return s, true, nil
+}
+
+// CurrentOpenShiftForRegister returns the open shift for ONE register, if it
+// has one — the register-scoped resolution ut-docs#268 requires for write
+// paths, instead of CurrentOpenShift's "most recent across any register"
+// heuristic. pos.OpenShift guards against opening a second shift for the
+// same register, but that guard is a non-transactional read-then-write
+// (FindOpenShiftForRegister runs before the insert's own transaction), and
+// there is no unique index enforcing it at the DB level (independent
+// review finding, ut-docs#268 round 2) — so two shifts open for one
+// register, however unlikely, isn't impossible. ORDER BY + LIMIT 1 mirrors
+// the CurrentOpenShift sibling so that if it ever happens, this resolves
+// to the same (newest) shift a manager looking at CurrentOpenShift's own
+// display would see, rather than an arbitrary row.
+func (r *POSRepo) CurrentOpenShiftForRegister(ctx context.Context, registerID string) (ShiftSummary, bool, error) {
+	var s ShiftSummary
+	var closedAt, note sql.NullString
+	var closing, expected sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note
+FROM shifts WHERE register_id = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`, registerID).Scan(
+		&s.ID, &s.RegisterID, &s.CashierID, &s.OpenedAt, &closedAt, &s.OpeningCash, &closing, &expected, &note)
+	if err == sql.ErrNoRows {
+		return ShiftSummary{}, false, nil
+	}
+	if err != nil {
+		return ShiftSummary{}, false, fmt.Errorf("current open shift for register: %w", err)
 	}
 	s.Open = true
 	s.ClosedAt = closedAt.String
