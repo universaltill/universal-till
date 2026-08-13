@@ -28,8 +28,8 @@
           <td>{{ if eq .Type "percent" }}{{ T "promotions.type.percent" }}{{ else }}{{ T "promotions.type.amount" }}{{ end }}</td>
           <td>{{ .ValueDisplay }}</td>
           <td>{{ .Description }}</td>
-          <td>{{ .StartsAt }}</td>
-          <td>{{ .EndsAt }}</td>
+          <td>{{ .StartsAtDate }}</td>
+          <td>{{ .EndsAtDate }}</td>
           <td>{{ if .CustomerID }}{{ .CustomerID }}{{ else }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ end }}</td>
           <td>{{ if .IsActive }}{{ T "promotions.active" }}{{ else }}<span class="muted">{{ T "promotions.inactive" }}</span>{{ end }}</td>
           <td class="users-actions">
@@ -39,10 +39,10 @@
                 <option value="percent">{{ T "promotions.type.percent" }}</option>
               </select>
               <input type="number" step="0.01" min="0.01" name="value_amount" x-show="type === 'amount'" value="{{ .ValueAmountMajor }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
-              <input type="number" step="0.01" min="0.01" name="value_percent" x-show="type === 'percent'" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
+              <input type="number" step="0.01" min="0.01" max="100" name="value_percent" x-show="type === 'percent'" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
               <input type="text" name="description" value="{{ .Description }}" placeholder="{{ T "promotions.field.description" }}" style="width:8rem" />
-              <input type="date" name="starts_at" value="{{ .StartsAt }}" />
-              <input type="date" name="ends_at" value="{{ .EndsAt }}" />
+              <input type="date" name="starts_at" value="{{ .StartsAtDate }}" />
+              <input type="date" name="ends_at" value="{{ .EndsAtDate }}" />
               <input type="hidden" name="customer_id" value="{{ .CustomerID }}" />
               <button type="submit" class="btn secondary">{{ T "promotions.edit" }}</button>
             </form>
@@ -72,7 +72,7 @@
         </select>
       </label>
       <label x-show="type === 'amount'">{{ T "promotions.col.value" }} <input type="number" step="0.01" min="0.01" name="value_amount" /></label>
-      <label x-show="type === 'percent'">{{ T "promotions.col.value" }} <input type="number" step="0.01" min="0.01" name="value_percent" /></label>
+      <label x-show="type === 'percent'">{{ T "promotions.col.value" }} <input type="number" step="0.01" min="0.01" max="100" name="value_percent" /></label>
       <label>{{ T "promotions.field.description" }} <input type="text" name="description" /></label>
       <label>{{ T "promotions.field.starts_at" }} <input type="date" name="starts_at" /></label>
       <label>{{ T "promotions.field.ends_at" }} <input type="date" name="ends_at" /></label>
@@ -92,7 +92,15 @@
   if (!q) return;
   var out = document.getElementById('promo-cust-results');
   var hidden = document.getElementById('promo-cust-id');
-  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  // Text-node escaping alone leaves quotes intact, which is fine between
+  // tags but breaks out of a double-quoted attribute -- and a customer's
+  // name is free text they chose. Escape the quotes too, so esc() is safe
+  // in both positions below.
+  function esc(s) {
+    var d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
   var timer;
   q.addEventListener('input', function () {
     clearTimeout(timer);

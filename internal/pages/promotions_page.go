@@ -81,15 +81,26 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			value = money.FromMinor(int64(math.Round(major * 100))).Minor()
 		case "percent":
 			pct, err := strconv.ParseFloat(strings.TrimSpace(r.PostFormValue("value_percent")), 64)
-			if err != nil || pct <= 0 {
+			// A percent discount over 100% is never a real promotion: the
+			// engine clamps the basket total at zero, so 500% and 100% are
+			// indistinguishable at the till while the stored value lies
+			// about what the shop intended. Same 0 < pct <= 100 range
+			// settings_page.go's payment-fee percent already enforces.
+			if err != nil || pct <= 0 || pct > 100 {
 				return data.PromotionInput{}, "promotions.error.value_invalid", false
 			}
 			value = int64(math.Round(pct * 100))
 		default:
 			return data.PromotionInput{}, "promotions.error.value_invalid", false
 		}
-		startsAt := strings.TrimSpace(r.PostFormValue("starts_at"))
-		endsAt := strings.TrimSpace(r.PostFormValue("ends_at"))
+		startsAt, ok := parsePromoDate(r.PostFormValue("starts_at"))
+		if !ok {
+			return data.PromotionInput{}, "promotions.error.dates_invalid", false
+		}
+		endsAt, ok := parsePromoDate(r.PostFormValue("ends_at"))
+		if !ok {
+			return data.PromotionInput{}, "promotions.error.dates_invalid", false
+		}
 		if startsAt != "" && endsAt != "" && endsAt < startsAt {
 			return data.PromotionInput{}, "promotions.error.dates_invalid", false
 		}
@@ -98,7 +109,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			Value:       value,
 			Description: strings.TrimSpace(r.PostFormValue("description")),
 			StartsAt:    startsAt,
-			EndsAt:      endsAt,
+			EndsAt:      endsAtInclusive(endsAt),
 			CustomerID:  strings.TrimSpace(r.PostFormValue("customer_id")),
 		}, "", true
 	}
@@ -179,6 +190,56 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
+// promoDateLayout is the wire format of the page's <input type="date">
+// fields, and the ISO-8601 date form the promotions table stores.
+const promoDateLayout = "2006-01-02"
+
+// parsePromoDate validates one date field from the form. Empty means "no
+// bound" and is allowed. Anything else must be a real ISO-8601 calendar
+// date: SQLite's datetime() returns NULL for junk, and FindActivePromo's
+// `datetime(starts_at) <= CURRENT_TIMESTAMP` then silently evaluates NULL,
+// which would leave a promo that looks saved but can never be redeemed.
+func parsePromoDate(raw string) (string, bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", true
+	}
+	if len(s) > len(promoDateLayout) {
+		// An already-stored end-of-day bound round-tripping through an edit.
+		s = s[:len(promoDateLayout)]
+	}
+	if _, err := time.Parse(promoDateLayout, s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// endsAtInclusive turns the end date the shop picked into the instant it
+// actually stops being valid. FindActivePromo filters on
+// `datetime(ends_at) >= CURRENT_TIMESTAMP`, and datetime('2026-08-31') is
+// 2026-08-31 00:00:00 -- so a bare date would expire the promo at the START
+// of its own last day, making a same-day promo (starts today, ends today)
+// impossible to redeem at all. Storing the end of that day is the shop
+// owner's plain reading of "ends 31 August" and needs no change to
+// FindActivePromo, whose query is untouched.
+func endsAtInclusive(date string) string {
+	if date == "" {
+		return ""
+	}
+	return date + " 23:59:59"
+}
+
+// promoDateOnly trims a stored bound back to its calendar date, for the
+// <input type="date"> prefill and the list column -- the inverse of
+// endsAtInclusive, and also tolerant of legacy/DB-authored rows that carry
+// a full timestamp.
+func promoDateOnly(stored string) string {
+	if len(stored) > len(promoDateLayout) {
+		return stored[:len(promoDateLayout)]
+	}
+	return stored
+}
+
 // promotionView is a promotion as the template needs it: PromotionAdmin
 // plus pre-formatted display/edit-prefill strings, computed here at the
 // UI-form boundary (never in internal/data -- the repo layer keeps value as
@@ -188,10 +249,14 @@ type promotionView struct {
 	ValueDisplay     string // "£5.00" or "10.00%", for the read-only list column
 	ValueAmountMajor string // prefill for the amount-type edit input; "" if type is percent
 	ValuePercent     string // prefill for the percent-type edit input; "" if type is amount
+	StartsAtDate     string // calendar date only, for the <input type="date"> prefill
+	EndsAtDate       string // ditto; strips endsAtInclusive's end-of-day time
 }
 
 func newPromotionView(p data.PromotionAdmin) promotionView {
 	v := promotionView{PromotionAdmin: p}
+	v.StartsAtDate = promoDateOnly(p.StartsAt)
+	v.EndsAtDate = promoDateOnly(p.EndsAt)
 	if p.Type == "percent" {
 		pct := float64(p.Value) / 100
 		v.ValueDisplay = fmt.Sprintf("%.2f%%", pct)

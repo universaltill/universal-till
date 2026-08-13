@@ -6,8 +6,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -88,6 +90,105 @@ func TestPromotionsPageCreate_DatesInvalidRejected(t *testing.T) {
 	}, &manager)
 	if rec.Header().Get("Location") != "/promotions?err=promotions.error.dates_invalid" {
 		t.Fatalf("ends before starts: loc=%q", rec.Header().Get("Location"))
+	}
+}
+
+// Review finding (2026-08-13): the end date a shop picks must include that
+// whole day. FindActivePromo filters on datetime(ends_at) >=
+// CURRENT_TIMESTAMP, and datetime('2026-08-13') is midnight at the START of
+// the 13th -- so storing the bare date made a promo ending today already
+// expired, and a same-day promo impossible to redeem at all.
+func TestPromotionsPageCreate_EndDateIsInclusiveOfThatDay(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	today := time.Now().UTC().Format("2006-01-02")
+
+	rec := postForm(mux, "/api/promotions", url.Values{
+		"code": {"ONEDAY"}, "type": {"amount"}, "value_amount": {"5.00"},
+		"starts_at": {today}, "ends_at": {today},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/promotions" {
+		t.Fatalf("create: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	if _, _, ok := data.NewPOSRepo(d.Db).FindActivePromo(t.Context(), "", "ONEDAY"); !ok {
+		var stored string
+		_ = d.Db.QueryRow(`SELECT ends_at FROM promotions WHERE code='ONEDAY'`).Scan(&stored)
+		t.Fatalf("a promo starting and ending today must be redeemable today (ends_at=%q)", stored)
+	}
+
+	// The list and the edit form still show the plain calendar date the
+	// shop typed, not the stored end-of-day bound.
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "23:59:59") {
+		t.Fatalf("stored end-of-day bound leaked into the page: %s", rec.Body.String())
+	}
+
+	// Re-saving an unchanged row must not drift the bound further out.
+	rec = postForm(mux, "/api/promotions/ONEDAY/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"5.00"},
+		"starts_at": {today}, "ends_at": {today},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit: code=%d", rec.Code)
+	}
+	var stored string
+	if err := d.Db.QueryRow(`SELECT ends_at FROM promotions WHERE code='ONEDAY'`).Scan(&stored); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if stored != today+" 23:59:59" {
+		t.Fatalf("ends_at after re-save = %q, want %q", stored, today+" 23:59:59")
+	}
+}
+
+// Review finding (2026-08-13): a percent discount over 100% is not a real
+// promotion -- the engine clamps the total at zero, so the stored value
+// misrepresents what the shop meant. Same range settings_page.go's
+// payment-fee percent enforces.
+func TestPromotionsPageCreate_PercentOver100Rejected(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postForm(mux, "/api/promotions", url.Values{
+		"code": {"TOOMUCH"}, "type": {"percent"}, "value_percent": {"500"},
+	}, &manager)
+	if rec.Header().Get("Location") != "/promotions?err=promotions.error.value_invalid" {
+		t.Fatalf("500%%: loc=%q", rec.Header().Get("Location"))
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code='TOOMUCH'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("rejected promo must not be stored: n=%d err=%v", n, err)
+	}
+
+	// 100% off is still a legitimate promotion and stays allowed.
+	rec = postForm(mux, "/api/promotions", url.Values{
+		"code": {"FREEBIE"}, "type": {"percent"}, "value_percent": {"100"},
+	}, &manager)
+	if rec.Header().Get("Location") != "/promotions" {
+		t.Fatalf("100%%: loc=%q", rec.Header().Get("Location"))
+	}
+}
+
+// Review finding (2026-08-13): junk in a date field must be rejected, not
+// stored. SQLite's datetime() yields NULL for it, and FindActivePromo's
+// comparison then silently never matches -- a promo that looks saved but
+// can never be redeemed.
+func TestPromotionsPageCreate_MalformedDateRejected(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postForm(mux, "/api/promotions", url.Values{
+		"code": {"JUNKDATE"}, "type": {"amount"}, "value_amount": {"5.00"},
+		"ends_at": {"not-a-date"},
+	}, &manager)
+	if rec.Header().Get("Location") != "/promotions?err=promotions.error.dates_invalid" {
+		t.Fatalf("junk date: loc=%q", rec.Header().Get("Location"))
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code='JUNKDATE'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("rejected promo must not be stored: n=%d err=%v", n, err)
 	}
 }
 
