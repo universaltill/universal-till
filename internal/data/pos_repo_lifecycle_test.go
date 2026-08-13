@@ -123,6 +123,60 @@ func TestCurrentOpenShift(t *testing.T) {
 	}
 }
 
+// TestCurrentOpenShiftForRegister covers the register-scoped resolution added
+// for ut-docs#268: with two concurrent open shifts on two different registers,
+// each register must resolve to ITS OWN shift — never "whichever was opened
+// most recently anywhere" — and a register with no open shift must come back
+// ok=false even while another register's shift is open.
+func TestCurrentOpenShiftForRegister(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO registers(id,name,is_active) VALUES('reg2','Back Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// No shifts at all: ok=false, no error.
+	if _, ok, err := dbx.repo.CurrentOpenShiftForRegister(ctx, "reg1"); err != nil || ok {
+		t.Fatalf("expected no open shift initially, got ok=%v err=%v", ok, err)
+	}
+
+	// Open a shift on reg1, then a LATER one on reg2 — the later shift is the
+	// one the old any-register heuristic would return for everyone.
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('shift1','reg1','user1','2026-01-01T09:00:00Z',5000)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('shift2','reg2','user2','2026-01-02T09:00:00Z',6000)`); err != nil {
+		t.Fatal(err)
+	}
+
+	s, ok, err := dbx.repo.CurrentOpenShiftForRegister(ctx, "reg1")
+	if err != nil || !ok {
+		t.Fatalf("expected an open shift for reg1, got ok=%v err=%v", ok, err)
+	}
+	if s.ID != "shift1" || s.RegisterID != "reg1" || !s.Open || s.OpeningCash != 5000 {
+		t.Fatalf("expected reg1's own shift1, got %+v", s)
+	}
+
+	s, ok, err = dbx.repo.CurrentOpenShiftForRegister(ctx, "reg2")
+	if err != nil || !ok || s.ID != "shift2" || s.RegisterID != "reg2" {
+		t.Fatalf("expected reg2's own shift2, got %+v ok=%v err=%v", s, ok, err)
+	}
+
+	// A register with no open shift resolves to nothing even while another
+	// register's shift is open.
+	if _, err := dbx.d.DB.ExecContext(ctx,
+		`UPDATE shifts SET closed_at = '2026-01-02T17:00:00Z' WHERE id = 'shift1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := dbx.repo.CurrentOpenShiftForRegister(ctx, "reg1"); err != nil || ok {
+		t.Fatalf("expected ok=false for reg1 after closing its shift, got ok=%v err=%v", ok, err)
+	}
+}
+
 func TestListRecentShifts(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
