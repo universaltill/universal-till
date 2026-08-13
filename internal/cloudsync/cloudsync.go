@@ -357,13 +357,18 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		}
 	}
 	// Variant rows ride along under their parent: own id/price/barcode, name
-	// composed for the cloud table. No qty on variants here — this cloud
-	// catalog payload only ever carried the parent item's own qty, and
-	// adding a variant's qty on top would double-count the shop's stock
-	// units against it. (Not an ADR-0011 citation: that ADR is multi-till
-	// sync/ownership, not export/reporting granularity — see ADR-0043,
-	// which does surface variant-scoped stock distinctly in the export
-	// payload, a different surface from this cloud catalog sync.)
+	// composed for the cloud table. No qty on variants here — qty above
+	// (qty[it.ID]) comes solely from ListStockLevels, which is item-scoped
+	// only (its own INNER JOIN items excludes variant-scoped inventory
+	// rows), so a variant's own stock is simply absent from this cloud
+	// snapshot today, a known and accepted gap in THIS surface — putting
+	// the variant's own qty on its own row wouldn't double-count anything
+	// (item- and variant-scoped inventory rows are disjoint per the CHECK
+	// constraint in 001_init.sql); it's just not done here. (Not an
+	// ADR-0011 citation: that ADR is multi-till sync/ownership, not
+	// export/reporting granularity — see ADR-0043, which does surface
+	// variant-scoped stock distinctly, but only in the export payload, a
+	// different surface from this cloud catalog sync.)
 	variants, _ := data.NewCatalogRepo(db).ItemVariants(ctx)
 	rows := make([]map[string]any, 0, len(items))
 	for _, it := range items {
