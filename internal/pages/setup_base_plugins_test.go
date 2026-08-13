@@ -1,11 +1,14 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -291,6 +294,31 @@ func TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].CanonicalType != "language" || pending[0].Locale != "de" {
 		t.Fatalf("expected the DE language spec left pending, got %+v", pending)
+	}
+}
+
+// --- StartBasePluginRetry lifecycle ---
+
+// The background worker is registered against app.Run's drain WaitGroup
+// (internal/pages/init.go), so it must return on ctx.Done() rather than
+// leaking its goroutine — including while it is still inside the
+// basePluginRetryInitialDelay window, which is far longer than a shutdown
+// is willing to wait. Without the ctx.Done() arm on that first select, a
+// till would sit on the delay before it could finish shutting down.
+func TestStartBasePluginRetryShutsDownOnCtxDone(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	StartBasePluginRetry(ctx, dp, &wg)
+	cancel() // cancel while the worker is still in its initial delay
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("StartBasePluginRetry did not return on ctx.Done() — goroutine leak")
 	}
 }
 
