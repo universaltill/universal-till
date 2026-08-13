@@ -108,7 +108,6 @@ jobs:
           LANG: en_GB.UTF-8
           LC_ALL: en_GB.UTF-8
         run: go test ./internal/pages/...
-        run: go test ./...
 
   e2e:
     runs-on: ubuntu-latest
