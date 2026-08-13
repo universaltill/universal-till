@@ -166,6 +166,99 @@ func TestApplyJournal_AppliesOnceThenIdempotent(t *testing.T) {
 	}
 }
 
+// TestJournalSale_WireFormatIsSnakeCase guards the LAN sync payload against
+// universal-till/CLAUDE.md's "JSON snake_case" rule (ut-docs#262):
+// data.SaleDetail had no json tags at all, so Go's default marshaling
+// produced PascalCase wire keys ("OrderType", "ReceiptNo", ...) that
+// nothing on this till-to-till surface was catching.
+func TestJournalSale_WireFormatIsSnakeCase(t *testing.T) {
+	j := seedJournalSale("sale-snake-1", "T2-R900", "sale", "", "itm1", 1, 100)
+
+	raw, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	sale, ok := wire["sale"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a \"sale\" object in the wire payload, got %s", raw)
+	}
+
+	for _, wantKey := range []string{"id", "receipt_no", "sale_type", "order_type", "created_at", "cashier_id", "lines", "payments"} {
+		if _, ok := sale[wantKey]; !ok {
+			t.Errorf("expected snake_case key %q in wire payload, got %s", wantKey, raw)
+		}
+	}
+	for _, badKey := range []string{"ID", "ReceiptNo", "SaleType", "OrderType", "CreatedAt", "CashierID"} {
+		if _, ok := sale[badKey]; ok {
+			t.Errorf("expected no PascalCase key %q in wire payload, got %s", badKey, raw)
+		}
+	}
+}
+
+// TestApplyJournal_RejectsMissingRequiredFields guards the corruption path
+// a snake_case tag rename opens (ut-docs#262): once SaleDetail's fields
+// carry json tags, Go's Unmarshal matches an incoming key against only the
+// tag name (case-insensitively). "ID" still matches tag "id" that way (only
+// case differs), so Sale.ID actually survives a stale-peer decode fine --
+// it's ReceiptNo/"receipt_no" and SaleType/"sale_type" that go silently
+// empty (the underscore makes them different strings, not just different
+// case). The missing-id case below is still worth guarding (defense in
+// depth against any malformed payload, not just a version-skewed one): with
+// no guard at all, an empty SaleID reaches pos.CompleteSale, which mints a
+// *new* random id for the sale -- writing a row, not a no-op -- so this test
+// asserts by row COUNT, not SaleExists(""), which could never see that row.
+func TestApplyJournal_RejectsMissingRequiredFields(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		j    journalSale
+	}{
+		{"missing id", func() journalSale {
+			j := seedJournalSale("", "T2-R901", "sale", "", "itm1", 1, 100)
+			return j
+		}()},
+		{"missing receipt_no", func() journalSale {
+			j := seedJournalSale("sale-missing-receipt", "", "sale", "", "itm1", 1, 100)
+			return j
+		}()},
+		{"missing sale_type", func() journalSale {
+			j := seedJournalSale("sale-missing-type", "T2-R902", "", "", "itm1", 1, 100)
+			return j
+		}()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var before int
+			if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales`).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+
+			applied, err := applyJournal(ctx, dp, "till-1", tc.j)
+			if err == nil {
+				t.Fatal("expected an error for a journal entry with a missing required field")
+			}
+			if applied {
+				t.Fatal("expected applied=false for a rejected journal entry")
+			}
+
+			var after int
+			if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales`).Scan(&after); err != nil {
+				t.Fatal(err)
+			}
+			if after != before {
+				t.Fatalf("expected no sale row written for a rejected journal entry, got %d before, %d after", before, after)
+			}
+		})
+	}
+}
+
 func TestSyncSalesAPI_RejectsUnauthorized(t *testing.T) {
 	mux, _ := newSyncSalesTestDeps(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/sales", bytes.NewReader([]byte(`[]`)))
