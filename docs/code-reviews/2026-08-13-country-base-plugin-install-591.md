@@ -183,6 +183,33 @@ The known pre-existing flaky race timeout in `internal/plugins`
 the full-repo suite came back with zero failures, so it needed no
 against-`main` comparison.
 
+## Post-push CI fixup: guard-docs-shots (ut-docs#620-class, disclosed)
+
+CI's `build` job failed on `guard-docs-shots.sh` after the PR opened: this
+change touches `web/ui/pages/settings.html` (the new pending-plugin chip)
+and `web/help/{en,ar,fa,tr}/display.md` (documenting it), both inputs to
+the manual-screenshot freshness guard.
+
+Verified **zero pixel impact** before touching the manifest, per the
+already-established ut-docs#535/#620 precedent (this cloud session cannot
+run `make docs-shots` — Playwright browser-revision mismatch, not yet fixed
+by the still-open PR universaltill/universal-till#322):
+
+- The new chip block is wrapped in `{{ if .pendingBasePlugins }}` — the
+  demo/screenshot fixture has no pending base-plugin install, so it
+  renders nothing; confirmed by reading the diff, not assumed.
+- The new `display.md` bullet documents existing background behavior
+  (the country auto-install feature this PR ships) and introduces no new
+  screen element to capture.
+
+Hand-patched `web/help/img/manifest.json`'s `surface_sha256` and the
+`topics.display.*` hashes using the guard script's own published
+algorithm (`scripts/ci/guard-docs-shots.sh`'s `surface_hash()`/
+`topic_hash()`, reimplemented verbatim in a one-off script, diffed to
+confirm only those 5 fields changed) — the exact workaround
+`ut-docs#620`'s own body documents as the accepted deviation. Re-ran
+`bash scripts/ci/guard-docs-shots.sh` locally to confirm it now passes.
+
 ## Follow-ups (not blocking)
 
 - `setupBasePlugins` maps a country to a *locale* only. A country with more
