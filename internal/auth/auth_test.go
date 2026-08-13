@@ -24,6 +24,12 @@ func openAuthTestDB(t *testing.T) *sql.DB {
 		 role TEXT NOT NULL DEFAULT 'cashier', pin_hash TEXT, is_active INTEGER NOT NULL DEFAULT 1)`,
 		`CREATE TABLE sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
 		 created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, revoked_at TEXT, last_seen_at TEXT)`,
+		// Column names/types/PK mirror migration 038_role_permissions.sql
+		// (the roles/permission_actions FK parents are omitted here since
+		// this hand-rolled schema only ever inserts values that would be
+		// valid against them — keep it in sync if 038 changes shape).
+		`CREATE TABLE role_permissions (role TEXT NOT NULL, action TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 0,
+		 PRIMARY KEY (role, action))`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatalf("setup: %v", err)
@@ -429,5 +435,31 @@ func TestChangeOwnPIN(t *testing.T) {
 	}
 	if u, _, err := svc.Login(ctx, "4321"); err != nil || u.ID != "op1" {
 		t.Errorf("new pin login: %+v %v", u, err)
+	}
+}
+
+// TestCan covers Service.Can (#554): granted, denied, and unknown-action —
+// the method is a thin pass-through to AuthRepo.HasPermission, so this is
+// mainly confirming the plumbing (User.Role reaches the repo query) rather
+// than re-testing the seed data itself (covered in internal/data).
+func TestCan(t *testing.T) {
+	db := openAuthTestDB(t)
+	if _, err := db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES ('manager', 'refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(db)
+	ctx := context.Background()
+
+	manager := User{ID: "boss", Role: "manager"}
+	cashier := User{ID: "alice", Role: "cashier"}
+
+	if can, err := svc.Can(ctx, manager, "refund"); err != nil || !can {
+		t.Fatalf("Can(manager, refund) = %v, %v; want true, nil", can, err)
+	}
+	if can, err := svc.Can(ctx, cashier, "refund"); err != nil || can {
+		t.Fatalf("Can(cashier, refund) = %v, %v; want false, nil", can, err)
+	}
+	if can, err := svc.Can(ctx, manager, "no-such-action"); err != nil || can {
+		t.Fatalf("Can(manager, unknown action) = %v, %v; want false, nil", can, err)
 	}
 }

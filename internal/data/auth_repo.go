@@ -250,3 +250,20 @@ func (r *AuthRepo) RevokeUserSessions(ctx context.Context, userID string) error 
 	}
 	return nil
 }
+
+// HasPermission reports whether role_permissions grants role the given
+// action. No row (unknown role, unknown action, or an ungranted pairing
+// that was never seeded) means denied — this is a closed, not an open,
+// permission model.
+func (r *AuthRepo) HasPermission(ctx context.Context, role, action string) (bool, error) {
+	var granted int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = ? AND action = ?`, role, action).Scan(&granted)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("has permission: %w", err)
+	}
+	return granted != 0, nil
+}

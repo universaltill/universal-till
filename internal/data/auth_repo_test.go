@@ -500,3 +500,86 @@ func TestAuthRepo_RevokeUserSessions(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthRepo_HasPermission covers migration 038's seed grants (#554):
+// manager/admin/super_admin get every catalog action, cashier gets none,
+// and an action outside the catalog is denied for everyone rather than
+// erroring — "no row" means denied, not "unknown."
+func TestAuthRepo_HasPermission(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newAuthTestRepo(t)
+
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		granted, err := repo.HasPermission(ctx, role, "refund")
+		if err != nil {
+			t.Fatalf("HasPermission(%s, refund): %v", role, err)
+		}
+		if !granted {
+			t.Fatalf("expected %s granted refund by the seed data", role)
+		}
+	}
+
+	granted, err := repo.HasPermission(ctx, "cashier", "refund")
+	if err != nil {
+		t.Fatalf("HasPermission(cashier, refund): %v", err)
+	}
+	if granted {
+		t.Fatal("cashier must not be granted refund by the seed data")
+	}
+
+	granted, err = repo.HasPermission(ctx, "manager", "no-such-action")
+	if err != nil {
+		t.Fatalf("HasPermission(manager, no-such-action): %v", err)
+	}
+	if granted {
+		t.Fatal("an action outside the catalog must be denied, not granted")
+	}
+}
+
+// TestAuthRepo_HasPermission_KioskUserZeroGrants is the regression test
+// #554's acceptance criteria call for: the kiosk user (018_kiosk_user.sql,
+// role=cashier) must have zero grants across the whole action catalog,
+// since /self-order routes are auth-exempt and reachable by any anonymous
+// LAN client (ADR-0020).
+func TestAuthRepo_HasPermission_KioskUserZeroGrants(t *testing.T) {
+	ctx := context.Background()
+	repo, d := newAuthTestRepo(t)
+
+	kiosk, ok, err := repo.GetUser(ctx, "kiosk")
+	if err != nil || !ok {
+		t.Fatalf("GetUser(kiosk): ok=%v err=%v", ok, err)
+	}
+	if kiosk.Role != "cashier" {
+		t.Fatalf("expected kiosk user role=cashier, got %q", kiosk.Role)
+	}
+
+	rows, err := d.DB.QueryContext(ctx, `SELECT action FROM permission_actions`)
+	if err != nil {
+		t.Fatalf("list catalog actions: %v", err)
+	}
+	defer rows.Close()
+	var actions []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			t.Fatal(err)
+		}
+		actions = append(actions, a)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) == 0 {
+		t.Fatal("expected a non-empty action catalog")
+	}
+
+	for _, action := range actions {
+		granted, err := repo.HasPermission(ctx, kiosk.Role, action)
+		if err != nil {
+			t.Fatalf("HasPermission(kiosk, %s): %v", action, err)
+		}
+		if granted {
+			t.Fatalf("kiosk user must have zero grants, but got %s", action)
+		}
+	}
+}
