@@ -3,6 +3,7 @@ package pages
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime"
 	"net/http"
@@ -139,14 +140,68 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, false, "type RESET to confirm")
 			return
 		}
-		n, err := data.NewPOSRepo(d.Db).ResetTransactionHistory(r.Context(), auth.UserID(r))
+		n, batchID, err := data.NewPOSRepo(d.Db).ResetTransactionHistory(r.Context(), auth.UserID(r))
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
 		}
 		// Refresh the in-memory shift/menu state is unnecessary — the basket is
 		// in memory and unaffected; the next receipt number restarts from 1.
-		respond(w, http.StatusOK, true, fmt.Sprintf("cleared %d sales and related records", n))
+		// ADR-0042: nothing was destroyed — say so.
+		respond(w, http.StatusOK, true, fmt.Sprintf("archived %d sales and related records (batch %s) — restorable from Settings → Data until the till trades again", n, batchID))
+	})
+
+	// ADR-0042: list the archived reset batches, newest first.
+	mux.HandleFunc("GET /api/data/reset-archives", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			respond(w, http.StatusForbidden, false, "manager only")
+			return
+		}
+		list, err := data.NewPOSRepo(d.Db).ListResetBatches(r.Context())
+		if err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		}
+		type batchJSON struct {
+			ID         string `json:"id"`
+			CreatedAt  string `json:"created_at"`
+			ActorID    string `json:"actor_id"`
+			SalesCount int64  `json:"sales_count"`
+		}
+		batches := make([]batchJSON, 0, len(list))
+		for _, b := range list {
+			batches = append(batches, batchJSON{ID: b.ID, CreatedAt: b.CreatedAt, ActorID: b.ActorID, SalesCount: b.SalesCount})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"batches": batches}, "error": nil})
+	})
+
+	// ADR-0042 §2: restore one archived reset batch, whole-batch only,
+	// refusing (409) if the till has traded since the reset. Gated exactly
+	// like reset itself: manager + its own typed confirmation.
+	mux.HandleFunc("POST /api/data/reset-archives/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
+		if !isManagerOrAuthOff(r) {
+			respond(w, http.StatusForbidden, false, "manager only")
+			return
+		}
+		_ = r.ParseForm()
+		if strings.TrimSpace(r.FormValue("confirm")) != "RESTORE" {
+			respond(w, http.StatusBadRequest, false, "type RESTORE to confirm")
+			return
+		}
+		n, err := data.NewPOSRepo(d.Db).RestoreResetBatch(r.Context(), r.PathValue("id"))
+		if err != nil {
+			switch {
+			case errors.Is(err, data.ErrResetBatchNotFound):
+				respond(w, http.StatusNotFound, false, "reset archive batch not found")
+			case errors.Is(err, data.ErrShopHasTradedSinceReset):
+				respond(w, http.StatusConflict, false, "the till has traded since this reset — the archived batch can no longer be restored automatically")
+			default:
+				respond(w, http.StatusInternalServerError, false, err.Error())
+			}
+			return
+		}
+		respond(w, http.StatusOK, true, fmt.Sprintf("restored %d sales and related records", n))
 	})
 
 	// GDPR: find a customer to erase.

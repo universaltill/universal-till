@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -62,6 +63,8 @@ func TestDataAPI_AllEndpointsRequireManager(t *testing.T) {
 		{http.MethodPost, "/api/data/customers/erase"},
 		{http.MethodGet, "/api/data/obsolete-items"},
 		{http.MethodPost, "/api/data/cleanup-catalog"},
+		{http.MethodGet, "/api/data/reset-archives"},
+		{http.MethodPost, "/api/data/reset-archives/some-batch/restore"},
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(c.method, c.path, nil)
@@ -116,8 +119,11 @@ func TestResetTransactions_ClearsSalesWhenConfirmed(t *testing.T) {
 		t.Fatalf("expected error:null, got %+v", body)
 	}
 	data, _ := body["data"].(map[string]any)
-	if data == nil || data["message"] != "cleared 1 sales and related records" {
-		t.Fatalf("expected the exact cleared-count message under data, got %+v", body)
+	msg, _ := data["message"].(string)
+	// ADR-0042: the records are archived, not destroyed — the response says
+	// so (and must NOT claim anything was permanently cleared/deleted).
+	if data == nil || !strings.HasPrefix(msg, "archived 1 sales") {
+		t.Fatalf("expected an archived-count message under data, got %+v", body)
 	}
 	var count int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
@@ -125,6 +131,17 @@ func TestResetTransactions_ClearsSalesWhenConfirmed(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected sales cleared, got %d rows left", count)
+	}
+	// ...and moved into the archive, tagged with a batch.
+	var archived, batches int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales_archive`).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&batches); err != nil {
+		t.Fatal(err)
+	}
+	if archived != 1 || batches != 1 {
+		t.Fatalf("expected 1 archived sale in 1 batch, got %d/%d", archived, batches)
 	}
 	// The catalog is explicitly NOT part of what reset-transactions
 	// touches (docs comment in data_api.go) -- confirm at the HTTP layer,
@@ -135,6 +152,118 @@ func TestResetTransactions_ClearsSalesWhenConfirmed(t *testing.T) {
 	}
 	if itm1 != 1 {
 		t.Fatalf("expected the catalog to survive a transaction reset")
+	}
+}
+
+// ADR-0042: a reset moves everything into an archive batch; the batch is
+// listable and restorable (whole-batch, typed RESTORE confirmation) as long
+// as the till has not traded since.
+func TestResetArchives_ListAndRestoreRoundTrip(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// List: { data: { batches: [ {id, created_at, actor_id, sales_count} ] } }
+	req := httptest.NewRequest(http.MethodGet, "/api/data/reset-archives", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	if body["error"] != nil {
+		t.Fatalf("list: expected error:null, got %+v", body)
+	}
+	data, _ := body["data"].(map[string]any)
+	batches, _ := data["batches"].([]any)
+	if len(batches) != 1 {
+		t.Fatalf("list: expected 1 batch, got %+v", body)
+	}
+	batch, _ := batches[0].(map[string]any)
+	id, _ := batch["id"].(string)
+	if id == "" {
+		t.Fatalf("list: batch must carry a snake_case id, got %+v", batch)
+	}
+	if sc, _ := batch["sales_count"].(float64); sc != 1 {
+		t.Fatalf("list: sales_count = %v, want 1", batch["sales_count"])
+	}
+	if created, _ := batch["created_at"].(string); created == "" || !strings.Contains(created, "T") {
+		t.Fatalf("list: created_at must be ISO-8601, got %+v", batch)
+	}
+
+	// Restore requires the typed confirmation.
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/restore", url.Values{"confirm": {"restore"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("restore with wrong confirm: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/restore", url.Values{"confirm": {"RESTORE"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var live, archived, remaining int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales_archive`).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if live != 1 || archived != 0 || remaining != 0 {
+		t.Fatalf("after restore: live=%d archived=%d batches=%d, want 1/0/0", live, archived, remaining)
+	}
+}
+
+func TestResetArchivesRestore_NotFoundAndConflict(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+
+	// Unknown batch → 404, not a 500/panic.
+	rec := postForm(mux, "/api/data/reset-archives/no-such-batch/restore", url.Values{"confirm": {"RESTORE"}}, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown batch: expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Reset, then trade: restore must refuse with 409 Conflict (ADR-0042 §2).
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var batchID string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&batchID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('post1','R001','completed','sale','GBP',50,0,0,50,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/data/reset-archives/"+batchID+"/restore", url.Values{"confirm": {"RESTORE"}}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("restore after trading: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	if s, _ := body["error"].(string); s == "" {
+		t.Fatalf("409 must carry a clear error message, got %+v", body)
+	}
+	// Refusal touches nothing.
+	var live, archived int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales_archive`).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if live != 1 || archived != 1 {
+		t.Fatalf("after refused restore: live=%d archived=%d, want 1/1", live, archived)
 	}
 }
 
