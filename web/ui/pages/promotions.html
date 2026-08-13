@@ -1,0 +1,123 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "promotions.title" }}</h1>
+</div>
+
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+<div class="users-layout">
+  <div class="card users-list">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "promotions.col.code" }}</th>
+          <th>{{ T "promotions.col.type" }}</th>
+          <th>{{ T "promotions.col.value" }}</th>
+          <th>{{ T "promotions.field.description" }}</th>
+          <th>{{ T "promotions.field.starts_at" }}</th>
+          <th>{{ T "promotions.field.ends_at" }}</th>
+          <th>{{ T "promotions.field.customer" }}</th>
+          <th>{{ T "promotions.col.status" }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .promotions }}
+        <tr>
+          <td>{{ .Code }}</td>
+          <td>{{ if eq .Type "percent" }}{{ T "promotions.type.percent" }}{{ else }}{{ T "promotions.type.amount" }}{{ end }}</td>
+          <td>{{ .ValueDisplay }}</td>
+          <td>{{ .Description }}</td>
+          <td>{{ .StartsAt }}</td>
+          <td>{{ .EndsAt }}</td>
+          <td>{{ if .CustomerID }}{{ .CustomerID }}{{ else }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ end }}</td>
+          <td>{{ if .IsActive }}{{ T "promotions.active" }}{{ else }}<span class="muted">{{ T "promotions.inactive" }}</span>{{ end }}</td>
+          <td class="users-actions">
+            <form method="post" action="/api/promotions/{{ .Code }}/edit" class="users-inline" x-data="{ type: '{{ .Type }}' }">
+              <select name="type" x-model="type">
+                <option value="amount">{{ T "promotions.type.amount" }}</option>
+                <option value="percent">{{ T "promotions.type.percent" }}</option>
+              </select>
+              <input type="number" step="0.01" min="0.01" name="value_amount" x-show="type === 'amount'" value="{{ .ValueAmountMajor }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
+              <input type="number" step="0.01" min="0.01" name="value_percent" x-show="type === 'percent'" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
+              <input type="text" name="description" value="{{ .Description }}" placeholder="{{ T "promotions.field.description" }}" style="width:8rem" />
+              <input type="date" name="starts_at" value="{{ .StartsAt }}" />
+              <input type="date" name="ends_at" value="{{ .EndsAt }}" />
+              <input type="hidden" name="customer_id" value="{{ .CustomerID }}" />
+              <button type="submit" class="btn secondary">{{ T "promotions.edit" }}</button>
+            </form>
+            <form method="post" action="/api/promotions/{{ .Code }}/active" class="users-inline">
+              <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
+              <button type="submit" class="btn secondary">
+                {{ if .IsActive }}{{ T "promotions.deactivate" }}{{ else }}{{ T "promotions.activate" }}{{ end }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{ else }}
+        <tr><td colspan="9" class="muted">{{ T "promotions.list_empty" }}</td></tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card users-form" x-data="{ type: 'amount' }">
+    <h3>{{ T "promotions.new.title" }}</h3>
+    <form method="post" action="/api/promotions" autocomplete="off">
+      <label>{{ T "promotions.col.code" }} <input type="text" name="code" required /></label>
+      <label>{{ T "promotions.col.type" }}
+        <select name="type" x-model="type">
+          <option value="amount">{{ T "promotions.type.amount" }}</option>
+          <option value="percent">{{ T "promotions.type.percent" }}</option>
+        </select>
+      </label>
+      <label x-show="type === 'amount'">{{ T "promotions.col.value" }} <input type="number" step="0.01" min="0.01" name="value_amount" /></label>
+      <label x-show="type === 'percent'">{{ T "promotions.col.value" }} <input type="number" step="0.01" min="0.01" name="value_percent" /></label>
+      <label>{{ T "promotions.field.description" }} <input type="text" name="description" /></label>
+      <label>{{ T "promotions.field.starts_at" }} <input type="date" name="starts_at" /></label>
+      <label>{{ T "promotions.field.ends_at" }} <input type="date" name="ends_at" /></label>
+      <label>{{ T "promotions.field.customer" }}
+        <input type="text" id="promo-cust-q" placeholder="{{ T "promotions.customer.search_ph" }}" autocomplete="off" />
+      </label>
+      <div id="promo-cust-results" class="set-gap-s"></div>
+      <input type="hidden" name="customer_id" id="promo-cust-id" value="" />
+      <button type="submit" class="btn primary" style="width:100%">{{ T "promotions.new.submit" }}</button>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  var q = document.getElementById('promo-cust-q');
+  if (!q) return;
+  var out = document.getElementById('promo-cust-results');
+  var hidden = document.getElementById('promo-cust-id');
+  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  var timer;
+  q.addEventListener('input', function () {
+    clearTimeout(timer);
+    hidden.value = '';
+    var term = q.value.trim();
+    if (!term) { out.innerHTML = ''; return; }
+    timer = setTimeout(function () {
+      fetch('/api/data/customers?q=' + encodeURIComponent(term))
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          var list = (j.data && j.data.customers) || [];
+          out.innerHTML = list.map(function (c) {
+            return '<button type="button" class="btn secondary" data-cust-pick="' + esc(c.ID) + '" data-cust-name="' + esc(c.Name) + '">'
+              + esc(c.Name) + (c.Phone ? ' · ' + esc(c.Phone) : '') + '</button>';
+          }).join(' ');
+        });
+    }, 250);
+  });
+  out.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-cust-pick]');
+    if (!b) return;
+    hidden.value = b.getAttribute('data-cust-pick');
+    q.value = b.getAttribute('data-cust-name');
+    out.innerHTML = '';
+  });
+})();
+</script>
+{{ end }}
