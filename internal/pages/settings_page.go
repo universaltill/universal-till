@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
 
@@ -114,6 +115,28 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if coverageErr != nil {
 			logging.L().Errorf("report archive coverage: %v", coverageErr)
 		}
+		// ADR-0042: archived reset batches for the Data card's restore list.
+		// Best-effort like the other Data-card queries above — a schema-less
+		// test DB just renders the page without the list.
+		resetBatchesRaw, resetBatchesErr := data.NewPOSRepo(d.Db).ListResetBatches(r.Context())
+		if resetBatchesErr != nil {
+			logging.L().Errorf("list reset batches: %v", resetBatchesErr)
+		}
+		// Same human-friendly date format the backups table already uses
+		// (backup_api.go's listBackupsForUI) rather than a raw RFC3339 string.
+		type resetBatchView struct {
+			ID         string
+			CreatedAt  string
+			SalesCount int64
+		}
+		resetBatches := make([]resetBatchView, 0, len(resetBatchesRaw))
+		for _, b := range resetBatchesRaw {
+			display := b.CreatedAt
+			if t, err := time.Parse(time.RFC3339, b.CreatedAt); err == nil {
+				display = t.Format("2006-01-02 15:04")
+			}
+			resetBatches = append(resetBatches, resetBatchView{ID: b.ID, CreatedAt: display, SalesCount: b.SalesCount})
+		}
 		data := map[string]any{
 			"title":                 "Settings",
 			"theme":                 st.Theme,
@@ -138,6 +161,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"shopType":              shopType,
 			"shopTypes":             setupShopTypes,
 			"restorePromptDeferred": restorePromptStatus == common.RestorePromptStatusDeferred,
+			"resetBatches":          resetBatches,
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
 			"launchOnStartup":       st.LaunchOnStartup,
