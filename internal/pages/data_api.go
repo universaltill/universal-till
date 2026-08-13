@@ -54,6 +54,14 @@ type exportRequestPayload struct {
 	// snapshot as of now, not as of To; there is no stock-movement history
 	// to reconstruct a past-dated level from.
 	Stock []data.ExportStockRow `json:"stock"`
+	// Items is the full catalog (data.CatalogRepo.ExportRows -- the same
+	// rows GET /api/catalog/export's hardcoded CSV writer already reads),
+	// gated on both the resolved entry declaring "items" in its Entities
+	// AND holding items:read (ut-docs#600) -- unlike Sales/Stock, which
+	// are permission-gated only, Items is the first ledger to require an
+	// explicit entity declaration too, mirroring how import entries have
+	// declared their handled entities since ut-docs#599.
+	Items []data.ExportRow `json:"items"`
 }
 
 // exportResponse is the JSON a plugin writes to stdout to answer
@@ -417,11 +425,41 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
+		// Items (ut-docs#600) is gated on the entry DECLARING "items" (its
+		// Entities, mirroring #599's import-side pattern) in addition to
+		// the items:read permission grant -- unlike Sales/Stock above,
+		// which are permission-gated only, since every export entry
+		// installed before #600 has no Entities at all and must keep
+		// getting exactly today's Sales/Stock-only payload regardless of
+		// what permissions it happens to hold.
+		wantsItems := false
+		for _, e := range entry.Entities {
+			if e == "items" {
+				wantsItems = true
+				break
+			}
+		}
+		var items []data.ExportRow
+		if wantsItems {
+			hasItemsRead, cerr := plugins.CheckPermissionGranted(r.Context(), d.Db, entry.PluginID, "items:read")
+			if cerr != nil {
+				respond(w, http.StatusInternalServerError, false, cerr.Error())
+				return
+			}
+			if hasItemsRead {
+				items, err = data.NewCatalogRepo(d.Db).ExportRows(r.Context())
+				if err != nil {
+					respond(w, http.StatusInternalServerError, false, err.Error())
+					return
+				}
+			}
+		}
+
 		// AskPlugin, not Ask: entry was resolved to a specific owning
 		// plugin above, and must not silently accept another installed
 		// plugin's answer to the same event type (ut-docs#189 review).
 		resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(r.Context(), entry.PluginID, "export.requested.ask", exportRequestPayload{
-			From: from, To: to, EntryKey: entry.Key, Sales: sales, Stock: stock,
+			From: from, To: to, EntryKey: entry.Key, Sales: sales, Stock: stock, Items: items,
 		})
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())

@@ -398,27 +398,47 @@ func bpToPercentString(bp int) string {
 
 // ExportRow is one catalog line for the CSV export (G22b — the
 // anti-lock-in half of import: a shop can always take its data and leave).
-// Columns are chosen so our own importer round-trips the file.
+// Columns are chosen so our own importer round-trips the file. JSON tags
+// (ut-docs#600 review finding F1) match ADR-0039's interchange-format
+// naming (price_minor etc.) now that this type is ALSO marshaled as the
+// wire payload for a dispatched export-type plugin (internal/pages/
+// data_api.go's exportRequestPayload.Items) — writeCatalogCSV
+// (internal/pages/import_page.go) reads these fields directly by name, not
+// via reflection/tags, so adding tags is safe for that existing consumer.
 type ExportRow struct {
-	Name        string
-	SKU         string
-	Barcode     string // primary barcode preferred, else any
-	PriceMinor  int64
-	Category    string
-	Description string
-	IsWeighed   bool
-	Stock       float64
-	IsActive    bool
+	Name        string `json:"name"`
+	SKU         string `json:"sku"`
+	Barcode     string `json:"barcode"` // primary barcode preferred, else any
+	PriceMinor  int64  `json:"price_minor"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+	IsWeighed   bool   `json:"is_weighed"`
+	// Stock (ut-docs#600 review finding F5, known limitation): item-scoped
+	// only (SUM(inventory.quantity) WHERE item_id = i.id) — a variant-
+	// tracked item's stock lives on variant-scoped inventory rows
+	// (item_id NULL, ADR-0043) and is NOT included here, unlike the same
+	// payload's separate stock[] ledger (data.ExportStockRow), which IS
+	// variant-aware since ut-docs#240. A plugin summing items[].Stock will
+	// under-count a variant-tracked shop's true stock; stock[] is the
+	// source of truth for stock levels, this field is catalog-export
+	// convenience only.
+	Stock    float64 `json:"stock"`
+	IsActive bool    `json:"is_active"`
 	// Tax pairing (ut-docs#512): HasTax when the item carries a tax code,
 	// HasTakeaway additionally when that code has a distinct takeaway rate —
 	// so export → import round-trips the (dine-in, takeaway) grouping.
-	TaxRateBP      int
-	HasTax         bool
-	TakeawayRateBP int
-	HasTakeaway    bool
+	TaxRateBP      int  `json:"tax_rate_bp"`
+	HasTax         bool `json:"has_tax"`
+	TakeawayRateBP int  `json:"takeaway_rate_bp"`
+	HasTakeaway    bool `json:"has_takeaway"`
 }
 
 // ExportRows reads the whole catalog for export, active items first.
+// Returns a non-nil (possibly empty) slice — ut-docs#600 review finding F4:
+// an empty catalog must marshal as `[]`, not `null`, so a dispatched
+// export-type plugin can tell "declared+granted but genuinely nothing to
+// export" apart from "omitted" (the same []-vs-null contract
+// ExportStockRow already documents in plugin-manifest.md).
 func (r *CatalogRepo) ExportRows(ctx context.Context) ([]ExportRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.name, COALESCE(i.sku, ''),
@@ -436,7 +456,7 @@ ORDER BY i.is_active DESC, i.name`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ExportRow
+	out := make([]ExportRow, 0)
 	for rows.Next() {
 		var e ExportRow
 		var rate, takeaway sql.NullInt64
