@@ -3059,49 +3059,52 @@ func (r *POSRepo) SaleCompletedAt(ctx context.Context, saleID string) (time.Time
 	return ts, true, nil
 }
 
-// SaleDetail is everything the journal shows when a sale is opened.
+// SaleDetail is everything the journal shows when a sale is opened. Also
+// the LAN sync wire payload (internal/pages/sync_sales.go's journalSale) --
+// the json tags below are load-bearing for universal-till/CLAUDE.md's
+// snake_case rule on that surface, not just documentation (ut-docs#262).
 type SaleDetail struct {
-	ID            string
-	ReceiptNo     string
-	Status        string
-	SaleType      string
-	TenderType    string
-	OrderType     string
-	Offline       bool
-	SyncStatus    string
-	Currency      string
-	Subtotal      int64
-	DiscountTotal int64
-	TaxTotal      int64
-	Total         int64
-	ServiceCharge int64
-	CreatedAt     string
-	CashierID     string
-	Lines         []SaleDetailLine
-	Payments      []SaleDetailPayment
+	ID            string              `json:"id"`
+	ReceiptNo     string              `json:"receipt_no"`
+	Status        string              `json:"status"`
+	SaleType      string              `json:"sale_type"`
+	TenderType    string              `json:"tender_type"`
+	OrderType     string              `json:"order_type"`
+	Offline       bool                `json:"offline"`
+	SyncStatus    string              `json:"sync_status"`
+	Currency      string              `json:"currency"`
+	Subtotal      int64               `json:"subtotal"`
+	DiscountTotal int64               `json:"discount_total"`
+	TaxTotal      int64               `json:"tax_total"`
+	Total         int64               `json:"total"`
+	ServiceCharge int64               `json:"service_charge"`
+	CreatedAt     string              `json:"created_at"`
+	CashierID     string              `json:"cashier_id"`
+	Lines         []SaleDetailLine    `json:"lines"`
+	Payments      []SaleDetailPayment `json:"payments"`
 }
 
 type SaleDetailLine struct {
-	Name         string
-	SKU          string
-	ItemID       string
-	VariantID    string
-	TaxRateBP    int
-	Qty          float64
-	UnitPrice    int64
-	LineDiscount int64
-	TaxAmount    int64
-	LineTotal    int64
-	Modifiers    []string // chosen customization option names (ADR-0020), e.g. "Extra shot"
+	Name         string   `json:"name"`
+	SKU          string   `json:"sku"`
+	ItemID       string   `json:"item_id"`
+	VariantID    string   `json:"variant_id"`
+	TaxRateBP    int      `json:"tax_rate_bp"`
+	Qty          float64  `json:"qty"`
+	UnitPrice    int64    `json:"unit_price"`
+	LineDiscount int64    `json:"line_discount"`
+	TaxAmount    int64    `json:"tax_amount"`
+	LineTotal    int64    `json:"line_total"`
+	Modifiers    []string `json:"modifiers"` // chosen customization option names (ADR-0020), e.g. "Extra shot"
 }
 
 type SaleDetailPayment struct {
-	Method      string
-	Amount      int64
-	ChangeGiven int64
-	TipAmount   int64
-	Reference   string
-	PaidAt      string
+	Method      string `json:"method"`
+	Amount      int64  `json:"amount"`
+	ChangeGiven int64  `json:"change_given"`
+	TipAmount   int64  `json:"tip_amount"`
+	Reference   string `json:"reference"`
+	PaidAt      string `json:"paid_at"`
 }
 
 // GetSaleDetailByID is GetSaleDetail keyed on the sale id (invoices store
