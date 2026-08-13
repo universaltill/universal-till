@@ -12,7 +12,7 @@ routes: [/country-settings]
 
 Every country the till knows about comes with sensible defaults: which currency it uses, the usual tax rate, whether that tax is already included in the price, and a minimum number of days archived transaction batches should be kept.
 
-This page is where those per-country defaults live. **They are not yet connected to your own shop or to how long archives are actually kept** — that wiring is still being built. For now this page is the place those values are stored and reviewed ahead of that.
+This page is where those per-country defaults live. **The first-boot setup wizard now reads them**, so an edit here reaches the country step the next time a till is set up from scratch. Two things are still not wired to it: it does not change a shop that has *already* been set up (its currency/tax stay whatever was chosen at the time), and it does not yet control how long archives are actually kept — archives are still kept for a fixed minimum regardless of the retention value shown here.
 
 ## How to use it
 
@@ -23,7 +23,7 @@ This page is where those per-country defaults live. **They are not yet connected
 
 ## Good to know
 
-- Tax is entered as a percentage — enter `19` for 19%. Half-percent rates like `8.5` are fine.
+- Tax is entered as a percentage — enter `19` for 19%. Half-percent rates like `8.5` are fine and are saved exactly — though the setup wizard prefills a new till to the nearest whole percent, so `8.5` arrives there as `9` (editable afterwards in Settings, same as any other rate).
 - **Tax included in price** means the shelf price already contains the tax, which is normal in most of Europe. Leave it off where tax is added at the till instead.
 - **Archive retention** here is a floor you can raise but not lower below the minimum shown. It does not yet control when archives are actually deleted — today, archives are kept for a fixed minimum regardless of this setting.
 - Editing a country here does not change any shop already set up, and does not rewrite sales you have already taken.

@@ -7,8 +7,24 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 )
+
+// detectCountryTestCodes mirrors what the wizard actually passes detectCountry
+// in production (ut-docs#660): the real country_settings codes, "OTHER"
+// excluded (detectCountry's caller is responsible for that, same as it always
+// was when detectCountry read setupCountries directly).
+func detectCountryTestCodes() []string {
+	defaults := data.BuiltinCountryDefaults()
+	codes := make([]string, 0, len(defaults))
+	for _, d := range defaults {
+		if d.Code != "OTHER" {
+			codes = append(codes, d.Code)
+		}
+	}
+	return codes
+}
 
 // withOSLocale swaps the detection seams for the duration of the test —
 // same pattern as catalog/handlers.go's newLookupClient — so no test ever
@@ -127,11 +143,12 @@ func TestDetectCountry(t *testing.T) {
 		{"nothing detectable at all", "ja_JP.UTF-8", "Asia/Tokyo", ""},
 		{"empty everything", "", "", ""},
 	}
+	codes := detectCountryTestCodes()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			withOSLocale(t, tc.locale, tc.timezone)
-			if got := detectCountry(); got != tc.want {
-				t.Errorf("detectCountry() = %q, want %q", got, tc.want)
+			if got := detectCountry(codes); got != tc.want {
+				t.Errorf("detectCountry(codes) = %q, want %q", got, tc.want)
 			}
 		})
 	}
