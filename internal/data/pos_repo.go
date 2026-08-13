@@ -1956,6 +1956,34 @@ FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`).Scan(
 	return s, true, nil
 }
 
+// CurrentOpenShiftForRegister returns the open shift for ONE register, if it
+// has one — the register-scoped resolution ut-docs#268 requires for write
+// paths, instead of CurrentOpenShift's "most recent across any register"
+// heuristic. A register has at most one open shift by construction
+// (pos.OpenShift blocks a second), so LIMIT 1 is defensive only, matching the
+// sibling FindOpenShiftForRegister's style.
+func (r *POSRepo) CurrentOpenShiftForRegister(ctx context.Context, registerID string) (ShiftSummary, bool, error) {
+	var s ShiftSummary
+	var closedAt, note sql.NullString
+	var closing, expected sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note
+FROM shifts WHERE register_id = ? AND closed_at IS NULL LIMIT 1`, registerID).Scan(
+		&s.ID, &s.RegisterID, &s.CashierID, &s.OpenedAt, &closedAt, &s.OpeningCash, &closing, &expected, &note)
+	if err == sql.ErrNoRows {
+		return ShiftSummary{}, false, nil
+	}
+	if err != nil {
+		return ShiftSummary{}, false, fmt.Errorf("current open shift for register: %w", err)
+	}
+	s.Open = true
+	s.ClosedAt = closedAt.String
+	s.ClosingCash = closing.Int64
+	s.Expected = expected.Int64
+	s.Note = note.String
+	return s, true, nil
+}
+
 // ListRecentShifts returns the latest shifts, newest first.
 func (r *POSRepo) ListRecentShifts(ctx context.Context, limit int) ([]ShiftSummary, error) {
 	if limit <= 0 {
