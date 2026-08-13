@@ -3,14 +3,14 @@ id: my-reports
 title: My reports
 section: Connecting & extending
 order: 361
-summary: "See the problem reports this till has sent (most recent 100), with their last-known status — works offline too."
+summary: "See the problem reports this till has captured — sent or still pending (most recent 100) — with their last-known status. Works offline too."
 routes: [/my-reports]
-keywords: [bug, issue, report, status, sent, github, tracking]
+keywords: [bug, issue, report, status, sent, pending, github, tracking]
 ---
 
 # My reports
 
-See the problem reports this till has sent (the most recent 100), with their last-known status — works offline too.
+See the problem reports this till has captured — sent, or still waiting to send (most recent 100) — with their last-known status. Works offline too.
 
 ## What the page shows
 
@@ -27,7 +27,7 @@ The statuses mean:
 
 ## Offline
 
-The page never needs the network: it always shows the statuses from the last time this shop was online, and refreshes them automatically in the background once you're connected again. A report you've just saved appears here shortly after it uploads.
+The page never needs the network: it always shows the statuses from the last time this shop was online, and refreshes them automatically in the background once you're connected again. A report you've just saved appears here immediately, as pending — it moves to "Sent, awaiting review" once it actually uploads.
 
 If this till can't save its own copy of a report — for example, its storage is full — it keeps retrying, but only for a while. After several failed attempts it gives up trying to remember the report locally. The report itself still reaches support either way; it just won't be listed here.
 

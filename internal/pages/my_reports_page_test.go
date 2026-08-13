@@ -49,6 +49,12 @@ func seedIssueReportsSent(t *testing.T, db *sql.DB) {
 func newMyReportsTestMux(t *testing.T) (*http.ServeMux, *sql.DB) {
 	t.Helper()
 	chdirRoot(t)
+	// ut-docs#637 review: registerMyReportsPage now also reads
+	// issuereport.Pending() (local disk), so every test built on this
+	// helper needs its own isolated PendingDir — otherwise a test run from
+	// a checkout that has ever captured a real bug report locally would
+	// pick up ./data/issue-reports/pending's actual contents.
+	withTempIssueReportsPendingDir(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
@@ -178,7 +184,6 @@ func TestMyReportsPage_ManagerGate(t *testing.T) {
 // reached the cloud simply never appeared anywhere on /my-reports.
 func TestMyReportsPage_PendingBundleShowsAsPending(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	withTempIssueReportsPendingDir(t)
 	mux, _ := newMyReportsTestMux(t)
 	if _, err := issuereport.Save("still waiting to upload", "", []byte("a"), nil, nil); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -206,7 +211,6 @@ func TestMyReportsPage_PendingBundleShowsAsPending(t *testing.T) {
 // a problem rather than retrying silently forever."
 func TestMyReportsPage_FailingBundleShowsReasonAfterThreshold(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	withTempIssueReportsPendingDir(t)
 	mux, _ := newMyReportsTestMux(t)
 	id, err := issuereport.Save("cloud unreachable for a while", "", []byte("a"), nil, nil)
 	if err != nil {
@@ -236,7 +240,6 @@ func TestMyReportsPage_FailingBundleShowsReasonAfterThreshold(t *testing.T) {
 // anyone.
 func TestMyReportsPage_BelowThresholdStaysPending(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	withTempIssueReportsPendingDir(t)
 	mux, _ := newMyReportsTestMux(t)
 	id, err := issuereport.Save("just offline for a bit", "", []byte("a"), nil, nil)
 	if err != nil {
@@ -263,7 +266,6 @@ func TestMyReportsPage_BelowThresholdStaysPending(t *testing.T) {
 // it — unlike a generic network blip.
 func TestMyReportsPage_NotRegisteredFailsImmediately(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	withTempIssueReportsPendingDir(t)
 	mux, _ := newMyReportsTestMux(t)
 	id, err := issuereport.Save("till was never enrolled", "", []byte("a"), nil, nil)
 	if err != nil {
@@ -288,7 +290,6 @@ func TestMyReportsPage_NotRegisteredFailsImmediately(t *testing.T) {
 // newest-captured-first list, not two blocks.
 func TestMyReportsPage_SentAndPendingRowsSortedTogether(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	withTempIssueReportsPendingDir(t)
 	mux, db := newMyReportsTestMux(t)
 	if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status) VALUES ('rep-old', 'oldest, already sent', '2026-08-01T10:00:00Z', 'sent')`); err != nil {
 		t.Fatal(err)

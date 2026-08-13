@@ -77,6 +77,14 @@ func uploadPendingIssueReports(ctx context.Context, cfg *config.Config, db *sql.
 			logging.L().Warnf("cloudsync: issue report %s not uploaded (will retry): %v", b.Meta.ID, err)
 			continue
 		}
+		// ut-docs#637 review: clear any upload-fail state recorded by an
+		// earlier tick BEFORE deciding what happens to the bundle next — if
+		// SaveSent below fails and the bundle survives for retry, it must
+		// not keep showing a stale "failing" reason for a report that has,
+		// in fact, already reached the cloud.
+		if cerr := issuereport.ClearUploadFailure(b.Meta.ID); cerr != nil {
+			logging.L().Warnf("cloudsync: issue report %s upload-fail state not cleared: %v", b.Meta.ID, cerr)
+		}
 		if err := repo.SaveSent(ctx, data.SentReport{
 			ID:         b.Meta.ID,
 			Note:       b.Meta.Note,

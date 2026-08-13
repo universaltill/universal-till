@@ -430,6 +430,42 @@ func TestUploadPendingIssueReportsKeepsBundleWhenSaveSentFails(t *testing.T) {
 	}
 }
 
+// ut-docs#637 review: a bundle that failed to upload on earlier ticks, then
+// succeeds, but then hits a SaveSent failure (so it survives for retry, same
+// shape as the test above) must NOT keep presenting its earlier upload
+// failure — the report did, in fact, reach the cloud this tick.
+func TestUploadPendingIssueReportsClearsUploadFailStateOnceUploadSucceeds(t *testing.T) {
+	withTempPendingDir(t)
+	brokenDB := testDB(t) // settings table only — SaveSent must fail
+	id, err := issuereport.Save("flaky then fine, but SaveSent fails", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := issuereport.RecordUploadFailure(id, issuereport.UploadFailReasonOther); err != nil {
+		t.Fatalf("RecordUploadFailure (setup): %v", err)
+	}
+	bundles, err := issuereport.Pending()
+	if err != nil || len(bundles) != 1 || bundles[0].Meta.UploadFailCount != 1 {
+		t.Fatalf("setup: Pending: %v, bundles=%+v", err, bundles)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(10 << 20)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), brokenDB)
+
+	remaining, err := issuereport.Pending()
+	if err != nil || len(remaining) != 1 || remaining[0].Meta.ID != id {
+		t.Fatalf("bundle must stay pending after a failed SaveSent: %v (%d)", err, len(remaining))
+	}
+	if remaining[0].Meta.UploadFailCount != 0 || remaining[0].Meta.UploadFailReason != "" {
+		t.Fatalf("upload-fail state must be cleared once the upload itself succeeds, got count=%d reason=%q", remaining[0].Meta.UploadFailCount, remaining[0].Meta.UploadFailReason)
+	}
+}
+
 // The core ut-docs#446 fix: a bundle whose cloud upload keeps succeeding but
 // whose local retained-record save keeps failing (e.g. disk full, DB briefly
 // read-only) must NOT be re-uploaded forever. After issuereport.MaxSentFailCount
