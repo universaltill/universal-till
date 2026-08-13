@@ -40,6 +40,8 @@ jobs:
         run: bash scripts/ci/guard-i18n_test.sh
       - name: Manual screenshot freshness guard
         run: bash scripts/ci/guard-docs-shots.sh
+      - name: Manual screenshot freshness guard regression test
+        run: bash scripts/ci/guard-docs-shots_test.sh
       - name: Help-topic registry guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
