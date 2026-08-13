@@ -23,7 +23,11 @@ test.describe('POS UI MVP Uplift', () => {
     await page.goto('/');
 
     const logo = page.locator('.nav .logo img');
-    await expect(logo).toHaveAttribute('src', /unitill-logo\.svg/);
+    // ut-docs#298: .nav is always dark (var(--brand) in every shipped
+    // theme), so it uses the light-glyph variant with no backing plate —
+    // the other till surfaces (login/setup/self-order) keep the canonical
+    // dark mark, since their background is white in every shipped theme.
+    await expect(logo).toHaveAttribute('src', /unitill-logo-light\.svg/);
     await expect(logo).toHaveAttribute('alt', 'Universal Till');
     await expect(logo).toBeVisible();
 
