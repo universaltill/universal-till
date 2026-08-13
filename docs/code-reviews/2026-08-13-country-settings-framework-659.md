@@ -175,3 +175,86 @@ before commit. This session is operating under a standing instruction not to
 spawn subagents unprompted, so that pass has **not** been run — this document
 is a self-review. Recorded honestly rather than claimed; `/code-review` on
 the branch would close the gap.
+
+## Independent review — run 2026-08-13, Scrum Master cycle (Opus, fresh context)
+
+The gap above is now closed. A cold cloud pipeline cycle picked this PR up
+under step 0c ("finish stale reviewed PRs first") and, because this
+document disclosed no independent pass had happened, ran a genuinely
+independent review (Opus, worktree-isolated, no prior reasoning carried
+in) before allowing the merge.
+
+**Verdict: SAFE TO MERGE AFTER FIXES.** The reviewer confirmed the core
+engineering independently — floor genuinely enforced in the repository on
+every `Upsert`, delete semantics correct, `is_builtin` actually derived
+rather than trusted, drift guards real (verified by deliberately breaking
+the DE seed and watching both drift tests fail for the right reason),
+migration properly additive, i18n complete with real (not machine-literal)
+translations across all four locales, ADR-0040 respected (no
+per-jurisdiction claim, single global floor). It also independently
+re-verified the "six pre-existing failures are locale-dependent, not
+mine" claim by reproducing one directly. Full detail in the review
+subagent's own report (not duplicated here); the three blocking findings
+it raised, and what changed in response:
+
+- **B1 — the manual and UI copy described behaviour that doesn't exist
+  yet.** `archive_min_days` has zero consumers today: `reportRetentionCutoff`
+  (the code that actually prunes `report_archive`) doesn't read it, and the
+  wizard still reads the old hardcoded `setupCountries` slice (that's
+  #660). The shipped copy said otherwise ("Changes apply to shops using
+  that country", "the smallest number of days... before anyone can
+  permanently delete it"). **Fixed**: reworded `countrysettings.intro`,
+  `countrysettings.retention_help` (all 4 locales) and all four
+  `country-settings.md` help topics to say plainly that these are
+  foundation values not yet wired to a running shop or to actual pruning,
+  and that raising the number today changes nothing yet. No compliance
+  claim was ever made (the reviewer confirmed that independently too) —
+  this fix is about the *foundation* claim, not a compliance one.
+- **B2 — three independent spellings of ADR-0040's "single global floor"
+  with nothing tying them together**: `data.GlobalArchiveMinDays` (3650),
+  `reportRetentionCutoff`'s `AddDate(-10,0,0)` (~3652–3653 real days
+  depending on leap years), `maxReportArchiveExportRangeDays` (3660,
+  unrelated coincidence). **Fixed**: kept `reportRetentionCutoff` on
+  calendar years (deliberately, not a fixed day count — see the comment
+  now on it: a fixed day count would make the enforced window a few days
+  *shorter* than the promised floor in some years, which is the wrong
+  direction to fix this in), and added
+  `TestReportRetentionCutoffNeverShorterThanGlobalArchiveMinDays`, which
+  asserts across four spread-out `now` dates (including 2100, not a
+  Gregorian leap year, and spans crossing 2/3 leap days) that the actual
+  prune window is never shorter than `data.GlobalArchiveMinDays` days.
+  Re-pointed `maxReportArchiveExportRangeDays` at the same constant
+  (`data.GlobalArchiveMinDays + 10`) so it's one spelling with a stated
+  offset, not a third independent number.
+- **B3 — the `is_builtin` anti-spoof claim was asserted in prose but
+  untested.** The existing test only ever left `IsBuiltin` at its zero
+  value, so it would have passed identically even if `Upsert` copied the
+  caller's flag straight through. **Fixed**: added
+  `TestUpsertIgnoresCallerSuppliedIsBuiltin`, which sets
+  `IsBuiltin: true` on a non-builtin code and asserts both that it's
+  stored as `false` and that `Delete` still removes the row outright (not
+  restore) — and verified the test actually catches the bug by
+  temporarily making `Upsert` trust `c.IsBuiltin`, confirming the new test
+  fails with the expected message, then reverting.
+
+Also merged `main` into the branch (it was behind by the fix/532 merge)
+and re-ran the full gate after: `go build`/`go vet` clean; `go test ./...`
+green with `LANG` unset; all guards green including `guard-docs-shots.sh`
+(re-ran `make docs-shots` after the copy edits — only the 4
+`country-settings` screenshots actually needed retaking; the run also
+re-encoded several unrelated topics' PNGs with no content change, which
+were reverted before commit rather than committed as diff noise, per the
+precedent this same PR's first draft already set).
+
+Non-blocking findings from the same pass (reflected-error-key allowlist,
+one dead template field, one unused locale key, an `err` shadowing bug in
+`Delete`'s builtin-restore audit path, no upper bound on
+`archive_min_days`, `parsePercentAsBP`'s `Inf`/`NaN` handling relying on a
+downstream range check rather than its own, a silent no-op delete on a
+nonexistent custom code, a generic error message for a rejected country
+code, and the shipped `en`/`ar` screenshots being visually truncated at
+the docs-shots viewport width) are real but not blocker-class — logged as
+a new Backlog card
+(`Country settings page: minor hardening + truncated manual screenshots
+follow-ups from ut-docs#659 review`) rather than gating this merge on
+them.
