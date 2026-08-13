@@ -353,6 +353,21 @@
   </div>
   {{ end }}
 
+  {{ if .pendingBasePlugins }}
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "setup.base_plugins.title" }}</h3>
+  {{ range .pendingBasePlugins }}
+  <div class="chip-row" data-testid="pending-base-plugin" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin:.3rem 0">
+    <span class="chip">{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}</span>
+    <button class="btn secondary" data-testid="pending-base-plugin-dismiss"
+            hx-post="/api/settings/dismiss-pending-base-plugin"
+            hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale }}'
+            hx-target="closest .chip-row" hx-swap="outerHTML"
+            hx-disabled-elt="this">{{ T "setup.base_plugins.dismiss_btn" }}</button>
+  </div>
+  {{ end }}
+  {{ end }}
+
   {{ if gt .sampleCount 0 }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.demo_title" }}</h3>

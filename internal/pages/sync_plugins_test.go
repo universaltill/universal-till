@@ -27,6 +27,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -65,6 +66,23 @@ type fakeMarketplace struct {
 	mu        sync.Mutex
 	tokenHits int // POST /v1/downloads/tokens count — proves (non-)reinstall
 	listings  map[string]*fakeMktListing
+	// catalog backs GET /v1/catalog/plugins for the country base-plugin
+	// resolve step (ut-docs#591) — empty by default (a 404/unserved route
+	// would be indistinguishable from "no catalog entries"; an explicit
+	// empty list is closer to the real marketplace's response shape), so
+	// every pre-existing sync_plugins_test.go test that never calls
+	// setCatalog is unaffected.
+	catalog []marketplace.PluginSummary
+}
+
+// setCatalog replaces the GET /v1/catalog/plugins response wholesale — the
+// resolve step (ut-docs#591) filters this client-side, so tests can freely
+// include entries that a real server-side locale/type filter would (or
+// wouldn't) already have dropped, to prove the client-side filter is real.
+func (m *fakeMarketplace) setCatalog(entries ...marketplace.PluginSummary) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.catalog = entries
 }
 
 func (m *fakeMarketplace) downloadTokenHits() int {
@@ -189,6 +207,12 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 	}
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/catalog/plugins":
+			m.mu.Lock()
+			entries := append([]marketplace.PluginSummary(nil), m.catalog...)
+			m.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(marketplace.ListPluginsResponse{Plugins: entries})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/downloads/tokens":
 			var req struct {
 				ListingID string `json:"listing_id"`
