@@ -9,20 +9,73 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
 )
 
-// kitchenStation is the header printed at the top of the DEFAULT kitchen
-// ticket (unrouted lines, or every line when no kitchen stations are
-// configured). It is printed on thermal paper (latin, like the receipt's
-// "Receipt"/"TOTAL" labels), not a UI string, so it stays a constant rather
-// than an i18n key. Station-routed tickets print the station's own name
-// instead (ut-docs#516).
+// kitchenStation is the internal identifier and audit/failure-label for the
+// DEFAULT kitchen ticket (unrouted lines, or every line when no kitchen
+// stations are configured) — the "station" field written to InsertAudit
+// calls and kitchenSendFailure.Station. It stays a FIXED, un-translated
+// string on purpose: audits/logs need to stay grep-friendly and
+// locale-independent regardless of the shop's configured language. The
+// PRINTED ticket header for the default bucket is translated separately in
+// kitchenTicketFor via the kitchen.ticket.station_default i18n key
+// (ut-docs#261) so kitchen staff read it in their own language. Station-
+// routed tickets print+audit the station's own shop-entered name instead
+// (data.KitchenStation.Name, ut-docs#516) — that's the shop's own text,
+// never translated, untouched by this card.
 const kitchenStation = "KITCHEN"
+
+// kitchenOrderTypeLabel translates a persisted sale order_type for display
+// on a kitchen ticket. "" (dine-in) stays "" — printing nothing is the
+// product decision (ut-docs#261), not a missing translation. Only
+// pos.OrderTypeTakeaway ("takeaway") exists in the domain today; an
+// unrecognized future value falls back to the raw string rather than
+// erroring, so a new order type added later degrades to un-translated
+// English instead of breaking kitchen printing. charset selects the
+// ASCII-safe fallback below.
+func kitchenOrderTypeLabel(locale, charset, orderType string) string {
+	switch orderType {
+	case "":
+		return ""
+	case pos.OrderTypeTakeaway:
+		return kitchenTicketText(locale, charset, "basket.order_type.takeaway")
+	default:
+		return orderType
+	}
+}
+
+// kitchenTicketText translates key for locale, with an ASCII-safe fallback
+// (review finding, ut-docs#261): a printer.charset=="ascii" thermal
+// printer can't render non-Latin scripts — encodeText (internal/print)
+// maps every unmappable rune to "?", so an ar/fa translation would print
+// as a run of question marks. Before this card, kitchen tickets were
+// hardcoded English and never hit this path at all; now that they carry
+// real translated text, degrade to the English string (always ASCII for
+// this ticket's own keys) rather than garbage, on ascii-charset setups
+// only. utf8-charset setups (the default) are unaffected.
+func kitchenTicketText(locale, charset, key string) string {
+	v := httpx.T(locale, key)
+	if charset != "ascii" || isASCII(v) {
+		return v
+	}
+	return httpx.T("en", key)
+}
+
+func isASCII(s string) bool {
+	for _, r := range s {
+		if r > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
 
 // buildKitchenTicket assembles the legacy single kitchen ticket for a
 // completed sale: item names + quantities, order number, order type and
@@ -38,21 +91,35 @@ func buildKitchenTicket(ctx context.Context, d *common.Deps, receiptNo string) (
 		return print.KitchenTicket{}, fmt.Errorf("receipt %s not found", receiptNo)
 	}
 	cfg := printerConfig(ctx, d)
-	return kitchenTicketFor(detail, cfg, kitchenStation, kitchenItemsFor(detail.Lines)), nil
+	locale := httpx.DefaultLocale()
+	return kitchenTicketFor(detail, cfg, locale, kitchenStation, true, kitchenItemsFor(detail.Lines)), nil
 }
 
 // kitchenTicketFor assembles one ticket from a sale's header fields, a
 // station header and a subset of the sale's lines. Shared by the legacy
 // single-ticket path and the per-station tickets so their byte layout can
-// never drift apart.
-func kitchenTicketFor(detail data.SaleDetail, cfg print.Config, station string, items []print.KitchenItem) print.KitchenTicket {
+// never drift apart. locale resolves the ticket's translated text
+// (ut-docs#261) — callers pass httpx.DefaultLocale() (the shop's
+// configured locale; there's no per-cashier request to resolve from here,
+// these tickets are built server-side). isDefault is an explicit flag, NOT
+// a `station == kitchenStation` string comparison (review finding,
+// ut-docs#261): a shop can name a real station "KITCHEN" (no name
+// validation in kitchen_stations_repo.go), and comparing by value would
+// wrongly translate that shop's own text — exactly the case this ticket's
+// own comment says must never happen.
+func kitchenTicketFor(detail data.SaleDetail, cfg print.Config, locale, station string, isDefault bool, items []print.KitchenItem) print.KitchenTicket {
+	header := station
+	if isDefault {
+		header = kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.station_default")
+	}
 	return print.KitchenTicket{
-		Station:   station,
-		OrderNo:   detail.ReceiptNo,
-		OrderType: detail.OrderType,
-		Timestamp: detail.CreatedAt,
-		Charset:   cfg.Charset,
-		Items:     items,
+		Station:    header,
+		OrderNo:    detail.ReceiptNo,
+		OrderLabel: kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.order_label"),
+		OrderType:  kitchenOrderTypeLabel(locale, cfg.Charset, detail.OrderType),
+		Timestamp:  detail.CreatedAt,
+		Charset:    cfg.Charset,
+		Items:      items,
 	}
 }
 
@@ -71,10 +138,11 @@ func kitchenItemsFor(lines []data.SaleDetailLine) []print.KitchenItem {
 // kitchenTarget is one destination ticket: a station header, the printer
 // address to send to, and the sale lines routed there.
 type kitchenTarget struct {
-	station  string // ticket header + audit label
-	address  string
-	items    []print.KitchenItem
-	rendered []byte // ESC/POS bytes, rendered at build time
+	station   string // ticket header + audit label
+	isDefault bool   // the unrouted/legacy bucket, not a real shop station (ut-docs#261)
+	address   string
+	items     []print.KitchenItem
+	rendered  []byte // ESC/POS bytes, rendered at build time
 }
 
 // kitchenSendFailure reports one target that could not be printed; Station
@@ -111,6 +179,7 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 		return nil, fmt.Errorf("receipt %s not found", receiptNo)
 	}
 	cfg := printerConfig(ctx, d)
+	locale := httpx.DefaultLocale()
 
 	itemIDs := make([]string, 0, len(detail.Lines))
 	for _, l := range detail.Lines {
@@ -177,15 +246,16 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 	}
 	if len(defaultLines) > 0 {
 		targets = append(targets, kitchenTarget{
-			station: kitchenStation,
-			address: cfg.KitchenAddress,
-			items:   kitchenItemsFor(defaultLines),
+			station:   kitchenStation,
+			isDefault: true,
+			address:   cfg.KitchenAddress,
+			items:     kitchenItemsFor(defaultLines),
 		})
 	}
 	// Render each ticket now so a per-target send failure later can't be a
 	// build failure in disguise.
 	for i := range targets {
-		t := kitchenTicketFor(detail, cfg, targets[i].station, targets[i].items)
+		t := kitchenTicketFor(detail, cfg, locale, targets[i].station, targets[i].isDefault, targets[i].items)
 		targets[i].rendered = print.RenderKitchenTicket(t)
 	}
 	return targets, nil
