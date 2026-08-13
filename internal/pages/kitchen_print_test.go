@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -58,7 +60,11 @@ func TestBuildKitchenTicket_IncludesLineModifiers(t *testing.T) {
 // discarded at completion), so a kitchen ticket built from a real
 // takeaway sale must show TAKEAWAY -- buildKitchenTicket's own comment
 // used to say "not yet — optional fields" because SaleDetail had nothing
-// to read it from.
+// to read it from. Since ut-docs#261, ticket.OrderType is pre-translated
+// display text (kitchenOrderTypeLabel), not the raw persisted value — the
+// default test locale is "en" (TestMain), where basket.order_type.takeaway
+// == "Takeaway", so the ticket shows the translated word, upper-cased at
+// render time to TAKEAWAY.
 func TestBuildKitchenTicket_IncludesOrderType(t *testing.T) {
 	chdirRoot(t)
 	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-order-type.db"))
@@ -82,8 +88,147 @@ func TestBuildKitchenTicket_IncludesOrderType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildKitchenTicket: %v", err)
 	}
-	if ticket.OrderType != "takeaway" {
-		t.Fatalf("ticket.OrderType = %q, want %q", ticket.OrderType, "takeaway")
+	if ticket.OrderType != "Takeaway" {
+		t.Fatalf("ticket.OrderType = %q, want %q", ticket.OrderType, "Takeaway")
+	}
+}
+
+// TestBuildKitchenTicket_DineInOrderTypeStaysBlank covers ut-docs#261's
+// product decision: a dine-in sale (order_type == "") must produce a ticket
+// with OrderType == "" -- specifically NOT a translated "Dine in" label
+// (the wrong direction a naive "always translate" implementation could
+// take). On its own this test can't distinguish "correctly handled the
+// blank case" from "translation isn't wired up at all" -- both produce "" here,
+// since the raw persisted value is already "" -- that distinction is what
+// TestBuildKitchenTicket_IncludesOrderType and
+// _OrderTypeAndLabelsFollowShopLocale cover instead (review finding,
+// ut-docs#261; verified by deliberately reverting the translation call:
+// this test still passed, those two did not).
+func TestBuildKitchenTicket_DineInOrderTypeStaysBlank(t *testing.T) {
+	chdirRoot(t)
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-dinein.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbase.Close()
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbase.DB.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-bagel','BAGEL','Bagel',250,1)`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, order_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-4','R-0102','completed','sale','','GBP',250,0,0,250,datetime('now'))`)
+	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-4','sale-4',1,'itm-bagel','Bagel',1,250,0,0,0,250,250)`)
+
+	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+	ticket, err := buildKitchenTicket(context.Background(), dp, "R-0102")
+	if err != nil {
+		t.Fatalf("buildKitchenTicket: %v", err)
+	}
+	if ticket.OrderType != "" {
+		t.Fatalf("ticket.OrderType = %q, want blank for dine-in", ticket.OrderType)
+	}
+}
+
+// TestBuildKitchenTicket_OrderTypeAndLabelsFollowShopLocale covers ut-docs#261:
+// the ticket's order-type text, the "ORDER" label and the default station
+// header must all follow the shop's configured locale
+// (httpx.DefaultLocale()), not always English. Switches the package's
+// wired locale to "tr" (real, distinct translations already in
+// web/locales/tr.json) for the duration of this test only, and restores
+// "en" afterward — TestMain (main_test.go) wires "en" once for this
+// package's whole test binary and every other test assumes that default.
+func TestBuildKitchenTicket_OrderTypeAndLabelsFollowShopLocale(t *testing.T) {
+	chdirRoot(t)
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(i18n, "tr")
+	defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
+
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-locale.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbase.Close()
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbase.DB.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-bagel','BAGEL','Bagel',250,1)`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, order_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-3','R-0101','completed','sale','takeaway','GBP',250,0,0,250,datetime('now'))`)
+	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-3','sale-3',1,'itm-bagel','Bagel',1,250,0,0,0,250,250)`)
+
+	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+	ticket, err := buildKitchenTicket(context.Background(), dp, "R-0101")
+	if err != nil {
+		t.Fatalf("buildKitchenTicket: %v", err)
+	}
+	if ticket.OrderType != "Paket" {
+		t.Errorf("ticket.OrderType = %q, want %q (tr for takeaway)", ticket.OrderType, "Paket")
+	}
+	if ticket.OrderLabel != "SİPARİŞ" {
+		t.Errorf("ticket.OrderLabel = %q, want %q", ticket.OrderLabel, "SİPARİŞ")
+	}
+	if ticket.Station != "MUTFAK" {
+		t.Errorf("ticket.Station = %q, want %q", ticket.Station, "MUTFAK")
+	}
+}
+
+// TestBuildKitchenTicket_AsciiCharsetFallsBackToEnglishForNonLatinLocale
+// covers a review finding (ut-docs#261): printer.charset=="ascii" thermal
+// printers can't render non-Latin scripts (encodeText maps every
+// unmappable rune to "?") -- before this card's translations, kitchen
+// tickets were hardcoded English and never hit this limitation; a
+// non-Latin translation (e.g. Arabic) under ascii charset must degrade to
+// the legible English text, not a run of "?" characters.
+func TestBuildKitchenTicket_AsciiCharsetFallsBackToEnglishForNonLatinLocale(t *testing.T) {
+	chdirRoot(t)
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(i18n, "ar")
+	defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
+
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-ascii.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbase.Close()
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbase.DB.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-bagel','BAGEL','Bagel',250,1)`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, order_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-5','R-0103','completed','sale','takeaway','GBP',250,0,0,250,datetime('now'))`)
+	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-5','sale-5',1,'itm-bagel','Bagel',1,250,0,0,0,250,250)`)
+
+	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+	if err := dp.Settings.Set(context.Background(), keyPrinterCharset, "ascii"); err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := buildKitchenTicket(context.Background(), dp, "R-0103")
+	if err != nil {
+		t.Fatalf("buildKitchenTicket: %v", err)
+	}
+	if ticket.Station != "KITCHEN" {
+		t.Errorf("ticket.Station = %q, want English fallback %q under ascii charset", ticket.Station, "KITCHEN")
+	}
+	if ticket.OrderLabel != "ORDER" {
+		t.Errorf("ticket.OrderLabel = %q, want English fallback %q under ascii charset", ticket.OrderLabel, "ORDER")
+	}
+	if ticket.OrderType != "Takeaway" {
+		t.Errorf("ticket.OrderType = %q, want English fallback %q under ascii charset", ticket.OrderType, "Takeaway")
 	}
 }
 
@@ -185,8 +330,16 @@ func TestPrintKitchen_ZeroStations_ByteIdenticalLegacyTicket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Station != kitchenStation {
-		t.Fatalf("legacy ticket station = %q, want %q", legacy.Station, kitchenStation)
+	// legacy.Station is the PRINTED (translated) header, not the fixed
+	// kitchenStation audit identifier — those are deliberately different
+	// things since ut-docs#261 (see kitchenTicketFor's doc comment).
+	// Comparing against kitchenStation directly would only pass by
+	// coincidence because en's kitchen.ticket.station_default happens to
+	// equal "KITCHEN"; assert against the actual translation instead so
+	// this stays meaningful under any default locale.
+	wantHeader := httpx.T(httpx.DefaultLocale(), "kitchen.ticket.station_default")
+	if legacy.Station != wantHeader {
+		t.Fatalf("legacy ticket station = %q, want %q", legacy.Station, wantHeader)
 	}
 	want := print.RenderKitchenTicket(legacy)
 	if !bytes.Equal(got, want) {
@@ -423,5 +576,55 @@ func TestPrintKitchen_BlankAddressStationFallsBackToDefault(t *testing.T) {
 	}
 	if !bytes.Contains(got, []byte("Steak")) {
 		t.Fatal("Steak must still reach the default kitchen printer, not vanish")
+	}
+}
+
+// TestPrintKitchen_ShopStationNamedKitchenStaysUntranslated is a real-shop-
+// data regression: nothing stops a shop from naming a kitchen station
+// literally "KITCHEN" (kitchen_stations_repo.go does no name validation),
+// which collides with the internal kitchenStation sentinel used to route
+// the default/unrouted bucket. Before ut-docs#261's review fix,
+// kitchenTicketFor detected "the default bucket" by comparing the station
+// NAME to that sentinel string — so a shop's own station named "KITCHEN"
+// would get silently translated into the shop's configured locale instead
+// of printing verbatim, contradicting this exact ticket's own comment that
+// a shop-entered station name is "never translated". The fix threads an
+// explicit isDefault flag instead of a value comparison; this test proves
+// a real shop station named "KITCHEN" prints untouched even under a
+// non-English default locale.
+func TestPrintKitchen_ShopStationNamedKitchenStaysUntranslated(t *testing.T) {
+	dp, dbase := kitchenRoutingDeps(t)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dbase.DB)
+
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(i18n, "tr")
+	defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
+
+	prn := printerFile(t, "shop-kitchen.prn")
+	stationID, err := repo.CreateKitchenStation(ctx, "KITCHEN", prn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetItemStationRoutes(ctx, "itm-steak", []string{stationID}); err != nil {
+		t.Fatal(err)
+	}
+	seedKitchenSale(t, dbase, "R-1005", "itm-steak")
+
+	targets, err := buildKitchenTargets(ctx, dp, "R-1005")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("want 1 target, got %d", len(targets))
+	}
+	if targets[0].station != "KITCHEN" {
+		t.Errorf("shop-entered station name must print verbatim, got %q", targets[0].station)
+	}
+	if targets[0].isDefault {
+		t.Error("a real routed shop station must never be flagged isDefault")
 	}
 }

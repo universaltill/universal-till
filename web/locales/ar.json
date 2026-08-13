@@ -330,6 +330,8 @@
   "kitchen.print.no_receipt": "لم يتم اختيار طلب",
   "kitchen.print.off": "لم تُضبط طابعة المطبخ",
   "kitchen.print.partial": "فشلت طباعة بعض تذاكر المطبخ",
+  "kitchen.ticket.order_label": "الطلب",
+  "kitchen.ticket.station_default": "المطبخ",
   "menu.back_to_sale": "العودة إلى البيع",
   "modifiers.add_to_cart": "إضافة إلى السلة",
   "modifiers.cancel": "إلغاء",

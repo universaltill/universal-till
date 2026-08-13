@@ -18,7 +18,19 @@ type KitchenTicket struct {
 	Station string
 	// OrderNo is the receipt/order number the ticket belongs to.
 	OrderNo string
-	// OrderType is dine-in / takeaway / delivery / phone (optional).
+	// OrderLabel is the pre-translated word printed before OrderNo ("ORDER"
+	// in English). Optional — defaults to "ORDER" at render time if the
+	// caller doesn't set it, so existing callers/tests that don't care
+	// about i18n keep working unchanged. Same "callers translate labels"
+	// convention as OrderType/Timestamp below.
+	OrderLabel string
+	// OrderType is the pre-translated, display-ready order-type text (e.g.
+	// "Takeaway" in the shop's configured locale) — dine-in / takeaway /
+	// delivery / phone, printed upper-cased at render time. Empty for
+	// dine-in (optional; prints nothing, a deliberate product decision —
+	// ut-docs#261 — not a missing translation). Callers translate before
+	// assigning; this package has no i18n dependency of its own and stays
+	// byte-testable.
 	OrderType string
 	// Table is a table or tab label (optional).
 	Table string
@@ -34,6 +46,15 @@ type KitchenItem struct {
 	Qty       string // pre-formatted ("2")
 	Name      string
 	Modifiers []string
+}
+
+// orderLabel returns t.OrderLabel, or "ORDER" if the caller left it unset —
+// keeps existing/i18n-agnostic callers producing legible output.
+func orderLabel(t KitchenTicket) string {
+	if s := strings.TrimSpace(t.OrderLabel); s != "" {
+		return s
+	}
+	return "ORDER"
 }
 
 // RenderKitchenTicket produces the ESC/POS byte stream for a kitchen ticket:
@@ -57,10 +78,13 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 		b.Write(cmdDoubleOff)
 	}
 	if s := strings.TrimSpace(t.OrderNo); s != "" {
-		line(clip("ORDER "+s, Width))
+		line(clip(orderLabel(t)+" "+s, Width))
 	}
 	b.Write(cmdBoldOff)
 	if s := strings.TrimSpace(t.OrderType); s != "" {
+		// strings.ToUpper isn't Turkish-locale-aware (dotless/dotted I) —
+		// a pre-existing cosmetic quirk, more reachable now that this can
+		// carry real translated text, not just English. Not solved here.
 		line(clip(strings.ToUpper(s), Width))
 	}
 	if s := strings.TrimSpace(t.Table); s != "" {
@@ -109,7 +133,7 @@ func RenderKitchenTicketText(t KitchenTicket) string {
 		center(s)
 	}
 	if s := strings.TrimSpace(t.OrderNo); s != "" {
-		center("ORDER " + s)
+		center(orderLabel(t) + " " + s)
 	}
 	if s := strings.TrimSpace(t.OrderType); s != "" {
 		center(strings.ToUpper(s))
