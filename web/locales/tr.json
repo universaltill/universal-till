@@ -1318,7 +1318,8 @@
   "help.untranslated": "Bu konu henüz çevrilmedi — İngilizce sürüm gösteriliyor.",
   "help.open": "Bu sayfa için yardım",
   "plugins.manage.broken": "Bozuk",
-  "plugins.status.broken_binary": "Bu eklentinin dosyaları bu kasada eksik veya okunamıyor — mağazadan otomatik olarak yeniden yüklenecek.",
+  "plugins.status.broken_binary": "Bu eklentinin dosyaları bu kasada eksik veya okunamıyor. Mağazadan kurulan eklentiler otomatik olarak yeniden yüklenir; dosyadan içe aktarılan bir eklentinin bu kasada yeniden içe aktarılması gerekir.",
   "pos.toast.tax_unavailable": "Satış tamamlanamadı: \"%s\" için vergi oranı, vergi eklentisi onarılırken kullanılamıyor. Ürünü kaldırın veya birazdan tekrar deneyin.",
+  "pos.toast.tax_unavailable_all": "Ödeme şu anda yapılamıyor — vergi eklentisi onarılıyor. Kısa süre sonra tekrar deneyin.",
   "selforder.checkout.tax_unavailable": "Bazı ürünler şu anda buradan sipariş edilemiyor — lütfen kasada ödeyin."
 }

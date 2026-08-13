@@ -30,13 +30,14 @@
         <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem; flex-wrap:wrap">
           <span class="tag" x-show="p.enabled" style="background:rgba(34,197,94,.2); color:#15803d">{{ T "plugins.manage.enabled" }}</span>
           <span class="tag" x-show="!p.enabled" style="background:rgba(148,163,184,.3); color:#475569">{{ T "plugins.manage.disabled" }}</span>
-        {{/* ut-docs#368: install_state='broken' — registered but its binary
-             failed to load (e.g. a join snapshot's row with no files). Same
-             ⚠-suffix warning shape as the sync chip; the tooltip explains
-             that the sync loop reinstalls marketplace plugins automatically. */}}
-        <span class="tag" x-show="p.state === 'broken'"
-              style="background:rgba(239,68,68,.2); color:#b91c1c"
-              title="{{ T "plugins.status.broken_binary" }}">{{ T "plugins.manage.broken" }} ⚠</span>
+          {{/* ut-docs#368: install_state='broken' — registered but its binary
+               failed to load (e.g. a join snapshot's row with no files). Same
+               ⚠-suffix warning shape as the sync chip; the tooltip explains
+               how each kind of plugin recovers (store installs re-fetch
+               automatically; file imports need a manual re-import). */}}
+          <span class="tag" x-show="p.state === 'broken'"
+                style="background:rgba(239,68,68,.2); color:#b91c1c"
+                title="{{ T "plugins.status.broken_binary" }}">{{ T "plugins.manage.broken" }} ⚠</span>
           <span class="tag" x-text="p.trust"></span>
           <span class="tag" x-show="p.hasUpdate" style="background:rgba(251,146,60,.25); color:#c2410c" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
         </div>

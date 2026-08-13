@@ -443,6 +443,20 @@ func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, p
 	}
 }
 
+// brokenRefetchMaxAttempts and brokenRefetchBackoffTicks bound the broken-
+// plugin marketplace re-fetch (ut-docs#368 round-2 review): a plugin can be
+// broken for a reason a re-fetch can never fix (e.g. a binary that installs
+// fine but can never load on this device), and without a cap the loop would
+// hit the marketplace on every 30s tick forever. After
+// brokenRefetchMaxAttempts consecutive attempts without an observed heal,
+// the loop attempts only every brokenRefetchBackoffTicks-th tick (~5 min at
+// the 30s cadence) — degraded, not stopped, so a marketplace outage that
+// merely OUTLASTS the burst still recovers on its own.
+const (
+	brokenRefetchMaxAttempts  = 5
+	brokenRefetchBackoffTicks = 10
+)
+
 // convergePluginSet makes this till's marketplace-installed plugin set match
 // the given primary registry rows — the shared diff loop of both the
 // changed-bundle and steady-state (cached rows) paths of syncPullPlugins.
@@ -478,9 +492,20 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 			continue
 		}
 		if installed && version == row.Version && installState != data.PluginStateBroken {
+			clearBrokenRefetch(d, row.ListingID)
 			continue
 		}
 		if installed && installState == data.PluginStateBroken {
+			// Bounded retry (round-2 review): a re-fetch can't fix every
+			// breakage (a binary that installs fine but can never load on
+			// this device re-breaks on the very next reload), so past
+			// brokenRefetchMaxAttempts consecutive attempts without an
+			// observed heal the loop degrades to one attempt every
+			// brokenRefetchBackoffTicks ticks instead of every tick.
+			if !shouldRefetchBroken(d, row.ListingID, row.Version) {
+				converged = false // still broken — just not retrying this tick
+				continue
+			}
 			logging.L().Warnf("plugin sync: %s (%s@%s) is broken locally (registered but not loadable) — re-fetching from the marketplace",
 				row.PluginName, row.ListingID, row.Version)
 		}
@@ -496,7 +521,13 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 
 	// Uninstalls: a listing this till holds as active that the primary no
 	// longer has. Keyed off local plugin_install_status records, so only
-	// marketplace-installed plugins can ever be pruned (scope boundary above).
+	// marketplace-installed plugins can ever be pruned (scope boundary
+	// above). NOTE: a record stays State=Active while its plugin is merely
+	// BROKEN (installed but unloadable, plugins.install_state='broken') —
+	// the install lifecycle and load health are separate facts, and
+	// wasm Sync's markBroken must never demote the record to Failed, or this
+	// loop skips the plugin forever and it can never be uninstalled from a
+	// replica (round-2 review BLOCKER; replicas reject manual uninstall).
 	records, err := statusStore.List(ctx)
 	if err != nil {
 		logging.L().Errorf("plugin sync: list local install records: %v", err)
@@ -516,4 +547,50 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		logging.L().Infof("plugin sync: uninstalled %s to follow the primary", rec.PluginID)
 	}
 	return converged
+}
+
+// shouldRefetchBroken reports whether this tick may attempt a marketplace
+// re-fetch for a broken plugin, and does the attempt bookkeeping when it
+// says yes. The first brokenRefetchMaxAttempts consecutive ticks attempt
+// every time (covers the ordinary join-snapshot heal, which succeeds on
+// attempt one); past that, only every brokenRefetchBackoffTicks-th tick
+// attempts, and the first skipped tick logs — at error level, distinct from
+// the per-attempt warn — that automatic recovery is not progressing.
+// Counted per listing+version, in memory (Deps.BrokenRefetch); the counter
+// clears when convergePluginSet later observes the plugin healthy, or when
+// the primary moves the listing to a different version.
+func shouldRefetchBroken(d *common.Deps, listingID, version string) bool {
+	d.BrokenRefetchMu.Lock()
+	defer d.BrokenRefetchMu.Unlock()
+	if d.BrokenRefetch == nil {
+		d.BrokenRefetch = map[string]*common.BrokenRefetchState{}
+	}
+	st := d.BrokenRefetch[listingID]
+	if st == nil || st.Version != version {
+		st = &common.BrokenRefetchState{Version: version}
+		d.BrokenRefetch[listingID] = st
+	}
+	if st.Attempts < brokenRefetchMaxAttempts {
+		st.Attempts++
+		return true
+	}
+	st.TicksSkipped++
+	if st.TicksSkipped >= brokenRefetchBackoffTicks {
+		st.TicksSkipped = 0
+		st.Attempts++ // stays past the cap: the slow cadence continues
+		return true
+	}
+	if st.TicksSkipped == 1 {
+		logging.L().Errorf("plugin sync: %s@%s is still broken after %d re-fetch attempts — automatic recovery is not progressing (a re-fetch can't fix a binary that can't load on this device); backing off to one attempt every %d ticks. Fix the cause (e.g. publish/install a compatible version on the primary) or re-install manually on the primary; restarting this till also resets the backoff",
+			listingID, version, st.Attempts, brokenRefetchBackoffTicks)
+	}
+	return false
+}
+
+// clearBrokenRefetch forgets a listing's re-fetch attempt count once the
+// plugin is observed installed-and-healthy at the primary's version.
+func clearBrokenRefetch(d *common.Deps, listingID string) {
+	d.BrokenRefetchMu.Lock()
+	defer d.BrokenRefetchMu.Unlock()
+	delete(d.BrokenRefetch, listingID)
 }

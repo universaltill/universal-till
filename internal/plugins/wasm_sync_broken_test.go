@@ -41,8 +41,12 @@ func TestWasmSync_MarksMissingBinaryBrokenAndHealsOnRecovery(t *testing.T) {
 		('bwh1', ?, 'tax.rate.ask', 'tax.rate', 1)`, pluginID); err != nil {
 		t.Fatalf("seed hooks: %v", err)
 	}
-	// A listing-linked install-status record (marketplace install) so the
-	// broken transition also surfaces on the store page's status surface.
+	// A listing-linked install-status record (marketplace install). The
+	// broken/heal transitions must leave it UNTOUCHED (round-2 review
+	// BLOCKER): its State tracks the install lifecycle, and this plugin DID
+	// install fine before breaking at load time — demoting it to Failed made
+	// convergePluginSet's prune loop (which only prunes Active records) skip
+	// the plugin forever, so it could never be uninstalled from a replica.
 	statusStore := NewInstallStatusStore(db)
 	if err := statusStore.Save(ctx, InstallStatusRecord{
 		ListingID: "listing-broken", PluginID: pluginID, PluginName: "BrokenWasm",
@@ -64,9 +68,12 @@ func TestWasmSync_MarksMissingBinaryBrokenAndHealsOnRecovery(t *testing.T) {
 	if info.InstallState != data.PluginStateBroken {
 		t.Fatalf("expected install_state 'broken' after a failed load, got %q", info.InstallState)
 	}
-	// The install-status record follows (listing-linked plugins only).
-	if rec, ok, _ := statusStore.Get(ctx, "listing-broken"); !ok || rec.State != InstallStateFailed || rec.MessageKey != "plugins.status.broken_binary" {
-		t.Fatalf("expected a Failed/broken_binary install-status record, got %+v (ok=%v)", rec, ok)
+	// The install-status record is left exactly as it was: still Active, no
+	// message — plugins.install_state='broken' is the single source of truth
+	// for the broken condition (the plugins-page chip and the tax
+	// fail-closed check both read it directly).
+	if rec, ok, _ := statusStore.Get(ctx, "listing-broken"); !ok || rec.State != InstallStateActive || rec.MessageKey != "" {
+		t.Fatalf("expected the install-status record untouched (Active, no message) while broken, got %+v (ok=%v)", rec, ok)
 	}
 	// The tally names the failure instead of pretending everything loaded.
 	foundTally := false
@@ -104,8 +111,9 @@ func TestWasmSync_MarksMissingBinaryBrokenAndHealsOnRecovery(t *testing.T) {
 	if info.InstallState != data.PluginStateInstalled {
 		t.Fatalf("expected install_state healed back to 'installed' after a successful load, got %q", info.InstallState)
 	}
+	// Still untouched after the heal — there was never anything to flip back.
 	if rec, ok, _ := statusStore.Get(ctx, "listing-broken"); !ok || rec.State != InstallStateActive || rec.MessageKey != "" {
-		t.Fatalf("expected the install-status record restored to Active after heal, got %+v (ok=%v)", rec, ok)
+		t.Fatalf("expected the install-status record still untouched (Active, no message) after heal, got %+v (ok=%v)", rec, ok)
 	}
 	w.mu.Lock()
 	_, loaded = w.modules[pluginID]
@@ -119,7 +127,8 @@ func TestWasmSync_MarksMissingBinaryBrokenAndHealsOnRecovery(t *testing.T) {
 }
 
 // A plugin with NO listing (file-imported) still flips to broken/installed
-// in the plugins table — it just has no install-status record to update.
+// in the plugins table — and Sync must not invent an install-status record
+// for it (nor touch any other).
 func TestWasmSync_BrokenWithoutListingSkipsStatusStore(t *testing.T) {
 	db := managerTestDB(t)
 	ctx := context.Background()

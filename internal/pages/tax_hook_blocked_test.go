@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -109,6 +112,39 @@ func TestAskTaxRateBP_DisabledBrokenPluginDoesNotBlock(t *testing.T) {
 	_, _, blocked := asker.AskTaxRateBP(pos.BasketLine{ItemID: "itm1", TaxCodeID: "tax_std", TaxRateBP: 2000}, "eat_in")
 	if blocked {
 		t.Fatal("a deliberately disabled plugin must not block checkout")
+	}
+}
+
+// MINOR (ut-docs#368 round-2 review): a DB error in taxAuthorityBroken fails
+// OPEN (a DB that can't answer a COUNT can't record a sale either, so this
+// doesn't reopen the silent-wrong-tax hole) — but never SILENTLY: a
+// persistent read failure disables the whole protection, so it must leave an
+// error-level signal in the log.
+func TestTaxAuthorityBroken_DBErrorFailsOpenButLogs(t *testing.T) {
+	db := openPagesTestDB(t)
+	seedForPages(t, db)
+	seedTaxPlugin(t, db)
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+	gen := bus.Generation()
+	db.Close() // every read from here on fails
+
+	asker := &pluginTaxRateAsker{db: db}
+	start := time.Now()
+	if asker.taxAuthorityBroken(gen) {
+		t.Fatal("a DB error must fail open (not blocked)")
+	}
+	found := false
+	for _, p := range logging.Recent() {
+		if p.At.After(start.Add(-time.Second)) && strings.Contains(p.Msg, "tax fail-closed") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("failing open silently disables the protection with zero signal — expected an error log; recent: %+v", logging.Recent())
 	}
 }
 
