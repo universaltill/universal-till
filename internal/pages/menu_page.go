@@ -30,6 +30,7 @@ var iconFor = map[string]string{
 	"/users":            "👤",
 	"/locations":        "📍",
 	"/kitchen-stations": "🍳",
+	"/country-settings": "🌍",
 	"/translations":     "🌐",
 	"/tills":            "🖥️",
 	"/report-issue":     "🐞",
@@ -54,6 +55,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 			add("/users", "users.title")
 			add("/locations", "locations.title")
 			add("/kitchen-stations", "kitchenstations.title")
+			add("/country-settings", "countrysettings.title")
 			add("/translations", "translations.title")
 			add("/report-issue", "issuereport.title")
 		}
