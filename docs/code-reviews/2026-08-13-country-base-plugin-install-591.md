@@ -210,6 +210,26 @@ confirm only those 5 fields changed) — the exact workaround
 `ut-docs#620`'s own body documents as the accepted deviation. Re-ran
 `bash scripts/ci/guard-docs-shots.sh` locally to confirm it now passes.
 
+## Post-push merge-conflict resolution (guard-docs-shots, ut-docs#620)
+
+PR universaltill/universal-till#322 (the `guard-docs-shots.sh` narrowing
+fix, unrelated to this card) merged to `main` while this PR was open,
+changing both the guard's algorithm and `web/help/img/manifest.json` —
+a real conflict in the manifest, not just a stale-hash mismatch. Merged
+`main` into this branch, took `main`'s manifest as the resolution base,
+then **actually re-ran `make docs-shots`** (confirmed runnable in this
+cloud session via ut-docs#622's pre-installed-Chromium path) against the
+merged tree rather than hand-patching a second time. All 68 screenshots
+passed. The `display` topic's own screenshots came back **byte-identical**
+to what was already committed — direct visual confirmation that the new
+pending-plugin chip (`{{ if .pendingBasePlugins }}`) really is invisible
+against the empty fixture, matching the zero-pixel-impact claim made
+before the merge. A handful of unrelated topics (`alerts`, `designer`,
+`users`/ar) came back with pixel-only diffs from browser-rendering
+variance (ut-docs#632, already tracked) — reverted those to their
+committed originals so this PR's diff stays scoped to `display` and the
+surface hash. Full gate re-run clean after the merge (below).
+
 ## Follow-ups (not blocking)
 
 - `setupBasePlugins` maps a country to a *locale* only. A country with more
