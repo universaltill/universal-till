@@ -197,6 +197,52 @@ func TestDeleteCustomCountryRemovesIt(t *testing.T) {
 	}
 }
 
+// ut-docs#659 review finding B3: the self-review claimed "is_builtin is
+// derived from the shipped defaults on every write, never taken from the
+// caller," but no test actually set IsBuiltin: true on a caller-supplied
+// row — TestDeleteCustomCountryRemovesIt above only proves the *default*
+// (false) is stored correctly, which would pass identically even if Upsert
+// copied the caller's flag straight through. This is the missing case: a
+// caller claiming builtin status for a code that isn't one of the shipped
+// defaults must be ignored, because IsBuiltin is exactly what flips Delete
+// from "remove the row" to "restore it" — a spoofed true would silently
+// change delete semantics for an operator-added country.
+func TestUpsertIgnoresCallerSuppliedIsBuiltin(t *testing.T) {
+	_, repo := openCountryTestDB(t)
+	ctx := context.Background()
+
+	spoofed := CountrySetting{
+		Code:           "NO",
+		Currency:       "NOK",
+		CurrencySymbol: "kr",
+		TaxRateBP:      2500,
+		TaxInclusive:   true,
+		ArchiveMinDays: GlobalArchiveMinDays,
+		IsBuiltin:      true, // NO is not a shipped default -- must be ignored
+	}
+	if err := repo.Upsert(ctx, spoofed); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, ok, _ := repo.Get(ctx, "NO")
+	if !ok {
+		t.Fatal("country not stored")
+	}
+	if got.IsBuiltin {
+		t.Fatal("Upsert must derive is_builtin from the shipped defaults, not trust the caller's field -- " +
+			"a spoofed true here would make Delete restore instead of remove")
+	}
+
+	// The consequence, made concrete: Delete on this "spoofed builtin" row
+	// must still remove it outright, exactly like any other custom country.
+	if err := repo.Delete(ctx, "NO"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, ok, _ := repo.Get(ctx, "NO"); ok {
+		t.Error("a country with a spoofed is_builtin=true must still delete outright, not restore -- " +
+			"it was never one of the shipped defaults")
+	}
+}
+
 // Codes are the join key with settings' KeyCountry and with the wizard, so
 // they are normalised on write rather than trusted.
 func TestCountrySettingsNormalisesAndValidates(t *testing.T) {
