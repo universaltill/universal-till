@@ -349,6 +349,35 @@ func TestStockForExport_VariantScoped(t *testing.T) {
 	}
 }
 
+// TestStockForExport_VariantScoped_InactiveParent covers the half of the
+// active-filter TestStockForExport_VariantScoped's fixture never exercises:
+// an ACTIVE variant whose PARENT item is inactive. variantStockForExport's
+// WHERE clause requires both i.is_active AND v.is_active, but a fixture
+// with only an inactive *variant* (the existing test) can't prove the
+// i.is_active half is actually wired up — a mutation deleting it would
+// still pass. This must fail against that mutation.
+func TestStockForExport_VariantScoped_InactiveParent(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbx.d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-inactive-parent', 'SKU-IP', 'Discontinued Line', 200, 5, 0)`)
+	mustExec(`INSERT INTO item_variants(id, item_id, sku, name, price, is_active) VALUES('var-ip', 'itm-inactive-parent', 'SKU-IP-V', '500ml', 200, 1)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity) VALUES('inv-var-ip', NULL, 'var-ip', 'loc1', 7)`)
+
+	got, err := dbx.repo.StockForExport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no rows for a variant whose parent item is inactive, got %+v", got)
+	}
+}
+
 // TestStockForExport_VariantScoped_NullSKU covers a variant with no SKU
 // (item_variants.sku is a nullable, unique column — see 001_init.sql), which
 // TestStockForExport_VariantScoped's fixture doesn't exercise: it must scan

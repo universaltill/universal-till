@@ -551,6 +551,89 @@ func TestExportDispatch_PayloadIncludesStockData(t *testing.T) {
 	}
 }
 
+// TestExportDispatch_PayloadIncludesVariantStockData is the ut-docs#240
+// wire-level counterpart to TestStockForExport_VariantScoped: proves
+// variant_id/variant_name actually round-trip through the real dispatched
+// JSON payload (a tag typo or a missing `omitempty` would ship silently
+// past the repo-level tests alone, which only assert on the Go struct).
+// Unmarshals into a generic map so item-level rows can be asserted to omit
+// the keys entirely, not just carry an empty string.
+func TestExportDispatch_PayloadIncludesVariantStockData(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp2", "csv", "CSV Export")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items(id, sku, name, base_price, reorder_level, is_active) VALUES('itm-var-dispatch','SKU-VD','Fizzy Drink',200,5,1)`)
+	mustExec(`INSERT INTO item_variants(id, item_id, sku, name, price, is_active) VALUES('var-vd','itm-var-dispatch','SKU-VD-330','330ml',200,1)`)
+	mustExec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv-var-dispatch',NULL,'var-vd','loc_main',9,datetime('now'))`)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp2", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Stock []map[string]any `json:"stock"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+
+	var variantRow, itemRow map[string]any
+	for _, row := range payload.Stock {
+		if row["item_id"] == "itm-var-dispatch" {
+			if _, hasVariant := row["variant_id"]; hasVariant {
+				variantRow = row
+			} else {
+				itemRow = row
+			}
+		}
+	}
+	if variantRow == nil {
+		t.Fatalf("expected a variant-scoped row for itm-var-dispatch in the dispatched payload, got %+v", payload.Stock)
+	}
+	if variantRow["variant_id"] != "var-vd" || variantRow["variant_name"] != "330ml" || variantRow["sku"] != "SKU-VD-330" {
+		t.Fatalf("unexpected variant row on the wire: %+v", variantRow)
+	}
+	if variantRow["current_qty"] != 9.0 {
+		t.Fatalf("unexpected variant qty on the wire: %+v", variantRow)
+	}
+	// itm1's baseline item-level row (seeded by seedForPages) proves
+	// omitempty actually omits the keys on an item-level row, not just
+	// sends them as empty strings.
+	for _, row := range payload.Stock {
+		if _, hasVariant := row["variant_id"]; hasVariant {
+			continue
+		}
+		if _, present := row["variant_name"]; present {
+			t.Fatalf("item-level row must omit variant_name entirely (omitempty), got %+v", row)
+		}
+		itemRow = row
+	}
+	if itemRow == nil {
+		t.Fatalf("expected at least one item-level row in the payload, got %+v", payload.Stock)
+	}
+}
+
 // TestExportDispatch_OmitsSalesWithoutSalesReadPermission is the ut-docs#228
 // regression: a plugin that has NOT been granted sales:read must not receive
 // the sales ledger, even though it has events:receive (so AskPlugin itself
