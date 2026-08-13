@@ -79,10 +79,11 @@ func timezoneNameFromFiles() string {
 	return ""
 }
 
-// setupTimezoneCountry maps common IANA zone names to a setupCountries code.
-// Not exhaustive — only the countries the wizard already knows how to
-// prefill (setupCountries). An unmapped zone deliberately resolves to "": the
-// card's own instruction is "leave it unset rather than guessing."
+// setupTimezoneCountry maps common IANA zone names to a country_settings
+// code. Not exhaustive — only the countries the wizard already knows how to
+// prefill (ut-docs#660: the codes detectCountry is handed, ultimately
+// data.CountrySettingsRepo). An unmapped zone deliberately resolves to "":
+// the card's own instruction is "leave it unset rather than guessing."
 var setupTimezoneCountry = map[string]string{
 	"Europe/London":       "GB",
 	"Asia/Tehran":         "IR",
@@ -129,24 +130,39 @@ func parseLocaleEnv(v string) (lang, region string) {
 	return lang, region
 }
 
-// detectCountry returns a setupCountries code from the OS timezone, falling
-// back to the locale's own region if the timezone doesn't resolve (e.g. a
-// timezone spanning several countries). Returns "" — never a guess — when
-// neither signal matches a country this wizard knows about.
-func detectCountry() string {
-	if c := setupTimezoneCountry[osTimezoneName()]; c != "" {
+// detectCountry returns a country_settings code from the OS timezone,
+// falling back to the locale's own region if the timezone doesn't resolve
+// (e.g. a timezone spanning several countries). Returns "" — never a guess —
+// when neither signal matches a country this wizard knows about.
+//
+// codes is the caller's currently-configured country list (ut-docs#660: the
+// wizard now reads country_settings rather than a hardcoded slice, so what
+// "a country this wizard knows about" means can change at runtime — an
+// admin-deleted custom country must stop being a valid detection target,
+// and an admin-added one should become one without a code change here).
+// "OTHER" is expected to already be excluded by the caller, same contract
+// detectCountry has always had.
+func detectCountry(codes []string) string {
+	if c := setupTimezoneCountry[osTimezoneName()]; c != "" && containsCode(codes, c) {
 		return c
 	}
 	_, region := parseLocaleEnv(osLocaleEnv())
 	if region == "" {
 		return ""
 	}
-	for _, c := range setupCountries {
-		if c.Code != "OTHER" && c.Code == region {
-			return c.Code
-		}
+	if containsCode(codes, region) {
+		return region
 	}
 	return ""
+}
+
+func containsCode(codes []string, code string) bool {
+	for _, c := range codes {
+		if c == code {
+			return true
+		}
+	}
+	return false
 }
 
 // detectLanguage returns the OS-detected language code and whether it is one
