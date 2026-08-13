@@ -3,13 +3,13 @@ id: my-reports
 title: Raporlarım
 section: Bağlantı ve eklentiler
 order: 361
-summary: "Bu kasadan gönderilen sorun raporlarını (en son 100 tanesi) bilinen son durumlarıyla görün — çevrimdışı da çalışır."
+summary: "Bu kasanın kaydettiği sorun raporlarını — gönderilmiş ya da gönderim bekleyen (en son 100 tanesi) — bilinen son durumlarıyla görün. Çevrimdışı da çalışır."
 routes: [/my-reports]
 ---
 
 # Raporlarım
 
-Bu kasadan gönderilen sorun raporlarını (en son 100 tanesi) bilinen son durumlarıyla görün — çevrimdışı da çalışır.
+Bu kasanın kaydettiği sorun raporlarını — gönderilmiş ya da gönderim bekleyen (en son 100 tanesi) — bilinen son durumlarıyla görün. Çevrimdışı da çalışır.
 
 ## Sayfa neyi gösterir
 
@@ -26,6 +26,6 @@ Durumların anlamı:
 
 ## Çevrimdışı
 
-Bu sayfanın internete hiç ihtiyacı yoktur: her zaman mağazanın son çevrimiçi olduğu andaki durumları gösterir ve bağlantı geri geldiğinde bunları arka planda otomatik olarak yeniler. Az önce kaydettiğiniz bir rapor, yüklendikten kısa süre sonra burada görünür.
+Bu sayfanın internete hiç ihtiyacı yoktur: her zaman mağazanın son çevrimiçi olduğu andaki durumları gösterir ve bağlantı geri geldiğinde bunları arka planda otomatik olarak yeniler. Az önce kaydettiğiniz bir rapor burada hemen "gönderim bekliyor" olarak görünür — gerçekten yüklendiğinde "Gönderildi, inceleme bekliyor" durumuna geçer.
 
 Sayfayı bildirim panelindeki **Raporlarımı görüntüle** bağlantısından açın (üst çubuktaki 🐞 düğmesi — Sorun bildirme konusuna bakın).

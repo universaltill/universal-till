@@ -68,13 +68,16 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager or admin role required", http.StatusForbidden)
 			return
 		}
-		reports, err := data.NewIssueReportsRepo(d.Db).ListSent(r.Context(), 100)
+		const rowLimit = 100
+		reports, err := data.NewIssueReportsRepo(d.Db).ListSent(r.Context(), rowLimit)
 		if err != nil {
 			http.Error(w, "failed to load reports", http.StatusInternalServerError)
 			return
 		}
 		rows := make([]myReportRow, 0, len(reports))
+		sentIDs := make(map[string]bool, len(reports))
 		for _, rec := range reports {
+			sentIDs[rec.ID] = true
 			rows = append(rows, myReportRow{
 				ID:             rec.ID,
 				Note:           rec.Note,
@@ -103,6 +106,15 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 			logging.L().Warnf("my-reports: listing pending issue reports: %v", perr)
 		}
 		for _, b := range pending {
+			// A successful upload's Discard normally removes the bundle from
+			// disk in the same tick that adds its issue_reports_sent row, but
+			// Discard itself can fail (logged, never fatal — see
+			// uploadPendingIssueReports) and leave both behind briefly. Skip
+			// the pending copy rather than rendering the same report twice —
+			// once with its real cloud status, once as merely "pending".
+			if sentIDs[b.Meta.ID] {
+				continue
+			}
 			row := myReportRow{
 				ID:             b.Meta.ID,
 				Note:           b.Meta.Note,
@@ -131,7 +143,17 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		// Newest-captured first, matching ListSent's own ordering — sent and
 		// still-pending rows are otherwise built in two separate passes above.
-		sort.Slice(rows, func(i, j int) bool { return rows[i].capturedAtTime.After(rows[j].capturedAtTime) })
+		// Stable: captured_at is only second-precision (parseStoredTime), so
+		// two rows can tie — an unstable sort would let their relative order
+		// (ListSent's own DESC ordering, for the sent ones) flip between
+		// renders for no reason.
+		sort.SliceStable(rows, func(i, j int) bool { return rows[i].capturedAtTime.After(rows[j].capturedAtTime) })
+		// The merged list can exceed rowLimit (pending bundles are added on
+		// top of an already-capped sent list) — keep the same "most recent
+		// N" promise the page's intro text and help topic make.
+		if len(rows) > rowLimit {
+			rows = rows[:rowLimit]
+		}
 
 		httpx.Render("ui/pages/my_reports.html", map[string]any{
 			"title":     "My reports",

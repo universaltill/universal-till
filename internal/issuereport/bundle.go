@@ -57,17 +57,21 @@ type Meta struct {
 	// MaxSentFailCount (ut-docs#446). Omitted from JSON — and so zero — for
 	// every bundle saved before this field existed.
 	SentFailCount int `json:"sent_fail_count,omitempty"`
-	// UploadFailCount counts consecutive failed cloud-upload attempts (the
+	// UploadFailCount counts failed cloud-upload attempts (the
 	// uploadIssueReport call itself failing — offline, misconfigured,
-	// unregistered) — distinct from SentFailCount above, which only counts
-	// after a successful upload. Never capped or acted on by cloudsync
-	// itself (the upload keeps retrying unboundedly, per offline-first —
-	// ADR-0003); it exists purely so /my-reports (ut-docs#637) can tell a
-	// bundle that's merely waiting for connectivity from one that has been
-	// failing for a while. Reset implicitly: once the upload eventually
-	// succeeds the bundle is discarded outright, so a persisted nonzero
-	// count only ever exists on a still-pending bundle. See
-	// RecordUploadFailure and UploadFailingThreshold.
+	// unregistered) since the last successful upload — distinct from
+	// SentFailCount above, which only counts after a successful upload.
+	// Never capped or acted on by cloudsync itself (the upload keeps
+	// retrying unboundedly, per offline-first — ADR-0003); it exists purely
+	// so /my-reports (ut-docs#637) can tell a bundle that's merely waiting
+	// for connectivity from one that has been failing for a while. Reset to
+	// zero by ClearUploadFailure once the upload succeeds — usually moot
+	// because a successful upload immediately discards the bundle, but NOT
+	// moot when the immediately following SaveSent step then fails and the
+	// bundle survives for retry (see uploadPendingIssueReports): without
+	// the explicit clear, a since-recovered bundle would keep showing its
+	// stale failure reason. See RecordUploadFailure, ClearUploadFailure and
+	// UploadFailingThreshold.
 	UploadFailCount int `json:"upload_fail_count,omitempty"`
 	// UploadFailReason is a coarse, translatable classification of the most
 	// recent upload failure — one of UploadFailReasonNotRegistered or
@@ -344,6 +348,44 @@ func RecordUploadFailure(id, reason string) (int, error) {
 		return 0, fmt.Errorf("issuereport: persist upload-fail count for %s: %w", id, err)
 	}
 	return meta.UploadFailCount, nil
+}
+
+// ClearUploadFailure resets a bundle's UploadFailCount/UploadFailReason back
+// to zero. Called once a bundle's cloud upload succeeds (independent review,
+// ut-docs#637): the bundle is usually discarded outright right after a
+// successful upload, but if the immediately following SaveSent step then
+// fails, the bundle survives on disk for the next tick's retry (see
+// uploadPendingIssueReports) — without this, its LAST *failed* upload's
+// stale reason (even UploadFailReasonNotRegistered, if this till was JUST
+// enrolled) would keep rendering as failing on /my-reports despite having,
+// in fact, already reached the cloud.
+//
+// A bundle that's already gone by the time this runs (discarded, or never
+// existed) is not an error worth reporting — there's nothing left to clear,
+// and the caller here always calls this immediately after its own
+// successful upload of the very id it's about to either discard or retain.
+func ClearUploadFailure(id string) error {
+	path := filepath.Join(PendingDir, id, "meta.json")
+	mb, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("issuereport: read meta for %s: %w", id, err)
+	}
+	var meta Meta
+	if err := json.Unmarshal(mb, &meta); err != nil {
+		return fmt.Errorf("issuereport: decode meta for %s: %w", id, err)
+	}
+	if meta.UploadFailCount == 0 && meta.UploadFailReason == "" {
+		return nil // already clear — skip the write
+	}
+	meta.UploadFailCount = 0
+	meta.UploadFailReason = ""
+	if err := writeMeta(path, meta); err != nil {
+		return fmt.Errorf("issuereport: clear upload-fail state for %s: %w", id, err)
+	}
+	return nil
 }
 
 // writeMeta is overridable in tests that need to simulate the durable write

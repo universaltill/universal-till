@@ -84,10 +84,24 @@ type directive struct {
 // Tick runs one full sync round: heartbeat up, directives down, apply,
 // report. Exported for tests; Start drives it on the loop.
 func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) error {
+	// Issue-report uploads (ADR-0022, spec 012) get a chance on EVERY tick,
+	// before the registration/connectivity gates below — ut-docs#637 review:
+	// this used to sit at the tail of Tick (see the pull side, still there),
+	// which meant an unregistered till (early return just below) or one
+	// whose /v1/stores/sync call is failing (the pushSync error return
+	// further down) never reached it at all — exactly the two cases this
+	// ticket's "surfaced as failing" gate exists for, so the failure count
+	// it depends on could never advance in either. Safe to run unconditionally
+	// here: uploadPendingIssueReports/uploadIssueReport already self-guard on
+	// registration internally (no network call when unregistered — see
+	// issue_reports.go's own check) and issuereport.Pending() is a pure local
+	// disk read.
+	uploadPendingIssueReports(ctx, cfg, db)
+
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
 	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
-		return nil // not registered — nothing to sync
+		return nil // not registered — nothing further to sync
 	}
 
 	dirs, err := pushSync(ctx, cfg, db, hooks)
@@ -113,14 +127,14 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 			logging.L().Infof("cloudsync: directive %s (%s) %s: %s", d.ID, d.Type, status, msg)
 		}
 	}
-	// Issue-reporter bundles (ADR-0022, spec 012): best-effort, same "leave
-	// it and retry next tick" spirit as everything above — a manager's bug
-	// report can lag behind an offline stretch with no harm done. Both
-	// directions ride this tick (ut-docs#348): pending bundles go up (media
-	// discarded once a retained record is saved), then the cloud's
-	// per-report statuses come down onto those retained rows so /my-reports
-	// shows what became of each report.
-	uploadPendingIssueReports(ctx, cfg, db)
+	// Issue-reporter status pull (ADR-0022, spec 012, ut-docs#348): the
+	// cloud's per-report statuses come down onto the retained
+	// issue_reports_sent rows so /my-reports shows what became of each
+	// report. Best-effort, same "leave it and retry next tick" spirit as
+	// everything above. The upload direction moved to the top of Tick
+	// (ut-docs#637) — this pull direction correctly stays gated behind
+	// registration/connectivity above: there is nothing to pull without
+	// them.
 	pullIssueReportStatuses(ctx, cfg, db)
 	return nil
 }
