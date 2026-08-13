@@ -280,6 +280,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	StartEODScheduler(bgCtx, dp, wg)                // background Z-report (docs: G30); joined by app.Run's drain
 	StartAutoUpdateScheduler(bgCtx, dp, wg)         // background unattended update (ut-docs#79); joined by app.Run's drain
+	StartBasePluginRetry(bgCtx, dp, wg)             // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
 	registerInvoices(mux, dp)                       // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
@@ -312,6 +313,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerRefund(mux, dp, authSvc)
 	registerUsers(mux, dp, authSvc)
 	registerLocations(mux, dp)
+	registerPromotions(mux, dp)      // promo-code admin: create/edit/deactivate/list (ut-docs#634)
 	registerKitchenStations(mux, dp) // kitchen station routing (ut-docs#516)
 	registerCountrySettings(mux, dp) // per-country defaults (ut-docs#659)
 	registerTranslations(mux, dp, i18n)

@@ -353,6 +353,21 @@
   </div>
   {{ end }}
 
+  {{ if .pendingBasePlugins }}
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "setup.base_plugins.title" }}</h3>
+  {{ range .pendingBasePlugins }}
+  <div class="chip-row" data-testid="pending-base-plugin" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin:.3rem 0">
+    <span class="chip">{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}</span>
+    <button class="btn secondary" data-testid="pending-base-plugin-dismiss"
+            hx-post="/api/settings/dismiss-pending-base-plugin"
+            hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale }}'
+            hx-target="closest .chip-row" hx-swap="outerHTML"
+            hx-disabled-elt="this">{{ T "setup.base_plugins.dismiss_btn" }}</button>
+  </div>
+  {{ end }}
+  {{ end }}
+
   {{ if gt .sampleCount 0 }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.demo_title" }}</h3>
@@ -732,6 +747,21 @@
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
   </form>
   {{ end }}
+  <!-- This till's register identity (ut-docs#268): which register's shift a
+       payout (e.g. Pfandrückgabe) lands on. Unlike the till-name field above,
+       this renders on primary AND replica — every till processes its own
+       local payouts, so its register identity matters everywhere. -->
+  <form hx-post="/api/settings/till-register" hx-swap="none"
+        hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+    <label>{{ T "settings.tills.register_label" }}
+      <select name="register_id" required>
+        {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
+        {{ range .registers }}<option value="{{ .ID }}"{{ if eq .ID $.TillRegisterID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
+      </select>
+    </label>
+    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    <p class="muted">{{ T "settings.tills.register_help" }}</p>
+  </form>
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
 </div>
