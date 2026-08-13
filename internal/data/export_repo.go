@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/universaltill/universal-till/internal/money"
@@ -32,16 +33,25 @@ type ExportSalePayment struct {
 	Amount money.Money `json:"amount"`
 }
 
-// ExportStockRow is one item's on-hand quantity at one stock location, for
-// an export/report plugin's "export.requested.ask" payload (ut-docs#59).
-// It reflects current on-hand stock, not a historical level as of the
+// ExportStockRow is one item's (or one variant's) on-hand quantity at one
+// stock location, for an export/report plugin's "export.requested.ask"
+// payload (ut-docs#59; variant rows added by ut-docs#240 — ADR-0043). It
+// reflects current on-hand stock, not a historical level as of the
 // requested date range's end — there is no stock-movement history table to
 // reconstruct a past-dated quantity from (a future card if a real fiscal
 // format ever needs it).
+//
+// VariantID/VariantName are empty for an item-level row. When set, the row
+// is variant-scoped: ItemID/Name still identify the *parent* item (so a
+// plugin can group by item), SKU is the variant's own SKU (not the
+// parent's), and CurrentQty is that variant's own stock — never folded into
+// the parent item's row, and the parent's own row (if any) is unaffected.
 type ExportStockRow struct {
 	ItemID       string  `json:"item_id"`
 	Name         string  `json:"name"`
 	SKU          string  `json:"sku"`
+	VariantID    string  `json:"variant_id,omitempty"`
+	VariantName  string  `json:"variant_name,omitempty"`
 	LocationID   string  `json:"location_id"`
 	LocationName string  `json:"location_name"`
 	CurrentQty   float64 `json:"current_qty"`
@@ -79,16 +89,18 @@ WHERE status = 'completed' AND sale_type = 'sale'
 }
 
 // StockForExport returns current on-hand stock per active item/location for
-// an export/report plugin's payload — the same rows ListStockLevels already
-// serves the inventory page, reshaped with JSON tags for the wire.
+// an export/report plugin's payload — item-level rows are the same ones
+// ListStockLevels serves the inventory page, reshaped with JSON tags for
+// the wire; variant-level rows come from variantStockForExport (ut-docs#240)
+// and are appended, not merged into their parent's row.
 func (r *POSRepo) StockForExport(ctx context.Context) ([]ExportStockRow, error) {
 	levels, err := r.ListStockLevels(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ExportStockRow, len(levels))
-	for i, l := range levels {
-		out[i] = ExportStockRow{
+	out := make([]ExportStockRow, 0, len(levels))
+	for _, l := range levels {
+		out = append(out, ExportStockRow{
 			ItemID:       l.ItemID,
 			Name:         l.Name,
 			SKU:          l.SKU,
@@ -96,9 +108,52 @@ func (r *POSRepo) StockForExport(ctx context.Context) ([]ExportStockRow, error) 
 			LocationName: l.LocationName,
 			CurrentQty:   l.CurrentQty,
 			ReorderLevel: l.ReorderLevel,
-		}
+		})
 	}
-	return out, nil
+	variants, err := r.variantStockForExport(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, variants...), nil
+}
+
+// variantStockForExport returns current on-hand stock for variant-scoped
+// inventory rows (inventory.item_id NULL, variant_id set — see the CHECK
+// constraint in 001_init.sql), the export-payload counterpart to
+// ListStockLevels' item-scoped query. Deliberately a separate query rather
+// than a change to ListStockLevels: the /inventory page's existing
+// item-only view is unchanged (ADR-0043) and keeps its own dedicated test
+// (TestListStockLevels_Batch8).
+//
+// Both the variant and its parent item must be active — a deactivated
+// item's variant stock doesn't appear, matching ListStockLevels'
+// i.is_active filter for item-level rows.
+func (r *POSRepo) variantStockForExport(ctx context.Context) ([]ExportStockRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.id, i.name, v.id, v.sku, v.name, inv.location_id, COALESCE(sl.name, ''),
+       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0)
+FROM inventory inv
+JOIN item_variants v ON v.id = inv.variant_id
+JOIN items i ON i.id = v.item_id
+LEFT JOIN stock_locations sl ON sl.id = inv.location_id
+WHERE i.is_active = 1 AND v.is_active = 1
+ORDER BY i.name, v.name, sl.name`)
+	if err != nil {
+		return nil, fmt.Errorf("query variant stock for export: %w", err)
+	}
+	defer rows.Close()
+	var out []ExportStockRow
+	for rows.Next() {
+		var row ExportStockRow
+		var sku sql.NullString
+		if err := rows.Scan(&row.ItemID, &row.Name, &row.VariantID, &sku, &row.VariantName,
+			&row.LocationID, &row.LocationName, &row.CurrentQty, &row.ReorderLevel); err != nil {
+			return nil, fmt.Errorf("scan variant stock for export: %w", err)
+		}
+		row.SKU = sku.String
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 // SalesForExport returns completed sales in [from, to] (inclusive of the
