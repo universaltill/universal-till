@@ -30,6 +30,19 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/setup/);
     await expect(page.locator('body')).toContainText('Choose your language');
+
+    // ut-docs#298: setup.html shares .login-logo with login.html — the
+    // CANONICAL dark mark with no backing plate (--surface is white in
+    // every shipped theme, so it reads cleanly with none). Independent
+    // review found the light-glyph-on-a-var(--brand)-plate first draft
+    // just relocated the reported defect from white-on-dark to
+    // navy-on-white here, on a surface that had no defect to begin with —
+    // only .nav (always dark) gets the light variant.
+    const logo = page.locator('.login-logo');
+    await expect(logo).toHaveAttribute('src', /unitill-logo\.svg/);
+    await expect(logo).not.toHaveAttribute('src', /unitill-logo-light\.svg/);
+    const bg = await logo.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg, 'setup logo must have no backing plate').toBe('rgba(0, 0, 0, 0)');
   });
 
   // ut-docs#344. Two defects, one screen, and only a real browser catches
@@ -200,6 +213,14 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await page.locator('.session-lock button').click();
     await expect(page).toHaveURL(/\/login/);
     await expect(page.locator('.pin-pad')).toBeVisible();
+
+    // ut-docs#298: same canonical-mark, no-plate check as the setup wizard
+    // above, this time on the real /login page.
+    const logo = page.locator('.login-logo');
+    await expect(logo).toHaveAttribute('src', /unitill-logo\.svg/);
+    await expect(logo).not.toHaveAttribute('src', /unitill-logo-light\.svg/);
+    const bg = await logo.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg, 'login logo must have no backing plate').toBe('rgba(0, 0, 0, 0)');
 
     // A protected page must bounce back to /login while locked.
     await page.goto('/inventory');
