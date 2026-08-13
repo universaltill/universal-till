@@ -52,6 +52,10 @@ func postForm(mux *http.ServeMux, path string, form url.Values, user *auth.User)
 }
 
 func TestFirstBootSetupThenLogin(t *testing.T) {
+	// ut-docs#662: hermetic against the developer machine's real OS locale —
+	// otherwise ut-docs#590's /setup detection redirect fires on any machine
+	// with a locale set and this test never even reaches the wizard.
+	withOSLocale(t, "", "")
 	mux, svc, d := newAuthTestMux(t)
 
 	// Fresh DB: /login redirects to the guided setup wizard.

@@ -80,6 +80,18 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go test ./...
+      - name: Test (with OS locale set — ut-docs#662)
+        # This runner's own container has no LANG, which is exactly what let
+        # ut-docs#662's OS-locale-detection redirect (ut-docs#590) hide 4
+        # failing tests from CI while they failed on every real developer
+        # machine. Re-running once with a locale set catches the whole class
+        # of "only breaks off this specific runner" bug, not just this one.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          LANG: en_GB.UTF-8
+          LC_ALL: en_GB.UTF-8
+        run: go test ./...
 
   e2e:
     runs-on: ubuntu-latest
