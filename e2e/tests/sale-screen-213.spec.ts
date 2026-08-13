@@ -3,8 +3,9 @@ import { watchConsole, waitForStableLayout } from './helpers';
 
 // ut-docs#213: the basket is a full-height first-class panel (>=4 line
 // items visible at 1280x800 with no scrolling), carries an always-visible
-// item-count badge, the nav logo is legible (rem-sized, on the .logo white
-// plate — the separate light-variant asset was retired in ut-docs#290),
+// item-count badge, the nav logo is legible (rem-sized; ut-docs#298
+// reintroduced the light-variant asset retired in ut-docs#290, this time
+// specifically for .nav's always-dark background, with no backing plate),
 // and errors surface on the single .pos-notice surface, persisting until
 // dismissed.
 test.use({ viewport: { width: 1280, height: 800 } });
@@ -190,11 +191,11 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     assertClean();
   });
 
-  test('nav logo renders legibly large with the canonical asset', async ({ page }) => {
+  test('nav logo renders legibly large with the light-glyph asset', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/');
     const logo = page.locator('.nav .logo img');
-    await expect(logo).toHaveAttribute('src', /unitill-logo\.svg/);
+    await expect(logo).toHaveAttribute('src', /unitill-logo-light\.svg/);
     const h = await logo.evaluate((el) => el.getBoundingClientRect().height);
     expect(h, 'logo must render at a legible size').toBeGreaterThanOrEqual(36);
     assertClean();
