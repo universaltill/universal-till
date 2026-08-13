@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 func TestShortDeviceID(t *testing.T) {
@@ -486,6 +487,106 @@ func TestSettingsPage_TillNameFieldOnlyOnPrimary(t *testing.T) {
 	}
 	if body := get(); strings.Contains(body, `/api/settings/till-name`) {
 		t.Fatalf("replica: till-name field should be hidden, got:\n%s", body)
+	}
+}
+
+// The Settings page's till-register picker (ut-docs#268) persists this
+// till's own register identity under till.register_id — the register a
+// shift-scoped write (e.g. a Pfandrückgabe payout) resolves against.
+// Manager-gated like till-name, and an id that isn't an active register is
+// rejected rather than persisted.
+func TestTillRegisterEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	for _, ins := range []string{
+		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
+		`INSERT INTO registers(id,name,is_active) VALUES('regB','Back Till',1)`,
+		`INSERT INTO registers(id,name,is_active) VALUES('reg-old','Retired Till',0)`,
+	} {
+		if _, err := d.Db.Exec(ins); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if rec := postForm(mux, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, &cashUser); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier till-register = %d, want 403", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/till-register", url.Values{}, &mgrUser); rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing register_id = %d, want 400", rec.Code)
+	}
+	// Not a register at all, and an inactive one: both rejected, nothing
+	// persisted — garbage here would silently misroute payouts later.
+	for _, bad := range []string{"no-such-register", "reg-old"} {
+		if rec := postForm(mux, "/api/settings/till-register", url.Values{"register_id": {bad}}, &mgrUser); rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid register %q = %d, want 400", bad, rec.Code)
+		}
+		if v, ok, _ := d.Settings.Get(t.Context(), pos.SettingsKeyTillRegisterID); ok {
+			t.Fatalf("invalid register %q persisted as %q", bad, v)
+		}
+	}
+
+	if rec := postForm(mux, "/api/settings/till-register", url.Values{"register_id": {"regB"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("manager till-register = %d, want 204", rec.Code)
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), pos.SettingsKeyTillRegisterID); !ok || v != "regB" {
+		t.Fatalf("till.register_id = %q ok=%v, want regB", v, ok)
+	}
+}
+
+// The register picker renders in the Tills card whether or not this till is
+// the primary — unlike the till-name field, every till (primary or replica)
+// processes its own local payouts, so register identity matters on all of
+// them (ut-docs#268). With nothing persisted on a multi-register shop the
+// picker renders unselected; once set, the chosen register is selected.
+func TestSettingsPage_TillRegisterPickerRendersAndSelects(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	for _, ins := range []string{
+		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
+		`INSERT INTO registers(id,name,is_active) VALUES('regB','Back Till',1)`,
+	} {
+		if _, err := d.Db.Exec(ins); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// Ambiguous (two registers, nothing persisted): the picker still
+	// renders — that's exactly when a manager needs it — with no option
+	// selected.
+	body := get()
+	if !strings.Contains(body, `/api/settings/till-register`) {
+		t.Fatalf("expected the till-register picker, got:\n%s", body)
+	}
+	if !strings.Contains(body, `value="regA"`) || !strings.Contains(body, `value="regB"`) {
+		t.Fatalf("expected both registers as options, got:\n%s", body)
+	}
+	if strings.Contains(body, `value="regA" selected`) || strings.Contains(body, `value="regB" selected`) {
+		t.Fatalf("expected no register pre-selected while unset, got:\n%s", body)
+	}
+
+	if err := d.Settings.Set(t.Context(), pos.SettingsKeyTillRegisterID, "regB"); err != nil {
+		t.Fatal(err)
+	}
+	if body := get(); !strings.Contains(body, `value="regB" selected`) {
+		t.Fatalf("expected regB selected after persisting it, got:\n%s", body)
+	}
+
+	// A replica (sync.primary_url set) keeps the picker — no
+	// .IsPrimaryTill gate here, unlike till-name.
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "https://primary.local"); err != nil {
+		t.Fatal(err)
+	}
+	if body := get(); !strings.Contains(body, `/api/settings/till-register`) {
+		t.Fatalf("replica: expected the till-register picker to still render, got:\n%s", body)
 	}
 }
 
