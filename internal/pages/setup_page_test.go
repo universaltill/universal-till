@@ -560,6 +560,10 @@ func TestSetupWizardPINValidation(t *testing.T) {
 // same invariant across every standalone template; this test covers the
 // rendered output of the page the bug was actually reported against.
 func TestSetupPageLoadsHTMXForTheJoinForm(t *testing.T) {
+	// ut-docs#662: hermetic against the developer machine's real OS locale —
+	// otherwise ut-docs#590's /setup detection redirect fires on any machine
+	// with a locale set and this test never even reaches the wizard.
+	withOSLocale(t, "", "")
 	mux, _, _ := newFullAuthDeps(t)
 
 	rec := httptest.NewRecorder()
