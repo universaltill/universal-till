@@ -1,6 +1,12 @@
--- 038: role_permissions groundwork (split (a) of #520) — action catalog +
+-- 039: role_permissions groundwork (split (a) of #520) — action catalog +
 -- role_permissions table. Additive/inert: no call site consumes this yet
 -- (that's #555), so no existing till's access changes when this lands.
+-- (Originally landed as 038 in PR #313, but PR #311 — merged moments
+-- earlier — independently also claimed version 038 for an unrelated
+-- migration; different filenames meant no merge conflict flagged it, but
+-- both registered as schema_migrations.version=38, so main's CI broke on
+-- a UNIQUE constraint violation. Renumbered here to the version actually
+-- free on main; see docs/code-reviews/2026-08-13-role-permissions-groundwork-554.md.)
 --
 -- roles is kept as its own table from day one (Architect prep on #520) so
 -- a future custom-role card is additive, not a rewrite. users.role stays
