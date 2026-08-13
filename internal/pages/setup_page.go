@@ -1,6 +1,8 @@
 package pages
 
 import (
+	"context"
+	"database/sql"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,21 +41,84 @@ func isValidShopType(v string) bool {
 	return false
 }
 
-var setupCountries = []setupCountry{
-	{"GB", "setup.country.gb", "GBP", 20, true},
-	{"IR", "setup.country.ir", "IRT", 10, true},
-	{"US", "setup.country.us", "USD", 0, false},
-	{"DE", "setup.country.de", "EUR", 19, true},
-	{"FR", "setup.country.fr", "EUR", 20, true},
-	{"ES", "setup.country.es", "EUR", 21, true},
-	{"IT", "setup.country.it", "EUR", 22, true},
-	{"NL", "setup.country.nl", "EUR", 21, true},
-	{"TR", "setup.country.tr", "TRY", 20, true},
-	{"AE", "setup.country.ae", "AED", 5, true},
-	{"SA", "setup.country.sa", "SAR", 15, true},
-	{"IN", "setup.country.in", "INR", 18, true},
-	{"PK", "setup.country.pk", "PKR", 18, true},
-	{"OTHER", "setup.country.other", "", 0, true},
+// wizardCountries reads the wizard's country list from country_settings
+// (ut-docs#660) — the compile-time setupCountries slice that used to live
+// here was moved into that table by ut-docs#659, and this is the read side
+// finally catching up, so an admin's edits (or an operator-added country) in
+// Settings → Country settings actually reach the one flow that most needs
+// them (first-boot setup).
+//
+// TaxRateBP (basis points) is rounded to the nearest whole percent:
+// setupCountry.TaxRatePct, the POST handler's tax_rate_pct form field, and
+// common.State.TaxRatePct are all `int` percent throughout the till's core —
+// widening that to fractional percent is a real but separate, much larger
+// change (touches State/Settings/the POS engine config, not just the
+// wizard) and out of scope here. Every builtin country ships whole-percent
+// rates today, so this is lossless for the seeded defaults; only a
+// fractional rate an admin sets via #659's CRUD UI would round when
+// prefilling this wizard.
+//
+// "OTHER" is always placed last, matching the original hardcoded slice's
+// order and the UX convention of a "not listed" catch-all coming last in a
+// dropdown — everything else keeps country_settings.List()'s own order
+// (alphabetical by code), a deliberate, minor change from the original
+// slice's hand-curated order; nothing in the wizard depends on that order
+// beyond display sequence.
+func wizardCountries(ctx context.Context, db *sql.DB) ([]setupCountry, error) {
+	rows, err := data.NewCountrySettingsRepo(db).List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return countrySettingsToSetupCountries(rows), nil
+}
+
+// builtinSetupCountries is renderWizard's fallback when country_settings
+// can't be read (review finding N2) — the exact values setupCountries used
+// to hardcode before ut-docs#660, so a DB read failure degrades to the
+// pre-#660 behaviour rather than taking down first boot entirely.
+func builtinSetupCountries() []setupCountry {
+	return countrySettingsToSetupCountries(data.BuiltinCountryDefaults())
+}
+
+// countrySettingsToSetupCountries is the one place CountrySetting (basis
+// points, DB row) becomes setupCountry (whole-percent, the wizard's view
+// model) — shared by the live DB read and the builtin-defaults fallback so
+// they can't drift from each other on rounding or OTHER-ordering.
+func countrySettingsToSetupCountries(rows []data.CountrySetting) []setupCountry {
+	out := make([]setupCountry, 0, len(rows))
+	var other *setupCountry
+	for _, r := range rows {
+		sc := setupCountry{
+			Code:         r.Code,
+			NameKey:      r.NameKey,
+			Currency:     r.Currency,
+			TaxRatePct:   int((r.TaxRateBP + 50) / 100), // round half up, see doc comment
+			TaxInclusive: r.TaxInclusive,
+		}
+		if sc.Code == "OTHER" {
+			other = &sc
+			continue
+		}
+		out = append(out, sc)
+	}
+	if other != nil {
+		out = append(out, *other)
+	}
+	return out
+}
+
+// wizardCountryCodes extracts the codes detectCountry needs, excluding
+// "OTHER" — that contract predates ut-docs#660 (detectCountry never treated
+// "OTHER" as a real detection target) and is preserved here rather than
+// changed.
+func wizardCountryCodes(countries []setupCountry) []string {
+	codes := make([]string, 0, len(countries))
+	for _, c := range countries {
+		if c.Code != "OTHER" {
+			codes = append(codes, c.Code)
+		}
+	}
+	return codes
 }
 
 // registerSetup wires the first-boot wizard: language → country (prefills
@@ -65,8 +130,20 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	renderWizard := func(w http.ResponseWriter, r *http.Request, errKey string, langUnavailableCode string) {
+		// Best-effort, matching every other failure this wizard already
+		// tolerates below (locale persist, restore prompt, plugin install,
+		// demo seed) — first boot must never become UNDOABLE because of a
+		// transient/edge-case DB read (offline-first's "never blocked"
+		// posture extends here too, per review finding N2). The builtin
+		// defaults are the exact values setupCountries used to hardcode, so
+		// this is a graceful degrade to the pre-#660 behaviour, not a guess.
+		countries, err := wizardCountries(r.Context(), d.Db)
+		if err != nil {
+			logging.L().Errorf("setup wizard: load country settings, falling back to builtin defaults: %v", err)
+			countries = builtinSetupCountries()
+		}
 		data := map[string]any{
-			"countries": setupCountries,
+			"countries": countries,
 			"shopTypes": setupShopTypes,
 			"errKey":    errKey,
 			// Matches the wizard's pre-#590 default (tax-inclusive on) for the
@@ -89,12 +166,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		//     deliberate "France, 20%" for "Germany, 19%" behind an operator who
 		//     is only retyping a mistyped PIN, and the retry would then save the
 		//     wrong tax rate without ever showing them the country step again.
-		code := detectCountry()
+		code := detectCountry(wizardCountryCodes(countries))
 		if r.Method == http.MethodPost {
 			code = strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
 		}
 		if code != "" {
-			for _, c := range setupCountries {
+			for _, c := range countries {
 				if c.Code == code {
 					data["detectedCountry"] = c.Code
 					data["detectedCurrency"] = c.Currency

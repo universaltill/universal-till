@@ -31,6 +31,11 @@ func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) 
 			t.Fatalf("setup: %v", err)
 		}
 	}
+	// country_settings (ut-docs#660): registerSetup below wires GET /setup,
+	// and wizardCountries now queries this table on every render — see
+	// seedCountrySettingsTable's own comment (setup_page_test.go) for why
+	// this reads the real migration file rather than hand-rolling the DDL.
+	seedCountrySettingsTable(t, db)
 	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}}
 	svc := auth.NewService(db)
 	mux := http.NewServeMux()

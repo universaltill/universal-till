@@ -1,9 +1,11 @@
 package pages
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -27,6 +29,25 @@ func initAuthTestI18n(t *testing.T) {
 		t.Fatalf("i18n: %v", err)
 	}
 	httpx.InitI18n(i18n, "en")
+}
+
+// seedCountrySettingsTable applies the REAL country_settings migration
+// (ut-docs#660) to a hand-rolled test schema, rather than retyping its
+// DDL/seed here — a hand-rolled copy is exactly the schema drift the tester
+// skill warns against; reading the actual migration file can't drift
+// because it IS the migration. Self-contained (no FK to any other table),
+// so it's safe to layer onto any hand-rolled schema. Shared by every fixture
+// in this package that registers the setup wizard (registerSetup), since
+// wizardCountries now queries this table on every render.
+func seedCountrySettingsTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	migrationSQL, err := os.ReadFile(filepath.Join("internal", "db", "migrations", "041_country_settings.sql"))
+	if err != nil {
+		t.Fatalf("read country_settings migration: %v", err)
+	}
+	if _, err := db.Exec(string(migrationSQL)); err != nil {
+		t.Fatalf("apply country_settings migration: %v", err)
+	}
 }
 
 // newFullAuthDeps wires the auth/setup/settings handlers against a DB with the
@@ -55,6 +76,7 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 			t.Fatalf("setup schema: %v", err)
 		}
 	}
+	seedCountrySettingsTable(t, db)
 	svc := auth.NewService(db)
 	store := settings.NewStore(db)
 	engine := pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
@@ -639,5 +661,96 @@ func TestSetupJoinRefusedOnceAnOperatorExists(t *testing.T) {
 		t.Fatalf("join after first boot: code=%d loc=%q, want 303 -> /login (an unauthenticated "+
 			"caller must not be able to re-enrol a configured till)",
 			rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// ut-docs#660: the wizard's country list comes from country_settings, not a
+// compile-time slice — an operator-added country (no seeded NameKey) must
+// show up, falling back to its raw code since {{ T "" }} would render
+// nothing.
+func TestSetupWizardRendersAdminAddedCountry(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	repo := data.NewCountrySettingsRepo(d.Db)
+	if err := repo.Upsert(t.Context(), data.CountrySetting{
+		Code: "ZZ", Currency: "ZZZ", TaxRateBP: 500, TaxInclusive: true,
+		ArchiveMinDays: data.GlobalArchiveMinDays,
+	}); err != nil {
+		t.Fatalf("seed custom country: %v", err)
+	}
+
+	rec := getSetup(mux, "?lang=en", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=en: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `value="ZZ"`) {
+		t.Fatalf("GET /setup?lang=en body missing the admin-added ZZ option:\n%s", body)
+	}
+	if !strings.Contains(body, `data-currency="ZZZ"`) {
+		t.Errorf("ZZ option missing its currency prefill data")
+	}
+	// No NameKey was seeded for this operator-added country — the option's
+	// visible label must fall back to the raw code rather than rendering
+	// {{ T "" }} (empty/garbage).
+	if !regexp.MustCompile(`value="ZZ"[^>]*>ZZ<`).MatchString(body) {
+		t.Errorf("ZZ option should render its own code as the label when it has no NameKey:\n%s", body)
+	}
+}
+
+// An admin's edit to a builtin country's tax rate (via Settings → Country
+// settings, #659) must reach the wizard's prefill — the whole point of
+// #660 moving the wizard off the hardcoded slice.
+func TestSetupWizardPrefillsAdminEditedCountry(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	repo := data.NewCountrySettingsRepo(d.Db)
+	gb, ok, err := repo.Get(t.Context(), "GB")
+	if err != nil || !ok {
+		t.Fatalf("seeded GB missing: ok=%v err=%v", ok, err)
+	}
+	gb.TaxRateBP = 2150 // 21.5% -- edited away from the seeded 20%
+	if err := repo.Upsert(t.Context(), gb); err != nil {
+		t.Fatalf("edit GB: %v", err)
+	}
+
+	withOSLocale(t, "en_GB.UTF-8", "Europe/London")
+	rec := getSetup(mux, "?lang=en", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=en: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// 2150bp rounds to 22% (round-half-up; see wizardCountries' doc comment
+	// on why the wizard only carries whole-percent precision).
+	for _, want := range []string{"country: 'GB'", "currency: 'GBP'", "tax: '22'"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /setup?lang=en body missing %q after editing GB's tax rate — wizard is not reading country_settings:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "tax: '20'") {
+		t.Errorf("GET /setup?lang=en still prefills GB's stale 20%% rate — wizard is reading a stale/cached source, not country_settings")
+	}
+}
+
+// Review finding N2: a country_settings read failure must degrade to the
+// builtin defaults, not take down first boot entirely — every OTHER
+// failure in this same handler (locale persist, restore prompt, plugin
+// install, demo seed) already follows this "never block the wizard"
+// posture, and a shop with no till yet has no recovery path if this one
+// screen 500s.
+func TestSetupWizardCountrySettingsReadFailureFallsBackToBuiltins(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	if _, err := d.Db.Exec(`DROP TABLE country_settings`); err != nil {
+		t.Fatalf("drop country_settings to simulate a read failure: %v", err)
+	}
+
+	rec := getSetup(mux, "?lang=en", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=en with country_settings unreadable: code=%d, want 200 (graceful fallback) body=%s",
+			rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// The builtin GB default (20%, GBP) — same values setupCountries used to
+	// hardcode pre-#660 — must still be offered.
+	if !strings.Contains(body, `value="GB"`) || !strings.Contains(body, `data-currency="GBP"`) || !strings.Contains(body, `data-tax="20"`) {
+		t.Fatalf("GET /setup?lang=en should still offer the builtin GB option when country_settings can't be read:\n%s", body)
 	}
 }
