@@ -663,6 +663,7 @@
   "settings.data.archives_restore_confirm_ph": "RESTORE yazın",
   "settings.data.archives_restore_confirm_required": "onaylamak için RESTORE yazın",
   "settings.data.archives_restore_conflict": "Bu kasa sıfırlamadan bu yana işlem yaptı — arşivlenmiş grup artık otomatik olarak geri yüklenemez.",
+  "settings.data.archives_restore_references_removed": "Bu arşiv, sıfırlamadan sonra kaldırılan veya silinen bir ürüne, stok konumuna ya da müşteriye başvuruyor (örn. \"Örnek verileri kaldır\", katalog temizliği veya müşteri silme yoluyla) ve artık otomatik olarak geri yüklenemez.",
   "settings.data.archives_restoring": "geri yükleniyor…",
   "settings.data.archives_title": "Sıfırlama arşivleri",
   "settings.data.reset_btn": "İşlem geçmişini temizle",

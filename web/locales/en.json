@@ -663,6 +663,7 @@
   "settings.data.archives_restore_confirm_ph": "type RESTORE",
   "settings.data.archives_restore_confirm_required": "type RESTORE to confirm",
   "settings.data.archives_restore_conflict": "This till has traded since the reset — the archived batch can no longer be restored automatically.",
+  "settings.data.archives_restore_references_removed": "This archive references a product, stock location or customer that was removed or erased after the reset (e.g. by \"Remove sample data\", catalog cleanup, or a customer erasure) and can no longer be restored automatically.",
   "settings.data.archives_restoring": "restoring…",
   "settings.data.archives_title": "Reset archives",
   "settings.data.reset_btn": "Clear transaction history",

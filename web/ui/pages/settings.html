@@ -433,6 +433,7 @@
     restoring: "{{ T "settings.data.archives_restoring" }}",
     confirmDialog: "{{ T "settings.data.archives_restore_confirm_dialog" }}",
     conflict: "{{ T "settings.data.archives_restore_conflict" }}",
+    referencesRemoved: "{{ T "settings.data.archives_restore_references_removed" }}",
     empty: "{{ T "settings.data.archives_empty" }}"
   };
   box.addEventListener('click', function (ev) {
@@ -450,6 +451,7 @@
     }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
       b.disabled = false;
       if (r.status === 409) { msg.textContent = '✗ ' + T.conflict; return; }
+      if (r.status === 422) { msg.textContent = '✗ ' + T.referencesRemoved; return; }
       msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       if (r.ok) {
         row.remove();
