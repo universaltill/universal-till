@@ -6,6 +6,8 @@
 #      (or type an explicit version). The `prepare` job computes + pushes the
 #      tag, then the build jobs run.
 #   2. Manual: `git tag vX.Y.Z && git push origin vX.Y.Z` (or scripts/release.sh).
+# Either way, the commit being tagged must already be on `main` — `prepare`
+# refuses otherwise (ut-docs#308).
 name: Release
 
 on:
@@ -41,9 +43,49 @@ jobs:
       - id: v
         run: |
           set -euo pipefail
+
+          # ut-docs#308: a release must be built from a commit that's
+          # actually reachable from main — the only way that isn't true is
+          # a manually pushed tag (`git tag && git push`, the "Manual" path
+          # above) from a stray branch, or a workflow_dispatch run kicked
+          # off from the wrong ref. Refuse it rather than let cadence counts
+          # / release notes silently read a disjoint-history diff.
+          #
+          # Depends on the full-history checkout above (fetch-depth: 0) —
+          # `git merge-base --is-ancestor` against a *shallow* clone can
+          # report a real ancestor as "not found" simply because history
+          # doesn't reach that far back, which looks identical to a genuine
+          # broken lineage. Fail closed instead of trusting a shallow
+          # result silently.
+          require_ancestor() {
+            local ref="$1" label="$2" hint="${3:-}"
+            if [ "$(git rev-parse --is-shallow-repository)" != "false" ]; then
+              echo "::error::checkout is shallow — cannot trust an ancestry check against it (this job's checkout step should always be fetch-depth: 0)"
+              exit 1
+            fi
+            if ! git rev-parse -q --verify origin/main >/dev/null; then
+              echo "::error::origin/main not found in this checkout — cannot verify ${label}"
+              exit 1
+            fi
+            local rc=0
+            git merge-base --is-ancestor "${ref}" origin/main || rc=$?
+            case "$rc" in
+              0) ;;
+              1)
+                echo "::error::${label} is not an ancestor of origin/main — refusing to release from a history line main doesn't contain (see ut-docs#308)"
+                [ -n "$hint" ] && echo "::error::${hint}"
+                exit 1 ;;
+              *)
+                echo "::error::git merge-base could not compare ${label} against origin/main (exit ${rc}) — failing closed rather than guessing"
+                exit 1 ;;
+            esac
+          }
+
           if [ "${{ github.event_name }}" = "push" ]; then
             TAG="${GITHUB_REF_NAME}"
             VERSION="${TAG#v}"
+            require_ancestor "refs/tags/${TAG}" "tag ${TAG}" \
+              "the tag is already on the remote and will be picked up as 'latest' by the next auto-bump — delete it (git push origin :refs/tags/${TAG}) and retag from main once ready"
           else
             if [ -n "${{ inputs.version }}" ]; then
               VERSION="${{ inputs.version }}"
@@ -72,6 +114,7 @@ jobs:
               echo "::error::version '${VERSION}' must be plain MAJOR.MINOR.PATCH (no 'v' prefix, no suffix like -beta1)"
               exit 1
             fi
+            require_ancestor "HEAD" "the checked-out commit"
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git tag -a "${TAG}" -m "Release ${TAG}"
