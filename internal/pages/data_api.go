@@ -57,7 +57,7 @@ type exportRequestPayload struct {
 	// Items is the full catalog (data.CatalogRepo.ExportRows -- the same
 	// rows GET /api/catalog/export's hardcoded CSV writer already reads),
 	// gated on both the resolved entry declaring "items" in its Entities
-	// AND holding catalog:read (ut-docs#600) -- unlike Sales/Stock, which
+	// AND holding items:read (ut-docs#600) -- unlike Sales/Stock, which
 	// are permission-gated only, Items is the first ledger to require an
 	// explicit entity declaration too, mirroring how import entries have
 	// declared their handled entities since ut-docs#599.
@@ -427,7 +427,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 
 		// Items (ut-docs#600) is gated on the entry DECLARING "items" (its
 		// Entities, mirroring #599's import-side pattern) in addition to
-		// the catalog:read permission grant -- unlike Sales/Stock above,
+		// the items:read permission grant -- unlike Sales/Stock above,
 		// which are permission-gated only, since every export entry
 		// installed before #600 has no Entities at all and must keep
 		// getting exactly today's Sales/Stock-only payload regardless of
@@ -441,12 +441,12 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		var items []data.ExportRow
 		if wantsItems {
-			hasCatalog, cerr := plugins.CheckPermissionGranted(r.Context(), d.Db, entry.PluginID, "catalog:read")
+			hasItemsRead, cerr := plugins.CheckPermissionGranted(r.Context(), d.Db, entry.PluginID, "items:read")
 			if cerr != nil {
 				respond(w, http.StatusInternalServerError, false, cerr.Error())
 				return
 			}
-			if hasCatalog {
+			if hasItemsRead {
 				items, err = data.NewCatalogRepo(d.Db).ExportRows(r.Context())
 				if err != nil {
 					respond(w, http.StatusInternalServerError, false, err.Error())

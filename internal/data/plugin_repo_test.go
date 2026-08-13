@@ -376,6 +376,32 @@ func TestPluginRepo_ListExportEntries_Entities(t *testing.T) {
 	}
 }
 
+// TestPluginRepo_ListExportEntries_MalformedConfigDegradesGracefully is the
+// ut-docs#600 review's N2 case: a hand-edited/legacy config_json that isn't
+// valid JSON must degrade to an empty Entities on that one row, per
+// ListExportEntries' own doc comment — not fail the whole listing.
+func TestPluginRepo_ListExportEntries_MalformedConfigDegradesGracefully(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('e4','Broken Exporter','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,sort_order,is_active,config_json)
+	                      VALUES('ee4','e4','export','broken_export','Broken',1,1,'{not valid json')`); err != nil {
+		t.Fatalf("seed export entry: %v", err)
+	}
+
+	rows, err := repo.ListExportEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListExportEntries: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Key != "broken_export" || len(rows[0].Entities) != 0 {
+		t.Fatalf("expected 1 row with empty Entities despite malformed config_json, got %+v", rows)
+	}
+}
+
 // Upgrade path for plugin settings: values the operator configured must
 // survive a manifest re-apply, dupes from the old NULL-scope_id upsert must
 // collapse, a scope change in the manifest must move the row (keeping its

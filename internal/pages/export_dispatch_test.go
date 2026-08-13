@@ -53,10 +53,13 @@ func seedExportPluginWithPermissions(t *testing.T, db *sql.DB, pluginID, key, la
 // seedExportPluginWithEntities is seedExportPluginWithPermissions' ut-docs#600
 // counterpart: an export entry that additionally DECLARES a catalog-entity
 // set (config_json, the same column/shape ImportEntryRow.Entities already
-// reads — ut-docs#599) and is optionally granted "catalog:read". Kept as a
-// separate helper rather than widening seedExportPluginWithPermissions'
-// signature, so every existing sales/stock call site stays untouched.
-func seedExportPluginWithEntities(t *testing.T, db *sql.DB, pluginID, key, label string, entities []string, catalogRead bool) {
+// reads — ut-docs#599) and is optionally granted "items:read" — the
+// <entity>:<verb> permission naming import entries already use (e.g.
+// "customers:write", plugin-manifest.md), not a one-off name (ut-docs#600
+// review finding F2: an earlier draft used "catalog:read", which both broke
+// this convention and collided with an unrelated "catalog:read" permission
+// already defined in ut-cloud for marketplace-catalog access).
+func seedExportPluginWithEntities(t *testing.T, db *sql.DB, pluginID, key, label string, entities []string, itemsRead bool) {
 	t.Helper()
 	mustExec := func(q string, args ...any) {
 		t.Helper()
@@ -73,8 +76,8 @@ func seedExportPluginWithEntities(t *testing.T, db *sql.DB, pluginID, key, label
 	          VALUES (?, ?, ?, ?, 'export', 1, 0, ?)`, pluginID+"-e", pluginID, key, label, string(entitiesJSON))
 	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'events:receive', 1)`, pluginID+"-p", pluginID)
 	mustExec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES (?, ?, 'export.requested.ask', 'export', 1)`, pluginID+"-h", pluginID)
-	if catalogRead {
-		mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'catalog:read', 1)`, pluginID+"-p-cat", pluginID)
+	if itemsRead {
+		mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'items:read', 1)`, pluginID+"-p-cat", pluginID)
 	}
 }
 
@@ -665,7 +668,7 @@ func TestExportDispatch_PayloadIncludesVariantStockData(t *testing.T) {
 // TestExportDispatch_PayloadIncludesItemsData is the ut-docs#600 counterpart
 // to TestExportDispatch_PayloadIncludesStockData: an export entry that
 // DECLARES the "items" entity (config_json, mirroring #599's import-side
-// Entities pattern) and holds catalog:read receives the full catalog
+// Entities pattern) and holds items:read receives the full catalog
 // (data.CatalogRepo.ExportRows — the same rows GET /api/catalog/export's
 // hardcoded CSV writer already reads) in the dispatched payload's new
 // "items" field.
@@ -702,16 +705,16 @@ func TestExportDispatch_PayloadIncludesItemsData(t *testing.T) {
 
 	var payload struct {
 		Items []struct {
-			Name string `json:"Name"`
-			SKU  string `json:"SKU"`
+			Name string `json:"name"`
+			SKU  string `json:"sku"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
 		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
 	}
 	var got *struct {
-		Name string `json:"Name"`
-		SKU  string `json:"SKU"`
+		Name string `json:"name"`
+		SKU  string `json:"sku"`
 	}
 	for i := range payload.Items {
 		if payload.Items[i].SKU == "SKU-EXP" {
@@ -726,12 +729,12 @@ func TestExportDispatch_PayloadIncludesItemsData(t *testing.T) {
 	}
 }
 
-// TestExportDispatch_OmitsItemsWithoutCatalogReadPermission proves items
+// TestExportDispatch_OmitsItemsWithoutItemsReadPermission proves items
 // gating is independent of the entity declaration: an entry that declares
-// "items" but was NOT granted catalog:read must not receive the catalog,
+// "items" but was NOT granted items:read must not receive the catalog,
 // mirroring TestExportDispatch_OmitsSalesWithoutSalesReadPermission's
 // per-ledger-gates-independently shape.
-func TestExportDispatch_OmitsItemsWithoutCatalogReadPermission(t *testing.T) {
+func TestExportDispatch_OmitsItemsWithoutItemsReadPermission(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newDataAPITestDeps(t)
 	seedExportPluginWithEntities(t, dp.Db, "com.t.exp4", "catalog_csv", "Catalog Export", []string{"items"}, false)
@@ -751,7 +754,7 @@ func TestExportDispatch_OmitsItemsWithoutCatalogReadPermission(t *testing.T) {
 
 	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 (missing catalog:read must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 (missing items:read must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	var payload struct {
@@ -761,13 +764,13 @@ func TestExportDispatch_OmitsItemsWithoutCatalogReadPermission(t *testing.T) {
 		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
 	}
 	if payload.Items != nil && string(payload.Items) != "null" {
-		t.Fatalf("expected items omitted (null) without catalog:read, got %s", payload.Items)
+		t.Fatalf("expected items omitted (null) without items:read, got %s", payload.Items)
 	}
 }
 
 // TestExportDispatch_OmitsItemsWhenEntityNotDeclared is the axis
-// TestExportDispatch_OmitsItemsWithoutCatalogReadPermission doesn't cover:
-// a plugin granted catalog:read but whose entry does NOT declare "items" in
+// TestExportDispatch_OmitsItemsWithoutItemsReadPermission doesn't cover:
+// a plugin granted items:read but whose entry does NOT declare "items" in
 // its Entities must still not receive the catalog — this is the actual
 // ut-docs#600 parity gap (export entries never had an entity declaration to
 // check at all, so a permission grant alone used to be the only gate; now a
@@ -803,6 +806,46 @@ func TestExportDispatch_OmitsItemsWhenEntityNotDeclared(t *testing.T) {
 	}
 	if payload.Items != nil && string(payload.Items) != "null" {
 		t.Fatalf("expected items omitted (null) without a declared \"items\" entity, got %s", payload.Items)
+	}
+}
+
+// TestExportDispatch_OmitsItemsWhenOnlyOtherEntityDeclared is ut-docs#600
+// review finding N3: a non-nil Entities that simply doesn't MENTION "items"
+// (as opposed to TestExportDispatch_OmitsItemsWhenEntityNotDeclared's nil
+// Entities) must also omit — exercising the loop body actually iterating a
+// non-matching entry rather than skipping an empty slice entirely. Matters
+// once ut-docs#654 (categories) lands as a real, distinct declared entity.
+func TestExportDispatch_OmitsItemsWhenOnlyOtherEntityDeclared(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp6", "catalog_csv", "Catalog Export", []string{"categories"}, true)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp6", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.Items != nil && string(payload.Items) != "null" {
+		t.Fatalf("expected items omitted (null) when only a different entity is declared, got %s", payload.Items)
 	}
 }
 
