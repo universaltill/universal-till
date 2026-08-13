@@ -59,3 +59,42 @@ func TestApplyReplicaIdentityReissuesDeviceID(t *testing.T) {
 		t.Fatalf("store token was disturbed: %q", got)
 	}
 }
+
+// The snapshot restore also carries the primary's OWN register identity
+// (sync.till_register_id, ut-docs#268 — which register a Pfandrückgabe
+// payout resolves against) baked into its settings row. Applying the
+// replica identity must clear it, so this till re-resolves its own
+// register (via pos.ResolveTillRegisterID) instead of starting life
+// already believing it's the primary's register — which would misroute
+// this replica's very first payout onto the wrong drawer (independent
+// review finding, ut-docs#268 round 2).
+func TestApplyReplicaIdentityClearsTillRegisterID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+
+	if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`,
+		"sync.till_register_id", "regA-primarys-own"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b",
+		ReceiptPrefix: "T2-", TillName: "Back lane",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	applied, err := ApplyReplicaIdentity(d.DB, path)
+	if err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+
+	var v string
+	scanErr := d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.till_register_id'`).Scan(&v)
+	if scanErr == nil {
+		t.Fatalf("expected sync.till_register_id cleared on join, still %q", v)
+	}
+}

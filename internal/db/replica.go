@@ -112,6 +112,21 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	if err := set("sync.push_cursor", nowUTC()); err != nil {
 		return false, fmt.Errorf("apply identity cursor: %w", err)
 	}
+	// The snapshot carried the primary's own register identity
+	// (sync.till_register_id, ut-docs#268) baked into its settings row —
+	// clear it so this replica re-resolves its OWN register (via
+	// pos.ResolveTillRegisterID) rather than starting life already
+	// believing it's the primary's register, which would misroute this
+	// replica's first Pfandrückgabe payout onto the wrong drawer before a
+	// manager ever gets a chance to set it explicitly (independent review
+	// finding, ut-docs#268 round 2). The key already carries the "sync."
+	// prefix that keeps ordinary admin-sync pulls from re-clobbering it
+	// (PerTillSettingPrefixes) — this join-time clear is the other half:
+	// the ONE path that legitimately inherits a whole settings row via
+	// snapshot restore rather than an admin-bundle apply.
+	if _, err := sqlDB.Exec(`DELETE FROM settings WHERE key = 'sync.till_register_id'`); err != nil {
+		return false, fmt.Errorf("clear till register identity: %w", err)
+	}
 	// The snapshot brought the primary's sessions; they mean nothing here.
 	if _, err := sqlDB.Exec(`DELETE FROM sessions`); err != nil {
 		return false, fmt.Errorf("clear sessions: %w", err)
