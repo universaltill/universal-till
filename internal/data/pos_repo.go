@@ -2438,71 +2438,9 @@ func (r *POSRepo) DistinctAuditEntityTypes(ctx context.Context) ([]string, error
 	return out, rows.Err()
 }
 
-// ResetTransactionHistory permanently clears ALL transactional data — sales,
-// payments, invoices, shifts, held sales and stock movements — for a clean
-// start after testing (go-live). It KEEPS the catalog, users, settings and
-// tills. report_archive is explicitly EXCLUDED (ADR-0040 §9): once a shop has
-// configured a retention mode, the report archive is a retained legal record,
-// not transactional/test data this button is meant to clear, so a manager
-// wipe here must never be able to destroy the retained window. It is
-// all-or-nothing by design (it cannot cherry-pick individual sales, so it
-// can't be used to hide specific takings) and records an audit entry with how
-// many sales were removed. Manager-gated at the handler.
-//
-// Known consequence of the report_archive exclusion above (ADR-0040
-// Consequences section flags this explicitly as needing a check at
-// implementation time — this is that check, not yet a full fix): if an EOD
-// report was already generated for today BEFORE this reset runs,
-// generateEOD's own (kind, period) idempotency means today's EOD cannot be
-// regenerated afterward with the post-reset figures — the pre-reset
-// (test-data) report for today survives permanently. A manager doing a
-// go-live reset on the same day test EOD reports were run should reset
-// before generating any further EOD reports that day; there is no
-// automatic reconciliation. See settings.data.reset_confirm_dialog.
-func (r *POSRepo) ResetTransactionHistory(ctx context.Context, actorID string) (int64, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Sale children first (some FKs don't cascade), then sales, then the
-	// standalone transactional tables.
-	for _, s := range []string{
-		`DELETE FROM invoices`,
-		`DELETE FROM sale_links`,
-		`DELETE FROM payments`,
-		`DELETE FROM sale_discounts`,
-		`DELETE FROM sale_lines`,
-	} {
-		if _, err := tx.ExecContext(ctx, s); err != nil {
-			return 0, fmt.Errorf("reset (%s): %w", s, err)
-		}
-	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM sales`)
-	if err != nil {
-		return 0, fmt.Errorf("reset sales: %w", err)
-	}
-	count, _ := res.RowsAffected()
-	for _, s := range []string{
-		`DELETE FROM held_sales`,
-		`DELETE FROM shifts`,
-		`DELETE FROM stock_movements`,
-	} {
-		if _, err := tx.ExecContext(ctx, s); err != nil {
-			return 0, fmt.Errorf("reset (%s): %w", s, err)
-		}
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_history_reset",
-		map[string]any{"sales_deleted": count}, now, ""); err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return count, nil
-}
+// ResetTransactionHistory moved to reset_archive_repo.go (ADR-0042): a reset
+// now archives into the *_archive tables instead of deleting, alongside
+// ListResetBatches and RestoreResetBatch.
 
 // CustomerSummary is a row in the customer picker for data management.
 type CustomerSummary struct {
