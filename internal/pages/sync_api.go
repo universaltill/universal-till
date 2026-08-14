@@ -184,7 +184,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 
 	// Tills page (manager): enrolled replicas + Add-till QR.
 	mux.HandleFunc("GET /tills", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "sync_management") {
 			http.Redirect(w, r, "/settings", http.StatusSeeOther)
 			return
 		}
@@ -226,7 +226,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// Issue a one-time enrolment token; responds with the QR + manual code.
 	// (encode/decodeEnrollCode keep the pairing "code" opaque — see below.)
 	mux.HandleFunc("POST /api/sync/enroll-token", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "sync_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -378,7 +378,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 
 	// Revoke a replica (manager, primary only).
 	mux.HandleFunc("POST /api/sync/tills/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "sync_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -412,7 +412,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// and the Tills page can pair new replicas from here. Documented
 	// procedure: docs architecture/lan-sync.md "Promoting a replica".
 	mux.HandleFunc("POST /api/sync/promote", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "sync_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -441,7 +441,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// Replica side (manager): join a primary. Enrols, downloads the full
 	// snapshot, stages restore + identity — takes effect on restart (D2).
 	mux.HandleFunc("POST /api/sync/join", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "sync_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}

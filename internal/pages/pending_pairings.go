@@ -17,7 +17,7 @@ import (
 // polls this via hx-trigger="every 30s" (ADR-0033 §4's cadence).
 func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/tills/pending-pairings", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "sync_management") {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}

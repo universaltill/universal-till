@@ -117,8 +117,8 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 	rp := &replicaPairing{}
 	client := &http.Client{Timeout: pairJoinHTTPTimeout}
 
-	mux.HandleFunc("POST /api/sync/pair-start", pairStartHandler(d, rp, client, managerGate, "/api/sync/pair-status"))
-	mux.HandleFunc("GET /api/sync/pair-status", pairStatusHandler(d, rp, client, managerGate, "/api/sync/pair-status"))
+	mux.HandleFunc("POST /api/sync/pair-start", pairStartHandler(d, rp, client, managerGate(d), "/api/sync/pair-status"))
+	mux.HandleFunc("GET /api/sync/pair-status", pairStatusHandler(d, rp, client, managerGate(d), "/api/sync/pair-status"))
 	// Rate-limited (ut-docs#289 review): unlike its manager-gated sibling
 	// above, this flavour needs no session at all — pair-start is an
 	// unauthenticated outbound-HTTP primitive to any attacker-chosen host

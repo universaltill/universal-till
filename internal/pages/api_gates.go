@@ -21,13 +21,19 @@ import (
 // /api/setup/join in sync_api.go).
 type apiGate func(w http.ResponseWriter, r *http.Request) bool
 
-// managerGate is the Tills-page check every /api/sync sibling uses.
-func managerGate(w http.ResponseWriter, r *http.Request) bool {
-	if !isManagerOrAuthOff(r) {
-		http.Error(w, "manager or admin required", http.StatusForbidden)
-		return false
+// managerGate is the Tills-page check every /api/sync sibling uses — the
+// same sync_management Can() check as sync_api.go/pairing_api.go/
+// pending_pairings.go (ut-docs#707), just packaged as an apiGate so
+// discovery_api.go and pairing_join.go can parameterize a handler by gate
+// like firstBootGate below.
+func managerGate(d *common.Deps) apiGate {
+	return func(w http.ResponseWriter, r *http.Request) bool {
+		if !canPerform(d, r, "sync_management") {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return false
+		}
+		return true
 	}
-	return true
 }
 
 // firstBootGate admits requests only while NO operator with a PIN exists —

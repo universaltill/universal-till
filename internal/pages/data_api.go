@@ -140,7 +140,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	respond := dataAPIRespond
 
 	mux.HandleFunc("POST /api/data/reset-transactions", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
@@ -162,7 +162,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// ADR-0042: list the archived reset batches, newest first.
 	mux.HandleFunc("GET /api/data/reset-archives", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
@@ -192,7 +192,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	// data.ErrArchiveReferencesRemoved's doc comment). Gated exactly like
 	// reset itself: manager + its own typed confirmation.
 	mux.HandleFunc("POST /api/data/reset-archives/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
@@ -225,7 +225,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	// it, only surface what it decided.
 	mux.HandleFunc("POST /api/data/reset-archives/{id}/purge", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, httpx.T(locale, "settings.data.archives_purge_manager_only"))
 			return
 		}
@@ -253,7 +253,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// GDPR: find a customer to erase.
 	mux.HandleFunc("GET /api/data/customers", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
@@ -268,7 +268,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// GDPR: erase a customer's personal data (keeps their sales, anonymised).
 	mux.HandleFunc("POST /api/data/customers/erase", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
@@ -292,7 +292,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Catalog cleanup: preview the inactive, never-sold items that can be removed.
 	mux.HandleFunc("GET /api/data/obsolete-items", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
@@ -307,7 +307,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Catalog cleanup: permanently remove the previewed obsolete items.
 	mux.HandleFunc("POST /api/data/cleanup-catalog", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
@@ -334,7 +334,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	// subscribed to the same event name must never be able to answer on
 	// another plugin's behalf.
 	mux.HandleFunc("POST /api/data/export", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}

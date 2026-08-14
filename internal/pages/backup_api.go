@@ -84,7 +84,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			payload, time.Now().UTC().Format(time.RFC3339), "")
 	}
 	deny := func(w http.ResponseWriter, r *http.Request) bool {
-		if isManagerOrAuthOff(r) {
+		if canPerform(d, r, "data_management") {
 			return false
 		}
 		http.Error(w, "manager or admin required", http.StatusForbidden)

@@ -502,19 +502,25 @@ func TestAuthRepo_RevokeUserSessions(t *testing.T) {
 }
 
 // TestAuthRepo_HasPermission covers migration 039's seed grants (#554),
-// 042's reports/audit additions (#709), and 043's plugin_management addition
-// (#706): manager/admin/super_admin get every catalog action, cashier gets
+// 042's reports/audit additions (#709), 043's plugin_management addition
+// (#706), and 044's data_management/sync_management additions (#707):
+// manager/admin/super_admin get every catalog action, cashier gets
 // none, and an action outside the catalog is denied for everyone rather than
 // erroring — "no row" means denied, not "unknown." Exercising these here
 // (against a REAL migrated DB, unlike internal/pages' hand-rolled fixture) is
 // what actually pins each migration's output — ut-docs#709 review finding:
-// nothing else in the codebase did.
+// nothing else in the codebase did. (#707 review: this list is the ONLY
+// thing that pins a migration's role/action grants against the real
+// migrated DB — internal/pages' seedForPages hand-seeds every role for
+// every action in its own catalog list regardless of what a migration
+// actually grants, so a typo in a migration's role list ships undetected
+// unless it's caught here.)
 func TestAuthRepo_HasPermission(t *testing.T) {
 	ctx := context.Background()
 	repo, _ := newAuthTestRepo(t)
 
 	for _, role := range []string{"manager", "admin", "super_admin"} {
-		for _, action := range []string{"refund", "reports", "audit", "plugin_management"} {
+		for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management"} {
 			granted, err := repo.HasPermission(ctx, role, action)
 			if err != nil {
 				t.Fatalf("HasPermission(%s, %s): %v", role, action, err)
@@ -525,7 +531,7 @@ func TestAuthRepo_HasPermission(t *testing.T) {
 		}
 	}
 
-	for _, action := range []string{"refund", "reports", "audit", "plugin_management"} {
+	for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management"} {
 		granted, err := repo.HasPermission(ctx, "cashier", action)
 		if err != nil {
 			t.Fatalf("HasPermission(cashier, %s): %v", action, err)
