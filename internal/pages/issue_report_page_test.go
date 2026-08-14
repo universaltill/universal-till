@@ -40,8 +40,12 @@ func newIssueReportTestMux(t *testing.T) *http.ServeMux {
 
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	// AuthSvc (ut-docs#713): /report-issue and its API are now
+	// canPerform()-gated, which queries role_permissions for real via
+	// AuthSvc.Can() — seedForPages already seeds it (manager/admin/
+	// super_admin granted "issue_reporting").
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerIssueReportPage(mux, dp)
 	return mux
@@ -70,6 +74,12 @@ func TestReportIssuePage_ManagerOnly(t *testing.T) {
 	rec := get(&auth.User{ID: "mgr-1", Role: "manager"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("manager = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	// super_admin broadens vs. isManagerOrAuthOff (manager/admin only,
+	// per #555) — accepted, and pinned here so a regression to the old gate
+	// wouldn't silently pass this test on manager alone.
+	if rec := get(&auth.User{ID: "super-1", Role: "super_admin"}); rec.Code != http.StatusOK {
+		t.Fatalf("super_admin = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }
 
