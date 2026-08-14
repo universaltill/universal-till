@@ -127,27 +127,79 @@ var columnSynonyms = map[string][]string{
 	"stock":       {"in stock", "stock", "quantity", "qty", "in_stock", "on_hand", "on hand", "current quantity", "stock quantity", "opening stock"},
 	// Tax columns (ut-docs#512): optional, ignored when absent so existing
 	// Loyverse/Square exports are unchanged. "takeaway tax" carries the
-	// off-premises rate where the source distinguishes one (§12 UStG).
-	// "tax rate (%)" is SumUp's own exact header text (ut-docs#581) — its
-	// parenthesised suffix doesn't match the "tax rate [" bracket-suffix
-	// prefix rule below, so it needs its own literal entry.
-	"tax":          {"tax", "tax %", "tax rate", "tax rate (%)", "vat", "vat %", "vat rate"},
+	// off-premises rate where the source distinguishes one (§12 UStG). A
+	// trailing parenthesised suffix on any field (e.g. SumUp's own "Tax
+	// rate (%)", ut-docs#581) is handled generally by stripTrailingParen
+	// below, not by a growing list of literal entries here (ut-docs#587).
+	"tax":          {"tax", "tax %", "tax rate", "vat", "vat %", "vat rate"},
 	"takeaway_tax": {"takeaway tax", "takeaway tax %", "takeaway vat", "takeaway rate", "takeaway tax rate"},
 	// square-specific extras used only for detection / variation naming
 	"variation": {"variation name"},
 	"token":     {"token", "handle"},
 }
 
+// stripTrailingParen removes one trailing parenthesised suffix (and the
+// whitespace before it) from an already-lowercased header key, e.g.
+// "tax rate(%)" -> "tax rate", "vat rate (%)" -> "vat rate", "tax (%)" ->
+// "tax". Used as a second-pass match key alongside the raw key so one
+// synonym list entry like "tax rate" catches a family of "(...)"-suffixed
+// header variants (percent sign, currency code, ...) without a growing
+// list of literal strings (ut-docs#587) — mirrors the existing " ["
+// bracket-prefix rule's spirit: an additional lenient match, never a
+// replacement for the exact-match pass.
+func stripTrailingParen(key string) string {
+	if !strings.HasSuffix(key, ")") {
+		return key
+	}
+	open := strings.LastIndexByte(key, '(')
+	if open < 0 {
+		return key
+	}
+	return strings.TrimSpace(key[:open])
+}
+
 func headerIndex(headers []string) map[string]int {
 	idx := map[string]int{}
+	keys := make([]string, len(headers))
+	stripped := make([]string, len(headers))
 	for i, h := range headers {
-		key := strings.ToLower(strings.TrimSpace(h))
+		keys[i] = strings.ToLower(strings.TrimSpace(h))
+		stripped[i] = stripTrailingParen(keys[i])
+	}
+	// Pass 1: exact match / " [" bracket-prefix rule only. A trailing
+	// parenthetical often qualifies or negates the synonym it's attached
+	// to ("Price (cost)", "VAT (takeaway)", "Stock (reserved)") rather
+	// than being decorative, so the lenient paren-stripped match below
+	// must never outrank a genuine exact match found here — review
+	// finding B1, ut-docs#587: an earlier lenient match used to be able
+	// to claim a field before a later, unrelated header's exact match
+	// got a turn, silently importing e.g. a cost price as the retail
+	// price or a takeaway tax rate as the dine-in rate.
+	for i, key := range keys {
 		for field, syns := range columnSynonyms {
 			if _, taken := idx[field]; taken {
 				continue
 			}
 			for _, s := range syns {
 				if key == s || strings.HasPrefix(key, s+" [") { // "Current Quantity [Main]"
+					idx[field] = i
+					break
+				}
+			}
+		}
+	}
+	// Pass 2: paren-stripped fallback (ut-docs#587), only for fields no
+	// header claimed exactly above.
+	for i, key := range stripped {
+		if key == "" { // e.g. a header that's nothing but "(...)"
+			continue
+		}
+		for field, syns := range columnSynonyms {
+			if _, taken := idx[field]; taken {
+				continue
+			}
+			for _, s := range syns {
+				if key == s { // "Tax rate(%)" -> "tax rate"
 					idx[field] = i
 					break
 				}
@@ -206,8 +258,9 @@ func hasExactHeader(headers []string, name string) bool {
 func hasColumn(headers []string, field string) bool {
 	for _, h := range headers {
 		key := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF")))
+		stripped := stripTrailingParen(key)
 		for _, s := range columnSynonyms[field] {
-			if key == s || strings.HasPrefix(key, s+" [") {
+			if key == s || strings.HasPrefix(key, s+" [") || stripped == s {
 				return true
 			}
 		}
