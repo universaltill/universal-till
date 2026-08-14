@@ -507,6 +507,28 @@ type issueDownloadTokenEnvelope struct {
 	} `json:"error"`
 }
 
+// APIError is a structured error decoded from a marketplace JSON envelope's
+// `error` field (`{code, message}`, matching ut-cloud's `apiError` shape).
+// Callers can `errors.As` it to react to a specific code (e.g. "not_entitled"
+// — ut-docs#673) instead of parsing prose out of Error().
+type APIError struct {
+	Code    string
+	Message string
+}
+
+func (e *APIError) Error() string {
+	switch {
+	case e.Code != "" && e.Message != "":
+		return fmt.Sprintf("marketplace: %s: %s", e.Code, e.Message)
+	case e.Message != "":
+		return fmt.Sprintf("marketplace: %s", e.Message)
+	case e.Code != "":
+		return fmt.Sprintf("marketplace: %s", e.Code)
+	default:
+		return "marketplace: request failed"
+	}
+}
+
 // IssueDownloadTokenResponse contains download authorization.
 type IssueDownloadTokenResponse struct {
 	Token              string `json:"token"`
@@ -533,16 +555,21 @@ func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadToken
 	}
 	defer resp.Body.Close()
 
+	// Decode the envelope regardless of status first — ut-cloud answers a
+	// blocked download (e.g. a paid listing needing approval) with a non-200
+	// status AND a structured {code, message} error body, not just a status
+	// code (ut-docs#673). Bailing on status before decoding, as this used to,
+	// silently threw that reason away.
+	var envelope issueDownloadTokenEnvelope
+	decodeErr := json.NewDecoder(resp.Body).Decode(&envelope)
+	if envelope.Error != nil {
+		return nil, &APIError{Code: envelope.Error.Code, Message: envelope.Error.Message}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download token request failed: status %d", resp.StatusCode)
 	}
-
-	var envelope issueDownloadTokenEnvelope
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return nil, fmt.Errorf("failed to decode download token response: %w", err)
-	}
-	if envelope.Error != nil {
-		return nil, fmt.Errorf("download token request failed: %s", envelope.Error.Message)
+	if decodeErr != nil {
+		return nil, fmt.Errorf("failed to decode download token response: %w", decodeErr)
 	}
 	if envelope.Data == nil {
 		return nil, fmt.Errorf("download token request failed: missing response data")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -164,6 +165,52 @@ func TestClient_IssueDownloadToken(t *testing.T) {
 	}
 	if resp.Signature != "sig123" {
 		t.Fatalf("unexpected signature %q", resp.Signature)
+	}
+}
+
+// TestClient_IssueDownloadToken_NotEntitled pins the paid-listing gate
+// (ut-docs#673): ut-cloud's downloadsvc answers a blocked download with HTTP
+// 403 and a {code:"not_entitled", message:"..."} envelope, not a 200. Before
+// this test the client discarded the body entirely on any non-200 status —
+// the specific reason (and even the plain message) never reached the caller,
+// only a generic "status 403". Callers need the code to tell "this plugin
+// needs approval" apart from "the marketplace is broken."
+func TestClient_IssueDownloadToken_NotEntitled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"not_entitled","message":"store is not entitled to download this plugin"}}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.MarketplaceConfig{
+		EndpointURL:       server.URL,
+		APIVersion:        "1.0.0",
+		ClientID:          "test",
+		ClientSecret:      "secret",
+		RequestTimeoutSec: 30,
+	}
+	client := NewClient(cfg, &mockTokenClient{token: "test-token"})
+
+	_, err := client.IssueDownloadToken(context.Background(), &IssueDownloadTokenRequest{
+		PluginID:   "listing-1",
+		MerchantID: "merchant-1",
+		StoreID:    "store-1",
+		DeviceID:   "device-1",
+		DeviceArch: "linux/amd64",
+	})
+	if err == nil {
+		t.Fatal("expected an error for a not_entitled response")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Code != "not_entitled" {
+		t.Errorf("Code = %q, want %q", apiErr.Code, "not_entitled")
+	}
+	if apiErr.Message != "store is not entitled to download this plugin" {
+		t.Errorf("Message = %q", apiErr.Message)
 	}
 }
 
