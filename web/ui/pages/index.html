@@ -100,6 +100,14 @@
       <button class="btn" type="submit">{{ T "tender.scan.add" }}</button>
       <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
               title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
+      <!-- Camera barcode/QR scan (ut-docs#548): unhidden by app.js only when
+           the browser has a native BarcodeDetector — feature-detection is
+           client-side-only, so the server always renders it hidden and lets
+           JS decide, unlike ai-identify's server-side (API key + online) gate
+           below. Never steals focus from, or disables, the wedge/HID scanner
+           path (ut-docs#76/#423) — purely additive. -->
+      <button class="btn secondary" type="button" id="barcode-scan-open" hidden
+              title="{{ T "scan.camera.button" }}" aria-label="{{ T "scan.camera.button" }}">🔳</button>
       {{ if .aiIdentify }}
       <button class="btn secondary" type="button" id="ai-identify-open" hidden
               title="{{ T "ai.identify.button" }}">📷</button>
@@ -197,6 +205,25 @@
   </div>
 </div>
 
+<!-- Camera barcode/QR scan (ut-docs#548): NOT server-side conditional — the
+     button/overlay always render (the server can't feature-detect a browser
+     API); app.js unhides the button only when BarcodeDetector exists,
+     client-side. Purely additive, never touches the wedge/HID scanner path
+     (ut-docs#76/#423). No frame ever leaves the device: decode is local,
+     the result feeds the same /api/pos/scan submit as any other scan. -->
+<div id="barcode-scan-overlay" class="ai-identify-overlay" hidden
+     data-msg-camera-error="{{ T "scan.camera.camera_error" }}"
+     data-msg-scanning="{{ T "scan.camera.scanning" }}">
+  <div class="ai-identify-panel">
+    <h3>{{ T "scan.camera.title" }}</h3>
+    <video id="barcode-scan-video" class="camera-overlay-video" autoplay playsinline muted></video>
+    <div id="barcode-scan-status" class="ai-identify-status" aria-live="polite"></div>
+    <div class="ai-identify-controls">
+      <button type="button" class="btn secondary" id="barcode-scan-close">{{ T "scan.camera.close" }}</button>
+    </div>
+  </div>
+</div>
+
 {{ if .aiIdentify }}
 <!-- Camera identify (assistive; opened on demand, never blocks checkout).
      Message strings ride on data-* so app.js stays locale-free. -->
@@ -208,7 +235,7 @@
      data-msg-camera-error="{{ T "ai.identify.camera_error" }}">
   <div class="ai-identify-panel">
     <h3>{{ T "ai.identify.title" }}</h3>
-    <video id="ai-identify-video" autoplay playsinline muted></video>
+    <video id="ai-identify-video" class="camera-overlay-video" autoplay playsinline muted></video>
     <div id="ai-identify-results" class="ai-identify-results"></div>
     <div id="ai-identify-status" class="ai-identify-status" aria-live="polite"></div>
     <div class="ai-identify-controls">
