@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -232,6 +233,7 @@ func newEODTestDeps(t *testing.T) *common.Deps {
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
 		Settings: settings.NewStore(db),
+		AuthSvc:  auth.NewService(db),
 	}
 }
 
@@ -282,6 +284,30 @@ func TestPostEODRun_RequiresManager(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+// Positive counterpart to TestPostEODRun_RequiresManager with a REAL session
+// (ut-docs#709 review finding — every other test in this file either uses
+// UT_AUTH=off or no session, so none of them ever exercised canPerform's
+// real d.AuthSvc.Can() path; this is the only test in the file that does).
+// super_admin is #554/#555's noted broadening vs. the old isManagerOrAuthOff
+// gate — accepted and inert since nothing today creates that role.
+func TestPostEODRun_RealSessionGatesByRole(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	for role, wantCode := range map[string]int{
+		"cashier": http.StatusForbidden, "manager": http.StatusOK,
+		"admin": http.StatusOK, "super_admin": http.StatusOK,
+	} {
+		t.Run(role, func(t *testing.T) {
+			mux, _ := newEODAPITestMux(t)
+			req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", nil), auth.User{ID: "u1", Role: role})
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != wantCode {
+				t.Fatalf("role=%s: expected %d, got %d: %s", role, wantCode, rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
