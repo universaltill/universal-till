@@ -64,6 +64,13 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   style with **logical** CSS properties (`margin-inline-start`, `text-align:
   start/end`, `padding-inline-*`) — never `left`/`right` — so RTL locales
   (fa, ar, he, …) lay out correctly with no extra CSS.
+- Adding a key to `web/locales/en.json` also needs a follow-up in the
+  external `ut-plugin-language-{de,es}` packs. `lang-pack-drift` CI
+  (`.github/workflows/lang-pack-drift.yml`) checks this: **blocking** on
+  `push` to `main`, **advisory-only** on a PR that touches `en.json`
+  (shows a warning, never blocks merge — see the Actions job summary for
+  the exact missing key(s)) so the gap surfaces to the author before
+  `main` goes red, not after.
 - Validate all external input (users, plugins, devices).
 
 ## Plugins
