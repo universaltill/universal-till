@@ -18,6 +18,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -49,6 +50,21 @@ func (e *paymentDeclinedError) Error() string {
 // kiosk checkout passes d.KioskEngine (ut-docs#449: an anonymous kiosk
 // checkout must never reset the cashier's live basket, and vice versa).
 func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, repo *data.POSRepo, saleInput pos.SaleInput, payments []pos.PaymentInput, actorID string) (string, error) {
+	// ADR-0048 German TSE hard gate — evaluated BEFORE the authorize loop
+	// (cheaper and earlier than ADR-0044's fiscal.sign.ask point: "never
+	// configured" needs no plugin round trip, just a local settings read).
+	// One insertion point covers both the cashier and self-order kiosk
+	// tender paths; no Engine/KioskEngine field is read here, so ADR-0020's
+	// kiosk-isolation guard is unaffected. The gate reads ONLY stored
+	// settings + the shop country — never network/offline state — so a
+	// known-offline sale still degrades via ADR-0044's proceed-and-declare,
+	// untouched. Callers map *fiscal.NeverConfiguredError /
+	// *fiscal.FailingWithoutOverrideError to their own surfaces.
+	fiscalGate, err := fiscal.CheckSaleAllowed(ctx, d.Settings, d.CurrentState().Country, time.Now().UTC())
+	if err != nil {
+		return "", err
+	}
+
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
 	// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
 	// BEFORE the sale completes — a declined card must stop the sale.
@@ -85,6 +101,22 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
 		return "", err
+	}
+
+	// ADR-0048 Decision 3: every sale completed during an active owner
+	// override window is flagged in its own audit trail — a per-sale
+	// marker, separate from the one-time grant entry. The receipt render
+	// path (and, once ut-docs#675 lands, its outage-notice line) keys off
+	// this same entry. Best-effort after the sale is committed: a failed
+	// audit write must not fail a tender whose money is already taken.
+	if fiscalGate.OverrideActive {
+		if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, "unsigned_override", map[string]any{
+			"actor":  actorID,
+			"reason": fiscalGate.OverrideReason,
+			"until":  fiscalGate.OverrideUntil.Format(time.RFC3339),
+		}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+			log.Printf("fiscal: unsigned_override audit for sale %s failed: %v", saleID, auditErr)
+		}
 	}
 
 	engine.Reset()
@@ -672,6 +704,21 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r))
 		if err != nil {
+			// ADR-0048 hard gate: same "payment/fiscal precondition" status
+			// family as a declined card (402), with a localized message —
+			// the raw typed-error text is English prose that must not sit on
+			// a cashier-facing surface. No sale row was created.
+			var fiscalNever *fiscal.NeverConfiguredError
+			var fiscalFailing *fiscal.FailingWithoutOverrideError
+			if errors.As(err, &fiscalNever) || errors.As(err, &fiscalFailing) {
+				locale := httpx.ResolveLocale(w, r)
+				key := "fiscal.block.never_configured"
+				if errors.As(err, &fiscalFailing) {
+					key = "fiscal.block.failing"
+				}
+				http.Error(w, httpx.T(locale, key), http.StatusPaymentRequired)
+				return
+			}
 			var declined *paymentDeclinedError
 			if errors.As(err, &declined) {
 				http.Error(w, err.Error(), http.StatusPaymentRequired)
@@ -743,8 +790,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			printerAvailable = true
 		}
 		printerUnavailable := !printerAvailable
+		// ADR-0048: a sale completed during an active TSE-override window
+		// prints a marker line. Derived from the sale's own audit trail
+		// (the unsigned_override entry completeTender wrote), so reprints
+		// stay truthful after the window ends. ut-docs#675's future
+		// outage-notice line must key off this same per-sale state, not
+		// invent a second marking mechanism.
+		unsignedOverride, _ := repo.SaleHasAuditAction(r.Context(), saleID, "unsigned_override")
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable,
-			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d))
+			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), unsignedOverride)
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
@@ -888,7 +942,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, storeName string, design receiptDesign) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, storeName string, design receiptDesign, unsignedOverride bool) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFS(uiassets.FS,
 		"ui/partials/receipt.html",
 	)
@@ -940,6 +994,11 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		"Total":              total,
 		"LegalBlocks":        legalBlocks,
 		"PrinterUnavailable": printerUnavailable,
+		// ADR-0048: marker line for a sale taken during an active TSE
+		// override window (copy under review with the tax adviser before
+		// the pilot goes system-of-record — the mechanism is this card's,
+		// the final wording is not).
+		"UnsignedOverride": unsignedOverride,
 		// Receipt design (docs: receipt-designer.md): the on-screen copy
 		// follows the same owner-styled design as the thermal print.
 		"StoreName":    storeName,

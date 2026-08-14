@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -360,11 +361,21 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		saleID, err := completeTender(r.Context(), d, d.KioskEngine, repo, saleInput, saleInput.Payments, "kiosk")
 		if err != nil {
 			var declined *paymentDeclinedError
+			var fiscalNever *fiscal.NeverConfiguredError
+			var fiscalFailing *fiscal.FailingWithoutOverrideError
 			status := http.StatusBadRequest
 			msgKey := "selforder.checkout.failed"
 			if errors.As(err, &declined) {
 				status = http.StatusPaymentRequired
 				msgKey = "selforder.checkout.declined"
+			}
+			// ADR-0048 hard gate: the anonymous customer can't repair either
+			// fiscal state, so both block kinds share one message pointing
+			// them to the counter — same 409 posture as the tax_unavailable
+			// path above (a till-side precondition, not a payment decline).
+			if errors.As(err, &fiscalNever) || errors.As(err, &fiscalFailing) {
+				status = http.StatusConflict
+				msgKey = "selforder.checkout.fiscal_blocked"
 			}
 			w.WriteHeader(status)
 			renderKioskPaymentPicker(w, r, d, methods, msgKey)

@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -91,6 +92,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		sampleCustomerPromoCount, _ := demoSeedRepo.SampleCustomerPromoCount(r.Context())
 		sampleCount := sampleItemCount + sampleCustomerPromoCount
 		shopType, _, _ := d.Settings.Get(r.Context(), common.KeyShopType)
+		// ADR-0048 (ut-docs#715): the fiscal-compliance card's state.
+		// Owner-only (isAdminOrAuthOff — NOT the manager gate the rest of
+		// this page uses); the override sub-form only appears once a TSE is
+		// declared configured, mirroring the handler's own refusal rule.
+		fiscalSystemOfRecordRaw, _, _ := d.Settings.Get(r.Context(), fiscal.KeySystemOfRecord)
+		fiscalTSEConfiguredRaw, _, _ := d.Settings.Get(r.Context(), fiscal.KeyTSEConfigured)
+		fiscalOverride, fiscalOverrideErr := fiscal.ActiveOverride(r.Context(), d.Settings, time.Now().UTC())
+		if fiscalOverrideErr != nil {
+			logging.L().Errorf("fiscal override state: %v", fiscalOverrideErr)
+		}
 		// Restore-from-another-POS resume prompt (ut-docs#617): only shown
 		// when the wizard's "Later" choice left it deferred; best-effort
 		// like shopType above, same posture.
@@ -165,6 +176,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
 			"launchOnStartup":       st.LaunchOnStartup,
+			"isOwner":               isAdminOrAuthOff(r),
+			"fiscalSystemOfRecord":  fiscalSystemOfRecordRaw == "true",
+			"fiscalTSEConfigured":   fiscalTSEConfiguredRaw == "true",
+			"fiscalOverrideActive":  fiscalOverride.Active,
+			"fiscalOverrideUntil":   fiscalOverride.Until.Format("2006-01-02 15:04"),
+			"fiscalAckPhrase":       fiscal.ConfirmationPhrase,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})

@@ -87,6 +87,15 @@
       {{ end }}
     </div>
     {{ end }}
+    {{ if .UnsignedOverride }}
+    {{/* ADR-0048: sale completed during an active owner TSE-override
+         window. ut-docs#675's future live-signing outage notice must reuse
+         this same conditional line (driven by the sale's own
+         unsigned_override audit state), not add a second mechanism. */}}
+    <div class="receipt-legal">
+      <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_override" }}</div>
+    </div>
+    {{ end }}
     {{ if .DesignFooter }}<div class="receipt-design-line" style="margin-top:.5rem"><small>{{ .DesignFooter }}</small></div>{{ end }}
     {{ if .PrinterUnavailable }}
     <div class="receipt-printer-warning">

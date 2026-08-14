@@ -284,6 +284,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
 	registerInventoryAPI(mux, dp)
+	registerFiscalAPI(mux, dp) // ADR-0048 German TSE hard-gate surface (ut-docs#715)
 	registerInventoryPage(mux, dp)
 	registerShiftsAPI(mux, dp)
 	registerShiftsPage(mux, dp)

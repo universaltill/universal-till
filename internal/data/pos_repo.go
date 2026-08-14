@@ -2265,6 +2265,22 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
+// SaleHasAuditAction reports whether a sale's audit trail contains at least
+// one entry with the given action — used by the receipt render path to mark
+// a sale completed during an ADR-0048 TSE-override window (action
+// "unsigned_override") without threading extra state through the tender
+// return path, and truthful on reprints after the window ends.
+func (r *POSRepo) SaleHasAuditAction(ctx context.Context, saleID, action string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(1) FROM audit_log WHERE entity_type = 'sale' AND entity_id = ? AND action = ?
+`, saleID, action).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("sale audit action lookup: %w", err)
+	}
+	return n > 0, nil
+}
+
 // AuditEntry is one row for the audit-trail browse/filter page. ActorName
 // is resolved via a LEFT JOIN on users — plugin-originated entries
 // (internal/data/plugin_repo.go's InsertAudit/InsertAuditRaw) always write

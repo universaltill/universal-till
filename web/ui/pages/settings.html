@@ -795,6 +795,42 @@
   </form>
 </div>
 {{ end }}
+{{ if .isOwner }}
+{{/* ADR-0048 (ut-docs#715): owner-only — admin/super_admin, deliberately
+     NOT the manager-wide .isManager gate the neighbouring cards use. */}}
+<div class="card">
+  <h2>{{ T "settings.fiscal.title" }} {{ helpLink "fiscal-compliance" }}</h2>
+  <p class="muted">{{ T "settings.fiscal.help" }}</p>
+  <form hx-post="/api/fiscal/system-of-record" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+    <label><input type="checkbox" name="enabled" value="true" {{ if .fiscalSystemOfRecord }}checked{{ end }}> {{ T "settings.fiscal.system_of_record" }}</label>
+    <p class="muted">{{ T "settings.fiscal.system_of_record.help" }}</p>
+    <div class="set-gap-s"><button class="btn" type="submit">{{ T "common.save" }}</button></div>
+  </form>
+  <form hx-post="/api/fiscal/tse-configured" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+    <label><input type="checkbox" name="enabled" value="true" {{ if .fiscalTSEConfigured }}checked{{ end }}> {{ T "settings.fiscal.tse_configured" }}</label>
+    <div class="set-gap-s"><button class="btn" type="submit">{{ T "common.save" }}</button></div>
+  </form>
+  {{ if .fiscalTSEConfigured }}
+  <h3>{{ T "settings.fiscal.override.title" }}</h3>
+  <p class="muted">{{ T "settings.fiscal.override.help" }}</p>
+  {{ if .fiscalOverrideActive }}
+  <p>⚠ {{ printf (T "settings.fiscal.override.active") .fiscalOverrideUntil }}</p>
+  {{ end }}
+  <form hx-post="/api/fiscal/tse-override" hx-target="#fiscal-override-result" hx-swap="innerHTML">
+    <label>{{ T "settings.fiscal.override.reason" }}
+      <input type="text" name="reason" required></label>
+    <label>{{ T "settings.fiscal.override.ack" }} <code>{{ .fiscalAckPhrase }}</code>
+      <input type="text" name="acknowledgement" required autocomplete="off"></label>
+    <label>{{ T "settings.fiscal.override.duration" }}
+      <input type="number" name="duration_minutes" min="1" max="480" value="60"></label>
+    <label>{{ T "settings.fiscal.override.pin" }}
+      <input type="password" name="owner_pin" inputmode="numeric" autocomplete="off"></label>
+    <div class="set-gap-s"><button class="btn" type="submit">{{ T "settings.fiscal.override.submit" }}</button></div>
+  </form>
+  <div id="fiscal-override-result"></div>
+  {{ end }}
+</div>
+{{ end }}
 {{ if .isManager }}
 <div class="card">
   <h2>{{ T "settings.currency.title" }}</h2>

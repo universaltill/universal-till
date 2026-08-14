@@ -42,7 +42,7 @@ func TestRenderReceipt_WorksFromAnyWorkingDirectory(t *testing.T) {
 	}
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, Reference: "REF"}}
-	if _, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}); err != nil {
+	if _, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, false); err != nil {
 		t.Fatalf("renderReceipt from an unrelated CWD: %v", err)
 	}
 }
@@ -80,7 +80,7 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 10, Reference: "REF"}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true})
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, false)
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestRenderReceipt_LegalText(t *testing.T) {
 			Lines:         []string{"VAT Reg 123"},
 		},
 	}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, legalBlocks, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true})
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, legalBlocks, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, false)
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestRenderReceipt_NoLegalText(t *testing.T) {
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 0}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true})
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, false)
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestRenderReceiptHonorsDesign(t *testing.T) {
 		ShowSKU: true,
 		// ShowTax and ShowBarcode off: subtotal/tax rows + barcode hidden.
 	}
-	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, "Corner Shop", design)
+	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, "Corner Shop", design, false)
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
