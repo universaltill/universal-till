@@ -120,6 +120,30 @@ func TestStoreAPI_DownloadFailureIs502(t *testing.T) {
 	}
 }
 
+// TestStoreAPI_DownloadNotEntitled_403 pins ut-docs#673's actionable-error
+// requirement: a paid listing the store isn't entitled to (or a listing
+// still awaiting approval) must surface as the specific
+// plugins.install.error.not_entitled i18n key, not the generic
+// "download failed: <status>" 502 TestStoreAPI_DownloadFailureIs502 covers.
+func TestStoreAPI_DownloadNotEntitled_403(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"not_entitled","message":"store is not entitled to download this plugin"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
+
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-paid"}}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("download of a not-entitled listing = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+	if ok, msg := storeRespOf(t, rec); ok || msg != "plugins.install.error.not_entitled" {
+		t.Fatalf("download envelope wrong: success=%v msg=%q, want the not_entitled i18n key", ok, msg)
+	}
+}
+
 func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{

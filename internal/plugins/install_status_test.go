@@ -3,9 +3,11 @@ package plugins
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/web/locales"
 	_ "modernc.org/sqlite"
 )
@@ -65,6 +67,35 @@ func TestClassifyInstallError(t *testing.T) {
 	}
 }
 
+// TestClassifyInstallError_NotEntitled pins the fix for the review finding
+// on ut-docs#673: a not_entitled *marketplace.APIError reached every install
+// path EXCEPT the store/download handler (which checks it directly) as the
+// generic "download failed" / plugins.install.error.retryable — including
+// the live Update button on /plugins, offering a Retry that can never
+// succeed for a paid listing needing approval. Uses errors.As, not string
+// matching, since it's the actual error type, and must still classify
+// correctly when wrapped (every real call site wraps it, e.g. "install: %w").
+func TestClassifyInstallError_NotEntitled(t *testing.T) {
+	apiErr := &marketplace.APIError{Code: "not_entitled", Message: "store is not entitled to download this plugin"}
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"bare APIError", apiErr},
+		{"wrapped APIError", fmt.Errorf("install: %w", apiErr)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := ClassifyInstallError(tc.err)
+			if failure.MessageKey != "plugins.install.error.not_entitled" {
+				t.Fatalf("message key = %q, want plugins.install.error.not_entitled", failure.MessageKey)
+			}
+			if failure.Retryable {
+				t.Fatal("retryable = true, want false — retrying an unapproved paid listing can never succeed")
+			}
+		})
+	}
+}
+
 // TestClassifyInstallError_KeysResolveInLocales guards a gap guard-i18n.sh
 // can't see (review finding, ut-docs#169): the UI renders a MessageKey via
 // {{ T .StatusMessageKey }} — a DYNAMIC key, not a literal `{{ T "..." }}`
@@ -87,6 +118,7 @@ func TestClassifyInstallError_KeysResolveInLocales(t *testing.T) {
 		"plugins.install.error.payment_conflict",
 		"plugins.install.error.page_conflict",
 		"plugins.install.error.page_route_conflict",
+		"plugins.install.error.not_entitled",
 	}
 	for _, key := range keys {
 		if got := i18n.T("en", key); got == key {

@@ -56,6 +56,7 @@
         {{ if eq .Tier "official" }}<span class="trust-badge trust-official" title="{{ T "plugins.trust.official_hint" }}">🏅 {{ T "plugins.trust.official" }}</span>
         {{ else if eq .Tier "verified" }}<span class="trust-badge trust-verified" title="{{ T "plugins.trust.verified_hint" }}">✔ {{ T "plugins.trust.verified" }}</span>
         {{ else }}<span class="trust-badge trust-unverified" title="{{ T "plugins.trust.unverified_hint" }}">⚠ {{ T "plugins.trust.unverified" }}</span>{{ end }}
+        {{ if .Paid }}<span class="paid-badge" title="{{ T "plugins.store.paid_hint" }}">{{ T "plugins.store.paid_badge" }}</span>{{ end }}
       </div>
       <span class="tag">v{{ .Version }}</span>
     </div>
@@ -162,7 +163,8 @@ window.utTrustPrompt = {{ printf "%q" (T "plugins.trust.confirm") }};
   // scripts. ut-docs#460: on a till that follows a primary, store
   // download/install are rejected with this key.
   var T = {
-    'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}'
+    'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
+    'plugins.install.error.not_entitled': '{{ T "plugins.install.error.not_entitled" }}'
   };
   document.addEventListener('click', function (ev) {
     var btn = ev.target.closest('[data-store-action]');
