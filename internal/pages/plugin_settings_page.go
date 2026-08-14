@@ -43,7 +43,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	mux.HandleFunc("GET /plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Redirect(w, r, "/plugins", http.StatusSeeOther)
 			return
 		}
@@ -76,7 +76,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
