@@ -663,6 +663,19 @@ func TestSettingsPage_HidesManagerOnlyCardsFromCashier(t *testing.T) {
 	if !strings.Contains(managerHTML, `name="currency"`) {
 		t.Fatal("manager should see the currency card")
 	}
+
+	// super_admin (ut-docs#710): the "isManager" template flag now comes from
+	// canPerform(d, r, "settings") instead of isManagerOrAuthOff, which never
+	// recognized super_admin (User.IsManager() only checks manager/admin) —
+	// this is the real broadening that swap brings. A super_admin session
+	// must see exactly what a manager sees.
+	superAdminHTML := get(&auth.User{ID: "sa1", Role: "super_admin", DisplayName: "Super"})
+	if !strings.Contains(superAdminHTML, `id="new-setting"`) {
+		t.Fatal("super_admin should see the raw settings.all key/value table")
+	}
+	if !strings.Contains(superAdminHTML, `name="currency"`) {
+		t.Fatal("super_admin should see the currency card")
+	}
 }
 
 // Regression: the shipped currency card (web/ui/pages/settings.html) posts
@@ -843,6 +856,117 @@ func TestEnrolEndpointsRefuseNonManager(t *testing.T) {
 		body := rec.Body.String()
 		if !strings.Contains(body, `class="error"`) && !strings.Contains(body, `class="muted"`) {
 			t.Fatalf("%s %s did not render a forbidden notice: %s", ep.method, ep.path, body)
+		}
+	}
+}
+
+// settingsForbiddenText is the exact localized string every HTMX-style
+// (200-with-error-span) settings endpoint renders when canPerform() denies
+// the request — httpx.T(locale, "settings.enrol.forbidden") in
+// web/locales/en.json. Used below to tell "denied" apart from "past the
+// gate but failed downstream for an unrelated reason" on those endpoints,
+// which never answer a hard 403.
+const settingsForbiddenText = "Only a manager or admin can register this till."
+
+// TestSettingsEndpoints_RoleMatrix is ut-docs#710's role-matrix proof: every
+// isManagerOrAuthOff site this card moved onto canPerform(d, r, "settings")
+// (19 handler gates + the GET /settings "isManager" template flag covered
+// separately by TestSettingsPage_HidesManagerOnlyCardsFromCashier) denies a
+// cashier and lets manager/admin/super_admin past the auth gate — same
+// table-driven role-matrix convention as #706's
+// TestPluginManagementEndpoints_RealSessionGatesByRole and #707's
+// TestDataManagementEndpoints_RealSessionGatesByRole
+// (data_backup_manager_gate_test.go). super_admin is the row that actually
+// documents canPerform()'s real broadening over the old isManagerOrAuthOff
+// gate (User.IsManager() never recognized super_admin) — written to fail
+// against the pre-#710 gate (a super_admin session got 403/the forbidden
+// span everywhere, same as a cashier) and confirmed to pass once every site
+// in settings_page.go was switched.
+//
+// Most endpoints answer a hard 403 when denied. Six are HTMX swap targets
+// that always answer 200 (HTMX drops non-2xx bodies) with the localized
+// forbidden text in an error/muted span instead — those are marked htmx
+// below and asserted by text rather than status code; "past the gate" for
+// them means downstream processing was reached, not that it necessarily
+// succeeded (e.g. enrol/now still fails offline-first with no reachable
+// marketplace, which is fine — this test only proves the auth gate itself).
+func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	if _, err := d.Db.Exec(`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name, method, path string
+		form               url.Values
+		htmx               bool
+	}{
+		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, true},
+		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, true},
+		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, true},
+		{"enrol-now", http.MethodPost, "/api/enrol/now", nil, true},
+		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, true},
+		{"idle-lock", http.MethodPost, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, false},
+		{"kiosk-idle-reset", http.MethodPost, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, false},
+		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, false},
+		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, false},
+		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, false},
+		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, false},
+		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, false},
+		{"remove-demo-catalogue", http.MethodPost, "/api/settings/remove-demo-catalogue", nil, true},
+		{"dismiss-restore-prompt", http.MethodPost, "/api/settings/dismiss-restore-prompt", nil, false},
+		{"dismiss-pending-base-plugin", http.MethodPost, "/api/settings/dismiss-pending-base-plugin", url.Values{"canonical_type": {"x"}}, false},
+		{"till-name", http.MethodPost, "/api/settings/till-name", url.Values{"name": {"X"}}, false},
+		{"till-register", http.MethodPost, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, false},
+		{"save", http.MethodPost, "/api/settings/save", url.Values{"currency": {"GBP"}}, false},
+		{"upsert", http.MethodPost, "/api/settings/upsert", url.Values{"key": {"x"}, "value": {"y"}}, false},
+	}
+
+	doReq := func(tc struct {
+		name, method, path string
+		form               url.Values
+		htmx               bool
+	}, u auth.User) *httptest.ResponseRecorder {
+		var req *http.Request
+		if tc.form != nil {
+			req = httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		} else {
+			req = httptest.NewRequest(tc.method, tc.path, nil)
+		}
+		req = auth.WithUser(req, u)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"/cashier_denied", func(t *testing.T) {
+			rec := doReq(tc, cashUser)
+			if tc.htmx {
+				if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), settingsForbiddenText) {
+					t.Fatalf("%s %s cashier = %d %q, want 200 with the forbidden text", tc.method, tc.path, rec.Code, rec.Body.String())
+				}
+				return
+			}
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s %s cashier = %d, want 403", tc.method, tc.path, rec.Code)
+			}
+		})
+		for _, role := range []string{"manager", "admin", "super_admin"} {
+			t.Run(tc.name+"/"+role+"_past_gate", func(t *testing.T) {
+				u := auth.User{ID: "u-" + role, Role: role}
+				rec := doReq(tc, u)
+				if tc.htmx {
+					if strings.Contains(rec.Body.String(), settingsForbiddenText) {
+						t.Fatalf("%s %s %s got the forbidden text, want past the auth gate: %s", tc.method, tc.path, role, rec.Body.String())
+					}
+					return
+				}
+				if rec.Code == http.StatusForbidden {
+					t.Fatalf("%s %s %s = 403, want past the auth gate", tc.method, tc.path, role)
+				}
+			})
 		}
 	}
 }

@@ -61,6 +61,14 @@ func setupSelfOrderShopDeps(t *testing.T) (*common.Deps, *db.DB) {
 		Settings:    settings.NewStore(d.DB),
 		Engine:      engine,
 		KioskEngine: kioskEngine,
+		// AuthSvc (ut-docs#710): GET /settings's "isManager" flag and every
+		// mutating settings endpoint are now canPerform()-gated, which
+		// queries role_permissions for real via AuthSvc.Can() — db.Open
+		// above already ran the real migrations, so the table exists and is
+		// seeded. Callers that need their own auth.Service for
+		// registerAuth/middleware (e.g. TestSelfOrderExit_PinLoginReachesTillSettingsNotKioskLoop)
+		// can still build a separate one against the same *sql.DB.
+		AuthSvc: auth.NewService(d.DB),
 	}
 	// Registered AFTER d.Close's cleanup above, so LIFO cleanup order runs
 	// this FIRST: any printReceiptAsync goroutine a test's checkout
