@@ -36,7 +36,7 @@ const importFormOverhead = 1 << 20 // 1MB
 // import_page.go) is untouched by this.
 func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/data/import", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "import_export") {
 			dataAPIRespond(w, http.StatusForbidden, false, "manager only")
 			return
 		}

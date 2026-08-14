@@ -506,8 +506,11 @@ func TestAuthRepo_RevokeUserSessions(t *testing.T) {
 // internal/pages/settings_page.go's canPerform() call sites as of ut-docs#710,
 // so it belongs in this assertion list same as every other wired-up action),
 // 042's reports/audit additions (#709), 043's plugin_management addition
-// (#706), and 044's data_management/sync_management additions (#707):
-// manager/admin/super_admin get every catalog action, cashier gets
+// (#706), 044's data_management/sync_management additions (#707), and 045's
+// import_export/issue_reporting additions (#713, wired up by
+// internal/pages/import_page.go+import_dispatch.go and
+// internal/pages/issue_report_page.go respectively): manager/admin/
+// super_admin get every catalog action, cashier gets
 // none, and an action outside the catalog is denied for everyone rather than
 // erroring — "no row" means denied, not "unknown." Exercising these here
 // (against a REAL migrated DB, unlike internal/pages' hand-rolled fixture) is
@@ -523,7 +526,7 @@ func TestAuthRepo_HasPermission(t *testing.T) {
 	repo, _ := newAuthTestRepo(t)
 
 	for _, role := range []string{"manager", "admin", "super_admin"} {
-		for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management", "settings"} {
+		for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management", "settings", "import_export", "issue_reporting"} {
 			granted, err := repo.HasPermission(ctx, role, action)
 			if err != nil {
 				t.Fatalf("HasPermission(%s, %s): %v", role, action, err)
@@ -534,7 +537,7 @@ func TestAuthRepo_HasPermission(t *testing.T) {
 		}
 	}
 
-	for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management", "settings"} {
+	for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management", "settings", "import_export", "issue_reporting"} {
 		granted, err := repo.HasPermission(ctx, "cashier", action)
 		if err != nil {
 			t.Fatalf("HasPermission(cashier, %s): %v", action, err)

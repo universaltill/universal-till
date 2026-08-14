@@ -33,7 +33,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "import_export") {
 			http.Redirect(w, r, "/catalog", http.StatusSeeOther)
 			return
 		}
@@ -45,7 +45,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "import_export") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -69,7 +69,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/catalog/export-save", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "import_export") {
 			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
@@ -99,7 +99,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "import_export") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}

@@ -123,7 +123,7 @@ func registerAskAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "ask is not configured", http.StatusNotFound)
 			return
 		}
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "reports") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}

@@ -40,8 +40,12 @@ func newIssueReportTestMux(t *testing.T) *http.ServeMux {
 
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	// AuthSvc (ut-docs#713): /report-issue and its API are now
+	// canPerform()-gated, which queries role_permissions for real via
+	// AuthSvc.Can() — seedForPages already seeds it (manager/admin/
+	// super_admin granted "issue_reporting").
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerIssueReportPage(mux, dp)
 	return mux
@@ -71,6 +75,12 @@ func TestReportIssuePage_ManagerOnly(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("manager = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
+	// super_admin broadens vs. isManagerOrAuthOff (manager/admin only,
+	// per #555) — accepted, and pinned here so a regression to the old gate
+	// wouldn't silently pass this test on manager alone.
+	if rec := get(&auth.User{ID: "super-1", Role: "super_admin"}); rec.Code != http.StatusOK {
+		t.Fatalf("super_admin = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
 }
 
 // The 🐞 nav chip mirrors the session-chip convention (TestSessionChip):
@@ -98,6 +108,14 @@ func TestBugReportChip(t *testing.T) {
 	rec := get(&auth.User{ID: "m1", Role: "manager"})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `data-testid="bugreport-toggle"`) {
 		t.Fatalf("manager chip: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	// super_admin broadens vs. isManagerOrAuthOff (manager/admin only, per
+	// #555) — pinned here so a regression of this handler's gate back to the
+	// old one fails: without this case the chip's gate is the ONE
+	// issue_reporting site no test distinguishes (review, ut-docs#713).
+	if rec := get(&auth.User{ID: "s1", Role: "super_admin"}); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `data-testid="bugreport-toggle"`) {
+		t.Fatalf("super_admin chip: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -223,6 +241,20 @@ func TestIssueReportAPI_ManagerOnly(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier POST = %d, want 403", rec.Code)
+	}
+
+	// super_admin broadens vs. isManagerOrAuthOff (manager/admin only, per
+	// #555) — pinned so a regression of THIS handler's gate back to the old
+	// one fails here rather than passing on the cashier case alone (review,
+	// ut-docs#713).
+	body, ctype = multipartIssueReport(t, "printer jammed", true, false)
+	req = httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "super-1", Role: "super_admin"})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("super_admin POST = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }
 

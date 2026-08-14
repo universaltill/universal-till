@@ -37,7 +37,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// cashier session on a backoffice-mode till falls through to the
 		// normal sale screen instead of a dead-end 403 (the mode is a
 		// default landing preference, not a role bypass).
-		if mode == "backoffice" && isManagerOrAuthOff(r) {
+		if mode == "backoffice" && canPerform(d, r, "reports") {
 			http.Redirect(w, r, "/backoffice", http.StatusSeeOther)
 			return
 		}
