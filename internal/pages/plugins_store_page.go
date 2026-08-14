@@ -2,6 +2,7 @@ package pages
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -31,6 +32,7 @@ type storeItem struct {
 	Tier             string // official | verified | unverified (ADR-0006 surface)
 	Type             string
 	Permissions      []string // manifest capability scopes (FR-006 permission badges); empty when the catalog has none for this release
+	Paid             bool     // ut-docs#673: badge only — no price/amount exists in the catalog data model yet (ut-docs#700)
 	Downloaded       bool
 	Installed        bool
 	StatusState      string // requested|downloading|installing|failed ("" otherwise)
@@ -105,6 +107,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 					Tier:        trustTierOf(p.ID, p.TrustTier),
 					Type:        p.CanonicalType,
 					Permissions: p.Permissions,
+					Paid:        p.PaidListing,
 				}
 				if icon := p.IconURL; icon != "" {
 					if strings.HasPrefix(icon, "/") {
@@ -232,6 +235,15 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 		})
 		if err != nil {
+			// ut-docs#673: a paid listing without an approved entitlement (or
+			// one still awaiting approval) fails this way — give the operator
+			// the specific, actionable reason instead of a generic gateway
+			// error, same pattern as the replica_use_primary key above.
+			var apiErr *marketplace.APIError
+			if errors.As(err, &apiErr) && apiErr.Code == "not_entitled" {
+				respond(w, http.StatusForbidden, "plugins.install.error.not_entitled")
+				return
+			}
 			respond(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))
 			return
 		}
