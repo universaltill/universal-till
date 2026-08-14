@@ -20,7 +20,7 @@ import (
 // the full pages; the heavy analysis stays on /reports.
 func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/backoffice", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "reports") {
 			http.Error(w, "manager or admin role required", http.StatusForbidden)
 			return
 		}
