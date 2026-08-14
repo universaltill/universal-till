@@ -38,6 +38,10 @@ jobs:
         run: bash scripts/ci/guard-i18n.sh
       - name: i18n coverage guard regression test
         run: bash scripts/ci/guard-i18n_test.sh
+      - name: Compliance-claims wording guard
+        run: bash scripts/ci/guard-compliance-claims.sh
+      - name: Compliance-claims wording guard regression test
+        run: bash scripts/ci/guard-compliance-claims_test.sh
       - name: Manual screenshot freshness guard
         run: bash scripts/ci/guard-docs-shots.sh
       - name: Manual screenshot freshness guard regression test
