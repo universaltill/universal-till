@@ -796,7 +796,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// stay truthful after the window ends. ut-docs#675's future
 		// outage-notice line must key off this same per-sale state, not
 		// invent a second marking mechanism.
-		unsignedOverride, _ := repo.SaleHasAuditAction(r.Context(), saleID, "unsigned_override")
+		unsignedOverride, overrideLookupErr := repo.SaleHasAuditAction(r.Context(), saleID, "unsigned_override")
+		if overrideLookupErr != nil {
+			// Fail quiet, not silent: an unreadable audit trail must not
+			// invent a marker (that would mislabel an ordinary sale), but
+			// it must not vanish either — this is the one signal saying a
+			// sale was taken unsigned.
+			log.Printf("fiscal: unsigned_override lookup for sale %s failed, receipt marker omitted: %v", saleID, overrideLookupErr)
+		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable,
 			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), unsignedOverride)
 		if renderErr != nil {

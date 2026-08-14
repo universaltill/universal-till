@@ -8,9 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/print"
@@ -181,7 +183,49 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	if rd.Footer != "" {
 		doc.Footer = []string{rd.Footer}
 	}
+	// ADR-0048 (ut-docs#715): a sale completed during an active owner
+	// TSE-override window carries the marker line on the PRINTED receipt
+	// too, not only the on-screen copy — the printed slip is the one the
+	// customer keeps and the shop files, and web/help's fiscal-compliance
+	// topic promises the sale is marked "on its receipt". Derived from the
+	// sale's own unsigned_override audit entry, i.e. the SAME per-sale
+	// state pos_api.go's on-screen receipt reads — never the current
+	// override-window state — so a reprint after the window expires stays
+	// truthful and a sale taken outside any window never gains the marker
+	// just because a new window happens to be active at reprint time.
+	flagged, ferr := data.NewPOSRepo(d.Db).SaleHasAuditAction(ctx, detail.ID, "unsigned_override")
+	if ferr != nil {
+		logging.L().Errorf("fiscal: unsigned_override lookup for sale %s failed, printed marker omitted: %v", detail.ID, ferr)
+	}
+	if flagged {
+		doc.Footer = append(wrapReceiptNotice(httpx.T(locale, "receipt.fiscal.unsigned_override")), doc.Footer...)
+	}
 	return doc, nil
+}
+
+// wrapReceiptNotice word-wraps a full-sentence notice to the thermal paper
+// width. print.Doc's renderers CLIP a footer line at print.Width rather than
+// wrapping it, so a sentence handed over whole would print with its tail
+// silently cut off — for the ADR-0048 marker that would drop the "no TSE
+// signature" half, which is the entire point of the line.
+func wrapReceiptNotice(text string) []string {
+	var out []string
+	line := ""
+	for _, word := range strings.Fields(text) {
+		switch {
+		case line == "":
+			line = word
+		case utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) <= print.Width:
+			line += " " + word
+		default:
+			out = append(out, line)
+			line = word
+		}
+	}
+	if line != "" {
+		out = append(out, line)
+	}
+	return out
 }
 
 // Test seams for the "printer hung until the deadline" regression

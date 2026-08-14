@@ -816,7 +816,14 @@
   {{ if .fiscalOverrideActive }}
   <p>⚠ {{ printf (T "settings.fiscal.override.active") .fiscalOverrideUntil }}</p>
   {{ end }}
-  <form hx-post="/api/fiscal/tse-override" hx-target="#fiscal-override-result" hx-swap="innerHTML">
+  {{/* htmx never swaps a 4xx by default, and app.js's global handler turns
+       one into a GENERIC "server error" toast — without this the handler's
+       localized refusals (wrong confirmation phrase, missing reason, bad
+       duration, non-owner PIN, never-configured) would all be swallowed and
+       the owner would be left retyping the acknowledgement phrase blind.
+       Same house pattern as index.html's pfand-result form. */}}
+  <form hx-post="/api/fiscal/tse-override" hx-target="#fiscal-override-result" hx-swap="innerHTML"
+        hx-on::before-swap="if (event.detail.target && event.detail.target.id === 'fiscal-override-result') { event.detail.shouldSwap = true; event.detail.isError = false; }">
     <label>{{ T "settings.fiscal.override.reason" }}
       <input type="text" name="reason" required></label>
     <label>{{ T "settings.fiscal.override.ack" }} <code>{{ .fiscalAckPhrase }}</code>

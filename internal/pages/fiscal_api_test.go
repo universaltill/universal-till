@@ -282,8 +282,14 @@ func TestFiscalToggles_OwnerOnlyAndAudited(t *testing.T) {
 	if v != "false" {
 		t.Fatalf("expected final value false, got %q", v)
 	}
+	// ORDER BY rowid, not created_at/id: created_at is second-resolution
+	// (time.RFC3339) and both writes land in the same test run, so ties are
+	// common; id is a random uuid.NewString() with no relation to insertion
+	// order, so "ORDER BY created_at, id" was flaky (~coin-flip on which
+	// audit row sorts first). SQLite's implicit rowid on this TEXT-PK,
+	// non-WITHOUT-ROWID table is the actual insertion order.
 	rows, err := dp.Db.Query(
-		`SELECT data_json FROM audit_log WHERE entity_type = 'fiscal_settings' AND action = 'system_of_record_changed' ORDER BY created_at, id`)
+		`SELECT data_json FROM audit_log WHERE entity_type = 'fiscal_settings' AND action = 'system_of_record_changed' ORDER BY rowid`)
 	if err != nil {
 		t.Fatal(err)
 	}
