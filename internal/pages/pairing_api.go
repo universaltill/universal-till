@@ -163,7 +163,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 	// pending requests, each with the verification code the manager
 	// visually compares against the replica's own "waiting" screen.
 	mux.HandleFunc("GET /api/sync/pair-requests", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "sync_management") {
 			http.Error(w, "manager required", http.StatusForbidden)
 			return
 		}
