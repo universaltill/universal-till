@@ -501,33 +501,40 @@ func TestAuthRepo_RevokeUserSessions(t *testing.T) {
 	}
 }
 
-// TestAuthRepo_HasPermission covers migration 039's seed grants (#554):
-// manager/admin/super_admin get every catalog action, cashier gets none,
-// and an action outside the catalog is denied for everyone rather than
-// erroring — "no row" means denied, not "unknown."
+// TestAuthRepo_HasPermission covers migration 039's seed grants (#554) and
+// 042's reports/audit additions (#709): manager/admin/super_admin get every
+// catalog action, cashier gets none, and an action outside the catalog is
+// denied for everyone rather than erroring — "no row" means denied, not
+// "unknown." Exercising `reports`/`audit` here (against a REAL migrated DB,
+// unlike internal/pages' hand-rolled fixture) is what actually pins 042's
+// output — ut-docs#709 review finding: nothing else in the codebase did.
 func TestAuthRepo_HasPermission(t *testing.T) {
 	ctx := context.Background()
 	repo, _ := newAuthTestRepo(t)
 
 	for _, role := range []string{"manager", "admin", "super_admin"} {
-		granted, err := repo.HasPermission(ctx, role, "refund")
+		for _, action := range []string{"refund", "reports", "audit"} {
+			granted, err := repo.HasPermission(ctx, role, action)
+			if err != nil {
+				t.Fatalf("HasPermission(%s, %s): %v", role, action, err)
+			}
+			if !granted {
+				t.Fatalf("expected %s granted %s by the seed data", role, action)
+			}
+		}
+	}
+
+	for _, action := range []string{"refund", "reports", "audit"} {
+		granted, err := repo.HasPermission(ctx, "cashier", action)
 		if err != nil {
-			t.Fatalf("HasPermission(%s, refund): %v", role, err)
+			t.Fatalf("HasPermission(cashier, %s): %v", action, err)
 		}
-		if !granted {
-			t.Fatalf("expected %s granted refund by the seed data", role)
+		if granted {
+			t.Fatalf("cashier must not be granted %s by the seed data", action)
 		}
 	}
 
-	granted, err := repo.HasPermission(ctx, "cashier", "refund")
-	if err != nil {
-		t.Fatalf("HasPermission(cashier, refund): %v", err)
-	}
-	if granted {
-		t.Fatal("cashier must not be granted refund by the seed data")
-	}
-
-	granted, err = repo.HasPermission(ctx, "manager", "no-such-action")
+	granted, err := repo.HasPermission(ctx, "manager", "no-such-action")
 	if err != nil {
 		t.Fatalf("HasPermission(manager, no-such-action): %v", err)
 	}

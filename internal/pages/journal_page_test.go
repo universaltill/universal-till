@@ -30,6 +30,7 @@ func newJournalMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 		State:    common.LoadState(t.Context(), setStore, cfg),
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Settings: setStore,
+		AuthSvc:  auth.NewService(db),
 	}
 	mux := http.NewServeMux()
 	registerJournal(mux, d)

@@ -263,7 +263,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 
 	mux.HandleFunc("POST /api/reports/eod/run", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "eod_report") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -286,7 +286,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Reprint an archived report.
 	mux.HandleFunc("POST /api/reports/eod/print/{period}", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "eod_report") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -329,7 +329,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 	// Downloaded directly as a JSON file (Content-Disposition: attachment),
 	// same precedent as GET /api/backup/download/{name}.
 	mux.HandleFunc("POST /api/reports/eod/range", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "eod_report") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -365,7 +365,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 	// the reports business-day-start boundary — a sibling field on this
 	// same settings panel/endpoint rather than a new settings page.
 	mux.HandleFunc("POST /api/settings/eod", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "eod_report") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -416,7 +416,7 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 	// UI renders cloud/both as visible-but-disabled for the same reason;
 	// this is the server-side half of that guarantee.
 	mux.HandleFunc("POST /api/settings/report-retention", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "eod_report") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -439,7 +439,7 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 	// text column, keeping the shape simple rather than flattening each
 	// report kind's own fields). JSON: the same rows as an array.
 	mux.HandleFunc("POST /api/reports/archive/export", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "eod_report") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
