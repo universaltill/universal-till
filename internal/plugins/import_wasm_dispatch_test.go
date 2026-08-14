@@ -171,6 +171,114 @@ func TestImportDispatch_RealWasmModule(t *testing.T) {
 	}
 }
 
+// TestImportDispatch_HostBufCapClampsOversizedDstCap proves
+// hostImportFileRead clamps a guest-claimed dstCap to importFileReadBufCap
+// (256KB) on the HOST side, regardless of what the guest claims it can
+// hold (ut-docs#615, follow-up from #599's review finding F5).
+// TestImportDispatch_RealWasmModule's chunking proof is driven entirely by
+// the GUEST's own 64KB buffer choice — it says nothing about what happens
+// if a guest claims a much larger dstCap. This test drives the guest's
+// dedicated "oversized_read" mode (testdata/import_guest/main.go), which
+// allocates a 2MB buffer and issues exactly ONE import_file_read call
+// claiming the full 2MB as dstCap, against a staged file with MORE than
+// importFileReadBufCap bytes remaining. A real os.File.Read on a regular
+// file with that much data remaining fills the whole target buffer in one
+// syscall, so an unclamped host would return far more than 256KB for that
+// one call; the clamp must cap it to exactly importFileReadBufCap.
+func TestImportDispatch_HostBufCapClampsOversizedDstCap(t *testing.T) {
+	guest := buildImportGuest(t)
+
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	w := NewWasmRuntime(base)
+
+	const pluginID = "com.test.importbufcap"
+	seedInstalledPlugin(t, db, pluginID, "ImportBufCap", "1.0.0", "wasm", true)
+	if _, err := db.Exec(`UPDATE plugins SET entrypoint = './plugin.wasm' WHERE id = ?`, pluginID); err != nil {
+		t.Fatalf("set entrypoint: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'events:receive', 1)`,
+		"imwbc-perm", pluginID); err != nil {
+		t.Fatalf("seed permission: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES (?, ?, 'import.requested.ask', 'import', 1)`,
+		"imwbc-hook", pluginID); err != nil {
+		t.Fatalf("seed hook: %v", err)
+	}
+
+	raw, err := os.ReadFile(guest)
+	if err != nil {
+		t.Fatalf("read guest: %v", err)
+	}
+	modPath := filepath.Join(base, pluginID, "1.0.0", "plugin.wasm")
+	if err := writeFileWithParents(modPath, raw); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+	w.Sync(ctx, db)
+	t.Cleanup(func() { importFiles.CloseAll(pluginID) })
+
+	bus := SharedBus(db)
+	defer bus.ResetSubscribers()
+	if !bus.HasSubscribers("import.requested.ask") {
+		t.Fatalf("import.requested.ask not subscribed after Sync")
+	}
+	bus.SetEventMode("import.requested.ask", Blocking)
+
+	// More than importFileReadBufCap bytes remaining, so an unclamped
+	// single read really could satisfy the guest's oversized 2MB request.
+	const fileSize = importFileReadBufCap + (100 << 10) // 356KB
+	content := make([]byte, fileSize)
+	for i := range content {
+		content[i] = byte(i % 256)
+	}
+	stagedPath := filepath.Join(t.TempDir(), "staged.bkp")
+	if err := os.WriteFile(stagedPath, content, 0o600); err != nil {
+		t.Fatalf("write staged file: %v", err)
+	}
+	handle, err := OpenImportFile(pluginID, stagedPath)
+	if err != nil {
+		t.Fatalf("OpenImportFile: %v", err)
+	}
+
+	payload := map[string]any{
+		"entry_key":   "bkp",
+		"entities":    []string{"items"},
+		"file_handle": handle,
+		"file_name":   "staged.bkp",
+		"file_size":   fileSize,
+		"mode":        "oversized_read",
+	}
+	resp, ok, err := bus.AskPlugin(ctx, pluginID, "import.requested.ask", payload)
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected the real wasm module to answer")
+	}
+
+	var parsed struct {
+		OK      bool           `json:"ok"`
+		Message string         `json:"message"`
+		Error   string         `json:"error"`
+		Counts  map[string]int `json:"counts"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil {
+		t.Fatalf("parse response %s: %v", resp, err)
+	}
+	if !parsed.OK {
+		t.Fatalf("guest reported failure: %+v", parsed)
+	}
+
+	got, hasKey := parsed.Counts["first_read_bytes"]
+	if !hasKey {
+		t.Fatalf("response %+v missing first_read_bytes — guest's oversized_read mode not exercised", parsed)
+	}
+	if got != importFileReadBufCap {
+		t.Fatalf("first read returned %d bytes, want exactly importFileReadBufCap (%d) — host-side dstCap clamp not applied", got, importFileReadBufCap)
+	}
+}
+
 // TestImportFileCloseAllOnPluginUnload mirrors TestHostTCPCloseAllOnPluginUnload
 // for the staged-file registry: a handle left open by a plugin (a guest
 // that never called import_file_close, host-side cleanup skipped) is
