@@ -4,15 +4,25 @@
 -- successors, per its own card text).
 --
 -- `import_export`: internal/pages/import_page.go's catalog import page,
--- CSV/ZIP export, export-save-to-disk, and the commit-import POST, plus
--- internal/pages/import_dispatch.go's plugin-import dispatch endpoint. All
--- five sites move catalog data in or out of the till in bulk — a distinct
--- risk shape from data_management (044: destroy/restore/export the till's
--- OWN stored transactional/customer data) and from settings (a config
--- edit) — bulk catalog import/export is closer to a supply-chain-facing
--- operation than either, so it gets its own action rather than overloading
--- one of those two. This is the new action the card's own text anticipated
--- ("import/export specifically... a new import_export action").
+-- CSV/ZIP export, export-save-to-disk, and the commit-import POST — four
+-- sites moving catalog data in or out of the till in bulk, a distinct risk
+-- shape from data_management (044: destroy/restore/export the till's OWN
+-- stored transactional/customer data) and from settings (a config edit) —
+-- closer to a supply-chain-facing operation than either, so it gets its
+-- own action rather than overloading one of those two. This is the new
+-- action the card's own text anticipated ("import/export specifically...
+-- a new import_export action").
+--
+-- internal/pages/import_dispatch.go's POST /api/data/import (plugin-import
+-- dispatch, not catalog-specific — it hands the upload to whichever
+-- import-type plugin entry the caller names, over arbitrary declared
+-- entities) is grouped under import_export too, alongside its sibling
+-- import_page.go sites, rather than data_management like its documented
+-- mirror POST /api/data/export (044) — a real judgment call flagged by
+-- independent review (ut-docs#713) as worth reconsidering, not obviously
+-- wrong: tracked as a follow-up card rather than blocking this one, since
+-- both actions are seeded identically to manager/admin/super_admin today
+-- and the split is inert either way.
 --
 -- `issue_reporting`: internal/pages/issue_report_page.go's "report an
 -- issue" panel, its nav chip, and the bundle-upload API (ADR-0022) — a

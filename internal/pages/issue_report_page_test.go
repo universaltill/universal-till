@@ -109,6 +109,14 @@ func TestBugReportChip(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `data-testid="bugreport-toggle"`) {
 		t.Fatalf("manager chip: code=%d body=%s", rec.Code, rec.Body.String())
 	}
+	// super_admin broadens vs. isManagerOrAuthOff (manager/admin only, per
+	// #555) — pinned here so a regression of this handler's gate back to the
+	// old one fails: without this case the chip's gate is the ONE
+	// issue_reporting site no test distinguishes (review, ut-docs#713).
+	if rec := get(&auth.User{ID: "s1", Role: "super_admin"}); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `data-testid="bugreport-toggle"`) {
+		t.Fatalf("super_admin chip: code=%d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 // /report-issue keeps working as a route (it's the /menu tile's target) but
@@ -233,6 +241,20 @@ func TestIssueReportAPI_ManagerOnly(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier POST = %d, want 403", rec.Code)
+	}
+
+	// super_admin broadens vs. isManagerOrAuthOff (manager/admin only, per
+	// #555) — pinned so a regression of THIS handler's gate back to the old
+	// one fails here rather than passing on the cashier case alone (review,
+	// ut-docs#713).
+	body, ctype = multipartIssueReport(t, "printer jammed", true, false)
+	req = httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "super-1", Role: "super_admin"})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("super_admin POST = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }
 
