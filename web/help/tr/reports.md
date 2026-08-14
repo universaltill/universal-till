@@ -41,6 +41,17 @@ planda otomatik ve kalıcı olarak silinir — manuel bir adım veya onay
 istemi yoktur, bu yüzden daha uzun süre saklamanız gereken her şeyi bundan
 önce dışa aktarın.
 
+Aynı Ayarlar → Veri yönetimi listesinden bir sıfırlama arşivi grubu da
+**kalıcı olarak silinebilir**, ama yalnızca yeterince eskiyse: gerçek
+satış içeren bir grup, arşivlendiğinden bu yana mağazanızın ülkesinin
+saklama süresi (Ülke ayarları sayfasında belirlenir) geçene kadar
+korunur — daha erken silme reddedilir ve mesaj, grubun ne zaman
+silinebilir hale geleceğini belirtir. Hiç satış içermeyen bir grup
+(sıfırlandığında henüz hiçbir şey satılmamıştı) hemen silinir — kasa
+vardiyaları gibi başka test verileri içerse bile; koruma özellikle satış
+kayıtlarıyla ilgilidir. Bu, yukarıdaki 10 yıllık rapor saklamasından
+ayrıdır ve onu değiştirmez.
+
 Ayarlar → Rapor saklama'da raporların nerede tutulacağını seçin:
 
 - **Yalnızca bu kasa** — bugün itibarıyla çalışır, ek bir kuruluma gerek

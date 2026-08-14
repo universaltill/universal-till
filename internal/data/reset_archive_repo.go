@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,9 +18,21 @@ import (
 // mechanism (ADR-0040 §9): it is a separate retained legal record with its
 // own retention pruning, and reset must never touch it.
 //
-// There is deliberately NO delete-archive method (ADR-0042 §3): permanent
-// purge is gated on the ut-docs#635 retention decision and ships (or not)
-// with a follow-up card.
+// Permanent purge (ADR-0042 §3, gated on the ut-docs#635 retention decision)
+// is DeleteResetBatch below, added by ut-docs#661 once #659 supplied
+// per-country archive_min_days as real data. A batch holding real trading
+// history cannot be purged until the shop's active country's retention
+// window has elapsed since it was archived.
+
+// StoreCountrySettingsKey is the settings.key a shop's chosen country lives
+// under. Duplicated from internal/pages/common.KeyCountry ("store.country")
+// rather than imported: internal/pages/common already imports internal/data
+// (see internal/pages/common/barcode_conflict.go), so the reverse import
+// would cycle. Exported (rather than a private literal re-typed in two
+// places) so TestStoreCountrySettingsKeyMatchesCommon (in
+// internal/pages/common) can assert the two never drift apart instead of
+// each just trusting the other's copy.
+const StoreCountrySettingsKey = "store.country"
 
 // ErrShopHasTradedSinceReset is returned by RestoreResetBatch when any live
 // transactional table already holds rows: post-reset trading re-occupies the
@@ -53,6 +66,20 @@ var ErrResetBatchNotFound = errors.New("reset archive batch not found")
 // not a silent one — a deeper fix (teach those three predicates to also
 // check the archive tables) is tracked separately, not attempted here.
 var ErrArchiveReferencesRemoved = errors.New("this archive references a product, stock location or customer that was removed or erased after the reset (e.g. by \"Remove sample data\", catalog cleanup or a GDPR erasure) and can no longer be restored automatically")
+
+// ArchiveWithinRetentionWindowError is returned by DeleteResetBatch when the
+// batch holds real trading history (sales_count > 0) and the shop's active
+// country's archive_min_days has not yet elapsed since the batch was
+// archived. RetainedUntil is the date the batch becomes purgeable, so the
+// handler can name it in the operator-facing refusal rather than returning
+// a generic error (ut-docs#661's own acceptance criteria).
+type ArchiveWithinRetentionWindowError struct {
+	RetainedUntil time.Time
+}
+
+func (e *ArchiveWithinRetentionWindowError) Error() string {
+	return fmt.Sprintf("archive batch is within its statutory retention window until %s", e.RetainedUntil.Format("2006-01-02"))
+}
 
 // isForeignKeyViolation reports whether err is a SQLite foreign-key
 // constraint failure. modernc.org/sqlite (this project's driver) doesn't
@@ -302,4 +329,114 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID string
 		return 0, err
 	}
 	return restored, nil
+}
+
+// resolveArchiveMinDays reads the shop's chosen country (settings key
+// StoreCountrySettingsKey) and returns that country's archive_min_days.
+// Falls back to GlobalArchiveMinDays -- ADR-0040's global floor -- when no
+// country is configured, or the configured code has no country_settings
+// row. Correction (independent review, ut-docs#661): the floor is every
+// jurisdiction's *minimum* admissible value, not its maximum --
+// validateCountrySetting enforces every real row to be at or ABOVE it, so
+// a country that has actually been raised beyond the floor is the one case
+// this fallback protects less than the truth would. It is still the right
+// fallback: it is the one value guaranteed valid for every jurisdiction
+// with no row of its own (never "no restriction"), and matches
+// common.LoadState's own "GB" default for an unconfigured shop, whose
+// seeded country_settings row sits exactly at this floor today.
+//
+// Runs inside the caller's transaction so the read is consistent with the
+// batch lookup it gates.
+func (r *POSRepo) resolveArchiveMinDays(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var countryCode string
+	err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, StoreCountrySettingsKey).Scan(&countryCode)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("resolve archive retention: read shop country: %w", err)
+	}
+	countryCode = strings.ToUpper(strings.TrimSpace(countryCode))
+	if countryCode == "" {
+		return GlobalArchiveMinDays, nil
+	}
+
+	var days int64
+	err = tx.QueryRowContext(ctx, `SELECT archive_min_days FROM country_settings WHERE code = ?`, countryCode).Scan(&days)
+	if err == sql.ErrNoRows {
+		return GlobalArchiveMinDays, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("resolve archive retention: read country setting %s: %w", countryCode, err)
+	}
+	return days, nil
+}
+
+// DeleteResetBatch permanently purges one archived reset-transactions
+// batch — ADR-0042 §3's deletion path, left unbuilt until the retention
+// decision (ut-docs#635 → #659 → this card, ut-docs#661) supplied a real
+// window to gate it on.
+//
+// A batch with sales_count == 0 holds no completed SALES and is not
+// protected — mirrors the product owner's ut-docs#187 condition, which was
+// specifically about REAL (non-demo) trading history, and sales_count is
+// the closest signal already on hand to "did this batch contain any."
+// Named precisely (independent review, ut-docs#661): this does NOT mean
+// the batch is empty. It can still hold archived shifts (opening/closing/
+// expected cash), stock_movements (cost_price on manual receipts/
+// adjustments) or held_sales payloads with zero sales among them — none of
+// those are gated by the retention window, on the judgement that a batch
+// with no completed sale is what the pre-launch "clear demo data" use case
+// actually produces. A batch with sales_count > 0 may only be purged once
+// resolveArchiveMinDays' window has elapsed since the batch's created_at
+// (when it was archived).
+//
+// Returns ErrResetBatchNotFound for an unknown id, and
+// *ArchiveWithinRetentionWindowError (still within the window) otherwise.
+// Manager-gated at the handler, same as reset/restore.
+func (r *POSRepo) DeleteResetBatch(ctx context.Context, batchID, actorID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var createdAt string
+	var salesCount int64
+	err = tx.QueryRowContext(ctx, `SELECT created_at, sales_count FROM reset_batches WHERE id = ?`, batchID).Scan(&createdAt, &salesCount)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("delete batch %q: %w", batchID, ErrResetBatchNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("delete: look up batch: %w", err)
+	}
+
+	if salesCount > 0 {
+		minDays, err := r.resolveArchiveMinDays(ctx, tx)
+		if err != nil {
+			return err
+		}
+		archivedAt, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return fmt.Errorf("delete: parse batch created_at %q: %w", createdAt, err)
+		}
+		retainedUntil := archivedAt.AddDate(0, 0, int(minDays))
+		if time.Now().UTC().Before(retainedUntil) {
+			return &ArchiveWithinRetentionWindowError{RetainedUntil: retainedUntil}
+		}
+	}
+
+	for _, t := range resetArchiveTables {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+			`DELETE FROM %s_archive WHERE reset_batch_id = ?`, t.live), batchID); err != nil {
+			return fmt.Errorf("delete: clear %s_archive: %w", t.live, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM reset_batches WHERE id = ?`, batchID); err != nil {
+		return fmt.Errorf("delete: delete batch: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_archive_purged",
+		map[string]any{"batch_id": batchID, "sales_count": salesCount}, now, ""); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

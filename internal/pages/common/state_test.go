@@ -533,3 +533,16 @@ func TestBuildMenu_EmptyPlugins(t *testing.T) {
 		t.Fatalf("BuildMenu with no plugins = %+v, want just the base item", got)
 	}
 }
+
+// TestStoreCountrySettingsKeyMatchesCommon guards data.StoreCountrySettingsKey
+// against drifting from KeyCountry: internal/data cannot import this package
+// (this package already imports internal/data — see barcode_conflict.go — so
+// the reverse import would cycle), so DeleteResetBatch's own read of the
+// shop's country (ut-docs#661) duplicates the literal instead. If the two
+// ever disagree, DeleteResetBatch silently reads the wrong settings row and
+// falls back to the global retention floor for every shop, without erroring.
+func TestStoreCountrySettingsKeyMatchesCommon(t *testing.T) {
+	if data.StoreCountrySettingsKey != KeyCountry {
+		t.Fatalf("data.StoreCountrySettingsKey = %q, want it to match common.KeyCountry = %q", data.StoreCountrySettingsKey, KeyCountry)
+	}
+}
