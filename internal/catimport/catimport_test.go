@@ -103,8 +103,8 @@ func TestParseSumUp(t *testing.T) {
 	}
 	// Umlaut category name must survive intact, and "Tax rate (%)" must be
 	// recognised as the tax column (the whole reason this fixture exists —
-	// it doesn't match the pre-existing synonym set's "tax rate" exact/
-	// bracket-prefix rule).
+	// it doesn't match the synonym set's "tax rate" exact/bracket-prefix
+	// rule directly; it resolves via the paren-stripped fallback, ut-docs#587).
 	kaesekuchen := res.Items[1]
 	if kaesekuchen.Name != "Käsekuchen" || kaesekuchen.Category != "Kuchen & Desserts" {
 		t.Errorf("umlaut name/category mangled: %+v", kaesekuchen)
@@ -208,6 +208,86 @@ func TestParseGenericERPStockAndDepartment(t *testing.T) {
 	}
 	if screws.Stock != 1000 {
 		t.Errorf("large stock wrong: %+v", screws)
+	}
+}
+
+// ut-docs#587: headerIndex/hasColumn's matching was exact-or-bracket-prefix
+// only, so header variants carrying a trailing parenthesised suffix
+// ("(%)", a currency code, ...) missed their synonym entirely and the
+// column was silently dropped (no TaxIssue — the column was never
+// recognised in the first place, not found-but-unparseable).
+func TestHeaderMatchingParenthesisedSuffix(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+	}{
+		{"no space before paren", "Tax rate(%)"},
+		{"synonym only reachable via stripping, not a literal entry", "VAT rate (%)"},
+		{"bare field name with paren suffix", "Tax (%)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			csv := "Name,Price," + c.header + "\nEspresso,2.00,19\n"
+			res, err := Parse(strings.NewReader(csv), 2)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if len(res.Items) != 1 {
+				t.Fatalf("items = %d", len(res.Items))
+			}
+			it := res.Items[0]
+			if !it.HasTax || it.TaxRateBP != 1900 {
+				t.Errorf("header %q not recognised as the tax column: %+v", c.header, it)
+			}
+		})
+	}
+}
+
+// The fix must be general (every columnSynonyms field), not a tax-only
+// patch — prove it against an unrelated field.
+func TestHeaderMatchingParenthesisedSuffixNonTaxField(t *testing.T) {
+	res, err := Parse(strings.NewReader("Name,Price(GBP)\nWidget,4.50\n"), 2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	if res.Items[0].PriceMinor != 450 {
+		t.Errorf("\"Price(GBP)\" not recognised as the price column: %+v", res.Items[0])
+	}
+}
+
+// Independent review finding B1 (ut-docs#587): a trailing parenthetical
+// often QUALIFIES or NEGATES the synonym it's attached to, rather than
+// being decorative — "Price (cost)", "VAT (takeaway)", "Stock (reserved)".
+// The paren-stripped fallback must never outrank a genuine exact match
+// found elsewhere on the row, or a file that imported correctly before
+// this fix starts silently importing the wrong column's value: a cost
+// price sold as the retail price, a takeaway tax rate booked as the
+// dine-in rate — the exact silent-money/compliance-corruption class this
+// package's other guardrails (ut-docs#512, #586) exist to prevent.
+func TestHeaderMatchingParenSuffixNeverShadowsAnExactMatch(t *testing.T) {
+	res, err := Parse(strings.NewReader("Name,Price (cost),Price\nWidget,1.10,4.50\n"), 2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	if got := res.Items[0].PriceMinor; got != 450 {
+		t.Errorf("exact \"Price\" column shadowed by the earlier lenient \"Price (cost)\" match: got %d, want 450 (the real retail price, not the 110 cost price)", got)
+	}
+
+	res, err = Parse(strings.NewReader("Name,Price,VAT (takeaway),VAT rate\nEspresso,2.00,7,19\n"), 2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	if got := res.Items[0].TaxRateBP; got != 1900 {
+		t.Errorf("exact \"VAT rate\" column shadowed by the earlier lenient \"VAT (takeaway)\" match: got %d bp, want 1900 (dine-in rate, not the 700bp takeaway rate)", got)
 	}
 }
 
