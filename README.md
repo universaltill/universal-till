@@ -465,6 +465,15 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 
 **Note:** Core POS is free forever. Cloud services are optional enhancements.
 
+> A small number of markets legally require a paid, third-party, certified
+> component before a shop can operate an electronic till as its system of
+> record — e.g. Germany's TSE (Technische Sicherheitseinrichtung) under
+> KassenSichV. That component is not Universal Till software, is not
+> included in the free tier, and its cost is unaffected by anything above:
+> bring your own on Free, or it's included in the subscription price on a
+> paid tier. See
+> [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).
+
 ---
 
 ## 🛡️ Security
