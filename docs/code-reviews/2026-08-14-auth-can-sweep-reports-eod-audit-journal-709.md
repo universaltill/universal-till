@@ -111,6 +111,16 @@ real role today (pure backend permission-check refactor) — `web/help/`
 manual topics and `reference/ux-guidelines.md` deliberately not touched,
 confirmed by the reviewer as intentional, not overlooked.
 
+CI's `guard-docs-shots.sh` still failed on push: its surface hash covers
+every non-test `internal/pages/**.go` file, so editing 5 of them (plus
+adding `authz.go`) shifted the hash even though no screenshotted screen
+renders differently for any real role. Ran `make docs-shots` and committed
+the regenerated `web/help/img/manifest.json` + the captures that came out
+byte-different (alerts/designer/users-fa — incidental non-deterministic
+render timing, not a real visual change; their topic-markdown hashes in
+the manifest are unchanged, confirming no topic prose or intentional
+rendering changed).
+
 ## Verdict
 
 Safe to merge. Both blocking findings fixed and re-verified; non-blocking
