@@ -77,6 +77,19 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   (most PRs would show no check run, which reads as "waiting forever").
 - Validate all external input (users, plugins, devices).
 
+## Compliance wording (Germany pilot)
+- **No compliance-certification outcome claims** (ADR-0040) — "GoBD-compliant",
+  "audit-proof"/"revisionssicher", "certified by the Finanzamt", or asserting
+  we file the merchant's §146a Abs. 4 AO notification are all forbidden; the
+  full product-owner-approved allow/forbid list is on ut-docs#667. Describe
+  what the software *does* (a factual capability), never promise a legal
+  *outcome* — that depends on how the shop operates, not on us.
+  Enforced by `scripts/ci/guard-compliance-claims.sh` across
+  `web/locales/*.json`, `web/help/**`, and `web/ui/**` — same
+  `compliance-claim:allow` escape-hatch convention as `guard-i18n.sh`'s
+  `i18n:ignore`, for a reviewed exception (e.g. a doc explaining in prose why
+  a term is avoided).
+
 ## Plugins
 - Installed plugins are Ed25519-verified before they run
   (`internal/plugins/manifest_verifier.go`). Never run an unverified plugin.
