@@ -217,7 +217,7 @@ func respondUpdateApplyCurrent(w http.ResponseWriter) {
 
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
 		}
@@ -257,7 +257,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// Manual "Check for updates" (Settings): one synchronous poll of the
 	// releases API, answered as a swappable HTML snippet.
 	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
 		}
@@ -286,7 +286,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// Auto-update schedule settings (manager): enable + local time. Mirrors
 	// POST /api/settings/eod's shape exactly (eod_api.go).
 	mux.HandleFunc("POST /api/settings/update-schedule", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
 		}
