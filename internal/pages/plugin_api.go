@@ -83,7 +83,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -120,7 +120,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -158,7 +158,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -201,7 +201,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 // handleInstallFromMarketplace handles marketplace plugin installation (T017)
 func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			writeInstallResponse(w, http.StatusForbidden, false, "manager or admin required", "plugins.install.error.forbidden")
 			return
 		}
@@ -365,7 +365,7 @@ func handleEnablePlugin(d *common.Deps) http.HandlerFunc {
 // manager + nav so the change takes effect immediately.
 func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -414,7 +414,7 @@ func handleDisablePlugin(d *common.Deps) http.HandlerFunc {
 // installed files, and reloads the plugin manager so the nav/menu drops it.
 func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -482,7 +482,7 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 // Ed25519 verification path — never an unverified extract.
 func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -592,7 +592,7 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 // handleRollbackPlugin handles rolling back a plugin to a previous version (T025)
 func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -677,7 +677,7 @@ func handleCheckUpdates(d *common.Deps) http.HandlerFunc {
 // handleImportFromFile handles manual plugin import from uploaded file (T028)
 func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -804,7 +804,7 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 // Version is taken from ?version= since a plugin may have multiple installed.
 func handleExportPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
