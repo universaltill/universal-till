@@ -444,3 +444,84 @@ func TestRemoveDemoCatalogueLeavesOwnItemsAlone(t *testing.T) {
 		t.Fatal("operator's own item was removed by the sample-data cleanup")
 	}
 }
+
+// ut-docs#633: a demo item referenced only by a HELD (parked) sale — not
+// yet in sale_lines/stock_movements — must still be kept, the same gap
+// ut-docs#567 (TestRemoveDemoCustomersPromosKeepsHeldSaleCustomer) already
+// closed for demo customers. Without this, "Remove sample data" could
+// delete an item a parked basket still points at, and recalling +
+// tendering that held sale later would FK-fail.
+func TestRemoveDemoCatalogueKeepsHeldSaleItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Mirrors pos.SnapshotLine's real shape (internal/pos/hold.go) just
+	// enough to exercise the LIKE match — only item_id matters here.
+	payload := `{"lines":[{"sku":"SKU-0003","name":"Held Item","qty":1,"price_cents":100,"item_id":"itm003"}],"total":100}`
+	if _, err := d.DB.Exec(`INSERT INTO held_sales (id, label, payload) VALUES ('h-1', 'Table 4', ?)`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	// Kept: itm003 (held sale). Removed: the other 49 items.
+	if removed != 49 || kept != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("item referenced only by a held sale was removed")
+	}
+}
+
+// Same gap as above, exercised via the variant-only NOT EXISTS clause in
+// isolation: a real resolved variant line actually carries BOTH item_id and
+// variant_id (internal/ui/buttons.go's resolve() / internal/data/pos_repo.go's
+// resolveVariant set both from the same row), so in practice the item_id
+// clause above already catches a held variant line too — this payload
+// (variant_id only, no item_id) is a synthetic shape that exists purely to
+// prove the variant clause is independently correct, as defense-in-depth
+// against a payload shape production doesn't currently produce.
+func TestRemoveDemoCatalogueKeepsHeldSaleVariantItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// var010 belongs to itm041 (internal/data/seeddata/demo_catalogue.sql).
+	payload := `{"lines":[{"sku":"SKU-0041-250","name":"Held Variant","qty":1,"price_cents":210,"variant_id":"var010"}],"total":210}`
+	if _, err := d.DB.Exec(`INSERT INTO held_sales (id, label, payload) VALUES ('h-1', 'Table 4', ?)`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	// Kept: itm041 (held sale, via its variant). Removed: the other 49.
+	if removed != 49 || kept != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm041'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("item referenced only by a held sale's variant line was removed")
+	}
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_variants WHERE id = 'var010'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("variant referenced only by a held sale did not survive (item_variants cascades from its parent item, so this would only fail if the item above wrongly did too)")
+	}
+}
