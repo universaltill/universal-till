@@ -73,7 +73,7 @@ The marketplace integration follows a **local-first** architecture where:
 **Phase 1-2: Foundation**
 - OAuth2 token client with secure on-disk caching (`internal/plugins/oauth/`)
 - Marketplace HTTPS client with API versioning (`internal/plugins/marketplace/client.go`)
-- Plugin cache storage with .part file tracking (`internal/plugins/storage/`)
+- Plugin cache storage with .part file tracking — superseded by `download_manager.go`/`installer_store.go`'s own `.part`-file handling; `internal/plugins/storage/` was dead code and removed 2026-08-14 (ut-docs#28)
 - Background scheduler for catalog sync, telemetry, revocation (`internal/server/server.go`)
 
 **Phase 3: Catalog Browsing (US1)**

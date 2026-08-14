@@ -12,7 +12,7 @@
 ## Phase 2: Foundational (Blocking Prerequisites)
 - [X] T004 Implement OAuth2 client-credentials token manager in `internal/plugins/oauth/token_client.go` with secure on-disk cache.
 - [X] T005 [P] Add marketplace gRPC/HTTPS client abstractions in `internal/plugins/marketplace/client.go` following `contracts/marketplace.proto`.
-- [X] T006 [P] Build download cache abstraction (`internal/plugins/storage/cache_store.go`) that tracks `.part` files and disk quotas.
+- [X] T006 [P] Build download cache abstraction (`internal/plugins/storage/cache_store.go`) that tracks `.part` files and disk quotas. **(Superseded 2026-08-14, ut-docs#28: the real download path ended up in `download_manager.go`/`installer_store.go` with its own `.part`-file handling; `cache_store.go` was never wired in and was removed as dead code.)**
 - [X] T006b [P] Attach API version metadata to all marketplace requests (per FR-016), with config wiring, deprecation alerting, and tests.
 - [X] T007 Define canonical plugin type enums + validation helpers in `internal/plugins/types.go` reused by host + UI.
 - [X] T008 Wire RBAC + audit helpers in `internal/plugins/authorizer.go` so installs/updates enforce manager overrides globally.
