@@ -31,7 +31,7 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"plugins":[
 				{"id":"com.universaltill.integration-ai","name":"AI Assistant","version":"1.0.1","type":"integration","trustLevel":"unverified"},
-				{"id":"com.acme.thirdparty","name":"Buttons Left Theme","version":"1.0.2","type":"theme","vendor":"Acme","trustLevel":"unverified"}
+				{"id":"com.acme.thirdparty","name":"Buttons Left Theme","version":"1.0.2","type":"theme","vendor":"Acme","trustLevel":"unverified","paidListing":true}
 			]}`))
 		case "/ui/api/merchant/entitlements":
 			w.Header().Set("Content-Type", "application/json")
@@ -86,6 +86,11 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 	}
 	if !strings.Contains(body, "utTrustPrompt") {
 		t.Error("localized trust prompt missing")
+	}
+	// ut-docs#673: only the paid listing (Buttons Left Theme) gets the paid
+	// badge — the free one (AI Assistant) must not.
+	if n := strings.Count(body, "paid-badge"); n != 1 {
+		t.Errorf("paid-badge count = %d, want exactly 1 (only the paid listing)", n)
 	}
 	for _, name := range []string{"AI Assistant", "Buttons Left Theme"} {
 		if !strings.Contains(body, name) {

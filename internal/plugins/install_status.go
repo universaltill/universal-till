@@ -3,10 +3,12 @@ package plugins
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 type InstallLifecycleState string
@@ -119,6 +121,19 @@ func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string
 }
 
 func ClassifyInstallError(err error) InstallFailure {
+	// ut-docs#673 review finding: a not_entitled marketplace.APIError (a paid
+	// listing needing approval, or a free one not yet approved) reached
+	// every install path except the store/download handler as the generic
+	// retryable failure — including the live Update button on /plugins,
+	// which then offered a Retry that can never succeed. Checked by type
+	// (errors.As, unwrapping through any "%w" wrapper a caller adds), not
+	// string-matching like the cases below, since the caller here already
+	// hands us the real error, not just its text.
+	var apiErr *marketplace.APIError
+	if errors.As(err, &apiErr) && apiErr.Code == "not_entitled" {
+		return InstallFailure{MessageKey: "plugins.install.error.not_entitled", Message: "This plugin needs approval before it can be installed.", Retryable: false}
+	}
+
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case msg == "":
