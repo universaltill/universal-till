@@ -1164,7 +1164,9 @@ body.login-screen {
   gap: 0.75rem;
 }
 .ai-identify-panel h3 { margin: 0; }
-#ai-identify-video {
+/* Shared by both camera overlays (AI identify + ut-docs#548 barcode scan) —
+   a class, not an ID, since two distinct <video> elements now use it. */
+.camera-overlay-video {
   inline-size: 100%;
   border-radius: 8px;
   background: #000;

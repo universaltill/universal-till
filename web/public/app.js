@@ -101,6 +101,11 @@ window.utCurrency = (function(){
     clearTimeout(timeout);
     timeout = setTimeout(function(){ buf = ""; }, 300);
   });
+
+  // Exposed so other on-page scan sources (ut-docs#548's camera scan) submit
+  // through the exact same path a wedge scan does, rather than duplicating
+  // scanCodeInput()/submit()'s form-lookup and focus-safe-clear logic.
+  window.utScan = { input: scanCodeInput, submit: submit };
 })();
 
 (function(){
@@ -600,6 +605,98 @@ function initOfflineOverride(updateFn){
   openBtn.addEventListener('click', open);
   captureBtn.addEventListener('click', identify);
   retakeBtn.addEventListener('click', retake);
+  closeBtn.addEventListener('click', close);
+})();
+
+// Camera barcode/QR scan (ut-docs#548): an alternative input mode alongside
+// the wedge/HID scanner path above (never disables or steals focus from it —
+// this is purely an on-demand overlay, opened and closed by the cashier).
+// Decoding is 100% client-side via the browser's native BarcodeDetector — no
+// frame or image is ever sent anywhere, unlike the AI-identify feature above
+// which uploads a still photo by design. Browser support varies, so the
+// button only appears when `BarcodeDetector` actually exists; there is no JS
+// fallback decoder in this pass (ut-docs#548 non-goal — a bundled decode
+// library is separate scope under ADR-0003's vendored-assets rule).
+(function(){
+  var openBtn = document.getElementById('barcode-scan-open');
+  var overlay = document.getElementById('barcode-scan-overlay');
+  if (!openBtn || !overlay || !window.utScan) return;
+  // typeof-check, not `'BarcodeDetector' in window`: a test (or a future
+  // polyfill probe) stubbing the property to undefined must still read as
+  // unsupported, not merely "present".
+  if (typeof window.BarcodeDetector !== 'function') return;
+
+  var video = document.getElementById('barcode-scan-video');
+  var status = document.getElementById('barcode-scan-status');
+  var closeBtn = document.getElementById('barcode-scan-close');
+  var msgs = overlay.dataset;
+  var stream = null;
+  var rafID = null;
+  var detector;
+  try {
+    // Formats this product's wedge scanners actually read (ut-docs#423's
+    // review: "EAN-8/13, UPC, Code-128 SKUs"), plus qr_code for #210-style
+    // self-order use later. An explicit list keeps decode behaviour the
+    // same across browsers rather than however each one's default differs.
+    detector = new BarcodeDetector({ formats: [
+      'ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'
+    ] });
+  } catch (e) {
+    return; // constructor throws if the browser can't support any listed format
+  }
+
+  openBtn.hidden = false;
+
+  function setStatus(text){ status.textContent = text || ''; }
+
+  function open(){
+    if (!overlay.hidden) return; // already open (button keeps focus; Space/Enter re-fires it)
+    overlay.hidden = false;
+    setStatus(msgs.msgScanning);
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function(s){
+        // The cashier can close while the permission prompt / camera start is
+        // still pending — never leave an orphaned live camera behind a hidden
+        // overlay (nor let it scan and ring up a line the cashier can't see).
+        if (overlay.hidden) { s.getTracks().forEach(function(t){ t.stop(); }); return; }
+        stream = s;
+        video.srcObject = s;
+        rafID = requestAnimationFrame(scanFrame);
+      })
+      .catch(function(){ setStatus(msgs.msgCameraError); });
+  }
+
+  function close(){
+    overlay.hidden = true;
+    if (rafID) { cancelAnimationFrame(rafID); rafID = null; }
+    if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    video.srcObject = null;
+  }
+
+  function scanFrame(){
+    if (!stream) return;
+    detector.detect(video)
+      .then(function(codes){
+        // close() nulls `stream`; a detect() already in flight when the
+        // cashier closed must not ring up a line after the overlay is gone.
+        if (!stream) return;
+        if (codes && codes.length) {
+          var code = codes[0].rawValue;
+          close();
+          if (code) window.utScan.submit(code, window.utScan.input());
+          return;
+        }
+        rafID = requestAnimationFrame(scanFrame);
+      })
+      .catch(function(){
+        // A transient per-frame decode error shouldn't kill the session —
+        // keep scanning until the cashier closes the overlay themselves.
+        if (!stream) return;
+        rafID = requestAnimationFrame(scanFrame);
+      });
+  }
+
+  openBtn.addEventListener('click', open);
   closeBtn.addEventListener('click', close);
 })();
 
