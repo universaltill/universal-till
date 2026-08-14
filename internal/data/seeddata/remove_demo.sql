@@ -7,7 +7,12 @@
 -- flagged is_sample_data = 1 AND nothing in sale_lines or stock_movements
 -- references it — directly or through one of its variants (sale_lines and
 -- stock_movements have no ON DELETE CASCADE, so deleting a sold/adjusted
--- item would either fail the FK or orphan real trading history). A demo
+-- item would either fail the FK or orphan real trading history) — AND no
+-- HELD (parked) sale references it either, the same signal
+-- remove_demo_customers_promos.sql already checks for demo customers
+-- (ut-docs#633): a held_sales row is an in-progress basket that hasn't
+-- reached sale_lines/stock_movements yet, but still FK-fails on tender if
+-- the item (or variant) it was parked against no longer exists. A demo
 -- category/brand goes only when, after the item pass, no remaining row
 -- (demo or operator-created) still references it.
 DROP TABLE IF EXISTS temp.demo_seed_removable;
@@ -22,7 +27,12 @@ WHERE i.is_sample_data = 1
   AND NOT EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.item_id = i.id)
   AND NOT EXISTS (SELECT 1 FROM stock_movements sm
                   JOIN item_variants v ON v.id = sm.variant_id
-                  WHERE v.item_id = i.id);
+                  WHERE v.item_id = i.id)
+  AND NOT EXISTS (SELECT 1 FROM held_sales h
+                  WHERE h.payload LIKE '%"item_id":"' || i.id || '"%')
+  AND NOT EXISTS (SELECT 1 FROM held_sales h
+                  JOIN item_variants v ON v.item_id = i.id
+                  WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%');
 
 -- inventory and price_history reference items/variants WITHOUT cascade, so
 -- clear them explicitly (variant rows first, via the parent item).
