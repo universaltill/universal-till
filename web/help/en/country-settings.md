@@ -12,7 +12,7 @@ routes: [/country-settings]
 
 Every country the till knows about comes with sensible defaults: which currency it uses, the usual tax rate, whether that tax is already included in the price, and a minimum number of days archived transaction batches should be kept.
 
-This page is where those per-country defaults live. **The first-boot setup wizard now reads them**, so an edit here reaches the country step the next time a till is set up from scratch. Two things are still not wired to it: it does not change a shop that has *already* been set up (its currency/tax stay whatever was chosen at the time), and it does not yet control how long archives are actually kept — archives are still kept for a fixed minimum regardless of the retention value shown here.
+This page is where those per-country defaults live. **The first-boot setup wizard now reads them**, so an edit here reaches the country step the next time a till is set up from scratch. It does not change a shop that has *already* been set up — its currency/tax stay whatever was chosen at the time. Archive retention is different: the value shown here is what a permanent-delete of a reset archive batch (Settings → Data) is measured against, for every shop, the moment it's saved — see the Reports help topic's "Report retention" section for how that plays out.
 
 ## How to use it
 
@@ -25,6 +25,6 @@ This page is where those per-country defaults live. **The first-boot setup wizar
 
 - Tax is entered as a percentage — enter `19` for 19%. Half-percent rates like `8.5` are fine and are saved exactly — though the setup wizard prefills a new till to the nearest whole percent, so `8.5` arrives there as `9` (editable afterwards in Settings, same as any other rate).
 - **Tax included in price** means the shelf price already contains the tax, which is normal in most of Europe. Leave it off where tax is added at the till instead.
-- **Archive retention** here is a floor you can raise but not lower below the minimum shown. It does not yet control when archives are actually deleted — today, archives are kept for a fixed minimum regardless of this setting.
+- **Archive retention** here is a floor you can raise but not lower below the minimum shown. It controls when a reset archive batch (Settings → Data → Reset archives) becomes eligible for permanent deletion: a batch holding real sales can't be deleted until this many days have passed since it was archived. Raising the value protects existing batches further out immediately; it never shortens protection already in effect.
 - Editing a country here does not change any shop already set up, and does not rewrite sales you have already taken.
 - If you are unsure what your own country requires you to keep, ask your accountant before assuming any number shown here is a compliance guarantee — this page does not certify compliance with any particular country's record-keeping law.
