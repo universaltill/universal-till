@@ -287,6 +287,54 @@ func TestSettingsRemoveDemoCatalogueEndpointCoversCustomersPromos(t *testing.T) 
 	}
 }
 
+// ut-docs#633: a demo item LIVE in the current (not yet held) basket has no
+// held_sales row for remove_demo.sql's own safety check to catch — the
+// endpoint must refuse removal outright instead of letting a later tender
+// FK-fail with no clear recovery.
+func TestSettingsRemoveDemoCatalogueEndpoint_BlocksWhileDemoItemInLiveBasket(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	d.Engine.AddLineWithModifiers(pos.BasketLine{
+		SKU: "SKU-0001", Name: "Coca-Cola Can 330ml", ItemID: "itm001", PriceCents: 120,
+	}, 1, nil)
+
+	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager remove: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "current basket") {
+		t.Fatalf("removal response %q does not explain the live-basket block", rec.Body.String())
+	}
+	if n, _ := repo.SampleItemCount(t.Context()); n != 50 {
+		t.Fatalf("sample items after blocked removal = %d, want 50 (removal must not have run)", n)
+	}
+}
+
+// Same guard, exercised via the demo CUSTOMER set on the current basket
+// rather than a basket line.
+func TestSettingsRemoveDemoCatalogueEndpoint_BlocksWhileDemoCustomerInLiveBasket(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCustomersPromos(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	d.Engine.SetCustomer("cust-001", "Alice Carter")
+
+	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager remove: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "current basket") {
+		t.Fatalf("removal response %q does not explain the live-basket block", rec.Body.String())
+	}
+	if n, _ := repo.SampleCustomerPromoCount(t.Context()); n != 6 {
+		t.Fatalf("sample customers/promos after blocked removal = %d, want 6 (removal must not have run)", n)
+	}
+}
+
 // ut-docs#617: the "Restore from another POS" resume prompt only shows once
 // the wizard's "Later" choice actually deferred it — not on a fresh till,
 // and not once dismissed/resumed.

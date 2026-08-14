@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/data/seeddata"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -31,6 +33,32 @@ func shortDeviceID(id string) string {
 		return id[:16] + "…"
 	}
 	return id
+}
+
+// demoDataInLiveBasket reports whether any currently in-progress basket —
+// cashier and/or self-order kiosk, both passed in — references a demo
+// catalogue item/variant or a demo customer. ut-docs#633: unlike a HELD
+// (parked) sale, a live basket has no held_sales row for
+// remove_demo.sql/remove_demo_customers_promos.sql's own safety check to
+// catch, so "Remove sample data" must guard against it directly here —
+// otherwise the referenced row disappears and tender later FK-fails with
+// no clear way to recover. nil engines (KioskEngine is nil in some test
+// harnesses, per ADR-0020) are skipped, not treated as a match.
+func demoDataInLiveBasket(engines ...*pos.Service) bool {
+	for _, e := range engines {
+		if e == nil {
+			continue
+		}
+		if slices.Contains(seeddata.DemoCustomerIDs, e.CustomerID()) {
+			return true
+		}
+		for _, l := range e.Lines() {
+			if slices.Contains(seeddata.ItemIDs, l.ItemID) || slices.Contains(seeddata.VariantIDs, l.VariantID) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
@@ -605,6 +633,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if !canPerform(d, r, "settings") {
 			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+			return
+		}
+		// ut-docs#633: a demo item/customer LIVE in the current (not yet
+		// held) basket has no held_sales row for remove_demo*.sql's own
+		// safety check to catch — block removal here instead of letting a
+		// later tender FK-fail with no clear recovery. Checks both baskets
+		// (ADR-0020 kiosk isolation: read-only here, so no guard conflict).
+		if demoDataInLiveBasket(d.Engine, d.KioskEngine) {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_in_basket"))
 			return
 		}
 		seedRepo := data.NewDemoSeedRepo(d.Db)
