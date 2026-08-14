@@ -215,6 +215,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPluginPages(mux, dp)
 	registerButtonsAPI(mux, dp)
 	registerPOSAPI(mux, dp)
+	registerFiscalAPI(mux, dp)       // German TSE hard-gate owner override (ADR-0048)
 	registerPOSModifiersAPI(mux, dp) // item customization step, ADR-0020
 	registerAIAPI(mux, dp)
 	registerAskAPI(mux, dp)

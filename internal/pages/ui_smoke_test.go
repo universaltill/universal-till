@@ -402,6 +402,17 @@ func seedForPages(t *testing.T, db *sql.DB) {
 			}
 		}
 	}
+	// 046's fiscal_tse_override is the one action deliberately NOT granted
+	// to manager (ADR-0048: owner = admin, must not silently become
+	// manager-or-above) — seeded separately to mirror the migration exactly.
+	if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES ('fiscal_tse_override')`); err != nil {
+		t.Fatalf("seed permission_action fiscal_tse_override: %v", err)
+	}
+	for _, role := range []string{"admin", "super_admin"} {
+		if _, err := db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, 'fiscal_tse_override', 1)`, role); err != nil {
+			t.Fatalf("seed role_permission %s/fiscal_tse_override: %v", role, err)
+		}
+	}
 	// minimal data
 	_, _ = db.Exec(`INSERT INTO plugin_catalog(id,version,name,description,runtime,entrypoint,package_url,sha256,author,website,tags_json,is_deprecated) VALUES('p1','1.0','Plugin','desc','go','entry','url','sha','auth','site','[]',0)`)
 	_, _ = db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('p1','Plugin','1.0',1)`)

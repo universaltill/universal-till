@@ -360,11 +360,21 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		saleID, err := completeTender(r.Context(), d, d.KioskEngine, repo, saleInput, saleInput.Payments, "kiosk")
 		if err != nil {
 			var declined *paymentDeclinedError
+			var fiscalNC *fiscalNeverConfiguredError
+			var fiscalTF *fiscalTSEFailingError
 			status := http.StatusBadRequest
 			msgKey := "selforder.checkout.failed"
-			if errors.As(err, &declined) {
+			switch {
+			case errors.As(err, &declined):
 				status = http.StatusPaymentRequired
 				msgKey = "selforder.checkout.declined"
+			case errors.As(err, &fiscalNC), errors.As(err, &fiscalTF):
+				// German TSE hard gate (ADR-0048) — same fail-closed rule
+				// as the cashier tender path, same shape as the blocked-tax
+				// refusal above: the anonymous customer can't repair
+				// anything, so the message points them to the counter.
+				status = http.StatusConflict
+				msgKey = "selforder.checkout.fiscal_blocked"
 			}
 			w.WriteHeader(status)
 			renderKioskPaymentPicker(w, r, d, methods, msgKey)
