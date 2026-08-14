@@ -276,7 +276,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Printer settings (manager): mode/address/device/charset/auto-print.
 	mux.HandleFunc("POST /api/settings/printer", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -305,7 +305,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Test print — the moment of truth for printer setup.
 	mux.HandleFunc("POST /api/print/test", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}

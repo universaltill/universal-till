@@ -246,7 +246,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 
 	// Seller identity (manager). Configuring it turns the feature on.
 	mux.HandleFunc("POST /api/settings/invoice", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -314,7 +314,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 
 	// Invoice register (manager): date-range list + accountant CSV.
 	mux.HandleFunc("GET /invoices", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "reports") {
 			http.Redirect(w, r, "/journal", http.StatusSeeOther)
 			return
 		}
@@ -354,7 +354,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 
 	// Accountant handoff: the same range as CSV (credit notes negative).
 	mux.HandleFunc("GET /api/invoices/export", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "reports") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
