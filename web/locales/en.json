@@ -1400,5 +1400,6 @@
   "countrysettings.error.retention_invalid": "Enter the retention period as a whole number of days.",
   "countrysettings.error.below_floor": "Archive retention cannot be set below the minimum. It can only be raised.",
   "countrysettings.error.save": "Could not save this country.",
-  "countrysettings.error.delete": "Could not delete this country."
+  "countrysettings.error.delete": "Could not delete this country.",
+  "test.ut_docs_669_trial_throwaway": "Throwaway verification key for ut-docs#669 -- safe to ignore, not shipped."
 }
