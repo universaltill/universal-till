@@ -1412,5 +1412,10 @@
   "countrysettings.error.retention_invalid": "Saklama süresini tam gün sayısı olarak girin.",
   "countrysettings.error.below_floor": "Arşiv saklama süresi alt sınırın altına ayarlanamaz. Yalnızca artırılabilir.",
   "countrysettings.error.save": "Bu ülke kaydedilemedi.",
-  "countrysettings.error.delete": "Bu ülke silinemedi."
+  "countrysettings.error.delete": "Bu ülke silinemedi.",
+  "pos.toast.fiscal_never_configured": "Satış tamamlanmadı: bu mağaza Almanya için gerçek satışları kaydedecek şekilde ayarlı, ancak yapılandırılmış bir TSE (teknik güvenlik birimi) yok. TSE kurmak için kendi donanımınızı, kendi bulut hesabınızı veya yönetilen bir aboneliği kullanabilirsiniz; ya da hazır olana kadar mağazayı gerçek satış modundan çıkarması için bir yöneticiden isteyin.",
+  "pos.toast.fiscal_tse_failing": "Satış tamamlanmadı: mağazanın TSE birimi şu anda arızalı olarak bildirilmiş durumda; bu yüzden kasa bu satışı kaydetmeyecek. Mağaza sahibi (yönetici) süreli ve geçici bir geçersiz kılma verebilir ya da TSE tekrar çalıştığında yeniden deneyin.",
+  "selforder.checkout.fiscal_blocked": "Buradan sipariş şu anda kullanılamıyor — lütfen kasadan sipariş verin.",
+  "fiscal.banner.override_active": "TSE geçersiz kılma etkin — satışlar TSE imzası olmadan kaydediliyor; bitiş:",
+  "receipt.fiscal.unsigned_override": "Belgelenmiş bir TSE arızası sırasında, süreli sahip geçersiz kılması altında kaydedildi."
 }

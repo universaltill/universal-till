@@ -80,6 +80,17 @@
     <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
   </div>
 
+  <!-- German TSE hard gate (ADR-0048, ut-docs#715): persistent banner for
+       the whole duration of an active owner override window — a status
+       surface, never a modal blocker (offline-first UI rules). Not
+       dismissible on purpose: it disappears by itself when the window
+       expires, which the gate re-checks on every sale. -->
+  {{ if .fiscalOverrideActive }}
+  <div class="pos-notice error" role="status" data-testid="fiscal-override-banner">
+    <span class="notice-text">{{ T "fiscal.banner.override_active" }} {{ .fiscalOverrideUntil }}</span>
+  </div>
+  {{ end }}
+
   <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
     <!-- Basket loads on page load -->
     <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>

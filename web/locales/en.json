@@ -1412,5 +1412,10 @@
   "countrysettings.error.retention_invalid": "Enter the retention period as a whole number of days.",
   "countrysettings.error.below_floor": "Archive retention cannot be set below the minimum. It can only be raised.",
   "countrysettings.error.save": "Could not save this country.",
-  "countrysettings.error.delete": "Could not delete this country."
+  "countrysettings.error.delete": "Could not delete this country.",
+  "pos.toast.fiscal_never_configured": "Sale not completed: this shop is set to record real sales for Germany, but no TSE (technical security device) is configured, so the till will not record this sale. Set up a TSE — your own hardware, your own cloud account, or a managed subscription — or ask an administrator to take the shop out of live-sales mode until it's ready.",
+  "pos.toast.fiscal_tse_failing": "Sale not completed: the shop's TSE is currently reported as failing, so the till will not record this sale. An owner (admin) can grant a temporary, time-limited override, or try again once the TSE is working.",
+  "selforder.checkout.fiscal_blocked": "Ordering here is unavailable right now — please order at the counter.",
+  "fiscal.banner.override_active": "TSE override active — sales are being recorded without a TSE signature until",
+  "receipt.fiscal.unsigned_override": "Recorded during a documented TSE outage, under a time-limited owner override."
 }

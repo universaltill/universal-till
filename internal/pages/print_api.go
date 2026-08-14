@@ -178,6 +178,15 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 			doc.KickDrawer = true
 		}
 	}
+	// ADR-0048: mark the printed receipt if this sale was taken during an
+	// active TSE-override window. Derived from the sale's own audit row
+	// (written by completeTender at tender time), not from current fiscal
+	// settings — printing (and especially a reprint) can happen well after
+	// the override window that was active when the sale completed, so
+	// re-reading current settings here would give a stale or wrong answer.
+	if hasOverride, auditErr := data.NewPOSRepo(d.Db).HasAuditEntry(ctx, "sale", detail.ID, "unsigned_override"); auditErr == nil && hasOverride {
+		doc.Meta = append(doc.Meta, "Recorded during a documented TSE outage, under a time-limited owner override.")
+	}
 	if rd.Footer != "" {
 		doc.Footer = []string{rd.Footer}
 	}
