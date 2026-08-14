@@ -12,7 +12,7 @@ routes: [/country-settings]
 
 Kasanın tanıdığı her ülke makul varsayılanlarla gelir: hangi para birimini kullandığı, alışılmış vergi oranı, bu verginin fiyata dahil olup olmadığı ve arşivlenmiş işlem gruplarının en az kaç gün saklanması gerektiği.
 
-Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **Bunlar henüz kendi dükkânınıza veya arşivlerin gerçekte ne kadar saklandığına bağlanmamıştır** — bu bağlantı hâlâ yapım aşamasındadır. Şimdilik bu sayfa yalnızca bu değerlerin saklandığı ve gözden geçirildiği yerdir.
+Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **İlk kurulum sihirbazı artık bunları okuyor**, bu yüzden buradaki bir düzenleme, kasa sıfırdan kurulduğunda ülke adımına ulaşır. Bu, zaten kurulmuş bir dükkânı değiştirmez — para birimi/vergisi o zaman seçilen şekilde kalır. Arşiv saklama farklıdır: burada gösterilen değer, bir sıfırlama arşivi grubunun (Ayarlar → Veri yönetimi) kalıcı silinmesinin kaydedildiği andan itibaren her dükkân için ölçüldüğü değerdir — bunun nasıl işlediğini görmek için Raporlar yardım konusundaki "Rapor saklama" bölümüne bakın.
 
 ## Nasıl kullanılır
 
@@ -25,6 +25,6 @@ Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **Bunlar henüz kendi 
 
 - Vergi yüzde olarak girilir — %19 için `19` yazın. `8.5` gibi buçuklu oranlar da kullanılabilir.
 - **Vergi fiyata dahil**, raf fiyatının vergiyi zaten içerdiği anlamına gelir; Avrupa'nın çoğunda normal olan budur. Verginin kasada eklendiği yerlerde bu seçeneği kapalı bırakın.
-- **Arşiv saklama** burada artırabileceğiniz ama gösterilen alt sınırın altına indiremeyeceğiniz bir tabandır. Arşivlerin gerçekte ne zaman silineceğini henüz bu değer belirlemiyor — bugün arşivler bu ayardan bağımsız olarak sabit bir asgari süre boyunca saklanıyor.
+- **Arşiv saklama** burada artırabileceğiniz ama gösterilen alt sınırın altına indiremeyeceğiniz bir tabandır. Bu değer, bir sıfırlama arşivi grubunun (Ayarlar → Veri yönetimi → Sıfırlama arşivleri) ne zaman kalıcı silme için uygun hale geleceğini belirler: gerçek satış içeren bir grup, arşivlendiğinden bu yana bu kadar gün geçmeden silinemez. Değeri artırmak mevcut grupları hemen daha uzun süre korur; halihazırda geçerli olan korumayı asla kısaltmaz.
 - Burada bir ülkeyi düzenlemek, halihazırda kurulmuş bir dükkânı değiştirmez ve zaten aldığınız satışları yeniden yazmaz.
 - Kendi ülkenizin sizden neleri saklamanızı istediğinden emin değilseniz, burada gösterilen herhangi bir sayıyı bir uyumluluk garantisi saymadan önce mali müşavirinize danışın — bu sayfa hiçbir ülkenin kayıt tutma yasasına uyumu belgelemez.

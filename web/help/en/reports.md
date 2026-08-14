@@ -54,6 +54,17 @@ automatically and permanently deleted in the background — there is no
 manual step and no confirmation prompt, so export anything you need to keep
 longer before then.
 
+A reset archive batch can also be **permanently deleted** from the same
+Settings → Data list, but only once it is old enough: a batch holding real
+sales is protected until your shop's country's retention window (set on
+the Country settings page) has passed since it was archived — deleting it
+earlier is refused, and the message tells you the date it becomes
+deletable. A batch with no sales in it at all (nothing was sold yet when
+it was reset) deletes right away even if it still holds other test data,
+such as till shifts — the protection is specifically about sales records.
+This is separate from, and does not change, the 10-year report retention
+above.
+
 In Settings → Report Retention, choose where reports are kept:
 
 - **This till only** — works today, no extra setup. Report archives are

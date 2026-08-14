@@ -8,9 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -19,6 +22,17 @@ import (
 func newDataAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
+	// The purge/restore handlers route their refusal messages through
+	// httpx.T -- without a real i18n load, T falls back to the raw key and
+	// fmt.Sprintf's %s stays unconsumed (independent review, ut-docs#661:
+	// this previously let a test assert on that literal fallback text
+	// without ever exercising a real translated, interpolated message).
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
@@ -67,6 +81,7 @@ func TestDataAPI_AllEndpointsRequireManager(t *testing.T) {
 		{http.MethodPost, "/api/data/cleanup-catalog"},
 		{http.MethodGet, "/api/data/reset-archives"},
 		{http.MethodPost, "/api/data/reset-archives/some-batch/restore"},
+		{http.MethodPost, "/api/data/reset-archives/some-batch/purge"},
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(c.method, c.path, nil)
@@ -266,6 +281,203 @@ func TestResetArchivesRestore_NotFoundAndConflict(t *testing.T) {
 	}
 	if live != 1 || archived != 1 {
 		t.Fatalf("after refused restore: live=%d archived=%d, want 1/1", live, archived)
+	}
+}
+
+// ut-docs#661: POST .../purge is the permanent delete ADR-0042 §3 left
+// unbuilt. These pin the handler's own contract (confirm token, status
+// codes) over the fixture DB, which has no country configured -- so every
+// purge here falls back to GlobalArchiveMinDays, same as a shop that never
+// picked a country.
+func TestResetArchivesPurge_RequiresExactConfirmString(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"purge"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("purge with wrong confirm: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var remaining int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("wrong-confirm purge must touch nothing, got %d batches remaining", remaining)
+	}
+}
+
+func TestResetArchivesPurge_UnknownBatchNotFound(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newDataAPITestDeps(t)
+	rec := postForm(mux, "/api/data/reset-archives/no-such-batch/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown batch: expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestResetArchivesPurge_WithinGlobalFloorRefused(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	// created_at is "now" -- well inside the 10-year global floor, no
+	// country configured.
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("purge within window: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	errMsg, _ := body["error"].(string)
+	// The batch was archived "now" with no country configured, so the
+	// retained-until date is exactly GlobalArchiveMinDays out from today.
+	// Asserting the real interpolated date (not just "contains a year")
+	// catches both a missing/broken i18n key and a %s left unconsumed by
+	// fmt.Sprintf (independent review, ut-docs#661).
+	wantDate := time.Now().UTC().AddDate(0, 0, int(data.GlobalArchiveMinDays)).Format("2006-01-02")
+	if !strings.Contains(errMsg, wantDate) {
+		t.Fatalf("409 message should name the retained-until date %s, got %q", wantDate, errMsg)
+	}
+	if strings.Contains(errMsg, "%!") {
+		t.Fatalf("409 message has an unconsumed format verb -- i18n key/interpolation broken, got %q", errMsg)
+	}
+	var remaining int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("refused purge must keep the batch, got %d remaining", remaining)
+	}
+}
+
+func TestResetArchivesPurge_NoTradingHistoryDeletesImmediately(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	// No sale at all -- reset still writes a header row with sales_count=0.
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("purge of a zero-sales batch: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var remaining int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("no-trading-history batch should purge unconditionally, got %d remaining", remaining)
+	}
+}
+
+func TestResetArchivesPurge_OutsideWindowDeletes(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `UPDATE reset_batches SET created_at = ? WHERE id = ?`,
+		time.Now().AddDate(0, 0, -3651).UTC().Format(time.RFC3339), id); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("purge outside window: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var remaining, archived int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales_archive`).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 || archived != 0 {
+		t.Fatalf("after purge: batches=%d sales_archive=%d, want 0/0", remaining, archived)
+	}
+}
+
+// TestResetArchivesPurge_CountryConfiguredWindow exercises the full stack
+// (handler -> DeleteResetBatch -> country_settings) end-to-end: this needs
+// the REAL migrated DB, since the fixture DB in newDataAPITestDeps has no
+// country_settings table (see newRealDBDataAPIDeps's own comment).
+func TestResetArchivesPurge_CountryConfiguredWindow(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newRealDBDataAPIDeps(t)
+	// GB is seeded builtin by migration 041; override its retention to a
+	// small value directly so the test doesn't need to wait out (or fake)
+	// the real 10-year floor.
+	if _, err := dp.Db.Exec(`UPDATE country_settings SET archive_min_days = 5 WHERE code = 'GB'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO settings (key, value) VALUES ('store.country', 'GB')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO items (id, name, base_price) VALUES ('i1','Widget',100)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1 day inside the 5-day window -- refused.
+	if _, err := dp.Db.Exec(`UPDATE reset_batches SET created_at = ? WHERE id = ?`,
+		time.Now().AddDate(0, 0, -4).UTC().Format(time.RFC3339), id); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("purge 1 day inside GB's window: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 1 day past the 5-day window -- deletes.
+	if _, err := dp.Db.Exec(`UPDATE reset_batches SET created_at = ? WHERE id = ?`,
+		time.Now().AddDate(0, 0, -6).UTC().Format(time.RFC3339), id); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("purge 1 day past GB's window: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

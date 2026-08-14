@@ -303,9 +303,11 @@
         <tr>
           <td>{{ .CreatedAt }}</td>
           <td>{{ .SalesCount }}</td>
-          <td style="display:flex; gap:.3rem">
-            <input type="text" placeholder="{{ T "settings.data.archives_restore_confirm_ph" }}" style="width:9rem">
+          <td style="display:flex; gap:.3rem; flex-wrap:wrap">
+            <input type="text" class="restore-confirm" placeholder="{{ T "settings.data.archives_restore_confirm_ph" }}" style="width:9rem">
             <button class="btn secondary" data-restore-batch="{{ .ID }}" data-testid="archive-restore">{{ T "settings.data.archives_restore_btn" }}</button>
+            <input type="text" class="purge-confirm" placeholder="{{ T "settings.data.archives_purge_confirm_ph" }}" style="width:9rem">
+            <button class="btn secondary" data-purge-batch="{{ .ID }}" data-testid="archive-purge">{{ T "settings.data.archives_purge_btn" }}</button>
           </td>
         </tr>
         {{ end }}
@@ -449,36 +451,62 @@
     confirmDialog: "{{ T "settings.data.archives_restore_confirm_dialog" }}",
     conflict: "{{ T "settings.data.archives_restore_conflict" }}",
     referencesRemoved: "{{ T "settings.data.archives_restore_references_removed" }}",
-    empty: "{{ T "settings.data.archives_empty" }}"
+    empty: "{{ T "settings.data.archives_empty" }}",
+    purgeConfirmRequired: "{{ T "settings.data.archives_purge_confirm_required" }}",
+    purging: "{{ T "settings.data.archives_purge_purging" }}",
+    purgeConfirmDialog: "{{ T "settings.data.archives_purge_confirm_dialog" }}"
   };
+  function removeRowIfEmpty(row) {
+    row.remove();
+    // Last row gone: swap the now-headers-only table for the same
+    // empty-state text the server renders when .resetBatches is empty,
+    // instead of leaving a dangling ARCHIVED/SALES header over nothing.
+    var tbody = box.querySelector('tbody');
+    if (tbody && !tbody.children.length) {
+      box.innerHTML = '<p class="muted">' + T.empty + '</p>';
+    }
+  }
   box.addEventListener('click', function (ev) {
-    var b = ev.target.closest('[data-restore-batch]');
-    if (!b) return;
-    var row = b.closest('tr');
-    var inp = row.querySelector('input');
-    if (inp.value.trim() !== 'RESTORE') { msg.textContent = '✗ ' + T.confirmRequired; return; }
-    if (!confirm(T.confirmDialog)) return;
-    b.disabled = true; msg.textContent = '⏳ ' + T.restoring;
-    fetch('/api/data/reset-archives/' + encodeURIComponent(b.getAttribute('data-restore-batch')) + '/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
-    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-      b.disabled = false;
-      if (r.status === 409) { msg.textContent = '✗ ' + T.conflict; return; }
-      if (r.status === 422) { msg.textContent = '✗ ' + T.referencesRemoved; return; }
-      msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-      if (r.ok) {
-        row.remove();
-        // Last row gone: swap the now-headers-only table for the same
-        // empty-state text the server renders when .resetBatches is empty,
-        // instead of leaving a dangling ARCHIVED/SALES header over nothing.
-        var tbody = box.querySelector('tbody');
-        if (tbody && !tbody.children.length) {
-          box.innerHTML = '<p class="muted">' + T.empty + '</p>';
-        }
-      }
-    }); }).catch(function (e) { b.disabled = false; msg.textContent = '✗ ' + e; });
+    var restoreBtn = ev.target.closest('[data-restore-batch]');
+    if (restoreBtn) {
+      var row = restoreBtn.closest('tr');
+      var inp = row.querySelector('input.restore-confirm');
+      if (inp.value.trim() !== 'RESTORE') { msg.textContent = '✗ ' + T.confirmRequired; return; }
+      if (!confirm(T.confirmDialog)) return;
+      restoreBtn.disabled = true; msg.textContent = '⏳ ' + T.restoring;
+      fetch('/api/data/reset-archives/' + encodeURIComponent(restoreBtn.getAttribute('data-restore-batch')) + '/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
+      }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        restoreBtn.disabled = false;
+        if (r.status === 409) { msg.textContent = '✗ ' + T.conflict; return; }
+        if (r.status === 422) { msg.textContent = '✗ ' + T.referencesRemoved; return; }
+        msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        if (r.ok) removeRowIfEmpty(row);
+      }); }).catch(function (e) { restoreBtn.disabled = false; msg.textContent = '✗ ' + e; });
+      return;
+    }
+    var purgeBtn = ev.target.closest('[data-purge-batch]');
+    if (purgeBtn) {
+      var prow = purgeBtn.closest('tr');
+      var pinp = prow.querySelector('input.purge-confirm');
+      if (pinp.value.trim() !== 'PURGE') { msg.textContent = '✗ ' + T.purgeConfirmRequired; return; }
+      if (!confirm(T.purgeConfirmDialog)) return;
+      purgeBtn.disabled = true; msg.textContent = '⏳ ' + T.purging;
+      fetch('/api/data/reset-archives/' + encodeURIComponent(purgeBtn.getAttribute('data-purge-batch')) + '/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ confirm: pinp.value.trim() }).toString()
+      }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        purgeBtn.disabled = false;
+        // 409 here means "still within the retention window" -- the
+        // server's own message (data.error) already names the date, so
+        // show it directly rather than a fixed string that can't.
+        msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        if (r.ok) removeRowIfEmpty(prow);
+      }); }).catch(function (e) { purgeBtn.disabled = false; msg.textContent = '✗ ' + e; });
+    }
   });
 })();
 (function () {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 )
@@ -215,6 +216,39 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		respond(w, http.StatusOK, true, fmt.Sprintf("restored %d sales and related records", n))
+	})
+
+	// ADR-0042 §3 / ut-docs#661: permanently purge one archived reset
+	// batch. Gated exactly like restore (manager + a fresh typed
+	// confirmation), plus the retention-window check DeleteResetBatch
+	// enforces in the repository itself — this handler cannot route around
+	// it, only surface what it decided.
+	mux.HandleFunc("POST /api/data/reset-archives/{id}/purge", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		if !isManagerOrAuthOff(r) {
+			respond(w, http.StatusForbidden, false, httpx.T(locale, "settings.data.archives_purge_manager_only"))
+			return
+		}
+		_ = r.ParseForm()
+		if strings.TrimSpace(r.FormValue("confirm")) != "PURGE" {
+			respond(w, http.StatusBadRequest, false, httpx.T(locale, "settings.data.archives_purge_confirm_required"))
+			return
+		}
+		err := data.NewPOSRepo(d.Db).DeleteResetBatch(r.Context(), r.PathValue("id"), auth.UserID(r))
+		if err != nil {
+			var within *data.ArchiveWithinRetentionWindowError
+			switch {
+			case errors.Is(err, data.ErrResetBatchNotFound):
+				respond(w, http.StatusNotFound, false, httpx.T(locale, "settings.data.archives_purge_not_found"))
+			case errors.As(err, &within):
+				respond(w, http.StatusConflict, false, fmt.Sprintf(
+					httpx.T(locale, "settings.data.archives_purge_retained_until"), within.RetainedUntil.Format("2006-01-02")))
+			default:
+				respond(w, http.StatusInternalServerError, false, err.Error())
+			}
+			return
+		}
+		respond(w, http.StatusOK, true, httpx.T(locale, "settings.data.archives_purge_done"))
 	})
 
 	// GDPR: find a customer to erase.
