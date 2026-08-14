@@ -479,7 +479,7 @@ time (remote support, migration).
 |---|---|---|---|---|
 | **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
 | **Tills** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
-| **Locations** | 1 | 1 | 1 | 3 |
+| **Locations** | 1 | 1 | 1 | 3 (+€39 each, to 10) |
 | Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ |
 | All free plugins | ✅ | ✅ | ✅ | ✅ |
 | Local backup / restore | ✅ | ✅ | ✅ | ✅ |
@@ -497,8 +497,15 @@ time (remote support, migration).
 | **Remote support session** | ❌ | ✅ | ✅ priority | ✅ on demand |
 | Support | Community | Email/ticket, Mon–Sat | Priority, same business day | Named contact + phone |
 
-Extra location **€39/month** · **no per-till charge, ever** · **no activation
-fee** · no minimum term on monthly billing · annual billing = **2 months free**.
+Extra location **€39/month** (published up to 10) · **no per-till charge, ever** ·
+**no activation fee** · no minimum term on monthly billing · annual billing =
+**2 months free**.
+
+**More than 10 locations, a franchise, or you need an SLA, SSO or a custom
+integration?** [Talk to us](mailto:hello@universaltill.com) — we'll quote.
+Not because the price stops working (at 25 sites the published ladder is
+still ~44% under the incumbents) but because at that point what you need
+stops being what's on this page.
 
 ### Prices by country
 
