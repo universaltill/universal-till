@@ -42,7 +42,7 @@ func TestAuditPage_ManagerOnlyAndRendersRealData(t *testing.T) {
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerAuditPage(mux, dp)
 
@@ -75,6 +75,37 @@ func TestAuditPage_ManagerOnlyAndRendersRealData(t *testing.T) {
 	}
 }
 
+// super_admin is #554/#555's noted broadening vs. the old isManagerOrAuthOff
+// gate (which only recognized manager/admin) — accepted and inert since
+// nothing in the codebase creates a super_admin-role user today. Pin it
+// explicitly on the audit trail, the most sensitive of #709's 5 gated pages.
+func TestAuditPage_SuperAdminGranted(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
+	mux := http.NewServeMux()
+	registerAuditPage(mux, dp)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/audit", nil), auth.User{ID: "sa-1", Role: "super_admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("super_admin = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // The entity_type/actor_id/action/date filters actually narrow the results
 // (not just accepted and ignored).
 func TestAuditPage_FiltersNarrowResults(t *testing.T) {
@@ -98,7 +129,7 @@ func TestAuditPage_FiltersNarrowResults(t *testing.T) {
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerAuditPage(mux, dp)
 
@@ -126,7 +157,7 @@ func TestAuditExport_ManagerOnly(t *testing.T) {
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerAuditPage(mux, dp)
 
@@ -166,7 +197,7 @@ func TestAuditExport_CSVHeadersFiltersAndAuditEntry(t *testing.T) {
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerAuditPage(mux, dp)
 
@@ -230,7 +261,7 @@ func TestAuditExport_FormulaShapedFieldsAreCSVSafe(t *testing.T) {
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerAuditPage(mux, dp)
 
@@ -295,7 +326,7 @@ func TestAuditExport_NullActorFallsBackToSystemLiteral(t *testing.T) {
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerAuditPage(mux, dp)
 
