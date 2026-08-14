@@ -480,7 +480,8 @@ Most POS vendors charge a licence for every till; we don't.
 | **Legally required fiscal audit export** (e.g. German DSFinV-K) | ✅ | ✅ | ✅ | ✅ |
 | Table plan, split bills, course firing | ❌ | ❌ | ✅ | ✅ |
 | Stock, purchase orders, recipes | ❌ | ❌ | ✅ | ✅ |
-| Accountant export (e.g. German DATEV) & advanced reports | ❌ | ❌ | ✅ | ✅ |
+| Accountant export (e.g. German DATEV) | ❌ | ✅ | ✅ | ✅ |
+| Advanced reports & accountant login | ❌ | ❌ | ✅ | ✅ |
 | Migration from your old system | self-service | guides | ✅ included | ✅ included |
 | Central catalog & consolidated reporting | ❌ | ❌ | ❌ | ✅ |
 | **Remote support session** | ❌ | ✅ | ✅ priority | ✅ on demand |
@@ -533,7 +534,9 @@ of zero in a market where it isn't.
 asks for is available on every plan, including the free one, wherever a TSE
 is configured. It is a legal obligation on you under §146a AO, not a feature
 we sell. The **DATEV** export is a different thing — an accounting batch for
-your *Steuerberater*, which nobody mandates — and that one is a Pro feature.
+your *Steuerberater*, which nobody mandates — and that one is included from
+the Shop plan upward, because your accountant should never be the reason a
+till doesn't work for you.
 
 *Universal Till provides a certified TSE and the required exports. It does
 not provide tax or legal advice, and your own record-keeping and reporting
