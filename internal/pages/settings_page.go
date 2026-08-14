@@ -32,16 +32,6 @@ func shortDeviceID(id string) string {
 	return id
 }
 
-// isManagerOrAuthOff gates manager-only settings; with UT_AUTH=off there is
-// no session to check, so dev/CI tooling passes.
-func isManagerOrAuthOff(r *http.Request) bool {
-	if auth.Disabled(os.Getenv("UT_AUTH")) {
-		return true
-	}
-	u, ok := auth.FromContext(r.Context())
-	return ok && u.IsManager()
-}
-
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
