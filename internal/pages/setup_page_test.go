@@ -71,12 +71,44 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`,
 		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, location_id TEXT,
 		 is_active INTEGER NOT NULL DEFAULT 1)`,
+		// roles/permission_actions/role_permissions (ut-docs#710): settings_page.go's
+		// endpoints now gate via canPerform()/AuthSvc.Can(), which queries
+		// role_permissions for real — column-identical to
+		// internal/db/migrations/039_role_permissions.sql, same drift rule as
+		// ui_smoke_test.go's seedForPages (a drifted fixture here would let a
+		// canPerform()-gated test pass against a permission schema production
+		// doesn't have).
+		`CREATE TABLE roles (role TEXT PRIMARY KEY)`,
+		`CREATE TABLE permission_actions (action TEXT PRIMARY KEY)`,
+		`CREATE TABLE role_permissions (role TEXT NOT NULL REFERENCES roles(role), action TEXT NOT NULL REFERENCES permission_actions(action),
+		 granted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (role, action))`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatalf("setup schema: %v", err)
 		}
 	}
 	seedCountrySettingsTable(t, db)
+	// Seed grants identical to 039's own seed data: manager/admin/super_admin
+	// get every catalog action, cashier gets none (no rows inserted for
+	// cashier — Can() treats "no row" as denied).
+	for _, role := range []string{"cashier", "manager", "admin", "super_admin"} {
+		if _, err := db.Exec(`INSERT INTO roles (role) VALUES (?)`, role); err != nil {
+			t.Fatalf("seed role %s: %v", role, err)
+		}
+	}
+	permissionCatalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings"}
+	for _, action := range permissionCatalog {
+		if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES (?)`, action); err != nil {
+			t.Fatalf("seed permission_action %s: %v", action, err)
+		}
+	}
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		for _, action := range permissionCatalog {
+			if _, err := db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, ?, 1)`, role, action); err != nil {
+				t.Fatalf("seed role_permission %s/%s: %v", role, action, err)
+			}
+		}
+	}
 	svc := auth.NewService(db)
 	store := settings.NewStore(db)
 	engine := pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
