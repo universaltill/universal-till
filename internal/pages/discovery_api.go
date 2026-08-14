@@ -26,13 +26,13 @@ var discoveryBrowse = discovery.Browse
 
 // registerDiscoveryAPI wires the two flavours of the same scan
 // (ut-docs#289): GET /api/sync/discover-primaries for a manager on the
-// Tills page (isManagerOrAuthOff, same as sync_api.go's /api/sync/enroll-
-// token and pairing endpoints — not a stricter or laxer check than its
-// neighbours), and GET /api/setup/discover-primaries for the first-boot
-// wizard's "Join an existing shop" step, gated by NeedsFirstBoot instead
-// (middleware-exempt; see firstBootGate).
+// Tills page (managerGate/sync_management, same as sync_api.go's
+// /api/sync/enroll-token and pairing endpoints — not a stricter or laxer
+// check than its neighbours), and GET /api/setup/discover-primaries for the
+// first-boot wizard's "Join an existing shop" step, gated by NeedsFirstBoot
+// instead (middleware-exempt; see firstBootGate).
 func registerDiscoveryAPI(mux *http.ServeMux, d *common.Deps) {
-	mux.HandleFunc("GET /api/sync/discover-primaries", discoverPrimariesHandler(managerGate))
+	mux.HandleFunc("GET /api/sync/discover-primaries", discoverPrimariesHandler(managerGate(d)))
 	// Rate-limited (ut-docs#289 review): unlike its manager-gated sibling
 	// above, this flavour needs no session at all — any LAN host can trigger
 	// a 4s mDNS multicast scan per request during the first-boot window.

@@ -104,10 +104,12 @@ func newSyncAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	return mux, dp
 }
 
-// isManagerOrAuthOff (used by several of these handlers) checks the
-// session role or UT_AUTH=off; set UT_AUTH=off for these tests so the
-// manager-gated endpoints are reachable without standing up a full
-// session, matching how the rest of this package's HTTP tests work.
+// Most tests below set UT_AUTH=off: canPerform(d, r, "sync_management")
+// (used by several of these handlers, ut-docs#707) checks the session role
+// or UT_AUTH=off, so this reaches the manager-gated endpoints without
+// standing up a full session, matching how the rest of this package's HTTP
+// tests work.
+
 func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newSyncAPITestDeps(t)

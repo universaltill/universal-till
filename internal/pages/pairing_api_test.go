@@ -49,6 +49,7 @@ func newPairingAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *auth.Se
 		Settings: settings.NewStore(db),
 	}
 	svc := auth.NewService(db)
+	dp.AuthSvc = svc
 	mux := http.NewServeMux()
 	tokens := registerSyncAPI(mux, dp)
 	registerPairingAPI(mux, dp, svc, tokens)
