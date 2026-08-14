@@ -18,6 +18,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -38,6 +39,44 @@ func (e *paymentDeclinedError) Error() string {
 	return "payment declined: " + e.Method
 }
 
+// fiscalNeverConfiguredError signals the ADR-0048 hard block: a shop in a
+// gated market (Germany) declared itself system-of-record without a TSE
+// configured. There is deliberately NO override path for this state — same
+// error shape as paymentDeclinedError so each tender surface maps it at its
+// own call site, with no sale row created.
+type fiscalNeverConfiguredError struct{}
+
+func (e *fiscalNeverConfiguredError) Error() string {
+	return "fiscal gate: shop is system of record but no TSE is configured"
+}
+
+// fiscalTSEFailingError signals the ADR-0048 configured-but-failing block:
+// the shop's TSE is known-failing and no owner override window is currently
+// active. Unlike fiscalNeverConfiguredError, an admin can lift this via
+// POST /api/fiscal/tse-override (fiscal_api.go).
+type fiscalTSEFailingError struct{}
+
+func (e *fiscalTSEFailingError) Error() string {
+	return "fiscal gate: TSE is failing and no owner override is active"
+}
+
+// fiscalSettingsReader resolves the settings source the gate reads —
+// d.Settings when wired (production), a repo over d.Db otherwise (bare-Deps
+// tests). Never reads d.Engine/d.KioskEngine (ADR-0020 kiosk isolation).
+func fiscalSettingsReader(d *common.Deps) fiscal.SettingsReader {
+	if d.Settings != nil {
+		return d.Settings
+	}
+	return data.NewSettingsRepo(d.Db)
+}
+
+// evaluateFiscalGate runs ADR-0048's policy for the shop's configured
+// country against wall-clock now. For any non-gated country (everything but
+// DE today) it returns Allowed without touching the settings store.
+func evaluateFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error) {
+	return fiscal.EvaluateGate(ctx, fiscalSettingsReader(d), d.CurrentState().Country, time.Now())
+}
+
 // completeTender runs the money-critical authorize -> complete -> publish
 // pipeline shared by every till-mode's tender path (cashier and self-order
 // kiosk alike): payment authorization gate, CompleteSale, basket reset via
@@ -49,6 +88,26 @@ func (e *paymentDeclinedError) Error() string {
 // kiosk checkout passes d.KioskEngine (ut-docs#449: an anonymous kiosk
 // checkout must never reset the cashier's live basket, and vice versa).
 func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, repo *data.POSRepo, saleInput pos.SaleInput, payments []pos.PaymentInput, actorID string) (string, error) {
+	// German TSE hard gate (ADR-0048, ut-docs#715) — evaluated BEFORE the
+	// payment.<key>.authorize loop: "never configured" needs no plugin
+	// round trip, just local settings reads (never the network — a till
+	// that is merely offline is NOT a failing TSE, and checkout must never
+	// block on connectivity, ADR-0003). Expiry of an override window is
+	// enforced right here by re-evaluating against wall-clock time on every
+	// tender — no background job; blocking resumes on the next attempt.
+	gate, err := evaluateFiscalGate(ctx, d)
+	if err != nil {
+		return "", err
+	}
+	switch gate.Decision {
+	case fiscal.BlockedNeverConfigured:
+		// Hard block, unconditionally — no override path exists for this
+		// branch, by design (ADR-0048 Decision 2.2).
+		return "", &fiscalNeverConfiguredError{}
+	case fiscal.BlockedTSEFailing:
+		return "", &fiscalTSEFailingError{}
+	}
+
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
 	// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
 	// BEFORE the sale completes — a declined card must stop the sale.
@@ -85,6 +144,22 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
 		return "", err
+	}
+
+	// Every sale completed during an active TSE-override window gets its
+	// own audit marker (entity sale, action unsigned_override) — a per-sale
+	// flag distinct from the one-time fiscal_override/grant entry, so the
+	// journal shows exactly which sales were taken unsigned (ADR-0048
+	// Decision 3). Best-effort after the fact: the sale itself is already
+	// committed, so a failed marker write is logged, never unwinds a sale.
+	if gate.Decision == fiscal.AllowedWithOverride {
+		if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, "unsigned_override", map[string]any{
+			"override_actor":  gate.OverrideActor,
+			"override_reason": gate.OverrideReason,
+			"override_until":  gate.OverrideUntil.UTC().Format(time.RFC3339),
+		}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+			log.Printf("fiscal gate: unsigned_override audit marker for sale %s failed: %v", saleID, auditErr)
+		}
 	}
 
 	engine.Reset()
@@ -677,6 +752,31 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, err.Error(), http.StatusPaymentRequired)
 				return
 			}
+			// German TSE hard gate (ADR-0048): same in-place, localized
+			// notice surface as the insufficient-stock rejection below —
+			// never a modal blocker, the basket survives, no sale row was
+			// created. The two block states get their own copy: never-
+			// configured names the fix (get a TSE set up / leave system-of-
+			// record mode), failing names the owner override.
+			var fiscalNC *fiscalNeverConfiguredError
+			var fiscalTF *fiscalTSEFailingError
+			if errors.As(err, &fiscalNC) || errors.As(err, &fiscalTF) {
+				msgKey := "pos.toast.fiscal_never_configured"
+				if errors.As(err, &fiscalTF) {
+					msgKey = "pos.toast.fiscal_tse_failing"
+				}
+				log.Printf("tender rejected: %v (ADR-0048 fiscal hard gate)", err)
+				locale := httpx.ResolveLocale(w, r)
+				funcs := httpx.FuncsFor(locale)
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, msgKey)
+				b.ToastLevel = "error"
+				basketView, _ := ui.NewBasketView(funcs)
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_ = basketView.Render(w, b)
+				return
+			}
 			if strings.Contains(err.Error(), "insufficient stock") {
 				locale := httpx.ResolveLocale(w, r)
 				funcs := httpx.FuncsFor(locale)
@@ -743,7 +843,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			printerAvailable = true
 		}
 		printerUnavailable := !printerAvailable
-		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable,
+		// Re-evaluate the fiscal gate for the receipt's unsigned-override
+		// marker line (ADR-0048): the sale just completed, so an active
+		// override window here means this sale was taken under it. A read
+		// error degrades to "no marker line" — the authoritative per-sale
+		// flag is the unsigned_override audit row completeTender wrote.
+		unsignedOverride := false
+		if g, gErr := evaluateFiscalGate(r.Context(), d); gErr == nil && g.Decision == fiscal.AllowedWithOverride {
+			unsignedOverride = true
+		}
+		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride,
 			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d))
 		if renderErr != nil {
 			printerUnavailable = true
@@ -888,7 +997,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, storeName string, design receiptDesign) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, storeName string, design receiptDesign) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFS(uiassets.FS,
 		"ui/partials/receipt.html",
 	)
@@ -940,6 +1049,10 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		"Total":              total,
 		"LegalBlocks":        legalBlocks,
 		"PrinterUnavailable": printerUnavailable,
+		// ADR-0048: a sale completed during an active TSE-override window
+		// carries a receipt line marking it as taken during a documented
+		// TSE-failure window.
+		"UnsignedOverride": unsignedOverride,
 		// Receipt design (docs: receipt-designer.md): the on-screen copy
 		// follows the same owner-styled design as the thermal print.
 		"StoreName":    storeName,

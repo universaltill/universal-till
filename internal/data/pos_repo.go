@@ -2310,6 +2310,28 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
+// HasAuditEntry reports whether an audit_log row exists for the given
+// entity/action pair — used by the receipt-printing path (ADR-0048) to
+// derive a sale's unsigned-override marker from the sale's own authoritative
+// audit row rather than re-reading current fiscal settings, since printing
+// (especially a reprint) can happen well after the override window that was
+// active when the sale itself completed.
+func (r *POSRepo) HasAuditEntry(ctx context.Context, entityType, entityID, action string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `
+SELECT 1 FROM audit_log
+WHERE entity_type = ? AND entity_id = ? AND action = ?
+LIMIT 1
+`, entityType, entityID, action).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check audit_log entry: %w", err)
+	}
+	return true, nil
+}
+
 // AuditEntry is one row for the audit-trail browse/filter page. ActorName
 // is resolved via a LEFT JOIN on users — plugin-originated entries
 // (internal/data/plugin_repo.go's InsertAudit/InsertAuditRaw) always write

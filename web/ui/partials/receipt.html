@@ -87,6 +87,14 @@
       {{ end }}
     </div>
     {{ end }}
+    {{ if .UnsignedOverride }}
+    <!-- ADR-0048: sale taken during an active TSE-override window — the
+         receipt says so factually (what happened), never a compliance
+         outcome claim (ADR-0040). -->
+    <div class="receipt-legal">
+      <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_override" }}</div>
+    </div>
+    {{ end }}
     {{ if .DesignFooter }}<div class="receipt-design-line" style="margin-top:.5rem"><small>{{ .DesignFooter }}</small></div>{{ end }}
     {{ if .PrinterUnavailable }}
     <div class="receipt-printer-warning">

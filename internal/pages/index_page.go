@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -91,6 +92,19 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			methods = []string{"cash", "card"}
 		}
 		defaultMethod := methods[0]
+		// German TSE hard gate (ADR-0048): while an owner override window is
+		// active, the sale screen shows a persistent banner — sales are
+		// being recorded without a TSE signature, and everyone at the till
+		// should see that state, not discover it per-receipt. Rendered via
+		// the existing pos-notice surface, never a modal blocker. A gate
+		// read error just renders no banner (the gate itself still runs on
+		// every tender).
+		fiscalOverrideActive := false
+		fiscalOverrideUntil := ""
+		if g, gErr := evaluateFiscalGate(r.Context(), d); gErr == nil && g.Decision == fiscal.AllowedWithOverride {
+			fiscalOverrideActive = true
+			fiscalOverrideUntil = g.OverrideUntil.Local().Format("2006-01-02 15:04")
+		}
 		data := map[string]any{
 			"title":                "Universal Till",
 			"saleScreen":           true,
@@ -102,6 +116,8 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"paymentMethodDefault": defaultMethod,
 			"payMethods":           payMethods,
 			"aiIdentify":           aiService(r.Context(), d).Enabled(),
+			"fiscalOverrideActive": fiscalOverrideActive,
+			"fiscalOverrideUntil":  fiscalOverrideUntil,
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})
