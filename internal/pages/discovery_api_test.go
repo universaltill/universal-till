@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -40,6 +41,12 @@ func newDiscoveryAPITestDeps(t *testing.T) *common.Deps {
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
 		Settings: settings.NewStore(db),
+		// AuthSvc unset here is harmless today (every test in this file
+		// sends no session, so canPerform returns at auth.FromContext
+		// before ever touching AuthSvc) -- but the next test added here
+		// that DOES send a real session would nil-deref, same latent gap
+		// ut-docs#707 review caught and fixed in newPairingAPITestDeps.
+		AuthSvc: auth.NewService(db),
 	}
 }
 
