@@ -19,7 +19,7 @@ const auditPageSize = 50
 // something scoped to the viewer.
 func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/audit", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "audit") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -69,7 +69,7 @@ func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("GET /api/audit/export", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "audit") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}

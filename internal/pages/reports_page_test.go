@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -43,6 +44,7 @@ func newReportsPageTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
 		Settings: settings.NewStore(db),
+		AuthSvc:  auth.NewService(db),
 	}
 	mux := http.NewServeMux()
 	registerReportsPage(mux, dp)
@@ -267,6 +269,41 @@ func TestReportsPage_ManagerOnlySectionsGatedByRole(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `name="time"`) {
 		t.Fatalf("expected the manager-only EOD settings form hidden for a non-manager, got: %s", rec.Body.String())
+	}
+}
+
+// Complements TestReportsPage_ManagerOnlySectionsGatedByRole's no-session
+// negative case with the positive one: a REAL manager session (ut-docs#709 —
+// canPerform()/Auth.Can(), not just the no-session short-circuit) must see
+// the EOD tab and its settings form. Also covers super_admin (#554/#555's
+// noted broadening vs. the old isManagerOrAuthOff gate, which only
+// recognized manager/admin) — accepted and inert since nothing today
+// creates a super_admin-role user.
+func TestReportsPage_ManagerAndSuperAdminSessionsSeeEODTab(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		t.Run(role, func(t *testing.T) {
+			mux, _ := newReportsPageTestDeps(t)
+			req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/reports", nil), auth.User{ID: "u1", Role: role})
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "/ui/reports/tab/eod") {
+				t.Fatalf("expected the EOD tab offered to role=%s, got: %s", role, rec.Body.String())
+			}
+
+			req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/eod", nil), auth.User{ID: "u1", Role: role})
+			rec = httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `name="time"`) {
+				t.Fatalf("expected the EOD settings form shown to role=%s, got: %s", role, rec.Body.String())
+			}
+		})
 	}
 }
 

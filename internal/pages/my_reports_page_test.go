@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -68,6 +69,7 @@ func newMyReportsTestMux(t *testing.T) (*http.ServeMux, *sql.DB) {
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Settings: settings.NewStore(db),
+		AuthSvc:  auth.NewService(db),
 	}
 	mux := http.NewServeMux()
 	registerMyReportsPage(mux, dp)
@@ -175,6 +177,29 @@ func TestMyReportsPage_ManagerGate(t *testing.T) {
 	rec := getMyReports(t, mux)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 without a manager session, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Positive counterpart to TestMyReportsPage_ManagerGate: a REAL session
+// (ut-docs#709 — canPerform()/Auth.Can(), not the no-session short-circuit)
+// for manager/admin/super_admin must reach the page; cashier stays denied.
+// super_admin is #554/#555's noted broadening vs. the old isManagerOrAuthOff
+// gate — accepted and inert, since nothing today creates that role.
+func TestMyReportsPage_RealSessionGatesByRole(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	for role, wantCode := range map[string]int{
+		"cashier": http.StatusForbidden, "manager": http.StatusOK,
+		"admin": http.StatusOK, "super_admin": http.StatusOK,
+	} {
+		t.Run(role, func(t *testing.T) {
+			mux, _ := newMyReportsTestMux(t)
+			req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/my-reports", nil), auth.User{ID: "u1", Role: role})
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != wantCode {
+				t.Fatalf("role=%s: expected %d, got %d: %s", role, wantCode, rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

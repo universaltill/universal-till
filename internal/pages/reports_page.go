@@ -214,8 +214,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"title":        "Reports",
 			"theme":        d.CurrentState().Theme,
 			"menuItems":    d.MenuSnapshot(),
-			"CanAsk":       aiService(r.Context(), d).CanAsk() && isManagerOrAuthOff(r),
-			"IsManager":    isManagerOrAuthOff(r),
+			"CanAsk":       aiService(r.Context(), d).CanAsk() && canPerform(d, r, "reports"),
+			"IsManager":    canPerform(d, r, "reports"),
 			"Days":         days,
 			"Period":       reportPeriodParam(r),
 			"Anchor":       window.Anchor,
@@ -350,13 +350,12 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"Tills":       tills,
 			})(w, r)
 		case "eod":
-			// Manager-gated like every other manager-only handler in this
-			// codebase (isManagerOrAuthOff before the repo calls, not just in
-			// the template): the partial only ever renders its body
+			// Gated by the eod_report action (#709/#555) before the repo calls,
+			// not just in the template: the partial only ever renders its body
 			// {{ if .IsManager }}, so a non-manager gets nothing back either
 			// way — but pre-this-fix, ListArchivedReports and two Settings.Get
 			// calls still ran for a role that can never see the result.
-			isManager := isManagerOrAuthOff(r)
+			isManager := canPerform(d, r, "eod_report")
 			type eodRow struct {
 				Period string
 				Net    int64

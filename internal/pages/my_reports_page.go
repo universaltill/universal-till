@@ -64,7 +64,7 @@ type myReportRow struct {
 // carry managers' free-text notes.
 func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /my-reports", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "reports") {
 			http.Error(w, "manager or admin role required", http.StatusForbidden)
 			return
 		}

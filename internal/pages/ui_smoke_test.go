@@ -363,10 +363,39 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE held_sales_archive (id TEXT NOT NULL, label TEXT NOT NULL, total_minor INTEGER NOT NULL, line_count INTEGER NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, reset_batch_id TEXT NOT NULL REFERENCES reset_batches(id));`,
 		`CREATE TABLE shifts_archive (id TEXT NOT NULL, register_id TEXT NOT NULL, cashier_id TEXT NOT NULL, opened_at TEXT NOT NULL, closed_at TEXT, opening_cash INTEGER NOT NULL, closing_cash INTEGER, expected_cash INTEGER, note TEXT, reset_batch_id TEXT NOT NULL REFERENCES reset_batches(id));`,
 		`CREATE TABLE stock_movements_archive (id TEXT NOT NULL, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, cost_price INTEGER, created_at TEXT NOT NULL, reset_batch_id TEXT NOT NULL REFERENCES reset_batches(id));`,
+		// roles/permission_actions/role_permissions: column-identical to
+		// internal/db/migrations/039_role_permissions.sql + 042 (ut-docs#709)
+		// — a drifted fixture here would let a canPerform()-gated page test
+		// pass against a permission schema production doesn't have.
+		`CREATE TABLE roles (role TEXT PRIMARY KEY);`,
+		`CREATE TABLE permission_actions (action TEXT PRIMARY KEY);`,
+		`CREATE TABLE role_permissions (role TEXT NOT NULL REFERENCES roles(role), action TEXT NOT NULL REFERENCES permission_actions(action), granted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (role, action));`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatalf("seed ddl failed: %v", err)
+		}
+	}
+	// Seed grants identical to 039 (manager/admin/super_admin get every
+	// catalog action, cashier gets none) + 042's reports/audit additions —
+	// keep this list in sync with every migration that adds a new action,
+	// so canPerform()-gated page tests exercise the real seed shape.
+	for _, role := range []string{"cashier", "manager", "admin", "super_admin"} {
+		if _, err := db.Exec(`INSERT INTO roles (role) VALUES (?)`, role); err != nil {
+			t.Fatalf("seed role %s: %v", role, err)
+		}
+	}
+	catalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "reports", "audit"}
+	for _, action := range catalog {
+		if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES (?)`, action); err != nil {
+			t.Fatalf("seed permission_action %s: %v", action, err)
+		}
+	}
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		for _, action := range catalog {
+			if _, err := db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, ?, 1)`, role, action); err != nil {
+				t.Fatalf("seed role_permission %s/%s: %v", role, action, err)
+			}
 		}
 	}
 	// minimal data

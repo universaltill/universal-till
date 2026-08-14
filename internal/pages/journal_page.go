@@ -18,7 +18,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			"title":       "Journal",
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.MenuSnapshot(),
-			"InvoicingOn": invoicingOn && isManagerOrAuthOff(r),
+			"InvoicingOn": invoicingOn && canPerform(d, r, "reports"),
 		})(w, r)
 	})
 
