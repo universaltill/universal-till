@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -205,6 +206,33 @@ func TestPostSettingsUpdateSchedule_RequiresManager(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+// Positive counterpart to TestPostSettingsUpdateSchedule_RequiresManager
+// (ut-docs#706 — canPerform()/Auth.Can(), not just the no-session
+// short-circuit): a REAL session for cashier is denied, manager/admin/
+// super_admin get past the gate and the write succeeds. super_admin is
+// #554/#555's noted broadening vs. the old isManagerOrAuthOff gate —
+// accepted and inert since nothing today creates that role.
+func TestPostSettingsUpdateSchedule_RealSessionGatesByRole(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	for role, wantCode := range map[string]int{
+		"cashier": http.StatusForbidden, "manager": http.StatusNoContent,
+		"admin": http.StatusNoContent, "super_admin": http.StatusNoContent,
+	} {
+		t.Run(role, func(t *testing.T) {
+			dp := newEODTestDeps(t)
+			mux := http.NewServeMux()
+			registerUpdateAPI(mux, dp)
+			req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/settings/update-schedule", strings.NewReader("enabled=on&time=03:30")), auth.User{ID: "u1", Role: role})
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != wantCode {
+				t.Fatalf("role=%s: got %d, want %d: %s", role, rec.Code, wantCode, rec.Body.String())
+			}
+		})
 	}
 }
 

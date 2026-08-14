@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -57,6 +58,7 @@ func newPluginSettingsTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Menu:     []common.MenuItem{{Href: "/plugins", Label: "Plugins"}},
 		Pm:       pm,
 		Settings: settings.NewStore(db),
+		AuthSvc:  auth.NewService(db),
 	}
 	mux := http.NewServeMux()
 	registerPluginSettings(mux, dp)
@@ -116,6 +118,43 @@ func TestPluginSettingsAPI_POST_RequiresManager(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	}
+}
+
+// Positive counterpart to the two RequiresManager tests above (ut-docs#706 —
+// canPerform()/Auth.Can(), not just the no-session short-circuit): a REAL
+// session for cashier/manager/admin/super_admin must gate exactly as
+// isManagerOrAuthOff did for manager/admin, with super_admin now also
+// granted (#554/#555's noted broadening, accepted and inert since nothing
+// today creates that role).
+func TestPluginSettingsPages_RealSessionGatesByRole(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	for role, wantGET := range map[string]int{
+		"cashier": http.StatusSeeOther, "manager": http.StatusOK,
+		"admin": http.StatusOK, "super_admin": http.StatusOK,
+	} {
+		t.Run(role, func(t *testing.T) {
+			mux, _ := newPluginSettingsTestDeps(t)
+
+			getReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil), auth.User{ID: "u1", Role: role})
+			getRec := httptest.NewRecorder()
+			mux.ServeHTTP(getRec, getReq)
+			if getRec.Code != wantGET {
+				t.Fatalf("GET role=%s: got %d, want %d", role, getRec.Code, wantGET)
+			}
+
+			postReq := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader("setting_endpoint_url=x")), auth.User{ID: "u1", Role: role})
+			postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			postRec := httptest.NewRecorder()
+			mux.ServeHTTP(postRec, postReq)
+			wantPOST := http.StatusOK
+			if role == "cashier" {
+				wantPOST = http.StatusForbidden
+			}
+			if postRec.Code != wantPOST {
+				t.Fatalf("POST role=%s: got %d, want %d", role, postRec.Code, wantPOST)
+			}
+		})
 	}
 }
 

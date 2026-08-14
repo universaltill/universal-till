@@ -202,7 +202,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	mux.HandleFunc("POST /api/plugins/store/download", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			respond(w, http.StatusForbidden, "manager or admin required")
 			return
 		}
@@ -251,7 +251,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/plugins/store/install", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			respond(w, http.StatusForbidden, "manager or admin required")
 			return
 		}
@@ -289,7 +289,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/plugins/store/delete-download", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "plugin_management") {
 			respond(w, http.StatusForbidden, "manager or admin required")
 			return
 		}
