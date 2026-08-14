@@ -460,15 +460,25 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 **Core POS is free forever, unconditionally** ([ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)).
 Paid plans buy hosted infrastructure and support, never the till itself.
 
-Plans are priced **per location, with tills included** — not per device.
-Most POS vendors charge a licence for every till; we don't.
+**Every plan includes unlimited tills** — including the free one. A till
+running on your own counter costs us nothing, so we don't charge for it.
+Most POS vendors charge a licence for every device; ready2order is €35.90
+per till, per month.
+
+Our rule for what's free: **if a feature costs us money to run, it's in a
+subscription. If it doesn't, everyone gets it.** So everything that runs on
+your own hardware — table plan, stock, kitchen routing, self-order kiosk,
+staff, reports, DATEV and DSFinV-K exports — is free on every plan. What
+you pay for is our infrastructure (off-site backup, cloud sync, remote
+management), a third party we pay on your behalf (the managed TSE), and our
+time (remote support, migration).
 
 ### What's in each plan
 
 | | **Local** | **Shop** | **Pro** | **Chain** |
 |---|---|---|---|---|
 | **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
-| **Tills included** | 1 | 2 | 5 | 15 |
+| **Tills** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
 | **Locations** | 1 | 1 | 1 | 3 |
 | Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ |
 | All free plugins | ✅ | ✅ | ✅ | ✅ |
@@ -478,17 +488,17 @@ Most POS vendors charge a licence for every till; we don't.
 | Manage prices & catalog from a browser | ❌ | ✅ | ✅ | ✅ |
 | **Managed fiscal device where a market requires one** (e.g. German TSE) | bring your own | ✅ included | ✅ included | ✅ included |
 | **Legally required fiscal audit export** (e.g. German DSFinV-K) | ✅ | ✅ | ✅ | ✅ |
-| Table plan, split bills, course firing | ❌ | ❌ | ✅ | ✅ |
-| Stock, purchase orders, recipes | ❌ | ❌ | ✅ | ✅ |
-| Accountant export (e.g. German DATEV) | ❌ | ✅ | ✅ | ✅ |
-| Advanced reports & accountant login | ❌ | ❌ | ✅ | ✅ |
-| Migration from your old system | self-service | guides | ✅ included | ✅ included |
+| Table plan, stock, kitchen routing, self-order kiosk, staff & shifts | ✅ | ✅ | ✅ | ✅ |
+| Accountant export (e.g. German DATEV) | ✅ | ✅ | ✅ | ✅ |
+| Cloud archive retention | local only | 2 years | 10 years | 10 years |
+| Proactive health check | ❌ | ❌ | quarterly | quarterly |
+| Migration from your old system | guides | guides | ✅ done for you | ✅ done for you |
 | Central catalog & consolidated reporting | ❌ | ❌ | ❌ | ✅ |
 | **Remote support session** | ❌ | ✅ | ✅ priority | ✅ on demand |
 | Support | Community | Email/ticket, Mon–Sat | Priority, same business day | Named contact + phone |
 
-Extra till **€8/month** · extra location **€39/month** · **no activation fee** ·
-no minimum term on monthly billing · annual billing = **2 months free**.
+Extra location **€39/month** · **no per-till charge, ever** · **no activation
+fee** · no minimum term on monthly billing · annual billing = **2 months free**.
 
 ### Prices by country
 
@@ -534,9 +544,9 @@ of zero in a market where it isn't.
 asks for is available on every plan, including the free one, wherever a TSE
 is configured. It is a legal obligation on you under §146a AO, not a feature
 we sell. The **DATEV** export is a different thing — an accounting batch for
-your *Steuerberater*, which nobody mandates — and that one is included from
-the Shop plan upward, because your accountant should never be the reason a
-till doesn't work for you.
+your *Steuerberater*, which nobody mandates. It's **also free on every
+plan**, because it's local code that costs us nothing to run — your
+accountant should never be the reason a till doesn't work for you.
 
 *Universal Till provides a certified TSE and the required exports. It does
 not provide tax or legal advice, and your own record-keeping and reporting
