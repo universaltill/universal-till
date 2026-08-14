@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -810,9 +811,70 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// ADR-0048: this generic editor must not be a side door around the
+		// fiscal gate. The override window/metadata is written only by
+		// POST /api/fiscal/tse-override (typed acknowledgement, duration
+		// cap, audit) — fabricating one here is refused for everyone;
+		// clearing (empty value = revoking an override early) stays
+		// possible for an owner. The fiscal.* flags themselves are
+		// owner(admin)-only, not manager-level like the rest of this page.
+		switch key {
+		case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
+			if value != "" {
+				http.Error(w, "fiscal override state is managed via POST /api/fiscal/tse-override", http.StatusBadRequest)
+				return
+			}
+			if !canPerform(d, r, "fiscal_tse_override") {
+				http.Error(w, "owner (admin) required", http.StatusForbidden)
+				return
+			}
+		case fiscal.KeyTSEFailingSince:
+			// ADR-0048 Decision 1: "Not operator-settable in this card" —
+			// no UI control ships for this key at all, set or clear, by
+			// design (a fake "mark as failing"/"mark as fixed" toggle would
+			// let an operator manufacture or erase the very state the
+			// override exists to gate). Written only by tests directly, or
+			// by a future real fiscal.sign.ask failure callback (#675) —
+			// never through this generic editor, for anyone.
+			http.Error(w, "fiscal.tse_failing_since is not settable via this endpoint", http.StatusBadRequest)
+			return
+		case fiscal.KeySystemOfRecord, fiscal.KeyTSEConfigured:
+			if !canPerform(d, r, "fiscal_tse_override") {
+				http.Error(w, "owner (admin) required", http.StatusForbidden)
+				return
+			}
+		}
+		// Read the prior value first so the fiscal-toggle audit below can
+		// record the actual transition, not just the new value.
+		fiscalToggleAction := ""
+		switch key {
+		case fiscal.KeySystemOfRecord:
+			fiscalToggleAction = "system_of_record_changed"
+		case fiscal.KeyTSEConfigured:
+			fiscalToggleAction = "tse_configured_changed"
+		}
+		prevFiscalValue := ""
+		if fiscalToggleAction != "" {
+			prevFiscalValue, _, _ = d.Settings.Get(r.Context(), key)
+		}
 		if err := d.Settings.Set(r.Context(), key, value); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		// Every write to the fiscal posture toggles is itself audit-logged
+		// (ADR-0048 Decision 1): the shop's own trail honestly records when
+		// it declared itself in- or out-of-scope. The setting write itself
+		// already succeeded by this point, so a failed audit insert doesn't
+		// fail the request (the toggle did take effect) — but it must not
+		// be silently swallowed either, since a lost audit entry here is
+		// exactly the gap ADR-0048 added this logging to close.
+		if fiscalToggleAction != "" && prevFiscalValue != value {
+			if auditErr := data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, getSessionUserID(r),
+				"fiscal_settings", key, fiscalToggleAction,
+				map[string]any{"actor": getSessionUserID(r), "from": prevFiscalValue, "to": value},
+				time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+				logging.L().Errorf("fiscal settings: audit log for %s (%s -> %s) failed: %v", key, prevFiscalValue, value, auditErr)
+			}
 		}
 		// reflect into state for known keys
 		truthy := func(v string) bool { return strings.ToLower(v) == "true" || v == "1" || v == "on" }
