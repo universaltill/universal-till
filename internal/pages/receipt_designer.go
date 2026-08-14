@@ -72,7 +72,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	mux.HandleFunc("GET /receipt-designer", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Redirect(w, r, "/settings", http.StatusSeeOther)
 			return
 		}
@@ -97,7 +97,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/receipt-designer/preview", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -108,7 +108,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/receipt-designer/save", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -132,7 +132,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 	// Logo upload (manager): PNG/JPEG/GIF, validated by actually encoding
 	// it; remove=1 deletes. The raster prints only when show_logo is on.
 	mux.HandleFunc("POST /api/receipt-designer/logo", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -179,7 +179,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/receipt-designer/test", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
