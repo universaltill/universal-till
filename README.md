@@ -66,11 +66,14 @@
 - Any standard keyboard/mouse/touchscreen
 
 ### Optional Cloud Services
-- Multi-device synchronization
-- Cloud backup and restore
-- Advanced analytics
+*(paid plans — see [Pricing](#-pricing); the core till never needs them)*
+- Multi-till synchronization
+- Encrypted off-site backup and restore, hosted in the EU
+- Managed fiscal device where a market requires one (e.g. German TSE)
+- Remote support sessions — a technician sees your screen, with your
+  permission, and fixes it with you
+- Advanced analytics and accountant exports
 - Multi-location management
-- Enhanced security features
 
 ### Plugin Marketplace
 Available now: Stripe / QR Pay / demo card payments, German & Spanish
@@ -450,20 +453,111 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 
 ## 💰 Pricing
 
-| Feature | Free (Local) | Cloud Starter | Cloud Pro | Enterprise |
-|---------|-------------|---------------|-----------|------------|
-| **Core POS** | ✅ Unlimited | ✅ Unlimited | ✅ Unlimited | ✅ Unlimited |
-| **Devices** | ✅ Unlimited | ✅ 3 devices | ✅ Unlimited | ✅ Unlimited |
-| **Offline Mode** | ✅ Forever | ✅ Forever | ✅ Forever | ✅ Forever |
-| **Local Plugins** | ✅ All | ✅ All | ✅ All | ✅ All |
-| **Cloud Sync** | ❌ | ✅ | ✅ | ✅ |
-| **Cloud Backup** | ❌ | 30 days | Unlimited | Unlimited |
-| **Advanced Analytics** | ❌ | Basic | ✅ Advanced | ✅ Custom |
-| **Multi-location** | ❌ | ❌ | ✅ | ✅ |
-| **Support** | Community | Email | Priority | Dedicated |
-| **Price** | **FREE** | **$??/mo** | **$??/mo** | **Custom** |
+> **Proposed, not yet live.** Payment collection is not implemented in the
+> product today — these plans describe what is being built. Full definitions:
+> [subscription-plans.md](https://github.com/universaltill/ut-docs/blob/main/reference/subscription-plans.md).
 
-**Note:** Core POS is free forever. Cloud services are optional enhancements.
+**Core POS is free forever, unconditionally** ([ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)).
+Paid plans buy hosted infrastructure and support, never the till itself.
+
+**Every plan includes unlimited tills** — including the free one. A till
+running on your own counter costs us nothing, so we don't charge for it.
+Most POS vendors charge a licence for every device; ready2order is €35.90
+per till, per month.
+
+Our rule for what's free: **if a feature costs us money to run, it's in a
+subscription. If it doesn't, everyone gets it.** So everything that runs on
+your own hardware — table plan, stock, kitchen routing, self-order kiosk,
+staff, reports, DATEV and DSFinV-K exports — is free on every plan. What
+you pay for is our infrastructure (off-site backup, cloud sync, remote
+management), a third party we pay on your behalf (the managed TSE), and our
+time (remote support, migration).
+
+### What's in each plan
+
+| | **Local** | **Shop** | **Pro** | **Chain** |
+|---|---|---|---|---|
+| **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
+| **Tills** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
+| **Locations** | 1 | 1 | 1 | 3 (+€39 each, to 10) |
+| Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ |
+| All free plugins | ✅ | ✅ | ✅ | ✅ |
+| Local backup / restore | ✅ | ✅ | ✅ | ✅ |
+| Encrypted off-site cloud backup | ❌ | ✅ | ✅ | ✅ |
+| Multi-till sync | ❌ | ✅ | ✅ | ✅ |
+| Manage prices & catalog from a browser | ❌ | ✅ | ✅ | ✅ |
+| **Managed fiscal device where a market requires one** (e.g. German TSE) | bring your own | ✅ included | ✅ included | ✅ included |
+| **Legally required fiscal audit export** (e.g. German DSFinV-K) | ✅ | ✅ | ✅ | ✅ |
+| Table plan, stock, kitchen routing, self-order kiosk, staff & shifts | ✅ | ✅ | ✅ | ✅ |
+| Accountant export (e.g. German DATEV) | ✅ | ✅ | ✅ | ✅ |
+| Cloud archive retention | local only | 2 years | 10 years | 10 years |
+| Proactive health check | ❌ | ❌ | quarterly | quarterly |
+| Migration from your old system | guides | guides | ✅ done for you | ✅ done for you |
+| Central catalog & consolidated reporting | ❌ | ❌ | ❌ | ✅ |
+| **Remote support session** | ❌ | ✅ | ✅ priority | ✅ on demand |
+| Support | Community | Email/ticket, Mon–Sat | Priority, same business day | Named contact + phone |
+
+Extra location **€39/month** (published up to 10) · **no per-till charge, ever** ·
+**no activation fee** · no minimum term on monthly billing · annual billing =
+**2 months free**.
+
+**More than 10 locations, a franchise, or you need an SLA, SSO or a custom
+integration?** [Talk to us](mailto:hello@universaltill.com) — we'll quote.
+Not because the price stops working (at 25 sites the published ladder is
+still ~44% under the incumbents) but because at that point what you need
+stops being what's on this page.
+
+### Prices by country
+
+| Market | | **Local** | **Shop** | **Pro** | **Chain** |
+|---|---|---|---|---|---|
+| 🇩🇪 🇦🇹 🇮🇪 🇪🇸 🇮🇹 🇫🇷 🇳🇱 **Eurozone** | monthly | **€0** | **€49** | **€69** | **€149** |
+| | annual *(per month)* | €0 | €40.83 | €57.50 | €124.17 |
+| 🇬🇧 **United Kingdom** | monthly | **£0** | **£42** | **£59** | **£127** |
+| | annual *(per month)* | £0 | £35.00 | £49.17 | £105.83 |
+| 🇦🇪 🇶🇦 🇧🇭 🇴🇲 **GCC** | monthly | **$0** | **$55** | **$79** | **$169** |
+| | annual *(per month)* | $0 | $45.83 | $65.83 | $140.83 |
+| 🇹🇷 **Turkey** | monthly | **₺0** | *≈€27* | *≈€39* | *≈€82* |
+| 🌍 **Rest of world** | monthly | **$0** | **$55** | **$79** | **$169** |
+
+All prices **exclude VAT / sales tax**.
+
+- **Turkey** is priced on local purchasing power rather than exchange rate,
+  billed in TRY at the prevailing rate and repriced quarterly. Not available
+  until GİB fiscal certification is complete.
+- **GCC** currencies are USD-pegged, so the USD list price is stable locally.
+  Local-currency billing is planned.
+- **Founding customers:** the first 25 German merchants get Shop at €39 and
+  Pro at €59, locked for 24 months.
+
+### 🇩🇪 A note for German merchants — being straight with you
+
+The till is free forever, and that is unconditional. But **German law
+separately requires every till to have a TSE**, whatever POS you run, and
+that costs money — roughly 54–149 €/year for a cloud TSE, or 179–249 € once
+for a hardware dongle that lasts about five years.
+
+So:
+
+- On a **paid plan**, the TSE is **included** — we provision it, monitor it
+  and renew it, and you never see TSE paperwork.
+- On the **free plan**, you bring your own — a dongle you buy, or your own
+  cloud TSE account. Both are fully supported, first-class paths.
+
+We would rather say this plainly than let "free forever" imply a total cost
+of zero in a market where it isn't.
+
+**What is never behind a paywall:** the **DSFinV-K** export a tax auditor
+asks for is available on every plan, including the free one, wherever a TSE
+is configured. It is a legal obligation on you under §146a AO, not a feature
+we sell. The **DATEV** export is a different thing — an accounting batch for
+your *Steuerberater*, which nobody mandates. It's **also free on every
+plan**, because it's local code that costs us nothing to run — your
+accountant should never be the reason a till doesn't work for you.
+
+*Universal Till provides a certified TSE and the required exports. It does
+not provide tax or legal advice, and your own record-keeping and reporting
+obligations remain yours.*
 
 > A small number of markets legally require a paid, third-party, certified
 > component before a shop can operate an electronic till as its system of
