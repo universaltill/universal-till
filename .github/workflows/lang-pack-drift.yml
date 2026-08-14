@@ -16,12 +16,24 @@ on:
   # PR that never touched web/locales/en.json cannot have caused new
   # drift, so it never runs this workflow at all -- no cost, no noise,
   # smallest exposure of the unpinned pack-script fetch below. A PR that
-  # DID add/change a base key gets an ADVISORY run (never blocking --
-  # see `continue-on-error`) so the author learns about a missing pack
-  # key before merge instead of after, without resurrecting the exact
-  # failure mode ut-docs#299's own review closed off: an external pack
-  # repo lagging for reasons that have nothing to do with this PR must
-  # never block this PR's merge.
+  # DID add/change a base key gets an ADVISORY run -- the step itself is
+  # coded to always exit 0 on this event (see the run: block) so the
+  # check run's own reported conclusion is a genuine `success`, not just
+  # a workflow-run-level side effect. This was deliberately NOT done via
+  # `continue-on-error` alone: live-verified against real GitHub Actions
+  # (universal-till#337) that job-level continue-on-error does NOT change
+  # the per-job check run's own conclusion (it still reports `failure`,
+  # which `mergeable_state` showed as merge-permitting-but-`unstable` here
+  # only because this check isn't currently a branch-protection required
+  # check -- a red X that would become a real block the moment someone
+  # adds it as one, contradicting the whole point of this card). Exiting
+  # 0 explicitly on the advisory path means the check is unambiguously
+  # green regardless of branch-protection config, while the missing-key
+  # info still reaches the author via a `::warning::` annotation plus the
+  # job summary -- without resurrecting the exact failure mode
+  # ut-docs#299's own review closed off: an external pack repo lagging
+  # for reasons that have nothing to do with this PR must never block
+  # this PR's merge.
   push:
     branches: [main]
   pull_request:
@@ -52,12 +64,6 @@ jobs:
   lang-pack-drift:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # false (blocking) on push/workflow_dispatch, preserving today's
-    # behaviour exactly; true (advisory) on pull_request -- a failing
-    # step still shows a warning icon and the summary below, but the
-    # job/check conclusion reports success, so it can never fail a
-    # required status check or block merge (ut-docs#669).
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,7 +77,7 @@ jobs:
         # `-eo pipefail`, but we still capture the status explicitly below
         # rather than relying on it, so the closing fence/annotation always
         # run even on failure (pipefail alone would abort the run: block
-        # mid-script under `-e`, in this repo's non-default shell mode).
+        # mid-script under `-e`).
         shell: bash
         run: |
           { echo "## lang-pack-drift"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -85,5 +91,12 @@ jobs:
             # touched en.json) with zero extra permissions -- keeps
             # `contents: read` intact, no `pull-requests: write` needed.
             echo "::warning file=web/locales/en.json::lang-pack-drift: a language pack is missing key(s) added here -- see the job summary. Advisory on this PR; this WILL block main after merge."
+            # Advisory means advisory: force the check itself green on a PR
+            # run regardless of what the script found. This is the actual
+            # non-blocking mechanism (see the `on:` comment above for why
+            # `continue-on-error` alone doesn't do this) -- push/
+            # workflow_dispatch never reach this branch, so main stays
+            # blocking, unchanged.
+            status=0
           fi
           exit "$status"
