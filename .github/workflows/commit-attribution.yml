@@ -1,0 +1,95 @@
+# Every commit on a PR must be authored by the human who did the work.
+#
+# WHY THIS EXISTS: GitHub's contributor graph counts *commit authors on the
+# default branch*, not PR authors. On 2026-08-14 an audit of this repo found
+# 617 of ~1,242 commits on main authored `noreply@universaltill.com` — an
+# address verified on no GitHub account, so credited to nobody — and 396
+# authored `Claude <noreply@anthropic.com>`. The public contributors list
+# read "claude 396 · farshid3003 207", i.e. it said an AI tool wrote more of
+# this product than the person who built it. Separately a human contributor
+# with two merged PRs had 0 contributions in every repo in the org, because
+# every commit inside those PRs was authored as Claude.
+#
+# Root cause was local git config: per-repo `user.email` overrides pointing
+# at AI tool identities. Nothing in CI noticed for over a thousand commits.
+#
+# See ut-docs#732. AI tools belong in a `Co-Authored-By:` trailer — never as
+# the author.
+
+name: commit-attribution
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  authors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the PR's commits and the base, not just a shallow tip.
+          fetch-depth: 0
+
+      - name: Reject AI-tool and unattributable commit authors
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Emails that must never be a commit AUTHOR.
+          #   - AI tool identities: the tool is a co-author, not the author.
+          #   - noreply@universaltill.com: verified on no GitHub account, so
+          #     commits using it are credited to nobody at all.
+          BANNED_RE='^(noreply@anthropic\.com|codex@users\.noreply\.github\.com|noreply@universaltill\.com)$'
+
+          bad=0
+          while IFS='|' read -r sha name email; do
+            [ -n "$sha" ] || continue
+            if printf '%s' "$email" | grep -Eiq "$BANNED_RE"; then
+              echo "::error::${sha:0:9} is authored by '${name} <${email}>'"
+              bad=1
+            else
+              echo "ok  ${sha:0:9}  ${name} <${email}>"
+            fi
+          done < <(git log --format='%H|%an|%ae' "$BASE_SHA..$HEAD_SHA")
+
+          if [ "$bad" -ne 0 ]; then
+            cat <<'MSG'
+
+          ────────────────────────────────────────────────────────────────
+          Commit attribution check failed.
+
+          At least one commit on this PR is authored by an AI tool identity,
+          or by an address that is not linked to any GitHub account. Those
+          commits are credited to the tool — or to nobody — instead of to
+          you, and they will not appear in your contributions.
+
+          Fix your git identity, then re-author the commits:
+
+              git config --global user.name  "Your Name"
+              git config --global user.email "you@example.com"
+
+          Use an address that is VERIFIED on your GitHub account, or your
+          own <username>@users.noreply.github.com address. Also check for a
+          per-repo override, which silently wins over the global one:
+
+              git config --local --list | grep user\.
+
+          Then rewrite this branch's commits with the corrected identity:
+
+              git rebase -r --exec 'git commit --amend --no-edit --reset-author' origin/main
+              git push --force-with-lease
+
+          Keep crediting the AI tool — as a trailer, not as the author:
+
+              Co-Authored-By: Claude <noreply@anthropic.com>
+          ────────────────────────────────────────────────────────────────
+          MSG
+            exit 1
+          fi
+
+          echo "All commit authors are attributable."
