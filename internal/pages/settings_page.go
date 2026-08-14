@@ -168,7 +168,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"settingsMap":           all,
 			"menuItems":             d.MenuSnapshot(),
 			"uiScale":               strconv.FormatFloat(scale, 'f', -1, 64),
-			"isManager":             isManagerOrAuthOff(r),
+			"isManager":             canPerform(d, r, "settings"),
 			"printer":               printerConfig(r.Context(), d),
 			"backups":               listBackupsForUI(d),
 			"payMethods":            payMethods,
@@ -200,7 +200,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/settings/payments-default", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
@@ -218,7 +218,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/settings/payments-fee", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
@@ -254,7 +254,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/enrol/claim-code", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
@@ -291,7 +291,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// Always answer 200: this is an hx-swap target, and HTMX silently drops
 		// non-2xx responses — a 403/502 here is exactly why the button looked
 		// dead. The message carries the outcome (and the reason on failure).
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
@@ -318,7 +318,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /api/enrol/devices", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			fmt.Fprintf(w, `<span class="muted">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
@@ -349,7 +349,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// Idle auto-lock window (docs: pos-auth.md). Manager/admin only — an
 	// unattended till's security posture is not a cashier decision.
 	mux.HandleFunc("POST /api/settings/idle-lock", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -378,7 +378,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// revoke), so this is purely a client-side "reload to the start
 	// screen" timer, read at render time. Manager/admin only.
 	mux.HandleFunc("POST /api/settings/kiosk-idle-reset", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -402,7 +402,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// window/process display mode. This card does NOT apply it to the OS
 	// window — that's #609 (macOS)/#610 (Windows)/#611 (Linux/Pi).
 	mux.HandleFunc("POST /api/settings/window-mode", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -428,7 +428,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// autostart-on-boot preference. Not wired to the OS's actual autostart
 	// mechanism yet — same future-card split as window-mode above.
 	mux.HandleFunc("POST /api/settings/launch-on-startup", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -498,7 +498,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// Plugin telemetry opt-in (FR-013): off by default, manager-only —
 	// gates internal/plugins.TelemetryClient.ReportNow's scheduler tick.
 	mux.HandleFunc("POST /api/settings/telemetry", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -558,7 +558,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// (self_order). Per-till (display.* never LAN-syncs), so one shop can
 	// mix registers, a back-office device, and one or more kiosks.
 	mux.HandleFunc("POST /api/settings/display-mode", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin role required", http.StatusForbidden)
 			return
 		}
@@ -581,7 +581,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// Shop type (ut-docs#539, taxonomy per ADR-0026) — editable after setup.
 	// Manager-only, same gate as the other store-level settings.
 	mux.HandleFunc("POST /api/settings/shop-type", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -612,7 +612,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/settings/remove-demo-catalogue", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
 			return
 		}
@@ -643,7 +643,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// catalogue's comment above on why 2xx-with-body is used for hx-swap
 	// targets).
 	mux.HandleFunc("POST /api/settings/dismiss-restore-prompt", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -660,7 +660,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// "outerHTML" on the chip itself, same reasoning as the restore-prompt
 	// dismiss above: an empty 200 body removes just that chip.
 	mux.HandleFunc("POST /api/settings/dismiss-pending-base-plugin", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -677,7 +677,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// This till's own display name (ut-docs#396) — distinct from a replica's
 	// own sync.till_name — shown in Settings and on the /tills page.
 	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -700,7 +700,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// settings key. An id that isn't an active register is rejected rather
 	// than persisted: garbage here would silently misroute payouts later.
 	mux.HandleFunc("POST /api/settings/till-register", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -748,7 +748,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/settings/save", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
@@ -798,7 +798,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 
 	// generic key/value upsert
 	mux.HandleFunc("POST /api/settings/upsert", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}

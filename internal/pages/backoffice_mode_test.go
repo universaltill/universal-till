@@ -145,8 +145,11 @@ func TestDisplayModeBackofficeRequiresManagerRole(t *testing.T) {
 
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	// AuthSvc (ut-docs#710): display-mode is now canPerform()-gated, which
+	// queries role_permissions for real via AuthSvc.Can() — seedForPages
+	// already seeds it (manager/admin/super_admin granted "settings").
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerSettings(mux, dp)
 
@@ -188,8 +191,11 @@ func TestBackofficeModeFallsThroughForNonManagerSession(t *testing.T) {
 
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	// AuthSvc (ut-docs#710): display-mode is now canPerform()-gated, which
+	// queries role_permissions for real via AuthSvc.Can() — seedForPages
+	// already seeds it (manager/admin/super_admin granted "settings").
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerIndex(mux, dp)
 	registerSettings(mux, dp)
