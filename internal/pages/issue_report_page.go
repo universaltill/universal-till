@@ -60,7 +60,7 @@ func readCappedOrReject(r io.Reader, limit int64) ([]byte, error) {
 // tills and back-office only.
 func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/report-issue", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "issue_reporting") {
 			http.Error(w, "manager or admin role required", http.StatusForbidden)
 			return
 		}
@@ -82,7 +82,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	// 200 when the operator isn't allowed to report issues, so nothing
 	// appears in the nav at all.
 	mux.HandleFunc("GET /ui/bugreport-chip", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "issue_reporting") {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -90,7 +90,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/issue-reports", func(w http.ResponseWriter, r *http.Request) {
-		if !isManagerOrAuthOff(r) {
+		if !canPerform(d, r, "issue_reporting") {
 			http.Error(w, "manager or admin role required", http.StatusForbidden)
 			return
 		}

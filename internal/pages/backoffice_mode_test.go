@@ -106,8 +106,11 @@ func TestBackofficeRequiresManagerRole(t *testing.T) {
 
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	// AuthSvc (ut-docs#713): /backoffice is now canPerform()-gated, which
+	// queries role_permissions for real via AuthSvc.Can() — seedForPages
+	// already seeds it (manager/admin/super_admin granted "reports").
 	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerBackofficePage(mux, dp)
 
@@ -132,6 +135,13 @@ func TestBackofficeRequiresManagerRole(t *testing.T) {
 	}
 	if rec := get(&auth.User{ID: "admin-1", Role: "admin"}); rec.Code != http.StatusOK {
 		t.Fatalf("admin = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	// super_admin broadens vs. isManagerOrAuthOff (which only recognized
+	// manager/admin) — accepted per #555, and worth pinning explicitly so a
+	// regression back to the old gate doesn't silently pass this test (it
+	// would, on manager/admin alone).
+	if rec := get(&auth.User{ID: "super-1", Role: "super_admin"}); rec.Code != http.StatusOK {
+		t.Fatalf("super_admin = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -226,5 +236,14 @@ func TestBackofficeModeFallsThroughForNonManagerSession(t *testing.T) {
 	cashier := &auth.User{ID: "cashier-1", Role: "cashier"}
 	if rec := home(cashier); rec.Code != http.StatusOK {
 		t.Fatalf("cashier home on a backoffice-mode till = %d, want 200 sale screen (not a dead-end)", rec.Code)
+	}
+	// The "/" redirect gate is canPerform(d, r, "reports") as of ut-docs#713,
+	// and super_admin is exactly what distinguishes it from the old
+	// isManagerOrAuthOff (manager/admin only, per #555). Without this case the
+	// manager/cashier pair above passes identically under either gate, so a
+	// regression here would go unnoticed (review, ut-docs#713).
+	super := &auth.User{ID: "super-1", Role: "super_admin"}
+	if rec := home(super); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/backoffice" {
+		t.Fatalf("super_admin home = %d → %q, want 303 → /backoffice", rec.Code, rec.Header().Get("Location"))
 	}
 }

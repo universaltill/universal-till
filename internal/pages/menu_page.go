@@ -51,7 +51,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		}
 		add("/help", "nav.help")
 		// Manager-only destinations (mirrors the session chip).
-		if isManagerOrAuthOff(r) {
+		if canPerform(d, r, "settings") {
 			add("/users", "users.title")
 			add("/locations", "locations.title")
 			add("/kitchen-stations", "kitchenstations.title")
