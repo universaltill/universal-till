@@ -1,11 +1,6 @@
 name: lang-pack-drift
 on:
-  # Deliberately NOT on pull_request: an external ut-plugin-language-*
-  # repo lagging behind core is a real, worth-surfacing gap, but it must
-  # never block an unrelated core feature PR from merging just because a
-  # separately-maintained plugin repo hasn't caught up yet (ut-docs#299).
-  #
-  # push: branches: [main] is the actual fix this workflow exists for:
+  # push: branches: [main] is the actual fix ut-docs#299 exists for:
   # universal-till gets pushed to constantly, so this trigger can never go
   # 60 days idle the way a `schedule:` cron in a quiet plugin repo can
   # (GitHub auto-disables scheduled workflows in public repos after 60
@@ -13,25 +8,82 @@ on:
   # ci.yml for the limitation this supersedes). The push that adds a core
   # locale key is the same push that now learns, within minutes, whether
   # an external pack has fallen behind -- not up to a week later on a
-  # cron that might not even still be enabled.
+  # cron that might not even still be enabled. This trigger stays
+  # BLOCKING (see `continue-on-error` below): main must not merge past a
+  # known pack-drift regression.
+  #
+  # pull_request, scoped to the base locale file only (ut-docs#669): a
+  # PR that never touched web/locales/en.json cannot have caused new
+  # drift, so it never runs this workflow at all -- no cost, no noise,
+  # smallest exposure of the unpinned pack-script fetch below. A PR that
+  # DID add/change a base key gets an ADVISORY run (never blocking --
+  # see `continue-on-error`) so the author learns about a missing pack
+  # key before merge instead of after, without resurrecting the exact
+  # failure mode ut-docs#299's own review closed off: an external pack
+  # repo lagging for reasons that have nothing to do with this PR must
+  # never block this PR's merge.
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - 'web/locales/en.json'
+      - 'scripts/ci/check-lang-pack-drift.sh'
+      - '.github/workflows/lang-pack-drift.yml'
   workflow_dispatch: {}
+# WARNING: never add this job as a required status check in branch
+# protection. `paths:` above means most PRs get NO check run at all for
+# this job (not a pending/pass/fail -- nothing), which reads to a required-
+# status-check gate as "waiting forever" and makes those PRs permanently
+# unmergeable. The whole point of scoping `paths:` is that unrelated PRs
+# never pay for or see this check; making it required would invert that.
 # Least-privilege (independent review, ut-docs#299): this job executes an
 # unpinned shell script fetched from each pack repo's own `main` branch --
 # a repo this pipeline doesn't control write access to. `contents: read`
 # plus persist-credentials:false below means a compromised pack script has
 # no push-capable GITHUB_TOKEN sitting in the workspace to steal or abuse;
-# worst case is a wasted CI run, not a path back into this repo.
+# worst case is a wasted CI run, not a path back into this repo. The PR
+# result is surfaced via $GITHUB_STEP_SUMMARY (a local file write) rather
+# than a PR comment specifically so this permission set never needs
+# `pull-requests: write` on a job that runs code fetched from a repo we
+# don't control.
 permissions:
   contents: read
 jobs:
   lang-pack-drift:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # false (blocking) on push/workflow_dispatch, preserving today's
+    # behaviour exactly; true (advisory) on pull_request -- a failing
+    # step still shows a warning icon and the summary below, but the
+    # job/check conclusion reports success, so it can never fail a
+    # required status check or block merge (ut-docs#669).
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Language-pack drift guard against core base locale (ut-docs#299)
-        run: bash scripts/ci/check-lang-pack-drift.sh
+        # `shell: bash` is REQUIRED, not cosmetic: the Actions default shell
+        # is `bash -e {0}` with NO pipefail, so a bare `script | tee` reports
+        # tee's exit status (always 0) regardless of the script's own result
+        # -- this guard would silently pass on real drift, on every trigger
+        # including the blocking push:main one. `shell: bash` gives Actions'
+        # `-eo pipefail`, but we still capture the status explicitly below
+        # rather than relying on it, so the closing fence/annotation always
+        # run even on failure (pipefail alone would abort the run: block
+        # mid-script under `-e`, in this repo's non-default shell mode).
+        shell: bash
+        run: |
+          { echo "## lang-pack-drift"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          bash scripts/ci/check-lang-pack-drift.sh 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=$?
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # Annotation, not a PR comment: surfaces on the PR's Files-
+            # changed tab (where the author is already looking, having just
+            # touched en.json) with zero extra permissions -- keeps
+            # `contents: read` intact, no `pull-requests: write` needed.
+            echo "::warning file=web/locales/en.json::lang-pack-drift: a language pack is missing key(s) added here -- see the job summary. Advisory on this PR; this WILL block main after merge."
+          fi
+          exit "$status"
