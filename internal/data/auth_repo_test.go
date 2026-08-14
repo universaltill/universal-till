@@ -501,7 +501,10 @@ func TestAuthRepo_RevokeUserSessions(t *testing.T) {
 	}
 }
 
-// TestAuthRepo_HasPermission covers migration 039's seed grants (#554),
+// TestAuthRepo_HasPermission covers migration 039's seed grants (#554,
+// including the "settings" action — now actually consumed by
+// internal/pages/settings_page.go's canPerform() call sites as of ut-docs#710,
+// so it belongs in this assertion list same as every other wired-up action),
 // 042's reports/audit additions (#709), 043's plugin_management addition
 // (#706), and 044's data_management/sync_management additions (#707):
 // manager/admin/super_admin get every catalog action, cashier gets
@@ -520,7 +523,7 @@ func TestAuthRepo_HasPermission(t *testing.T) {
 	repo, _ := newAuthTestRepo(t)
 
 	for _, role := range []string{"manager", "admin", "super_admin"} {
-		for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management"} {
+		for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management", "settings"} {
 			granted, err := repo.HasPermission(ctx, role, action)
 			if err != nil {
 				t.Fatalf("HasPermission(%s, %s): %v", role, action, err)
@@ -531,7 +534,7 @@ func TestAuthRepo_HasPermission(t *testing.T) {
 		}
 	}
 
-	for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management"} {
+	for _, action := range []string{"refund", "reports", "audit", "plugin_management", "data_management", "sync_management", "settings"} {
 		granted, err := repo.HasPermission(ctx, "cashier", action)
 		if err != nil {
 			t.Fatalf("HasPermission(cashier, %s): %v", action, err)
