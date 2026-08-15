@@ -100,6 +100,48 @@ func TestRelatedItems_InactiveAndSkulessExcluded(t *testing.T) {
 	}
 }
 
+// A variant sale line (item_id NULL, variant_id set — the shape a variant
+// checkout persists per 001_init.sql's CHECK constraint) must resolve
+// through its parent item, the same COALESCE(sl.item_id, iv.item_id)-via-
+// item_variants join every other reporting query already uses
+// (ut-docs#752 — this query was the one exception).
+func TestRelatedItems_VariantSaleLineContributes(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "shirt", SKU: "SHIRT", Name: "Shirt", BasePrice: 2000, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "shirt-m", ItemID: "shirt", SKU: "SHIRT-M", Name: "Shirt (M)", Price: 2000, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "belt", SKU: "BELT", Name: "Belt", BasePrice: 1500, IsActive: true})
+
+	// Two baskets pairing the shirt VARIANT (not the bare item) with belt —
+	// meets relatedMinSupport (2) only if the variant line resolves to
+	// "shirt" at all; before the fix this query never saw these lines.
+	testsupport.SeedCompletedSaleVariant(t, db, "s1", "shirt-m")
+	if _, err := db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot) VALUES(?,?,?,?,?)`,
+		"s1-lb", "s1", 2, "belt", "belt"); err != nil {
+		t.Fatalf("seed belt line: %v", err)
+	}
+	testsupport.SeedCompletedSaleVariant(t, db, "s2", "shirt-m")
+	if _, err := db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot) VALUES(?,?,?,?,?)`,
+		"s2-lb", "s2", 2, "belt", "belt"); err != nil {
+		t.Fatalf("seed belt line: %v", err)
+	}
+
+	repo := NewRelatedItemsRepo(db)
+	ctx := context.Background()
+	if _, err := repo.Rebuild(ctx); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+
+	got, err := repo.SuggestForBasket(ctx, []string{"shirt"}, 4)
+	if err != nil {
+		t.Fatalf("suggest: %v", err)
+	}
+	if len(got) != 1 || got[0].ItemID != "belt" {
+		t.Fatalf("expected belt suggested via the variant-line purchases, got %+v", got)
+	}
+}
+
 func TestRelatedItems_RebuildReplacesOldPairs(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
