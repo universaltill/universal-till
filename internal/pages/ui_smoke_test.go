@@ -9,8 +9,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -297,7 +299,13 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);`,
 		`CREATE TABLE plugin_install_status (listing_id TEXT PRIMARY KEY, plugin_id TEXT, plugin_name TEXT, target_version TEXT, current_version TEXT, state TEXT NOT NULL, message_key TEXT, retryable INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);`,
 		`CREATE TABLE plugin_catalog (id TEXT PRIMARY KEY, version TEXT, name TEXT, description TEXT, runtime TEXT, entrypoint TEXT, package_url TEXT, sha256 TEXT, author TEXT, website TEXT, tags_json TEXT, is_deprecated INTEGER DEFAULT 0);`,
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER DEFAULT 1, trust_level TEXT DEFAULT 'untrusted', install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
+		// updated_at kept column-identical to internal/db/migrations/001_init.sql
+		// (ut-docs#625) -- data.PluginRepo.GetPluginVersionAt queries
+		// "WHERE id = ? AND updated_at <= ? ORDER BY updated_at DESC", called
+		// from loadReceiptLegalBlocks on the tender path; a fixture missing
+		// this column makes that real query fail against a schema that
+		// doesn't match production.
+		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER DEFAULT 1, trust_level TEXT DEFAULT 'untrusted', install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		`CREATE TABLE plugin_entries (id TEXT, plugin_id TEXT, key TEXT, route TEXT, label TEXT, icon_path TEXT, parent_page_key TEXT, target_action TEXT, trigger_event TEXT, menu_group TEXT, type TEXT, is_active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, config_json TEXT);`,
 		`CREATE TABLE plugin_permissions (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, permission TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 0, UNIQUE(plugin_id, permission));`,
 		`CREATE TABLE plugin_hooks (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, event TEXT NOT NULL, action TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 100, is_active INTEGER NOT NULL DEFAULT 1, config_json TEXT, UNIQUE(plugin_id, event, action));`,
@@ -442,6 +450,31 @@ func seedForPages(t *testing.T, db *sql.DB) {
 	_, _ = db.Exec(`INSERT INTO inventory(id,item_id,variant_id,location_id,quantity,updated_at) VALUES('inv2',NULL,'var1','loc_main',30,datetime('now'))`)
 	_, _ = db.Exec(`INSERT INTO users(id,username,pin_hash,role,created_at) VALUES('user1','admin','','admin',datetime('now'))`)
 	_, _ = db.Exec(`INSERT INTO users(id,username,pin_hash,role,created_at) VALUES('system','system','','admin',datetime('now'))`)
+}
+
+// TestPluginRepoGetPluginVersionAt_SeedForPagesSchema is a regression test
+// for ut-docs#625: seedForPages' plugins fixture was missing the updated_at
+// column that data.PluginRepo.GetPluginVersionAt queries (called from
+// loadReceiptLegalBlocks on the real tender path whenever completedAt is
+// non-zero). Against the drifted fixture this failed with "no such column:
+// updated_at" -- silently, since the tender path's caller discards the
+// error -- so it never showed up as a test FAILure there, only as log
+// noise. This test calls the repository method directly so the same schema
+// gap is a hard assertion instead.
+func TestPluginRepoGetPluginVersionAt_SeedForPagesSchema(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	repo := data.NewPluginRepo(db)
+	version, ok, err := repo.GetPluginVersionAt(t.Context(), "p1", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("GetPluginVersionAt: %v", err)
+	}
+	if !ok || version != "1.0" {
+		t.Fatalf("expected plugin p1 version 1.0 to be found, got ok=%v version=%q", ok, version)
+	}
 }
 
 func TestInventoryFormRender(t *testing.T) {
