@@ -267,6 +267,60 @@ func TestAuthRepo_CountOtherActiveAdminsWithPIN(t *testing.T) {
 	_ = d
 }
 
+// TestAuthRepo_CountOtherActiveSuperAdminsWithPIN covers the ut-docs#761
+// review's finding 4: before this, only the last ADMIN was guarded against
+// deactivation — a super_admin (unreachable before that same card) had no
+// equivalent guard, so deactivating the last one would strand the till with
+// nobody able to reach the permission matrix, audit page or backoffice.
+func TestAuthRepo_CountOtherActiveSuperAdminsWithPIN(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newAuthTestRepo(t)
+
+	baseline, err := repo.CountOtherActiveSuperAdminsWithPIN(ctx, "none")
+	if err != nil {
+		t.Fatalf("baseline count: %v", err)
+	}
+
+	mk := func(username, role string, active bool, pin string) string {
+		t.Helper()
+		id, err := repo.CreateUser(ctx, username, username, role)
+		if err != nil {
+			t.Fatalf("CreateUser %s: %v", username, err)
+		}
+		if pin != "" {
+			if err := repo.SetUserPIN(ctx, id, pin); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !active {
+			if err := repo.SetUserActive(ctx, id, false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return id
+	}
+	sa1 := mk("sa-a", "super_admin", true, "h1")
+	mk("sa-b", "super_admin", true, "h2")
+	mk("sa-inactive", "super_admin", false, "h3") // must not count
+	mk("sa-no-pin", "super_admin", true, "")      // must not count
+	mk("adm-c", "admin", true, "h4")              // an admin must not count as a super_admin
+
+	n, err := repo.CountOtherActiveSuperAdminsWithPIN(ctx, sa1)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != baseline+1 {
+		t.Fatalf("expected %d other super_admins, got %d", baseline+1, n)
+	}
+	n, err = repo.CountOtherActiveSuperAdminsWithPIN(ctx, "unrelated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != baseline+2 {
+		t.Fatalf("expected %d super_admins, got %d", baseline+2, n)
+	}
+}
+
 func TestAuthRepo_SessionLifecycle(t *testing.T) {
 	ctx := context.Background()
 	repo, d := newAuthTestRepo(t)
@@ -708,5 +762,80 @@ func TestAuthRepo_SetRolePermission(t *testing.T) {
 	}
 	if granted, err := repo.HasPermission(ctx, "manager", "fiscal_tse_override"); err != nil || !granted {
 		t.Fatalf("expected manager/fiscal_tse_override granted, granted=%v err=%v", granted, err)
+	}
+}
+
+// TestAuthRepo_SetUserRole covers the ut-docs#761 promotion path: nothing
+// before this card could ever move a user onto (or off of) super_admin —
+// this is the one repo method both the in-app promote handler and the
+// scripts/promote-super-admin bootstrap CLI share.
+func TestAuthRepo_SetUserRole(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newAuthTestRepo(t)
+
+	id, err := repo.CreateUser(ctx, "amir", "Amir", "admin")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if err := repo.SetUserRole(ctx, nil, id, "super_admin"); err != nil {
+		t.Fatalf("SetUserRole: %v", err)
+	}
+	u, ok, err := repo.GetUser(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("GetUser: ok=%v err=%v", ok, err)
+	}
+	if u.Role != "super_admin" {
+		t.Fatalf("Role = %q, want super_admin", u.Role)
+	}
+
+	// Unknown user: a no-op UPDATE must be reported as an error, not
+	// silently swallowed (mirrors SetUserPIN's "0 rows affected" check).
+	if err := repo.SetUserRole(ctx, nil, "nope", "super_admin"); err == nil {
+		t.Fatal("SetUserRole on an unknown user must error")
+	}
+
+	// Runs inside a caller-supplied tx when given one, same as
+	// SetRolePermission — the promote handler journals in the same tx.
+	tx, err := repo.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := repo.SetUserRole(ctx, tx, id, "admin"); err != nil {
+		t.Fatalf("SetUserRole in tx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if u, _, _ := repo.GetUser(ctx, id); u.Role != "admin" {
+		t.Fatalf("Role after tx commit = %q, want admin", u.Role)
+	}
+}
+
+// TestAuthRepo_CountUsersByRole covers the bootstrap CLI's "refuse to
+// re-bootstrap over an existing super_admin without --force" guard.
+func TestAuthRepo_CountUsersByRole(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newAuthTestRepo(t)
+
+	if n, err := repo.CountUsersByRole(ctx, "super_admin"); err != nil || n != 0 {
+		t.Fatalf("CountUsersByRole(super_admin) on a fresh DB = %d, err=%v, want 0", n, err)
+	}
+
+	id, err := repo.CreateUser(ctx, "amir", "Amir", "admin")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := repo.SetUserRole(ctx, nil, id, "super_admin"); err != nil {
+		t.Fatalf("SetUserRole: %v", err)
+	}
+	if n, err := repo.CountUsersByRole(ctx, "super_admin"); err != nil || n != 1 {
+		t.Fatalf("CountUsersByRole(super_admin) = %d, err=%v, want 1", n, err)
+	}
+	// Scoped by role: promoting amir to super_admin must not move the
+	// seeded 'kiosk' service identity (migration's own cashier row) into
+	// the count of any other role.
+	if n, err := repo.CountUsersByRole(ctx, "cashier"); err != nil || n != 1 {
+		t.Fatalf("CountUsersByRole(cashier) = %d, err=%v, want 1 (the seeded kiosk user)", n, err)
 	}
 }

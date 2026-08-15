@@ -24,3 +24,9 @@ PIN girişli ayrı kasiyer ve yönetici hesapları; kimin ne sattığını ve ç
 ## İzin matrisi
 
 Süper yönetici, kasiyer/müdür/yönetici rolü atamanın ötesine geçebilir — her rolün tam olarak neler yapabileceğini (iadeler, iptaller, fiyat geçersiz kılma, ayarlar, raporlar ve daha fazlası) Kullanıcılar → İzinler'den, işlem bazında verebilir veya geri alabilir. Her değişiklik, kimin yaptığıyla birlikte denetim kaydına işlenir. Asla yapamayacağınız tek şey, bir süper yöneticinin bu sayfaya kendi erişimini geri almaktır — bu izin her zaman kilitlidir, böylece kimse yanlışlıkla tüm süper yöneticileri dışarıda bırakamaz.
+
+## Süper yönetici olmak
+
+Yalnızca mevcut bir süper yönetici, bir başkasını süper yönetici yapabilir veya bu role terfi ettirebilir — Kullanıcılar'dan, ya yeni bir hesap için rol olarak "süper yönetici"yi seçin ya da mevcut bir kişinin adının yanındaki "Süper yöneticiye yükselt"i kullanın. Her ikisi de, diğer her izin-hassas değişiklik gibi denetim kaydına işlenir ve kişinin bir sonraki oturum açışında etkili olur.
+
+Henüz süper yöneticisi olmayan bir dükkânın (bu rol bu kasa sürümünden önce yoktu) ilkini oluşturmak için tek seferlik bir kurulum adımına ihtiyacı vardır — Kullanıcılar'da süper yönetici seçeneği henüz yoksa destek ekibine sorun.
