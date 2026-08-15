@@ -222,6 +222,32 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	if in.OrderType != OrderTypeTakeaway {
 		in.OrderType = ""
 	}
+	// ut-docs#744: a variant resolved by barcode carries BOTH ItemID and
+	// VariantID upstream (ui.PriceResolverAdapter deliberately keeps ItemID
+	// alongside VariantID on the live BasketLine -- internal/pages/tax_hook.go's
+	// tax.rate.ask payload still needs it there for a variant line). But a
+	// sale line's *persisted* identity must be exactly one of the two, same
+	// as the sale_lines/inventory/stock_movements CHECK constraints already
+	// require -- so normalize here, at the one choke point every caller
+	// (cashier, kiosk, sync replay, refund, return) goes through, rather
+	// than trusting every SaleLineInput{} construction site to get this
+	// right individually. VariantID wins: it's the more specific identity.
+	//
+	// This mutates in.Lines[i] in place, and since in.Lines is a slice,
+	// that mutation is visible to the caller's own backing array after
+	// CompleteSale returns -- deliberately: publishStockAdjustedForSale
+	// (pos_api.go) and warnIfStockNegative (sync_sales.go) both read
+	// l.ItemID/l.VariantID from the same Lines slice post-completion, and
+	// need the cleared form (CurrentQty's own query only matches when
+	// exactly one is set, same as the CHECK constraints above). A caller
+	// that passed a defensive copy of Lines would silently lose this and
+	// read the wrong inventory row -- same fragility class already called
+	// out for PaymentInput.TipAmount aliasing in pos_api.go.
+	for i := range in.Lines {
+		if in.Lines[i].VariantID != "" {
+			in.Lines[i].ItemID = ""
+		}
+	}
 	subtotal, taxTotal, serviceCharge, total, err := computeSaleTotals(in)
 	if err != nil {
 		return "", err
