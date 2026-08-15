@@ -47,6 +47,49 @@ func missingJournalFields(s data.SaleDetail) string {
 	return strings.Join(missing, ", ")
 }
 
+// invalidJournalFields names which of the fields applyJournal treats as
+// requiring a REAL value (not just presence) fail that check, for a
+// diagnosable rejection -- "" means none invalid. Distinct from
+// missingJournalFields above: those three are rejected when EMPTY; these
+// are rejected when PRESENT-BUT-WRONG (currency) or malformed (created_at).
+//
+//   - currency: "" is still accepted -- the contract's documented graceful
+//     default (pos.CompleteSale defaults an empty Currency to "GBP") is
+//     unchanged. A NON-empty value that doesn't match this shop's actual
+//     configured currency is new: nothing downstream cross-checks it, so a
+//     wrong-currency journal entry was previously applied at face value,
+//     silently booking real revenue under the wrong currency.
+//   - created_at: newly REQUIRED (tightened from "optional, degrades
+//     gracefully" -- see reference/contracts/pos-lan-sync-journal.md's
+//     changelog). An empty or unparseable value doesn't just "default"
+//     anywhere downstream: applyJournal's own SetSaleProvenance call below
+//     writes it VERBATIM over sales.created_at, clobbering the real
+//     timestamp CompleteSale just wrote -- so a missing/malformed
+//     created_at was silently corrupting the sale's actual creation time,
+//     not degrading gracefully. Every real replica (buildJournal) always
+//     populates this from its own DB row, so this cannot reject a
+//     well-behaved peer.
+func invalidJournalFields(s data.SaleDetail, configuredCurrency string) string {
+	var invalid []string
+	// configuredCurrency == "" (independent review, ut-docs#647): the
+	// primary's own runtime state should never actually be blank --
+	// pos.CompleteSale defaults an empty Currency to "GBP" on write and
+	// sales.currency is NOT NULL DEFAULT 'GBP' -- but /api/settings/upsert
+	// can set store.currency to "" without validating it (unlike
+	// /api/settings/save, which does), so this stays defensive: treat "not
+	// yet configured" as "don't know," not "must match empty," so a
+	// well-behaved replica's real currency isn't rejected shop-wide until
+	// the setting is fixed or the till restarts (LoadState re-applies the
+	// cfg default).
+	if configuredCurrency != "" && s.Currency != "" && s.Currency != configuredCurrency {
+		invalid = append(invalid, fmt.Sprintf("currency (%q, shop is %q)", s.Currency, configuredCurrency))
+	}
+	if _, err := time.Parse(time.RFC3339, s.CreatedAt); err != nil {
+		invalid = append(invalid, "created_at")
+	}
+	return strings.Join(invalid, ", ")
+}
+
 // buildJournal packages one local sale for pushing.
 func buildJournal(ctx context.Context, repo *data.POSRepo, receiptNo string) (journalSale, bool, error) {
 	detail, found, err := repo.GetSaleDetail(ctx, receiptNo)
@@ -79,6 +122,9 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// first).
 	if missing := missingJournalFields(j.Sale); missing != "" {
 		return false, fmt.Errorf("invalid journal entry (sale id %q): missing %s", j.Sale.ID, missing)
+	}
+	if invalid := invalidJournalFields(j.Sale, d.CurrentState().Currency); invalid != "" {
+		return false, fmt.Errorf("invalid journal entry (sale id %q): invalid %s", j.Sale.ID, invalid)
 	}
 	repo := data.NewPOSRepo(d.Db)
 	if exists, err := repo.SaleExists(ctx, j.Sale.ID); err != nil || exists {
