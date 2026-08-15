@@ -66,6 +66,10 @@ func main() {
 		runOversizedRead(h)
 		return
 	}
+	if ev.Payload.Mode == "invalid_ptr_read" {
+		runInvalidPtrRead(h)
+		return
+	}
 
 	size := importFileSize(h)
 
@@ -110,4 +114,43 @@ func runOversizedRead(h int32) {
 		return
 	}
 	fmt.Printf(`{"ok":true,"message":"first_read_bytes=%d close=%d","counts":{"first_read_bytes":%d}}`+"\n", n, cc, int(n))
+}
+
+// invalidGuestPtr is a destination address no wasip1 test module here ever
+// has real memory at (this guest's own linear memory is a few pages, far
+// short of 4GiB) — used to make the host's write-side bounds check fail
+// deterministically without needing to know the module's exact memory size.
+const invalidGuestPtr = 0xFFFFFF00
+
+// runInvalidPtrRead is the ut-docs#614 proof: it issues ONE
+// import_file_read call with a deliberately out-of-bounds dstPtr (expects
+// a hostErrInvalid response and, critically, that call must not consume
+// any bytes from the staged file), then reads the WHOLE file normally
+// through a valid buffer and hashes it. If the host had already consumed
+// bytes from the file cursor before discovering the bad pointer (the
+// pre-fix behavior), the hash below would not match the full, untouched
+// file content.
+func runInvalidPtrRead(h int32) {
+	const probeCap = 64 // realistic dstCap; the pointer, not the size, is what's invalid
+	invalidCode := importFileRead(h, invalidGuestPtr, probeCap)
+
+	hasher := sha256.New()
+	buf := make([]byte, readBufSize)
+	bp, bc := ptrOf(buf)
+	var total int64
+	for {
+		n := importFileRead(h, bp, bc)
+		if n < 0 {
+			fmt.Printf(`{"ok":false,"error":"import_file_read failed after invalid-ptr probe: %d"}`+"\n", n)
+			return
+		}
+		if n == 0 {
+			break
+		}
+		hasher.Write(buf[:n])
+		total += int64(n)
+	}
+	cc := importFileClose(h)
+	fmt.Printf(`{"ok":true,"message":"invalid_code=%d sha256=%x bytes=%d close=%d","counts":{"invalid_code":%d,"bytes":%d}}`+"\n",
+		invalidCode, hasher.Sum(nil), total, cc, int(invalidCode), int(total))
 }

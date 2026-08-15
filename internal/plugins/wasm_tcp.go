@@ -245,6 +245,15 @@ func hostTCPRead(ctx context.Context, m api.Module, handle int32, dstPtr, dstCap
 	if bufCap > tcpReadBufCap {
 		bufCap = tcpReadBufCap
 	}
+	// Validate the destination region is addressable BEFORE touching the
+	// socket (ut-docs#614): conn.Read has no seek-back, so a bad dstPtr
+	// discovered only after the read would silently and permanently lose
+	// whatever the device just sent. Catching it here means an invalid
+	// pointer costs the guest nothing — the bytes are still in the socket's
+	// receive buffer for a retry with a good one.
+	if _, ok := m.Memory().Read(dstPtr, bufCap); !ok {
+		return hostErrInvalid
+	}
 	// effectiveDeadline (review finding B1): the actual cause of the 25s
 	// checkout freeze the review measured — a guest-clamped 30s read
 	// deadline outliving the plugin's real 10s event deadline. Clamping by
