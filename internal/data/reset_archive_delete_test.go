@@ -108,6 +108,58 @@ func TestDeleteResetBatch_OutsideRetentionWindow_Deletes(t *testing.T) {
 	}
 }
 
+func TestDeleteResetBatch_RetainedUntilDateIsPurgeableFromMidnight(t *testing.T) {
+	d, x, count := resetTestDB(t, "purge_midnight.db")
+	// GB is seeded builtin by migration 041; override its retention to a
+	// small, easy-to-straddle value directly (same pattern as
+	// TestDeleteResetBatch_BoundaryEitherSideOfCountryWindow).
+	x(`UPDATE country_settings SET archive_min_days = 5 WHERE code = 'GB'`)
+	x(`INSERT INTO settings (key, value) VALUES ('store.country', 'GB')`)
+	seedFullSale(t, x)
+
+	repo := data.NewPOSRepo(d.DB)
+	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	// Archive it exactly 5 days before today's date, but at a time-of-day a
+	// couple of seconds *later* than right now -- so the retained-until
+	// date is today, yet we're attempting the purge before the original
+	// archive's time-of-day is reached. ut-docs#699: the named (date-only)
+	// retained-until must already be purgeable at this moment, not only
+	// from that time-of-day onward.
+	//
+	// Clamp (never wrap) the +2s offset to stay within "now"'s own
+	// calendar day: a plain time.Time.Add that crosses midnight would move
+	// the wrapped H/M/S *behind* the real now's time-of-day, which
+	// (independent review, ut-docs#699) would make even the pre-fix buggy
+	// arithmetic pass -- silently losing this test's regression-catching
+	// power in the last ~2 seconds of any UTC day.
+	now := time.Now().UTC()
+	laterHour, laterMin, laterSec := now.Hour(), now.Minute(), now.Second()+2
+	if laterSec > 59 {
+		laterSec, laterMin = laterSec-60, laterMin+1
+	}
+	if laterMin > 59 {
+		laterMin, laterHour = laterMin-60, laterHour+1
+	}
+	if laterHour > 23 {
+		laterHour, laterMin, laterSec = 23, 59, 59
+	}
+	shiftedDate := now.AddDate(0, 0, -5)
+	archivedAt := time.Date(shiftedDate.Year(), shiftedDate.Month(), shiftedDate.Day(),
+		laterHour, laterMin, laterSec, 0, time.UTC)
+	setBatchCreatedAt(t, x, batchID, archivedAt)
+
+	if err := repo.DeleteResetBatch(context.Background(), batchID, ""); err != nil {
+		t.Fatalf("purge on the retained-until date itself, before the original time-of-day: got %v, want success", err)
+	}
+	if c := count("reset_batches"); c != 0 {
+		t.Fatalf("reset_batches should be empty after purge, got %d", c)
+	}
+}
+
 func TestDeleteResetBatch_BoundaryEitherSideOfCountryWindow(t *testing.T) {
 	d, x, count := resetTestDB(t, "purge_boundary.db")
 	// GB is seeded builtin by migration 041; override its retention to a
