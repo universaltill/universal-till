@@ -275,6 +275,69 @@ func TestDemoCatalogueUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	}
 }
 
+// ut-docs#566: a shop that renamed a demo item before ever trading with it
+// keeps that item across the upgrade path too, the same as it does via the
+// Settings removal action (data.TestRemoveDemoCatalogueKeepsEditedItem) —
+// migration 036 and DemoSeedRepo.RemoveDemoCatalogue share the exact same
+// predicate, but this proves the migration path independently rather than
+// assuming the shared-block guard is enough.
+func TestDemoCatalogueUpgradeKeepsRenamedUntradedItem(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m036-upgrade-renamed.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconstruct the pre-036 state: full demo catalogue present, with
+	// itm001 renamed by the shop before ever selling or stock-adjusting it.
+	if _, err := d.DB.Exec(seeddata.DemoCatalogueSQL); err != nil {
+		t.Fatalf("re-seed demo catalogue: %v", err)
+	}
+	if _, err := d.DB.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatalf("rename itm001: %v", err)
+	}
+
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 36`); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE items DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind is_sample_data column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE report_archive DROP COLUMN cloud_acked_at`); err != nil {
+		t.Fatalf("rewind report_archive.cloud_acked_at column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE customers DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind customers.is_sample_data column: %v", err)
+	}
+	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
+		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err = Open(path) // replays 036 against the simulated pre-036 till
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	// itm001 survives, still renamed, still flagged as sample data; every
+	// other (genuinely untouched) demo item is gone.
+	assertIDs(t, d, "items", []string{"itm001"})
+	var name string
+	var flag int
+	if err := d.DB.QueryRow(`SELECT name, is_sample_data FROM items WHERE id = 'itm001'`).Scan(&name, &flag); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Flat White" {
+		t.Errorf("itm001.name = %q after 036, want the shop's rename intact", name)
+	}
+	if flag != 1 {
+		t.Errorf("itm001.is_sample_data = %d after 036, want 1", flag)
+	}
+}
+
 // ut-docs#567: migration 038 gives the 3 demo customers + 3 demo promo
 // codes the same opt-in treatment 036 gave the catalogue. Upgrade path: an
 // existing till whose 001 seeded them long ago, and that actually used one
@@ -493,9 +556,11 @@ func TestMigration036MatchesSeedData(t *testing.T) {
 	if !strings.Contains(m036, seeddata.RemoveDemoSQL) {
 		t.Error("036 does not contain seeddata/remove_demo.sql verbatim — regenerate the migration from the shared assets")
 	}
-	// And the Go-side ID slices mirror the SQL lists.
+	// And the Go-side ID slices mirror the SQL lists. demo_seed_items now
+	// carries sku/name/base_price alongside id (ut-docs#566), so its rows are
+	// no longer a bare 1-tuple — match the id as the row's leading column.
 	for _, id := range seeddata.ItemIDs {
-		if !strings.Contains(seeddata.DemoIDsSQL, "('"+id+"')") {
+		if !strings.Contains(seeddata.DemoIDsSQL, "('"+id+"',") {
 			t.Errorf("seeddata.ItemIDs has %s but demo_ids.sql does not list it", id)
 		}
 		if !strings.Contains(seeddata.DemoCatalogueSQL, "'"+id+"'") {
@@ -522,6 +587,52 @@ func TestMigration036MatchesSeedData(t *testing.T) {
 	if len(itemRows) != len(seeddata.ItemIDs) {
 		t.Errorf("demo_catalogue.sql's items INSERT has %d rows, seeddata.ItemIDs has %d — an item was added to one but not the other",
 			len(itemRows), len(seeddata.ItemIDs))
+	}
+}
+
+// ut-docs#566: demo_seed_items' pristine sku/name/base_price reference
+// values (in demo_ids.sql, used by remove_demo.sql's removal predicate)
+// must never drift from demo_catalogue.sql — the single source of truth
+// those values are a literal copy of. A drift here would silently break
+// the pristine check: either a genuinely-untouched item stops being
+// removable, or (worse) a renamed/repriced item is compared against the
+// wrong reference values and gets deleted anyway.
+func TestDemoSeedItemsPristineValuesMatchCatalogue(t *testing.T) {
+	catalogueRow := regexp.MustCompile(`(?m)^\s*\('(itm\d{3})',\s*'([^']*)',\s*'((?:[^']|'')*)',\s*'[^']*',\s*'[a-z_]+',\s*'[a-z_]+',\s*'[a-z]+',\s*(\d+),`)
+	pristineRow := regexp.MustCompile(`(?m)^\s*\('(itm\d{3})',\s*'([^']*)',\s*'((?:[^']|'')*)',\s*(\d+)\)`)
+
+	type pristine struct{ sku, name, price string }
+	catalogue := map[string]pristine{}
+	for _, m := range catalogueRow.FindAllStringSubmatch(seeddata.DemoCatalogueSQL, -1) {
+		catalogue[m[1]] = pristine{sku: m[2], name: m[3], price: m[4]}
+	}
+	if len(catalogue) != len(seeddata.ItemIDs) {
+		t.Fatalf("parsed %d item rows out of demo_catalogue.sql, want %d — regex drifted from the file's shape", len(catalogue), len(seeddata.ItemIDs))
+	}
+
+	seeded := map[string]pristine{}
+	for _, m := range pristineRow.FindAllStringSubmatch(seeddata.DemoIDsSQL, -1) {
+		seeded[m[1]] = pristine{sku: m[2], name: m[3], price: m[4]}
+	}
+	if len(seeded) != len(seeddata.ItemIDs) {
+		t.Fatalf("parsed %d pristine rows out of demo_ids.sql, want %d — regex drifted from the file's shape", len(seeded), len(seeddata.ItemIDs))
+	}
+
+	for _, id := range seeddata.ItemIDs {
+		c, ok := catalogue[id]
+		if !ok {
+			t.Errorf("%s missing from demo_catalogue.sql's items INSERT", id)
+			continue
+		}
+		s, ok := seeded[id]
+		if !ok {
+			t.Errorf("%s missing from demo_ids.sql's demo_seed_items INSERT", id)
+			continue
+		}
+		if c != s {
+			t.Errorf("%s pristine values drifted: demo_catalogue.sql has (sku=%q, name=%q, base_price=%s), demo_ids.sql has (sku=%q, name=%q, base_price=%s)",
+				id, c.sku, c.name, c.price, s.sku, s.name, s.price)
+		}
 	}
 }
 
