@@ -41,6 +41,11 @@
               </button>
             </form>
             {{ end }}
+            {{ if and $.canEditPermissions (ne .Role "super_admin") (ne .ID "kiosk") }}
+            <form method="post" action="/api/users/{{ .ID }}/promote-super-admin" class="users-inline">
+              <button type="submit" class="btn secondary">{{ T "users.promote_super_admin" }}</button>
+            </form>
+            {{ end }}
           </td>
         </tr>
         {{ end }}
@@ -59,6 +64,9 @@
           {{ if .isAdmin }}
           <option value="manager">{{ T "users.role.manager" }}</option>
           <option value="admin">{{ T "users.role.admin" }}</option>
+          {{ end }}
+          {{ if .canEditPermissions }}
+          <option value="super_admin">{{ T "users.role.super_admin" }}</option>
           {{ end }}
         </select>
       </label>
