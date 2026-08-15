@@ -187,6 +187,13 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	if hasOverride, auditErr := data.NewPOSRepo(d.Db).HasAuditEntry(ctx, "sale", detail.ID, "unsigned_override"); auditErr == nil && hasOverride {
 		doc.Meta = append(doc.Meta, "Recorded during a documented TSE outage, under a time-limited owner override.")
 	}
+	// ADR-0044 proceed-and-declare (ut-docs#675): same audit-row derivation
+	// as the override line above — the sale's own unsigned_fiscal_signing
+	// marker, written by completeTender at tender time, decides the notice;
+	// a reprint long after the outage still shows what happened to THIS sale.
+	if hasSignGap, auditErr := data.NewPOSRepo(d.Db).HasAuditEntry(ctx, "sale", detail.ID, "unsigned_fiscal_signing"); auditErr == nil && hasSignGap {
+		doc.Meta = append(doc.Meta, "TSE signing was unavailable when this sale was recorded; signing is retried automatically.")
+	}
 	if rd.Footer != "" {
 		doc.Footer = []string{rd.Footer}
 	}
