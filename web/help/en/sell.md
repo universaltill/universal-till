@@ -39,4 +39,4 @@ If a fiscal signing plugin is installed, the till asks it to sign each sale at t
 - a warning appears in the till's problems list, and
 - the till keeps retrying automatically in the background, every couple of minutes, until the sale is signed — each recovered sale gets its own entry in the audit trail.
 
-If signing failed while the till was online (a real signing fault, not just a network outage), the shop's TSE is also marked as failing, which pauses further sales in system-of-record mode as described above until it recovers or an owner grants an override. Once the background retries catch up, the failing mark clears by itself.
+A signing outage never pauses selling by itself — whether the cause is the network or the signing service, the till keeps completing sales and recording the gap as described above. Once a background retry signs a sale, the recovery is recorded in the audit trail and any later reprint of that receipt comes out clean, without the outage notice. (The system-of-record pause described earlier on this page is a separate safeguard; a signing outage does not trigger it.)

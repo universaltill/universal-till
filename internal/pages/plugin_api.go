@@ -388,15 +388,42 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// meaningfully active on a till at once, so enabling a second
 		// plugin that also declares it while another answerer is active is
 		// refused HERE, at install/enable time, naming the owning plugin —
-		// never at tender time, mid-sale. NOTE: tax.rate.ask is equally
+		// never at tender time, mid-sale. The same check also runs at
+		// manifest-persist time (plugins.PersistManifest), which install
+		// and update go through — this handler covers re-enabling an
+		// installed-but-disabled plugin. NOTE: tax.rate.ask is equally
 		// `exclusive` per ADR-0041 but has NO equivalent enforcement today;
 		// retrofitting it is deliberately out of this card's scope (it
 		// predates the mechanism) and needs its own card.
+		//
+		// FAIL CLOSED on a DB error (review of ut-docs#675, B2): on a
+		// compliance-relevant exclusive point, "couldn't verify ownership"
+		// must refuse the enable and surface the error — never silently
+		// skip the check and activate a possibly-second answerer.
 		if active {
 			pluginRepo := data.NewPluginRepo(d.Db)
-			if declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, fiscalSignAskEvent); hookErr == nil && declares {
-				ownerID, ownerName, found, ownerErr := pluginRepo.ActiveHookOwner(ctx, fiscalSignAskEvent, pluginID)
-				if ownerErr == nil && found {
+			declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, fiscalSignAskEvent)
+			if hookErr != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"data":  nil,
+					"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, fiscalSignAskEvent, hookErr),
+				})
+				return
+			}
+			if declares {
+				ownerID, ownerName, found, ownerErr := pluginRepo.ActiveHookOwner(ctx, nil, fiscalSignAskEvent, pluginID)
+				if ownerErr != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data":  nil,
+						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, fiscalSignAskEvent, ownerErr),
+					})
+					return
+				}
+				if found {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusConflict)
 					json.NewEncoder(w).Encode(map[string]interface{}{

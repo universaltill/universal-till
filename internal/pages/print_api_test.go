@@ -895,3 +895,45 @@ func TestPostPrintReceipt_ReprintFailsCleanlyWithNoPrinter(t *testing.T) {
 		t.Fatalf("expected exactly one receipt_reprint audit entry, got %d", count)
 	}
 }
+
+// Review of ut-docs#675 (smaller finding alongside B1-B4): a sale whose
+// signing gap was RESOLVED by the background retry (a later
+// fiscal_signing_resolved audit row for the same sale) must reprint clean —
+// the outage notice derives from the unsigned_fiscal_signing marker ONLY
+// while no resolution row exists. Same sale, minutes later, signed: any
+// reprint after that must not still claim TSE signing was unavailable.
+func TestBuildReceiptDoc_ResolvedSigningGapPrintsClean(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+	now := "2026-08-15T10:00:00Z"
+	if err := repo.InsertAudit(ctx, nil, "", "sale", "sale1", "unsigned_fiscal_signing", map[string]any{
+		"reason": "signing backend declared unreachable by the plugin",
+	}, now, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unresolved: the notice line prints.
+	doc, err := buildReceiptDoc(ctx, dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(doc.Meta, "\n"), "TSE signing was unavailable") {
+		t.Fatalf("unresolved signing gap must print the outage notice, got %+v", doc.Meta)
+	}
+
+	// Resolved by the background retry: reprints are clean.
+	if err := repo.InsertAudit(ctx, nil, "", "sale", "sale1", "fiscal_signing_resolved", map[string]any{
+		"resolved_at": "2026-08-15T10:02:00Z",
+	}, "2026-08-15T10:02:00Z", ""); err != nil {
+		t.Fatal(err)
+	}
+	doc, err = buildReceiptDoc(ctx, dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(doc.Meta, "\n"), "TSE signing") {
+		t.Fatalf("a resolved sale must reprint clean (no outage notice), got %+v", doc.Meta)
+	}
+}

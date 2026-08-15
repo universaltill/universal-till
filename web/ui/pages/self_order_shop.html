@@ -79,6 +79,14 @@
 
     <dialog id="selforder-modal" class="modifier-modal"></dialog>
 
+    <!-- The kiosk's declared-offline signal (ut-docs#675 review, B1): the
+         payment picker's checkout form hx-include's this input, and the
+         checkout handler threads it into SaleInput.Offline — the same
+         navigator.onLine-driven flag the cashier till's #offline-flag
+         carries (web/public/app.js), minus the manual override toggle the
+         kiosk deliberately doesn't surface to anonymous customers. -->
+    <input type="hidden" id="selforder-offline-flag" name="offline" value="0">
+
     <script>
       // Every /api/self-order/* handler that answers 4xx (a rejected
       // modifier submission, a declined kiosk payment, an invalid method)
@@ -114,6 +122,17 @@
             tile.hidden = !show;
           });
         });
+      })();
+
+      // Keep the offline flag current — same online/offline event wiring
+      // as web/public/app.js's updateOfflineFlag for the cashier till.
+      (function () {
+        var input = document.getElementById('selforder-offline-flag');
+        if (!input) return;
+        function update() { input.value = navigator.onLine ? '0' : '1'; }
+        window.addEventListener('online', update);
+        window.addEventListener('offline', update);
+        update();
       })();
 
       // Idle reset (ADR-0020, same mechanism as the /self-order landing
