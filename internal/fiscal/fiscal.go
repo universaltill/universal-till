@@ -29,9 +29,16 @@ const (
 	KeyTSEConfigured = "fiscal.tse_configured"
 	// KeyTSEFailingSince: RFC3339 timestamp when a configured TSE became
 	// known-failing; absent/empty = healthy. Not operator-settable via any
-	// UI in this card — written only by a future real fiscal.sign.ask
-	// failure callback (ut-docs#675) or directly in tests. Never to be set
-	// from a mere network-offline condition (ADR-0048 Decision 1).
+	// UI, and — deliberately — NO production writer exists yet: the
+	// fiscal.sign.ask point (ut-docs#675) does not drive this key, because
+	// none of the failures it can observe (timeout, transport error,
+	// plugin-declared "unreachable", unusable answer) distinguishes "the
+	// TSE itself is known bad" (expired cert, dongle pulled,
+	// provider-reported fault — what this key means, ADR-0048 Decision 1)
+	// from "we currently can't reach it". A future fiscal.sign.ask
+	// contract version adding a TSE-confirmed-broken response state would
+	// be the right first writer. Set directly in tests only. Never to be
+	// set from a mere network-offline condition (ADR-0048 Decision 1).
 	KeyTSEFailingSince = "fiscal.tse_failing_since"
 	// KeyOverrideUntil: RFC3339 end of the currently-granted owner override
 	// window. Absent/empty/expired = no active override.

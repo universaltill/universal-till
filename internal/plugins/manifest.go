@@ -388,6 +388,53 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 	return fmt.Errorf("page entry route %q is already provided by plugin %s — pick a different route", c.Route, c.Owner)
 }
 
+// FiscalSignAskEvent is the tender-phase fiscal signing extension point
+// (ADR-0044 Decision 1, ut-docs#675) — an ADR-0041 `exclusive` point, which
+// is why manifest persistence enforces single ownership below. The dispatch
+// side lives in internal/pages (fiscal_sign_hook.go), which aliases this
+// constant; the contract is ut-docs/reference/contracts/fiscal-sign-ask.md.
+const FiscalSignAskEvent = "fiscal.sign.ask"
+
+// validateExclusiveHookOwnership enforces ADR-0041 Decision B's `exclusive`
+// marker for fiscal.sign.ask at manifest-persist time (independent review
+// of ut-docs#675, finding B2). The enable-time check in
+// setPluginActiveHandler alone is bypassable: PersistManifest activates the
+// plugin unconditionally (UpsertPluginManifest sets is_active = 1 on both
+// its INSERT and its ON CONFLICT UPDATE branch), so a fresh install of a
+// second fiscal.sign.ask-declaring plugin — or an update of an
+// already-active plugin whose new version starts declaring the hook —
+// would silently create two active answerers without ever passing through
+// POST /api/plugins/{id}/enable. Same call-site shape as
+// validatePageEntryKeys above: run inside PersistManifest's transaction
+// before anything is written, so a refusal rolls the whole install back.
+//
+// The plugin's own prior registration is excluded from the ownership query,
+// so a plugin updating or re-installing ITSELF never conflicts with itself.
+// A DB error fails CLOSED (the persist is refused with the error): on a
+// compliance-relevant exclusive point, "couldn't verify ownership" must
+// never degrade to "allowed" — the same posture the enable-time check
+// applies.
+func validateExclusiveHookOwnership(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, hooks []ManifestHook) error {
+	declares := false
+	for _, h := range hooks {
+		if h.Event == FiscalSignAskEvent {
+			declares = true
+			break
+		}
+	}
+	if !declares {
+		return nil
+	}
+	ownerID, ownerName, found, err := repo.ActiveHookOwner(ctx, tx, FiscalSignAskEvent, pluginID)
+	if err != nil {
+		return fmt.Errorf("check fiscal signing exclusivity: %w", err)
+	}
+	if found {
+		return fmt.Errorf("%s (%s) is already the active fiscal signing provider — %s is an exclusive extension point; disable or uninstall it before installing %s", ownerName, ownerID, FiscalSignAskEvent, pluginID)
+	}
+	return nil
+}
+
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {
 	repo := data.NewPluginRepo(db)
 	tx, err := db.BeginTx(ctx, nil)
@@ -419,6 +466,16 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// rejected here too, the same shape as the key check above but a
 	// distinct namespace (ut-docs#499).
 	if err := validatePageEntryRoutes(ctx, repo, tx, m.ID, m.Entries); err != nil {
+		return err
+	}
+
+	// 0d. fiscal.sign.ask is an `exclusive` extension point (ADR-0041
+	// Decision B): a manifest declaring it while a DIFFERENT active plugin
+	// already holds the point must be rejected here, loudly, on BOTH
+	// install and update — this persist activates the plugin, so letting
+	// it through would mint a second active answerer with no /enable ever
+	// involved (review of ut-docs#675, B2).
+	if err := validateExclusiveHookOwnership(ctx, repo, tx, m.ID, m.Hooks); err != nil {
 		return err
 	}
 

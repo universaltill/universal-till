@@ -70,6 +70,18 @@ func fiscalSettingsReader(d *common.Deps) fiscal.SettingsReader {
 	return data.NewSettingsRepo(d.Db)
 }
 
+// formFlagTruthy reports whether a form checkbox/flag value spells "true"
+// ("1"/"true"/"yes"/"on", case-insensitive) — the till's convention for the
+// offline flag the cashier tender path and the self-order kiosk checkout
+// both thread into SaleInput.Offline.
+func formFlagTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // evaluateFiscalGate runs ADR-0048's policy for the shop's configured
 // country against wall-clock now. For any non-gated country (everything but
 // DE today) it returns Allowed without touching the settings store.
@@ -141,6 +153,19 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// Make it explicit instead.
 	saleInput.Payments = payments
 
+	// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#675): the tender-phase
+	// fiscal signing point fires HERE — after payment.<key>.authorize has
+	// resolved (the payable total, including any reader-reported tip above,
+	// is final) and before CompleteSale persists the sale. This ordering is
+	// load-bearing: signing concurrently with an in-flight authorize could
+	// produce an irreversible TSE record for a sale that is then declined
+	// and never persisted. Orthogonal to the ADR-0048 hard gate at the top
+	// of this function — the gate decides whether a sale may START; this
+	// point signs (or declares) every sale that actually completes, and
+	// fires regardless of the gate's decision. Never blocks or refuses the
+	// sale: any failure lands on the proceed-and-declare surface below.
+	signRes := dispatchFiscalSignAsk(ctx, d, &saleInput)
+
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
 		return "", err
@@ -160,6 +185,16 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
 			log.Printf("fiscal gate: unsigned_override audit marker for sale %s failed: %v", saleID, auditErr)
 		}
+	}
+
+	// fiscal.sign.ask proceed-and-declare (ADR-0044/ADR-0041 Decision E):
+	// the sale is already committed — a failed (or known-offline-skipped)
+	// signing dispatch is now DECLARED, never unwound: journal marker,
+	// receipt outage notice (derived from that marker by both render
+	// paths), operator Problem, background retry. Best-effort, log-only on
+	// failure, exactly like the unsigned_override block above.
+	if signRes.Outcome.isFailure() || signRes.Outcome == fiscalSignSkippedOffline {
+		declareUnsignedFiscalSale(ctx, d, repo, saleID, actorID, signRes)
 	}
 
 	engine.Reset()
@@ -505,17 +540,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		if !offlineSet {
 			if err := r.ParseForm(); err == nil {
-				switch strings.ToLower(strings.TrimSpace(r.Form.Get("offline_override"))) {
-				case "1", "true", "yes", "on":
+				if formFlagTruthy(r.Form.Get("offline_override")) {
 					offline = true
 					offlineSet = true
 				}
-				if !offlineSet {
-					switch strings.ToLower(strings.TrimSpace(r.Form.Get("offline"))) {
-					case "1", "true", "yes", "on":
-						offline = true
-						offlineSet = true
-					}
+				if !offlineSet && formFlagTruthy(r.Form.Get("offline")) {
+					offline = true
+					offlineSet = true
 				}
 			}
 		}
@@ -852,7 +883,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if g, gErr := evaluateFiscalGate(r.Context(), d); gErr == nil && g.Decision == fiscal.AllowedWithOverride {
 			unsignedOverride = true
 		}
-		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride,
+		// fiscal.sign.ask outage notice (ADR-0044 proceed-and-declare):
+		// derived from the sale's own audit rows — NOT a gate/settings
+		// re-evaluation, since this flag is a per-sale outcome, not
+		// current-settings state — and suppressed once a later
+		// fiscal_signing_resolved row shows the background retry signed
+		// the sale (review of ut-docs#675: a resolved sale renders clean).
+		unsignedFiscalSigning := saleHasUnresolvedSigningGap(r.Context(), repo, saleID)
+		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning,
 			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d))
 		if renderErr != nil {
 			printerUnavailable = true
@@ -997,7 +1035,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, storeName string, design receiptDesign) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, storeName string, design receiptDesign) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFS(uiassets.FS,
 		"ui/partials/receipt.html",
 	)
@@ -1053,6 +1091,10 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		// carries a receipt line marking it as taken during a documented
 		// TSE-failure window.
 		"UnsignedOverride": unsignedOverride,
+		// ADR-0044 proceed-and-declare: a sale whose fiscal.sign.ask
+		// dispatch failed (or was skipped known-offline) carries a visible
+		// outage notice — the gap must never look like a normal sale.
+		"UnsignedFiscalSigning": unsignedFiscalSigning,
 		// Receipt design (docs: receipt-designer.md): the on-screen copy
 		// follows the same owner-styled design as the thermal print.
 		"StoreName":    storeName,
