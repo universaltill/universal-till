@@ -35,6 +35,53 @@ type EventBus struct {
 	subscribers map[string][]EventSubscriber // event_type -> subscribers
 	eventModes  map[string]EventDispatchMode // event_type -> dispatch mode
 	generation  uint64                       // bumped whenever the subscriber set changes
+
+	// dropWarnMu/dropWarnedAt throttle the "channel full" diagnostic (see
+	// channelFullWarnInterval) — separate from mu because publish() holds
+	// mu.RLock() across the whole dispatch loop and this must be safe to
+	// touch from inside that critical section without a reentrant lock.
+	dropWarnMu   sync.Mutex
+	dropWarnedAt map[string]time.Time
+}
+
+// channelFullWarnInterval bounds how often publish() performs the "channel
+// full" audit write + stdout warning for a given plugin. Without this, a
+// publisher racing a subscriber whose channel never drains (a wedged plugin,
+// or — as found investigating ut-docs#674 — a test deliberately hammering
+// Publish with no backoff) drives an unbounded number of synchronous SQLite
+// audit writes and raw stdout writes in a tight loop: one regression test
+// alone produced ~16,700 of each in under 16 seconds, all serialized through
+// the single audit-log DB connection and the shared stdout mutex. That is a
+// genuine, unbounded resource amplifier found while investigating
+// ut-docs#674's CI contention report — independent review could not
+// reproduce that specific incident (a double `go test ./...` run, in
+// several patterns, pre- and post-fix) to confirm this as ITS root cause,
+// so treat this as a worthwhile hardening against a real amplifier this
+// codebase has, not a confirmed fix for that incident. One second is a
+// judgement call, not a precisely-derived number: short enough that an
+// operator/log still sees a wedged plugin promptly, long enough that even a
+// permanently-stuck plugin in a 24/7 till writes at most ~86,400 audit rows/
+// day instead of ~864,000. Every occurrence still gets its first-ever audit/
+// log entry immediately; only the redundant repeats within the window are
+// coalesced (and the coalesced entry says so — see the "further drops...
+// coalesced" wording below), so the anomaly is never silently invisible.
+const channelFullWarnInterval = time.Second
+
+// shouldWarnChannelFull reports whether enough time has passed since the
+// last "channel full" diagnostic for pluginID to fire another one, and
+// records this call as the most recent one if so.
+func (eb *EventBus) shouldWarnChannelFull(pluginID string) bool {
+	eb.dropWarnMu.Lock()
+	defer eb.dropWarnMu.Unlock()
+	if eb.dropWarnedAt == nil {
+		eb.dropWarnedAt = make(map[string]time.Time)
+	}
+	now := time.Now()
+	if last, ok := eb.dropWarnedAt[pluginID]; ok && now.Sub(last) < channelFullWarnInterval {
+		return false
+	}
+	eb.dropWarnedAt[pluginID] = now
+	return true
 }
 
 // SetDB rebinds the bus to a live database handle (see SharedBus).
@@ -404,8 +451,19 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "enqueued", "")
 				dispatched++
 			default:
-				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "dropped", "channel full")
-				fmt.Printf("warning: event channel full for plugin %s\n", sub.PluginID)
+				if eb.shouldWarnChannelFull(sub.PluginID) {
+					// This audit row / log line stands for a BURST of
+					// drops, not a single one: every further drop for
+					// this plugin within channelFullWarnInterval is
+					// coalesced into it. Say so in the record itself —
+					// otherwise a reader of audit_log would reasonably
+					// (and wrongly) infer that an event with no "dropped"
+					// row was delivered, which after throttling is no
+					// longer a safe inference.
+					reason := fmt.Sprintf("channel full (further drops within %s coalesced into this entry)", channelFullWarnInterval)
+					eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "dropped", reason)
+					fmt.Printf("warning: event channel full for plugin %s (further drops within %s suppressed)\n", sub.PluginID, channelFullWarnInterval)
+				}
 			}
 		}
 	}
