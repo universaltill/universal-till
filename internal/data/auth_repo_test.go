@@ -603,3 +603,110 @@ func TestAuthRepo_HasPermission_KioskUserZeroGrants(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthRepo_ListRolePermissionMatrix (ut-docs#556's editor page) must
+// return a full role×action grid, including cells with no role_permissions
+// row at all — an action added by a later migration but never explicitly
+// seeded for some role is a real, common shape (e.g. fiscal_tse_override is
+// seeded for admin/super_admin only, so manager/cashier have no row for it)
+// and must still render as an unchecked cell, not silently vanish from the
+// grid.
+func TestAuthRepo_ListRolePermissionMatrix(t *testing.T) {
+	ctx := context.Background()
+	repo, d := newAuthTestRepo(t)
+
+	var roleCount, actionCount int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM roles`).Scan(&roleCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM permission_actions`).Scan(&actionCount); err != nil {
+		t.Fatal(err)
+	}
+
+	grants, err := repo.ListRolePermissionMatrix(ctx)
+	if err != nil {
+		t.Fatalf("ListRolePermissionMatrix: %v", err)
+	}
+	if len(grants) != roleCount*actionCount {
+		t.Fatalf("expected a full %d roles x %d actions grid = %d cells, got %d",
+			roleCount, actionCount, roleCount*actionCount, len(grants))
+	}
+
+	// fiscal_tse_override (046) is seeded admin/super_admin ONLY — manager
+	// must appear in the matrix as an explicit ungranted cell, not be absent.
+	found := false
+	for _, g := range grants {
+		if g.Role == "manager" && g.Action == "fiscal_tse_override" {
+			found = true
+			if g.Granted {
+				t.Fatal("manager must not be granted fiscal_tse_override")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected (manager, fiscal_tse_override) to appear in the matrix even though no role_permissions row seeds it")
+	}
+}
+
+// TestAuthRepo_Migration047SeedsPermissionManagementSuperAdminOnly runs
+// against a REAL migrated DB (openMigratedDB, not internal/pages'
+// seedForPages hand-seed) — the migrated-DB precondition every other
+// TestAuthRepo_HasPermission* test in this file already follows, and the
+// one place that actually proves 047 seeded what it claims: super_admin
+// ONLY, not the manager-inclusive pattern 039/042-045 use or 046's
+// admin+super_admin pattern. Without this, a migration regression to
+// either of those patterns would still pass every test in the pages
+// package, since that package's fixture hand-seeds its own copy rather
+// than running 047 (see internal/pages/ui_smoke_test.go's own comment).
+func TestAuthRepo_Migration047SeedsPermissionManagementSuperAdminOnly(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newAuthTestRepo(t)
+
+	for _, role := range []string{"cashier", "manager", "admin"} {
+		granted, err := repo.HasPermission(ctx, role, "permission_management")
+		if err != nil {
+			t.Fatalf("HasPermission(%s, permission_management): %v", role, err)
+		}
+		if granted {
+			t.Fatalf("%s must NOT be granted permission_management by migration 047's seed", role)
+		}
+	}
+	granted, err := repo.HasPermission(ctx, "super_admin", "permission_management")
+	if err != nil {
+		t.Fatalf("HasPermission(super_admin, permission_management): %v", err)
+	}
+	if !granted {
+		t.Fatal("super_admin must be granted permission_management by migration 047's seed")
+	}
+}
+
+func TestAuthRepo_SetRolePermission(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newAuthTestRepo(t)
+
+	// Revoke a seeded grant.
+	if err := repo.SetRolePermission(ctx, nil, "manager", "refund", false); err != nil {
+		t.Fatalf("SetRolePermission revoke: %v", err)
+	}
+	if granted, err := repo.HasPermission(ctx, "manager", "refund"); err != nil || granted {
+		t.Fatalf("expected manager/refund revoked, granted=%v err=%v", granted, err)
+	}
+
+	// Re-grant it.
+	if err := repo.SetRolePermission(ctx, nil, "manager", "refund", true); err != nil {
+		t.Fatalf("SetRolePermission grant: %v", err)
+	}
+	if granted, err := repo.HasPermission(ctx, "manager", "refund"); err != nil || !granted {
+		t.Fatalf("expected manager/refund granted, granted=%v err=%v", granted, err)
+	}
+
+	// Grant a cell that has NO existing role_permissions row at all
+	// (manager was never seeded fiscal_tse_override) — must insert, not
+	// require a pre-existing row to update.
+	if err := repo.SetRolePermission(ctx, nil, "manager", "fiscal_tse_override", true); err != nil {
+		t.Fatalf("SetRolePermission on a never-seeded cell: %v", err)
+	}
+	if granted, err := repo.HasPermission(ctx, "manager", "fiscal_tse_override"); err != nil || !granted {
+		t.Fatalf("expected manager/fiscal_tse_override granted, granted=%v err=%v", granted, err)
+	}
+}

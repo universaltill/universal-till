@@ -17,21 +17,28 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	repo := svc.Repo()
 	posRepo := data.NewPOSRepo(d.Db)
 
+	// requireManager gates on the user_management action (039's catalog),
+	// not the old IsManager() bit — granted to manager/admin/super_admin,
+	// same set IsManager() plus super_admin recognized (ut-docs#556: without
+	// this, super_admin can never reach /users at all, so the Permissions
+	// link this page also carries would be dead — a super_admin session
+	// 403'd here before ever seeing it).
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
-		u, ok := auth.FromContext(r.Context())
-		if !ok || !u.IsManager() {
+		if !canPerform(d, r, "user_management") {
 			http.Error(w, "manager or admin role required", http.StatusForbidden)
 			return auth.User{}, false
 		}
+		u, _ := auth.FromContext(r.Context())
 		return u, true
 	}
 
-	// canManage: admins manage everyone but 'system'; managers only cashiers.
+	// canManage: admins and super_admins manage everyone but 'system';
+	// managers only cashiers.
 	canManage := func(actor auth.User, target data.UserRow) bool {
 		if target.ID == "system" {
 			return false
 		}
-		if actor.Role == "admin" {
+		if actor.Role == "admin" || actor.Role == "super_admin" {
 			return true
 		}
 		return target.Role == "cashier"
@@ -61,12 +68,13 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			rows = append(rows, row{UserRow: u, HasPIN: u.PinHash != "", CanEdit: canManage(actor, u)})
 		}
 		httpx.Render("ui/pages/users.html", map[string]any{
-			"title":     "Users",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"users":     rows,
-			"isAdmin":   actor.Role == "admin",
-			"errKey":    errKey,
+			"title":              "Users",
+			"theme":              d.CurrentState().Theme,
+			"menuItems":          d.MenuSnapshot(),
+			"users":              rows,
+			"isAdmin":            actor.Role == "admin",
+			"canEditPermissions": canPerform(d, r, lockoutAction), // super_admin only (ut-docs#556)
+			"errKey":             errKey,
 		})(w, r)
 	}
 

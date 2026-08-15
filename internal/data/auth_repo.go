@@ -267,3 +267,104 @@ func (r *AuthRepo) HasPermission(ctx context.Context, role, action string) (bool
 	}
 	return granted != 0, nil
 }
+
+// RoleExists reports whether role is a recognized row in roles — the
+// matrix editor validates against this before writing, so a typo'd or
+// forged role in a POST fails with a clean 400 instead of a raw FK
+// constraint error surfacing to the client.
+func (r *AuthRepo) RoleExists(ctx context.Context, role string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `SELECT 1 FROM roles WHERE role = ?`, role).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("role exists: %w", err)
+	}
+	return true, nil
+}
+
+// ActionExists reports whether action is a recognized row in
+// permission_actions. Same validate-before-write purpose as RoleExists.
+func (r *AuthRepo) ActionExists(ctx context.Context, action string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `SELECT 1 FROM permission_actions WHERE action = ?`, action).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("action exists: %w", err)
+	}
+	return true, nil
+}
+
+// PermissionGrant is one cell of the role×action permission matrix (ut-docs#556).
+type PermissionGrant struct {
+	Role    string
+	Action  string
+	Granted bool
+}
+
+// ListRolePermissionMatrix returns every (role, action) pairing in the
+// catalog — including ungranted ones, so the matrix editor can render a
+// full grid rather than only the rows a previous migration happened to
+// seed a "granted" row for. LEFT JOIN role_permissions: an action added
+// by a later migration but never explicitly granted to a role still shows
+// as an unchecked cell, not a missing one.
+func (r *AuthRepo) ListRolePermissionMatrix(ctx context.Context) ([]PermissionGrant, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT roles.role, permission_actions.action,
+		       COALESCE(role_permissions.granted, 0)
+		FROM roles
+		CROSS JOIN permission_actions
+		LEFT JOIN role_permissions
+		  ON role_permissions.role = roles.role
+		 AND role_permissions.action = permission_actions.action
+		ORDER BY roles.role, permission_actions.action`)
+	if err != nil {
+		return nil, fmt.Errorf("list role permission matrix: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PermissionGrant
+	for rows.Next() {
+		var g PermissionGrant
+		var granted int
+		if err := rows.Scan(&g.Role, &g.Action, &granted); err != nil {
+			return nil, fmt.Errorf("scan permission grant: %w", err)
+		}
+		g.Granted = granted != 0
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list role permission matrix: %w", err)
+	}
+	return out, nil
+}
+
+// SetRolePermission grants or revokes one (role, action) cell. Runs inside
+// the given tx when non-nil (the caller journals the change in the same
+// transaction), or directly against the DB otherwise. Upserts rather than
+// requiring a pre-existing row, since a (role, action) pairing with no row
+// at all (an action added by a later migration, never explicitly seeded
+// for this role) is a legitimate starting state — HasPermission already
+// treats "no row" as denied, so the first grant here has to be an insert,
+// not an update.
+func (r *AuthRepo) SetRolePermission(ctx context.Context, tx *sql.Tx, role, action string, granted bool) error {
+	g := 0
+	if granted {
+		g = 1
+	}
+	q := `INSERT INTO role_permissions (role, action, granted) VALUES (?, ?, ?)
+	      ON CONFLICT (role, action) DO UPDATE SET granted = excluded.granted`
+	var err error
+	if tx != nil {
+		_, err = tx.ExecContext(ctx, q, role, action, g)
+	} else {
+		_, err = r.db.ExecContext(ctx, q, role, action, g)
+	}
+	if err != nil {
+		return fmt.Errorf("set role permission: %w", err)
+	}
+	return nil
+}
