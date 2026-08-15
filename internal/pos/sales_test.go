@@ -122,6 +122,81 @@ func TestCompleteSale_SucceedsAndWritesRows(t *testing.T) {
 	}
 }
 
+// ut-docs#744: a variant scanned by barcode resolves through
+// ui.PriceResolverAdapter with BOTH ItemID and VariantID set on the
+// BasketLine (ItemID is kept deliberately — see ui.TestResolve_VariantBarcode
+// — because tax_hook.go's tax.rate.ask payload still needs it even for a
+// variant line), and pos_api.go/self_order_shop.go copy both verbatim into
+// SaleLineInput. Before the fix, validateLine rejected any line with both
+// set ("line cannot have both item_id and variant_id"), so a variant could
+// be scanned into the basket but never tendered — this reproduces that
+// exact SaleLineInput shape and asserts CompleteSale now succeeds, with
+// only variant_id (not item_id) persisted on the sale_lines row, matching
+// the same-shaped CHECK constraint on sale_lines/inventory/stock_movements.
+func TestCompleteSale_VariantLineWithBothIDsSetIsTenderable(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm-cof','COF','Coffee', 300, 1)`)
+	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, price, is_active) VALUES('var-lg','itm-cof', 400, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1',NULL,'var-lg','loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	in := SaleInput{
+		SaleType:     "sale",
+		RegisterID:   "reg1",
+		CashierID:    "user1",
+		Currency:     "GBP",
+		TaxInclusive: false,
+		Lines: []SaleLineInput{
+			{
+				// This is exactly what ResolveShortcutLine/PriceResolverAdapter
+				// produce for a variant barcode scan today: both set.
+				ItemID:             "itm-cof",
+				VariantID:          "var-lg",
+				SKU:                "VB-1",
+				Name:               "Coffee - Large",
+				Qty:                1,
+				UnitPrice:          400,
+				TaxRateBasisPoints: 0,
+				LocationID:         "loc1",
+			},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 400, Currency: "GBP"},
+		},
+	}
+
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("CompleteSale error: %v (variant barcode scan must be tenderable)", err)
+	}
+
+	var itemID, variantID sql.NullString
+	if err := db.QueryRow(`SELECT item_id, variant_id FROM sale_lines WHERE sale_id = ?`, saleID).Scan(&itemID, &variantID); err != nil {
+		t.Fatalf("query sale_line: %v", err)
+	}
+	if itemID.Valid {
+		t.Fatalf("expected item_id NULL for a variant line, got %q", itemID.String)
+	}
+	if !variantID.Valid || variantID.String != "var-lg" {
+		t.Fatalf("expected variant_id = var-lg, got %+v", variantID)
+	}
+
+	// Stock deducted against the variant's own inventory row, not a
+	// nonexistent item-level row (CurrentQty's query requires exactly one
+	// of item_id/variant_id to match, mirroring the sale_lines CHECK).
+	var qty float64
+	if err := db.QueryRow(`SELECT quantity FROM inventory WHERE variant_id='var-lg' AND location_id='loc1'`).Scan(&qty); err != nil {
+		t.Fatal(err)
+	}
+	if qty != 4 {
+		t.Fatalf("expected inventory 4 after selling 1, got %v", qty)
+	}
+}
+
 // ADR-0020: a sale line's chosen modifiers persist as their own rows,
 // snapshotted (name + delta) rather than FK'd to the live option, and the
 // line's unit_price already reflects the folded-in delta — no separate
