@@ -285,6 +285,89 @@ func TestResolveCurrentPrice_Variant(t *testing.T) {
 	}
 }
 
+// TestResolveShortcutLine_VariantSKUExact proves a variant can be found by
+// its OWN sku (not the parent item's) and that an active price_history
+// override on the variant applies. Before this fix, resolveSKU only ever
+// queried items.sku, so a variant's own SKU never matched anything here —
+// ResolveShortcutLine returned ok=false, and the variant was unreachable
+// by exact-SKU search entirely (found during independent review of
+// ut-docs#744's fix, filed as ut-docs#751).
+func TestResolveShortcutLine_VariantSKUExact(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-L", Name: "Large", Price: 350, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v1',280,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+
+	line, ok := repo.ResolveShortcutLine(ctx, "S1-L")
+	if !ok {
+		t.Fatal("expected the variant's own SKU to resolve")
+	}
+	if line.ItemID != "i1" || line.VariantID != "v1" || !line.HasVariant {
+		t.Fatalf("expected item i1 / variant v1, got %+v", line)
+	}
+	if line.Price != 280 {
+		t.Fatalf("expected the variant's active price_history override 280, got %d", line.Price)
+	}
+	if line.Name != "Latte - Large" {
+		t.Fatalf("expected the composed 'Item - Variant' display name, got %q", line.Name)
+	}
+}
+
+// TestResolveShortcutLine_VariantNameLike is the same gap on the name-LIKE
+// fallback: a variant's own name never matched items.name, so it was
+// unreachable by name search too.
+func TestResolveShortcutLine_VariantNameLike(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-L", Name: "Large", Price: 350, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v1',280,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+
+	line, ok := repo.ResolveShortcutLine(ctx, "large")
+	if !ok {
+		t.Fatal("expected the variant's own name to resolve via name-LIKE search")
+	}
+	if line.ItemID != "i1" || line.VariantID != "v1" || !line.HasVariant {
+		t.Fatalf("expected item i1 / variant v1, got %+v", line)
+	}
+	if line.Price != 280 {
+		t.Fatalf("expected the variant's active price_history override 280, got %d", line.Price)
+	}
+}
+
+// TestResolveShortcutLine_ItemSKUStillWinsOverVariantSKU is a regression
+// guard: the variant fallback must only fire when no ITEM matches by sku —
+// an item's own exact-SKU match must keep winning, unaffected by the new
+// fallback.
+func TestResolveShortcutLine_ItemSKUStillWinsOverVariantSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "MUG-001", Name: "Mug", BasePrice: 500, IsActive: true})
+
+	line, ok := repo.ResolveShortcutLine(ctx, "MUG-001")
+	if !ok {
+		t.Fatal("expected a resolved line via exact SKU match")
+	}
+	if line.ItemID != "i1" || line.HasVariant {
+		t.Fatalf("expected the plain item match, got %+v", line)
+	}
+}
+
 func TestResolveCurrentPrice_ValidationAndNotFound(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	repo := data.NewPOSRepo(db)
