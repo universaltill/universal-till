@@ -89,6 +89,34 @@ func main() {
 		h := open(p.Host, p.Port, p.ConnectTimeoutMs)
 		record(map[string]any{"open_code": h})
 
+	case "invalidptrread":
+		// ut-docs#614 proof: one tcp_read call with a deliberately
+		// out-of-bounds dstPtr must fail WITHOUT consuming any bytes
+		// already sitting in the socket's receive buffer — a second,
+		// valid-buffer read must still get the full pushed payload.
+		h := open(p.Host, p.Port, p.ConnectTimeoutMs)
+		if h < 0 {
+			record(map[string]any{"open_code": h})
+			return
+		}
+		const invalidGuestPtr = 0xFFFFFF00
+		invalidCode := tcpRead(h, invalidGuestPtr, 64, p.ReadTimeoutMs)
+		buf := make([]byte, 4096)
+		bp, bc := ptrOf(buf)
+		rc := tcpRead(h, bp, bc, p.ReadTimeoutMs)
+		got := ""
+		if rc > 0 && int(rc) <= len(buf) {
+			got = string(buf[:rc])
+		}
+		cc := tcpClose(h)
+		record(map[string]any{
+			"open_code":    h,
+			"invalid_code": invalidCode,
+			"read_code":    rc,
+			"read_data":    got,
+			"close_code":   cc,
+		})
+
 	case "readtimeout":
 		// The fixture server accepts but never writes: the read must come
 		// back -3 after the guest's own read deadline, not hang the event.

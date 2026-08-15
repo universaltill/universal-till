@@ -279,6 +279,117 @@ func TestImportDispatch_HostBufCapClampsOversizedDstCap(t *testing.T) {
 	}
 }
 
+// TestImportDispatch_InvalidPtrDoesNotConsumeStreamBytes proves the
+// ut-docs#614 fix: hostImportFileRead ('internal/plugins/wasm_import_file.go')
+// validates the guest-supplied destination region is addressable BEFORE
+// reading from the staged file, so a guest-supplied out-of-bounds dstPtr
+// returns hostErrInvalid without silently consuming (and losing) bytes
+// from the file's read cursor. Drives the guest's dedicated
+// "invalid_ptr_read" mode (testdata/import_guest/main.go): one call with a
+// bad pointer, then a normal chunked read of the WHOLE file — the
+// resulting hash must match the full, untouched content. Before the fix,
+// the bad-pointer call would already have pulled the first chunk off the
+// file via f.Read before discovering the write would fail, permanently
+// losing those bytes; the chunked read afterward would then hash a file
+// short its first chunk and never match.
+func TestImportDispatch_InvalidPtrDoesNotConsumeStreamBytes(t *testing.T) {
+	guest := buildImportGuest(t)
+
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	w := NewWasmRuntime(base)
+
+	const pluginID = "com.test.importinvalidptr"
+	seedInstalledPlugin(t, db, pluginID, "ImportInvalidPtr", "1.0.0", "wasm", true)
+	if _, err := db.Exec(`UPDATE plugins SET entrypoint = './plugin.wasm' WHERE id = ?`, pluginID); err != nil {
+		t.Fatalf("set entrypoint: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'events:receive', 1)`,
+		"imip-perm", pluginID); err != nil {
+		t.Fatalf("seed permission: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES (?, ?, 'import.requested.ask', 'import', 1)`,
+		"imip-hook", pluginID); err != nil {
+		t.Fatalf("seed hook: %v", err)
+	}
+
+	raw, err := os.ReadFile(guest)
+	if err != nil {
+		t.Fatalf("read guest: %v", err)
+	}
+	modPath := filepath.Join(base, pluginID, "1.0.0", "plugin.wasm")
+	if err := writeFileWithParents(modPath, raw); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+	w.Sync(ctx, db)
+	t.Cleanup(func() { importFiles.CloseAll(pluginID) })
+
+	bus := SharedBus(db)
+	defer bus.ResetSubscribers()
+	if !bus.HasSubscribers("import.requested.ask") {
+		t.Fatalf("import.requested.ask not subscribed after Sync")
+	}
+	bus.SetEventMode("import.requested.ask", Blocking)
+
+	// Small enough to read in one chunked-loop iteration or a few — the
+	// point is exactness of the byte count and hash, not chunking depth.
+	const fileSize = 10 << 10
+	content := make([]byte, fileSize)
+	for i := range content {
+		content[i] = byte((i*13 + 1) % 256)
+	}
+	wantSum := sha256.Sum256(content)
+	stagedPath := filepath.Join(t.TempDir(), "staged.bkp")
+	if err := os.WriteFile(stagedPath, content, 0o600); err != nil {
+		t.Fatalf("write staged file: %v", err)
+	}
+	handle, err := OpenImportFile(pluginID, stagedPath)
+	if err != nil {
+		t.Fatalf("OpenImportFile: %v", err)
+	}
+
+	payload := map[string]any{
+		"entry_key":   "bkp",
+		"entities":    []string{"items"},
+		"file_handle": handle,
+		"file_name":   "staged.bkp",
+		"file_size":   fileSize,
+		"mode":        "invalid_ptr_read",
+	}
+	resp, ok, err := bus.AskPlugin(ctx, pluginID, "import.requested.ask", payload)
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected the real wasm module to answer")
+	}
+
+	var parsed struct {
+		OK      bool           `json:"ok"`
+		Message string         `json:"message"`
+		Error   string         `json:"error"`
+		Counts  map[string]int `json:"counts"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil {
+		t.Fatalf("parse response %s: %v", resp, err)
+	}
+	if !parsed.OK {
+		t.Fatalf("guest reported failure: %+v", parsed)
+	}
+
+	if parsed.Counts["invalid_code"] != hostErrInvalid {
+		t.Fatalf("invalid_code = %v, want %d (hostErrInvalid) for an out-of-bounds dstPtr", parsed.Counts["invalid_code"], hostErrInvalid)
+	}
+	if got := parsed.Counts["bytes"]; got != fileSize {
+		t.Fatalf("bytes read after the invalid-pointer probe = %d, want %d (the full file) — the invalid-pointer call consumed/lost bytes from the stream", got, fileSize)
+	}
+	wantHash := fmt.Sprintf("sha256=%x", wantSum)
+	if !strings.Contains(parsed.Message, wantHash) {
+		t.Fatalf("message %q lacks %q — file content read after the invalid-pointer probe does not match the untouched original (bytes were lost)", parsed.Message, wantHash)
+	}
+}
+
 // TestImportFileCloseAllOnPluginUnload mirrors TestHostTCPCloseAllOnPluginUnload
 // for the staged-file registry: a handle left open by a plugin (a guest
 // that never called import_file_close, host-side cleanup skipped) is
