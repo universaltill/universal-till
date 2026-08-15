@@ -232,6 +232,17 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	// (cashier, kiosk, sync replay, refund, return) goes through, rather
 	// than trusting every SaleLineInput{} construction site to get this
 	// right individually. VariantID wins: it's the more specific identity.
+	//
+	// This mutates in.Lines[i] in place, and since in.Lines is a slice,
+	// that mutation is visible to the caller's own backing array after
+	// CompleteSale returns -- deliberately: publishStockAdjustedForSale
+	// (pos_api.go) and warnIfStockNegative (sync_sales.go) both read
+	// l.ItemID/l.VariantID from the same Lines slice post-completion, and
+	// need the cleared form (CurrentQty's own query only matches when
+	// exactly one is set, same as the CHECK constraints above). A caller
+	// that passed a defensive copy of Lines would silently lose this and
+	// read the wrong inventory row -- same fragility class already called
+	// out for PaymentInput.TipAmount aliasing in pos_api.go.
 	for i := range in.Lines {
 		if in.Lines[i].VariantID != "" {
 			in.Lines[i].ItemID = ""
