@@ -425,6 +425,12 @@ func seedForPages(t *testing.T, db *sql.DB) {
 	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
 	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
 	_, _ = db.Exec(`INSERT INTO inventory(id,item_id,variant_id,location_id,quantity,updated_at) VALUES('inv1','itm1',NULL,'loc_main',50,datetime('now'))`)
+	// ut-docs#744: a variant of itm1, its own barcode + own inventory row,
+	// used by TestTenderHandler_VariantBarcodeScanIsTenderable to drive a
+	// variant scan through the real /api/pos/tender handler end to end.
+	_, _ = db.Exec(`INSERT INTO item_variants(id,item_id,sku,name,price,is_active) VALUES('var1','itm1','ABC-L','Large',150,1)`)
+	_, _ = db.Exec(`INSERT INTO variant_barcodes(barcode,variant_id,is_primary) VALUES('VAR','var1',1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id,item_id,variant_id,location_id,quantity,updated_at) VALUES('inv2',NULL,'var1','loc_main',30,datetime('now'))`)
 	_, _ = db.Exec(`INSERT INTO users(id,username,pin_hash,role,created_at) VALUES('user1','admin','','admin',datetime('now'))`)
 	_, _ = db.Exec(`INSERT INTO users(id,username,pin_hash,role,created_at) VALUES('system','system','','admin',datetime('now'))`)
 }
