@@ -141,11 +141,18 @@ func TestAuthorizeManager(t *testing.T) {
 	db := openAuthTestDB(t)
 	seedOperator(t, db, "alice", "cashier", "1122")
 	seedOperator(t, db, "boss", "manager", "9876")
+	seedOperator(t, db, "root", "super_admin", "5544")
 	svc := NewService(db)
 	ctx := context.Background()
 
 	if u, err := svc.AuthorizeManager(ctx, "9876"); err != nil || u.ID != "boss" {
 		t.Fatalf("manager pin: u=%+v err=%v", u, err)
+	}
+	// A super_admin outranks manager/admin (ut-docs#761 review finding 2:
+	// before this, promoting an operator to super_admin actually stripped
+	// their manager-override capability at checkout).
+	if u, err := svc.AuthorizeManager(ctx, "5544"); err != nil || u.ID != "root" {
+		t.Fatalf("super_admin pin: u=%+v err=%v", u, err)
 	}
 	// A cashier's PIN does not authorize a manager action (and counts as a failure).
 	if _, err := svc.AuthorizeManager(ctx, "1122"); err != ErrInvalidPIN {
@@ -153,6 +160,27 @@ func TestAuthorizeManager(t *testing.T) {
 	}
 	if _, err := svc.AuthorizeManager(ctx, "0000"); err != ErrInvalidPIN {
 		t.Fatalf("wrong pin: err = %v, want ErrInvalidPIN", err)
+	}
+}
+
+// TestUser_IsManager_IncludesSuperAdmin covers ut-docs#761 review finding 2:
+// IsManager() gates five pages (promotions, country settings, translations,
+// kitchen stations, locations) directly by role, and never learned about
+// super_admin — so promoting an operator to super_admin, the highest role,
+// silently locked them out of every one of those pages. authz.go's own
+// comment used to say promoting to super_admin was inert; this diff is what
+// makes it not inert, so this gap had to close in the same change.
+func TestUser_IsManager_IncludesSuperAdmin(t *testing.T) {
+	cases := map[string]bool{
+		"cashier":     false,
+		"manager":     true,
+		"admin":       true,
+		"super_admin": true,
+	}
+	for role, want := range cases {
+		if got := (User{Role: role}).IsManager(); got != want {
+			t.Errorf("IsManager() for role %q = %v, want %v", role, got, want)
+		}
 	}
 }
 

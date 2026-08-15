@@ -144,6 +144,44 @@ func (r *AuthRepo) SetUserActive(ctx context.Context, userID string, active bool
 	return nil
 }
 
+// SetUserRole updates a user's role. Runs inside the given tx when
+// non-nil (the caller journals the change in the same transaction, same
+// convention as SetRolePermission), or directly against the DB otherwise.
+// Callers are responsible for authorizing the change and writing the audit
+// entry — see users_page.go's super_admin-promotion handler and
+// scripts/promote-super-admin's bootstrap CLI (ut-docs#761), the two paths
+// that share this method.
+func (r *AuthRepo) SetUserRole(ctx context.Context, tx *sql.Tx, userID, role string) error {
+	q := `UPDATE users SET role = ? WHERE id = ?`
+	var res sql.Result
+	var err error
+	if tx != nil {
+		res, err = tx.ExecContext(ctx, q, role, userID)
+	} else {
+		res, err = r.db.ExecContext(ctx, q, role, userID)
+	}
+	if err != nil {
+		return fmt.Errorf("set user role: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("set user role: user %s not found", userID)
+	}
+	return nil
+}
+
+// CountUsersByRole reports how many users currently hold role. Used by the
+// super_admin bootstrap CLI (scripts/promote-super-admin, ut-docs#761) to
+// refuse re-bootstrapping over an existing super_admin without an explicit
+// --force, so the CLI can't quietly become a standing backdoor next to the
+// in-app promotion path.
+func (r *AuthRepo) CountUsersByRole(ctx context.Context, role string) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role = ?`, role).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count users by role: %w", err)
+	}
+	return n, nil
+}
+
 // CountOtherActiveAdminsWithPIN counts active admins with a PIN besides the
 // given user — guards "cannot deactivate the last admin".
 func (r *AuthRepo) CountOtherActiveAdminsWithPIN(ctx context.Context, excludeUserID string) (int, error) {
@@ -154,6 +192,25 @@ func (r *AuthRepo) CountOtherActiveAdminsWithPIN(ctx context.Context, excludeUse
 		excludeUserID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count admins: %w", err)
+	}
+	return n, nil
+}
+
+// CountOtherActiveSuperAdminsWithPIN counts active super_admins with a PIN
+// besides the given user — guards "cannot deactivate the last super_admin"
+// (ut-docs#761 review finding 4), the same shape as
+// CountOtherActiveAdminsWithPIN above but for the role that surface never
+// had to consider before super_admin promotion existed. Deactivating the
+// last one would strand the till with nobody able to reach the permission
+// matrix, audit page or backoffice.
+func (r *AuthRepo) CountOtherActiveSuperAdminsWithPIN(ctx context.Context, excludeUserID string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users
+		 WHERE is_active = 1 AND role = 'super_admin' AND pin_hash IS NOT NULL AND pin_hash != '' AND id != ?`,
+		excludeUserID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count super_admins: %w", err)
 	}
 	return n, nil
 }
