@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -569,6 +570,48 @@ func TestFiscalSignRetry_ProtocolFailureDoesNotStarveQueue(t *testing.T) {
 	}
 	if resolved != 2 {
 		t.Fatalf("expected sales 2 and 3 resolved this tick, got %d resolved markers", resolved)
+	}
+}
+
+// A plugin handler error that is NOT a budget timeout (e.g. a wasm guest
+// trap on one specific payload) must be classified entry-level, same as an
+// unparseable/unknown response — it proves nothing about the OTHER queued
+// sales, so it must not starve them either. Only a genuine
+// context.DeadlineExceeded is backend-level (fiscal_sign_hook.go's
+// askFiscalSign). Regression test for the residual gap the 2026-08-15
+// scoped re-review flagged: originally every bus.Ask error, deadline or
+// not, was lumped into fiscalSignFailedBackend.
+func TestFiscalSignRetry_HandlerErrorDoesNotStarveQueue(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	ctx := context.Background()
+	var asked []string
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-buggy", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		var p fiscalSignAskPayload
+		if err := json.Unmarshal(ev.Payload, &p); err != nil {
+			t.Errorf("unmarshal ask payload: %v", err)
+		}
+		asked = append(asked, p.SaleID)
+		if p.SaleID == "sale-1" {
+			// A real handler error, well within budget — not a timeout.
+			return nil, errors.New("guest trapped on this payload")
+		}
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	if err := savePendingFiscalSignRetries(ctx, dp, []pendingFiscalSignRetry{
+		{SaleID: "sale-1", FailedAt: "2026-08-15T09:00:00Z", Payload: fiscalSignAskPayload{SaleID: "sale-1"}},
+		{SaleID: "sale-2", FailedAt: "2026-08-15T09:01:00Z", Payload: fiscalSignAskPayload{SaleID: "sale-2"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fiscalSignRetryTick(ctx, dp)
+
+	if len(asked) != 2 || asked[0] != "sale-1" || asked[1] != "sale-2" {
+		t.Fatalf("a non-timeout handler error on entry 1 must not starve entry 2, asked: %v", asked)
+	}
+	pending, err := loadPendingFiscalSignRetries(ctx, dp)
+	if err != nil || len(pending) != 1 || pending[0].SaleID != "sale-1" {
+		t.Fatalf("expected only the erroring entry kept queued, got %+v (err %v)", pending, err)
 	}
 }
 

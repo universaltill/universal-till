@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -193,9 +194,22 @@ func askFiscalSign(ctx context.Context, bus *plugins.EventBus, payload fiscalSig
 	defer cancel()
 	resp, ok, err := bus.Ask(askCtx, fiscalSignAskEvent, payload)
 	if err != nil {
-		// Transport/handler error — including the guest killed at the
-		// budget deadline. Backend-level: nothing answered in time.
-		return fiscalSignResult{Outcome: fiscalSignFailedBackend, Reason: fmt.Sprintf("signing dispatch failed: %v", err), Payload: payload}
+		if errors.Is(askCtx.Err(), context.DeadlineExceeded) {
+			// The budget itself expired — nothing answered in time, which
+			// says nothing about whether THIS plugin's handler is broken
+			// vs. the backend it talks to being slow/down. Treated as
+			// backend-level so the retry tick doesn't keep re-paying the
+			// full budget against every other queued sale in the same
+			// tick while the timeout condition is still live.
+			return fiscalSignResult{Outcome: fiscalSignFailedBackend, Reason: fmt.Sprintf("signing dispatch failed: %v", err), Payload: payload}
+		}
+		// A real handler/guest error (e.g. a wasm trap on this specific
+		// payload) within budget: this plugin answered, badly, for THIS
+		// entry — it says nothing about the other queued sales, so it must
+		// not abort the retry tick early (that would silently starve every
+		// entry behind a deterministically-misbehaving one, forever). Same
+		// entry-level treatment as an unparseable/unknown response below.
+		return fiscalSignResult{Outcome: fiscalSignFailedEntry, Reason: fmt.Sprintf("signing dispatch failed: %v", err), Payload: payload}
 	}
 	if !ok {
 		// Nobody answered (every subscriber cleanly declined with an empty
