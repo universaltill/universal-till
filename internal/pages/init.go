@@ -314,6 +314,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerAuth(mux, dp, authSvc)
 	registerRefund(mux, dp, authSvc)
 	registerUsers(mux, dp, authSvc)
+	registerPermissionSettings(mux, dp) // super_admin-only role→action grant matrix editor (ut-docs#556)
 	registerLocations(mux, dp)
 	registerPromotions(mux, dp)      // promo-code admin: create/edit/deactivate/list (ut-docs#634)
 	registerKitchenStations(mux, dp) // kitchen station routing (ut-docs#516)

@@ -61,12 +61,13 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			rows = append(rows, row{UserRow: u, HasPIN: u.PinHash != "", CanEdit: canManage(actor, u)})
 		}
 		httpx.Render("ui/pages/users.html", map[string]any{
-			"title":     "Users",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"users":     rows,
-			"isAdmin":   actor.Role == "admin",
-			"errKey":    errKey,
+			"title":              "Users",
+			"theme":              d.CurrentState().Theme,
+			"menuItems":          d.MenuSnapshot(),
+			"users":              rows,
+			"isAdmin":            actor.Role == "admin",
+			"canEditPermissions": actor.Role == lockoutRole, // super_admin only (ut-docs#556)
+			"errKey":             errKey,
 		})(w, r)
 	}
 
