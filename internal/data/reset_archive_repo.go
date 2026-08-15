@@ -417,7 +417,15 @@ func (r *POSRepo) DeleteResetBatch(ctx context.Context, batchID, actorID string)
 		if err != nil {
 			return fmt.Errorf("delete: parse batch created_at %q: %w", createdAt, err)
 		}
-		retainedUntil := archivedAt.AddDate(0, 0, int(minDays))
+		// Truncate to the archive date's own midnight before adding the
+		// window (ut-docs#699): RetainedUntil is displayed date-only
+		// ("2006-01-02" in both the error and the API response), so the
+		// named date must actually become purgeable from its own midnight,
+		// not from the original archive's time-of-day. Without this, a
+		// batch archived at 14:30 stays refused until 14:30 on the named
+		// date, silently contradicting the date-only refusal message.
+		archivedDate := time.Date(archivedAt.Year(), archivedAt.Month(), archivedAt.Day(), 0, 0, 0, 0, time.UTC)
+		retainedUntil := archivedDate.AddDate(0, 0, int(minDays))
 		if time.Now().UTC().Before(retainedUntil) {
 			return &ArchiveWithinRetentionWindowError{RetainedUntil: retainedUntil}
 		}
