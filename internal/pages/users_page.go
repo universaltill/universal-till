@@ -283,4 +283,115 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		_ = repo.RevokeUserSessions(r.Context(), target.ID)
 		http.Redirect(w, r, "/users", http.StatusSeeOther)
 	})
+
+	// POST /api/users/{id}/role closes the ut-docs#766 gap left by
+	// promote-super-admin above: that path can only ever move a user *to*
+	// super_admin, so there was no in-app way to demote one (or change any
+	// other user's role) — the only lever was deactivation, a coarser
+	// action that also drops the user's login/PIN/history association.
+	// General any-role-to-any-role endpoint rather than a second
+	// single-purpose "demote" mirror of promote-super-admin: POST
+	// /api/users above already has to validate+gate every role a user can
+	// be *created* with, so reusing that same shape for role *changes*
+	// covers promotion, demotion and lateral moves with one gate instead
+	// of one handler per direction.
+	mux.HandleFunc("POST /api/users/{id}/role", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := requireManager(w, r)
+		if !ok {
+			return
+		}
+		target, found, err := repo.GetUser(r.Context(), r.PathValue("id"))
+		if err != nil || !found {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		if !canManage(actor, target) {
+			http.Error(w, "cannot manage this user", http.StatusForbidden)
+			return
+		}
+		// Same service-identity exclusion as promote-super-admin: 'kiosk'
+		// (migration 018) is a PIN-less identity reachable by any anonymous
+		// LAN client via the auth-exempt /self-order surface, so changing
+		// its role — up *or* down — is a real privilege-escalation path,
+		// not a theoretical one. canManage already blocks 'system'.
+		if target.ID == "kiosk" {
+			http.Error(w, "cannot change this user's role", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseForm()
+		newRole := r.PostFormValue("role")
+		if newRole != "cashier" && newRole != "manager" && newRole != "admin" && newRole != "super_admin" {
+			http.Redirect(w, r, "/users?err=users.error.role", http.StatusSeeOther)
+			return
+		}
+		if newRole == target.Role {
+			// Already there — a no-op, not an error (mirrors
+			// promote-super-admin's own already-there branch).
+			http.Redirect(w, r, "/users", http.StatusSeeOther)
+			return
+		}
+		// Gating mirrors POST /api/users' create-time rule exactly, applied
+		// symmetrically to both directions of a change: granting *or*
+		// removing super_admin is at least as sensitive as anything
+		// permission_management gates (ut-docs#761); granting or removing
+		// manager/admin needs an admin-or-above actor, same as creating one.
+		if newRole == "super_admin" || target.Role == "super_admin" {
+			if !canPerform(d, r, "permission_management") {
+				http.Error(w, "super_admin required", http.StatusForbidden)
+				return
+			}
+		} else if actor.Role != "admin" && actor.Role != "super_admin" {
+			// The newRole==target.Role return above already guarantees this
+			// branch is only reached when at least one side is manager/admin
+			// (both being "cashier" would mean they're equal) — so the actor
+			// check alone is the whole condition; ut-docs#766 review finding 4.
+			http.Error(w, "only admins change managers or admins", http.StatusForbidden)
+			return
+		}
+		// Last-active-with-a-PIN guards: changing the last admin or the
+		// last super_admin *away* from that role would strand the till the
+		// same way deactivating them would (the /active handler above
+		// already guards exactly this for deactivation) — reusing both
+		// counters rather than inventing a third guard shape.
+		if target.Role == "admin" && newRole != "admin" {
+			others, err := repo.CountOtherActiveAdminsWithPIN(r.Context(), target.ID)
+			if err != nil || others == 0 {
+				http.Redirect(w, r, "/users?err=users.error.last_admin", http.StatusSeeOther)
+				return
+			}
+		}
+		if target.Role == "super_admin" && newRole != "super_admin" {
+			others, err := repo.CountOtherActiveSuperAdminsWithPIN(r.Context(), target.ID)
+			if err != nil || others == 0 {
+				http.Redirect(w, r, "/users?err=users.error.last_super_admin", http.StatusSeeOther)
+				return
+			}
+		}
+
+		tx, err := d.Db.BeginTx(r.Context(), nil)
+		if err != nil {
+			http.Redirect(w, r, "/users?err=users.error.role_change", http.StatusSeeOther)
+			return
+		}
+		defer tx.Rollback()
+
+		fromRole := target.Role
+		if err := repo.SetUserRole(r.Context(), tx, target.ID, newRole); err != nil {
+			http.Redirect(w, r, "/users?err=users.error.role_change", http.StatusSeeOther)
+			return
+		}
+		if err := posRepo.InsertAudit(r.Context(), tx, actor.ID, "user", target.ID, "user_role_changed",
+			map[string]any{"from": fromRole, "to": newRole, "via": "in-app"}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			http.Redirect(w, r, "/users?err=users.error.role_change", http.StatusSeeOther)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			http.Redirect(w, r, "/users?err=users.error.role_change", http.StatusSeeOther)
+			return
+		}
+		// Same "a changed privilege boundary invalidates sessions"
+		// convention as promote-super-admin/deactivate.
+		_ = repo.RevokeUserSessions(r.Context(), target.ID)
+		http.Redirect(w, r, "/users", http.StatusSeeOther)
+	})
 }

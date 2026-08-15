@@ -258,3 +258,189 @@ func TestUsersPage_Deactivate_LastSuperAdminGuard(t *testing.T) {
 		}
 	})
 }
+
+// TestUsersPage_ChangeRole_DemoteSuperAdmin covers the ut-docs#766 gap:
+// promote-super-admin (above) can only ever move a user *to* super_admin,
+// so there was no in-app way back down. A second super_admin must exist
+// first so the last-super_admin guard (below) doesn't itself block the move.
+func TestUsersPage_ChangeRole_DemoteSuperAdmin(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	posRepo := data.NewPOSRepo(dp.Db)
+	insertTestUserWithPIN(t, dp.Db, "sa-1", "sa-1", "SA One", "super_admin", "h1")
+	insertTestUserWithPIN(t, dp.Db, "sa-2", "sa-2", "SA Two", "super_admin", "h2")
+
+	t.Run("plain_admin_denied", func(t *testing.T) {
+		form := url.Values{"role": {"admin"}}
+		rec := postForm(mux, "/api/users/sa-2/role", form, &auth.User{ID: "admin-1", Role: "admin"})
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("admin demoting super_admin = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+		if role, ok := userRole(t, dp.Db, "sa-2"); !ok || role != "super_admin" {
+			t.Fatalf("target role changed by a denied request: role=%q ok=%v", role, ok)
+		}
+	})
+
+	t.Run("super_admin_actor_allowed", func(t *testing.T) {
+		rec := postForm(mux, "/api/users/sa-2/role", url.Values{"role": {"admin"}}, &auth.User{ID: "sa-1", Role: "super_admin"})
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("demote = %d, want 303: %s", rec.Code, rec.Body.String())
+		}
+		if role, ok := userRole(t, dp.Db, "sa-2"); !ok || role != "admin" {
+			t.Fatalf("role after demote: role=%q ok=%v, want admin", role, ok)
+		}
+
+		entries, err := posRepo.ListAudit(t.Context(), data.AuditFilters{EntityType: "user", ActorID: "sa-1"})
+		if err != nil {
+			t.Fatalf("ListAudit: %v", err)
+		}
+		found := false
+		for _, e := range entries {
+			if e.Action == "user_role_changed" && e.EntityID == "sa-2" {
+				found = true
+				if !strings.Contains(e.DataJSON, `"from":"super_admin"`) || !strings.Contains(e.DataJSON, `"to":"admin"`) {
+					t.Fatalf("audit payload missing from/to: %s", e.DataJSON)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("expected a user_role_changed audit entry by sa-1, got %+v", entries)
+		}
+	})
+}
+
+// TestUsersPage_ChangeRole_LastSuperAdminGuard mirrors
+// TestUsersPage_Deactivate_LastSuperAdminGuard: changing the only
+// super_admin's role away from super_admin would strand the till exactly
+// the same way deactivating them would.
+func TestUsersPage_ChangeRole_LastSuperAdminGuard(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	insertTestUserWithPIN(t, dp.Db, "sa-only", "sa-only", "Only SA", "super_admin", "h1")
+
+	rec := postForm(mux, "/api/users/sa-only/role", url.Values{"role": {"admin"}}, &auth.User{ID: "sa-only", Role: "super_admin"})
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "err=users.error.last_super_admin") {
+		t.Fatalf("demote last super_admin = %d loc=%q, want 303 with last_super_admin error", rec.Code, rec.Header().Get("Location"))
+	}
+	if role, ok := userRole(t, dp.Db, "sa-only"); !ok || role != "super_admin" {
+		t.Fatalf("sa-only role must be unchanged, role=%q ok=%v", role, ok)
+	}
+}
+
+// TestUsersPage_ChangeRole_LastAdminGuard: same guard, extended to admin —
+// CountOtherActiveAdminsWithPIN already exists for the deactivate handler,
+// so role-change reuses it rather than leaving this direction unguarded.
+func TestUsersPage_ChangeRole_LastAdminGuard(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	insertTestUserWithPIN(t, dp.Db, "sa-1", "sa-1", "SA One", "super_admin", "h1")
+	insertTestUserWithPIN(t, dp.Db, "admin-only", "admin-only", "Only Admin", "admin", "h2")
+
+	t.Run("last_admin_blocked", func(t *testing.T) {
+		rec := postForm(mux, "/api/users/admin-only/role", url.Values{"role": {"manager"}}, &auth.User{ID: "sa-1", Role: "super_admin"})
+		if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "err=users.error.last_admin") {
+			t.Fatalf("demote last admin = %d loc=%q, want 303 with last_admin error", rec.Code, rec.Header().Get("Location"))
+		}
+		if role, ok := userRole(t, dp.Db, "admin-only"); !ok || role != "admin" {
+			t.Fatalf("admin-only role must be unchanged, role=%q ok=%v", role, ok)
+		}
+	})
+
+	t.Run("second_admin_allows_change", func(t *testing.T) {
+		insertTestUserWithPIN(t, dp.Db, "admin-second", "admin-second", "Second Admin", "admin", "h3")
+		rec := postForm(mux, "/api/users/admin-only/role", url.Values{"role": {"manager"}}, &auth.User{ID: "sa-1", Role: "super_admin"})
+		if rec.Code != http.StatusSeeOther || strings.Contains(rec.Header().Get("Location"), "err=") {
+			t.Fatalf("demote with a second admin present = %d loc=%q, want a plain 303", rec.Code, rec.Header().Get("Location"))
+		}
+		if role, ok := userRole(t, dp.Db, "admin-only"); !ok || role != "manager" {
+			t.Fatalf("role after demote: role=%q ok=%v, want manager", role, ok)
+		}
+	})
+}
+
+func TestUsersPage_ChangeRole_ManagerCannotPromoteCashier(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	insertTestUser(t, dp.Db, "cash-1", "cash-1", "Cash One", "cashier")
+
+	rec := postForm(mux, "/api/users/cash-1/role", url.Values{"role": {"manager"}}, &auth.User{ID: "mgr-1", Role: "manager"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("manager promoting cashier to manager = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if role, ok := userRole(t, dp.Db, "cash-1"); !ok || role != "cashier" {
+		t.Fatalf("target role changed by a denied request: role=%q ok=%v", role, ok)
+	}
+}
+
+func TestUsersPage_ChangeRole_ManagerCannotTouchAdmin(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	insertTestUser(t, dp.Db, "admin-1", "admin-1", "Admin One", "admin")
+
+	// canManage denies a manager acting on a non-cashier target before the
+	// role-sensitivity gate is even reached.
+	rec := postForm(mux, "/api/users/admin-1/role", url.Values{"role": {"cashier"}}, &auth.User{ID: "mgr-1", Role: "manager"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("manager changing admin's role = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUsersPage_ChangeRole_AdminPromotesCashierToManager(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	insertTestUser(t, dp.Db, "cash-1", "cash-1", "Cash One", "cashier")
+
+	rec := postForm(mux, "/api/users/cash-1/role", url.Values{"role": {"manager"}}, &auth.User{ID: "admin-1", Role: "admin"})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("admin promoting cashier to manager = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if role, ok := userRole(t, dp.Db, "cash-1"); !ok || role != "manager" {
+		t.Fatalf("role after promote: role=%q ok=%v, want manager", role, ok)
+	}
+}
+
+func TestUsersPage_ChangeRole_SameRoleIsNoop(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	posRepo := data.NewPOSRepo(dp.Db)
+	insertTestUser(t, dp.Db, "cash-1", "cash-1", "Cash One", "cashier")
+
+	rec := postForm(mux, "/api/users/cash-1/role", url.Values{"role": {"cashier"}}, &auth.User{ID: "mgr-1", Role: "manager"})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("same-role change = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	entries, err := posRepo.ListAudit(t.Context(), data.AuditFilters{EntityType: "user", ActorID: "mgr-1"})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	for _, e := range entries {
+		if e.Action == "user_role_changed" && e.EntityID == "cash-1" {
+			t.Fatalf("no-op same-role change must not journal an audit entry, got %+v", e)
+		}
+	}
+}
+
+func TestUsersPage_ChangeRole_InvalidRole(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	insertTestUser(t, dp.Db, "cash-1", "cash-1", "Cash One", "cashier")
+
+	rec := postForm(mux, "/api/users/cash-1/role", url.Values{"role": {"owner"}}, &auth.User{ID: "admin-1", Role: "admin"})
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "err=users.error.role") {
+		t.Fatalf("invalid role = %d loc=%q, want 303 with role error", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestUsersPage_ChangeRole_KioskServiceIdentityForbidden(t *testing.T) {
+	mux, dp, _ := newUsersTestDeps(t)
+	insertTestUser(t, dp.Db, "kiosk", "kiosk", "Self-order kiosk", "cashier")
+
+	rec := postForm(mux, "/api/users/kiosk/role", url.Values{"role": {"manager"}}, &auth.User{ID: "sa-1", Role: "super_admin"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("changing kiosk role = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if role, ok := userRole(t, dp.Db, "kiosk"); !ok || role != "cashier" {
+		t.Fatalf("kiosk role changed: role=%q ok=%v", role, ok)
+	}
+}
+
+func TestUsersPage_ChangeRole_UnknownUser404s(t *testing.T) {
+	mux, _, _ := newUsersTestDeps(t)
+
+	rec := postForm(mux, "/api/users/does-not-exist/role", url.Values{"role": {"manager"}}, &auth.User{ID: "sa-1", Role: "super_admin"})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("change role of unknown user = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+}
