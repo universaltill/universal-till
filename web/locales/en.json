@@ -1422,7 +1422,7 @@
   "receipt.fiscal.unsigned_signing": "TSE signing was unavailable when this sale was recorded; signing is retried automatically.",
   "users.role.super_admin": "super admin",
   "permissions.title": "Permissions",
-  "permissions.intro": "Only super_admin can grant or revoke what each role is allowed to do. Every change is recorded in the audit trail.",
+  "permissions.intro": "Only a super admin can grant or revoke what each role is allowed to do. Every change is recorded in the audit trail.",
   "permissions.col.action": "Action",
   "permissions.saved": "Saved",
   "permissions.lockout_error": "Can't revoke this — it would lock every super admin out of this page.",

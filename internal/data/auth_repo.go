@@ -268,6 +268,36 @@ func (r *AuthRepo) HasPermission(ctx context.Context, role, action string) (bool
 	return granted != 0, nil
 }
 
+// RoleExists reports whether role is a recognized row in roles — the
+// matrix editor validates against this before writing, so a typo'd or
+// forged role in a POST fails with a clean 400 instead of a raw FK
+// constraint error surfacing to the client.
+func (r *AuthRepo) RoleExists(ctx context.Context, role string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `SELECT 1 FROM roles WHERE role = ?`, role).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("role exists: %w", err)
+	}
+	return true, nil
+}
+
+// ActionExists reports whether action is a recognized row in
+// permission_actions. Same validate-before-write purpose as RoleExists.
+func (r *AuthRepo) ActionExists(ctx context.Context, action string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `SELECT 1 FROM permission_actions WHERE action = ?`, action).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("action exists: %w", err)
+	}
+	return true, nil
+}
+
 // PermissionGrant is one cell of the role×action permission matrix (ut-docs#556).
 type PermissionGrant struct {
 	Role    string
