@@ -3657,18 +3657,35 @@ func (r *POSRepo) ResolveShortcutLine(ctx context.Context, code string) (Shortcu
 	}
 	// SKU exact
 	if row, ok := r.resolveSKU(ctx, q); ok {
-		price := r.resolvePrice(ctx, row.ItemID, row.VariantID, row.Price)
+		price := r.resolveRowPrice(ctx, row)
+		if row.Variant != "" {
+			row.ItemName = row.ItemName + " - " + row.Variant
+		}
 		return r.toShortcutLine(row.SKU, price, row), true
 	}
 	// Name like
 	if row, ok := r.resolveNameLike(ctx, "%"+q+"%"); ok {
-		price := r.resolvePrice(ctx, row.ItemID, row.VariantID, row.Price)
-		if row.ItemName == "" {
+		price := r.resolveRowPrice(ctx, row)
+		if row.Variant != "" {
+			row.ItemName = row.ItemName + " - " + row.Variant
+		} else if row.ItemName == "" {
 			row.ItemName = q
 		}
 		return r.toShortcutLine(q, price, row), true
 	}
 	return ShortcutLine{}, false
+}
+
+// resolveRowPrice prices a resolved item/variant row. ResolveCurrentPrice
+// rejects a row with both ItemID and VariantID set (item_id/variant_id are
+// mutually exclusive everywhere a price_history row is looked up), so a
+// variant match must be priced by its VariantID alone, dropping ItemID —
+// which is otherwise still needed on the row for tax-code/display purposes.
+func (r *POSRepo) resolveRowPrice(ctx context.Context, row shortcutPriceRow) int64 {
+	if row.VariantID != "" {
+		return r.resolvePrice(ctx, "", row.VariantID, row.Price)
+	}
+	return r.resolvePrice(ctx, row.ItemID, "", row.Price)
 }
 
 // ResolveCurrentPrice returns the active price (minor units) for an item or variant.
@@ -3812,7 +3829,29 @@ WHERE i.is_active = 1 AND i.sku = ?
 LIMIT 1
 `, sku)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err == nil {
+		return res, true
+	}
+	return r.resolveVariantSKU(ctx, sku)
+}
+
+// resolveVariantSKU is resolveSKU's fallback for a variant's own SKU (not
+// the parent item's) — items.sku never matches it, so without this a
+// variant could not be found by exact-SKU search at all.
+func (r *POSRepo) resolveVariantSKU(ctx context.Context, sku string) (shortcutPriceRow, bool) {
+	row := r.db.QueryRowContext(ctx, `
+SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+FROM item_variants v
+JOIN items i ON i.id = v.item_id
+LEFT JOIN tax_codes t ON t.id = i.tax_code_id
+WHERE v.is_active = 1 AND i.is_active = 1 AND v.sku = ?
+LIMIT 1
+`, sku)
+	var res shortcutPriceRow
+	res.SKU = sku
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -3830,7 +3869,29 @@ ORDER BY i.name
 LIMIT 1
 `, like)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err == nil {
+		return res, true
+	}
+	return r.resolveVariantNameLike(ctx, like)
+}
+
+// resolveVariantNameLike is resolveNameLike's fallback for a variant's own
+// name (not the parent item's) — items.name never matches it, so without
+// this a variant could not be found by name search at all.
+func (r *POSRepo) resolveVariantNameLike(ctx context.Context, like string) (shortcutPriceRow, bool) {
+	row := r.db.QueryRowContext(ctx, `
+SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+FROM item_variants v
+JOIN items i ON i.id = v.item_id
+LEFT JOIN tax_codes t ON t.id = i.tax_code_id
+WHERE v.is_active = 1 AND i.is_active = 1 AND v.name LIKE ?
+ORDER BY v.name
+LIMIT 1
+`, like)
+	var res shortcutPriceRow
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
