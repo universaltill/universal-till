@@ -743,12 +743,12 @@
       </label>
     </div>
     <div class="field-pair">
-      <label>{{ T "settings.printer.address" }} <input type="text" name="address" value="{{ $p.Address }}" placeholder="192.168.1.50:9100"></label>
-      <label>{{ T "settings.printer.device" }} <input type="text" name="device" value="{{ $p.Device }}" placeholder="/dev/usb/lp0"></label>
+      <label>{{ T "settings.printer.address" }} <input type="text" name="address" value="{{ $p.Address }}" placeholder="192.168.1.50:9100" dir="ltr"></label>
+      <label>{{ T "settings.printer.device" }} <input type="text" name="device" value="{{ $p.Device }}" placeholder="/dev/usb/lp0" dir="ltr"></label>
     </div>
     <p class="muted" style="margin:.2rem 0 0">{{ T "settings.printer.system_hint" }}</p>
     <label>{{ T "settings.printer.kitchen_addr" }}
-      <input type="text" name="kitchenAddr" value="{{ $p.KitchenAddress }}" placeholder="192.168.1.60:9100">
+      <input type="text" name="kitchenAddr" value="{{ $p.KitchenAddress }}" placeholder="192.168.1.60:9100" dir="ltr">
       <span class="muted">{{ T "settings.printer.kitchen_help" }}</span>
     </label>
     <label><input type="checkbox" name="autoPrint" {{ if $p.AutoPrint }}checked{{ end }}> {{ T "settings.printer.auto" }}</label>

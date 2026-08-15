@@ -590,6 +590,35 @@ func TestSettingsPage_TillRegisterPickerRendersAndSelects(t *testing.T) {
 	}
 }
 
+// ut-docs#553: the printer/kitchen-printer address fields hold technical
+// LTR strings (host:port, a device path) that render corrupted/right-
+// truncated under an RTL locale unless force-directioned, the same bug
+// class independently caught and fixed on /kitchen-stations (ut-docs#516).
+// This regression test would have failed against the pre-fix markup, which
+// had no dir="ltr" on any of the three inputs.
+func TestSettingsPage_PrinterAddressFieldsAreLTR(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	for _, want := range []string{
+		`name="address" value="" placeholder="192.168.1.50:9100" dir="ltr"`,
+		`name="device" value="" placeholder="/dev/usb/lp0" dir="ltr"`,
+		`name="kitchenAddr" value="" placeholder="192.168.1.60:9100" dir="ltr"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected printer field with dir=\"ltr\": %s\ngot:\n%s", want, body)
+		}
+	}
+}
+
 // A cashier (and an unauthenticated/no-session request) is refused on both
 // mutating settings endpoints, matching every other mutating settings
 // endpoint's isManagerOrAuthOff gate in this file (ut-docs#179 — /save and
