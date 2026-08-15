@@ -68,6 +68,16 @@ func TestPublish_NeverPanicsRacingManagerReload(t *testing.T) {
 			// whole point of the #504 fix.
 		}
 	}()
+	// Drain via t.Cleanup, registered right after the publisher starts, so it
+	// still runs even if a t.Fatalf in the reload loop below unwinds the test
+	// via runtime.Goexit (ut-docs#509, ut-docs#750): without this, the leaked
+	// publisher kept calling Publish against the closed test DB, and the
+	// resulting `sql: database is closed` log storm starved the shared
+	// logger's mutex for whichever test runs next in the same process.
+	t.Cleanup(func() {
+		close(stop)
+		publisherWg.Wait()
+	})
 
 	for i := 0; i < 100; i++ {
 		if err := m.Reload(ctx); err != nil {
@@ -82,11 +92,8 @@ func TestPublish_NeverPanicsRacingManagerReload(t *testing.T) {
 			t.Fatalf("resubscribe %d: %v", i, err)
 		}
 	}
-
-	close(stop)
-	publisherWg.Wait()
 	// Reaching here without a panic (run with -race to also confirm no data
-	// race) is the assertion.
+	// race) is the assertion. The publisher is drained by the t.Cleanup above.
 }
 
 // Regression guard for a finding from ut-docs#504's own independent review:
