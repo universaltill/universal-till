@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,10 @@ func newPOSTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 
 	resolver := stubResolver{
 		"ABC": {SKU: "ABC", Name: "Apple", Qty: 1, PriceCents: 100, ItemID: "itm1", TaxRateBP: 2000},
+		// ut-docs#744: mirrors exactly what ui.PriceResolverAdapter produces
+		// for a real variant barcode scan -- BOTH ItemID and VariantID set
+		// (see internal/ui/resolver_test.go's TestResolve_VariantBarcode).
+		"VAR": {SKU: "VAR", Name: "Apple - Large", Qty: 1, PriceCents: 150, ItemID: "itm1", VariantID: "var1", TaxRateBP: 2000},
 	}
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
 
@@ -223,6 +228,68 @@ func TestTenderHandler_JSONAcceptReturnsSaleSummary(t *testing.T) {
 	}
 	if subtotal != 100 || taxTotal != 20 {
 		t.Fatalf("expected subtotal=100 tax_total=20, got subtotal=%d tax_total=%d", subtotal, taxTotal)
+	}
+}
+
+// ut-docs#744: a variant scanned by barcode resolves with BOTH ItemID and
+// VariantID set on the BasketLine (deliberately -- tax_hook.go's
+// tax.rate.ask payload still needs ItemID for a variant line), and this
+// handler copies both verbatim into pos.SaleLineInput. Before the fix,
+// CompleteSale rejected any line with both set, so scanning a variant made
+// it completely untenderable through the real /api/pos/tender route. This
+// drives the real handler end to end (not just CompleteSale directly) to
+// prove the full resolve -> basket -> tender chain works, and that only
+// variant_id (never item_id) lands on the persisted sale_lines row.
+func TestTenderHandler_VariantBarcodeScanIsTenderable(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("VAR"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	line := dp.Engine.Basket().Lines[0]
+	if line.ItemID != "itm1" || line.VariantID != "var1" {
+		t.Fatalf("fixture drifted from a real variant scan's shape: %+v", line)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":180}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var out struct {
+		Data struct {
+			SaleID string `json:"saleId"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("expected valid JSON, got: %v\nbody: %s", err, rec.Body.String())
+	}
+	if out.Error != nil {
+		t.Fatalf("expected error:null on success, got %+v", out.Error)
+	}
+
+	var itemID, variantID sql.NullString
+	if err := dp.Db.QueryRow(`SELECT item_id, variant_id FROM sale_lines WHERE sale_id = ?`, out.Data.SaleID).Scan(&itemID, &variantID); err != nil {
+		t.Fatalf("query sale_line: %v", err)
+	}
+	if itemID.Valid {
+		t.Fatalf("expected item_id NULL for a variant line, got %q", itemID.String)
+	}
+	if !variantID.Valid || variantID.String != "var1" {
+		t.Fatalf("expected variant_id = var1, got %+v", variantID)
+	}
+
+	var qty float64
+	if err := dp.Db.QueryRow(`SELECT quantity FROM inventory WHERE variant_id = 'var1' AND location_id = 'loc_main'`).Scan(&qty); err != nil {
+		t.Fatal(err)
+	}
+	if qty != 29 {
+		t.Fatalf("expected variant inventory 29 (started at 30, sold 1), got %v", qty)
 	}
 }
 
