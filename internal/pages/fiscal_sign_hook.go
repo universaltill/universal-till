@@ -346,12 +346,23 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 }
 
 // recordFiscalTSEEvidence persists an approved answer's §6 KassenSichV
-// evidence for a sale (ut-docs#585) — best-effort and log-only on failure,
-// exactly like declareUnsignedFiscalSale's bookkeeping: the sale is already
-// committed and must never be unwound over an evidence write failing.
-// Idempotent at the repository level (first write wins), and a nil evidence
-// (bare approval, pre-1.1.0 signer) is a no-op.
-func recordFiscalTSEEvidence(ctx context.Context, repo *data.POSRepo, saleID string, ev *fiscalTSEEvidence) {
+// evidence for a sale (ut-docs#585) — best-effort on failure, exactly like
+// declareUnsignedFiscalSale's bookkeeping: the sale is already committed and
+// must never be unwound over an evidence write failing. Idempotent at the
+// repository level (first write wins), and a nil evidence (bare approval,
+// pre-1.1.0 signer) is a no-op.
+//
+// A write failure here used to be log-only — silent to the operator and the
+// journal, unlike the sibling declareUnsignedFiscalSale path (ut-docs#763).
+// That asymmetry mattered: a sale that WAS signed but then lost its evidence
+// is arguably worse than a cleanly-declared unsigned one, since nothing on
+// the receipt or in the audit trail flagged it as needing attention. So a
+// failure now gets the same two-part observability declareUnsignedFiscalSale
+// gives its own failure: a journal marker (actorID is "" from the background
+// retry tick, same as its neighbouring fiscal_signing_resolved marker) and a
+// Warnf into the Problems ring. Still never unwinds or blocks the sale —
+// this is additive observability only.
+func recordFiscalTSEEvidence(ctx context.Context, repo *data.POSRepo, saleID, actorID string, ev *fiscalTSEEvidence) {
 	if ev == nil {
 		return
 	}
@@ -366,6 +377,14 @@ func recordFiscalTSEEvidence(ctx context.Context, repo *data.POSRepo, saleID str
 		SignatureAlgorithm: ev.SignatureAlgorithm,
 	}); err != nil {
 		logging.L().Errorf("fiscal signing: persist TSE evidence for sale %s: %v", saleID, err)
+		now := time.Now().UTC().Format(time.RFC3339)
+		if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, "fiscal_evidence_persist_failed", map[string]any{
+			"reason":    err.Error(),
+			"failed_at": now,
+		}, now, ""); auditErr != nil {
+			log.Printf("fiscal signing: fiscal_evidence_persist_failed audit marker for sale %s failed: %v", saleID, auditErr)
+		}
+		logging.L().Warnf("fiscal signing: sale %s was signed but its §6 KassenSichV evidence failed to persist (%v) — no evidence will be shown on this sale's receipt; journaled for follow-up", saleID, err)
 	}
 }
 
@@ -574,7 +593,7 @@ func fiscalSignRetryTick(ctx context.Context, d *common.Deps) {
 			// (ut-docs#585): a recovered sale's reprints show the same §6
 			// field set a live-signed sale's do. Idempotent — if evidence
 			// somehow already exists for the sale, the first write stands.
-			recordFiscalTSEEvidence(ctx, repo, entry.SaleID, res.Evidence)
+			recordFiscalTSEEvidence(ctx, repo, entry.SaleID, "", res.Evidence)
 			now := time.Now().UTC().Format(time.RFC3339)
 			if auditErr := repo.InsertAudit(ctx, nil, "", "sale", entry.SaleID, "fiscal_signing_resolved", map[string]any{
 				"resolved_at":       now,
