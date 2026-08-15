@@ -86,8 +86,42 @@ type fiscalSignAskVATLine struct {
 //     semantics, treated exactly like no answer, NOT a failure.
 //   - "unreachable":       the plugin declares its signing backend
 //     unreachable — a genuine failure → proceed-and-declare.
+// Since contract v1.1.0 (ut-docs#585) an "approved" answer MAY additionally
+// carry a `tse` object with the §6 KassenSichV receipt evidence — see
+// fiscalTSEEvidence. Purely additive: a bare {"status":"approved"} stays a
+// fully valid answer (no evidence persisted/rendered for that sale), and the
+// other two states gain no fields.
 type fiscalSignAskResponse struct {
-	Status string `json:"status"`
+	Status string             `json:"status"`
+	TSE    *fiscalTSEEvidence `json:"tse,omitempty"`
+}
+
+// fiscalTSEEvidence is the optional §6 KassenSichV signing evidence a signer
+// may return alongside "approved" (contract fiscal-sign-ask.md v1.1.0,
+// ut-docs#585): the TSE's transaction number, signature counter, serial
+// number, transaction start/log time, the signature itself (base64) and the
+// signing algorithm identifier. Every field is individually optional; the
+// evidence as a whole counts as PRESENT only when Signature is non-empty
+// (see hasSignature) — a signature-less evidence object proves nothing worth
+// persisting. Field set modeled on the legal requirement, not on any
+// vendor's API shape: no fiskaly sandbox/real TSE was available to copy
+// field names from (the ut-docs#757 honesty constraint), so end-to-end
+// verification against a real TSE is an explicit follow-up.
+type fiscalTSEEvidence struct {
+	TransactionNumber  int64  `json:"transaction_number,omitempty"`
+	SignatureCounter   int64  `json:"signature_counter,omitempty"`
+	SerialNumber       string `json:"serial_number,omitempty"`
+	StartTime          string `json:"start_time,omitempty"`
+	LogTime            string `json:"log_time,omitempty"`
+	Signature          string `json:"signature,omitempty"`
+	SignatureAlgorithm string `json:"signature_algorithm,omitempty"`
+}
+
+// hasSignature is the presence test the contract fixes: evidence without the
+// signature itself (the receipt's Prüfwert) is treated exactly like no
+// evidence — nothing persisted, nothing rendered, never placeholders.
+func (e *fiscalTSEEvidence) hasSignature() bool {
+	return e != nil && e.Signature != ""
 }
 
 const (
@@ -144,6 +178,12 @@ type fiscalSignResult struct {
 	Outcome fiscalSignOutcome
 	Reason  string
 	Payload fiscalSignAskPayload
+	// Evidence is the §6 KassenSichV TSE evidence parsed from an approved
+	// answer (contract v1.1.0, ut-docs#585) — non-nil ONLY on
+	// fiscalSignApproved AND only when the answer carried a usable evidence
+	// object (hasSignature); nil means "approved, nothing to persist/render",
+	// exactly the pre-1.1.0 behaviour.
+	Evidence *fiscalTSEEvidence
 }
 
 // dispatchFiscalSignAsk runs the fiscal.sign.ask point for one tender.
@@ -226,7 +266,14 @@ func askFiscalSign(ctx context.Context, bus *plugins.EventBus, payload fiscalSig
 	}
 	switch parsed.Status {
 	case fiscalSignStatusApproved:
-		return fiscalSignResult{Outcome: fiscalSignApproved, Payload: payload}
+		// v1.1.0 evidence rides along only when usable (hasSignature); a
+		// bare or signature-less approval is the same clean approval it
+		// always was — the evidence never changes the outcome.
+		res := fiscalSignResult{Outcome: fiscalSignApproved, Payload: payload}
+		if parsed.TSE.hasSignature() {
+			res.Evidence = parsed.TSE
+		}
+		return res
 	case fiscalSignStatusNotThisTerminal:
 		// An explicit "not me" — ADR-0041 Decision F: same as no answer.
 		return fiscalSignResult{Outcome: fiscalSignNoOpinion, Payload: payload}
@@ -295,6 +342,30 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		TenderedAt:   now.Format(time.RFC3339),
 		Payments:     payments,
 		VATBreakdown: vat,
+	}
+}
+
+// recordFiscalTSEEvidence persists an approved answer's §6 KassenSichV
+// evidence for a sale (ut-docs#585) — best-effort and log-only on failure,
+// exactly like declareUnsignedFiscalSale's bookkeeping: the sale is already
+// committed and must never be unwound over an evidence write failing.
+// Idempotent at the repository level (first write wins), and a nil evidence
+// (bare approval, pre-1.1.0 signer) is a no-op.
+func recordFiscalTSEEvidence(ctx context.Context, repo *data.POSRepo, saleID string, ev *fiscalTSEEvidence) {
+	if ev == nil {
+		return
+	}
+	if err := repo.RecordFiscalTSESignature(ctx, data.FiscalTSESignature{
+		SaleID:             saleID,
+		TransactionNumber:  ev.TransactionNumber,
+		SignatureCounter:   ev.SignatureCounter,
+		SerialNumber:       ev.SerialNumber,
+		StartTime:          ev.StartTime,
+		LogTime:            ev.LogTime,
+		Signature:          ev.Signature,
+		SignatureAlgorithm: ev.SignatureAlgorithm,
+	}); err != nil {
+		logging.L().Errorf("fiscal signing: persist TSE evidence for sale %s: %v", saleID, err)
 	}
 }
 
@@ -499,6 +570,11 @@ func fiscalSignRetryTick(ctx context.Context, d *common.Deps) {
 		res := askFiscalSign(ctx, bus, payload)
 		if res.Outcome == fiscalSignApproved {
 			resolvedIDs = append(resolvedIDs, entry.SaleID)
+			// A background re-sign that returned evidence records it too
+			// (ut-docs#585): a recovered sale's reprints show the same §6
+			// field set a live-signed sale's do. Idempotent — if evidence
+			// somehow already exists for the sale, the first write stands.
+			recordFiscalTSEEvidence(ctx, repo, entry.SaleID, res.Evidence)
 			now := time.Now().UTC().Format(time.RFC3339)
 			if auditErr := repo.InsertAudit(ctx, nil, "", "sale", entry.SaleID, "fiscal_signing_resolved", map[string]any{
 				"resolved_at":       now,

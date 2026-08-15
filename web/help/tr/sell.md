@@ -40,3 +40,7 @@ Bir mali imzalama eklentisi kuruluysa, kasa her satışı ödeme anında imzalat
 - kasa, satış imzalanana kadar arka planda birkaç dakikada bir otomatik olarak yeniden dener — kurtarılan her satış denetim kaydına kendi girişini alır.
 
 İmzalama kesintisi tek başına satışı asla duraklatmaz — neden ağ da olsa imzalama hizmeti de olsa, kasa satışları tamamlamaya ve açığı yukarıda anlatıldığı gibi kaydetmeye devam eder. Arka plandaki bir yeniden deneme satışı imzaladığında, kurtarma denetim kaydına işlenir ve o fişin sonraki her yeniden baskısı kesinti notu olmadan, temiz çıkar. (Bu sayfada daha önce anlatılan resmi kayıt modu duraklatması ayrı bir güvencedir; imzalama kesintisi onu tetiklemez.)
+
+### Fişlerdeki TSE imza bloğu
+
+İmzalama eklentisi bir satışı imzalayıp imza ayrıntılarını döndürdüğünde, fişte eklentinin döndürdüğü imza ayrıntılarını gösteren bir "TSE imzası" bloğu yer alır: TSE seri numarası, işlem numarası, imza sayacı, işlem başlangıç ve bitiş zamanları, imza algoritması ve imzanın kendisi. Ekrandaki fiş bu ayrıntıları ayrıca QR kod olarak da gösterir (QR biçimi henüz geçicidir ve Almanya'daki kullanıma geçmeden önce sertifikalı bir TSE'ye karşı doğrulanacaktır); termal baskı ise metin satırları olarak yazar. Bu blok yalnızca imzalama hizmeti o satış için bu verileri gerçekten döndürdüğünde görünür — bloğu olmayan bir fiş, verinin sağlanmadığı anlamına gelir ve hiçbir alan asla yer tutucu değerlerle doldurulmaz.

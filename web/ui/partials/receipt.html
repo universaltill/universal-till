@@ -18,6 +18,9 @@
   .receipt-legal {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; color: #374151;}
   .receipt-legal-label {font-weight: 600; margin-bottom: 0.25rem;}
   .receipt-legal-line {margin: 0.15rem 0;}
+  .receipt-tse-signature {font-family: monospace; font-size: 0.75rem; overflow-wrap: anywhere;}
+  .receipt-tse-qr {text-align: center; margin-block-start: 0.4rem;}
+  .receipt-tse-qr img {max-width: 100%;}
   .receipt-printer-warning {display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
   .receipt-printer-message {font-size: 0.9rem;}
   @media print {
@@ -103,6 +106,26 @@
          (ADR-0040). Signing is retried automatically in the background. -->
     <div class="receipt-legal">
       <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_signing" }}</div>
+    </div>
+    {{ end }}
+    {{ if .TSESignature }}
+    <!-- ut-docs#585 (fiscal.sign.ask contract v1.1.0): the sale's recorded
+         §6 KassenSichV TSE evidence, rendered from the persisted
+         fiscal_tse_signatures row — real recorded values only; this whole
+         block is absent when no evidence was recorded, and individual
+         fields the signer didn't return are skipped, never placeholders.
+         Factual data display, no compliance-outcome claim (ADR-0040). The
+         QR payload format is provisional — see buildTSEQRPayload. -->
+    <div class="receipt-legal receipt-tse">
+      <div class="receipt-legal-label">{{ T "receipt.fiscal.tse.title" }}</div>
+      {{ if .TSESignature.SerialNumber }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.serial_number" }}: {{ .TSESignature.SerialNumber }}</div>{{ end }}
+      {{ if .TSESignature.TransactionNumber }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.transaction_number" }}: {{ .TSESignature.TransactionNumber }}</div>{{ end }}
+      {{ if .TSESignature.SignatureCounter }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature_counter" }}: {{ .TSESignature.SignatureCounter }}</div>{{ end }}
+      {{ if .TSESignature.StartTime }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.start_time" }}: {{ .TSESignature.StartTime }}</div>{{ end }}
+      {{ if .TSESignature.LogTime }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.log_time" }}: {{ .TSESignature.LogTime }}</div>{{ end }}
+      {{ if .TSESignature.SignatureAlgorithm }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature_algorithm" }}: {{ .TSESignature.SignatureAlgorithm }}</div>{{ end }}
+      {{ if .TSESignature.Signature }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature" }}: <span class="receipt-tse-signature">{{ .TSESignature.Signature }}</span></div>{{ end }}
+      {{ if .TSESignature.QRDataURI }}<div class="receipt-tse-qr"><img src="{{ .TSESignature.QRDataURI }}" alt="" width="140" height="140"></div>{{ end }}
     </div>
     {{ end }}
     {{ if .DesignFooter }}<div class="receipt-design-line" style="margin-top:.5rem"><small>{{ .DesignFooter }}</small></div>{{ end }}
