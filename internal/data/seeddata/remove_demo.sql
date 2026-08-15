@@ -4,22 +4,28 @@
 -- DemoSeedRepo.RemoveDemoCatalogue.
 --
 -- "Untouched" safety rule: a demo item may only be deleted when it is still
--- flagged is_sample_data = 1 AND nothing in sale_lines or stock_movements
--- references it — directly or through one of its variants (sale_lines and
--- stock_movements have no ON DELETE CASCADE, so deleting a sold/adjusted
--- item would either fail the FK or orphan real trading history) — AND no
--- HELD (parked) sale references it either, the same signal
--- remove_demo_customers_promos.sql already checks for demo customers
--- (ut-docs#633): a held_sales row is an in-progress basket that hasn't
--- reached sale_lines/stock_movements yet, but still FK-fails on tender if
--- the item (or variant) it was parked against no longer exists. A demo
--- category/brand goes only when, after the item pass, no remaining row
--- (demo or operator-created) still references it.
+-- flagged is_sample_data = 1 AND still PRISTINE — its sku/name/base_price
+-- still match the values it was seeded with (ut-docs#566: a shop that
+-- renamed/repriced a demo item before ever selling or stock-adjusting it
+-- has already made it real, and trading history alone missed that) — AND
+-- nothing in sale_lines or stock_movements references it — directly or
+-- through one of its variants (sale_lines and stock_movements have no ON
+-- DELETE CASCADE, so deleting a sold/adjusted item would either fail the FK
+-- or orphan real trading history) — AND no HELD (parked) sale references it
+-- either, the same signal remove_demo_customers_promos.sql already checks
+-- for demo customers (ut-docs#633): a held_sales row is an in-progress
+-- basket that hasn't reached sale_lines/stock_movements yet, but still
+-- FK-fails on tender if the item (or variant) it was parked against no
+-- longer exists. A demo category/brand goes only when, after the item pass,
+-- no remaining row (demo or operator-created) still references it.
 DROP TABLE IF EXISTS temp.demo_seed_removable;
 CREATE TEMP TABLE demo_seed_removable AS
 SELECT i.id FROM items i
 JOIN demo_seed_items d ON d.id = i.id
 WHERE i.is_sample_data = 1
+  AND i.sku IS d.sku
+  AND i.name = d.name
+  AND i.base_price = d.base_price
   AND NOT EXISTS (SELECT 1 FROM sale_lines sl WHERE sl.item_id = i.id)
   AND NOT EXISTS (SELECT 1 FROM sale_lines sl
                   JOIN item_variants v ON v.id = sl.variant_id

@@ -156,6 +156,65 @@ func TestRemoveDemoCatalogueEmpty(t *testing.T) {
 	}
 }
 
+// ut-docs#566: a shop that configures its till before opening — renaming,
+// repricing, or re-SKU'ing a demo item — has already made it real, even
+// with zero sale_lines/stock_movements history. Each edit is independently
+// sufficient to keep the item; a genuinely untouched sibling item is
+// removed as before, proving the predicate doesn't just keep everything.
+func TestRemoveDemoCatalogueKeepsEditedItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// itm001 renamed, itm002 repriced, itm003 re-SKU'd — no sale, no stock
+	// movement against any of them.
+	if _, err := d.DB.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`UPDATE items SET base_price = 350 WHERE id = 'itm002'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`UPDATE items SET sku = 'MY-OWN-SKU' WHERE id = 'itm003'`); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	if removed != 47 || kept != 3 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 47, 3", removed, kept)
+	}
+	for _, id := range []string{"itm001", "itm002", "itm003"} {
+		var n int
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = ?`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("edited item %s was removed", id)
+		}
+	}
+	// itm004, genuinely untouched, is gone like the rest of the 47.
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm004'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Error("untouched item itm004 was kept — predicate over-broadened, not just the edited items")
+	}
+	// Their name/price edits survived the removal pass untouched.
+	var name string
+	if err := d.DB.QueryRow(`SELECT name FROM items WHERE id = 'itm001'`).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Flat White" {
+		t.Errorf("itm001.name = %q after removal, want the operator's rename intact", name)
+	}
+}
+
 // ut-docs#567: the 3 demo customers + 3 demo promo codes get the same
 // opt-in treatment ut-docs#539 gave the demo catalogue.
 func TestSeedDemoCustomersPromos(t *testing.T) {
