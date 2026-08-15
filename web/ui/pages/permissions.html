@@ -1,0 +1,43 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "permissions.title" }} {{ helpLink "users" }}</h1>
+</div>
+
+<div class="card">
+  <p class="muted">{{ T "permissions.intro" }}</p>
+  <div class="table" style="overflow-x:auto">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "permissions.col.action" }}</th>
+          {{ range .Roles }}<th>{{ T (printf "users.role.%s" .) }}</th>{{ end }}
+        </tr>
+      </thead>
+      <tbody>
+        {{ $roles := .Roles }}
+        {{ range .Rows }}
+        {{ $action := .Action }}
+        {{ $cells := .Cells }}
+        <tr>
+          <td>{{ T (printf "permissions.action.%s" $action) }}</td>
+          {{ range $roles }}
+          {{ $role := . }}
+          {{ $cell := index $cells $role }}
+          <td style="text-align:center">
+            {{ if $cell.Locked }}
+            <input type="checkbox" checked disabled title="{{ T "permissions.lockout_hint" }}">
+            {{ else }}
+            <input type="checkbox" {{ if $cell.Granted }}checked{{ end }}
+                   hx-post="/api/users/permissions" hx-target="#perm-msg" hx-swap="innerHTML"
+                   hx-vals='{{ jsonVals "role" $role "action" $action "granted" $cell.Toggled }}'>
+            {{ end }}
+          </td>
+          {{ end }}
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  <span id="perm-msg" aria-live="polite"></span>
+</div>
+{{ end }}
