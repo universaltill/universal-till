@@ -97,10 +97,17 @@ jobs:
         # ./...` a second time (ut-docs#674, found same-day): running the
         # entire suite twice in one job triggered a real CI failure in the
         # unrelated internal/plugins package — a 600s test-binary timeout
-        # with goroutines blocked on internal/logging's mutex, consistent
-        # with two full-suite runs contending over shared resources
-        # (stdout/logger, WASM runtime processes) in the same job rather
-        # than any actual bug in internal/plugins. main had 15 consecutive
+        # with goroutines blocked on internal/logging's mutex and
+        # database/sql's connection opener. Investigating ut-docs#674 found
+        # and fixed a genuine unbounded resource amplifier in
+        # internal/plugins (EventBus.publish's "channel full" path could
+        # perform ~16,700 unthrottled synchronous DB+stdout writes in one
+        # test) — so "no actual bug in internal/plugins" turned out to be
+        # wrong, there was one, now throttled. What independent review could
+        # NOT do is reproduce the double-run hang itself (several run
+        # patterns, pre- and post-fix) to confirm that bug was the cause of
+        # THIS incident specifically, so treat it as fixed-along-the-way
+        # hardening, not a confirmed root cause. main had 15 consecutive
         # green runs before this step was widened to the whole tree, and
         # failed on the very next merge after. If a locale-dependent bug
         # ever surfaces outside internal/pages, that's the point to widen
