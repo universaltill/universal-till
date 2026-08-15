@@ -318,6 +318,12 @@ func TestResolveShortcutLine_VariantSKUExact(t *testing.T) {
 	if line.Name != "Latte - Large" {
 		t.Fatalf("expected the composed 'Item - Variant' display name, got %q", line.Name)
 	}
+	// The basket line must carry the code that was actually searched for —
+	// resolveVariantSKU has to populate SKU itself (the variant query does
+	// not select it), and an empty SKU would reach the basket unnoticed.
+	if line.SKU != "S1-L" {
+		t.Fatalf("expected the variant's own SKU on the line, got %q", line.SKU)
+	}
 }
 
 // TestResolveShortcutLine_VariantNameLike is the same gap on the name-LIKE
@@ -346,25 +352,85 @@ func TestResolveShortcutLine_VariantNameLike(t *testing.T) {
 	if line.Price != 280 {
 		t.Fatalf("expected the variant's active price_history override 280, got %d", line.Price)
 	}
+	if line.Name != "Latte - Large" {
+		t.Fatalf("expected the composed 'Item - Variant' display name, got %q", line.Name)
+	}
 }
 
-// TestResolveShortcutLine_ItemSKUStillWinsOverVariantSKU is a regression
-// guard: the variant fallback must only fire when no ITEM matches by sku —
-// an item's own exact-SKU match must keep winning, unaffected by the new
-// fallback.
+// TestResolveShortcutLine_ItemSKUStillWinsOverVariantSKU is the regression
+// guard for the new variant fallback: it must only fire when no ITEM
+// matches by sku. items.sku and item_variants.sku are separately-UNIQUE
+// columns (001_init.sql), so one item's SKU legitimately CAN equal another
+// item's variant's SKU — that collision is the only shape in which the
+// fallback could steal a match from an item, so it is what this test
+// creates. (A single item with no competing variant proves nothing here:
+// it passes with the fallback removed entirely.)
 func TestResolveShortcutLine_ItemSKUStillWinsOverVariantSKU(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	repo := data.NewPOSRepo(db)
 	ctx := context.Background()
 
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "MUG-001", Name: "Mug", BasePrice: 500, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "TEE-001", Name: "Tee", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v2", ItemID: "i2", SKU: "MUG-001", Name: "Large", Price: 900, IsActive: true})
 
 	line, ok := repo.ResolveShortcutLine(ctx, "MUG-001")
 	if !ok {
 		t.Fatal("expected a resolved line via exact SKU match")
 	}
-	if line.ItemID != "i1" || line.HasVariant {
-		t.Fatalf("expected the plain item match, got %+v", line)
+	if line.ItemID != "i1" || line.VariantID != "" || line.HasVariant {
+		t.Fatalf("expected the ITEM match to win over another item's variant with the same SKU, got %+v", line)
+	}
+	if line.Price != 500 || line.Name != "Mug" {
+		t.Fatalf("expected the item's own price/name (500 / %q), got %d / %q", "Mug", line.Price, line.Name)
+	}
+}
+
+// TestResolveShortcutLine_ItemNameStillWinsOverVariantName is the same
+// guard on the name-LIKE path: an item whose NAME matches must keep
+// winning over a variant whose name also matches.
+func TestResolveShortcutLine_ItemNameStillWinsOverVariantName(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Large Fries", BasePrice: 200, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Latte", BasePrice: 300, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v2", ItemID: "i2", SKU: "S2-L", Name: "Large", Price: 350, IsActive: true})
+
+	line, ok := repo.ResolveShortcutLine(ctx, "large")
+	if !ok {
+		t.Fatal("expected a resolved line")
+	}
+	if line.ItemID != "i1" || line.VariantID != "" || line.HasVariant {
+		t.Fatalf("expected the ITEM name match to win over the variant name match, got %+v", line)
+	}
+}
+
+// TestResolveShortcutLine_InactiveVariantNotResolvable is the active-row
+// guard for the two new variant queries: a discontinued variant — or an
+// active variant hanging off a discontinued parent item — must not become
+// ringable at checkout via SKU or name search. Without the
+// `v.is_active = 1 AND i.is_active = 1` predicates the row still resolves
+// AND still prices (ResolveCurrentPrice errors on the inactive variant, so
+// resolvePrice silently falls back to the row's own price), which is
+// exactly how a withdrawn product would quietly go back on sale.
+func TestResolveShortcutLine_InactiveVariantNotResolvable(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	// Inactive variant under an active item.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-XL", Name: "Discontinued Size", Price: 350, IsActive: false})
+	// Active variant under an INACTIVE item.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Withdrawn", BasePrice: 400, IsActive: false})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v2", ItemID: "i2", SKU: "S2-XL", Name: "Withdrawn Size", Price: 450, IsActive: true})
+
+	for _, code := range []string{"S1-XL", "Discontinued Size", "S2-XL", "Withdrawn Size"} {
+		if line, ok := repo.ResolveShortcutLine(ctx, code); ok {
+			t.Fatalf("%q must not resolve at checkout, got %+v", code, line)
+		}
 	}
 }
 
