@@ -259,6 +259,49 @@ func TestHostTCPReadTimeout(t *testing.T) {
 	}
 }
 
+// TestHostTCPInvalidPtrDoesNotConsumeSocketBytes proves the ut-docs#614 fix:
+// hostTCPRead ('internal/plugins/wasm_tcp.go') validates the guest-supplied
+// destination region is addressable BEFORE reading off the socket, so a
+// guest-supplied out-of-bounds dstPtr returns hostErrInvalid without
+// silently consuming (and losing) bytes already sitting in the connection's
+// receive buffer. The fixture pushes a known payload immediately on accept
+// (no request needed); the guest's "invalidptrread" mode issues one
+// deliberately-bad-pointer read, then one normal read — which must still
+// return the SAME pushed payload. Before the fix, the bad-pointer call
+// would already have pulled the payload off the socket via conn.Read
+// before discovering the write would fail, permanently losing it — the
+// second, valid read would then time out or see nothing.
+func TestHostTCPInvalidPtrDoesNotConsumeSocketBytes(t *testing.T) {
+	guest := buildTCPGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.tcpinvalidptr"
+	const pushed = "pushed-before-any-request"
+
+	host, port, _, _ := startTCPFixture(t, func(conn net.Conn) {
+		defer conn.Close()
+		_, _ = conn.Write([]byte(pushed))
+		// Keep the connection open briefly so the guest's second read has
+		// time to land — the test's own read deadline bounds the wait.
+		time.Sleep(500 * time.Millisecond)
+	})
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, fmt.Sprintf("tcp:%s:%d", host, port))
+
+	w := newTCPTestRuntime(t, guest, pluginID)
+	res := runTCPGuest(t, w, d, pluginID, map[string]any{
+		"mode": "invalidptrread", "host": host, "port": port,
+		"connect_timeout_ms": 2000, "read_timeout_ms": 2000,
+	})
+	if res["invalid_code"] != float64(hostErrInvalid) {
+		t.Fatalf("invalid_code = %v, want %d (hostErrInvalid) for an out-of-bounds dstPtr", res["invalid_code"], hostErrInvalid)
+	}
+	if res["read_data"] != pushed {
+		t.Fatalf("read_data = %q, want %q — the invalid-pointer read consumed/lost the pushed bytes (read_code=%v)", res["read_data"], pushed, res["read_code"])
+	}
+}
+
 // A plugin holds at most 4 concurrent handles: the fifth open returns -4.
 // Handles are sequential per plugin starting at 0.
 func TestHostTCPMaxHandles(t *testing.T) {

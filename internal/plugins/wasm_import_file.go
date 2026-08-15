@@ -209,6 +209,15 @@ func hostImportFileRead(ctx context.Context, m api.Module, handle int32, dstPtr,
 	if bufCap > importFileReadBufCap {
 		bufCap = importFileReadBufCap
 	}
+	// Validate the destination region is addressable BEFORE touching the
+	// file (ut-docs#614): the staged file's cursor advances on every
+	// f.Read, with no seek-back host function, so a bad dstPtr discovered
+	// only after the read would silently and permanently lose that chunk
+	// of the stream. Catching it here means an invalid pointer costs the
+	// guest nothing — the bytes are still there for a retry with a good one.
+	if _, ok := m.Memory().Read(dstPtr, bufCap); !ok {
+		return hostErrInvalid
+	}
 	buf := make([]byte, bufCap)
 	n, err := f.Read(buf)
 	if err != nil && !errors.Is(err, io.EOF) {
