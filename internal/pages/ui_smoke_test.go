@@ -353,6 +353,12 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE stock_movements (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, cost_price INTEGER, created_at TEXT NOT NULL);`,
 		`CREATE TABLE inventory (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, quantity REAL NOT NULL, updated_at TEXT NOT NULL, UNIQUE(item_id, variant_id, location_id));`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL);`,
+		// fiscal_tse_signatures: column-identical to
+		// internal/db/migrations/048_fiscal_tse_signatures.sql (ut-docs#585)
+		// — the tender path's RecordFiscalTSESignature and both receipt
+		// render paths' GetFiscalTSESignature hit it directly, same drift
+		// rule as the comments above.
+		`CREATE TABLE fiscal_tse_signatures (sale_id TEXT PRIMARY KEY, transaction_number INTEGER NOT NULL DEFAULT 0, signature_counter INTEGER NOT NULL DEFAULT 0, serial_number TEXT NOT NULL DEFAULT '', start_time TEXT NOT NULL DEFAULT '', log_time TEXT NOT NULL DEFAULT '', signature TEXT NOT NULL, signature_algorithm TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		`CREATE TABLE report_archive (id TEXT PRIMARY KEY, kind TEXT NOT NULL, period TEXT NOT NULL, content_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (kind, period));`,
 		`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL DEFAULT (datetime('now')), ends_at TEXT);`,

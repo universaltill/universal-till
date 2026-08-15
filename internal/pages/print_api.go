@@ -197,6 +197,38 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	if saleHasUnresolvedSigningGap(ctx, data.NewPOSRepo(d.Db), detail.ID) {
 		doc.Meta = append(doc.Meta, "TSE signing was unavailable when this sale was recorded; signing is retried automatically.")
 	}
+	// ut-docs#585: the sale's recorded §6 KassenSichV TSE evidence, when any
+	// — same per-sale derivation as the two notices above (the sale's own
+	// fiscal_tse_signatures row, written at tender/retry time). Plain-text
+	// lines only on this path (ESC/POS QR raster support is a declared
+	// non-goal for #585); fields the signer didn't return are skipped —
+	// never placeholders — and a read error degrades to no lines, same
+	// conservative policy as the audit-derived notices. English literals
+	// match this renderer's existing convention (locale "en", latin digits —
+	// see the locale note at the top of this function).
+	if sig, ok, sigErr := data.NewPOSRepo(d.Db).GetFiscalTSESignature(ctx, detail.ID); sigErr == nil && ok {
+		if sig.SerialNumber != "" {
+			doc.Meta = append(doc.Meta, "TSE serial: "+sig.SerialNumber)
+		}
+		if sig.TransactionNumber != 0 {
+			doc.Meta = append(doc.Meta, "TSE transaction no.: "+strconv.FormatInt(sig.TransactionNumber, 10))
+		}
+		if sig.SignatureCounter != 0 {
+			doc.Meta = append(doc.Meta, "TSE signature counter: "+strconv.FormatInt(sig.SignatureCounter, 10))
+		}
+		if sig.StartTime != "" {
+			doc.Meta = append(doc.Meta, "TSE transaction start: "+sig.StartTime)
+		}
+		if sig.LogTime != "" {
+			doc.Meta = append(doc.Meta, "TSE transaction end: "+sig.LogTime)
+		}
+		if sig.SignatureAlgorithm != "" {
+			doc.Meta = append(doc.Meta, "TSE signature algorithm: "+sig.SignatureAlgorithm)
+		}
+		if sig.Signature != "" {
+			doc.Meta = append(doc.Meta, "TSE signature: "+sig.Signature)
+		}
+	}
 	if rd.Footer != "" {
 		doc.Footer = []string{rd.Footer}
 	}

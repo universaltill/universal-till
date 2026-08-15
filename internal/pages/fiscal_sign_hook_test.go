@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
@@ -723,6 +724,176 @@ func TestFiscalSignPayload_PaymentAmountNetsChangeGiven(t *testing.T) {
 	}
 	if got := payload.Payments[0].Amount; got != 1200 {
 		t.Fatalf("payment amount must net ChangeGiven (2000-800=1200 minor units), got %d", got)
+	}
+}
+
+// --- ut-docs#585: §6 KassenSichV TSE evidence on "approved" (contract 1.1.0)
+
+// The parsed dispatch result carries the optional `tse` evidence through to
+// the tender path; a bare {"status":"approved"} (still fully valid, 1.1.0 is
+// additive) carries none; an evidence object WITHOUT the signature itself is
+// treated as absent (a signature-less object proves nothing worth keeping).
+func TestFiscalSignAsk_ApprovedCarriesTSEEvidence(t *testing.T) {
+	cases := []struct {
+		name     string
+		response string
+		want     *fiscalTSEEvidence
+	}{
+		{
+			name: "full evidence",
+			response: `{"status":"approved","tse":{"transaction_number":4711,"signature_counter":12345,` +
+				`"serial_number":"TSE-TEST-SERIAL-1","start_time":"2026-08-15T10:31:00Z",` +
+				`"log_time":"2026-08-15T10:31:02Z","signature":"TESTSIGBASE64==",` +
+				`"signature_algorithm":"ecdsa-plain-SHA256"}}`,
+			want: &fiscalTSEEvidence{
+				TransactionNumber:  4711,
+				SignatureCounter:   12345,
+				SerialNumber:       "TSE-TEST-SERIAL-1",
+				StartTime:          "2026-08-15T10:31:00Z",
+				LogTime:            "2026-08-15T10:31:02Z",
+				Signature:          "TESTSIGBASE64==",
+				SignatureAlgorithm: "ecdsa-plain-SHA256",
+			},
+		},
+		{name: "bare approved", response: `{"status":"approved"}`, want: nil},
+		{
+			name:     "evidence without signature is ignored",
+			response: `{"status":"approved","tse":{"transaction_number":1,"serial_number":"x"}}`,
+			want:     nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, dp := newFiscalSignDeps(t)
+			subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-evidence", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+				return json.RawMessage(tc.response), nil
+			})
+			in := pos.SaleInput{
+				Currency: "EUR",
+				Lines:    []pos.SaleLineInput{{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(100), TaxRateBasisPoints: 2000}},
+			}
+			res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+			if res.Outcome != fiscalSignApproved {
+				t.Fatalf("expected fiscalSignApproved, got %v (%s)", res.Outcome, res.Reason)
+			}
+			if tc.want == nil {
+				if res.Evidence != nil {
+					t.Fatalf("expected no evidence, got %+v", res.Evidence)
+				}
+				return
+			}
+			if res.Evidence == nil {
+				t.Fatal("expected the evidence carried through, got nil")
+			}
+			if *res.Evidence != *tc.want {
+				t.Fatalf("evidence mismatch:\n got %+v\nwant %+v", *res.Evidence, *tc.want)
+			}
+		})
+	}
+}
+
+// End-to-end through the REAL wazero runtime: a signer answering approved +
+// TSE evidence completes the sale clean (no unsigned marker, no retry queue
+// — the evidence is additive and changes no outcome), persists the evidence
+// keyed on the sale id, and the rendered receipt carries the actual field
+// values plus a QR code — never placeholders.
+func TestFiscalSignAsk_ApprovedWithTSEEvidencePersistsAndRenders(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	installFiscalSignWasmPlugin(t, dp, "com.test.fiscal-sign-tse", "fiscalsign_tse_guest")
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := fiscalSignTender(t, mux, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := countSales(t, dp); got != 1 {
+		t.Fatalf("expected 1 sale, got %d", got)
+	}
+	// Additive: an approved-with-evidence sale is exactly as clean as a
+	// bare-approved one.
+	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
+		t.Fatalf("approved-with-evidence sale must carry no unsigned_fiscal_signing marker, got %d", n)
+	}
+	if pending, err := loadPendingFiscalSignRetries(context.Background(), dp); err != nil || len(pending) != 0 {
+		t.Fatalf("expected no pending retries, got %+v (err %v)", pending, err)
+	}
+
+	// Persisted, keyed on the real sale row's id.
+	var saleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales`).Scan(&saleID); err != nil {
+		t.Fatal(err)
+	}
+	sig, ok, err := data.NewPOSRepo(dp.Db).GetFiscalTSESignature(context.Background(), saleID)
+	if err != nil || !ok {
+		t.Fatalf("expected persisted TSE evidence for sale %s, ok=%v err=%v", saleID, ok, err)
+	}
+	if sig.TransactionNumber != 4711 || sig.SignatureCounter != 12345 ||
+		sig.SerialNumber != "TSE-TEST-SERIAL-1" || sig.Signature != "TESTSIGBASE64==" ||
+		sig.StartTime != "2026-08-15T10:31:00Z" || sig.LogTime != "2026-08-15T10:31:02Z" ||
+		sig.SignatureAlgorithm != "ecdsa-plain-SHA256" {
+		t.Fatalf("persisted evidence mismatch: %+v", sig)
+	}
+
+	// Rendered on the inline HTML receipt: real values + a QR image.
+	body := rec.Body.String()
+	for _, want := range []string{"TSE-TEST-SERIAL-1", "4711", "12345", "TESTSIGBASE64==", "ecdsa-plain-SHA256", "data:image/png;base64,"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("receipt must render TSE evidence value %q, got: %s", want, body)
+		}
+	}
+}
+
+// A till with no signer (or a signer that returns no evidence) renders
+// NEITHER the TSE block NOR placeholder values — absence is absence.
+func TestFiscalSignAsk_NoEvidenceRendersNoTSEBlock(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	rec := fiscalSignTender(t, mux, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	// `receipt-tse"` (closing quote) matches the block's class attribute but
+	// not the style sheet's .receipt-tse-* rules, which are always emitted.
+	for _, forbidden := range []string{`receipt-tse"`, "TSE serial number", "TSE transaction no."} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("a sale with no TSE evidence must not render the TSE block (%q found): %s", forbidden, body)
+		}
+	}
+}
+
+// A queued unsigned sale re-signed by the background retry with evidence
+// gets that evidence persisted too — a recovered sale's later reprints show
+// the same §6 field set a live-signed sale's do.
+func TestFiscalSignRetry_ResolvedSalePersistsEvidence(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	ctx := context.Background()
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-tse-retry", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"approved","tse":{"transaction_number":99,"signature":"RETRYSIG=="}}`), nil
+	})
+	if err := savePendingFiscalSignRetries(ctx, dp, []pendingFiscalSignRetry{{
+		SaleID:   "sale-retry-1",
+		FailedAt: "2026-08-15T09:00:00Z",
+		Payload:  fiscalSignAskPayload{SaleID: "sale-retry-1", Currency: "EUR", Total: 120},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	fiscalSignRetryTick(ctx, dp)
+
+	if pending, err := loadPendingFiscalSignRetries(ctx, dp); err != nil || len(pending) != 0 {
+		t.Fatalf("expected the pending list drained, got %+v (err %v)", pending, err)
+	}
+	sig, ok, err := data.NewPOSRepo(dp.Db).GetFiscalTSESignature(ctx, "sale-retry-1")
+	if err != nil || !ok {
+		t.Fatalf("expected evidence persisted for the retried sale, ok=%v err=%v", ok, err)
+	}
+	if sig.TransactionNumber != 99 || sig.Signature != "RETRYSIG==" {
+		t.Fatalf("retried sale's evidence mismatch: %+v", sig)
 	}
 }
 
