@@ -222,6 +222,21 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	if in.OrderType != OrderTypeTakeaway {
 		in.OrderType = ""
 	}
+	// ut-docs#744: a variant resolved by barcode carries BOTH ItemID and
+	// VariantID upstream (ui.PriceResolverAdapter deliberately keeps ItemID
+	// alongside VariantID on the live BasketLine -- internal/pages/tax_hook.go's
+	// tax.rate.ask payload still needs it there for a variant line). But a
+	// sale line's *persisted* identity must be exactly one of the two, same
+	// as the sale_lines/inventory/stock_movements CHECK constraints already
+	// require -- so normalize here, at the one choke point every caller
+	// (cashier, kiosk, sync replay, refund, return) goes through, rather
+	// than trusting every SaleLineInput{} construction site to get this
+	// right individually. VariantID wins: it's the more specific identity.
+	for i := range in.Lines {
+		if in.Lines[i].VariantID != "" {
+			in.Lines[i].ItemID = ""
+		}
+	}
 	subtotal, taxTotal, serviceCharge, total, err := computeSaleTotals(in)
 	if err != nil {
 		return "", err
