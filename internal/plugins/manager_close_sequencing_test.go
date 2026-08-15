@@ -59,6 +59,11 @@ func TestManagerClose_NeverPanicsWhenSequencedAfterPublisherDrain(t *testing.T) 
 		// internal/cloudsync's ticker: keeps publishing until told to stop.
 		var publisherWg sync.WaitGroup
 		stop := make(chan struct{})
+		var stopOnce sync.Once
+		drain := func() {
+			stopOnce.Do(func() { close(stop) })
+			publisherWg.Wait()
+		}
 		publisherWg.Add(1)
 		go func() {
 			defer publisherWg.Done()
@@ -71,6 +76,20 @@ func TestManagerClose_NeverPanicsWhenSequencedAfterPublisherDrain(t *testing.T) 
 				_, _ = bus.Publish(ctx, "close.seq", map[string]any{"i": i})
 			}
 		}()
+		// Safety net for ut-docs#750's flake class (same shape as
+		// ut-docs#509): if bus.Subscribe below t.Fatalf's, Goexit would skip
+		// the manual drain() call further down, leaking this iteration's
+		// publisher goroutine into whatever test runs next — closed-DB audit
+		// writes from the leak then starve the shared logger's mutex.
+		// Registered every iteration on purpose: on the normal (non-Fatal)
+		// path each one just becomes a no-op at test end (stopOnce/Wait both
+		// already settled) — 300 cheap no-ops, not a real accumulation, and
+		// simpler than threading a single end-of-test drain list through the
+		// loop for a case that should never actually fire.
+		// t.Cleanup + sync.Once make the eventual drain idempotent with the
+		// manual call on the success path, which must stay exactly where it
+		// is — draining before m.Close is the behavior this test asserts.
+		t.Cleanup(drain)
 
 		if _, err := bus.Subscribe(ctx, pid, []string{"close.seq"}); err != nil {
 			t.Fatalf("subscribe: %v", err)
@@ -80,8 +99,7 @@ func TestManagerClose_NeverPanicsWhenSequencedAfterPublisherDrain(t *testing.T) 
 		// The fix's invariant, mirrored exactly: stop and DRAIN the
 		// publisher (app.Run's drainBackgroundServices) BEFORE Close runs
 		// (app.Run's pluginManager.Close, in its deferred cleanup).
-		close(stop)
-		publisherWg.Wait()
+		drain()
 		m.Close(context.Background())
 	}
 	// Reaching here without a panic is the assertion — the loop's whole
