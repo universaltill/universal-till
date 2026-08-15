@@ -56,10 +56,11 @@ func (r *RelatedItemsRepo) Rebuild(ctx context.Context) (int64, error) {
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO related_items (item_id, related_item_id, support, score)
 WITH sale_items AS (
-    SELECT DISTINCT sl.sale_id, sl.item_id
+    SELECT DISTINCT sl.sale_id, COALESCE(sl.item_id, iv.item_id) AS item_id
     FROM sale_lines sl
     JOIN sales s ON s.id = sl.sale_id
-    WHERE sl.item_id IS NOT NULL
+    LEFT JOIN item_variants iv ON iv.id = sl.variant_id
+    WHERE COALESCE(sl.item_id, iv.item_id) IS NOT NULL
       AND s.status = 'completed'
       AND s.created_at >= datetime('now', ?)
 ),
