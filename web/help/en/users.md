@@ -25,3 +25,9 @@ Separate cashier and manager accounts with PIN login, and shift tracking so you 
 ## Permissions matrix
 
 A super admin can go further than assigning cashier/manager/admin roles — they can grant or revoke exactly what each role is allowed to do, action by action (refunds, void, price overrides, settings, reports, and more), from Users → Permissions. Every change is logged in the audit trail with who made it. The one thing you can never do is revoke a super admin's own access to this page — that grant is always locked on, so nobody can accidentally lock every super admin out.
+
+## Becoming a super admin
+
+Only an existing super admin can create or promote another one — from Users, either pick "super admin" as the role for a brand-new account, or use "Promote to super admin" next to an existing person's name. Both are logged in the audit trail, the same as any other permission-sensitive change, and take effect on that person's next sign-in.
+
+A shop with no super admin yet (the role didn't exist before this till version) needs a one-time setup step to create the first one — ask support if Users has no super-admin option available to you yet.

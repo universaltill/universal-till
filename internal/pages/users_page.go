@@ -72,7 +72,11 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			"theme":              d.CurrentState().Theme,
 			"menuItems":          d.MenuSnapshot(),
 			"users":              rows,
-			"isAdmin":            actor.Role == "admin",
+			// super_admin is the top of the role hierarchy (canManage
+			// above already treats it that way) — it must see at least
+			// what a plain admin sees, including the manager/admin role
+			// options (ut-docs#761 review finding 3).
+			"isAdmin":            actor.Role == "admin" || actor.Role == "super_admin",
 			"canEditPermissions": canPerform(d, r, lockoutAction), // super_admin only (ut-docs#556)
 			"errKey":             errKey,
 		})(w, r)
@@ -93,11 +97,24 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		_ = r.ParseForm()
 		username, display, role := r.PostFormValue("username"), r.PostFormValue("display_name"), r.PostFormValue("role")
-		if role != "cashier" && role != "manager" && role != "admin" {
+		if role != "cashier" && role != "manager" && role != "admin" && role != "super_admin" {
 			http.Redirect(w, r, "/users?err=users.error.role", http.StatusSeeOther)
 			return
 		}
-		if actor.Role != "admin" && role != "cashier" {
+		if role == "super_admin" {
+			// Creating a super_admin is at least as sensitive as anything
+			// permission_management gates (ut-docs#761, mirrors 047's own
+			// migration comment) — deliberately its own branch rather than
+			// falling into the "admins create managers/admins" rule below,
+			// which an admin actor would otherwise satisfy.
+			if !canPerform(d, r, "permission_management") {
+				http.Error(w, "super_admin required", http.StatusForbidden)
+				return
+			}
+		} else if actor.Role != "admin" && actor.Role != "super_admin" && role != "cashier" {
+			// super_admin included (ut-docs#761 review finding 3) — it's
+			// the top of the role hierarchy and must be able to do at
+			// least what a plain admin can.
 			http.Error(w, "only admins create managers or admins", http.StatusForbidden)
 			return
 		}
@@ -172,6 +189,17 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				return
 			}
 		}
+		// Same guard, super_admin side (ut-docs#761 review finding 4):
+		// deactivating the only super_admin would strand the till with
+		// nobody able to reach the permission matrix, audit page or
+		// backoffice.
+		if !activate && target.Role == "super_admin" {
+			others, err := repo.CountOtherActiveSuperAdminsWithPIN(r.Context(), target.ID)
+			if err != nil || others == 0 {
+				http.Redirect(w, r, "/users?err=users.error.last_super_admin", http.StatusSeeOther)
+				return
+			}
+		}
 		if err := repo.SetUserActive(r.Context(), target.ID, activate); err != nil {
 			http.Error(w, "failed to update user", http.StatusInternalServerError)
 			return
@@ -184,6 +212,75 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			action = "user_activate"
 		}
 		audit(r, actor.ID, target.ID, action)
+		http.Redirect(w, r, "/users", http.StatusSeeOther)
+	})
+
+	// POST /api/users/{id}/promote-super-admin closes the ut-docs#761 gap:
+	// nothing before this could ever create or promote a super_admin user,
+	// so every super_admin-gated surface built so far (audit_page.go,
+	// backoffice_page.go, permission_settings_page.go) was unreachable in
+	// production. Deliberately gated on permission_management, not merely
+	// "admin" — a promotion is at least as sensitive as anything that
+	// action already gates (047's own migration comment), and a plain
+	// admin promoting itself would defeat that gate's whole point. A
+	// single-purpose action rather than a general role editor, to keep
+	// this change scoped to the one gap the card asks to close.
+	mux.HandleFunc("POST /api/users/{id}/promote-super-admin", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "permission_management") {
+			http.Error(w, "super_admin required", http.StatusForbidden)
+			return
+		}
+		actorID := getSessionUserID(r)
+		target, found, err := repo.GetUser(r.Context(), r.PathValue("id"))
+		if err != nil || !found {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		// 'system' (audit actor for till-initiated writes) and 'kiosk'
+		// (migration 018 — the PIN-less service identity self-order sales
+		// attribute to, reachable by any anonymous LAN client via the
+		// auth-exempt /self-order surface) are never real operators —
+		// promoting either would be a real privilege-escalation path, not
+		// a theoretical one.
+		if target.ID == "system" || target.ID == "kiosk" {
+			http.Error(w, "cannot promote this user", http.StatusForbidden)
+			return
+		}
+		if target.Role == "super_admin" {
+			// Already there — a no-op, not an error.
+			http.Redirect(w, r, "/users", http.StatusSeeOther)
+			return
+		}
+
+		tx, err := d.Db.BeginTx(r.Context(), nil)
+		if err != nil {
+			http.Redirect(w, r, "/users?err=users.error.promote", http.StatusSeeOther)
+			return
+		}
+		defer tx.Rollback()
+
+		if err := repo.SetUserRole(r.Context(), tx, target.ID, "super_admin"); err != nil {
+			http.Redirect(w, r, "/users?err=users.error.promote", http.StatusSeeOther)
+			return
+		}
+		if err := posRepo.InsertAudit(r.Context(), tx, actorID, "user", target.ID, "user_role_changed",
+			// "via" mirrors the bootstrap CLI's own audit payload
+			// (scripts/promote-super-admin) so an auditor reading
+			// user_role_changed entries can tell the two provenances
+			// apart without cross-referencing actor ids.
+			map[string]any{"from": target.Role, "to": "super_admin", "via": "in-app"}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			http.Redirect(w, r, "/users?err=users.error.promote", http.StatusSeeOther)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			http.Redirect(w, r, "/users?err=users.error.promote", http.StatusSeeOther)
+			return
+		}
+		// A changed role is a changed privilege boundary — same
+		// "invalidate existing sessions" convention SetUserPIN/deactivate
+		// already follow, so the new role takes effect on next login
+		// rather than silently applying mid-session.
+		_ = repo.RevokeUserSessions(r.Context(), target.ID)
 		http.Redirect(w, r, "/users", http.StatusSeeOther)
 	})
 }

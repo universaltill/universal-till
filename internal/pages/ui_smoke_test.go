@@ -321,7 +321,18 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL, location_id TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE shifts (id TEXT PRIMARY KEY, register_id TEXT NOT NULL, cashier_id TEXT NOT NULL, opened_at TEXT NOT NULL DEFAULT (datetime('now')), closed_at TEXT, opening_cash INTEGER NOT NULL DEFAULT 0, closing_cash INTEGER, expected_cash INTEGER, note TEXT);`,
-		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT, pin_hash TEXT NOT NULL, role TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);`,
+		// pin_hash is nullable — column-identical to 001_init.sql (ut-docs#761):
+		// AuthRepo.CreateUser's INSERT never sets it ("no PIN yet — set it
+		// separately", per its own doc comment), so a NOT NULL here made
+		// CreateUser fail against this fixture specifically, while both
+		// auth_page_test.go's and setup_page_test.go's own users fixtures
+		// already had this column nullable, matching production. created_at
+		// isn't even a real column in 001_init.sql's users table, but this
+		// fixture added one for its own INSERTs — given a DEFAULT (the same
+		// idiom this file already uses for shifts.opened_at above) so
+		// CreateUser's INSERT, which never sets it either, doesn't fail the
+		// NOT NULL it otherwise carried no value for.
+		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT, pin_hash TEXT, role TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		// customers/held_sales/price_history below are kept column-identical
 		// to internal/db/migrations/001_init.sql and 002_held_sales.sql --
 		// SearchCustomers/ResetTransactionHistory/CleanupObsoleteItems

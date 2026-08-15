@@ -40,7 +40,12 @@ type User struct {
 }
 
 // IsManager reports whether the user can approve manager-gated actions.
-func (u User) IsManager() bool { return u.Role == "manager" || u.Role == "admin" }
+// super_admin is included (ut-docs#761 review finding 2) — it's the top of
+// the role hierarchy (canManage in users_page.go already treats it that
+// way), so it must never be a role that grants LESS than manager/admin.
+func (u User) IsManager() bool {
+	return u.Role == "manager" || u.Role == "admin" || u.Role == "super_admin"
+}
 
 // Service owns login, session resolution and the failed-attempt lockout.
 type Service struct {
@@ -151,7 +156,7 @@ func (s *Service) AuthorizeManager(ctx context.Context, pin string) (User, error
 	if err != nil {
 		return User{}, err
 	}
-	if u.Role != "manager" && u.Role != "admin" {
+	if u.Role != "manager" && u.Role != "admin" && u.Role != "super_admin" {
 		s.recordFailure()
 		return User{}, ErrInvalidPIN
 	}

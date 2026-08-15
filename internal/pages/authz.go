@@ -22,9 +22,13 @@ import (
 //
 // Note: Can() also grants the super_admin role, while the old gate/
 // User.IsManager() only recognized manager/admin — a real broadening
-// versus the gate it replaced. It's inert for every existing till: no
-// code path creates a super_admin-role user yet (see #555's tracking
-// comment), so no real till's access changes from this swap.
+// versus the gate it replaced. This USED to be inert for every existing
+// till, since no code path could create a super_admin-role user (see
+// #555's tracking comment) — no longer true since ut-docs#761 added the
+// promotion path, which is exactly why IsManager() itself was updated in
+// that same change to also recognize super_admin (auth/service.go):
+// otherwise promoting an operator to the highest role would have silently
+// stripped them of every IsManager()-gated page.
 func canPerform(d *common.Deps, r *http.Request, action string) bool {
 	if auth.Disabled(os.Getenv("UT_AUTH")) {
 		return true
