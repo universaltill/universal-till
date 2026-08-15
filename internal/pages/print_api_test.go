@@ -875,6 +875,51 @@ func TestPostPrintLabels_HandlesOutOfRangeCopiesGracefully(t *testing.T) {
 	}
 }
 
+// ut-docs#585: a sale with recorded TSE evidence (fiscal_tse_signatures,
+// written at tender time from the fiscal.sign.ask v1.1.0 approved response)
+// prints the §6 KassenSichV field values as plain-text Meta lines on the
+// ESC/POS path — real values, no QR (raster QR on that path is a declared
+// non-goal for #585). A sale with no recorded evidence prints no TSE
+// evidence lines at all, never placeholders.
+func TestBuildReceiptDoc_TSESignatureLinesWhenRecorded(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+
+	// No evidence recorded: no TSE evidence lines (and no placeholders).
+	doc, err := buildReceiptDoc(ctx, dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta := strings.Join(doc.Meta, "\n"); strings.Contains(meta, "TSE serial") || strings.Contains(meta, "TSE transaction") {
+		t.Fatalf("no recorded evidence must mean no TSE evidence lines, got %+v", doc.Meta)
+	}
+
+	if err := data.NewPOSRepo(dp.Db).RecordFiscalTSESignature(ctx, data.FiscalTSESignature{
+		SaleID:             "sale1",
+		TransactionNumber:  4711,
+		SignatureCounter:   12345,
+		SerialNumber:       "TSE-TEST-SERIAL-1",
+		StartTime:          "2026-08-15T10:31:00Z",
+		LogTime:            "2026-08-15T10:31:02Z",
+		Signature:          "TESTSIGBASE64==",
+		SignatureAlgorithm: "ecdsa-plain-SHA256",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err = buildReceiptDoc(ctx, dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := strings.Join(doc.Meta, "\n")
+	for _, want := range []string{"TSE-TEST-SERIAL-1", "4711", "12345", "TESTSIGBASE64==", "ecdsa-plain-SHA256", "2026-08-15T10:31:00Z", "2026-08-15T10:31:02Z"} {
+		if !strings.Contains(meta, want) {
+			t.Fatalf("ESC/POS Meta must carry TSE evidence value %q, got %+v", want, doc.Meta)
+		}
+	}
+}
+
 func TestPostPrintReceipt_ReprintFailsCleanlyWithNoPrinter(t *testing.T) {
 	mux, dp := newPrintAPITestDeps(t)
 	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
