@@ -340,7 +340,19 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			SaleType:     "sale",
 			Currency:     d.CurrentState().Currency,
 			TaxInclusive: d.CurrentState().TaxInclusive,
-			Lines:        saleLines,
+			// Same declared-offline signal the cashier tender path threads
+			// into SaleInput.Offline (review of ut-docs#675, B1): the kiosk
+			// page's hidden #selforder-offline-flag input — driven by
+			// navigator.onLine, hx-include'd into the checkout form — read
+			// with the same formFlagTruthy convention /api/pos/tender uses.
+			// Without it a genuinely-offline kiosk burned the full 3s
+			// fiscal.sign.ask budget on EVERY sale (the known-offline
+			// short-circuit never fired), and the sale row's own
+			// offline/sync flags were wrong too. The kiosk surfaces no
+			// manual offline_override toggle, so only the browser signal is
+			// consulted here.
+			Offline: formFlagTruthy(r.Form.Get("offline")),
+			Lines:   saleLines,
 			Payments: []pos.PaymentInput{{
 				MethodID: method,
 				Amount:   total,

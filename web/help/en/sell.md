@@ -29,3 +29,14 @@ If your shop's country is Germany and an administrator has put the shop into sys
 - Trial and demo shops (not in system-of-record mode) are never affected by this check.
 
 This check only looks at your shop's own settings on the till — it never depends on the network, and being offline is not treated as a TSE fault.
+
+### When TSE signing can't be reached mid-sale
+
+If a fiscal signing plugin is installed, the till asks it to sign each sale at the moment of payment (this takes up to a few seconds when the signing service is slow). When the signing service can't be reached — or the till already knows it's offline — the sale still completes normally: checkout is never blocked by the network. Instead, the gap is recorded openly:
+
+- the sale is flagged as unsigned in the audit trail,
+- the customer receipt carries a notice that TSE signing was unavailable,
+- a warning appears in the till's problems list, and
+- the till keeps retrying automatically in the background, every couple of minutes, until the sale is signed — each recovered sale gets its own entry in the audit trail.
+
+A signing outage never pauses selling by itself — whether the cause is the network or the signing service, the till keeps completing sales and recording the gap as described above. Once a background retry signs a sale, the recovery is recorded in the audit trail and any later reprint of that receipt comes out clean, without the outage notice. (The system-of-record pause described earlier on this page is a separate safeguard; a signing outage does not trigger it.)

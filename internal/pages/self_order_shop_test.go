@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
@@ -888,5 +889,118 @@ func TestSelfOrderShop_HasPinGatedExitLink(t *testing.T) {
 	}
 	if !strings.Contains(body, "selforder-exit") {
 		t.Fatalf("self-order shop screen missing the discreet exit affordance styling: %s", body)
+	}
+}
+
+// B1 (review of ut-docs#675), kiosk half: the self-order checkout builds its
+// own pos.SaleInput and — pre-fix — never set Offline at all, so a genuinely
+// offline kiosk till burned the full 3s fiscal.sign.ask budget on EVERY
+// sale instead of short-circuiting (the exact ADR-0003 regression the
+// known-offline short-circuit exists to prevent). The kiosk client now
+// carries the same signal the cashier tender path threads into
+// SaleInput.Offline (a hidden offline flag driven by navigator.onLine,
+// hx-include'd into the checkout form); this proves the handler honors it:
+// a declared-offline kiosk checkout must complete WITHOUT ever dispatching
+// to the subscribed signing plugin, and still proceed-and-declare.
+func TestSelfOrderShop_KnownOfflineCheckoutSkipsFiscalSignDispatch(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	// A real installed signing plugin (catalog + plugins + hook +
+	// events:receive grant — the real schema enforces the catalog FK),
+	// answering via an in-process handler that counts invocations.
+	ctx := context.Background()
+	const pluginID = "com.test.kiosk-fiscal-sign"
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+VALUES (?, '1.0.0', 'Kiosk Fiscal Sign', 'wasm', './plugin.wasm', 'https://example.invalid', 'deadbeef', '0.0.1', '1', '2026-08-15T00:00:00Z')`, pluginID)
+	mustExec(`INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level)
+VALUES (?, 'Kiosk Fiscal Sign', '1.0.0', 'installed', './plugin.wasm', 'wasm', 1, 'trusted')`, pluginID)
+	mustExec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+VALUES (?, ?, 'fiscal.sign.ask', 'fiscal.sign', 1)`, "hook-"+pluginID, pluginID)
+	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+VALUES (?, ?, 'events:receive', 1)`, "perm-"+pluginID, pluginID)
+
+	var invocations atomic.Int64
+	bus := plugins.SharedBus(d.DB)
+	t.Cleanup(bus.ResetSubscribers)
+	if _, err := bus.SubscribeWithHandler(ctx, pluginID, []string{"fiscal.sign.ask"}, func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		invocations.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	post("/api/self-order/scan", "code=5000001")
+	rec := post("/api/self-order/checkout", "method=card&offline=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("offline kiosk checkout must complete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := invocations.Load(); n != 0 {
+		t.Fatalf("a known-offline kiosk checkout must never dispatch fiscal.sign.ask (got %d invocations) — it would burn the 3s budget on every offline sale", n)
+	}
+	// And it still lands on the proceed-and-declare surface, exactly like
+	// the cashier path's known-offline short-circuit.
+	var markers int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='sale' AND action='unsigned_fiscal_signing'`).Scan(&markers); err != nil {
+		t.Fatal(err)
+	}
+	if markers != 1 {
+		t.Fatalf("offline kiosk sale must be journaled unsigned, got %d markers", markers)
+	}
+	var offlineFlag int
+	if err := d.DB.QueryRow(`SELECT offline FROM sales WHERE status='completed'`).Scan(&offlineFlag); err != nil {
+		t.Fatal(err)
+	}
+	if offlineFlag != 1 {
+		t.Fatal("the sale row must record the declared offline state, same as the cashier path")
+	}
+}
+
+// The kiosk page and its checkout form carry the offline signal the handler
+// above consumes: the hidden flag lives on the shop page (driven by
+// navigator.onLine) and the payment picker's form hx-include's it.
+func TestSelfOrderShop_CheckoutFormCarriesOfflineFlag(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/self-order/shop", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /self-order/shop = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `id="selforder-offline-flag"`) {
+		t.Fatalf("shop page missing the hidden offline flag input: %s", rec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/checkout", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET checkout = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `hx-include="#selforder-offline-flag"`) {
+		t.Fatalf("payment picker form must hx-include the offline flag: %s", rec.Body.String())
 	}
 }

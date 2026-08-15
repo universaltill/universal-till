@@ -3,7 +3,11 @@
   <p class="payment-picker-total">{{ T "basket.total" }}: {{ money .Total }}</p>
   {{ if .ErrKey }}<div class="toast toast-error">{{ T .ErrKey }}</div>{{ end }}
   {{ if .Methods }}
-  <form hx-post="/api/self-order/checkout" hx-target="#selforder-modal" hx-swap="innerHTML">
+  <!-- hx-include carries the shop page's hidden offline flag (driven by
+       navigator.onLine) into the checkout POST, same signal shape as the
+       cashier tender's #offline-flag (ut-docs#675 review, B1): a till that
+       knows it's offline must not burn the fiscal.sign.ask budget per sale. -->
+  <form hx-post="/api/self-order/checkout" hx-target="#selforder-modal" hx-swap="innerHTML" hx-include="#selforder-offline-flag">
     <div class="payment-picker-methods">
       {{ range .Methods }}
       <button type="submit" name="method" value="{{ .ID }}" class="btn primary payment-picker-method">

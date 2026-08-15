@@ -29,3 +29,14 @@ Mağazanızın ülkesi Almanya ise ve bir yönetici mağazayı resmi kayıt modu
 - Deneme ve tanıtım mağazaları (resmi kayıt modunda olmayanlar) bu denetimden hiçbir zaman etkilenmez.
 
 Bu denetim yalnızca mağazanızın kasadaki kendi ayarlarına bakar — asla ağa bağlı değildir ve çevrimdışı olmak TSE arızası sayılmaz.
+
+### Satış sırasında TSE imzalamaya ulaşılamazsa
+
+Bir mali imzalama eklentisi kuruluysa, kasa her satışı ödeme anında imzalatmak ister (imzalama hizmeti yavaşsa bu birkaç saniye sürebilir). İmzalama hizmetine ulaşılamadığında — veya kasa zaten çevrimdışı olduğunu biliyorsa — satış yine normal şekilde tamamlanır: ödeme asla ağ yüzünden engellenmez. Bunun yerine eksik açıkça kaydedilir:
+
+- satış, denetim kaydında imzasız olarak işaretlenir,
+- müşteri fişinde TSE imzalamanın kullanılamadığına dair bir not yer alır,
+- kasanın sorun listesinde bir uyarı görünür ve
+- kasa, satış imzalanana kadar arka planda birkaç dakikada bir otomatik olarak yeniden dener — kurtarılan her satış denetim kaydına kendi girişini alır.
+
+İmzalama kesintisi tek başına satışı asla duraklatmaz — neden ağ da olsa imzalama hizmeti de olsa, kasa satışları tamamlamaya ve açığı yukarıda anlatıldığı gibi kaydetmeye devam eder. Arka plandaki bir yeniden deneme satışı imzaladığında, kurtarma denetim kaydına işlenir ve o fişin sonraki her yeniden baskısı kesinti notu olmadan, temiz çıkar. (Bu sayfada daha önce anlatılan resmi kayıt modu duraklatması ayrı bir güvencedir; imzalama kesintisi onu tetiklemez.)
