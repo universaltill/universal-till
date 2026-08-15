@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -27,8 +26,10 @@ import (
 // CompleteSale persists the sale. The ".ask" suffix is what makes
 // wasm_runtime.go dispatch it as a blocking, value-returning hook
 // (EventBus.Ask), same as tax.rate.ask. Contract:
-// ut-docs/reference/contracts/fiscal-sign-ask.md.
-const fiscalSignAskEvent = "fiscal.sign.ask"
+// ut-docs/reference/contracts/fiscal-sign-ask.md. The canonical constant
+// lives in internal/plugins so manifest persistence can enforce the point's
+// exclusivity (ADR-0041 Decision B) without importing this package.
+const fiscalSignAskEvent = plugins.FiscalSignAskEvent
 
 // fiscalSignAskBudget is the point's own tender-phase budget — ADR-0041
 // Decision D's 3000ms figure, sized for a legally-required cloud TSE round
@@ -108,14 +109,32 @@ const (
 	fiscalSignNoOpinion
 	// fiscalSignSkippedOffline: the till already knows it's offline, so the
 	// dispatch was skipped entirely (ADR-0044 D1's known-offline
-	// short-circuit) → proceed-and-declare, but NEVER tse_failing_since
-	// (ADR-0048 Decision 1: network-offline is not a failing TSE).
+	// short-circuit) → proceed-and-declare.
 	fiscalSignSkippedOffline
-	// fiscalSignFailed: timeout, transport/handler error, an unparseable
-	// answer, or a declared-unreachable backend, while the till had
-	// network → proceed-and-declare AND mark the TSE failing.
-	fiscalSignFailed
+	// fiscalSignFailedBackend: a backend-level failure — timeout,
+	// transport/handler error, or the plugin explicitly declaring its
+	// backend "unreachable" — evidence the signing backend itself cannot
+	// be reached right now → proceed-and-declare. The background retry
+	// tick aborts early on this outcome: everything left in the queue
+	// shares the same down backend, so re-paying the 3s budget per entry
+	// this tick is pointless.
+	fiscalSignFailedBackend
+	// fiscalSignFailedEntry: a protocol-level failure — the plugin
+	// answered in-budget, but with something core can't accept for THIS
+	// sale (unparseable JSON, an unknown status). Signing is unproven, so
+	// it's still proceed-and-declare, but it is a PER-ENTRY outcome, not
+	// evidence the backend is down: the retry tick keeps going through the
+	// rest of the queue (review of ut-docs#675, B3 — one
+	// permanently-confusing entry must not starve every entry behind it).
+	fiscalSignFailedEntry
 )
+
+// isFailure reports whether the outcome is a signing failure of either
+// level — the tender path treats both identically (proceed-and-declare);
+// only the retry tick's abort-early decision distinguishes them.
+func (o fiscalSignOutcome) isFailure() bool {
+	return o == fiscalSignFailedBackend || o == fiscalSignFailedEntry
+}
 
 // fiscalSignResult is one dispatch's outcome plus what the declare path
 // needs: a human-readable reason for the journal/log, and the payload for
@@ -175,8 +194,8 @@ func askFiscalSign(ctx context.Context, bus *plugins.EventBus, payload fiscalSig
 	resp, ok, err := bus.Ask(askCtx, fiscalSignAskEvent, payload)
 	if err != nil {
 		// Transport/handler error — including the guest killed at the
-		// budget deadline. All failures land on the same declare path.
-		return fiscalSignResult{Outcome: fiscalSignFailed, Reason: fmt.Sprintf("signing dispatch failed: %v", err), Payload: payload}
+		// budget deadline. Backend-level: nothing answered in time.
+		return fiscalSignResult{Outcome: fiscalSignFailedBackend, Reason: fmt.Sprintf("signing dispatch failed: %v", err), Payload: payload}
 	}
 	if !ok {
 		// Nobody answered (every subscriber cleanly declined with an empty
@@ -187,8 +206,9 @@ func askFiscalSign(ctx context.Context, bus *plugins.EventBus, payload fiscalSig
 	if json.Unmarshal(resp, &parsed) != nil {
 		// Answered, but with JSON core can't read: signing is NOT proven to
 		// have happened, and for a compliance-bearing point "unproven" must
-		// be declared, never assumed fine.
-		return fiscalSignResult{Outcome: fiscalSignFailed, Reason: "signing plugin answered with unparseable JSON", Payload: payload}
+		// be declared, never assumed fine. Protocol-level: the backend IS
+		// answering — this entry's answer is what's broken.
+		return fiscalSignResult{Outcome: fiscalSignFailedEntry, Reason: "signing plugin answered with unparseable JSON", Payload: payload}
 	}
 	switch parsed.Status {
 	case fiscalSignStatusApproved:
@@ -197,9 +217,14 @@ func askFiscalSign(ctx context.Context, bus *plugins.EventBus, payload fiscalSig
 		// An explicit "not me" — ADR-0041 Decision F: same as no answer.
 		return fiscalSignResult{Outcome: fiscalSignNoOpinion, Payload: payload}
 	case fiscalSignStatusUnreachable:
-		return fiscalSignResult{Outcome: fiscalSignFailed, Reason: "signing backend declared unreachable by the plugin", Payload: payload}
+		// The plugin's own authoritative "my backend is down" — treated as
+		// backend-level, same as a transport failure.
+		return fiscalSignResult{Outcome: fiscalSignFailedBackend, Reason: "signing backend declared unreachable by the plugin", Payload: payload}
 	default:
-		return fiscalSignResult{Outcome: fiscalSignFailed, Reason: fmt.Sprintf("signing plugin answered with unknown status %q", parsed.Status), Payload: payload}
+		// Protocol-level, same as unparseable JSON: an unrecognized status
+		// (e.g. a future contract version's new state) proves the backend
+		// is up and talking — it says nothing about the other queued sales.
+		return fiscalSignResult{Outcome: fiscalSignFailedEntry, Reason: fmt.Sprintf("signing plugin answered with unknown status %q", parsed.Status), Payload: payload}
 	}
 }
 
@@ -239,7 +264,13 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 	for _, p := range in.Payments {
 		payments = append(payments, fiscalSignAskPayment{
 			Method: p.MethodID,
-			Amount: p.Amount.Minor(),
+			// NET of change handed back (review of ut-docs#675, B4): a €20
+			// cash tender against a €12 sale collected €12 — the same
+			// Amount.Sub(ChangeGiven) that netPayments (CompleteSale's
+			// sufficiency check) and renderReceipt already compute. The
+			// gross tender would corrupt the irreversible signed record's
+			// payment-type breakdown.
+			Amount: p.Amount.Sub(p.ChangeGiven).Minor(),
 			Tip:    p.TipAmount.Minor(),
 		})
 	}
@@ -267,10 +298,19 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 //	(d) background retry — queued under common.KeyPendingFiscalSignRetries,
 //	    drained by fiscalSignRetryTick.
 //
-// On a GENUINE failure (the till had network, signing still failed — never
-// the known-offline short-circuit, ADR-0048 Decision 1) it also stamps
-// fiscal.KeyTSEFailingSince, which is exactly the "configured but failing"
-// signal the ADR-0048 hard gate reads on the next tender.
+// Deliberately NOT here: fiscal.KeyTSEFailingSince. ADR-0048 Decision 1
+// reserves that key for "the TSE itself is known bad" (expired cert, dongle
+// pulled, provider-reported fault) — a strictly narrower condition than "we
+// currently can't reach it" — and EVERY failure this card can observe is a
+// reachability outcome: the contract's three response states
+// (approved / not-this-terminal / unreachable) plus timeout, transport
+// error and an unusable answer give a plugin no way to say "my TSE is
+// confirmed broken". Stamping the key from here would hard-block the shop's
+// NEXT sale via the ADR-0048 gate over a mere outage — the exact
+// offline-first regression that ADR forbids (review of ut-docs#675, B1). A
+// future contract version adding a TSE-confirmed-broken response state
+// would be the right trigger for that key; this card never drives it — and
+// correspondingly never CLEARS it either (see fiscalSignRetryTick).
 func declareUnsignedFiscalSale(ctx context.Context, d *common.Deps, repo *data.POSRepo, saleID, actorID string, res fiscalSignResult) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	knownOffline := res.Outcome == fiscalSignSkippedOffline
@@ -299,34 +339,27 @@ func declareUnsignedFiscalSale(ctx context.Context, d *common.Deps, repo *data.P
 	}); err != nil {
 		logging.L().Errorf("fiscal signing: queue background retry for sale %s: %v", saleID, err)
 	}
-
-	// TSE-failing stamp — genuine failures only, first failure wins (don't
-	// overwrite an earlier onset timestamp).
-	if res.Outcome == fiscalSignFailed {
-		markTSEFailingSince(ctx, d, now)
-	}
 }
 
-// markTSEFailingSince sets fiscal.KeyTSEFailingSince to now if it isn't
-// already set. Per internal/fiscal's own key doc this callback (ut-docs#675)
-// is the key's only production writer; fiscalSignRetryTick is the only
-// clearer.
-func markTSEFailingSince(ctx context.Context, d *common.Deps, now string) {
-	if d.Settings == nil {
-		logging.L().Errorf("fiscal signing: cannot stamp %s — settings store unavailable", fiscal.KeyTSEFailingSince)
-		return
+// saleHasUnresolvedSigningGap decides the receipt outage notice for both
+// render paths (renderReceipt's flag in pos_api.go, the ESC/POS Meta line in
+// print_api.go): true only while the sale carries an unsigned_fiscal_signing
+// marker WITHOUT a later fiscal_signing_resolved row — a sale the background
+// retry already signed prints clean on any reprint (review of ut-docs#675,
+// alongside B1-B4). Errors degrade conservatively: can't read the marker →
+// no notice (the authoritative record is the audit row itself, same policy
+// as before); marker present but can't read the resolution → keep the
+// notice, which was truthful at write time.
+func saleHasUnresolvedSigningGap(ctx context.Context, repo *data.POSRepo, saleID string) bool {
+	hasGap, err := repo.HasAuditEntry(ctx, "sale", saleID, "unsigned_fiscal_signing")
+	if err != nil || !hasGap {
+		return false
 	}
-	existing, _, err := d.Settings.Get(ctx, fiscal.KeyTSEFailingSince)
+	resolved, err := repo.HasAuditEntry(ctx, "sale", saleID, "fiscal_signing_resolved")
 	if err != nil {
-		logging.L().Errorf("fiscal signing: read %s: %v", fiscal.KeyTSEFailingSince, err)
-		return
+		return true
 	}
-	if strings.TrimSpace(existing) != "" {
-		return // an earlier failure already stamped the onset
-	}
-	if err := d.Settings.Set(ctx, fiscal.KeyTSEFailingSince, now); err != nil {
-		logging.L().Errorf("fiscal signing: set %s: %v", fiscal.KeyTSEFailingSince, err)
-	}
+	return !resolved
 }
 
 // --- background retry (ADR-0044 D1: "retry signing in the background") -----
@@ -407,12 +440,19 @@ func enqueueFiscalSignRetry(ctx context.Context, d *common.Deps, entry pendingFi
 // fiscalSignRetryTick is one pass of the background retry: re-ask each
 // queued unsigned sale, drop what succeeds (with a fiscal_signing_resolved
 // audit row against the same sale — audit rows are append-only, so recovery
-// gets its own marker rather than mutating the original), and stop at the
-// FIRST still-failing answer: the backlog shares one backend, so once it
-// says no there is no point paying the 3s budget once per queued sale this
-// tick. When a success drains the backlog to empty, the TSE-failing stamp is
-// cleared — this loop is that key's only production writer (see
-// fiscal.KeyTSEFailingSince's doc), so a plain clear is safe.
+// gets its own marker rather than mutating the original), and stop early
+// ONLY at the first BACKEND-level failure (transport error, budget timeout,
+// declared "unreachable"): the backlog shares one backend, so once that
+// backend is provably down there is no point paying the 3s budget once per
+// queued sale this tick. A PROTOCOL-level failure (unparseable JSON,
+// unknown status) is a per-entry outcome — the entry stays queued but the
+// tick continues with the rest, so one permanently-confusing entry can
+// never starve every sale behind it (review of ut-docs#675, B3).
+//
+// fiscal.KeyTSEFailingSince is deliberately not touched here, in either
+// direction — this mechanism never sets it (see declareUnsignedFiscalSale's
+// ADR-0048 Decision 1 note), so clearing it on drain would emit a false
+// "TSE is fine now" against whatever other mechanism legitimately set it.
 //
 // The list lock is NOT held across the asks (each can burn up to the 3s
 // budget, and a live tender's enqueue must never wait on that): resolved
@@ -462,21 +502,21 @@ func fiscalSignRetryTick(ctx context.Context, d *common.Deps) {
 			// keep trying the rest: a not-me answer is cheap.
 			continue
 		}
-		// Still failing: everything left shares the same down backend —
-		// stop burning the budget this tick.
+		if res.Outcome == fiscalSignFailedEntry {
+			// Protocol-level: THIS entry's answer is unusable (unknown
+			// status, unparseable JSON) but the backend is demonstrably up
+			// and answering. Keep the entry queued for a future tick (a
+			// contract/provider fix may unstick it) and keep going — the
+			// sales behind it deserve their attempt this tick (B3).
+			logging.L().Warnf("fiscal signing retry: sale %s still unsigned (%s) — kept queued, continuing with the rest of the backlog", entry.SaleID, res.Reason)
+			continue
+		}
+		// Backend-level failure: everything left shares the same down
+		// backend — stop burning the budget this tick.
 		break
 	}
-	remaining, err := removeResolvedFiscalSignRetries(ctx, d, resolvedIDs)
-	if err != nil {
+	if _, err := removeResolvedFiscalSignRetries(ctx, d, resolvedIDs); err != nil {
 		logging.L().Errorf("fiscal signing retry: persist pending list: %v", err)
-		return
-	}
-	if len(resolvedIDs) > 0 && remaining == 0 && d.Settings != nil {
-		if err := d.Settings.Set(ctx, fiscal.KeyTSEFailingSince, ""); err != nil {
-			logging.L().Errorf("fiscal signing retry: clear %s: %v", fiscal.KeyTSEFailingSince, err)
-		} else {
-			logging.L().Infof("fiscal signing retry: backlog drained — %s cleared, the TSE is answering again", fiscal.KeyTSEFailingSince)
-		}
 	}
 }
 

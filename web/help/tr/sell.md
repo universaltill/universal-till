@@ -39,4 +39,4 @@ Bir mali imzalama eklentisi kuruluysa, kasa her satışı ödeme anında imzalat
 - kasanın sorun listesinde bir uyarı görünür ve
 - kasa, satış imzalanana kadar arka planda birkaç dakikada bir otomatik olarak yeniden dener — kurtarılan her satış denetim kaydına kendi girişini alır.
 
-İmzalama, kasa çevrimiçiyken başarısız olduysa (yalnızca bir ağ kesintisi değil, gerçek bir imzalama arızası), mağazanın TSE'si de arızalı olarak işaretlenir; bu, yukarıda anlatıldığı gibi resmi kayıt modunda sonraki satışları, TSE düzelene veya sahibi bir geçersiz kılma verene kadar duraklatır. Arka plandaki yeniden denemeler açığı kapattığında arıza işareti kendiliğinden kalkar.
+İmzalama kesintisi tek başına satışı asla duraklatmaz — neden ağ da olsa imzalama hizmeti de olsa, kasa satışları tamamlamaya ve açığı yukarıda anlatıldığı gibi kaydetmeye devam eder. Arka plandaki bir yeniden deneme satışı imzaladığında, kurtarma denetim kaydına işlenir ve o fişin sonraki her yeniden baskısı kesinti notu olmadan, temiz çıkar. (Bu sayfada daha önce anlatılan resmi kayıt modu duraklatması ayrı bir güvencedir; imzalama kesintisi onu tetiklemez.)

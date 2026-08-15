@@ -461,13 +461,16 @@ WHERE p.is_active = 1
 
 // ActiveHookOwner returns the id and display name of an ACTIVE plugin other
 // than excludePluginID currently holding an active hook for event — the
-// install-time exclusivity check for an ADR-0041 `exclusive` extension point
+// exclusivity check for an ADR-0041 `exclusive` extension point
 // (fiscal.sign.ask today, ut-docs#675): setPluginActiveHandler refuses to
-// enable a second answerer while this owner is active, naming it in the
-// error. found=false means the point is unowned (or owned only by the
-// excluded plugin itself, e.g. a re-enable).
-func (r *PluginRepo) ActiveHookOwner(ctx context.Context, event, excludePluginID string) (id, name string, found bool, err error) {
-	err = r.db.QueryRowContext(ctx, `
+// enable a second answerer while this owner is active, and PersistManifest
+// refuses an install/update whose manifest declares the hook (review of
+// ut-docs#675, B2 — pass the install transaction as tx so the check sees a
+// consistent snapshot; nil outside one). found=false means the point is
+// unowned (or owned only by the excluded plugin itself, e.g. a re-enable
+// or a self-update).
+func (r *PluginRepo) ActiveHookOwner(ctx context.Context, tx *sql.Tx, event, excludePluginID string) (id, name string, found bool, err error) {
+	err = r.executor(tx).QueryRowContext(ctx, `
 SELECT p.id, COALESCE(p.name, p.id)
 FROM plugins p
 JOIN plugin_hooks h ON h.plugin_id = p.id

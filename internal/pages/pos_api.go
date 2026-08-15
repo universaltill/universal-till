@@ -70,6 +70,18 @@ func fiscalSettingsReader(d *common.Deps) fiscal.SettingsReader {
 	return data.NewSettingsRepo(d.Db)
 }
 
+// formFlagTruthy reports whether a form checkbox/flag value spells "true"
+// ("1"/"true"/"yes"/"on", case-insensitive) — the till's convention for the
+// offline flag the cashier tender path and the self-order kiosk checkout
+// both thread into SaleInput.Offline.
+func formFlagTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // evaluateFiscalGate runs ADR-0048's policy for the shop's configured
 // country against wall-clock now. For any non-gated country (everything but
 // DE today) it returns Allowed without touching the settings store.
@@ -181,7 +193,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// receipt outage notice (derived from that marker by both render
 	// paths), operator Problem, background retry. Best-effort, log-only on
 	// failure, exactly like the unsigned_override block above.
-	if signRes.Outcome == fiscalSignFailed || signRes.Outcome == fiscalSignSkippedOffline {
+	if signRes.Outcome.isFailure() || signRes.Outcome == fiscalSignSkippedOffline {
 		declareUnsignedFiscalSale(ctx, d, repo, saleID, actorID, signRes)
 	}
 
@@ -528,17 +540,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		if !offlineSet {
 			if err := r.ParseForm(); err == nil {
-				switch strings.ToLower(strings.TrimSpace(r.Form.Get("offline_override"))) {
-				case "1", "true", "yes", "on":
+				if formFlagTruthy(r.Form.Get("offline_override")) {
 					offline = true
 					offlineSet = true
 				}
-				if !offlineSet {
-					switch strings.ToLower(strings.TrimSpace(r.Form.Get("offline"))) {
-					case "1", "true", "yes", "on":
-						offline = true
-						offlineSet = true
-					}
+				if !offlineSet && formFlagTruthy(r.Form.Get("offline")) {
+					offline = true
+					offlineSet = true
 				}
 			}
 		}
@@ -876,14 +884,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			unsignedOverride = true
 		}
 		// fiscal.sign.ask outage notice (ADR-0044 proceed-and-declare):
-		// derived from the sale's own unsigned_fiscal_signing audit row —
-		// NOT a gate/settings re-evaluation, since this flag is a per-sale
-		// outcome, not current-settings state. A read error degrades to "no
-		// notice line"; the authoritative record is the audit row itself.
-		unsignedFiscalSigning := false
-		if hasGap, gapErr := repo.HasAuditEntry(r.Context(), "sale", saleID, "unsigned_fiscal_signing"); gapErr == nil && hasGap {
-			unsignedFiscalSigning = true
-		}
+		// derived from the sale's own audit rows — NOT a gate/settings
+		// re-evaluation, since this flag is a per-sale outcome, not
+		// current-settings state — and suppressed once a later
+		// fiscal_signing_resolved row shows the background retry signed
+		// the sale (review of ut-docs#675: a resolved sale renders clean).
+		unsignedFiscalSigning := saleHasUnresolvedSigningGap(r.Context(), repo, saleID)
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning,
 			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d))
 		if renderErr != nil {
