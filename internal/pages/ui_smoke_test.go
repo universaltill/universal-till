@@ -413,6 +413,15 @@ func seedForPages(t *testing.T, db *sql.DB) {
 			t.Fatalf("seed role_permission %s/fiscal_tse_override: %v", role, err)
 		}
 	}
+	// 047's permission_management is the matrix-editor page's own gating
+	// action (ut-docs#556) — seeded super_admin ONLY, deliberately not even
+	// the admin+super_admin pattern 046 uses: see 047's migration comment.
+	if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES ('permission_management')`); err != nil {
+		t.Fatalf("seed permission_action permission_management: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES ('super_admin', 'permission_management', 1)`); err != nil {
+		t.Fatalf("seed role_permission super_admin/permission_management: %v", err)
+	}
 	// minimal data
 	_, _ = db.Exec(`INSERT INTO plugin_catalog(id,version,name,description,runtime,entrypoint,package_url,sha256,author,website,tags_json,is_deprecated) VALUES('p1','1.0','Plugin','desc','go','entry','url','sha','auth','site','[]',0)`)
 	_, _ = db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('p1','Plugin','1.0',1)`)

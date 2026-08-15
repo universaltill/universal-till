@@ -1,6 +1,9 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "users.title" }}</h1>
+  {{ if .canEditPermissions }}
+  <a class="btn secondary" href="/users/permissions">{{ T "permissions.title" }}</a>
+  {{ end }}
 </div>
 
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
