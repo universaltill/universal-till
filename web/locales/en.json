@@ -1418,5 +1418,6 @@
   "pos.toast.fiscal_tse_failing": "Sale not completed: the shop's TSE is currently reported as failing, so the till will not record this sale. An owner (admin) can grant a temporary, time-limited override, or try again once the TSE is working.",
   "selforder.checkout.fiscal_blocked": "Ordering here is unavailable right now — please order at the counter.",
   "fiscal.banner.override_active": "TSE override active — sales are being recorded without a TSE signature until",
-  "receipt.fiscal.unsigned_override": "Recorded during a documented TSE outage, under a time-limited owner override."
+  "receipt.fiscal.unsigned_override": "Recorded during a documented TSE outage, under a time-limited owner override.",
+  "receipt.fiscal.unsigned_signing": "TSE signing was unavailable when this sale was recorded; signing is retried automatically."
 }

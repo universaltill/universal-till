@@ -383,6 +383,31 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
 		}
+		// fiscal.sign.ask is an EXCLUSIVE extension point (ADR-0041
+		// Decision B, ADR-0044; ut-docs#675): only one TSE provider is
+		// meaningfully active on a till at once, so enabling a second
+		// plugin that also declares it while another answerer is active is
+		// refused HERE, at install/enable time, naming the owning plugin —
+		// never at tender time, mid-sale. NOTE: tax.rate.ask is equally
+		// `exclusive` per ADR-0041 but has NO equivalent enforcement today;
+		// retrofitting it is deliberately out of this card's scope (it
+		// predates the mechanism) and needs its own card.
+		if active {
+			pluginRepo := data.NewPluginRepo(d.Db)
+			if declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, fiscalSignAskEvent); hookErr == nil && declares {
+				ownerID, ownerName, found, ownerErr := pluginRepo.ActiveHookOwner(ctx, fiscalSignAskEvent, pluginID)
+				if ownerErr == nil && found {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusConflict)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data": nil,
+						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active fiscal signing provider — %s is an exclusive extension point; disable the active provider first",
+							pluginID, ownerName, ownerID, fiscalSignAskEvent),
+					})
+					return
+				}
+			}
+		}
 		if err := data.NewPluginRepo(d.Db).SetPluginActive(ctx, nil, pluginID, active); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
