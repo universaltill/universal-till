@@ -31,8 +31,8 @@ import (
 
 // openRealSchemaPagesDB builds a DB with the real migrated schema. The lifecycle
 // write paths (SetPluginActive, PersistManifest, DeletePlugin) touch columns the
-// simplified seedForPages fixture doesn't have (e.g. plugins.updated_at,
-// installed_from_url), so they need the production schema to exercise the
+// simplified seedForPages fixture doesn't have (e.g. plugins.installed_from_url,
+// installed_sha256), so they need the production schema to exercise the
 // success branches rather than only the DB-error branch.
 func openRealSchemaPagesDB(t *testing.T) *sql.DB {
 	t.Helper()

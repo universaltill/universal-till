@@ -672,13 +672,10 @@ func TestFiscalSignExclusivity_EnableFailsClosedOnDBError(t *testing.T) {
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, dp)
 
-	// seedForPages' minimal plugins table lacks updated_at, which the real
-	// SetPluginActive stamps — add it so the (pre-fix, fail-open) enable
-	// path would genuinely SUCCEED, proving a red result here is the
-	// exclusivity check being skipped, not an unrelated schema error.
-	if _, err := dp.Db.Exec(`ALTER TABLE plugins ADD COLUMN updated_at TEXT`); err != nil {
-		t.Fatal(err)
-	}
+	// seedForPages' plugins table carries updated_at since ut-docs#625, so
+	// the real SetPluginActive stamp (which the pre-fix, fail-open enable
+	// path would need to genuinely SUCCEED) is already available -- no
+	// ALTER TABLE workaround needed here anymore.
 	seedFiscalSignPluginRows(t, dp, "com.test.signer-a", true)
 	seedFiscalSignPluginRows(t, dp, "com.test.signer-b", false)
 	// Break the hook lookup: both HasActiveHook and ActiveHookOwner read
@@ -736,12 +733,9 @@ func TestFiscalSignExclusivity_EnableSucceedsWithoutConflict(t *testing.T) {
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, dp)
 
-	// seedForPages' minimal plugins table lacks updated_at, which the real
-	// SetPluginActive stamps — add it so the success path can run.
-	if _, err := dp.Db.Exec(`ALTER TABLE plugins ADD COLUMN updated_at TEXT`); err != nil {
-		t.Fatal(err)
-	}
-
+	// seedForPages' plugins table carries updated_at since ut-docs#625, so
+	// the real SetPluginActive stamp is already available -- no ALTER TABLE
+	// workaround needed here anymore.
 	seedFiscalSignPluginRows(t, dp, "com.test.signer-a", false)
 	seedFiscalSignPluginRows(t, dp, "com.test.signer-b", false)
 	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level)
