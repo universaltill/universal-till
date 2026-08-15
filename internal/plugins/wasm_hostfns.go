@@ -42,6 +42,14 @@ const httpResponseCap = 256 << 10 // response body cap (base64-decoded bytes)
 type hostState struct {
 	pluginID string
 	db       *sql.DB
+
+	// httpCacheReq/httpCacheResp cache the most recently completed
+	// hostHTTPRequest call for THIS event (ut-docs#754). WasmRuntime.HandleEvent
+	// creates a fresh hostState per event/module instantiation, so the cache
+	// dies with the instance — no explicit expiry, no cross-event or
+	// cross-plugin leakage. See hostHTTPRequest for why this exists.
+	httpCacheReq  []byte
+	httpCacheResp []byte
 }
 
 type hostStateKey struct{}
@@ -55,7 +63,10 @@ func stateFrom(ctx context.Context) (*hostState, bool) {
 	return s, ok && s != nil && s.db != nil
 }
 
-// readGuest copies a guest buffer out of module memory.
+// readGuest returns a VIEW into guest module memory — not a copy. A caller
+// that needs the bytes to outlive this call (e.g. as a cache key) must
+// clone them explicitly; the guest is free to overwrite this region before
+// its own memory is next read.
 func readGuest(m api.Module, ptr, length uint32) ([]byte, bool) {
 	if length == 0 {
 		return nil, true
@@ -189,6 +200,27 @@ func hostStorageSet(ctx context.Context, m api.Module, keyPtr, keyLen, valPtr, v
 // hostname must be covered by a granted `net:<host>` permission; https only,
 // except plain http to localhost (dev/Ollama). Runs under the module's
 // event deadline.
+//
+// Buffer-ABI retry cache (ut-docs#754): per the module's buffer ABI, a
+// guest that undersizes dstCap gets back the FULL response length and is
+// expected to "call again with a bigger buffer" — passing the identical
+// request bytes. Every other buffer-ABI call re-derives its answer
+// idempotently on retry (a SQLite read, a file/socket cursor guarded by
+// #614's pre-read bounds check); this one does not — without a cache, the
+// retry would re-issue the LIVE HTTP request. Harmless for an idempotent
+// GET, but a real duplicate side effect for a payment/ERP-connector plugin
+// POSTing a charge or order with an undersized response buffer.
+//
+// The cache is deliberately narrow — populated ONLY when this call's own
+// response overflowed the guest's dstCap (the one case the buffer ABI
+// itself says "call again"), and cleared the moment a hit is served into a
+// buffer big enough to hold the whole thing. Caching every successful call
+// unconditionally was tried and rejected during review: it silently
+// collapsed two genuinely separate, adequately-buffered calls with
+// byte-identical request bytes (a poll loop, a deliberate duplicate
+// submission) into one, which is a worse bug than the one this fix exists
+// to close. A failed call is never cached at all — retrying a real failure
+// is supposed to hit the network again.
 func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
@@ -197,6 +229,20 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	raw, ok := readGuest(m, reqPtr, reqLen)
 	if !ok {
 		return hostErrInvalid
+	}
+	if s.httpCacheResp != nil && bytes.Equal(s.httpCacheReq, raw) {
+		resp := s.httpCacheResp
+		if dstCap >= uint32(len(resp)) {
+			// This call's buffer is big enough for the whole cached
+			// response — the buffer-ABI retry this cache exists for is
+			// now complete. Clear it so a LATER call with the same
+			// request bytes (not part of this retry) is treated as a
+			// fresh, real request instead of silently reusing a stale
+			// answer.
+			s.httpCacheReq = nil
+			s.httpCacheResp = nil
+		}
+		return writeGuest(m, dstPtr, dstCap, resp)
 	}
 	var req struct {
 		Method  string            `json:"method"`
@@ -259,6 +305,18 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	})
 	if err != nil {
 		return hostErrInternal
+	}
+	if uint32(len(out)) > dstCap {
+		// Only cache the overflow case — this call's own buffer didn't fit
+		// the response, so per the buffer ABI the guest WILL call again
+		// with a bigger buffer, passing the identical request bytes.
+		// Key is a COPY of raw: raw is a live view into guest linear
+		// memory (readGuest → m.Memory().Read, no copy), which the guest
+		// is free to overwrite/reuse before its retry call — holding onto
+		// it uncopied would compare against whatever later lands at that
+		// address instead of the original request bytes.
+		s.httpCacheReq = bytes.Clone(raw)
+		s.httpCacheResp = out
 	}
 	return writeGuest(m, dstPtr, dstCap, out)
 }

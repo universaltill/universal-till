@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,8 +76,15 @@ func grantPerm(t *testing.T, d *sql.DB, pluginID, perm string) {
 
 func runGuest(t *testing.T, w *WasmRuntime, d *sql.DB, pluginID, url string) map[string]any {
 	t.Helper()
-	payload, _ := json.Marshal(map[string]string{"url": url})
-	ev := Event{ID: "ev1", Type: "test.event", Timestamp: time.Now(), Payload: payload}
+	return runGuestPayload(t, w, d, pluginID, map[string]string{"url": url})
+}
+
+// runGuestPayload is runGuest generalized to an arbitrary event payload —
+// the guest fixture dispatches on payload.mode (see testdata/hostfn_guest).
+func runGuestPayload(t *testing.T, w *WasmRuntime, d *sql.DB, pluginID string, payload any) map[string]any {
+	t.Helper()
+	body, _ := json.Marshal(payload)
+	ev := Event{ID: "ev1", Type: "test.event", Timestamp: time.Now(), Payload: body}
 	w.mu.Lock()
 	w.db = d
 	w.mu.Unlock()
@@ -244,5 +253,174 @@ func TestHostSettingsGet(t *testing.T) {
 	res := runGuest(t, w, d, pluginID, srv.URL+"/ping")
 	if res["setting_val"] != "https://erp.example.com/hook" {
 		t.Fatalf("settings_get returned %q (code %v), want the unwrapped URL", res["setting_val"], res["setting_code"])
+	}
+}
+
+// TestHostHTTPRetryDoesNotReissueRequest is the ut-docs#754 fix proof: the
+// guest issues one http_request call with a deliberately undersized
+// buffer, gets back the buffer ABI's "here's the full length, call again
+// bigger" signal, and retries with the IDENTICAL request bytes. Before the
+// fix, that retry re-issued the live HTTP request — for a non-idempotent
+// call (a payment/ERP-connector POST) that duplicates the side effect. The
+// server here counts real hits, so this proves the retry is served from
+// cache, not the network, for the exact same logical call.
+func TestHostHTTPRetryDoesNotReissueRequest(t *testing.T) {
+	guest := buildHostfnGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.httpretry"
+
+	var hits int32
+	const body = "this response body is deliberately longer than the guest's first, undersized 4-byte buffer"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, "net:127.0.0.1")
+
+	w := NewWasmRuntime(t.TempDir())
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	w.hasNet[pluginID] = true
+
+	res := runGuestPayload(t, w, d, pluginID, map[string]string{"mode": "http_retry", "url": srv.URL + "/charge"})
+
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("server hit %d times for one logical retried call, want exactly 1 (duplicate side effect)", got)
+	}
+	// The undersized first call's own buffer ABI contract is unchanged: it
+	// still reports the FULL response length, not the 4 bytes it fit.
+	firstCode, _ := res["first_code"].(float64)
+	if firstCode <= 4 {
+		t.Errorf("first_code = %v, want the full response length (> the 4-byte buffer)", res["first_code"])
+	}
+	secondBody, _ := base64.StdEncoding.DecodeString(fmt.Sprint(res["second_body"]))
+	if string(secondBody) != body {
+		t.Errorf("second call body = %q, want the real cached response %q", secondBody, body)
+	}
+}
+
+// TestHostHTTPRetryDifferentRequestNotCached is the false-positive guard:
+// two genuinely different requests (not a retry of one) must both reach
+// the server — the #754 cache keys on exact request bytes, not merely
+// "this plugin already made a call this event."
+func TestHostHTTPRetryDifferentRequestNotCached(t *testing.T) {
+	guest := buildHostfnGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.httpretrydiff"
+
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte("body-for-" + r.URL.Path))
+	}))
+	defer srv.Close()
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, "net:127.0.0.1")
+
+	w := NewWasmRuntime(t.TempDir())
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	w.hasNet[pluginID] = true
+
+	res := runGuestPayload(t, w, d, pluginID, map[string]any{
+		"mode": "http_retry_diff",
+		"urls": []string{srv.URL + "/a", srv.URL + "/b"},
+	})
+
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Errorf("server hit %d times for two distinct requests, want exactly 2", got)
+	}
+	body0, _ := base64.StdEncoding.DecodeString(fmt.Sprint(res["body_0"]))
+	body1, _ := base64.StdEncoding.DecodeString(fmt.Sprint(res["body_1"]))
+	if string(body0) != "body-for-/a" || string(body1) != "body-for-/b" {
+		t.Errorf("bodies = %q, %q, want distinct per-URL responses", body0, body1)
+	}
+}
+
+// TestHostHTTPRepeatSameRequestBothReachServer is the #754 independent
+// review's F1 regression test: the guest makes the SAME request TWICE,
+// each time with a generously sized buffer up front (never an undersized-
+// buffer retry — a poll loop or a deliberate duplicate submission, not the
+// buffer-ABI retry the cache exists for). An earlier draft of the #754 fix
+// cached every successful call unconditionally and silently collapsed
+// this into one live call — both must reach the server.
+func TestHostHTTPRepeatSameRequestBothReachServer(t *testing.T) {
+	guest := buildHostfnGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.httprepeatsame"
+
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(fmt.Sprintf("hit-%d", n)))
+	}))
+	defer srv.Close()
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, "net:127.0.0.1")
+
+	w := NewWasmRuntime(t.TempDir())
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	w.hasNet[pluginID] = true
+
+	res := runGuestPayload(t, w, d, pluginID, map[string]string{"mode": "http_repeat_same", "url": srv.URL + "/poll"})
+
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Errorf("server hit %d times for two separate, adequately-buffered identical requests, want exactly 2", got)
+	}
+	firstBody, _ := base64.StdEncoding.DecodeString(fmt.Sprint(res["first_body"]))
+	secondBody, _ := base64.StdEncoding.DecodeString(fmt.Sprint(res["second_body"]))
+	if string(firstBody) == string(secondBody) {
+		t.Errorf("both calls got the same body (%q) — second call was served from cache instead of hitting the server", firstBody)
+	}
+}
+
+// TestHostHTTPRetryThenFreshCallNotCached proves the cache clears once a
+// pending buffer-ABI retry is fully served: undersized call (miss, caches
+// on overflow) → same-bytes big-buffer retry (hit, clears the cache) →
+// another same-bytes big-buffer call, which is NOT part of that retry and
+// must go out for real.
+func TestHostHTTPRetryThenFreshCallNotCached(t *testing.T) {
+	guest := buildHostfnGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.httpretryfresh"
+
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(fmt.Sprintf("this response body is deliberately longer than a 4-byte buffer, hit-%d", n)))
+	}))
+	defer srv.Close()
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, "net:127.0.0.1")
+
+	w := NewWasmRuntime(t.TempDir())
+	if err := w.load(pluginID, "1.0.0", guest); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	w.hasNet[pluginID] = true
+
+	res := runGuestPayload(t, w, d, pluginID, map[string]string{"mode": "http_retry_then_repeat", "url": srv.URL + "/charge"})
+
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Errorf("server hit %d times (want 2: one for the miss+retry pair, one for the later fresh call)", got)
+	}
+	secondBody, _ := base64.StdEncoding.DecodeString(fmt.Sprint(res["second_body"]))
+	thirdBody, _ := base64.StdEncoding.DecodeString(fmt.Sprint(res["third_body"]))
+	if string(secondBody) == string(thirdBody) {
+		t.Errorf("second and third call got the same body (%q) — the cache did not clear after being fully served", secondBody)
 	}
 }
