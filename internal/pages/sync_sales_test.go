@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -243,6 +244,139 @@ func TestApplyJournal_RejectsMissingRequiredFields(t *testing.T) {
 			applied, err := applyJournal(ctx, dp, "till-1", tc.j)
 			if err == nil {
 				t.Fatal("expected an error for a journal entry with a missing required field")
+			}
+			if applied {
+				t.Fatal("expected applied=false for a rejected journal entry")
+			}
+
+			var after int
+			if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales`).Scan(&after); err != nil {
+				t.Fatal(err)
+			}
+			if after != before {
+				t.Fatalf("expected no sale row written for a rejected journal entry, got %d before, %d after", before, after)
+			}
+		})
+	}
+}
+
+// TestApplyJournal_RejectsInvalidCurrency guards the LAN sync boundary
+// (ut-docs#647): unlike the live checkout path (internal/pages/pos_api.go's
+// completeTender), which always derives SaleInput.Currency server-side from
+// d.CurrentState().Currency, applyJournal previously passed a replica's
+// claimed sale.currency straight through unchecked -- a wrong-currency
+// journal entry was silently applied as-is. Empty currency is untouched by
+// this guard: it still degrades gracefully to pos.CompleteSale's own "GBP"
+// default, per the documented contract.
+func TestApplyJournal_RejectsInvalidCurrency(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t) // test config's shop currency is "GBP"
+	ctx := context.Background()
+
+	j := seedJournalSale("remote-sale-badcur", "T2-R903", "sale", "", "itm1", 1, 100)
+	j.Sale.Currency = "EUR"
+
+	var before int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+
+	applied, err := applyJournal(ctx, dp, "till-1", j)
+	if err == nil {
+		t.Fatal("expected an error for a journal entry whose currency doesn't match the shop's configured currency")
+	}
+	if applied {
+		t.Fatal("expected applied=false for a rejected journal entry")
+	}
+
+	var after int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("expected no sale row written for a rejected journal entry, got %d before, %d after", before, after)
+	}
+}
+
+// TestApplyJournal_AcceptsEmptyCurrency locks in the graceful-default
+// guarantee TestApplyJournal_RejectsInvalidCurrency's new guard must NOT
+// break: an empty currency is absence, not a wrong value, and still applies
+// (pos.CompleteSale defaults it).
+func TestApplyJournal_AcceptsEmptyCurrency(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+
+	j := seedJournalSale("remote-sale-nocur", "T2-R904", "sale", "", "itm1", 1, 100)
+	j.Sale.Currency = ""
+
+	applied, err := applyJournal(ctx, dp, "till-1", j)
+	if err != nil {
+		t.Fatalf("expected an empty currency to still apply gracefully, got err=%v", err)
+	}
+	if !applied {
+		t.Fatal("expected the journal to apply")
+	}
+}
+
+// TestApplyJournal_AcceptsRealCurrencyWhenPrimaryUnconfigured guards a
+// finding from independent review (ut-docs#647): a blank configured
+// currency (reachable via /api/settings/upsert, which doesn't validate
+// store.currency the way /api/settings/save does) must NOT be treated as
+// "the shop's currency is empty, so reject anything non-empty" -- that
+// would 422 every well-behaved replica's push shop-wide until the setting
+// is fixed or the till restarts. "Not yet configured" must stay
+// permissive, the same as before this card's guard existed.
+func TestApplyJournal_AcceptsRealCurrencyWhenPrimaryUnconfigured(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	dp.UpdateState(func(s *common.RuntimeState) { s.Currency = "" })
+
+	j := seedJournalSale("remote-sale-unconfigcur", "T2-R905", "sale", "", "itm1", 1, 100)
+	j.Sale.Currency = "GBP"
+
+	applied, err := applyJournal(ctx, dp, "till-1", j)
+	if err != nil {
+		t.Fatalf("expected a real currency to still apply when the primary's own currency isn't configured, got err=%v", err)
+	}
+	if !applied {
+		t.Fatal("expected the journal to apply")
+	}
+}
+
+// TestApplyJournal_RejectsMissingOrMalformedCreatedAt guards a real
+// data-corruption path (ut-docs#647): applyJournal's SetSaleProvenance call
+// writes sale.created_at VERBATIM over the sales.created_at column that
+// pos.CompleteSale just stamped with the real completion time -- an empty
+// or garbage value there previously clobbered the sale's actual creation
+// timestamp rather than "degrading gracefully" (there is no downstream
+// default for this field, unlike currency). Every real replica
+// (buildJournal) always populates this from its own DB row, so tightening
+// it to required cannot reject a well-behaved peer.
+func TestApplyJournal_RejectsMissingOrMalformedCreatedAt(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		createdAt string
+	}{
+		{"empty", ""},
+		{"malformed", "not-a-timestamp"},
+		{"date-only, not RFC3339", "2026-01-01"},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			j := seedJournalSale(fmt.Sprintf("remote-sale-badcreated-%d", i), fmt.Sprintf("T2-R91%d", i), "sale", "", "itm1", 1, 100)
+			j.Sale.CreatedAt = tc.createdAt
+
+			var before int
+			if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales`).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+
+			applied, err := applyJournal(ctx, dp, "till-1", j)
+			if err == nil {
+				t.Fatal("expected an error for a journal entry with a missing/malformed created_at")
 			}
 			if applied {
 				t.Fatal("expected applied=false for a rejected journal entry")
