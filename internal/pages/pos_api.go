@@ -205,7 +205,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// sale over bookkeeping. Evidence is only ever non-nil on approved; a
 	// bare approval (or a pre-1.1.0 signer) is a no-op here.
 	if signRes.Outcome == fiscalSignApproved {
-		recordFiscalTSEEvidence(ctx, repo, saleID, signRes.Evidence)
+		recordFiscalTSEEvidence(ctx, repo, saleID, actorID, signRes.Evidence)
 	}
 
 	engine.Reset()

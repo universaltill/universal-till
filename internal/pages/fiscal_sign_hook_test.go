@@ -845,6 +845,68 @@ func TestFiscalSignAsk_ApprovedWithTSEEvidencePersistsAndRenders(t *testing.T) {
 	}
 }
 
+// ut-docs#763: a sale that WAS signed but then failed to persist its §6
+// evidence must not go silent — unlike the pre-fix behaviour, it now gets
+// the same journal marker + Problems-ring treatment declareUnsignedFiscalSale
+// gives an actual signing failure. Forces the failure by dropping the
+// evidence table out from under RecordFiscalTSESignature (same DB-error
+// injection technique as TestFiscalSignExclusivity_EnableFailsClosedOnDBError)
+// rather than mocking the repository — real error, real path.
+func TestFiscalSignAsk_EvidencePersistFailureIsObservable(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	logging.ResetRecent()
+	installFiscalSignWasmPlugin(t, dp, "com.test.fiscal-sign-tse-fail", "fiscalsign_tse_guest")
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`DROP TABLE fiscal_tse_signatures`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := fiscalSignTender(t, mux, false)
+
+	// (0) Never unwinds or blocks the sale — additive observability only.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sale must complete despite the evidence persist failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := countSales(t, dp); got != 1 {
+		t.Fatalf("expected 1 sale, got %d", got)
+	}
+	var saleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales`).Scan(&saleID); err != nil {
+		t.Fatal(err)
+	}
+	// The evidence itself really is gone — this is what makes the failure
+	// worth flagging in the first place, not just an incidental side effect.
+	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
+		t.Fatalf("a persist failure is not a signing failure, must carry no unsigned_fiscal_signing marker, got %d", n)
+	}
+
+	// (a) journal marker, attached to the real sale row.
+	var markerSaleID, markerPayload string
+	if err := dp.Db.QueryRow(`SELECT entity_id, data_json FROM audit_log WHERE entity_type='sale' AND action='fiscal_evidence_persist_failed'`).
+		Scan(&markerSaleID, &markerPayload); err != nil {
+		t.Fatalf("expected a sale/fiscal_evidence_persist_failed audit row: %v", err)
+	}
+	if markerSaleID != saleID {
+		t.Fatalf("marker not attached to the sale: %q != %q", markerSaleID, saleID)
+	}
+	if !strings.Contains(markerPayload, "no such table") {
+		t.Fatalf("marker payload should carry the failure reason, got %s", markerPayload)
+	}
+
+	// (c) operator alert in the Problems ring.
+	foundProblem := false
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, saleID) && strings.Contains(p.Msg, "evidence failed to persist") {
+			foundProblem = true
+		}
+	}
+	if !foundProblem {
+		t.Fatalf("expected a Problems-ring warning naming sale %s; recent: %+v", saleID, logging.Recent())
+	}
+}
+
 // A till with no signer (or a signer that returns no evidence) renders
 // NEITHER the TSE block NOR placeholder values — absence is absence.
 func TestFiscalSignAsk_NoEvidenceRendersNoTSEBlock(t *testing.T) {
