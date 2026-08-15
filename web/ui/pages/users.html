@@ -46,6 +46,30 @@
               <button type="submit" class="btn secondary">{{ T "users.promote_super_admin" }}</button>
             </form>
             {{ end }}
+            {{/* Only render when the actor has at least one option they could
+                 actually submit successfully: a plain admin can't touch a
+                 super_admin's role either direction (same gate as granting
+                 one), and a manager's only editable targets are cashiers,
+                 for whom every non-cashier option 403s (managers can't
+                 grant manager/admin, same rule as creating a user) — so
+                 without this guard the control renders as either a
+                 wrong-role-displayed dead end (ut-docs#766 review finding
+                 1) or an always-inert button (finding 3). */}}
+            {{ if and .CanEdit (ne .ID "kiosk") (or $.canEditPermissions (and $.isAdmin (ne .Role "super_admin"))) }}
+            <form method="post" action="/api/users/{{ .ID }}/role" class="users-inline">
+              <select name="role">
+                <option value="cashier" {{ if eq .Role "cashier" }}selected{{ end }}>{{ T "users.role.cashier" }}</option>
+                {{ if $.isAdmin }}
+                <option value="manager" {{ if eq .Role "manager" }}selected{{ end }}>{{ T "users.role.manager" }}</option>
+                <option value="admin" {{ if eq .Role "admin" }}selected{{ end }}>{{ T "users.role.admin" }}</option>
+                {{ end }}
+                {{ if $.canEditPermissions }}
+                <option value="super_admin" {{ if eq .Role "super_admin" }}selected{{ end }}>{{ T "users.role.super_admin" }}</option>
+                {{ end }}
+              </select>
+              <button type="submit" class="btn secondary">{{ T "users.change_role" }}</button>
+            </form>
+            {{ end }}
           </td>
         </tr>
         {{ end }}
