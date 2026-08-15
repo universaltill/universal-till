@@ -648,6 +648,38 @@ func TestAuthRepo_ListRolePermissionMatrix(t *testing.T) {
 	}
 }
 
+// TestAuthRepo_Migration047SeedsPermissionManagementSuperAdminOnly runs
+// against a REAL migrated DB (openMigratedDB, not internal/pages'
+// seedForPages hand-seed) — the migrated-DB precondition every other
+// TestAuthRepo_HasPermission* test in this file already follows, and the
+// one place that actually proves 047 seeded what it claims: super_admin
+// ONLY, not the manager-inclusive pattern 039/042-045 use or 046's
+// admin+super_admin pattern. Without this, a migration regression to
+// either of those patterns would still pass every test in the pages
+// package, since that package's fixture hand-seeds its own copy rather
+// than running 047 (see internal/pages/ui_smoke_test.go's own comment).
+func TestAuthRepo_Migration047SeedsPermissionManagementSuperAdminOnly(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newAuthTestRepo(t)
+
+	for _, role := range []string{"cashier", "manager", "admin"} {
+		granted, err := repo.HasPermission(ctx, role, "permission_management")
+		if err != nil {
+			t.Fatalf("HasPermission(%s, permission_management): %v", role, err)
+		}
+		if granted {
+			t.Fatalf("%s must NOT be granted permission_management by migration 047's seed", role)
+		}
+	}
+	granted, err := repo.HasPermission(ctx, "super_admin", "permission_management")
+	if err != nil {
+		t.Fatalf("HasPermission(super_admin, permission_management): %v", err)
+	}
+	if !granted {
+		t.Fatal("super_admin must be granted permission_management by migration 047's seed")
+	}
+}
+
 func TestAuthRepo_SetRolePermission(t *testing.T) {
 	ctx := context.Background()
 	repo, _ := newAuthTestRepo(t)

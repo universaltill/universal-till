@@ -25,11 +25,11 @@
           {{ $cell := index $cells $role }}
           <td style="text-align:center">
             {{ if $cell.Locked }}
-            <input type="checkbox" checked disabled title="{{ T "permissions.lockout_hint" }}">
+            <input type="checkbox" {{ if $cell.Granted }}checked{{ end }} disabled title="{{ T "permissions.lockout_hint" }}">
             {{ else }}
-            <input type="checkbox" {{ if $cell.Granted }}checked{{ end }}
-                   hx-post="/api/users/permissions" hx-target="#perm-msg" hx-swap="innerHTML"
-                   hx-vals='{{ jsonVals "role" $role "action" $action "granted" $cell.Toggled }}'>
+            <input type="checkbox" name="granted" value="1" {{ if $cell.Granted }}checked{{ end }}
+                   hx-post="/api/users/permissions" hx-trigger="change" hx-target="#perm-msg" hx-swap="innerHTML"
+                   hx-vals='{{ jsonVals "role" $role "action" $action }}'>
             {{ end }}
           </td>
           {{ end }}
