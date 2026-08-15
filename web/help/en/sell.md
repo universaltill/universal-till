@@ -40,3 +40,7 @@ If a fiscal signing plugin is installed, the till asks it to sign each sale at t
 - the till keeps retrying automatically in the background, every couple of minutes, until the sale is signed — each recovered sale gets its own entry in the audit trail.
 
 A signing outage never pauses selling by itself — whether the cause is the network or the signing service, the till keeps completing sales and recording the gap as described above. Once a background retry signs a sale, the recovery is recorded in the audit trail and any later reprint of that receipt comes out clean, without the outage notice. (The system-of-record pause described earlier on this page is a separate safeguard; a signing outage does not trigger it.)
+
+### The TSE signature block on receipts
+
+When the signing plugin signs a sale and returns the signing details, the receipt includes a "TSE signature" block showing the signing details the plugin returned: the TSE serial number, the transaction number, the signature counter, the transaction start and end times, the signing algorithm, and the signature itself. The on-screen receipt also renders these details as a QR code (the QR format is provisional and will be confirmed against a certified TSE before the German rollout); the thermal print shows them as text lines. The block only appears when the signing service actually returned this data for that sale — a receipt without it means the data was not provided, and nothing is ever filled in with placeholder values.
