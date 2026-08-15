@@ -29,7 +29,7 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		// stock subquery don't fail on a missing table.
 		`CREATE TABLE inventory (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, reorder_level REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'completed', subtotal INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
-		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, name_snapshot TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0);`,
+		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE related_items (item_id TEXT NOT NULL, related_item_id TEXT NOT NULL, support INTEGER NOT NULL, score REAL NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (item_id, related_item_id));`,
 		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT, CHECK ((item_id IS NOT NULL AND variant_id IS NULL) OR (item_id IS NULL AND variant_id IS NOT NULL)));`,
 		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
@@ -173,6 +173,25 @@ func SeedCompletedSale(t *testing.T, db *sql.DB, saleID string, itemIDs ...strin
 		if _, err := db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot) VALUES(?,?,?,?,?)`,
 			saleID+"-l"+string(rune('a'+i)), saleID, i+1, itemID, itemID); err != nil {
 			t.Fatalf("seed sale line: %v", err)
+		}
+	}
+}
+
+// SeedCompletedSaleVariant inserts a completed sale whose lines reference
+// variants (not items) directly — the shape a variant checkout persists
+// (sale_lines.variant_id set, item_id NULL, per the 001_init.sql CHECK
+// constraint) — for tests exercising queries that must resolve a variant
+// line back to its parent item (e.g. related-items co-occurrence,
+// ut-docs#752).
+func SeedCompletedSaleVariant(t *testing.T, db *sql.DB, saleID string, variantIDs ...string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO sales(id, receipt_no, status) VALUES(?,?, 'completed')`, saleID, "R-"+saleID); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+	for i, variantID := range variantIDs {
+		if _, err := db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, variant_id, name_snapshot) VALUES(?,?,?,?,?)`,
+			saleID+"-l"+string(rune('a'+i)), saleID, i+1, variantID, variantID); err != nil {
+			t.Fatalf("seed variant sale line: %v", err)
 		}
 	}
 }
