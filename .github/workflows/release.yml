@@ -185,7 +185,12 @@ jobs:
           name: linux-shell-arm64
           path: dist-shells/linux-arm64
       - name: Run tests before releasing
-        run: go test ./...
+        # internal/plugins needs a longer per-package timeout than the 600s
+        # default — same margin issue as ci.yml's own split Test step
+        # (ut-docs#643/#753/#776): a release build must not fail on the
+        # same timeout-margin false alarm the main CI workflow was just
+        # fixed for.
+        run: go test $(go list ./... | grep -v '/internal/plugins$') && go test -timeout 20m ./internal/plugins
       # The Windows desktop shell (webview_go → Edge WebView2) is a CGO build
       # cross-compiled with mingw-w64.
       - name: Install mingw-w64 (Windows desktop shell)
