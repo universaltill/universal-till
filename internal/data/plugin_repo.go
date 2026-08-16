@@ -679,22 +679,49 @@ func (r *PluginRepo) UpsertPluginSetting(ctx context.Context, pluginID, key, val
 // they are this till's own (scope_id stays NULL: one till, one register).
 // Update-then-insert rather than ON CONFLICT: the unique index includes
 // scope_id, which is NULL here, and SQLite treats NULLs as distinct.
-func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, key, valueJSON, scope string) error {
-	res, err := r.executor(nil).ExecContext(ctx, `
+//
+// Runs inside its own transaction (ut-docs#785): the DSN's _txlock=immediate
+// (ut-docs#311) makes BeginTx take the write lock at BEGIN, so a second
+// caller for the same (plugin_id, key, scope) can't start its own UPDATE
+// until the first has committed — closing the gap a separate
+// UPDATE-then-INSERT pair leaves open, where two callers can each see zero
+// rows updated and both fall through to INSERT, leaving two rows for the
+// same global setting (the unique index doesn't catch it — scope_id is NULL
+// for global rows and SQLite treats NULLs as distinct in a unique index).
+// Same serialization pattern as MergeAdditiveJSONMapSetting (ut-docs#532).
+//
+// Owns its own transaction, same as MergeAdditiveJSONMapSetting — a future
+// caller invoking this while already holding a write transaction on the
+// same DB will block for busy_timeout(5000ms) and then fail with
+// SQLITE_BUSY rather than nest. No current caller does this (checked at
+// ut-docs#785 time).
+func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, key, valueJSON, scope string) (err error) {
+	done := pluginObs.trace("upsert_setting")
+	defer func() { done(err) }()
+
+	tx, txErr := r.db.BeginTx(ctx, nil)
+	if txErr != nil {
+		err = pluginObs.wrap("upsert_setting", txErr)
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `
 UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
 WHERE plugin_id = ? AND key = ? AND scope = ?`,
 		valueJSON, pluginID, key, scope)
 	if err != nil {
 		return pluginObs.wrap("upsert_setting", err)
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return nil
-	}
-	_, err = r.executor(nil).ExecContext(ctx, `
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err = tx.ExecContext(ctx, `
 INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
 VALUES (?, ?, ?, ?, ?)`,
-		uuid.NewString(), pluginID, key, valueJSON, scope)
-	if err != nil {
+			uuid.NewString(), pluginID, key, valueJSON, scope); err != nil {
+			return pluginObs.wrap("upsert_setting", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
 		return pluginObs.wrap("upsert_setting", err)
 	}
 	return nil
