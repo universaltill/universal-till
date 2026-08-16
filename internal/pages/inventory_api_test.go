@@ -250,6 +250,56 @@ func TestCreateNegativeInventoryOverride_CashierRequiresManagerPIN(t *testing.T)
 	if actorID != "mgr1" {
 		t.Fatalf("expected the approving manager (mgr1) to be the audit actor, got %q", actorID)
 	}
+
+	// ut-docs#780: the audit row must also record the originally-blocked
+	// cashier, not just the approving manager — otherwise the row reads
+	// as if the manager performed the action directly.
+	var dataJSON string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT data_json FROM audit_log WHERE id = ?`, overrideID).Scan(&dataJSON); err != nil {
+		t.Fatalf("query audit_log data_json for override %q: %v", overrideID, err)
+	}
+	var payload struct {
+		RequestedBy string `json:"requested_by"`
+	}
+	if err := json.Unmarshal([]byte(dataJSON), &payload); err != nil {
+		t.Fatalf("data_json not valid JSON: %v (%s)", err, dataJSON)
+	}
+	if payload.RequestedBy != "cashier1" {
+		t.Fatalf("expected requested_by=%q (the blocked cashier) in the audit payload, got %q (%s)", "cashier1", payload.RequestedBy, dataJSON)
+	}
+}
+
+// TestCreateNegativeInventoryOverride_AdminSelfApproves_NoRequestedBy covers
+// the complementary case (ut-docs#780): when an admin authorizes their own
+// override directly (no PIN fallback), requestedBy == actorID and the
+// payload must NOT carry a requested_by key at all — the two identities
+// coincide, so there is nothing to distinguish.
+func TestCreateNegativeInventoryOverride_AdminSelfApproves_NoRequestedBy(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	ctx := context.Background()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/inventory/override",
+		strings.NewReader("reason=stock+count+correction&item_id=itm1&location_id=loc_main&qty_before=50"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for an admin self-approved override, got %d: %s", rec.Code, rec.Body.String())
+	}
+	overrideID := strings.TrimSuffix(strings.TrimPrefix(rec.Body.String(), "<div class='success'>Override recorded: "), "</div>")
+
+	var dataJSON string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT data_json FROM audit_log WHERE id = ?`, overrideID).Scan(&dataJSON); err != nil {
+		t.Fatalf("query audit_log data_json for override %q: %v", overrideID, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(dataJSON), &payload); err != nil {
+		t.Fatalf("data_json not valid JSON: %v (%s)", err, dataJSON)
+	}
+	if _, present := payload["requested_by"]; present {
+		t.Fatalf("expected no requested_by key when actor self-approves, got %s", dataJSON)
+	}
 }
 
 // TestCreateNegativeInventoryOverride_JSONEnvelope covers the JSON-Accept
