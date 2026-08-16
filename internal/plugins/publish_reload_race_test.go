@@ -27,6 +27,31 @@ import (
 // must never panic, with no sequencing discipline required from callers.
 func TestPublish_NeverPanicsRacingManagerReload(t *testing.T) {
 	db := managerTestDB(t)
+	// ut-docs#770: this test deliberately drives db from two goroutines at
+	// once (the publisher loop below vs. the 100x m.Reload() calls), and
+	// managerTestDB's DSN-level busy_timeout(5000) alone wasn't enough — a
+	// 2026-08-15 CI run still hit "database is locked (SQLITE_BUSY)" from
+	// Reload's own write under sustained contention (ut-docs#750 already
+	// fixed a *different* symptom in this same test; this is a second,
+	// independent race). Pinning the pool to one connection, the same fix
+	// already established for this exact class of concurrent-goroutine test
+	// DB race elsewhere in this package (shutdown_drain_test.go) and in
+	// internal/pos (sales_test.go, offline_resilience_test.go), makes
+	// database/sql itself serialize the two goroutines' queries instead of
+	// leaving it to SQLite's real-time busy handler, which a loaded/shared
+	// CI runner can starve past its 5s budget. Safe here: neither goroutine
+	// holds a connection open (via a Tx, or an undrained *sql.Rows) while
+	// blocked on eb.mu — publish() takes eb.mu.RLock first and only then
+	// does DB work under it, while every DB call on the Reload path (list
+	// installed plugins, permission checks, SyncPluginPaymentMethods)
+	// fully releases its connection before ResetSubscribers() takes
+	// eb.mu.Lock — so there's no connection-vs-eb.mu cycle to deadlock on.
+	// If a future change makes Reload's DB work hold a connection open
+	// while calling into the bus (e.g. wrapping Sync in a Tx, or a repo
+	// method returning open Rows across ResetSubscribers), this pinned
+	// pool becomes a real deadlock risk, surfacing as this package's
+	// -race suite hitting its timeout rather than a clear failure.
+	db.SetMaxOpenConns(1)
 	ctx := context.Background()
 	const pid = "com.test.reloadrace"
 	// "none" runtime: Reload's WasmRuntime.Sync still unconditionally calls
