@@ -592,7 +592,7 @@ func TestPOSRepo_SalesByWeekdayAndHour_BucketsLocalTime(t *testing.T) {
 	// regression is only catchable on non-UTC machines.
 	ctrlSlot := func(format string, tm time.Time, goSlot int) int {
 		var slot int
-		if err := d.DB.QueryRow(`SELECT CAST(strftime(?, ?, 'localtime') AS INTEGER)`,
+		if err := d.DB.QueryRow(`SELECT CAST(strftime(?, ?, 'localtime', '0 hours', '0 minutes') AS INTEGER)`,
 			format, b8At(tm)).Scan(&slot); err != nil {
 			t.Fatalf("control slot query: %v", err)
 		}
@@ -631,17 +631,127 @@ func TestPOSRepo_SalesByWeekdayAndHour_BucketsLocalTime(t *testing.T) {
 		}
 	}
 
-	byHour, err := repo.SalesByHour(ctx, winFrom(7), winTo())
+	byHour, err := repo.SalesByHour(ctx, winFrom(7), winTo(), 0, 0)
 	if err != nil {
 		t.Fatalf("SalesByHour: %v", err)
 	}
 	check("SalesByHour", byHour, expect("%H", func(tm time.Time) int { return tm.Local().Hour() }))
 
-	byWeekday, err := repo.SalesByWeekday(ctx, winFrom(7), winTo())
+	byWeekday, err := repo.SalesByWeekday(ctx, winFrom(7), winTo(), 0, 0)
 	if err != nil {
 		t.Fatalf("SalesByWeekday: %v", err)
 	}
 	check("SalesByWeekday", byWeekday, expect("%w", func(tm time.Time) int { return int(tm.Local().Weekday()) }))
+}
+
+// b8ExpectedSlot computes the SalesByWeekday/SalesByHour bucket key for tm
+// directly via SQLite's own strftime(...,'localtime',hh,mm) modifiers — the
+// same production query busyBuckets now uses (ut-docs#653, mirroring
+// SalesByDay's ut-docs#559 fix) — rather than a Go time.Time computation, so
+// the assertion holds regardless of host timezone (same rationale as
+// b8ExpectedDay above).
+func b8ExpectedSlot(t *testing.T, d *db.DB, format string, tm time.Time, hh, mm int) int {
+	t.Helper()
+	var slot int
+	if err := d.DB.QueryRow(`SELECT CAST(strftime(?, ?, 'localtime', ?, ?) AS INTEGER)`,
+		format, b8At(tm), fmt.Sprintf("%d hours", -hh), fmt.Sprintf("%d minutes", -mm)).Scan(&slot); err != nil {
+		t.Fatalf("control slot query: %v", err)
+	}
+	return slot
+}
+
+// TestPOSRepo_SalesByWeekday_BusinessDayBoundary_ShiftsWeekday is
+// ut-docs#653's reproduction, mirroring ut-docs#559's
+// TestPOSRepo_SalesByDay_BusinessDayBoundary_MergesTradingNight: a sale at
+// 02:00 with a 04:00 business-day-start boundary belongs to the PREVIOUS
+// business day, so it must bucket into that previous day's weekday — not
+// the raw calendar weekday of the timestamp it's stored under.
+func TestPOSRepo_SalesByWeekday_BusinessDayBoundary_ShiftsWeekday(t *testing.T) {
+	d := b8OpenDB(t, "salesbyweekday-boundary.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	// 02:00 UTC — before the 04:00 boundary, so it belongs to the PREVIOUS
+	// business day's weekday, not this calendar day's.
+	t1 := time.Date(2026, 8, 13, 2, 0, 0, 0, time.UTC)
+	b8Sale(t, d, "n1", b8At(t1), "completed", "sale", 100, 1000)
+
+	from := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+
+	rows, err := repo.SalesByWeekday(ctx, from, to, 4, 0)
+	if err != nil {
+		t.Fatalf("SalesByWeekday: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly 1 weekday bucket, got %d: %+v", len(rows), rows)
+	}
+	wantSlot := b8ExpectedSlot(t, d, "%w", t1, 4, 0)
+	if rows[0].Slot != wantSlot {
+		t.Fatalf("weekday slot = %d, want %d (business day the 02:00 sale belongs to, not its raw calendar weekday)", rows[0].Slot, wantSlot)
+	}
+	if rows[0].Count != 1 || rows[0].Total != 1000 {
+		t.Fatalf("bucket = %+v, want count 1 total 1000", rows[0])
+	}
+}
+
+// TestPOSRepo_SalesByHour_BusinessDayBoundary_Shifted mirrors the above for
+// SalesByHour: the same 04:00-boundary shift busyBuckets applies to every
+// bucket expression (ut-docs#653's own text: "mirroring #559's
+// date(created_at, 'localtime', ?, ?) approach") shifts the hour bucket too.
+func TestPOSRepo_SalesByHour_BusinessDayBoundary_Shifted(t *testing.T) {
+	d := b8OpenDB(t, "salesbyhour-boundary.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	t1 := time.Date(2026, 8, 13, 2, 0, 0, 0, time.UTC)
+	b8Sale(t, d, "n1", b8At(t1), "completed", "sale", 100, 1000)
+
+	from := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+
+	rows, err := repo.SalesByHour(ctx, from, to, 4, 0)
+	if err != nil {
+		t.Fatalf("SalesByHour: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly 1 hour bucket, got %d: %+v", len(rows), rows)
+	}
+	wantSlot := b8ExpectedSlot(t, d, "%H", t1, 4, 0)
+	if rows[0].Slot != wantSlot {
+		t.Fatalf("hour slot = %d, want %d (shifted by the same business-day-start boundary as SalesByDay/SalesByWeekday)", rows[0].Slot, wantSlot)
+	}
+}
+
+// TestPOSRepo_SalesByWeekdayAndHour_DefaultBoundary_NoRegression pins
+// hh=mm=0 (the default, unset business_day_start) as a no-op vs. the
+// pre-#653 2-arg query — same guarantee ut-docs#559 pinned for SalesByDay.
+func TestPOSRepo_SalesByWeekdayAndHour_DefaultBoundary_NoRegression(t *testing.T) {
+	d := b8OpenDB(t, "busy-default-noregression.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	t1 := time.Date(2026, 8, 13, 2, 0, 0, 0, time.UTC)
+	b8Sale(t, d, "n1", b8At(t1), "completed", "sale", 100, 1000)
+
+	from := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+
+	wd, err := repo.SalesByWeekday(ctx, from, to, 0, 0)
+	if err != nil {
+		t.Fatalf("SalesByWeekday: %v", err)
+	}
+	if len(wd) != 1 || wd[0].Slot != int(t1.Local().Weekday()) {
+		t.Fatalf("hh=mm=0 weekday = %+v, want slot %d (unshifted local weekday)", wd, int(t1.Local().Weekday()))
+	}
+
+	hr, err := repo.SalesByHour(ctx, from, to, 0, 0)
+	if err != nil {
+		t.Fatalf("SalesByHour: %v", err)
+	}
+	if len(hr) != 1 || hr[0].Slot != t1.Local().Hour() {
+		t.Fatalf("hh=mm=0 hour = %+v, want slot %d (unshifted local hour)", hr, t1.Local().Hour())
+	}
 }
 
 func TestPOSRepo_ItemDailySellRates_NetOfReturnsPerDay(t *testing.T) {
@@ -763,10 +873,10 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if rows, cats, err := repo.SeasonalForecast(ctx, 28, 5); err != nil || len(rows) != 0 || len(cats) != 0 {
 		t.Fatalf("SeasonalForecast empty = (%v, %v, %v)", rows, cats, err)
 	}
-	if rows, err := repo.SalesByWeekday(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
+	if rows, err := repo.SalesByWeekday(ctx, winFrom(7), winTo(), 0, 0); err != nil || len(rows) != 0 {
 		t.Fatalf("SalesByWeekday empty = (%v, %v)", rows, err)
 	}
-	if rows, err := repo.SalesByHour(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
+	if rows, err := repo.SalesByHour(ctx, winFrom(7), winTo(), 0, 0); err != nil || len(rows) != 0 {
 		t.Fatalf("SalesByHour empty = (%v, %v)", rows, err)
 	}
 	if rates, err := repo.ItemDailySellRates(ctx, winFrom(7), winTo()); err != nil || len(rates) != 0 {
@@ -800,10 +910,10 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if _, _, err := repo.SeasonalForecast(ctx, 28, 5); err == nil {
 		t.Fatal("SeasonalForecast on a closed DB must error")
 	}
-	if _, err := repo.SalesByWeekday(ctx, winFrom(7), winTo()); err == nil {
+	if _, err := repo.SalesByWeekday(ctx, winFrom(7), winTo(), 0, 0); err == nil {
 		t.Fatal("SalesByWeekday on a closed DB must error")
 	}
-	if _, err := repo.SalesByHour(ctx, winFrom(7), winTo()); err == nil {
+	if _, err := repo.SalesByHour(ctx, winFrom(7), winTo(), 0, 0); err == nil {
 		t.Fatal("SalesByHour on a closed DB must error")
 	}
 	if _, err := repo.ItemDailySellRates(ctx, winFrom(7), winTo()); err == nil {

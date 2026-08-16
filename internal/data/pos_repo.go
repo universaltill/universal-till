@@ -1437,25 +1437,39 @@ type BusySlot struct {
 	Total int64 // revenue, minor units
 }
 
-// SalesByWeekday buckets completed sales by local weekday over the last N
-// days — "which days are busiest" for staffing decisions.
-func (r *POSRepo) SalesByWeekday(ctx context.Context, from, to time.Time) ([]BusySlot, error) {
-	return r.busyBuckets(ctx, from, to, `CAST(strftime('%w', s.created_at, 'localtime') AS INTEGER)`)
+// SalesByWeekday buckets completed sales by local weekday over [from, to),
+// shifted by the shop's configured business-day-start hh:mm boundary
+// (parseBusinessDayStart) the same way SalesByDay's date() grouping is
+// (ut-docs#559) — so a trading night that spans the boundary buckets into
+// the weekday its business day belongs to, not the raw calendar weekday of
+// the stored timestamp, keeping every chart on the Sales-trend tab
+// consistent (ut-docs#653). hh=mm=0 (the default) is a no-op vs. the
+// previous 2-arg query when the host timezone is UTC.
+func (r *POSRepo) SalesByWeekday(ctx context.Context, from, to time.Time, hh, mm int) ([]BusySlot, error) {
+	return r.busyBuckets(ctx, from, to, hh, mm, `CAST(strftime('%w', s.created_at, 'localtime', ?, ?) AS INTEGER)`)
 }
 
-// SalesByHour buckets completed sales by local hour of day over [from, to).
-func (r *POSRepo) SalesByHour(ctx context.Context, from, to time.Time) ([]BusySlot, error) {
-	return r.busyBuckets(ctx, from, to, `CAST(strftime('%H', s.created_at, 'localtime') AS INTEGER)`)
+// SalesByHour buckets completed sales by local hour of day over [from, to),
+// shifted by the same business-day-start boundary as SalesByWeekday/
+// SalesByDay (ut-docs#653). hh=mm=0 (the default) is a no-op.
+func (r *POSRepo) SalesByHour(ctx context.Context, from, to time.Time, hh, mm int) ([]BusySlot, error) {
+	return r.busyBuckets(ctx, from, to, hh, mm, `CAST(strftime('%H', s.created_at, 'localtime', ?, ?) AS INTEGER)`)
 }
 
-func (r *POSRepo) busyBuckets(ctx context.Context, from, to time.Time, bucketExpr string) ([]BusySlot, error) {
+// busyBuckets runs bucketExpr, which must consume the business-day-start
+// shift as its own two '?' placeholders (mirroring SalesByDay's
+// date(created_at, 'localtime', ?, ?) — see the two callers above) ahead of
+// the window bounds' placeholders.
+func (r *POSRepo) busyBuckets(ctx context.Context, from, to time.Time, hh, mm int, bucketExpr string) ([]BusySlot, error) {
 	fromStr, toStr := windowArgs(from, to)
+	hourMod := fmt.Sprintf("%d hours", -hh)
+	minMod := fmt.Sprintf("%d minutes", -mm)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT `+bucketExpr+` AS slot, COUNT(*), COALESCE(SUM(s.total), 0)
 FROM sales s
 WHERE s.status = 'completed' AND s.sale_type = 'sale'
   AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)
-GROUP BY slot ORDER BY slot`, fromStr, toStr)
+GROUP BY slot ORDER BY slot`, hourMod, minMod, fromStr, toStr)
 	if err != nil {
 		return nil, fmt.Errorf("busy buckets: %w", err)
 	}
