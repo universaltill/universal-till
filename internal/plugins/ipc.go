@@ -371,6 +371,44 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 		Payload:   payloadBytes,
 	}
 
+	// ut-docs#791: sale.completed's card-present reconciliation fields
+	// (masked PAN, auth code, terminal/trace ID — ut-docs#543) are gated
+	// on their own permission, same shape as the sales/stock export
+	// ledgers (ut-docs#228, data_api.go) — a plugin missing the grant
+	// still gets the event (line items, totals, non-card payment method),
+	// just with those specific fields blanked, rather than being denied
+	// the whole sale.completed subscription it may genuinely need for ERP
+	// sync. redactedPayloadBytes is computed once, outside the per-
+	// subscriber loop below, and reused for every subscriber that lacks
+	// the grant.
+	//
+	// Deserializes payloadBytes back into a SaleCompletedEvent rather than
+	// type-asserting the original payload interface{} — a type assertion
+	// against the concrete SaleCompletedEvent value would fail open
+	// (redactedPayloadBytes stays nil, every subscriber gets the full
+	// payload unredacted) the moment a future caller passes
+	// *SaleCompletedEvent instead of a value; json.Marshal produces
+	// identical bytes for both, so round-tripping through JSON is
+	// immune to that. json.Unmarshal here can only fail on malformed
+	// JSON, which can't happen against bytes this function just produced
+	// itself via json.Marshal above — but even so, failure still leaves
+	// redactedPayloadBytes nil, which the dispatch loop below treats as
+	// "no redaction configured for this event type" and sends the full
+	// event.Payload to everyone. That's acceptable ONLY because
+	// eventType == "sale.completed" is gated behind PublishSaleCompleted
+	// being the sole production caller (ipc.go, always a value); it is
+	// not a general-purpose fail-closed guarantee for arbitrary payloads.
+	var redactedPayloadBytes []byte
+	if eventType == "sale.completed" {
+		var saleEvent SaleCompletedEvent
+		if uerr := json.Unmarshal(payloadBytes, &saleEvent); uerr == nil {
+			redactedPayloadBytes, err = json.Marshal(redactCardPresentFields(saleEvent))
+			if err != nil {
+				return "", nil, fmt.Errorf("marshal redacted payload: %w", err)
+			}
+		}
+	}
+
 	// Hold the read lock across the ENTIRE dispatch loop, not just the
 	// subscriber snapshot (ut-docs#504). ResetSubscribers takes the
 	// exclusive Lock before closing any subscriber channel, so holding the
@@ -386,8 +424,9 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 	// eb.eventModes field reads below (we already hold the lock) and the
 	// ...WithDB audit variants instead of dbHandle()/GetEventMode()/
 	// auditEvent()/auditDispatch(), all of which self-RLock. Blocking
-	// handlers (WasmRuntime.HandleEvent) and CheckPermission are DB/wazero
-	// only and never touch EventBus.
+	// handlers (WasmRuntime.HandleEvent), CheckPermission, and the
+	// payments:reconciliation data.PluginRepo.CheckPermission call
+	// (ut-docs#791) are DB/wazero only and never touch EventBus.
 	eb.mu.RLock()
 	defer eb.mu.RUnlock()
 	db := eb.db
@@ -413,6 +452,37 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 				return "", nil, fmt.Errorf("event %s denied for plugin %s: %w", eventType, sub.PluginID, err)
 			}
 			continue
+		}
+
+		// ut-docs#791: this subscriber's own copy of the event, redacted
+		// unless it holds payments:reconciliation. Goes straight to
+		// data.PluginRepo.CheckPermission (the same primitive
+		// CheckPermissionGranted wraps) rather than CheckPermissionGranted
+		// itself, deliberately skipping its audit-on-denial: for every
+		// OTHER permission, a denial is an exceptional attempted access
+		// worth a row in audit_log. Here it's the opposite — most
+		// sale.completed subscribers (plain ERP/accounting connectors)
+		// will never declare this permission at all, so "not granted" is
+		// the expected, permanent steady state, checked on every single
+		// sale for every such subscriber. Auditing it the normal way
+		// would write one denial row per sale per ungranted subscriber
+		// forever, into the same audit_log the GoBD-relevant journal
+		// entries live in, drowning out genuinely exceptional denials —
+		// unlike data_api.go's sales:read/inventory:read precedent, which
+		// only runs once per on-demand export request, not once per sale.
+		// A repo-layer error is still fail-closed (err != nil → granted
+		// false → redact), just silent rather than audited — consistent
+		// with a best-effort, non-blocking event publish never aborting
+		// on this class of failure.
+		subEvent := event
+		if redactedPayloadBytes != nil {
+			granted, _, permErr := data.NewPluginRepo(db).CheckPermission(ctx, sub.PluginID, "payments:reconciliation")
+			if permErr != nil {
+				fmt.Printf("warning: payments:reconciliation check failed for plugin %s: %v\n", sub.PluginID, permErr)
+			}
+			if !granted {
+				subEvent.Payload = redactedPayloadBytes
+			}
 		}
 
 		switch mode {
@@ -442,7 +512,7 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 			// single deferred eb.mu.RUnlock() stays correct (exactly one
 			// RUnlock for exactly one held lock at exit).
 			eb.mu.RUnlock()
-			handlerResp, err := sub.Handler(ctx, event)
+			handlerResp, err := sub.Handler(ctx, subEvent)
 			eb.mu.RLock()
 			if err != nil {
 				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "error", err.Error())
@@ -453,7 +523,7 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 			dispatched++
 		default:
 			select {
-			case sub.Channel <- event:
+			case sub.Channel <- subEvent:
 				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "enqueued", "")
 				dispatched++
 			default:
@@ -626,6 +696,37 @@ func (eb *EventBus) auditDispatchWithDB(ctx context.Context, db *sql.DB, eventID
 // PublishSaleCompleted is a helper to publish sale.completed events
 func (eb *EventBus) PublishSaleCompleted(ctx context.Context, saleEvent SaleCompletedEvent) (string, error) {
 	return eb.Publish(ctx, "sale.completed", saleEvent)
+}
+
+// redactCardPresentFields returns a copy of ev with every payment's
+// card-present reconciliation fields (ut-docs#543: MaskedPAN, AuthCode,
+// TerminalID, TraceID) cleared. Used by publish() (ut-docs#791) to build
+// the payload delivered to sale.completed subscribers that lack the
+// payments:reconciliation permission — everything else about the sale
+// (totals, line items, the non-card payment method/amount/reference) is
+// unaffected, since most ERP/accounting connectors need the sale, not the
+// card data. Field-clearing (not dropping Payments entirely) so a
+// connector's payment-method/amount reconciliation against its own ledger
+// still works; the omitempty tags on those four fields mean a cleared
+// field marshals as absent, not as an empty string, so an ungranted
+// subscriber can't distinguish "no card-present payment" from "redacted"
+// from the payload shape alone — same "can't tell no-data from
+// no-permission" contract the sales/stock export ledgers already use
+// (ut-docs#228, ADR referenced in reference/plugin-manifest.md).
+func redactCardPresentFields(ev SaleCompletedEvent) SaleCompletedEvent {
+	if len(ev.Payments) == 0 {
+		return ev
+	}
+	redacted := ev
+	redacted.Payments = make([]SalePayment, len(ev.Payments))
+	for i, p := range ev.Payments {
+		p.MaskedPAN = ""
+		p.AuthCode = ""
+		p.TerminalID = ""
+		p.TraceID = ""
+		redacted.Payments[i] = p
+	}
+	return redacted
 }
 
 // PublishStockAdjusted is a helper to publish stock.adjusted events
