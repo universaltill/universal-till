@@ -231,6 +231,50 @@ func TestTenderHandler_JSONAcceptReturnsSaleSummary(t *testing.T) {
 	}
 }
 
+// Independent review, ut-docs#543: pos.PaymentInput has no json tags at
+// all, so its fields (including the card-present ones this ticket added)
+// serialise as bare Go PascalCase in the tender endpoint's JSON response --
+// against universal-till/CLAUDE.md's "JSON snake_case" rule, and a second
+// wire spelling for the same concept data.SaleDetailPayment already
+// correctly tags snake_case. Guard the wire shape directly.
+func TestTenderHandler_JSONResponsePaymentsAreSnakeCase(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			Payments []map[string]any `json:"payments"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("expected valid JSON, got: %v\nbody: %s", err, rec.Body.String())
+	}
+	if len(out.Data.Payments) != 1 {
+		t.Fatalf("expected 1 payment, got %d: %s", len(out.Data.Payments), rec.Body.String())
+	}
+	p := out.Data.Payments[0]
+	for _, key := range []string{"method_id", "amount", "change_given", "tip_amount"} {
+		if _, ok := p[key]; !ok {
+			t.Fatalf("expected snake_case key %q in payments[0], got keys: %v (body: %s)", key, p, rec.Body.String())
+		}
+	}
+	for _, badKey := range []string{"MethodID", "Amount", "ChangeGiven", "TipAmount", "MaskedPAN", "AuthCode", "TerminalID", "TraceID"} {
+		if _, ok := p[badKey]; ok {
+			t.Fatalf("found PascalCase key %q in payments[0] JSON -- violates snake_case rule: %v", badKey, p)
+		}
+	}
+}
+
 // ut-docs#744: a variant scanned by barcode resolves with BOTH ItemID and
 // VariantID set on the BasketLine (deliberately -- tax_hook.go's
 // tax.rate.ask payload still needs ItemID for a variant line), and this

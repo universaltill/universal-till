@@ -523,6 +523,7 @@
   "products.search_ph": "ابحث عن المنتجات…",
   "products.title": "المنتجات",
   "products.uncategorized": "بدون تصنيف",
+  "receipt.auth_code": "رمز الموافقة",
   "receipt.auto_reset": "إعادة ضبط تلقائية خلال ٦٠ ثانية…",
   "receipt.change": "الباقي",
   "receipt.legal.plugin_label": "إشعار قانوني (%s v%s)",

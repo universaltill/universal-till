@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
@@ -91,18 +92,68 @@ type SaleLineInput struct {
 	Modifiers          []data.SelectedModifier
 }
 
+// json tags (independent review, ut-docs#543): PaymentInput is never
+// JSON-decoded (the tender handler decodes into its own local request
+// struct and maps fields across), only ever encoded -- once, in the
+// /api/pos/tender JSON response. It shipped with no tags at all, so it
+// serialised as bare Go PascalCase, against universal-till/CLAUDE.md's
+// "JSON snake_case" rule and out of step with the identical wire
+// vocabulary data.SaleDetailPayment already uses correctly.
 type PaymentInput struct {
-	MethodID    string
-	Amount      money.Money
-	Currency    string
-	Reference   string
-	ChangeGiven money.Money
+	MethodID    string      `json:"method_id"`
+	Amount      money.Money `json:"amount"`
+	Currency    string      `json:"currency,omitempty"`
+	Reference   string      `json:"reference,omitempty"`
+	ChangeGiven money.Money `json:"change_given"`
 	// TipAmount is gratuity captured alongside a card-terminal payment
 	// (docs/germany-pos-parity-backlog.md, "Tips: SumUp reader -> till
 	// auto-sync"). It is metadata only: NOT part of Amount's coverage of
 	// the sale total, and does not affect netPayments/CompleteSale's
 	// payment-sufficiency check. Zero for tenders with no tip (e.g. cash).
-	TipAmount money.Money
+	TipAmount money.Money `json:"tip_amount"`
+
+	// Card-present reconciliation fields (ut-docs#543) -- optional,
+	// provider-agnostic metadata a locally-attached card terminal (e.g. a
+	// future ZVT integration, ut-docs#515) supplies. All empty for every
+	// payment method today (cash, Stripe, SumUp, QR-pay, demo).
+	//
+	// MaskedPAN must NEVER be a full card number -- scheme + last 4
+	// digits only (e.g. "VISA •••• 4242"). CompleteSale rejects anything
+	// that looks like an unmasked PAN before it ever reaches persistence;
+	// masking is the caller's responsibility before this field is set.
+	MaskedPAN  string `json:"masked_pan,omitempty"`
+	AuthCode   string `json:"auth_code,omitempty"` // terminal's auth/approval code
+	TerminalID string `json:"terminal_id,omitempty"`
+	TraceID    string `json:"trace_id,omitempty"` // terminal transaction/trace ID
+}
+
+// maxMaskedPANDigits bounds how many ASCII digits a MaskedPAN value may
+// contain. A properly masked display (scheme + last 4 digits, e.g.
+// "VISA •••• 4242") never has more than 4 real digits -- everything else
+// is mask characters or scheme text. A real, unmasked PAN (12-19 digits,
+// however it's grouped -- "4242424242424242" or "4242 4242 4242 4242")
+// always has more, so this catches it regardless of grouping.
+const maxMaskedPANDigits = 4
+
+// validateMaskedPAN rejects a PaymentInput.MaskedPAN value that looks like
+// an unmasked PAN. This is the persistence boundary (ut-docs#543): masking
+// must happen here, not just at render time, since GetSaleDetail and the
+// receipt template both trust whatever was stored.
+func validateMaskedPAN(s string) error {
+	digits := 0
+	// unicode.IsDigit, not a bare '0'-'9' range: this product ships fa/ar
+	// locales, so a full PAN written in Arabic-Indic or fullwidth digits
+	// is a real input shape, not a theoretical one -- an ASCII-only check
+	// let it straight through (independent review, ut-docs#543).
+	for _, r := range s {
+		if unicode.IsDigit(r) {
+			digits++
+			if digits > maxMaskedPANDigits {
+				return fmt.Errorf("masked_pan must show at most the last %d digits (got a value that looks like an unmasked PAN)", maxMaskedPANDigits)
+			}
+		}
+	}
+	return nil
 }
 
 const receiptRetryLimit = 5
@@ -374,7 +425,16 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			}
 
 			for _, p := range in.Payments {
-				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), p.TipAmount.Minor(), time.Now().UTC().Format(time.RFC3339)); err != nil {
+				if err := validateMaskedPAN(p.MaskedPAN); err != nil {
+					return err
+				}
+				cardPresent := data.CardPresentFields{
+					MaskedPAN:  p.MaskedPAN,
+					AuthCode:   p.AuthCode,
+					TerminalID: p.TerminalID,
+					TraceID:    p.TraceID,
+				}
+				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), p.TipAmount.Minor(), time.Now().UTC().Format(time.RFC3339), cardPresent); err != nil {
 					return err
 				}
 			}

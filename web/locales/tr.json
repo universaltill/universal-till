@@ -523,6 +523,7 @@
   "products.search_ph": "Ürünlerde ara…",
   "products.title": "Ürünler",
   "products.uncategorized": "Kategorisiz",
+  "receipt.auth_code": "Onay kodu",
   "receipt.auto_reset": "60 sn içinde otomatik sıfırlanır...",
   "receipt.change": "Para üstü",
   "receipt.legal.plugin_label": "Yasal uyarı (%s v%s)",

@@ -155,6 +155,12 @@ type SalePayment struct {
 	Method      string `json:"method"`
 	AmountCents int64  `json:"amount_cents"`
 	Reference   string `json:"reference"`
+	// Card-present reconciliation fields (ut-docs#543) -- empty unless the
+	// payment method supplied them. See data.CardPresentFields.
+	MaskedPAN  string `json:"masked_pan,omitempty"`
+	AuthCode   string `json:"auth_code,omitempty"`
+	TerminalID string `json:"terminal_id,omitempty"`
+	TraceID    string `json:"trace_id,omitempty"`
 }
 
 // StockAdjustedEvent is the payload published on "stock.adjusted" whenever an

@@ -167,6 +167,37 @@ func TestApplyJournal_AppliesOnceThenIdempotent(t *testing.T) {
 	}
 }
 
+// ut-docs#543: a journaled-in sale (from a replica till, via the LAN sync
+// journal) must carry its card-present reconciliation fields through to the
+// primary's local `payments` row, not silently drop them -- the primary is
+// exactly the node where cross-till reconciliation happens.
+func TestApplyJournal_CarriesCardPresentFields(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+
+	j := seedJournalSale("remote-sale-cp", "T2-R900-CP", "sale", "", "itm1", 1, 100)
+	j.Sale.Payments = []data.SaleDetailPayment{
+		{Method: "card", Amount: 100, MaskedPAN: "VISA •••• 4242", AuthCode: "013579", TerminalID: "TERM-01", TraceID: "TRACE-99"},
+	}
+	applied, err := applyJournal(ctx, dp, "till-1", j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("expected the journal to apply")
+	}
+
+	var maskedPAN, authCode, terminalID, traceID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT masked_pan, auth_code, terminal_id, trace_id FROM payments WHERE sale_id = 'remote-sale-cp'`).
+		Scan(&maskedPAN, &authCode, &terminalID, &traceID); err != nil {
+		t.Fatalf("read replayed payment: %v", err)
+	}
+	if maskedPAN != "VISA •••• 4242" || authCode != "013579" || terminalID != "TERM-01" || traceID != "TRACE-99" {
+		t.Fatalf("card-present fields dropped by journal replay: %q %q %q %q", maskedPAN, authCode, terminalID, traceID)
+	}
+}
+
 // TestJournalSale_WireFormatIsSnakeCase guards the LAN sync payload against
 // universal-till/CLAUDE.md's "JSON snake_case" rule (ut-docs#262):
 // data.SaleDetail had no json tags at all, so Go's default marshaling
