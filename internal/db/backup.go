@@ -42,6 +42,11 @@ func Snapshot(db *sql.DB, dbPath string) (string, error) {
 		// overwrite, so reuse the existing file.
 		return dest, nil
 	}
+	// Load-bearing for ut-docs#636: VACUUM INTO rebuilds the entire logical
+	// database (every table in sqlite_schema), never a subset. Retained
+	// fiscal data (reset-archive tables, 040_reset_archive.sql) depends on
+	// that — a future rewrite of this copy toward a selective/per-table
+	// export must not silently drop them.
 	if _, err := db.Exec(`VACUUM INTO ?`, dest); err != nil {
 		return "", fmt.Errorf("vacuum into: %w", err)
 	}
