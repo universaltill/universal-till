@@ -392,6 +392,79 @@ func TestRemoveDemoCustomersPromosKeepsHeldSaleCustomer(t *testing.T) {
 	}
 }
 
+// ut-docs#640: right after a reset-transactions run, the live sales table
+// is empty — the real reference to a demo customer sits in sales_archive
+// instead. "Remove sample data" must keep a customer an archived batch
+// still points to, the same way it already keeps one a LIVE sale or held
+// sale points to.
+func TestRemoveDemoCustomersPromosKeepsSaleArchiveCustomer(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('batch1','2026-01-01T00:00:00Z',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO sales_archive (id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, currency, subtotal, discount_total, tax_total, total, rounding, created_at, till_id, service_charge_amount, order_type, order_status, customer_id, reset_batch_id)
+	   VALUES ('sa1','R1','completed','sale','cash',0,'synced',0,'GBP',100,0,0,100,0,'2026-01-01T00:00:00Z','till1',0,'counter','completed','cust-001','batch1')`); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCustomersPromos(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCustomersPromos: %v", err)
+	}
+	// Kept: cust-001 (archived sale). Removed: cust-002, cust-003, PROMO50,
+	// PROMO500, DISC10 = 5.
+	if removed != 5 || kept != 1 {
+		t.Fatalf("RemoveDemoCustomersPromos = removed %d, kept %d; want 5, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM customers WHERE id = 'cust-001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("customer referenced only by an archived sale was removed")
+	}
+}
+
+// Same gap on the held_sales_archive side (independent review follow-up):
+// a demo customer parked in a basket that was then swept into the archive
+// by a reset, before ever being tendered, must also survive.
+func TestRemoveDemoCustomersPromosKeepsHeldSaleArchiveCustomer(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('batch1','2026-01-01T00:00:00Z',0)`); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"lines":[],"customer_id":"cust-001","customer_name":"Alice Carter","total":0}`
+	if _, err := d.DB.Exec(`INSERT INTO held_sales_archive (id, label, total_minor, line_count, payload, created_at, reset_batch_id)
+	   VALUES ('ha1','Table 4',0,0,?,'2026-01-01T00:00:00Z','batch1')`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCustomersPromos(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCustomersPromos: %v", err)
+	}
+	if removed != 5 || kept != 1 {
+		t.Fatalf("RemoveDemoCustomersPromos = removed %d, kept %d; want 5, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM customers WHERE id = 'cust-001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("customer referenced only by an archived held sale was removed")
+	}
+}
+
 // Independent review (ut-docs#567, F3): a demo promotion the shop has
 // genuinely customized (edited value/description, without necessarily
 // targeting a specific customer) must be kept, not just one with
@@ -582,5 +655,162 @@ func TestRemoveDemoCatalogueKeepsHeldSaleVariantItem(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatal("variant referenced only by a held sale did not survive (item_variants cascades from its parent item, so this would only fail if the item above wrongly did too)")
+	}
+}
+
+// ut-docs#640: right after a reset-transactions run, the live sale_lines
+// table is empty — the real reference to a demo item sits in
+// sale_lines_archive instead. "Remove sample data" must keep an item an
+// archived batch still points to, the same way it already keeps one a LIVE
+// sale_line or held sale points to.
+func TestRemoveDemoCatalogueKeepsSaleArchiveItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedArchivedSaleLine(t, d, "batch1", "itm003", "")
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	// Kept: itm003 (archived sale line). Removed: the other 49 items.
+	if removed != 49 || kept != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("item referenced only by an archived sale line was removed")
+	}
+}
+
+// Same gap, exercised via the variant-only clause — mirrors
+// TestRemoveDemoCatalogueKeepsHeldSaleVariantItem's own defense-in-depth
+// rationale.
+func TestRemoveDemoCatalogueKeepsSaleArchiveVariantItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// var010 belongs to itm041 (internal/data/seeddata/demo_catalogue.sql).
+	seedArchivedSaleLine(t, d, "batch1", "", "var010")
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	if removed != 49 || kept != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm041'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("item referenced only by an archived sale line's variant was removed")
+	}
+}
+
+// Same gap on the stock_movements_archive side — a demo item stock-adjusted
+// before a reset must stay kept afterward too.
+func TestRemoveDemoCatalogueKeepsStockArchiveItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('batch1','2026-01-01T00:00:00Z',0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO stock_movements_archive (id, item_id, location_id, type, quantity, created_at, reset_batch_id)
+	   VALUES ('sma1','itm003','loc-main','adjustment',-1,'2026-01-01T00:00:00Z','batch1')`); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	if removed != 49 || kept != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("item referenced only by an archived stock movement was removed")
+	}
+}
+
+// Same gap on the held_sales_archive side (independent review follow-up):
+// a demo item parked in a basket that was then swept into the archive by a
+// reset, before ever being tendered, must also survive — this one is worse
+// than the sale_lines/stock_movements gap above, since held_sales_archive
+// carries no FK at all, so RestoreResetBatch would succeed silently and the
+// shop owner would only discover the break as a raw FK failure when they
+// try to tender the restored basket.
+func TestRemoveDemoCatalogueKeepsHeldSaleArchiveItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('batch1','2026-01-01T00:00:00Z',0)`); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"lines":[{"sku":"SKU-0003","name":"Held Item","qty":1,"price_cents":100,"item_id":"itm003"}],"total":100}`
+	if _, err := d.DB.Exec(`INSERT INTO held_sales_archive (id, label, total_minor, line_count, payload, created_at, reset_batch_id)
+	   VALUES ('ha1','Table 4',100,1,?,'2026-01-01T00:00:00Z','batch1')`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	if removed != 49 || kept != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("item referenced only by an archived held sale was removed")
+	}
+}
+
+// seedArchivedSaleLine inserts one reset_batches row plus one minimal
+// sale_lines_archive row referencing either itemID or variantID (never
+// both — mirrors sale_lines_archive's own CHECK constraint). Archive tables
+// carry no FK to live tables (migration 040's own header comment), so this
+// needs no real prior sale or reset to set up.
+func seedArchivedSaleLine(t *testing.T, d *db.DB, batchID, itemID, variantID string) {
+	t.Helper()
+	if _, err := d.DB.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES (?, '2026-01-01T00:00:00Z', 0)`, batchID); err != nil {
+		t.Fatal(err)
+	}
+	var item, variant any
+	if itemID != "" {
+		item = itemID
+	}
+	if variantID != "" {
+		variant = variantID
+	}
+	if _, err := d.DB.Exec(`INSERT INTO sale_lines_archive
+	   (id, sale_id, line_no, item_id, variant_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, reset_batch_id)
+	   VALUES ('sla1', 'sale-x', 1, ?, ?, 'Archived snapshot', 1, 100, 0, 0, 0, 100, 100, ?)`,
+		item, variant, batchID); err != nil {
+		t.Fatal(err)
 	}
 }
