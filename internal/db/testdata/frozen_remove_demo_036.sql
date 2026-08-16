@@ -8,27 +8,16 @@
 -- still match the values it was seeded with (ut-docs#566: a shop that
 -- renamed/repriced a demo item before ever selling or stock-adjusting it
 -- has already made it real, and trading history alone missed that) — AND
--- nothing in sale_lines or stock_movements references it, LIVE OR ARCHIVED —
--- directly or through one of its variants (sale_lines and stock_movements
--- have no ON DELETE CASCADE, so deleting a sold/adjusted item would either
--- fail the FK or orphan real trading history; the *_archive twins carry no
--- FK to items at all, so deleting the item there would silently orphan the
--- archived reference instead of failing loudly) — AND no HELD (parked) sale
--- references it either, the same signal remove_demo_customers_promos.sql
--- already checks for demo customers (ut-docs#633): a held_sales row is an
--- in-progress basket that hasn't reached sale_lines/stock_movements yet, but
--- still FK-fails on tender if the item (or variant) it was parked against no
+-- nothing in sale_lines or stock_movements references it — directly or
+-- through one of its variants (sale_lines and stock_movements have no ON
+-- DELETE CASCADE, so deleting a sold/adjusted item would either fail the FK
+-- or orphan real trading history) — AND no HELD (parked) sale references it
+-- either, the same signal remove_demo_customers_promos.sql already checks
+-- for demo customers (ut-docs#633): a held_sales row is an in-progress
+-- basket that hasn't reached sale_lines/stock_movements yet, but still
+-- FK-fails on tender if the item (or variant) it was parked against no
 -- longer exists. A demo category/brand goes only when, after the item pass,
 -- no remaining row (demo or operator-created) still references it.
---
--- The *_archive clauses (ut-docs#640) close the same gap
--- ErrArchiveReferencesRemoved documents (internal/data/reset_archive_repo.go):
--- right after a reset-transactions run, the live sale_lines/stock_movements
--- tables are empty, so the live-only clauses above see nothing — the real
--- references sit in sale_lines_archive/stock_movements_archive instead.
--- Without this, "Remove sample data" could delete a demo item a still-
--- restorable archive batch depends on, and a later RestoreResetBatch would
--- then hit a live FK it can no longer satisfy.
 DROP TABLE IF EXISTS temp.demo_seed_removable;
 CREATE TEMP TABLE demo_seed_removable AS
 SELECT i.id FROM items i
@@ -45,29 +34,9 @@ WHERE i.is_sample_data = 1
   AND NOT EXISTS (SELECT 1 FROM stock_movements sm
                   JOIN item_variants v ON v.id = sm.variant_id
                   WHERE v.item_id = i.id)
-  AND NOT EXISTS (SELECT 1 FROM sale_lines_archive sl WHERE sl.item_id = i.id)
-  AND NOT EXISTS (SELECT 1 FROM sale_lines_archive sl
-                  JOIN item_variants v ON v.id = sl.variant_id
-                  WHERE v.item_id = i.id)
-  AND NOT EXISTS (SELECT 1 FROM stock_movements_archive sm WHERE sm.item_id = i.id)
-  AND NOT EXISTS (SELECT 1 FROM stock_movements_archive sm
-                  JOIN item_variants v ON v.id = sm.variant_id
-                  WHERE v.item_id = i.id)
   AND NOT EXISTS (SELECT 1 FROM held_sales h
                   WHERE h.payload LIKE '%"item_id":"' || i.id || '"%')
   AND NOT EXISTS (SELECT 1 FROM held_sales h
-                  JOIN item_variants v ON v.item_id = i.id
-                  WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
-  -- held_sales_archive (ut-docs#640 review follow-up): a held sale parked
-  -- against a demo item, then swept into the archive by a reset before
-  -- ever being tendered, is worse than the sale_lines/stock_movements gap
-  -- above — held_sales_archive.payload carries no FK at all, so deleting
-  -- the item here would let RestoreResetBatch succeed silently, and the
-  -- shop owner would only discover the break as a raw "FOREIGN KEY
-  -- constraint failed" the moment they try to tender the restored basket.
-  AND NOT EXISTS (SELECT 1 FROM held_sales_archive h
-                  WHERE h.payload LIKE '%"item_id":"' || i.id || '"%')
-  AND NOT EXISTS (SELECT 1 FROM held_sales_archive h
                   JOIN item_variants v ON v.item_id = i.id
                   WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%');
 

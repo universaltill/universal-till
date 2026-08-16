@@ -2562,9 +2562,30 @@ ORDER BY name LIMIT ?`, like, like, like, limit)
 }
 
 // EraseCustomer removes a customer's personal data (GDPR right to erasure):
-// it unlinks the customer from sales and promotions (keeping the sales, which
-// are financial records, but anonymous) and deletes the customer row. Audited.
-// Returns false if no such customer.
+// it unlinks the customer from sales (live AND archived) and promotions
+// (keeping the sales, which are financial records, but anonymous) and
+// deletes the customer row. Audited. Returns false if no such customer.
+//
+// The sales_archive unlink (ut-docs#640, independent review) closes the
+// same gap ErrArchiveReferencesRemoved documents for CleanupObsoleteItems
+// and the demo-data removal script: right after a reset-transactions run,
+// this customer's sale sits in sales_archive, invisible to a LIVE-only
+// unlink — deleting the customer row without also anonymising that
+// archived row would leave it dangling, and a later RestoreResetBatch
+// would then hit a live FK it can no longer satisfy
+// (sales.customer_id -> customers). An earlier version of this fix
+// refused the erasure outright instead — rejected on further review: any
+// batch that can trigger the refusal necessarily has sales_count > 0, so
+// DeleteResetBatch's retention window (10 years by default) AND
+// RestoreResetBatch's "till has traded since" refusal (true after the
+// shop's very next sale) together make "restore or purge it first" an
+// almost always impossible instruction — a GDPR Article 17 erasure
+// request would sit unfulfillable for years. Anonymising the archived
+// copy the same way the live copy already is has no such trap: archive
+// tables carry no FK to live tables (migration 040's own header), nothing
+// else in this codebase reads sales_archive.customer_id, and it matches
+// this function's own existing contract ("keeping the sales... but
+// anonymous") instead of inventing a different rule for the archived half.
 func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID string) (bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2574,6 +2595,7 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID string) (bool, 
 
 	for _, q := range []string{
 		`UPDATE sales SET customer_id = NULL WHERE customer_id = ?`,
+		`UPDATE sales_archive SET customer_id = NULL WHERE customer_id = ?`,
 		`UPDATE promotions SET customer_id = NULL WHERE customer_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
@@ -2601,8 +2623,21 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID string) (bool, 
 // obsoleteItemsWhere selects items that are safe to permanently delete during
 // catalog cleanup: they are already deactivated (is_active = 0) AND have no
 // financial or stock history whatsoever — neither the item nor any of its
-// variants appears in sale_lines or stock_movements. Anything ever sold or
-// moved is KEPT (deactivated at most) so audit/tax history stays intact.
+// variants appears in sale_lines or stock_movements, LIVE OR ARCHIVED.
+// Anything ever sold or moved is KEPT (deactivated at most) so audit/tax
+// history stays intact.
+//
+// The *_archive clauses (ut-docs#640) close a gap found in independent
+// review of ut-docs#187 (see ErrArchiveReferencesRemoved's doc comment,
+// reset_archive_repo.go): right after a reset-transactions run, the live
+// sale_lines/stock_movements tables are empty — the real references sit in
+// sale_lines_archive/stock_movements_archive instead, invisible to the
+// clauses above on their own. Without this, catalog cleanup could delete an
+// item a still-restorable archive batch depends on, and a later
+// RestoreResetBatch would then hit a live FK it can no longer satisfy.
+// item_variants itself is never archived (reset only clears transactional
+// tables), so a variant_id recorded in an archive row still resolves
+// against the live item_variants table exactly like the live clauses above.
 const obsoleteItemsWhere = `
 is_active = 0
 AND id NOT IN (SELECT item_id FROM sale_lines WHERE item_id IS NOT NULL)
@@ -2610,7 +2645,13 @@ AND id NOT IN (SELECT item_id FROM stock_movements WHERE item_id IS NOT NULL)
 AND id NOT IN (SELECT v.item_id FROM item_variants v
               WHERE v.id IN (SELECT variant_id FROM sale_lines WHERE variant_id IS NOT NULL))
 AND id NOT IN (SELECT v.item_id FROM item_variants v
-              WHERE v.id IN (SELECT variant_id FROM stock_movements WHERE variant_id IS NOT NULL))`
+              WHERE v.id IN (SELECT variant_id FROM stock_movements WHERE variant_id IS NOT NULL))
+AND id NOT IN (SELECT item_id FROM sale_lines_archive WHERE item_id IS NOT NULL)
+AND id NOT IN (SELECT item_id FROM stock_movements_archive WHERE item_id IS NOT NULL)
+AND id NOT IN (SELECT v.item_id FROM item_variants v
+              WHERE v.id IN (SELECT variant_id FROM sale_lines_archive WHERE variant_id IS NOT NULL))
+AND id NOT IN (SELECT v.item_id FROM item_variants v
+              WHERE v.id IN (SELECT variant_id FROM stock_movements_archive WHERE variant_id IS NOT NULL))`
 
 // ObsoleteItem is a row in the catalog-cleanup preview.
 type ObsoleteItem struct {
