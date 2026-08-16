@@ -468,3 +468,114 @@ func TestCleanupObsoleteItems_ItemWithKitchenStationRouteCascades(t *testing.T) 
 		t.Fatalf("station route must cascade-delete with its item, got %d rows left", routeCount)
 	}
 }
+
+// ut-docs#640: right after a reset-transactions run, the live sale_lines/
+// stock_movements tables are empty — the real references to item 'i1' now
+// sit in sale_lines_archive/stock_movements_archive instead. Deactivating
+// 'i1' afterward must NOT make it look "never sold" to obsoleteItemsWhere;
+// both the preview and the delete must keep it, exactly as they would if
+// the reference were still live.
+func TestCleanupObsoleteItems_KeepsItemReferencedOnlyByArchive(t *testing.T) {
+	d, x, _ := resetTestDB(t, "cleanup-archive.db")
+	seedFullSale(t, x) // archives item 'i1' via a sale_line AND a stock_movement
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	if _, _, err := repo.ResetTransactionHistory(ctx, ""); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	// Live sale_lines/stock_movements are now empty; only the archive
+	// references i1. Deactivate it so it would otherwise match
+	// obsoleteItemsWhere.
+	x(`UPDATE items SET is_active = 0 WHERE id = 'i1'`)
+
+	preview, err := repo.ListObsoleteItems(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListObsoleteItems: %v", err)
+	}
+	for _, it := range preview {
+		if it.ID == "i1" {
+			t.Fatal("item referenced only by an archived sale_line/stock_movement must not be previewed as obsolete")
+		}
+	}
+
+	n, err := repo.CleanupObsoleteItems(ctx, "")
+	if err != nil {
+		t.Fatalf("CleanupObsoleteItems: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("cleanup removed %d item(s), want 0 — 'i1' is archive-referenced", n)
+	}
+	var c int
+	if err := d.DB.QueryRow(`SELECT count(*) FROM items WHERE id = 'i1'`).Scan(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c != 1 {
+		t.Fatal("item referenced only by an archived sale_line/stock_movement was removed")
+	}
+}
+
+// ut-docs#640 (independent review — an earlier version of this fix refused
+// the erasure instead; rejected because DeleteResetBatch's 10-year default
+// retention plus RestoreResetBatch's "till has traded since" refusal
+// together make "restore or purge it first" almost always impossible,
+// turning a GDPR Article 17 request into a multi-year dead end): EraseCustomer
+// only used to NULL the LIVE sales.customer_id. Once a customer's only sale
+// has gone through reset-transactions, the reference lives in
+// sales_archive.customer_id instead, invisible to that UPDATE — erasing the
+// customer without also anonymising the archived row would leave it
+// pointing at a now-deleted customer, breaking a future RestoreResetBatch.
+// Erasure must anonymise BOTH copies and still succeed.
+func TestEraseCustomer_AnonymisesArchivedSaleToo(t *testing.T) {
+	d, x, _ := resetTestDB(t, "erase-archive.db")
+	x(`INSERT INTO customers (id, name, phone, email) VALUES ('c1','Ada Lovelace','555','ada@x.com')`)
+	x(`INSERT INTO sales (id, receipt_no, subtotal, total, customer_id) VALUES ('s1','R1',100,100,'c1')`)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	if _, _, err := repo.ResetTransactionHistory(ctx, ""); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	var archived int
+	if err := d.DB.QueryRow(`SELECT count(*) FROM sales_archive WHERE customer_id = 'c1'`).Scan(&archived); err != nil || archived != 1 {
+		t.Fatalf("setup: sales_archive.customer_id = c1, count=%d err=%v, want 1", archived, err)
+	}
+
+	ok, err := repo.EraseCustomer(ctx, "c1", "")
+	if err != nil || !ok {
+		t.Fatalf("erase: ok=%v err=%v, want ok=true err=nil", ok, err)
+	}
+	var custs int
+	if err := d.DB.QueryRow(`SELECT count(*) FROM customers WHERE id = 'c1'`).Scan(&custs); err != nil {
+		t.Fatal(err)
+	}
+	if custs != 0 {
+		t.Fatal("customer not erased")
+	}
+	// The archived sale is KEPT (still 1 row) but anonymised.
+	var archivedCount int
+	var cid *string
+	if err := d.DB.QueryRow(`SELECT count(*), customer_id FROM sales_archive WHERE id = 's1'`).Scan(&archivedCount, &cid); err != nil {
+		t.Fatal(err)
+	}
+	if archivedCount != 1 || cid != nil {
+		t.Fatalf("archived sale should be kept + unlinked: count=%d cid=%v", archivedCount, cid)
+	}
+
+	// Now restore the batch: it must succeed (no dangling FK to the
+	// deleted customer) and the restored live sale must stay anonymous.
+	batches, err := repo.ListResetBatches(ctx)
+	if err != nil || len(batches) != 1 {
+		t.Fatalf("ListResetBatches: %+v, %v", batches, err)
+	}
+	if _, err := repo.RestoreResetBatch(ctx, batches[0].ID, ""); err != nil {
+		t.Fatalf("restore after erasure: %v", err)
+	}
+	var liveCID *string
+	if err := d.DB.QueryRow(`SELECT customer_id FROM sales WHERE id = 's1'`).Scan(&liveCID); err != nil {
+		t.Fatal(err)
+	}
+	if liveCID != nil {
+		t.Fatalf("restored sale should stay anonymous, got customer_id=%v", *liveCID)
+	}
+}
