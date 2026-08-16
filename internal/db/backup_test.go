@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -125,10 +126,11 @@ func TestStageAndApplyRestore(t *testing.T) {
 
 // ut-docs#636: reset-archive batches (040_reset_archive.sql, ut-docs#187) are
 // retained fiscal data, not disposable test data — a backup taken after a
-// reset must restore them intact. Snapshot/restore work by copying the whole
-// SQLite file (VACUUM INTO), so this passes without any table-specific
-// wiring; the test pins that behaviour so a future switch to a selective
-// (per-table) backup mechanism can't silently drop the archive tables again.
+// reset must restore them intact. `VACUUM INTO` rebuilds the entire logical
+// database (every table in sqlite_schema), so this passes without any
+// table-specific wiring; the test pins that behaviour so a future switch to
+// a selective (per-table) backup mechanism can't silently drop the archive
+// tables again.
 func TestSnapshotAndRestore_PreservesResetArchiveBatch(t *testing.T) {
 	path := testDBPath(t)
 	d := openTest(t, path)
@@ -153,7 +155,10 @@ func TestSnapshotAndRestore_PreservesResetArchiveBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)
 	}
-	sd, err := Open(snap)
+	// A plain connection, not Open(snap): Open runs migrations and flips
+	// journal_mode, which would mutate this disaster-recovery artifact before
+	// the restore below reads it back.
+	sd, err := sql.Open("sqlite", snap)
 	if err != nil {
 		t.Fatalf("open snapshot: %v", err)
 	}
