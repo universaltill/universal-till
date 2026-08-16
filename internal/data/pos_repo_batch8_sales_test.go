@@ -53,7 +53,7 @@ VALUES ('cash', 'Cash', 'cash', 1)`)
 		t.Fatalf("InsertSaleLine l1: %v", err)
 	}
 	if err := repo.InsertPayment(ctx, nil, saleID+"-p1", saleID, "cash",
-		1080, "GBP", "ref-b8", 20, 50, createdAt); err != nil {
+		1080, "GBP", "ref-b8", 20, 50, createdAt, CardPresentFields{}); err != nil {
 		t.Fatalf("InsertPayment: %v", err)
 	}
 }

@@ -213,6 +213,49 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+// ut-docs#543: card-present reconciliation fields (masked PAN, auth code,
+// terminal/trace ID) are exactly the kind of ALTER TABLE payments column
+// this migration's own header comment (040_reset_archive.sql) says must be
+// mirrored onto payments_archive -- confirm they actually round-trip
+// through a reset + restore, not just persist on the live table.
+func TestResetThenRestoreRoundTrip_CardPresentFields(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore_card_present.db")
+	seedFullSale(t, x)
+	if _, err := d.DB.Exec(`UPDATE payments SET masked_pan=?, auth_code=?, terminal_id=?, trace_id=? WHERE id='p1'`,
+		"VISA •••• 4242", "013579", "TERM-01", "TRACE-99"); err != nil {
+		t.Fatalf("seed card-present fields: %v", err)
+	}
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	if _, batchID, err := repo.ResetTransactionHistory(ctx, ""); err != nil {
+		t.Fatalf("reset: %v", err)
+	} else {
+		var maskedPAN string
+		if err := d.DB.QueryRow(`SELECT masked_pan FROM payments_archive WHERE id='p1' AND reset_batch_id=?`, batchID).Scan(&maskedPAN); err != nil {
+			t.Fatalf("read archived masked_pan: %v", err)
+		}
+		if maskedPAN != "VISA •••• 4242" {
+			t.Fatalf("archived masked_pan = %q, want %q", maskedPAN, "VISA •••• 4242")
+		}
+
+		if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+			t.Fatalf("restore: %v", err)
+		}
+	}
+	if c := count("payments"); c != 1 {
+		t.Fatalf("payments after restore: %d rows, want 1", c)
+	}
+	var maskedPAN, authCode, terminalID, traceID string
+	if err := d.DB.QueryRow(`SELECT masked_pan, auth_code, terminal_id, trace_id FROM payments WHERE id='p1'`).
+		Scan(&maskedPAN, &authCode, &terminalID, &traceID); err != nil {
+		t.Fatalf("read restored payment: %v", err)
+	}
+	if maskedPAN != "VISA •••• 4242" || authCode != "013579" || terminalID != "TERM-01" || traceID != "TRACE-99" {
+		t.Fatalf("restored card-present fields = %q %q %q %q, want originals back", maskedPAN, authCode, terminalID, traceID)
+	}
+}
+
 // Independent review, ut-docs#187: seedFullSale's one invoice has no credit
 // note, so the invoices self-FK two-phase archive/restore ordering
 // (original_invoice_id) was previously exercised by neither existing test —
