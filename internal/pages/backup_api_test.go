@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -71,10 +73,14 @@ func TestCopyBackupTo_CopiesBytesAndCreatesDestDir(t *testing.T) {
 	}
 }
 
+// ut-docs#557: POST /api/backup/now moved off the flat deny() 403 onto
+// checkOrElevate — a denied caller now gets the in-place elevation prompt
+// (200, htmx-swappable) instead. download/save-copy/restore below are
+// deliberately NOT wired to elevation yet (see the Dev report) and keep
+// the old flat-403 deny() gate unchanged.
 func TestBackupAPI_AllEndpointsRequireManager(t *testing.T) {
 	mux, _, _ := newBackupTestDeps(t)
 	cases := []struct{ method, path string }{
-		{http.MethodPost, "/api/backup/now"},
 		{http.MethodGet, "/api/backup/download/whatever.db"},
 		{http.MethodPost, "/api/backup/save-copy/whatever.db"},
 		{http.MethodPost, "/api/backup/restore"},
@@ -86,6 +92,73 @@ func TestBackupAPI_AllEndpointsRequireManager(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("%s %s: expected 403, got %d: %s", c.method, c.path, rec.Code, rec.Body.String())
 		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/now", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("POST /api/backup/now: expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "elevation-dialog") || !strings.Contains(rec.Body.String(), `name="override_pin"`) {
+		t.Errorf("POST /api/backup/now: expected the elevation prompt dialog, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#557: a cashier session denied data_management gets past the gate
+// with a valid manager approver PIN — the snapshot is created attributed to
+// the approver, and the audit trail records both (dual attribution).
+func TestBackupNow_ElevatesOnValidApproverPIN(t *testing.T) {
+	mux, dp, dbPath := newBackupTestDeps(t)
+	dp.AuthSvc = auth.NewService(dp.Db) // canPerform() needs it non-nil once a real session reaches it
+	authRepo := data.NewAuthRepo(dp.Db)
+	ctx := t.Context()
+
+	mgrID, err := authRepo.CreateUser(ctx, "mgr-backup", "Backup Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	hash, err := auth.HashPIN("555222")
+	if err != nil {
+		t.Fatalf("hash pin: %v", err)
+	}
+	if err := authRepo.SetUserPIN(ctx, mgrID, hash); err != nil {
+		t.Fatalf("set pin: %v", err)
+	}
+	// blocked_actor_id carries a real FK to users(id) — the blocked session
+	// user must exist as a real row, same as the approver.
+	blockedID, err := authRepo.CreateUser(ctx, "blocked-cashier", "Blocked Cashier", "cashier")
+	if err != nil {
+		t.Fatalf("create cashier: %v", err)
+	}
+
+	form := strings.NewReader("override_pin=555222")
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/backup/now", form), auth.User{ID: blockedID, Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	list, err := db.ListBackups(dbPath)
+	if err != nil {
+		t.Fatalf("list backups: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected exactly one real snapshot file on disk, got %d", len(list))
+	}
+
+	var actorID, blockedActorID string
+	if err := dp.Db.QueryRow(`SELECT actor_id, blocked_actor_id FROM audit_log WHERE action='backup_created'`).
+		Scan(&actorID, &blockedActorID); err != nil {
+		t.Fatalf("expected a backup_created audit row: %v", err)
+	}
+	if actorID != mgrID {
+		t.Fatalf("actor_id = %q, want the approver %q", actorID, mgrID)
+	}
+	if blockedActorID != blockedID {
+		t.Fatalf("blocked_actor_id = %q, want the originally-blocked session user %q", blockedActorID, blockedID)
 	}
 }
 

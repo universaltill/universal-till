@@ -24,7 +24,7 @@ import (
 // real behavior on a real till, every lookup is audited — must create it).
 func addAuditTable(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL, blocked_actor_id TEXT)`); err != nil {
 		t.Fatal(err)
 	}
 }

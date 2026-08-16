@@ -21,7 +21,7 @@ func newAuditTestDB(t *testing.T) *sql.DB {
 	}
 	stmts := []string{
 		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'cashier', pin_hash TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (actor_id) REFERENCES users (id));`,
+		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), blocked_actor_id TEXT, FOREIGN KEY (actor_id) REFERENCES users (id));`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -223,6 +223,79 @@ func TestPOSRepo_ListAuditForExport_FiltersMatchListAudit(t *testing.T) {
 	}
 	if len(exported) != 1 || exported[0].Action != "install" {
 		t.Fatalf("expected entity_type=plugin to narrow to the install entry, got %+v", exported)
+	}
+}
+
+// TestPOSRepo_InsertAudit_LeavesBlockedActorIDEmpty pins InsertAudit's
+// unchanged behavior after migration 049 (ut-docs#557) added the column:
+// the ordinary, non-elevated path always leaves blocked_actor_id NULL.
+func TestPOSRepo_InsertAudit_LeavesBlockedActorIDEmpty(t *testing.T) {
+	db := newAuditTestDB(t)
+	repo := NewPOSRepo(db)
+	ctx := context.Background()
+
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('u1','alice','Alice','manager')`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := repo.InsertAudit(ctx, nil, "u1", "sale", "R-1", "refund", nil, "2026-01-01T10:00:00Z", ""); err != nil {
+		t.Fatalf("InsertAudit: %v", err)
+	}
+
+	entries, err := repo.ListAudit(ctx, AuditFilters{})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].BlockedActorID != "" {
+		t.Fatalf("BlockedActorID = %q, want empty for a non-elevated InsertAudit entry", entries[0].BlockedActorID)
+	}
+}
+
+// TestPOSRepo_InsertAuditElevated_PersistsBlockedActorID proves the
+// dual-attribution write (ut-docs#557): actor_id is the approver who
+// actually performed the action, blocked_actor_id is the originally-blocked
+// session user — both survive round-trip through ListAudit AND
+// ListAuditForExport (both threaded through the same buildAuditWhere/Scan
+// column list).
+func TestPOSRepo_InsertAuditElevated_PersistsBlockedActorID(t *testing.T) {
+	db := newAuditTestDB(t)
+	repo := NewPOSRepo(db)
+	ctx := context.Background()
+
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('approver1','mgr','Manager','manager')`); err != nil {
+		t.Fatalf("seed approver: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('blocked1','cash','Cashier','cashier')`); err != nil {
+		t.Fatalf("seed blocked user: %v", err)
+	}
+
+	if err := repo.InsertAuditElevated(ctx, nil, "approver1", "blocked1", "settings", "theme", "settings_changed",
+		map[string]any{"key": "theme"}, "2026-01-01T10:00:00Z", ""); err != nil {
+		t.Fatalf("InsertAuditElevated: %v", err)
+	}
+
+	entries, err := repo.ListAudit(ctx, AuditFilters{})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].ActorID != "approver1" {
+		t.Fatalf("ActorID = %q, want approver1 (the approver actually acted)", entries[0].ActorID)
+	}
+	if entries[0].BlockedActorID != "blocked1" {
+		t.Fatalf("BlockedActorID = %q, want blocked1 (the originally-blocked user)", entries[0].BlockedActorID)
+	}
+
+	exported, _, err := repo.ListAuditForExport(ctx, AuditFilters{})
+	if err != nil {
+		t.Fatalf("ListAuditForExport: %v", err)
+	}
+	if len(exported) != 1 || exported[0].BlockedActorID != "blocked1" {
+		t.Fatalf("expected ListAuditForExport to also carry BlockedActorID, got %+v", exported)
 	}
 }
 

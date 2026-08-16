@@ -160,6 +160,11 @@ func TestDemoCatalogueUpgradeKeepsTouchedItems(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
 	}
+	// Migration 049 adds audit_log.blocked_actor_id -- same non-idempotent
+	// replay problem (ut-docs#557).
+	if _, err := d.DB.Exec(`ALTER TABLE audit_log DROP COLUMN blocked_actor_id`); err != nil {
+		t.Fatalf("rewind audit_log.blocked_actor_id column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -285,6 +290,11 @@ func TestDemoCatalogueUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
 	}
+	// Migration 049 adds audit_log.blocked_actor_id -- same non-idempotent
+	// replay problem (ut-docs#557).
+	if _, err := d.DB.Exec(`ALTER TABLE audit_log DROP COLUMN blocked_actor_id`); err != nil {
+		t.Fatalf("rewind audit_log.blocked_actor_id column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +352,11 @@ func TestDemoCatalogueUpgradeKeepsRenamedUntradedItem(t *testing.T) {
 	}
 	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
+	}
+	// Migration 049 adds audit_log.blocked_actor_id -- same non-idempotent
+	// replay problem (ut-docs#557).
+	if _, err := d.DB.Exec(`ALTER TABLE audit_log DROP COLUMN blocked_actor_id`); err != nil {
+		t.Fatalf("rewind audit_log.blocked_actor_id column: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
@@ -411,6 +426,11 @@ func TestDemoCustomersPromosUpgradeKeepsTouchedRows(t *testing.T) {
 	}
 	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
+	}
+	// Migration 049 adds audit_log.blocked_actor_id -- same non-idempotent
+	// replay problem (ut-docs#557).
+	if _, err := d.DB.Exec(`ALTER TABLE audit_log DROP COLUMN blocked_actor_id`); err != nil {
+		t.Fatalf("rewind audit_log.blocked_actor_id column: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
@@ -500,6 +520,11 @@ func TestDemoCustomersPromosUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	}
 	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
+	}
+	// Migration 049 adds audit_log.blocked_actor_id -- same non-idempotent
+	// replay problem (ut-docs#557).
+	if _, err := d.DB.Exec(`ALTER TABLE audit_log DROP COLUMN blocked_actor_id`); err != nil {
+		t.Fatalf("rewind audit_log.blocked_actor_id column: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)

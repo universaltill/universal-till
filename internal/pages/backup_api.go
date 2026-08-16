@@ -92,20 +92,41 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	mux.HandleFunc("POST /api/backup/now", func(w http.ResponseWriter, r *http.Request) {
-		if deny(w, r) {
+		// Mutating + audit-writing (ut-docs#557): a denied session gets an
+		// in-place PIN re-auth instead of a flat 403. Only this endpoint —
+		// backup/download, /save-copy and /restore below stay on the plain
+		// deny() 403 gate for now (see the Dev report for why).
+		elev := checkOrElevate(d, r, "data_management", r.FormValue("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/backup/now", "#backup-msg",
+				httpx.T(locale, "elevation.summary.backup_now"), nil, elev)
 			return
 		}
+		actorID := elev.ActorID
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
+		}
+		auditNow := func(action string, payload map[string]any) {
+			now := time.Now().UTC().Format(time.RFC3339)
+			if elev.Outcome == elevated {
+				_ = posRepo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "backup", "-", action, payload, now, "")
+				return
+			}
+			_ = posRepo.InsertAudit(r.Context(), nil, actorID, "backup", "-", action, payload, now, "")
+		}
+
 		path, err := db.Snapshot(d.Db, dbPath)
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
-			audit(r, "backup_failed", map[string]any{"error": err.Error()})
+			auditNow("backup_failed", map[string]any{"error": err.Error()})
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.backup.failed"))
 			return
 		}
 		_ = db.PruneBackups(dbPath, 14)
-		audit(r, "backup_created", map[string]any{"file": filepath.Base(path)})
+		auditNow("backup_created", map[string]any{"file": filepath.Base(path)})
 		// Reload so the list shows the new snapshot.
 		w.Header().Set("HX-Refresh", "true")
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.backup.done"))
