@@ -1,10 +1,37 @@
 {{ define "journal" }}
 <div class="journal" id="journal" {{ if .OOB }}hx-swap-oob="true"{{ end }}>
   <h2>{{ T "journal.title" }}</h2>
+  {{ if .ShowFilters }}
+    <form class="journal-filters">
+      <label>{{ T "journal.filter.till" }}
+        <select name="till" hx-get="/ui/journal?limit=full" hx-target="#journal" hx-swap="outerHTML" hx-include="closest form">
+          <option value="" {{ if eq .SelectedTill "" }}selected{{ end }}>{{ T "reports.this_till" }}</option>
+          <option value="all" {{ if eq .SelectedTill "all" }}selected{{ end }}>{{ T "journal.filter.all_tills" }}</option>
+          {{ $selected := .SelectedTill }}
+          {{ range .Tills }}
+          <option value="{{ .ID }}" {{ if eq $selected .ID }}selected{{ end }}>{{ .Name }}</option>
+          {{ end }}
+        </select>
+      </label>
+      <label>{{ T "journal.filter.day" }}
+        <input type="date" name="day" value="{{ .Day }}" hx-get="/ui/journal?limit=full" hx-target="#journal" hx-swap="outerHTML" hx-include="closest form">
+      </label>
+    </form>
+    {{ if .Tills }}
+      <div class="journal-till-status muted">
+        {{ range .Tills }}
+          <div>{{ if .LastSeenAt }}{{ printf (T "journal.till_last_synced") .Name .LastSeenAt }}{{ else }}{{ printf (T "journal.till_last_synced") .Name "—" }}{{ end }}</div>
+        {{ end }}
+      </div>
+    {{ end }}
+    {{ if .ExplicitCrossTillOnReplica }}
+      <div class="journal-replica-notice">{{ T "journal.replica_no_cross_till" }}</div>
+    {{ end }}
+  {{ end }}
   {{ if .Entries }}
     <table>
       <thead>
-        <tr><th>{{ T "journal.col.receipt" }}</th><th>{{ T "journal.col.total" }}</th><th>{{ T "journal.col.tender" }}</th><th>{{ T "journal.col.sync" }}</th><th>{{ T "journal.col.time" }}</th></tr>
+        <tr><th>{{ T "journal.col.receipt" }}</th><th>{{ T "journal.col.total" }}</th><th>{{ T "journal.col.tender" }}</th><th>{{ T "journal.col.sync" }}</th><th>{{ T "journal.col.time" }}</th>{{ if .ShowFilters }}<th>{{ T "journal.col.till" }}</th>{{ end }}</tr>
       </thead>
       <tbody>
         {{ range .Entries }}
@@ -14,6 +41,7 @@
             <td>{{ .TenderType }}</td>
             <td>{{ .SyncStatus }}</td>
             <td>{{ .CreatedAt }}</td>
+            {{ if $.ShowFilters }}<td>{{ if eq .TillID "" }}{{ T "reports.this_till" }}{{ else if .TillName }}{{ .TillName }}{{ else }}{{ T "journal.till_unknown" }}{{ end }}</td>{{ end }}
           </tr>
         {{ end }}
       </tbody>

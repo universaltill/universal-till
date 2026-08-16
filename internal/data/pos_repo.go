@@ -74,6 +74,24 @@ type SaleJournalEntry struct {
 	TenderType string
 	SyncStatus string
 	CreatedAt  string
+	// TillID/TillName are this sale's provenance (ADR-0011 D3): TillID is ''
+	// for a sale made on this till (or pre-sync history), else the till id
+	// it was journaled in from; TillName is that till's enrolled name (''
+	// when TillID is '' or the till is no longer enrolled).
+	TillID   string
+	TillName string
+}
+
+// SalesJournalFilter narrows ListSalesJournal. AllTills=true ignores TillID
+// and returns every till's sales; otherwise TillID selects one till's sales
+// ("" = this till's own local sales, till_id=”). Day, if set, is
+// "YYYY-MM-DD" and restricts to that calendar day (by created_at). Limit
+// <= 0 defaults to 5, same convention as ListRecentSales.
+type SalesJournalFilter struct {
+	TillID   string
+	AllTills bool
+	Day      string
+	Limit    int
 }
 
 type QueuedSale struct {
@@ -3408,29 +3426,55 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 }
 
 func (r *POSRepo) ListRecentSales(ctx context.Context, limit int) ([]SaleJournalEntry, error) {
+	return r.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: limit})
+}
+
+// ListSalesJournal is the general sales-journal read: ListRecentSales (every
+// till, no day filter) is the AllTills=true special case of this, kept as a
+// thin wrapper so callers that only ever wanted "all tills, recent N" don't
+// need to change. ut-docs#550: lets one till show every till's sales for
+// end-of-day review, filterable by till and by day — a plain local-DB query,
+// no primary/replica special-casing needed (ADR-0011: only the primary's
+// local sales table ever accumulates other tills' journaled sales, so a
+// replica's own local rows are all this query can ever find there).
+func (r *POSRepo) ListSalesJournal(ctx context.Context, f SalesJournalFilter) ([]SaleJournalEntry, error) {
+	limit := f.Limit
 	if limit <= 0 {
 		limit = 5
 	}
-	rows, err := r.db.QueryContext(ctx, `
-SELECT receipt_no, total, tender_type, sync_status, created_at
-FROM sales
-ORDER BY created_at DESC
-LIMIT ?
-`, limit)
+	query := `
+SELECT s.receipt_no, s.total, s.tender_type, s.sync_status, s.created_at, s.till_id, COALESCE(t.name, '') AS till_name
+FROM sales s
+LEFT JOIN tills t ON t.id = s.till_id
+WHERE 1=1
+`
+	args := []any{}
+	if !f.AllTills {
+		query += ` AND s.till_id = ?`
+		args = append(args, f.TillID)
+	}
+	if f.Day != "" {
+		query += ` AND date(s.created_at) = date(?)`
+		args = append(args, f.Day)
+	}
+	query += ` ORDER BY s.created_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list recent sales: %w", err)
+		return nil, fmt.Errorf("list sales journal: %w", err)
 	}
 	defer rows.Close()
 	var out []SaleJournalEntry
 	for rows.Next() {
 		var entry SaleJournalEntry
-		if err := rows.Scan(&entry.ReceiptNo, &entry.Total, &entry.TenderType, &entry.SyncStatus, &entry.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan recent sales: %w", err)
+		if err := rows.Scan(&entry.ReceiptNo, &entry.Total, &entry.TenderType, &entry.SyncStatus, &entry.CreatedAt, &entry.TillID, &entry.TillName); err != nil {
+			return nil, fmt.Errorf("scan sales journal: %w", err)
 		}
 		out = append(out, entry)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list recent sales: %w", err)
+		return nil, fmt.Errorf("list sales journal: %w", err)
 	}
 	return out, nil
 }
