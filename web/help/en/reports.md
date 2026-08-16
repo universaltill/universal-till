@@ -94,3 +94,36 @@ at the same time, it never lands on the other drawer. On a shop with more
 than one register, the till has to know which register it is first: set
 "This till's register" in Settings → Tills, or the payout is refused with
 a message pointing you there.
+
+## Seeing every till's sales (Journal)
+
+The Journal page (the receipts/sync list, off the sale screen) shows every
+till's sales by default, newest first, with the till that took each order
+shown in its own column — so one machine can review the whole shop's
+takings without walking to each register. Switch it to "This till" to see
+only this machine's own sales instead.
+
+Use the filter row above the list:
+
+- **Till** — "All tills" (the default) shows every till's sales, newest
+  first; "This till" narrows the list to only this machine's own local
+  sales; or pick one specific till by name to see just its sales.
+- **Day** — pick a date to narrow the list to that calendar day; leave it
+  blank to see the most recent sales regardless of day.
+
+When any till other than "This till" is enrolled, a line under the filters
+shows each enrolled till's name and when it was last in contact with this
+machine ("last contact from *till*: *time*") — a till that's pinging fine
+can still have a failed sales sync underneath, so this is a network-contact
+signal, not proof its sales have actually arrived; useful for spotting a
+till that's fallen behind, not a substitute for reconciling totals. A till
+shows "—" here if it's never been in contact, or (on a replica) because
+its contact time isn't shared down from the primary.
+
+Only a shop's primary till accumulates other tills' sales — a replica till
+only ever has its own local sales to journal, whatever till filter is
+picked, because a replica only ever pushes its own sales one-way up to the
+primary and never receives siblings' sales back down. Picking "All tills"
+or a specific other till on a replica shows a message explaining that
+cross-till sales are only available on the shop's primary till, instead of
+a table that's quietly empty with nothing to explain why.
