@@ -412,13 +412,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// and the Tills page can pair new replicas from here. Documented
 	// procedure: docs architecture/lan-sync.md "Promoting a replica".
 	mux.HandleFunc("POST /api/sync/promote", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "sync_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
 		_ = r.ParseForm()
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+		// Validate the request body BEFORE ever checking elevation
+		// (ut-docs#557 review finding): burning a manager's PIN entry on a
+		// request that was always going to 400/409 regardless of who
+		// approved it is a needless cost.
 		if strings.TrimSpace(r.Form.Get("confirm")) != "PROMOTE" {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "tills.promote_confirm_hint"))
@@ -429,12 +430,32 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "tills.promote_not_replica"))
 			return
 		}
+
+		// Mutating + audit-writing (ut-docs#557): a denied session gets an
+		// in-place PIN re-auth instead of a flat 403.
+		elev := checkOrElevate(d, r, "sync_management", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/sync/promote", "#promote-msg",
+				httpx.T(locale, "elevation.summary.sync_promote"), []elevationHiddenField{
+					{Name: "confirm", Value: r.Form.Get("confirm")},
+				}, elev)
+			return
+		}
+		actorID := elev.ActorID
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
+		}
+
 		if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(r.Context()); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", "-", "till_promoted",
-			nil, time.Now().UTC().Format(time.RFC3339), "")
+		now := time.Now().UTC().Format(time.RFC3339)
+		if elev.Outcome == elevated {
+			_ = posRepo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "till", "-", "till_promoted", nil, now, "")
+		} else {
+			_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till", "-", "till_promoted", nil, now, "")
+		}
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "tills.promoted"))
 	})
 

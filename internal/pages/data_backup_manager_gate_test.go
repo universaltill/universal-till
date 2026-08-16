@@ -106,6 +106,17 @@ func TestBackupEndpoints_RealSessionGatesByRole(t *testing.T) {
 			req := auth.WithUser(httptest.NewRequest(tc.method, tc.path, nil), auth.User{ID: "u1", Role: "cashier"})
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
+			// ut-docs#557: POST /api/backup/now alone moved off the flat
+			// deny() 403 onto checkOrElevate — a denied cashier now gets the
+			// in-place elevation prompt (200) instead. The other three
+			// endpoints are deliberately not wired to elevation yet and keep
+			// the plain 403.
+			if tc.name == "backup now" {
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s %s cashier = %d, want 200 (elevation prompt)", tc.method, tc.path, rec.Code)
+				}
+				return
+			}
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("%s %s cashier = %d, want 403", tc.method, tc.path, rec.Code)
 			}

@@ -1,0 +1,71 @@
+{{/* elevation_prompt.html — the manager-override-elevation dialog
+     (ut-docs#557). Rendered by checkOrElevate's needsElevation branch.
+
+     Two pieces, in one response body:
+
+       1. A small, non-OOB hint (`elevation.hint`) — this is the ONLY part
+          that lands in the triggering action's own hx-target (e.g.
+          tills.html's #promote-msg), so that target isn't left blank while
+          the dialog is up.
+       2. The dialog itself, OOB-swapped (hx-swap-oob="true", outerHTML by
+          default) into the empty <dialog id="elevation-modal"> placeholder
+          every page renders via web/ui/layouts/base.html — NOT into the
+          triggering hx-target. Rendering the dialog's own <form> straight
+          into that hx-target would nest it inside whatever <form> the
+          triggering element already sits in (e.g. tills.html's #promote-msg
+          is inside <form hx-post="/api/sync/promote">) — invalid HTML, and
+          silently mangled by the fragment-parsing algorithm. Matching
+          web/ui/pages/index.html's #modifier-modal/#hold-modal/#pfand-modal
+          precedent instead keeps this dialog a top-level element outside
+          any form, at the cost of needing the OOB indirection.
+
+     Self-opening: the <script> nested inside the dialog calls dialog.show()
+     on itself once inserted (allowScriptTags default; same pattern
+     GetLowStock's low-stock badge script uses, internal/pages/
+     inventory_api.go) — NOT showModal(). showModal() makes everything
+     outside the dialog inert (web/public/app.css:668-672's own comment),
+     which would make the custom on-screen keyboard (#osk, appended to
+     <body>, NOT inside the dialog — web/public/osk.js's wantsOSK triggers on
+     type="password", exactly the PIN field below) unreachable on kiosk
+     hardware with no physical keyboard. #hold-modal/#pfand-modal made the
+     same call for the same reason; this dialog follows suit, closing only
+     via the explicit Cancel/close() calls below (never remove() — the
+     placeholder id must survive a cancel so the NEXT elevation attempt's
+     OOB swap still has something to match).
+
+     Data: Action (the original handler's own POST URL — the retry re-POSTs
+     to the SAME endpoint), HxTarget (the original triggering element's own
+     hx-target, so a retry's response — success OR another prompt — lands
+     back in the right place), Hidden ([]{Name,Value} mirroring the
+     original form's other fields, since this dialog's form IS the retry),
+     Summary (a human-readable, pre-translated, plain-text description of
+     the specific action being approved — e.g. which role/permission is
+     being granted or revoked — rendered as visible text so an approver
+     never PINs in blind; empty renders no summary line), ErrKey (empty on
+     a first-time prompt; an i18n key once a PIN was actually tried and
+     failed — elevationErrorKey in elevation.go). */}}
+<span class="elevation-hint muted">{{ T "elevation.hint" }}</span>
+<dialog id="elevation-modal" class="modifier-modal elevation-dialog" hx-swap-oob="true">
+  <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML">
+    <h3>{{ T "elevation.prompt_title" }} {{ helpLink "elevation" }}</h3>
+    <p class="muted">{{ T "elevation.prompt_help" }}</p>
+    {{ if .Summary }}<p class="elevation-summary">{{ .Summary }}</p>{{ end }}
+    {{ range .Hidden }}
+    <input type="hidden" name="{{ .Name }}" value="{{ .Value }}">
+    {{ end }}
+    <label>{{ T "elevation.pin_label" }}
+      <input type="password" name="override_pin" inputmode="numeric" pattern="[0-9]{4,8}"
+             minlength="4" maxlength="8" placeholder="{{ T "elevation.pin_placeholder" }}"
+             autocomplete="off" autofocus required>
+    </label>
+    {{ if .ErrKey }}<div class="login-error">{{ T .ErrKey }}</div>{{ end }}
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="this.closest('dialog').close();">
+        {{ T "common.cancel" }}
+      </button>
+      <button type="submit" class="btn primary">{{ T "elevation.submit" }}</button>
+    </div>
+  </form>
+  <script>document.currentScript.closest('dialog').show()</script>
+</dialog>

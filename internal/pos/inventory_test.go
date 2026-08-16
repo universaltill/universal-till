@@ -439,7 +439,8 @@ CREATE TABLE audit_log (
   entity_id TEXT NOT NULL,
   action TEXT NOT NULL,
   data_json TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  blocked_actor_id TEXT
 );
 
 CREATE TABLE users (

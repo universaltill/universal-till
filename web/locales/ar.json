@@ -1462,5 +1462,19 @@
   "permissions.action.import_export": "الاستيراد / التصدير",
   "permissions.action.issue_reporting": "الإبلاغ عن مشكلة",
   "permissions.action.fiscal_tse_override": "تجاوز جهاز الأمان المالي (TSE)",
-  "permissions.action.permission_management": "الصلاحيات"
+  "permissions.action.permission_management": "الصلاحيات",
+  "elevation.prompt_title": "مطلوب موافقة المدير",
+  "elevation.prompt_help": "أدخل الرمز السري لأحد المعتمدين للمتابعة.",
+  "elevation.pin_label": "الرمز السري للمدير",
+  "elevation.pin_placeholder": "أدخل الرمز السري",
+  "elevation.submit": "تأكيد",
+  "elevation.error_invalid_pin": "الرمز السري غير صحيح",
+  "elevation.error_locked_out": "محاولات كثيرة جدًا، حاول مرة أخرى بعد قليل",
+  "elevation.error_insufficient_role": "هذا الرمز لا يملك صلاحية لهذا الإجراء",
+  "elevation.error_unavailable": "الموافقة غير متاحة على هذا الجهاز حاليًا.",
+  "elevation.hint": "مطلوب موافقة المدير — راجع النافذة.",
+  "elevation.summary.backup_now": "إنشاء نسخة احتياطية محلية جديدة الآن.",
+  "elevation.summary.sync_promote": "ترقية هذا الجهاز إلى جهاز رئيسي مستقل، مع إنهاء المزامنة مع الجهاز الرئيسي الحالي.",
+  "elevation.summary.permission_grant": "منح دور %s صلاحية \"%s\".",
+  "elevation.summary.permission_revoke": "سحب صلاحية \"%s\" من دور %s."
 }

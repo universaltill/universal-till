@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
@@ -263,6 +264,60 @@ func TestSyncPromote_RequiresConfirmationAndActualReplicaState(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 promoting a till that isn't a replica, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#557: a cashier session denied sync_management gets past the gate
+// with a valid manager approver PIN, replaying the "confirm" field the
+// elevation dialog's hidden input carried — proceeds as the approver, and
+// the audit trail records both the approver and the originally-blocked
+// cashier (dual attribution).
+func TestSyncPromote_ElevatesOnValidApproverPIN(t *testing.T) {
+	mux, dp := newSyncAPITestDeps(t)
+	dp.AuthSvc = auth.NewService(dp.Db)
+	authRepo := data.NewAuthRepo(dp.Db)
+	posRepo := data.NewPOSRepo(dp.Db)
+	ctx := t.Context()
+
+	mgrID, err := authRepo.CreateUser(ctx, "mgr-promote", "Promote Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	hash, err := auth.HashPIN("918273")
+	if err != nil {
+		t.Fatalf("hash pin: %v", err)
+	}
+	if err := authRepo.SetUserPIN(ctx, mgrID, hash); err != nil {
+		t.Fatalf("set pin: %v", err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed replica identity: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/sync/promote",
+		strings.NewReader("confirm=PROMOTE&override_pin=918273")), auth.User{ID: "blocked-cashier", Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("expected a success indicator, got: %s", rec.Body.String())
+	}
+
+	entries, err := posRepo.ListAudit(ctx, data.AuditFilters{Action: "till_promoted"})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one till_promoted entry, got %+v", entries)
+	}
+	if entries[0].ActorID != mgrID {
+		t.Fatalf("ActorID = %q, want the approver %q", entries[0].ActorID, mgrID)
+	}
+	if entries[0].BlockedActorID != "blocked-cashier" {
+		t.Fatalf("BlockedActorID = %q, want the originally-blocked session user", entries[0].BlockedActorID)
 	}
 }
 
@@ -1038,5 +1093,27 @@ func TestAdvertisableHostLeavesReachableHostsAlone(t *testing.T) {
 		if got != host {
 			t.Errorf("advertisableHost(%q) = %q, want it unchanged", host, got)
 		}
+	}
+}
+
+// ut-docs#557 review Fix 4: input validation must run BEFORE the elevation
+// check on /api/sync/promote too — a denied session with a bad confirmation
+// phrase gets a plain 400 immediately, not the elevation dialog first.
+// UT_AUTH left at its default (auth ON) so the cashier session is genuinely
+// denied sync_management, exercising the exact ordering this fix pins down.
+func TestSyncPromote_ValidatesBeforeElevating(t *testing.T) {
+	mux, _ := newSyncAPITestDeps(t)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/sync/promote",
+		strings.NewReader("confirm=nope")), auth.User{ID: "blocked-cashier", Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a bad confirmation phrase (validated before elevation), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("expected NO elevation prompt for a request that fails input validation, got: %s", rec.Body.String())
 	}
 }
