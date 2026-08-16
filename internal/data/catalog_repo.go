@@ -383,6 +383,50 @@ VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
 	return "", false, fmt.Errorf("create tax code: %w", insErr)
 }
 
+// TaxCodeView is one active tax code as listed for a plugin settings editor
+// (ut-docs#190's takeaway-rate-overrides UI): the dine-in rate to show
+// alongside an override input, and any pinned takeaway rate to suggest as a
+// placeholder.
+type TaxCodeView struct {
+	ID             string
+	Name           string
+	RateBP         int64
+	TakeawayRateBP *int64
+}
+
+// ListTaxCodes returns every active tax code, highest dine-in rate first
+// (then name) — the set a shop owner picks from when entering a takeaway
+// override per tax code (ut-docs#190). Inactive/retired codes are excluded;
+// they're not a valid override target going forward.
+func (r *CatalogRepo) ListTaxCodes(ctx context.Context) ([]TaxCodeView, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, rate_basis_points, takeaway_rate_basis_points
+FROM tax_codes
+WHERE is_active = 1
+ORDER BY rate_basis_points DESC, name`)
+	if err != nil {
+		return nil, fmt.Errorf("list tax codes: %w", err)
+	}
+	defer rows.Close()
+	var out []TaxCodeView
+	for rows.Next() {
+		var v TaxCodeView
+		var takeaway sql.NullInt64
+		if err := rows.Scan(&v.ID, &v.Name, &v.RateBP, &takeaway); err != nil {
+			return nil, fmt.Errorf("scan tax code: %w", err)
+		}
+		if takeaway.Valid {
+			tv := takeaway.Int64
+			v.TakeawayRateBP = &tv
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list tax codes: %w", err)
+	}
+	return out, nil
+}
+
 // ExportRow is one catalog line for the CSV export (G22b — the
 // anti-lock-in half of import: a shop can always take its data and leave).
 // Columns are chosen so our own importer round-trips the file. JSON tags

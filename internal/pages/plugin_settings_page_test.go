@@ -239,3 +239,417 @@ func TestPluginSettingsAPI_POST_PerTillScopeStaysPerTillOnUpdate(t *testing.T) {
 		t.Fatalf("expected reader_id in the settings list")
 	}
 }
+
+// seedTaxCode inserts a minimal active tax_codes row for the takeaway
+// overrides editor tests.
+func seedTaxCode(t *testing.T, db *common.Deps, id, name string, rateBP int, takeawayBP *int) {
+	t.Helper()
+	_, err := db.Db.ExecContext(context.Background(),
+		`INSERT INTO tax_codes (id, name, rate_basis_points, is_active, takeaway_rate_basis_points) VALUES (?, ?, ?, 1, ?)`,
+		id, name, rateBP, takeawayBP)
+	if err != nil {
+		t.Fatalf("seed tax code %s: %v", id, err)
+	}
+}
+
+func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedTaxCode(t, dp, "tax_reduced", "Reduced VAT", 700, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700}`, "global")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "takeaway_pct_tax_19") {
+		t.Fatalf("expected a takeaway_pct_tax_19 input, got %s", body)
+	}
+	if !strings.Contains(body, "takeaway_pct_tax_reduced") {
+		t.Fatalf("expected a takeaway_pct_tax_reduced input, got %s", body)
+	}
+	if !strings.Contains(body, `value="7"`) {
+		t.Fatalf("expected the pre-filled override (7%%) in the page, got %s", body)
+	}
+	if !strings.Contains(body, "Standard VAT") || !strings.Contains(body, "Reduced VAT") {
+		t.Fatalf("expected tax code names in the page, got %s", body)
+	}
+}
+
+func TestPluginSettingsPage_GET_RendersOrphanOverrideEntry(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	// No active tax codes at all, but an existing override for a deleted one.
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_gone":500}`, "global")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "takeaway_pct_tax_gone") {
+		t.Fatalf("expected an orphan takeaway_pct_tax_gone input, got %s", body)
+	}
+	if !strings.Contains(body, `value="5"`) {
+		t.Fatalf("expected the orphan's current override (5%%), got %s", body)
+	}
+}
+
+func TestPluginSettingsPage_GET_FallsBackToRawInputWhenNoTaxCodesOrOverrides(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	// seedForPages always seeds an active 'tax_std' tax code -- deactivate it
+	// so this test genuinely reaches the "no active tax codes" state.
+	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE tax_codes SET is_active = 0 WHERE id = 'tax_std'`); err != nil {
+		t.Fatal(err)
+	}
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="setting_takeaway_rate_overrides"`) {
+		t.Fatalf("expected fallback to the plain text input, got %s", body)
+	}
+	if strings.Contains(body, "takeaway_pct_") {
+		t.Fatalf("did not expect a typed row with no tax codes and no overrides, got %s", body)
+	}
+}
+
+// settingsGetRoundTrip performs exactly the unwrap the settings_get WASM
+// host fn does (internal/plugins/wasm_hostfns.go hostSettingsGet): a stored
+// value_json is JSON-string-unwrapped, then the caller (the tax.de plugin's
+// handleTaxRateAsk) json.Unmarshals the plain text into map[string]int.
+func settingsGetRoundTrip(t *testing.T, valueJSON string) map[string]int {
+	t.Helper()
+	out := []byte(valueJSON)
+	var str string
+	if json.Unmarshal(out, &str) == nil {
+		out = []byte(str)
+	}
+	var m map[string]int
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("round-trip unmarshal of %q: %v", valueJSON, err)
+	}
+	return m
+}
+
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_StoresAndBumpsGeneration(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+
+	genBefore := plugins.SharedBus(dp.Db).Generation()
+
+	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list plugin settings: %v", err)
+	}
+	var stored string
+	for _, row := range rows {
+		if row.Key == "takeaway_rate_overrides" {
+			stored = row.ValueJSON
+		}
+	}
+	got := settingsGetRoundTrip(t, stored)
+	want := map[string]int{"tax_19": 700}
+	if got["tax_19"] != want["tax_19"] || len(got) != len(want) {
+		t.Fatalf("round-tripped overrides = %+v, want %+v (raw stored: %s)", got, want, stored)
+	}
+
+	genAfter := plugins.SharedBus(dp.Db).Generation()
+	if genAfter <= genBefore {
+		t.Fatalf("expected BumpGeneration to run, generation before=%d after=%d", genBefore, genAfter)
+	}
+}
+
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_BlankClearsEntry(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700}`, "global")
+
+	form := "setting_takeaway_typed=1&takeaway_pct_tax_19="
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list plugin settings: %v", err)
+	}
+	var stored string
+	for _, row := range rows {
+		if row.Key == "takeaway_rate_overrides" {
+			stored = row.ValueJSON
+		}
+	}
+	got := settingsGetRoundTrip(t, stored)
+	if _, ok := got["tax_19"]; ok {
+		t.Fatalf("expected tax_19 cleared, got %+v (raw: %s)", got, stored)
+	}
+}
+
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_InvalidRateRejected(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+
+	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=150"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an out-of-range rate, got %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list plugin settings: %v", err)
+	}
+	for _, row := range rows {
+		if row.Key == "takeaway_rate_overrides" && row.ValueJSON != `"{}"` {
+			t.Fatalf("expected nothing written on invalid input, got %s", row.ValueJSON)
+		}
+	}
+}
+
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_OrphanEntryClearable(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_gone":500}`, "global")
+
+	form := "setting_takeaway_typed=1&takeaway_pct_tax_gone="
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list plugin settings: %v", err)
+	}
+	var stored string
+	for _, row := range rows {
+		if row.Key == "takeaway_rate_overrides" {
+			stored = row.ValueJSON
+		}
+	}
+	got := settingsGetRoundTrip(t, stored)
+	if _, ok := got["tax_gone"]; ok {
+		t.Fatalf("expected orphan entry cleared, got %+v (raw: %s)", got, stored)
+	}
+}
+
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_IgnoresUnknownTaxCodeID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+
+	// takeaway_pct_unknown_id doesn't match any active tax code or existing
+	// orphan entry -- the form cannot invent an override entry. The known
+	// field alongside it makes this test fail against code that never runs
+	// the typed path at all (review finding: the unknown-only form was also
+	// "ignored" by the pre-change code, asserting nothing).
+	form := "setting_takeaway_typed=1&takeaway_pct_unknown_id=9&takeaway_pct_tax_19=7"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list plugin settings: %v", err)
+	}
+	var stored string
+	for _, row := range rows {
+		if row.Key == "takeaway_rate_overrides" {
+			stored = row.ValueJSON
+		}
+	}
+	got := settingsGetRoundTrip(t, stored)
+	if _, ok := got["unknown_id"]; ok {
+		t.Fatalf("expected the unknown tax_code_id ignored, got %+v (raw: %s)", got, stored)
+	}
+	if got["tax_19"] != 700 {
+		t.Fatalf("expected the known tax code's override stored (tax_19=700), got %+v (raw: %s)", got, stored)
+	}
+}
+
+// Regression for the ut-docs#190 review's BLOCKER: strconv.ParseFloat
+// accepts NaN/Inf/overflowing exponents, and int(math.Round(x)) on those is
+// implementation-defined — on amd64 it yields math.MinInt64, which the
+// pre-fix code persisted into the live tax map with a success response
+// (arm64 happened to round them to 0, which is why the original tests
+// stayed green). All of these must be a 400 with nothing written.
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_NonFiniteAndOverflowRejected(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+
+	for _, bad := range []string{"NaN", "nan", "Inf", "+Inf", "-Inf", "infinity", "1e300", "101", "-1", "0", "0.004"} {
+		form := "setting_takeaway_typed=1&takeaway_pct_tax_19=" + bad
+		req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("input %q: expected 400, got %d body %s", bad, rec.Code, rec.Body.String())
+		}
+	}
+
+	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list plugin settings: %v", err)
+	}
+	for _, row := range rows {
+		if row.Key == "takeaway_rate_overrides" {
+			if got := settingsGetRoundTrip(t, row.ValueJSON); len(got) != 0 {
+				t.Fatalf("expected nothing written after rejected inputs, got %+v (raw: %s)", got, row.ValueJSON)
+			}
+		}
+	}
+}
+
+// Regression for the ut-docs#190 review's lost-update finding: a form
+// rendered before an entry existed (no takeaway_pct_* field for it at all)
+// must PRESERVE that entry on save, not silently delete it — a concurrent
+// writer (e.g. a catalog import merging into this same global row) may have
+// added it after the page loaded. Present-but-blank remains an explicit
+// removal (covered by ..._BlankClearsEntry).
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_AbsentFieldPreservesEntry(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedTaxCode(t, dp, "tax_7", "Reduced VAT", 700, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700,"tax_7":500}`, "global")
+
+	// The stale form carries a field for tax_19 only — tax_7's entry must
+	// survive the save untouched.
+	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=8"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list plugin settings: %v", err)
+	}
+	for _, row := range rows {
+		if row.Key == "takeaway_rate_overrides" {
+			got := settingsGetRoundTrip(t, row.ValueJSON)
+			if got["tax_19"] != 800 || got["tax_7"] != 500 {
+				t.Fatalf("expected {tax_19:800, tax_7:500}, got %+v (raw: %s)", got, row.ValueJSON)
+			}
+		}
+	}
+}
+
+// Regression for the ut-docs#190 review's partial-write finding: settings
+// rows are written in key order, so a validation failure on the typed
+// takeaway row used to land AFTER sibling keys sorting before it had
+// already been upserted — half the form committed, no generation bump, no
+// audit row. Validation now runs before any write: the whole POST must
+// abort with the sibling setting untouched.
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_InvalidRateLeavesSiblingSettingsUnwritten(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	// "api_endpoint" sorts before "takeaway_rate_overrides", so under the
+	// old mid-loop abort it was already written when validation failed.
+	seedPluginSetting(t, dp, "p1", "api_endpoint", "http://old.local", "global")
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+
+	form := "setting_api_endpoint=http%3A%2F%2Fnew.local&setting_takeaway_typed=1&takeaway_pct_tax_19=150"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST: expected 400, got %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list plugin settings: %v", err)
+	}
+	for _, row := range rows {
+		if row.Key == "api_endpoint" {
+			var v string
+			if json.Unmarshal([]byte(row.ValueJSON), &v) == nil && v != "http://old.local" {
+				t.Fatalf("sibling setting was written despite the aborted POST: %q", v)
+			}
+		}
+	}
+}
+
+// Regression for the ut-docs#190 review's silent-clobber finding: a stored
+// value that doesn't parse as a tax_code_id -> bp map (hand-edited raw
+// JSON) must render as the RAW text input — visible and fixable — not as an
+// all-blank typed editor whose next save would overwrite it.
+func TestPluginSettingsPage_GET_UnparseableStoredValueFallsBackToRawInput(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{oops`, "global")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "setting_takeaway_typed") {
+		t.Fatalf("expected raw-input fallback for an unparseable stored value, got the typed editor")
+	}
+	if !strings.Contains(body, `name="setting_takeaway_rate_overrides"`) {
+		t.Fatalf("expected the raw text input rendering the stored value, body:\n%s", body)
+	}
+}
