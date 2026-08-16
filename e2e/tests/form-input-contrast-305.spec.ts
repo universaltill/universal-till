@@ -1,0 +1,85 @@
+import { test, expect } from '@playwright/test';
+import { watchConsole } from './helpers';
+
+// ut-docs#305: form-control borders were ~1.2:1 against their own
+// background (--border, slate-200, on a white --surface) -- WCAG 2.1
+// 1.4.11 Non-text Contrast wants 3:1 for a UI component's visual boundary.
+// Only the autofocused field was distinguishable, via its focus border.
+//
+// Fix: a dedicated --control-border token (aliased to the already-legible
+// --muted in app.css and every curated theme) replaces --border specifically
+// on `input, select, textarea`'s resting border-color. --border itself is
+// untouched -- it still styles purely decorative dividers/cards, which
+// 1.4.11 doesn't cover, so this stays a small, targeted diff rather than
+// re-tuning every border in the app.
+//
+// Measured the same way the original report was: computed colours read off
+// a REAL element in a real browser (getComputedStyle), not the stylesheet
+// source and not a screenshot. Each curated theme's own stylesheet is
+// layered on top of app.css via the exact /themes/<name>.css URL
+// web/ui/layouts/base.html itself links, so this exercises the actual
+// served CSS, not a copy of it.
+
+const THEMES = ['default', 'amber', 'fresh', 'monarch', 'slate'] as const;
+
+test.describe('form-control borders meet WCAG 1.4.11 non-text contrast (ut-docs#305)', () => {
+  for (const theme of THEMES) {
+    test(`${theme} theme: resting input border is >= 3:1 against its own background`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      if (theme !== 'default') {
+        // The exact stylesheet base.html links for a non-default theme
+        // (real served CSS, not a copy pasted into the test).
+        await page.addStyleTag({ url: `/themes/${theme}.css` });
+      }
+
+      const result = await page.evaluate(() => {
+        function srgbToLinear(c: number) {
+          const s = c / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        }
+        function luminance(rgb: [number, number, number]) {
+          const [r, g, b] = rgb.map(srgbToLinear);
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        }
+        function parseRGB(css: string): [number, number, number] {
+          const m = css.match(/rgba?\(([^)]+)\)/);
+          if (!m) throw new Error(`unparseable colour: ${css}`);
+          const parts = m[1].split(',').map((n) => parseFloat(n.trim()));
+          return [parts[0], parts[1], parts[2]];
+        }
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        document.body.appendChild(input);
+        const resting = getComputedStyle(input);
+        const restingBorder = resting.borderTopColor;
+        const background = resting.backgroundColor;
+        input.focus();
+        const focusBorder = getComputedStyle(input).borderTopColor;
+        input.remove();
+
+        const l1 = luminance(parseRGB(restingBorder));
+        const l2 = luminance(parseRGB(background));
+        const lighter = Math.max(l1, l2);
+        const darker = Math.min(l1, l2);
+        const ratio = (lighter + 0.05) / (darker + 0.05);
+
+        return { restingBorder, focusBorder, background, ratio };
+      });
+
+      expect(
+        result.ratio,
+        `${theme}: border ${result.restingBorder} vs background ${result.background} must be >= 3:1`,
+      ).toBeGreaterThanOrEqual(3);
+      // The focus state must still read as visually distinct from resting
+      // (don't fix resting contrast by making focus less obvious).
+      expect(result.focusBorder, `${theme}: focus border must differ from resting border`).not.toBe(
+        result.restingBorder,
+      );
+
+      assertClean();
+    });
+  }
+});

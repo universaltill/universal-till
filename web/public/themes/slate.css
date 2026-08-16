@@ -11,6 +11,7 @@
   --border: #dbe3ec;
   --text: #0f172a;
   --muted: #64748b;
+  --control-border: var(--muted);   /* ut-docs#305: form-control border, 3:1 min */
   --radius: 8px;
   --radius-lg: 10px;
   --shadow: 0 1px 2px rgba(15,23,42,.06);
