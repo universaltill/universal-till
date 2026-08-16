@@ -973,6 +973,12 @@ type receiptPayment struct {
 	Change    int64
 	Tip       int64
 	Reference string
+	// MaskedPAN/AuthCode are the standard EC-receipt line (ut-docs#543) --
+	// shown instead of Reference when a card-present payment supplied
+	// them. Already-masked by the time it reaches here (pos.CompleteSale
+	// validates this at persistence); never the full PAN.
+	MaskedPAN string
+	AuthCode  string
 }
 
 type receiptLegalBlock struct {
@@ -1135,6 +1141,8 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 			Change:    p.ChangeGiven.Minor(),
 			Tip:       p.TipAmount.Minor(),
 			Reference: p.Reference,
+			MaskedPAN: p.MaskedPAN,
+			AuthCode:  p.AuthCode,
 		})
 	}
 	// ut-docs#585: the sale's recorded §6 KassenSichV evidence, when any —
@@ -1251,6 +1259,10 @@ func publishSaleCompleted(ctx context.Context, d *common.Deps, saleID string) {
 			Method:      p.Method,
 			AmountCents: p.Amount,
 			Reference:   p.Reference,
+			MaskedPAN:   p.MaskedPAN,
+			AuthCode:    p.AuthCode,
+			TerminalID:  p.TerminalID,
+			TraceID:     p.TraceID,
 		})
 	}
 	_, _ = plugins.SharedBus(d.Db).PublishSaleCompleted(ctx, ev)

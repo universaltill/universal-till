@@ -182,6 +182,14 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 			ChangeGiven: money.FromMinor(p.ChangeGiven),
 			TipAmount:   money.FromMinor(p.TipAmount),
 			Currency:    j.Sale.Currency, Reference: p.Reference,
+			// Card-present reconciliation fields (ut-docs#543) must
+			// survive a replica->primary journal replay, same as every
+			// other payment field -- the primary is where cross-till
+			// reconciliation actually happens.
+			MaskedPAN:  p.MaskedPAN,
+			AuthCode:   p.AuthCode,
+			TerminalID: p.TerminalID,
+			TraceID:    p.TraceID,
 		})
 	}
 	if _, err := pos.CompleteSale(ctx, d.Db, in); err != nil {

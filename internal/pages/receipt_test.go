@@ -98,6 +98,68 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 	}
 }
 
+// ut-docs#543: when a payment carries card-present reconciliation data
+// (masked PAN + auth code), the receipt shows the standard EC-receipt
+// line instead of the generic Reference text -- and must NEVER show
+// anything but the already-masked value handed to it (masking happens
+// upstream, at CompleteSale's validation boundary, not here).
+func TestRenderReceipt_ShowsMaskedPANAndAuthCode(t *testing.T) {
+	chdirRoot(t)
+	funcs := map[string]any{
+		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"barcodesvg": httpx.BarcodeSVG,
+		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T": func(key string) string {
+			if key == "receipt.auth_code" {
+				return "Auth"
+			}
+			return key
+		},
+	}
+	lines := []pos.SaleLineInput{{Name: "Coffee", Qty: 1, UnitPrice: 370, TaxRateBasisPoints: 0}}
+	payments := []pos.PaymentInput{{
+		MethodID: "card", Amount: 370,
+		MaskedPAN: "VISA •••• 4242", AuthCode: "013579",
+		// Reference is set too, so the test proves MaskedPAN wins the
+		// generic-Reference-line fallback rather than both rendering.
+		Reference: "should-not-appear",
+	}}
+	html, err := renderReceipt(funcs, "123", lines, payments, 370, 0, 370, false, 0, "", 0, nil, false, false, false, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true})
+	if err != nil {
+		t.Fatalf("renderReceipt error: %v", err)
+	}
+	if !strings.Contains(html, "VISA •••• 4242") {
+		t.Fatalf("expected masked PAN in receipt html, got: %s", html)
+	}
+	if !strings.Contains(html, "013579") {
+		t.Fatalf("expected auth code in receipt html, got: %s", html)
+	}
+	if strings.Contains(html, "should-not-appear") {
+		t.Fatalf("expected the generic Reference line to be suppressed when MaskedPAN is set, got: %s", html)
+	}
+}
+
+// Existing (non-card-present) payment methods keep showing today's
+// Reference line unchanged -- no MaskedPAN means no behaviour change.
+func TestRenderReceipt_NoCardPresentFieldsFallsBackToReference(t *testing.T) {
+	chdirRoot(t)
+	funcs := map[string]any{
+		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"barcodesvg": httpx.BarcodeSVG,
+		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":          func(key string) string { return key },
+	}
+	lines := []pos.SaleLineInput{{Name: "Tea", Qty: 1, UnitPrice: 250, TaxRateBasisPoints: 0}}
+	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 250, Reference: "sumup-ref-1"}}
+	html, err := renderReceipt(funcs, "123", lines, payments, 250, 0, 250, false, 0, "", 0, nil, false, false, false, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true})
+	if err != nil {
+		t.Fatalf("renderReceipt error: %v", err)
+	}
+	if !strings.Contains(html, "sumup-ref-1") {
+		t.Fatalf("expected Reference to still render when no card-present fields are set: %s", html)
+	}
+}
+
 func TestRenderReceipt_LegalText(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
