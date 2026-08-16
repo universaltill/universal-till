@@ -52,6 +52,12 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		cleanup()
 		return "", nil, fmt.Errorf("open snapshot for copy: %w", err)
 	}
+	// Load-bearing for ut-docs#636: a raw byte copy of the whole snapshot
+	// file, never a per-table export — a joining replica must inherit
+	// retained fiscal data (reset-archive tables) the same way it inherits
+	// everything else. Redaction below stays limited to one column on one
+	// table for the same reason: anything more selective here risks quietly
+	// dropping data a future migration adds.
 	_, copyErr := io.Copy(tmp, src)
 	src.Close()
 	if closeErr := tmp.Close(); copyErr == nil {

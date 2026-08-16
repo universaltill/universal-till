@@ -144,6 +144,58 @@ func TestRedactedJoinSnapshot_EmptyTillsTableIsFine(t *testing.T) {
 	}
 }
 
+// ut-docs#636: the join/enrolment snapshot (GET /api/sync/snapshot — a
+// joining replica's starting DB) is built from Snapshot()'s whole-file copy,
+// so a reset-archive batch (040_reset_archive.sql, ut-docs#187) must survive
+// it the same way it survives a local backup — RedactedJoinSnapshot only
+// UPDATEs tills.bearer_hash, it never drops or filters other tables. Pins
+// this so a future rewrite of the copy step (e.g. away from a raw file copy
+// toward a selective per-table export) can't silently drop archived data for
+// a joining replica, the same "join-path gap class" already seen in
+// ut-docs#368 (plugin binaries missing from a join).
+func TestRedactedJoinSnapshot_PreservesResetArchiveBatch(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	if _, err := d.Exec(`INSERT INTO reset_batches (id, created_at, actor_id, sales_count) VALUES ('batch-1', '2026-08-16T00:00:00Z', 'user-1', 1)`); err != nil {
+		t.Fatalf("seed reset_batches: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO sales_archive (
+		id, receipt_no, status, sale_type, tender_type, offline, sync_status,
+		sync_attempts, register_id, currency, subtotal, discount_total, tax_total,
+		total, rounding, created_at, till_id, service_charge_amount, order_type,
+		order_status, reset_batch_id
+	) VALUES (
+		'sale-1', 'R-1', 'completed', 'sale', 'cash', 0, 'synced',
+		0, 'register-1', 'GBP', 1000, 0, 200,
+		1200, 0, '2026-08-16T00:00:00Z', 'till-1', 0, 'counter',
+		'completed', 'batch-1'
+	)`); err != nil {
+		t.Fatalf("seed sales_archive: %v", err)
+	}
+
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+
+	sd, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatalf("open copy: %v", err)
+	}
+	defer sd.Close()
+	var batches, sales int
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM reset_batches WHERE id = 'batch-1'`).Scan(&batches); err != nil {
+		t.Fatalf("count reset_batches in join snapshot: %v", err)
+	}
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM sales_archive WHERE reset_batch_id = 'batch-1'`).Scan(&sales); err != nil {
+		t.Fatalf("count sales_archive in join snapshot: %v", err)
+	}
+	if batches != 1 || sales != 1 {
+		t.Errorf("join snapshot archive rows: batches=%d sales=%d, want 1 and 1 — reset-archive data did not survive the join/enrolment snapshot copy", batches, sales)
+	}
+}
+
 // ut-docs#436: a join-snapshot-*.db left behind by a crash between
 // os.CreateTemp and cleanup() (simulated here directly, not by an actual
 // crash) must be reaped once it's old enough to no longer plausibly be
