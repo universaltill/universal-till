@@ -2312,16 +2312,32 @@ VALUES (?, ?, ?, ?, ?, ?)
 	return nil
 }
 
-// InsertAudit writes an audit_log entry (id optional).
+// InsertAudit writes an audit_log entry (id optional). blocked_actor_id is
+// always NULL — the ordinary, non-elevated path. See InsertAuditElevated
+// for the manager-override-elevation variant (ut-docs#557).
 func (r *POSRepo) InsertAudit(ctx context.Context, tx *sql.Tx, actorID, entityType, entityID, action string, payload any, createdAt string, id string) error {
+	return r.insertAudit(ctx, tx, actorID, "", entityType, entityID, action, payload, createdAt, id)
+}
+
+// InsertAuditElevated writes an audit_log entry recording BOTH the actor who
+// performed the action (actorID — the approving user once elevation
+// succeeded) and the originally-blocked session user (blockedActorID),
+// dual attribution for manager-override elevation (ut-docs#557,
+// internal/pages/elevation.go's checkOrElevate). blockedActorID must be
+// non-empty; pass InsertAudit instead for the ordinary, non-elevated case.
+func (r *POSRepo) InsertAuditElevated(ctx context.Context, tx *sql.Tx, actorID, blockedActorID, entityType, entityID, action string, payload any, createdAt, id string) error {
+	return r.insertAudit(ctx, tx, actorID, blockedActorID, entityType, entityID, action, payload, createdAt, id)
+}
+
+func (r *POSRepo) insertAudit(ctx context.Context, tx *sql.Tx, actorID, blockedActorID, entityType, entityID, action string, payload any, createdAt string, id string) error {
 	if id == "" {
 		id = uuid.NewString()
 	}
 	data, _ := json.Marshal(payload)
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-`, id, nullIfEmpty(actorID), entityType, entityID, action, string(data), createdAt)
+INSERT INTO audit_log (id, actor_id, blocked_actor_id, entity_type, entity_id, action, data_json, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`, id, nullIfEmpty(actorID), nullIfEmpty(blockedActorID), entityType, entityID, action, string(data), createdAt)
 	if err != nil {
 		return fmt.Errorf("insert audit_log: %w", err)
 	}
@@ -2363,6 +2379,11 @@ type AuditEntry struct {
 	Action     string
 	DataJSON   string
 	CreatedAt  string
+	// BlockedActorID is the originally-blocked session user's id, set only
+	// on an elevated entry (InsertAuditElevated, ut-docs#557) — empty for
+	// every ordinary entry, including every row written before migration
+	// 049 added the column.
+	BlockedActorID string
 }
 
 // AuditFilters narrows ListAudit; zero values mean "no filter" on that field.
@@ -2439,7 +2460,8 @@ func (r *POSRepo) ListAudit(ctx context.Context, f AuditFilters) ([]AuditEntry, 
 	whereClause, args := buildAuditWhere(f)
 	query := `
 SELECT a.id, COALESCE(a.actor_id, ''), COALESCE(u.display_name, ''),
-       a.entity_type, a.entity_id, a.action, COALESCE(a.data_json, ''), a.created_at
+       a.entity_type, a.entity_id, a.action, COALESCE(a.data_json, ''), a.created_at,
+       COALESCE(a.blocked_actor_id, '')
 FROM audit_log a
 LEFT JOIN users u ON u.id = a.actor_id` + whereClause + `
 ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
@@ -2453,7 +2475,7 @@ ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
 	var out []AuditEntry
 	for rows.Next() {
 		var e AuditEntry
-		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.EntityType, &e.EntityID, &e.Action, &e.DataJSON, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.EntityType, &e.EntityID, &e.Action, &e.DataJSON, &e.CreatedAt, &e.BlockedActorID); err != nil {
 			return nil, fmt.Errorf("scan audit_log: %w", err)
 		}
 		out = append(out, e)
@@ -2476,7 +2498,8 @@ func (r *POSRepo) listAuditForExportWithCeiling(ctx context.Context, f AuditFilt
 	whereClause, args := buildAuditWhere(f)
 	query := `
 SELECT a.id, COALESCE(a.actor_id, ''), COALESCE(u.display_name, ''),
-       a.entity_type, a.entity_id, a.action, COALESCE(a.data_json, ''), a.created_at
+       a.entity_type, a.entity_id, a.action, COALESCE(a.data_json, ''), a.created_at,
+       COALESCE(a.blocked_actor_id, '')
 FROM audit_log a
 LEFT JOIN users u ON u.id = a.actor_id` + whereClause + `
 ORDER BY a.created_at DESC LIMIT ?`
@@ -2490,7 +2513,7 @@ ORDER BY a.created_at DESC LIMIT ?`
 	var out []AuditEntry
 	for rows.Next() {
 		var e AuditEntry
-		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.EntityType, &e.EntityID, &e.Action, &e.DataJSON, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.EntityType, &e.EntityID, &e.Action, &e.DataJSON, &e.CreatedAt, &e.BlockedActorID); err != nil {
 			return nil, false, fmt.Errorf("scan audit_log: %w", err)
 		}
 		out = append(out, e)

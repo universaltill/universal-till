@@ -1462,5 +1462,19 @@
   "permissions.action.import_export": "İçe / dışa aktarma",
   "permissions.action.issue_reporting": "Sorun bildirimi",
   "permissions.action.fiscal_tse_override": "Mali TSE geçersiz kılma",
-  "permissions.action.permission_management": "İzinler"
+  "permissions.action.permission_management": "İzinler",
+  "elevation.prompt_title": "Yönetici onayı gerekli",
+  "elevation.prompt_help": "Devam etmek için bir onaylayanın PIN'ini girin.",
+  "elevation.pin_label": "Yönetici PIN",
+  "elevation.pin_placeholder": "PIN girin",
+  "elevation.submit": "Onayla",
+  "elevation.error_invalid_pin": "Geçersiz PIN",
+  "elevation.error_locked_out": "Çok fazla deneme, kısa süre sonra tekrar deneyin",
+  "elevation.error_insufficient_role": "Bu PIN bu işlem için yetkili değil",
+  "elevation.error_unavailable": "Onay şu anda bu cihazda kullanılamıyor.",
+  "elevation.hint": "Yönetici onayı gerekli — iletişim kutusuna bakın.",
+  "elevation.summary.backup_now": "Şimdi yeni bir yerel yedek oluştur.",
+  "elevation.summary.sync_promote": "Bu kasayı bağımsız bir birincil kasaya yükselt ve mevcut birincil kasayla senkronizasyonu sonlandır.",
+  "elevation.summary.permission_grant": "%s rolüne \"%s\" yetkisini ver.",
+  "elevation.summary.permission_revoke": "\"%s\" yetkisini %s rolünden geri al."
 }

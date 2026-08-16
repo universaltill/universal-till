@@ -254,11 +254,16 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
 	}
+	// Migration 049 adds audit_log.blocked_actor_id -- same non-idempotent
+	// replay problem (ut-docs#557).
+	if _, err := d.DB.Exec(`ALTER TABLE audit_log DROP COLUMN blocked_actor_id`); err != nil {
+		t.Fatalf("rewind audit_log.blocked_actor_id column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 023 and its followers (027-037)
+	d, err = Open(path) // re-applies 023 and its followers (027-049)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,11 +350,16 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE promotions DROP COLUMN is_sample_data`); err != nil {
 		t.Fatalf("rewind promotions.is_sample_data column: %v", err)
 	}
+	// Migration 049 adds audit_log.blocked_actor_id -- same non-idempotent
+	// replay problem (ut-docs#557).
+	if _, err := d.DB.Exec(`ALTER TABLE audit_log DROP COLUMN blocked_actor_id`); err != nil {
+		t.Fatalf("rewind audit_log.blocked_actor_id column: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // re-applies 031 through 037
+	d, err = Open(path) // re-applies 031 through 049
 	if err != nil {
 		t.Fatal(err)
 	}

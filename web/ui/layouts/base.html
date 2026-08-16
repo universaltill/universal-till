@@ -44,6 +44,21 @@
          the current page renders. Closed by default; opened by the 🐞 nav
          chip, or pre-opened server-side by /report-issue. -->
     {{ template "bugreport_panel" . }}
+    <!-- Manager-override-elevation dialog (ut-docs#557). Empty/pre-built
+         placeholder, OUTSIDE any <form> — same precedent as index.html's
+         #modifier-modal/#hold-modal/#pfand-modal. checkOrElevate's
+         needsElevation branch (elevation.go's renderElevationPrompt) fills
+         this in via hx-swap-oob="true" targeting this id: rendering the
+         dialog's own <form> straight into the triggering action's own
+         hx-target (e.g. tills.html's #promote-msg, itself inside
+         <form hx-post="/api/sync/promote">) would nest a <form> inside a
+         <form> — invalid, and silently mangled by the HTML fragment-parsing
+         algorithm. Declared once here (not once per triggering page) since
+         base.html's "content" block wraps every page that can reach
+         checkOrElevate (backup_api.go, sync_api.go,
+         permission_settings_page.go) and an extra closed, empty <dialog> on
+         pages that never trigger it costs nothing. -->
+    <dialog id="elevation-modal" class="modifier-modal"></dialog>
     <footer class="statusbar" aria-label="Status">
       <!-- data-conn-*, not data-online: html/template strips "data-" and
            treats on*-named attributes as JS context, JSON-quoting the value. -->
