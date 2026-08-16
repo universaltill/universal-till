@@ -1535,6 +1535,41 @@ WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
 // Both leave the stale name in place rather than erroring — the entry
 // simply doesn't relabel until the collision clears, same "silently
 // doesn't materialize" treatment id collisions already get.
+//
+// SQLITE_BUSY under contention (ut-docs#775, investigated): this method's
+// three statements are each a single autocommit ExecContext — no explicit
+// Tx wraps them, so none hits the SHARED->RESERVED lock-promotion gap
+// _txlock=immediate exists to fix (ut-docs#311, internal/db.Open): that gap
+// is specific to a DEFERRED transaction that reads then tries to upgrade an
+// already-held SHARED lock, which SQLite's deadlock avoidance refuses to
+// retry via the busy handler. A fresh autocommit write has no held SHARED
+// lock to promote from, so it goes through ordinary lock acquisition, where
+// the DSN's busy_timeout(5000) applies in full.
+//
+// This holds even for a HYPOTHETICAL future Tx-wrap of this method:
+// _txlock=immediate is DSN-wide (internal/db.Open's comment: "makes every
+// database/sql Begin/BeginTx run BEGIN IMMEDIATE"), so any BeginTx on this
+// handle takes the write lock at BEGIN, before any read — there is no held
+// SHARED lock left to promote from either way. The gap could only reappear
+// via a raw "BEGIN DEFERRED" bypassing sql.DB.Begin — not something
+// anything in this codebase does today. The guard that actually holds that
+// DSN flag in place is internal/db's
+// TestConcurrentWriterWaitsInsteadOfInstantBusy, which fails within ~1ms
+// with SQLITE_BUSY if _txlock=immediate is removed.
+//
+// Verified empirically for the Reload path, not just reasoned:
+// TestReload_SurvivesRealisticPublisherContention (this package's caller,
+// internal/plugins) races Manager.Reload against an unthrottled publisher
+// goroutine on the SAME production-shaped, deliberately-unpinned connection
+// pool #770's own test pins to 1 — clean under -race with hundreds of
+// concurrent publishes per run, with Reload observably parking in the busy
+// handler (waits of up to ~1-2s at a pathological publish rate) rather than
+// erroring. No retry wrapper added — there's nothing here for one to catch.
+//
+// Scope caveat, stated because the obvious stronger claim is NOT supported:
+// that contention test does not detect removal of _txlock=immediate, so it
+// is evidence about THIS path's behaviour under load, not a regression test
+// for the DSN flag. Keep both.
 func (r *PluginRepo) SyncPluginPaymentMethods(ctx context.Context) error {
 	// Standing invariant, re-asserted EVERY run (not just migration 021):
 	// the seeded built-ins are never plugin-owned. Damage can re-enter a
