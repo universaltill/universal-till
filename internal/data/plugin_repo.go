@@ -716,18 +716,13 @@ VALUES (?, ?, ?, ?, ?)`,
 // and an error is returned — a hand-edited value that fails to parse must
 // never be silently overwritten by whatever this merge would have written.
 //
-// Read/write scope note (found in ut-docs#532's review, pre-existing and
-// preserved rather than introduced by this method): the read prefers the
-// most specific scope present (register beats user beats global — same
-// preference GetPluginSetting itself uses), but the write always targets
-// scope='global', matching UpsertPluginSetting/UpsertPluginSettingScoped's
-// own global-only default. On a key that only ever has a global-scope row
-// (true today for ut-plugin-tax-de's takeaway_rate_overrides) this is
-// inert; a future caller with a register/user-scoped row on the same key
-// would see the merge read that row but write the result to a *different*
-// global row, silently diverging from what GetPluginSetting reports back.
-// Tracked as a follow-up rather than fixed here, to keep this fix scoped
-// to the atomicity bug it was opened for.
+// Scope: both the read and the write target scope='global' only, by design
+// (ut-docs#668 — a pre-existing read/write scope mismatch here, found in
+// ut-docs#532's review, is now fixed). A register- or user-scoped row for
+// the same key is intentionally invisible to this method; unlike
+// GetPluginSetting, which prefers the most specific scope present, this
+// merge never reads or writes anything but the global row, so a caller
+// needing scoped merge semantics needs a distinct method, not this one.
 //
 // Owns its own transaction (BeginTx, not an injectable tx like
 // InstallPlugin's executor(tx) pattern) — matches settings_repo.go's
@@ -752,8 +747,8 @@ func (r *PluginRepo) MergeAdditiveJSONMapSetting(ctx context.Context, pluginID, 
 	existing := map[string]int{}
 	var raw string
 	scanErr := tx.QueryRowContext(ctx, `
-SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ?
-ORDER BY CASE scope WHEN 'register' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1`,
+SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = 'global'
+LIMIT 1`,
 		pluginID, key).Scan(&raw)
 	switch {
 	case scanErr != nil && !errors.Is(scanErr, sql.ErrNoRows):
