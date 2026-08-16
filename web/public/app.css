@@ -677,6 +677,14 @@ a.btn, a.btn:hover { text-decoration: none; }
 /* Keep the payout dialog out of the native top layer: the custom on-screen
    keyboard is appended to <body> and must remain clickable while it is open. */
 #pfand-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* Manager-override-elevation dialog (ut-docs#557): same non-modal treatment
+   as #hold-modal/#pfand-modal above, and for the same reason — its PIN
+   field is type="password", which web/public/osk.js's wantsOSK() opens the
+   on-screen keyboard for, and showModal()'s inert-outside-the-dialog
+   behaviour would make that keyboard unreachable on kiosk hardware with no
+   physical keyboard. */
+#elevation-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+.elevation-summary { font-weight: 600; margin-block: .4rem .6rem; }
 .modifier-group { border: 1px solid var(--border); border-radius: var(--radius);
                    padding: .6rem .75rem; margin-block-end: .75rem; }
 .modifier-group legend { font-weight: 600; padding-inline: .25rem; }

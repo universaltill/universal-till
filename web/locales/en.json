@@ -1462,5 +1462,19 @@
   "permissions.action.import_export": "Import / export",
   "permissions.action.issue_reporting": "Report an issue",
   "permissions.action.fiscal_tse_override": "Fiscal TSE override",
-  "permissions.action.permission_management": "Permissions"
+  "permissions.action.permission_management": "Permissions",
+  "elevation.prompt_title": "Manager approval required",
+  "elevation.prompt_help": "Enter an approver's PIN to continue this action.",
+  "elevation.pin_label": "Manager PIN",
+  "elevation.pin_placeholder": "Enter PIN",
+  "elevation.submit": "Confirm",
+  "elevation.error_invalid_pin": "Invalid PIN",
+  "elevation.error_locked_out": "Too many attempts, try again shortly",
+  "elevation.error_insufficient_role": "This PIN doesn't have permission for this action",
+  "elevation.error_unavailable": "Approval isn't available on this device right now.",
+  "elevation.hint": "Manager approval needed — see the dialog.",
+  "elevation.summary.backup_now": "Create a new local backup now.",
+  "elevation.summary.sync_promote": "Promote this till to a standalone primary, ending sync with its current primary.",
+  "elevation.summary.permission_grant": "Grant the %s role the \"%s\" permission.",
+  "elevation.summary.permission_revoke": "Revoke the \"%s\" permission from the %s role."
 }

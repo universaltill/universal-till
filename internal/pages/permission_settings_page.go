@@ -81,19 +81,19 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/users/permissions", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, lockoutAction) {
-			http.Error(w, "super_admin required", http.StatusForbidden)
-			return
-		}
 		role := r.FormValue("role")
 		action := r.FormValue("action")
-		granted := r.FormValue("granted") == "1"
+		grantedRaw := r.FormValue("granted")
+		granted := grantedRaw == "1"
 		locale := httpx.ResolveLocale(w, r)
 
-		// Reject clean 400s for bad input before ever touching a write —
-		// role_permissions' FK constraints would also refuse an unknown
-		// role/action, but as a raw SQLite error, not a message an operator
-		// (or this page's own client-side JS) can act on.
+		// Validate the request body BEFORE ever checking elevation
+		// (ut-docs#557 review finding): burning a manager's PIN entry on a
+		// request that was always going to 400 anyway is a needless cost.
+		// Also rejects clean 400s for bad input before ever touching a
+		// write — role_permissions' FK constraints would also refuse an
+		// unknown role/action, but as a raw SQLite error, not a message an
+		// operator (or this page's own client-side JS) can act on.
 		if role == "" || action == "" {
 			http.Error(w, "role and action required", http.StatusBadRequest)
 			return
@@ -115,16 +115,38 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		// Self-lockout guard. Returns 200 (not 409): htmx never swaps a
-		// non-2xx response by default, and this codebase's only override
-		// (web/public/app.js's beforeSwap) is scoped to 400s under
-		// /api/pos/ — a 409 here would render as a generic "server error"
-		// banner, not the actual reason, on the one message this guard
-		// exists to surface.
+		// Self-lockout guard, also ahead of elevation: no approver PIN, of
+		// any role, makes this write legal — asking for one first would
+		// just burn it on a request that's refused either way. Returns 200
+		// (not 409): htmx never swaps a non-2xx response by default, and
+		// this codebase's only override (web/public/app.js's beforeSwap) is
+		// scoped to 400s under /api/pos/ — a 409 here would render as a
+		// generic "server error" banner, not the actual reason, on the one
+		// message this guard exists to surface.
 		if role == lockoutRole && action == lockoutAction && !granted {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			fmt.Fprintf(w, `<span class="login-error">%s</span>`, httpx.T(locale, "permissions.lockout_error"))
 			return
+		}
+
+		// Mutating + audit-writing (ut-docs#557): a denied session gets an
+		// in-place PIN re-auth instead of a flat 403. lockoutAction is this
+		// page's own gate (super_admin only) — the SAME action string
+		// canPerform used before, so an elevating approver must themselves
+		// be super_admin, not merely re-prove "some manager PIN".
+		elev := checkOrElevate(d, r, lockoutAction, r.FormValue("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/users/permissions", "#perm-msg",
+				permissionChangeSummary(locale, role, action, granted), []elevationHiddenField{
+					{Name: "role", Value: role},
+					{Name: "action", Value: action},
+					{Name: "granted", Value: grantedRaw},
+				}, elev)
+			return
+		}
+		actorID := elev.ActorID
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
 		}
 
 		tx, err := d.Db.BeginTx(r.Context(), nil)
@@ -144,10 +166,16 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 		if granted {
 			verb = "role_permission_granted"
 		}
-		if err := posRepo.InsertAudit(r.Context(), tx, getSessionUserID(r), "role_permission", role+":"+action, verb,
-			map[string]any{"role": role, "action": action, "granted": granted},
-			time.Now().UTC().Format(time.RFC3339), ""); err != nil {
-			logging.L().Errorf("permission matrix: journal write: %v", err)
+		auditErr := func() error {
+			payload := map[string]any{"role": role, "action": action, "granted": granted}
+			now := time.Now().UTC().Format(time.RFC3339)
+			if elev.Outcome == elevated {
+				return posRepo.InsertAuditElevated(r.Context(), tx, actorID, elev.ActorID, "role_permission", role+":"+action, verb, payload, now, "")
+			}
+			return posRepo.InsertAudit(r.Context(), tx, actorID, "role_permission", role+":"+action, verb, payload, now, "")
+		}()
+		if auditErr != nil {
+			logging.L().Errorf("permission matrix: journal write: %v", auditErr)
 			http.Error(w, "failed to save", http.StatusInternalServerError)
 			return
 		}
@@ -160,4 +188,26 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "permissions.saved"))
 	})
+}
+
+// permissionChangeSummary renders a human-readable, pre-translated
+// description of the specific role→action grant/revoke an elevation prompt
+// is asking an approver to sign off on (ut-docs#557 review finding: the
+// dialog previously showed only a generic "manager approval required" while
+// the actual change traveled invisibly as hidden form fields — worst on
+// this page specifically, since the elevated action here is a PERMANENT
+// permission grant/revoke, not a transient one-off like the other two
+// checkOrElevate call sites, so an unseen approval is a standing mistake,
+// not just a one-time one). role/action are rendered through the SAME
+// permissions.action.%s/users.role.%s keys permissions.html's own grid
+// already uses (T() falls back to the raw key if a translation is somehow
+// missing, never panics), so an approver sees the exact labels they'd see
+// on the matrix itself.
+func permissionChangeSummary(locale, role, action string, granted bool) string {
+	roleLabel := httpx.T(locale, fmt.Sprintf("users.role.%s", role))
+	actionLabel := httpx.T(locale, fmt.Sprintf("permissions.action.%s", action))
+	if granted {
+		return fmt.Sprintf(httpx.T(locale, "elevation.summary.permission_grant"), roleLabel, actionLabel)
+	}
+	return fmt.Sprintf(httpx.T(locale, "elevation.summary.permission_revoke"), actionLabel, roleLabel)
 }

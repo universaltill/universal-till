@@ -1462,5 +1462,19 @@
   "permissions.action.import_export": "درون‌ریزی / برون‌بری",
   "permissions.action.issue_reporting": "گزارش مشکل",
   "permissions.action.fiscal_tse_override": "لغو موقت الزام دستگاه امنیت مالیاتی (TSE)",
-  "permissions.action.permission_management": "دسترسی‌ها"
+  "permissions.action.permission_management": "دسترسی‌ها",
+  "elevation.prompt_title": "تأیید مدیر لازم است",
+  "elevation.prompt_help": "برای ادامه، پین یک تأییدکننده را وارد کنید.",
+  "elevation.pin_label": "پین مدیر",
+  "elevation.pin_placeholder": "پین را وارد کنید",
+  "elevation.submit": "تأیید",
+  "elevation.error_invalid_pin": "پین نامعتبر است",
+  "elevation.error_locked_out": "تلاش‌های زیاد، کمی بعد دوباره امتحان کنید",
+  "elevation.error_insufficient_role": "این پین برای این عملیات مجوز ندارد",
+  "elevation.error_unavailable": "در حال حاضر تأیید در این دستگاه امکان‌پذیر نیست.",
+  "elevation.hint": "تأیید مدیر لازم است — به کادر مراجعه کنید.",
+  "elevation.summary.backup_now": "اکنون یک پشتیبان محلی جدید ایجاد کن.",
+  "elevation.summary.sync_promote": "این دستگاه را به یک دستگاه اصلی مستقل ارتقا بده و همگام‌سازی با دستگاه اصلی فعلی را پایان بده.",
+  "elevation.summary.permission_grant": "دسترسی «%s» را به نقش %s بده.",
+  "elevation.summary.permission_revoke": "دسترسی «%s» را از نقش %s بگیر."
 }

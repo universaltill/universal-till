@@ -1,0 +1,17 @@
+-- 049: audit_log.blocked_actor_id — dual attribution for manager-override
+-- elevation (ut-docs#557).
+--
+-- When canPerform() denies a mutating, audit-writing action and the
+-- operator elevates via a valid approver PIN (internal/pages/elevation.go's
+-- checkOrElevate), the action proceeds as the approver but the trail must
+-- still record who was originally blocked, not just who ultimately acted.
+-- actor_id (already on this table) becomes the APPROVER's id in that case;
+-- blocked_actor_id carries the ORIGINALLY-BLOCKED session user's id, NULL
+-- for every ordinary (non-elevated) entry — including every row written
+-- before this migration.
+--
+-- Additive and nullable, no backfill: existing rows (and every call still
+-- going through InsertAudit, unchanged) simply carry NULL here, same
+-- "additive, no call site consumes this yet" shape as 039's own groundwork
+-- migration.
+ALTER TABLE audit_log ADD COLUMN blocked_actor_id TEXT REFERENCES users(id);

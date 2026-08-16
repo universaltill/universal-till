@@ -122,16 +122,78 @@ func TestPermissionSettingsPage_GET_RendersCheckedLockedAndHxVals(t *testing.T) 
 	}
 }
 
+// ut-docs#557: a denied POST now renders the in-place elevation prompt
+// (200, htmx-swappable) instead of a flat 403 — canPerform() still denies
+// an admin session exactly as before (permission_management is
+// super_admin-only), but the response shape changed on purpose.
 func TestPermissionSettingsPage_POST_RequiresSuperAdmin(t *testing.T) {
-	mux, _ := newPermissionSettingsTestDeps(t)
+	mux, dp := newPermissionSettingsTestDeps(t)
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/users/permissions",
 		formBody("role=manager&action=refund&granted=0")), auth.User{ID: "u1", Role: "admin"})
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("admin POST = %d, want 403: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin POST = %d, want 200 (elevation prompt): %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "elevation-dialog") || !strings.Contains(body, `name="override_pin"`) {
+		t.Fatalf("expected the elevation prompt dialog, got: %s", body)
+	}
+	// Nothing must actually change without a valid approver PIN.
+	authRepo := data.NewAuthRepo(dp.Db)
+	if granted, err := authRepo.HasPermission(t.Context(), "manager", "refund"); err != nil || !granted {
+		t.Fatalf("manager should still be granted refund (no write without elevation), got %v err=%v", granted, err)
+	}
+}
+
+// A correct super_admin approver PIN elevates: the grant proceeds as the
+// approver, and the audit trail records both the approver (actor) and the
+// originally-blocked admin session (blocked_actor_id).
+func TestPermissionSettingsPage_POST_ElevatesOnValidApproverPIN(t *testing.T) {
+	mux, dp := newPermissionSettingsTestDeps(t)
+	authRepo := data.NewAuthRepo(dp.Db)
+	posRepo := data.NewPOSRepo(dp.Db)
+	ctx := t.Context()
+
+	saID, err := authRepo.CreateUser(ctx, "sa2", "Super Admin Two", "super_admin")
+	if err != nil {
+		t.Fatalf("create super_admin: %v", err)
+	}
+	hash, err := auth.HashPIN("192837")
+	if err != nil {
+		t.Fatalf("hash pin: %v", err)
+	}
+	if err := authRepo.SetUserPIN(ctx, saID, hash); err != nil {
+		t.Fatalf("set pin: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/users/permissions",
+		formBody("role=manager&action=refund&granted=0&override_pin=192837")), auth.User{ID: "blocked-admin", Role: "admin"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("elevated POST = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	if granted, err := authRepo.HasPermission(ctx, "manager", "refund"); err != nil || granted {
+		t.Fatalf("manager should no longer be granted refund, got %v err=%v", granted, err)
+	}
+
+	entries, err := posRepo.ListAudit(ctx, data.AuditFilters{EntityType: "role_permission"})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one audit entry, got %+v", entries)
+	}
+	if entries[0].ActorID != saID {
+		t.Fatalf("ActorID = %q, want the approver %q", entries[0].ActorID, saID)
+	}
+	if entries[0].BlockedActorID != "blocked-admin" {
+		t.Fatalf("BlockedActorID = %q, want the originally-blocked session user", entries[0].BlockedActorID)
 	}
 }
 
@@ -277,4 +339,52 @@ func TestPermissionSettingsPage_POST_LockoutGuardScopedToSuperAdminOnly(t *testi
 
 func formBody(s string) *strings.Reader {
 	return strings.NewReader(s)
+}
+
+// ut-docs#557 review Fix 4: input validation must run BEFORE the elevation
+// check, so a denied session with a genuinely bad request (unknown role)
+// gets a plain 400 immediately, not the elevation dialog first — burning a
+// manager's PIN on a request that would 400 anyway either way is a needless
+// cost. An admin session is denied lockoutAction (super_admin-only), so
+// pre-fix ordering would have rendered the elevation prompt here instead.
+func TestPermissionSettingsPage_POST_ValidatesBeforeElevating(t *testing.T) {
+	mux, _ := newPermissionSettingsTestDeps(t)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/users/permissions",
+		formBody("role=not-a-real-role&action=refund&granted=1")), auth.User{ID: "u1", Role: "admin"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unknown role (validated before elevation), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("expected NO elevation prompt for a request that fails input validation, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#557 review Fix 3: the elevation prompt must show a human-readable,
+// visible description of the SPECIFIC role/permission change being
+// approved — not just a generic "manager approval required" — since this
+// page's elevated action is a PERMANENT permission grant/revoke, worst of
+// the three checkOrElevate call sites to approve blind.
+func TestPermissionSettingsPage_POST_ElevationPromptShowsSpecificSummary(t *testing.T) {
+	mux, _ := newPermissionSettingsTestDeps(t)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/users/permissions",
+		formBody("role=manager&action=refund&granted=0")), auth.User{ID: "u1", Role: "admin"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "elevation-summary") {
+		t.Fatalf("expected a visible elevation-summary line, got: %s", body)
+	}
+	// role=manager, action=refund, granted=0 (revoke): the summary must
+	// name BOTH the role and the action, not a generic phrase.
+	if !strings.Contains(body, "manager") || !strings.Contains(body, "Refund") {
+		t.Fatalf("expected the summary to name the specific role (manager) and action (Refund), got: %s", body)
+	}
 }
