@@ -968,7 +968,18 @@ a.btn, a.btn:hover { text-decoration: none; }
 .split-tender-form label { display: flex; flex-direction: column; font-size: .8rem;
                            gap: .2rem; margin-bottom: 0; }
 .split-tender-form input, .split-tender-form select { padding: .45rem; border-radius: 6px;
-                                                      border: 1px solid var(--border); }
+                                                      border: 1px solid var(--control-border); }
+/* ut-docs#305: the rule above and the base `input:focus, select:focus,
+   textarea:focus` rule (near the top of this file) are equal specificity
+   (one class + one element); this file's cascade order puts the rule above
+   LATER, so its resting `border` shorthand silently out-ranked the generic
+   focus rule's `border-color` and split-tender-form fields never got a
+   visible focus swap at all -- pre-existing, not introduced by this fix,
+   but caught by the new contrast test's focus-distinguishability check and
+   fixed alongside it since it's the same file/selector. */
+.split-tender-form input:focus, .split-tender-form select:focus {
+  border-color: var(--accent);
+}
 .split-controls { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
 .split-tender-payments { margin: .25rem 0; display: flex; flex-direction: column; gap: .4rem; }
 .split-tender-payments.empty { color: var(--muted); font-size: .9rem; }
