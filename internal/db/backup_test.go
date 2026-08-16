@@ -123,6 +123,74 @@ func TestStageAndApplyRestore(t *testing.T) {
 	}
 }
 
+// ut-docs#636: reset-archive batches (040_reset_archive.sql, ut-docs#187) are
+// retained fiscal data, not disposable test data — a backup taken after a
+// reset must restore them intact. Snapshot/restore work by copying the whole
+// SQLite file (VACUUM INTO), so this passes without any table-specific
+// wiring; the test pins that behaviour so a future switch to a selective
+// (per-table) backup mechanism can't silently drop the archive tables again.
+func TestSnapshotAndRestore_PreservesResetArchiveBatch(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	if _, err := d.Exec(`INSERT INTO reset_batches (id, created_at, actor_id, sales_count) VALUES ('batch-1', '2026-08-16T00:00:00Z', 'user-1', 1)`); err != nil {
+		t.Fatalf("seed reset_batches: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO sales_archive (
+		id, receipt_no, status, sale_type, tender_type, offline, sync_status,
+		sync_attempts, register_id, currency, subtotal, discount_total, tax_total,
+		total, rounding, created_at, till_id, service_charge_amount, order_type,
+		order_status, reset_batch_id
+	) VALUES (
+		'sale-1', 'R-1', 'completed', 'sale', 'cash', 0, 'synced',
+		0, 'register-1', 'GBP', 1000, 0, 200,
+		1200, 0, '2026-08-16T00:00:00Z', 'till-1', 0, 'counter',
+		'completed', 'batch-1'
+	)`); err != nil {
+		t.Fatalf("seed sales_archive: %v", err)
+	}
+
+	snap, err := Snapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	sd, err := Open(snap)
+	if err != nil {
+		t.Fatalf("open snapshot: %v", err)
+	}
+	var batches, sales int
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM reset_batches WHERE id = 'batch-1'`).Scan(&batches); err != nil {
+		t.Fatalf("count reset_batches in snapshot: %v", err)
+	}
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM sales_archive WHERE reset_batch_id = 'batch-1'`).Scan(&sales); err != nil {
+		t.Fatalf("count sales_archive in snapshot: %v", err)
+	}
+	sd.Close()
+	if batches != 1 || sales != 1 {
+		t.Fatalf("snapshot archive rows: batches=%d sales=%d, want 1 and 1", batches, sales)
+	}
+
+	// Full round-trip: mutate after the snapshot, restore, and confirm the
+	// archived batch (not the mutation) is what comes back.
+	if _, err := d.Exec(`DELETE FROM sales_archive WHERE id = 'sale-1'`); err != nil {
+		t.Fatalf("mutate after snapshot: %v", err)
+	}
+	if err := StageRestore(path, filepath.Base(snap)); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	d.Close()
+	if applied, err := ApplyPendingRestore(path); err != nil || !applied {
+		t.Fatalf("apply: %v %v", applied, err)
+	}
+	restored := openTest(t, path)
+	var restoredSales int
+	if err := restored.QueryRow(`SELECT COUNT(*) FROM sales_archive WHERE id = 'sale-1'`).Scan(&restoredSales); err != nil {
+		t.Fatalf("count sales_archive after restore: %v", err)
+	}
+	if restoredSales != 1 {
+		t.Errorf("restored sales_archive rows = %d, want 1 — reset-archive data did not survive a backup/restore round-trip", restoredSales)
+	}
+}
+
 func TestStageRestoreRejectsBadNames(t *testing.T) {
 	path := testDBPath(t)
 	openTest(t, path)
