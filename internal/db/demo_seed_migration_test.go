@@ -1,6 +1,7 @@
 package db
 
 import (
+	_ "embed"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -9,6 +10,36 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 )
+
+// frozenRemoveDemoSQL036 is a frozen, byte-for-byte snapshot of
+// seeddata/remove_demo.sql AS IT STOOD when migration 036 was authored —
+// not a copy of the live (evolving) seeddata.RemoveDemoSQL. Migrations are
+// append-only (universal-till/CLAUDE.md): 036 embeds this text verbatim as
+// a one-time upgrade step for pre-036 databases, and can never be edited to
+// pick up a later behavioural fix to the live removal script. ut-docs#640
+// added an *_archive-aware clause to seeddata.RemoveDemoSQL (closing a gap
+// where "Remove sample data" could delete a demo item a still-restorable
+// reset-archive batch depends on) — but that gap cannot exist on a
+// pre-036 database at migration time: the reset-archive mechanism
+// (ADR-0042, ut-docs#187) shipped chronologically AFTER 036, so no database
+// migrating through 036 can already hold archived demo sale/stock rows.
+// 036 staying on the pre-#640 rule is therefore correct, not stale — this
+// fixture is what TestMigration036MatchesSeedData now pins against instead
+// of the live seeddata.RemoveDemoSQL, which is expected to keep evolving.
+//
+//go:embed testdata/frozen_remove_demo_036.sql
+var frozenRemoveDemoSQL036 string
+
+// frozenRemoveDemoCustomersPromosSQL038 is the same kind of frozen snapshot
+// as frozenRemoveDemoSQL036, for migration 038 and
+// seeddata/remove_demo_customers_promos.sql. ut-docs#640 also added a
+// sales_archive-aware clause there (a demo customer referenced only by an
+// archived — post-reset — sale must not be deleted); 038 predates the
+// reset-archive mechanism the same way 036 does, so it stays pinned to the
+// pre-#640 rule for the same reason.
+//
+//go:embed testdata/frozen_remove_demo_customers_promos_038.sql
+var frozenRemoveDemoCustomersPromosSQL038 string
 
 // ut-docs#539: 001_init.sql unconditionally seeded a 50-item grocery demo
 // catalogue; migration 036 makes it opt-in. On a brand-new install 036 runs
@@ -511,8 +542,8 @@ func TestMigration038MatchesSeedData(t *testing.T) {
 	if !strings.Contains(m038, seeddata.DemoCustomersPromosIDsSQL) {
 		t.Error("038 does not contain seeddata/demo_customers_promos_ids.sql verbatim — regenerate the migration from the shared assets")
 	}
-	if !strings.Contains(m038, seeddata.RemoveDemoCustomersPromosSQL) {
-		t.Error("038 does not contain seeddata/remove_demo_customers_promos.sql verbatim — regenerate the migration from the shared assets")
+	if !strings.Contains(m038, frozenRemoveDemoCustomersPromosSQL038) {
+		t.Error("038 no longer matches its frozen pre-ut-docs#640 remove_demo_customers_promos.sql snapshot (testdata/frozen_remove_demo_customers_promos_038.sql) — 038 is an append-only migration and must never change; if this fails, something edited 038 itself, not seeddata.RemoveDemoCustomersPromosSQL")
 	}
 	for _, id := range seeddata.DemoCustomerIDs {
 		if !strings.Contains(seeddata.DemoCustomersPromosIDsSQL, "('"+id+"')") {
@@ -553,8 +584,8 @@ func TestMigration036MatchesSeedData(t *testing.T) {
 	if !strings.Contains(m036, seeddata.DemoIDsSQL) {
 		t.Error("036 does not contain seeddata/demo_ids.sql verbatim — regenerate the migration from the shared assets")
 	}
-	if !strings.Contains(m036, seeddata.RemoveDemoSQL) {
-		t.Error("036 does not contain seeddata/remove_demo.sql verbatim — regenerate the migration from the shared assets")
+	if !strings.Contains(m036, frozenRemoveDemoSQL036) {
+		t.Error("036 no longer matches its frozen pre-ut-docs#640 remove_demo.sql snapshot (testdata/frozen_remove_demo_036.sql) — 036 is an append-only migration and must never change; if this fails, something edited 036 itself, not seeddata.RemoveDemoSQL")
 	}
 	// And the Go-side ID slices mirror the SQL lists. demo_seed_items now
 	// carries sku/name/base_price alongside id (ut-docs#566), so its rows are
