@@ -11,6 +11,32 @@
     {{ range .Settings }}
     {{ if .Secret }}
     <label>{{ .Key }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <input type="password" name="setting_{{ .Key }}" autocomplete="off" value="" placeholder="{{ if .IsSet }}{{ T "plugins.settings.secret_set" }}{{ else }}{{ T "plugins.settings.secret_empty" }}{{ end }}"></label>
+    {{ else if .Typed }}
+    <fieldset style="margin-block-end:.75rem">
+      <legend>{{ T "plugins.settings.takeaway.title" }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}</legend>
+      <p class="muted">{{ T "plugins.settings.takeaway.help" }}</p>
+      <input type="hidden" name="setting_takeaway_typed" value="1">
+      <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ T "plugins.settings.takeaway.tax_code" }}</th>
+            <th>{{ T "plugins.settings.takeaway.dine_in_rate" }}</th>
+            <th>{{ T "plugins.settings.takeaway.rate" }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .TaxRows }}
+          <tr>
+            <td>{{ if .Orphan }}{{ .Name }} <span class="muted">{{ T "plugins.settings.takeaway.deleted_code" }}</span>{{ else }}{{ .Name }}{{ end }}</td>
+            <td>{{ if .Orphan }}—{{ else }}{{ .DineInPercent }}%{{ end }}</td>
+            <td><input type="number" step="0.01" min="0" max="100" name="takeaway_pct_{{ .TaxCodeID }}" value="{{ .OverridePercent }}" placeholder="{{ .PlaceholderPercent }}"></td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+      </div>
+    </fieldset>
     {{ else }}
     <label>{{ .Key }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <input type="text" name="setting_{{ .Key }}" value="{{ .Value }}"></label>
     {{ end }}
@@ -24,4 +50,14 @@
   <p class="muted">{{ T "plugins.settings.none" }}</p>
   {{ end }}
 </div>
+
+<script>
+// htmx doesn't swap 4xx responses, so a validation error (e.g. an invalid
+// takeaway rate, served 400 with a localized body) would otherwise surface
+// only as the generic server-error banner — same pattern as refund.html.
+document.body.addEventListener('htmx:responseError', function (ev) {
+  var msg = document.getElementById('ps-msg');
+  if (msg) msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+});
+</script>
 {{ end }}
