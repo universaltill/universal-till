@@ -235,11 +235,17 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 
 		// Actor: a manager/admin session authorizes itself; a cashier needs
 		// a manager's PIN, and that manager becomes the audit actor.
-		actorID := getSessionUserID(r)
-		if actorID == "" {
+		// requestedBy is kept separate from actorID so a PIN-approved
+		// override still records who was actually blocked and asked for
+		// approval (ut-docs#780) — mirrors fiscal_api.go's
+		// createTSEOverride, which captures the same distinction as
+		// requestedBy/actorID.
+		requestedBy := getSessionUserID(r)
+		if requestedBy == "" {
 			respondOverrideError(w, r, http.StatusUnauthorized, "authentication required")
 			return
 		}
+		actorID := requestedBy
 		role, ok, err := repo.LookupUserRole(ctx, actorID)
 		if err != nil {
 			respondOverrideError(w, r, http.StatusInternalServerError, fmt.Sprintf("auth check failed: %v", err))
@@ -291,12 +297,13 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 
 		// Record override
 		overrideID, err := pos.RecordNegativeInventoryOverride(ctx, dp.Db, pos.OverrideNegativeInventory{
-			ActorID:    actorID,
-			Reason:     req.Reason,
-			ItemID:     req.ItemID,
-			VariantID:  req.VariantID,
-			LocationID: req.LocationID,
-			QtyBefore:  req.QtyBefore,
+			ActorID:     actorID,
+			RequestedBy: requestedBy,
+			Reason:      req.Reason,
+			ItemID:      req.ItemID,
+			VariantID:   req.VariantID,
+			LocationID:  req.LocationID,
+			QtyBefore:   req.QtyBefore,
 		})
 		if err != nil {
 			respondOverrideError(w, r, http.StatusInternalServerError, err.Error())

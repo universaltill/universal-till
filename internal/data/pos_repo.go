@@ -124,12 +124,22 @@ type StockMovementInput struct {
 
 // OverrideNegativeInventory captures a manager override allowing negative inventory with audit.
 type OverrideNegativeInventory struct {
-	ActorID    string
-	Reason     string
-	ItemID     string
-	VariantID  string
-	LocationID string
-	QtyBefore  float64
+	ActorID string
+	// RequestedBy is the originally-blocked user who asked for the
+	// override, when different from ActorID (a cashier whose action a
+	// manager's PIN then approved). Equal to ActorID when the actor
+	// authorized their own override directly — the caller isn't required
+	// to leave it empty in that case; the payload check below only emits
+	// requested_by when it actually differs. ut-docs#780: without this, a
+	// PIN-approved override's audit row reads as if the approving manager
+	// performed the action directly, and the original actor's identity is
+	// lost.
+	RequestedBy string
+	Reason      string
+	ItemID      string
+	VariantID   string
+	LocationID  string
+	QtyBefore   float64
 }
 
 // LowStockItem represents an item with low stock.
@@ -611,6 +621,12 @@ func (r *POSRepo) RecordNegativeInventoryOverride(ctx context.Context, override 
 	payload := map[string]any{
 		"reason":   override.Reason,
 		"snapshot": snapshot,
+	}
+	// Dual attribution (ut-docs#780), same convention as fiscal_api.go's
+	// createTSEOverride: only recorded when it actually differs from the
+	// audit actor, so a self-authorized override's payload stays as-is.
+	if override.RequestedBy != "" && override.RequestedBy != override.ActorID {
+		payload["requested_by"] = override.RequestedBy
 	}
 	payloadJSON, _ := json.Marshal(payload)
 
