@@ -120,7 +120,7 @@ type resetArchiveTable struct {
 // catalog/user rows and intra-batch parents are satisfied on re-insert.
 var resetArchiveTables = []resetArchiveTable{
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
-	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount"},
+	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, masked_pan, auth_code, terminal_id, trace_id"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
 	{"sale_discounts", "id, sale_id, line_id, type, value, amount, reason"},
 	{"stock_movements", "id, item_id, variant_id, location_id, sale_line_id, type, quantity, cost_price, created_at"},

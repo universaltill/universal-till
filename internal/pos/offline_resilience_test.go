@@ -376,7 +376,11 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			currency TEXT NOT NULL, 
 			reference TEXT, 
 			change_given INTEGER NOT NULL DEFAULT 0, 
-			tip_amount INTEGER NOT NULL DEFAULT 0, 
+			tip_amount INTEGER NOT NULL DEFAULT 0,
+			masked_pan TEXT,
+			auth_code TEXT,
+			terminal_id TEXT,
+			trace_id TEXT,
 			paid_at TEXT NOT NULL,
 			FOREIGN KEY (sale_id) REFERENCES sales(id)
 		)`,

@@ -516,6 +516,7 @@
   "products.search_ph": "Search products…",
   "products.title": "Products",
   "products.uncategorized": "Uncategorized",
+  "receipt.auth_code": "Auth",
   "receipt.auto_reset": "Auto-reset in 60s...",
   "receipt.change": "Change",
   "receipt.legal.plugin_label": "Legal notice (%s v%s)",
