@@ -121,11 +121,11 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 
 	// Busy-times buckets: our one sale lands in exactly one weekday bucket
 	// and one hour bucket, and totals carry through.
-	wd, err := repo.SalesByWeekday(ctx, pagesWinFrom(30), pagesWinTo())
+	wd, err := repo.SalesByWeekday(ctx, pagesWinFrom(30), pagesWinTo(), 0, 0)
 	if err != nil {
 		t.Fatalf("weekday: %v", err)
 	}
-	hr, err := repo.SalesByHour(ctx, pagesWinFrom(30), pagesWinTo())
+	hr, err := repo.SalesByHour(ctx, pagesWinFrom(30), pagesWinTo(), 0, 0)
 	if err != nil {
 		t.Fatalf("hour: %v", err)
 	}
