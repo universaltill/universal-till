@@ -246,8 +246,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		switch r.PathValue("name") {
 		case "sales-trend":
 			daily, _ := repo.SalesByDay(r.Context(), window.From, window.To, window.Hour, window.Minute)
-			byWeekday, _ := repo.SalesByWeekday(r.Context(), window.From, window.To)
-			byHour, _ := repo.SalesByHour(r.Context(), window.From, window.To)
+			byWeekday, _ := repo.SalesByWeekday(r.Context(), window.From, window.To, window.Hour, window.Minute)
+			byHour, _ := repo.SalesByHour(r.Context(), window.From, window.To, window.Hour, window.Minute)
 			// Normalize to bar widths (busiest = 100%) so the template stays dumb.
 			type busyBar struct {
 				Label string
