@@ -2291,15 +2291,29 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
+// CardPresentFields is optional, provider-agnostic reconciliation metadata
+// a locally-attached card terminal (e.g. a future ZVT integration,
+// ut-docs#515) supplies on a payment (ut-docs#543). All empty for every
+// payment method today (cash, Stripe, SumUp, QR-pay, demo). MaskedPAN must
+// never be a full card number -- masking is enforced at the caller's
+// boundary (pos.CompleteSale), not here.
+type CardPresentFields struct {
+	MaskedPAN  string
+	AuthCode   string
+	TerminalID string
+	TraceID    string
+}
+
 // InsertPayment writes a payment row. tipAmount is gratuity metadata
 // (docs/germany-pos-parity-backlog.md tip-flow gap) -- it rides alongside
 // amount but is never subtracted/added when deriving what the payment
 // applies toward the sale total; see pos.PaymentInput.TipAmount.
-func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, paidAt string) error {
+func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, paidAt string, cardPresent CardPresentFields) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, paid_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount, paidAt)
+INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, masked_pan, auth_code, terminal_id, trace_id, paid_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount,
+		nullIfEmpty(cardPresent.MaskedPAN), nullIfEmpty(cardPresent.AuthCode), nullIfEmpty(cardPresent.TerminalID), nullIfEmpty(cardPresent.TraceID), paidAt)
 	if err != nil {
 		return fmt.Errorf("insert payment: %w", err)
 	}
@@ -3409,7 +3423,13 @@ type SaleDetailPayment struct {
 	ChangeGiven int64  `json:"change_given"`
 	TipAmount   int64  `json:"tip_amount"`
 	Reference   string `json:"reference"`
-	PaidAt      string `json:"paid_at"`
+	// Card-present reconciliation fields (ut-docs#543) -- empty for every
+	// payment method that doesn't supply them. See CardPresentFields.
+	MaskedPAN  string `json:"masked_pan,omitempty"`
+	AuthCode   string `json:"auth_code,omitempty"`
+	TerminalID string `json:"terminal_id,omitempty"`
+	TraceID    string `json:"trace_id,omitempty"`
+	PaidAt     string `json:"paid_at"`
 }
 
 // GetSaleDetailByID is GetSaleDetail keyed on the sale id (invoices store
@@ -3500,7 +3520,9 @@ ORDER BY sl.line_no, slm.rowid`, d.ID)
 	}
 
 	payRows, err := r.db.QueryContext(ctx, `
-SELECT method_id, amount, change_given, tip_amount, COALESCE(reference, ''), paid_at
+SELECT method_id, amount, change_given, tip_amount, COALESCE(reference, ''),
+       COALESCE(masked_pan, ''), COALESCE(auth_code, ''), COALESCE(terminal_id, ''), COALESCE(trace_id, ''),
+       paid_at
 FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale payments: %w", err)
@@ -3508,7 +3530,8 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	defer payRows.Close()
 	for payRows.Next() {
 		var p SaleDetailPayment
-		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.Reference, &p.PaidAt); err != nil {
+		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.Reference,
+			&p.MaskedPAN, &p.AuthCode, &p.TerminalID, &p.TraceID, &p.PaidAt); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale payment: %w", err)
 		}
 		d.Payments = append(d.Payments, p)

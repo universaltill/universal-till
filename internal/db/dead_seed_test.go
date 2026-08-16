@@ -137,6 +137,16 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	if _, err := d.DB.Exec(`ALTER TABLE audit_log DROP COLUMN blocked_actor_id`); err != nil {
 		t.Fatalf("rewind audit_log.blocked_actor_id column: %v", err)
 	}
+	// Migrations 050/051 add payments/payments_archive's card-present
+	// columns -- same non-idempotent replay problem (ut-docs#543).
+	for _, col := range []string{"masked_pan", "auth_code", "terminal_id", "trace_id"} {
+		if _, err := d.DB.Exec(`ALTER TABLE payments DROP COLUMN ` + col); err != nil {
+			t.Fatalf("rewind payments.%s column: %v", col, err)
+		}
+		if _, err := d.DB.Exec(`ALTER TABLE payments_archive DROP COLUMN ` + col); err != nil {
+			t.Fatalf("rewind payments_archive.%s column: %v", col, err)
+		}
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
