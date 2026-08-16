@@ -516,6 +516,7 @@
   "products.search_ph": "جستجوی محصولات…",
   "products.title": "محصولات",
   "products.uncategorized": "دسته‌بندی‌نشده",
+  "receipt.auth_code": "کد تأیید",
   "receipt.auto_reset": "بازنشانی خودکار تا ۶۰ ثانیه…",
   "receipt.change": "باقی‌مانده",
   "receipt.legal.plugin_label": "اطلاعیه قانونی (%s v%s)",

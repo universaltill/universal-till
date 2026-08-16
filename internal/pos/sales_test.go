@@ -40,7 +40,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_line_modifiers (id TEXT PRIMARY KEY, sale_line_id TEXT NOT NULL, group_id TEXT, option_id TEXT, group_name_snapshot TEXT NOT NULL, option_name_snapshot TEXT NOT NULL, price_delta_minor INTEGER NOT NULL, FOREIGN KEY (sale_line_id) REFERENCES sale_lines(id));`,
 		`CREATE TABLE sale_discounts (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_id TEXT, type TEXT NOT NULL, value INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT);`,
-		`CREATE TABLE payments (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, method_id TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT NOT NULL, reference TEXT, change_given INTEGER NOT NULL DEFAULT 0, tip_amount INTEGER NOT NULL DEFAULT 0, paid_at TEXT NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
+		`CREATE TABLE payments (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, method_id TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT NOT NULL, reference TEXT, change_given INTEGER NOT NULL DEFAULT 0, tip_amount INTEGER NOT NULL DEFAULT 0, masked_pan TEXT, auth_code TEXT, terminal_id TEXT, trace_id TEXT, paid_at TEXT NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_links (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, original_sale_id TEXT NOT NULL, reason TEXT);`,
 		`CREATE TABLE stock_movements (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, created_at TEXT NOT NULL);`,
 		`CREATE TABLE inventory (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, quantity REAL NOT NULL, updated_at TEXT NOT NULL, UNIQUE(item_id, variant_id, location_id));`,
@@ -289,6 +289,125 @@ func TestCompleteSale_RejectsUnderpayment(t *testing.T) {
 
 	if _, err := CompleteSale(ctx, db, in); err == nil {
 		t.Fatalf("expected underpayment to fail")
+	}
+}
+
+// ut-docs#543: card-present reconciliation fields (masked PAN, auth code,
+// terminal/trace ID) are optional metadata on a payment, same shape as
+// TipAmount -- they must persist when a caller (a future card-terminal
+// plugin, e.g. #515's ZVT integration) supplies them.
+func TestCompleteSale_PersistsCardPresentFields(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Coffee', 370, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',20,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
+
+	in := SaleInput{
+		SaleType: "sale",
+		Currency: "GBP",
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Coffee", Qty: 1, UnitPrice: 370, TaxRateBasisPoints: 0, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "card", Amount: 370, MaskedPAN: "VISA •••• 4242", AuthCode: "013579", TerminalID: "TERM-01", TraceID: "TRACE-99"},
+		},
+	}
+
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("complete sale: %v", err)
+	}
+	var maskedPAN, authCode, terminalID, traceID string
+	if err := db.QueryRow(`SELECT masked_pan, auth_code, terminal_id, trace_id FROM payments WHERE sale_id=?`, saleID).
+		Scan(&maskedPAN, &authCode, &terminalID, &traceID); err != nil {
+		t.Fatalf("read payment: %v", err)
+	}
+	if maskedPAN != "VISA •••• 4242" || authCode != "013579" || terminalID != "TERM-01" || traceID != "TRACE-99" {
+		t.Fatalf("card-present fields not persisted correctly: %q %q %q %q", maskedPAN, authCode, terminalID, traceID)
+	}
+}
+
+// The masked-PAN field must never accept anything that looks like an
+// unmasked PAN -- masking happens at the boundary (here), not just at
+// render time, since nothing downstream re-validates it before printing
+// on a receipt or exposing it via GetSaleDetail.
+func TestCompleteSale_RejectsUnmaskedPAN(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Coffee', 370, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',20,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
+
+	in := SaleInput{
+		SaleType: "sale",
+		Currency: "GBP",
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Coffee", Qty: 1, UnitPrice: 370, TaxRateBasisPoints: 0, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{
+			// A real, unmasked 16-digit PAN -- must be rejected outright.
+			{MethodID: "card", Amount: 370, MaskedPAN: "4242424242424242"},
+		},
+	}
+
+	if _, err := CompleteSale(ctx, db, in); err == nil {
+		t.Fatalf("expected an unmasked-looking PAN to be rejected")
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("count sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected the sale to roll back entirely, found %d sale rows", count)
+	}
+}
+
+// Independent review, ut-docs#543: validateMaskedPAN's original digit check
+// used a bare ASCII range ('0'-'9'), so a full PAN written in non-ASCII
+// digits -- Arabic-Indic (used by the shipped fa/ar locales) or fullwidth
+// -- bypassed the guard entirely. unicode.IsDigit must catch both.
+func TestCompleteSale_RejectsUnmaskedPAN_NonASCIIDigits(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Coffee', 370, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',20,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
+
+	for _, tc := range []struct {
+		name string
+		pan  string
+	}{
+		// A real, unmasked 16-digit PAN in Arabic-Indic digits.
+		{"arabic-indic", "۴۲۴۲۴۲۴۲۴۲۴۲۴۲۴۲"},
+		// Same, in fullwidth digits.
+		{"fullwidth", "４２４２４２４２４２４２４２４２"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := SaleInput{
+				SaleType: "sale",
+				Currency: "GBP",
+				Lines: []SaleLineInput{
+					{ItemID: "itm1", SKU: "SKU1", Name: "Coffee", Qty: 1, UnitPrice: 370, TaxRateBasisPoints: 0, LocationID: "loc1"},
+				},
+				Payments: []PaymentInput{
+					{MethodID: "card", Amount: 370, MaskedPAN: tc.pan},
+				},
+			}
+			if _, err := CompleteSale(ctx, db, in); err == nil {
+				t.Fatalf("expected a non-ASCII-digit unmasked PAN (%q) to be rejected", tc.pan)
+			}
+		})
 	}
 }
 
