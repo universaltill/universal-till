@@ -386,7 +386,7 @@ VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
 // ExportRow is one catalog line for the CSV export (G22b — the
 // anti-lock-in half of import: a shop can always take its data and leave).
 // Columns are chosen so our own importer round-trips the file. JSON tags
-// (ut-docs#600 review finding F1) match ADR-0039's interchange-format
+// (ut-docs#600 review finding F1) match ADR-0051's interchange-format
 // naming (price_minor etc.) now that this type is ALSO marshaled as the
 // wire payload for a dispatched export-type plugin (internal/pages/
 // data_api.go's exportRequestPayload.Items) — writeCatalogCSV
