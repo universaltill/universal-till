@@ -83,7 +83,38 @@ jobs:
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test ./...
+        run: go test $(go list ./... | grep -v '/internal/plugins$')
+      - name: Test (internal/plugins — wider timeout, ut-docs#643/#753/#776)
+        # internal/plugins hit the plain (this workflow never uses -race)
+        # default 600s per-package `go test` timeout for real in CI (PR
+        # #316, "FAIL ... internal/plugins 600.015s") — not a deadlock: this
+        # session measured the package's own plain runtime at 83-93s and
+        # ut-docs#648 recorded the identical shape for internal/pages
+        # ("goroutine dump showed [a test] still runnable inside a DB
+        # query, not deadlocked, not a real hang" at 599.802s) — a `go
+        # test` timeout dumps every live goroutine at the deadline instant,
+        # and whichever one is transiently waiting on a shared resource
+        # (here internal/logging's package-global mutex) at that exact
+        # moment reads as "blocked" out of context. The git history since
+        # ut-docs#509 (draining Supervisor's monitorProcess goroutines)
+        # shows no reintroduced leak of that shape, and every
+        # WasmRuntime.Sync call in this package's tests that can actually
+        # register a subscriber already drains it (defer
+        # bus.ResetSubscribers()) — the rest never reach subscription at
+        # all (load failure short-circuits first) — so this is margin, not
+        # a bug. Run separately with a longer timeout rather than raising
+        # it for the whole suite, so a genuine hang anywhere else still
+        # fails fast (within the default 10m) instead of taking up to 20m
+        # to report. Scoped to the exact package (no trailing /...) so
+        # internal/plugins/marketplace and /oauth — already covered by the
+        # main Test step above — don't run a second time in this same job;
+        # see ut-docs#662's own comment on why re-running things twice in
+        # one job is exactly the kind of contention this package doesn't
+        # need more of.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: go test -timeout 20m ./internal/plugins
       - name: Test (with OS locale set — ut-docs#662)
         # This runner's own container has no LANG, which is exactly what let
         # ut-docs#662's OS-locale-detection redirect (ut-docs#590) hide 4
