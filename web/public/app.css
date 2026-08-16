@@ -863,6 +863,17 @@ a.btn, a.btn:hover { text-decoration: none; }
 .toast.hide { opacity: 0; }
 
 /* ---------- Journal ---------- */
+.journal-filters { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end;
+                    margin-block-end: .75rem; }
+.journal-filters label { display: flex; flex-direction: column; gap: .2rem;
+                          font-size: .78rem; color: var(--muted); }
+.journal-till-status { margin-block-end: .5rem; font-size: .8rem; }
+/* B2 (ut-docs#550 review): an honest "can't show that here" notice for an
+   explicit cross-till ask on a replica -- same warn tint .sync-chip.warn /
+   .tag.warn already use, so it reads as a real notice, not muted status text. */
+.journal-replica-notice { margin-block-end: .75rem; padding: .5rem .75rem;
+                           border-radius: var(--radius); font-size: .85rem;
+                           background: rgba(217, 119, 6, .12); color: var(--warning); }
 .journal table { width: 100%; border-collapse: collapse; background: var(--surface);
                  border-radius: var(--radius); overflow: hidden; }
 .journal th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;

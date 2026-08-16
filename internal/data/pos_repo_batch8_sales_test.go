@@ -507,4 +507,186 @@ VALUES (?, ?, 'completed', 'sale', 'cash', 'synced', 'GBP', ?, ?, ?)`,
 	if entries[0].ReceiptNo != "R6" || entries[4].ReceiptNo != "R2" {
 		t.Fatalf("default-limit ordering mismatch: first=%+v last=%+v", entries[0], entries[4])
 	}
+
+	// ListRecentSales is unchanged behavior-wise: every row is still this
+	// till's local, provenance-less sale (till_id defaults to '' and no
+	// till row exists), so TillID/TillName come back empty too.
+	for _, e := range entries {
+		if e.TillID != "" || e.TillName != "" {
+			t.Fatalf("ListRecentSales row has unexpected till provenance: %+v", e)
+		}
+	}
+}
+
+// seedJournalSale inserts a bare sales row for ListSalesJournal tests —
+// lighter than seedBatch8Sale (no lines/payments needed, ListSalesJournal
+// only reads sales+tills columns).
+func seedJournalSale(t *testing.T, d *db.DB, id, receiptNo, tillID, createdAt string, total int64) {
+	t.Helper()
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, sync_status, currency, subtotal, total, created_at, till_id)
+VALUES (?, ?, 'completed', 'sale', 'cash', 'synced', 'GBP', ?, ?, ?, ?)`,
+		id, receiptNo, total, total, createdAt, tillID)
+}
+
+// TestPOSRepo_ListSalesJournal_TillFilter covers ut-docs#550: an operator
+// filtering the journal to one specific till's sales sees only that till's
+// rows, with the other tills' sales excluded.
+func TestPOSRepo_ListSalesJournal_TillFilter(t *testing.T) {
+	d := openBatch8DB(t, "journal-tillfilter.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	mustExec(t, d, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-2', 'Front Counter', 'bh-2')`)
+
+	seedJournalSale(t, d, "sale-local-1", "L1", "", "2026-08-15T09:00:00Z", 100)
+	seedJournalSale(t, d, "sale-t2-1", "T2-1", "till-2", "2026-08-15T09:05:00Z", 200)
+	seedJournalSale(t, d, "sale-t2-2", "T2-2", "till-2", "2026-08-15T09:10:00Z", 300)
+
+	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{TillID: "till-2", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(till-2): %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want 2 entries for till-2, got %d: %+v", len(entries), entries)
+	}
+	if entries[0].ReceiptNo != "T2-2" || entries[0].TillID != "till-2" || entries[0].TillName != "Front Counter" {
+		t.Fatalf("newest till-2 entry mismatch: %+v", entries[0])
+	}
+	if entries[1].ReceiptNo != "T2-1" {
+		t.Fatalf("second till-2 entry mismatch: %+v", entries[1])
+	}
+
+	// TillID: "" selects this till's own local (till_id='') sales only.
+	local, err := repo.ListSalesJournal(ctx, SalesJournalFilter{TillID: "", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(local): %v", err)
+	}
+	if len(local) != 1 || local[0].ReceiptNo != "L1" || local[0].TillID != "" || local[0].TillName != "" {
+		t.Fatalf("local-only filter mismatch: %+v", local)
+	}
+}
+
+// TestPOSRepo_ListSalesJournal_AllTills covers the "All tills" view: rows
+// from every till come back, each correctly joined to its till name, and a
+// row with till_id=” (this till's own sale) shows an empty TillName rather
+// than failing the join.
+func TestPOSRepo_ListSalesJournal_AllTills(t *testing.T) {
+	d := openBatch8DB(t, "journal-alltills.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	mustExec(t, d, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-2', 'Front Counter', 'bh-2')`)
+	mustExec(t, d, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-3', 'Back Counter', 'bh-3')`)
+
+	seedJournalSale(t, d, "sale-local-1", "L1", "", "2026-08-15T09:00:00Z", 100)
+	seedJournalSale(t, d, "sale-t2-1", "T2-1", "till-2", "2026-08-15T09:05:00Z", 200)
+	seedJournalSale(t, d, "sale-t3-1", "T3-1", "till-3", "2026-08-15T09:10:00Z", 300)
+
+	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(AllTills): %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("want 3 entries, got %d: %+v", len(entries), entries)
+	}
+	// Newest first: T3-1, T2-1, L1.
+	if entries[0].ReceiptNo != "T3-1" || entries[0].TillID != "till-3" || entries[0].TillName != "Back Counter" {
+		t.Fatalf("entry 0 mismatch: %+v", entries[0])
+	}
+	if entries[1].ReceiptNo != "T2-1" || entries[1].TillID != "till-2" || entries[1].TillName != "Front Counter" {
+		t.Fatalf("entry 1 mismatch: %+v", entries[1])
+	}
+	if entries[2].ReceiptNo != "L1" || entries[2].TillID != "" || entries[2].TillName != "" {
+		t.Fatalf("entry 2 (this till) mismatch: %+v", entries[2])
+	}
+}
+
+// TestPOSRepo_ListSalesJournal_DayFilter covers ut-docs#550's day filter:
+// only rows whose created_at falls on the given calendar day are returned.
+func TestPOSRepo_ListSalesJournal_DayFilter(t *testing.T) {
+	d := openBatch8DB(t, "journal-dayfilter.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	seedJournalSale(t, d, "sale-d1", "D1", "", "2026-08-14T23:59:00Z", 100)
+	seedJournalSale(t, d, "sale-d2", "D2", "", "2026-08-15T08:00:00Z", 200)
+	seedJournalSale(t, d, "sale-d3", "D3", "", "2026-08-15T20:00:00Z", 300)
+
+	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Day: "2026-08-15", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(day filter): %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want 2 entries for 2026-08-15, got %d: %+v", len(entries), entries)
+	}
+	if entries[0].ReceiptNo != "D3" || entries[1].ReceiptNo != "D2" {
+		t.Fatalf("day-filtered entries mismatch: %+v", entries)
+	}
+
+	// Empty Day = no day filter (falls back to till-scoped only).
+	all, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(no day filter): %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("want 3 entries with no day filter, got %d", len(all))
+	}
+}
+
+// TestPOSRepo_ListSalesJournal_RevokedTill covers B1 from the ut-docs#550
+// review: DeleteTill hard-deletes the tills row, but sales.till_id is
+// retained -- so a sale journaled from a since-revoked till must still come
+// back with TillID set (non-empty) even though the LEFT JOIN can no longer
+// resolve a TillName. The caller (journal.html) must not mistake this for
+// "this till's own sale" (TillID == ""): a revoked/unknown till still has a
+// distinct, non-empty TillID and an empty TillName.
+func TestPOSRepo_ListSalesJournal_RevokedTill(t *testing.T) {
+	d := openBatch8DB(t, "journal-revoked.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	tills := NewTillsRepo(d.DB)
+
+	tillID, err := tills.InsertTill(ctx, "Kiosk Gone", "bh-revoked")
+	if err != nil {
+		t.Fatalf("InsertTill: %v", err)
+	}
+	seedJournalSale(t, d, "sale-revoked-1", "REV-1", tillID, "2026-08-15T09:00:00Z", 400)
+
+	if err := tills.DeleteTill(ctx, tillID); err != nil {
+		t.Fatalf("DeleteTill: %v", err)
+	}
+
+	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSalesJournal: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 entry, got %d: %+v", len(entries), entries)
+	}
+	if entries[0].ReceiptNo != "REV-1" {
+		t.Fatalf("entry mismatch: %+v", entries[0])
+	}
+	if entries[0].TillID != tillID {
+		t.Fatalf("revoked-till sale must retain its TillID, got %q", entries[0].TillID)
+	}
+	if entries[0].TillName != "" {
+		t.Fatalf("revoked-till sale must have an empty TillName (no matching tills row), got %q", entries[0].TillName)
+	}
+}
+
+// TestPOSRepo_ListSalesJournal_LimitDefault mirrors ListRecentSales' limit<=0
+// convention: it defaults to 5.
+func TestPOSRepo_ListSalesJournal_LimitDefault(t *testing.T) {
+	d := openBatch8DB(t, "journal-limitdefault.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	for i := 0; i < 6; i++ {
+		seedJournalSale(t, d, "sale-ld"+string(rune('1'+i)), "LD"+string(rune('1'+i)), "",
+			"2026-08-15T09:0"+string(rune('0'+i))+":00Z", int64(100+i))
+	}
+	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{Limit: 0})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(limit=0): %v", err)
+	}
+	if len(entries) != 5 {
+		t.Fatalf("want 5 entries (default limit), got %d", len(entries))
+	}
 }

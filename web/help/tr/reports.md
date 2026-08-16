@@ -82,3 +82,41 @@ bile asla diğer çekmeceye düşmez. Birden fazla kasası olan bir mağazada
 cihazın önce hangi kasa olduğunu bilmesi gerekir: Ayarlar → Kasalar'da
 "Bu cihazın kasası"nı ayarlayın; yoksa çıkış, sizi oraya yönlendiren bir
 mesajla reddedilir.
+
+## Tüm kasaların satışlarını görme (İşlem geçmişi)
+
+İşlem geçmişi sayfası (fiş/eşitleme listesi, satış ekranının dışında)
+varsayılan olarak tüm kasaların satışlarını, en yeniden en eskiye, hangi
+kasanın hangi siparişi aldığını kendi sütununda göstererek listeler —
+böylece tek bir cihaz her kasaya gitmeden tüm mağazanın hasılatını
+inceleyebilir. Yalnızca bu cihazın kendi satışlarını görmek için seçimi
+"Bu kasa"ya değiştirin.
+
+Listenin üstündeki filtre satırını kullanın:
+
+- **Kasa** — "Tüm kasalar" (varsayılan) tüm kasaların satışlarını, en
+  yeniden en eskiye, gösterir; "Bu kasa" listeyi yalnızca bu cihazın kendi
+  yerel satışlarıyla sınırlar; ya da belirli bir kasayı adıyla seçip
+  yalnızca onun satışlarını görebilirsiniz.
+- **Gün** — listeyi o takvim gününe daraltmak için bir tarih seçin; günden
+  bağımsız en son satışları görmek için boş bırakın.
+
+"Bu kasa" dışında bir kasa kayıtlıysa, filtrelerin altındaki bir satır
+her kayıtlı kasanın adını ve bu cihazla en son ne zaman bağlantı
+kurduğunu gösterir ("*kasa*'dan son bağlantı: *zaman*") — bağlantısı
+düzgün çalışan bir kasanın satış eşitlemesi yine de arka planda bozulmuş
+olabilir, bu yüzden bu yalnızca bir ağ bağlantısı sinyalidir, satışlarının
+gerçekten ulaştığının kanıtı değildir; eşitlemesi gecikmiş bir kasayı fark
+etmek için kullanışlıdır, toplamları uzlaştırmanın yerine geçmez. Bir kasa
+hiç bağlantı kurmadıysa, ya da (bir yedek kasada) bağlantı zamanı ana
+kasadan paylaşılmadığı için burada "—" gösterilir.
+
+Bu görünüm yalnızca mağazanın ana kasasında işe yarar, çünkü diğer
+kasaların satışlarını yalnızca o biriktirir; bir yedek (replica) kasa,
+hangi kasa filtresi seçilirse seçilsin, her zaman yalnızca kendi
+satışlarını gösterebilir — çünkü bir yedek kasa kendi satışlarını yalnızca
+tek yönlü olarak ana kasaya gönderir ve diğer kasaların satışlarını asla
+geri almaz. Bir yedek kasada "Tüm kasalar" ya da belirli başka bir kasa
+seçmek, neden boş kaldığını açıklamayan bir tablo yerine, kasalar arası
+satışların yalnızca mağazanın ana kasasında kullanılabildiğini açıklayan
+bir mesaj gösterir.
