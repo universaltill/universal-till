@@ -105,6 +105,66 @@ func TestMergeAdditiveJSONMapSetting_PreservesExistingEntry(t *testing.T) {
 	}
 }
 
+// ut-docs#668: the read must agree with the write on scope. Before this
+// fix, the SELECT preferred a register-scoped row over global (mirroring
+// GetPluginSetting's own preference order) while the write always targeted
+// scope='global' — so a register-scoped row for the same key would be read
+// and merged, but the result written into a *separate* global row, silently
+// diverging from what GetPluginSetting reports back and leaking a
+// till-specific override into the shop-wide row. The merge must now ignore
+// a register-scoped row entirely and only ever read/write global.
+func TestMergeAdditiveJSONMapSetting_IgnoresRegisterScopedRow(t *testing.T) {
+	d, repo := newPluginLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedCatalogEntry(t, d, "com.example.tax", "1.0.0")
+	if err := repo.InstallPlugin(ctx, nil, "com.example.tax"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A register-scoped override, plus a pre-existing global entry.
+	if err := repo.UpsertPluginSettingScoped(ctx, "com.example.tax", "takeaway_rate_overrides", `{"reg_only":111}`, "register"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"a": 100}); err != nil {
+		t.Fatal(err)
+	}
+
+	added, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"reg_only": 999, "b": 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "reg_only" must be treated as new from the merge's point of view — it
+	// lives in the register-scoped row, which the merge must never read.
+	if added != 2 {
+		t.Fatalf("added = %d, want 2 (both %q and %q are new to the global row the merge reads)", added, "reg_only", "b")
+	}
+
+	var globalRaw string
+	if err := d.DB.QueryRowContext(ctx,
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.example.tax' AND key = 'takeaway_rate_overrides' AND scope = 'global'`).
+		Scan(&globalRaw); err != nil {
+		t.Fatal(err)
+	}
+	var gotGlobal map[string]int
+	if err := json.Unmarshal([]byte(globalRaw), &gotGlobal); err != nil {
+		t.Fatal(err)
+	}
+	if gotGlobal["a"] != 100 || gotGlobal["b"] != 200 || gotGlobal["reg_only"] != 999 {
+		t.Fatalf("global row = %v, want a=100 b=200 reg_only=999", gotGlobal)
+	}
+
+	var registerRaw string
+	if err := d.DB.QueryRowContext(ctx,
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.example.tax' AND key = 'takeaway_rate_overrides' AND scope = 'register'`).
+		Scan(&registerRaw); err != nil {
+		t.Fatal(err)
+	}
+	if registerRaw != `{"reg_only":111}` {
+		t.Fatalf("register-scoped row must be left untouched by the merge, got %q", registerRaw)
+	}
+}
+
 // An existing value that isn't valid JSON (a hand-edit gone wrong) must be
 // left completely untouched, with an error returned so the caller can warn.
 func TestMergeAdditiveJSONMapSetting_InvalidExistingJSONLeftUntouched(t *testing.T) {
