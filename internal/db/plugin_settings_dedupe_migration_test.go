@@ -27,6 +27,15 @@ func TestMigration052DedupesGlobalPluginSettings(t *testing.T) {
 		t.Fatalf("seed plugins: %v", err)
 	}
 
+	// ux_plugin_settings_global (migration 053, ut-docs#787) already exists
+	// on this freshly-opened DB and would reject the very duplicate this
+	// test needs to seed -- drop it first so the seed below can recreate
+	// the pre-repair state; the rewind-and-reopen below (which replays 052
+	// then 053 in order) recreates it once the duplicate is cleaned up.
+	if _, err := d.DB.Exec(`DROP INDEX IF EXISTS ux_plugin_settings_global`); err != nil {
+		t.Fatalf("drop unique index for reseed: %v", err)
+	}
+
 	// Simulate the pre-785 race: two 'global' rows for the same key, the
 	// unique index didn't catch it because scope_id is NULL on both. The
 	// newer one (later updated_at) holds the value an operator actually
