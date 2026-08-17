@@ -403,9 +403,19 @@ func TestPluginRepo_ListExportEntries_MalformedConfigDegradesGracefully(t *testi
 }
 
 // Upgrade path for plugin settings: values the operator configured must
-// survive a manifest re-apply, dupes from the old NULL-scope_id upsert must
-// collapse, a scope change in the manifest must move the row (keeping its
-// value), and undeclared keys must go. Uses the real migrated schema.
+// survive a manifest re-apply, cross-scope duplicate rows for one key must
+// collapse to the best candidate, a scope change in the manifest must move
+// the row (keeping its value), and undeclared keys must go. Uses the real
+// migrated schema.
+//
+// Same-scope GLOBAL duplicates (the old NULL-scope_id upsert bug this
+// reconcile logic was originally written to clean up) can no longer be
+// created at all, thanks to ux_plugin_settings_global (migration 053,
+// ut-docs#787) -- register/user-scoped same-key duplicates are still
+// possible (that index is deliberately scoped to scope='global' only, see
+// the migration's own header comment), so this test exercises the
+// collapse logic via a cross-scope conflict instead, which the index
+// doesn't (and shouldn't) block.
 func TestReconcilePluginSettingsUpgrade(t *testing.T) {
 	ctx := context.Background()
 	d := openMigratedDB(t, "till.db")
@@ -423,15 +433,18 @@ func TestReconcilePluginSettingsUpgrade(t *testing.T) {
 		t.Fatalf("reconcile v1: %v", err)
 	}
 
-	// Operator configures both, then the old upsert bug leaves a duplicate
-	// default row for secret_key (scope_id NULL never conflicted).
+	// Operator configures both, then a stray register-scoped default row for
+	// secret_key shows up too (e.g. a value written under an earlier
+	// per-till scope before this manifest declared the key global) --
+	// reconcile must collapse to the operator's real configured value
+	// regardless of which row carries it.
 	if err := repo.UpsertPluginSetting(ctx, "com.t.p", "reader_id", `"tmr_1"`); err != nil {
 		t.Fatalf("set reader: %v", err)
 	}
 	if err := repo.UpsertPluginSetting(ctx, "com.t.p", "secret_key", `"sk_live"`); err != nil {
 		t.Fatalf("set secret: %v", err)
 	}
-	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('dupe', 'com.t.p', 'secret_key', '""', 'global')`)
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('dupe', 'com.t.p', 'secret_key', '""', 'register')`)
 
 	// v2 upgrade: reader becomes per-till (register), old_flag dropped, a new
 	// key appears.
