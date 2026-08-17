@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
@@ -493,6 +494,44 @@ func TestAdminSyncSharedPluginSettings(t *testing.T) {
 	_ = replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.stripe' AND key = 'currency'`).Scan(&n)
 	if n != 0 {
 		t.Fatal("deleted global plugin setting survived on the replica")
+	}
+}
+
+// A primary-side bug (or any other future writer) could in principle hand
+// the sync apply path a bundle with two global-scope rows for the same
+// (plugin_id, key). ut-docs#787's ux_plugin_settings_global index
+// (migration 053) is the backstop: applyPluginSettings has no
+// upsert-in-place semantics of its own for plugin_settings (it deletes
+// then re-inserts each bundle row by its own id), so without the index a
+// bundle like this would silently create two rows on the replica.
+func TestAdminSyncSharedPluginSettingsRejectsDuplicateGlobalRowsInBundle(t *testing.T) {
+	ctx := context.Background()
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, replica, `INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at) VALUES ('com.ut.dup', '1.0.0', 'com.ut.dup', 'wasm', 'plugin.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`)
+	mustExec(t, replica, `INSERT INTO plugins (id, name, version, entrypoint, runtime) VALUES ('com.ut.dup', 'com.ut.dup', '1.0.0', 'plugin.wasm', 'wasm')`)
+
+	bundle := AdminBundle{Tables: map[string][]map[string]any{
+		"plugin_settings": {
+			{"id": "d1", "plugin_id": "com.ut.dup", "key": "k", "value_json": `"a"`, "scope": "global"},
+			{"id": "d2", "plugin_id": "com.ut.dup", "key": "k", "value_json": `"b"`, "scope": "global"},
+		},
+	}}
+
+	err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle))
+	if err == nil {
+		t.Fatal("expected duplicate global plugin_settings rows in one bundle to be rejected")
+	}
+	if !strings.Contains(err.Error(), "UNIQUE constraint failed: plugin_settings.plugin_id, plugin_settings.key") {
+		t.Fatalf("apply failed for an unexpected reason, want the ux_plugin_settings_global constraint: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.dup'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("partial apply left %d row(s) behind; expected the whole bundle apply to roll back", n)
 	}
 }
 

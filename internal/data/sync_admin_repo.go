@@ -75,9 +75,14 @@ var adminTables = []adminTable{
 	{name: "shortcut_buttons", pk: []string{"barcode"}},
 	{name: "translation_overrides", pk: []string{"locale", "key"}},
 	{name: "settings", pk: []string{"key"}},
-	// pk is the surrogate uuid, not (plugin_id,key,scope,scope_id): the
-	// UNIQUE index includes scope_id, which is NULL on global rows, and
-	// SQLite treats NULLs as distinct — ON CONFLICT on it would never fire.
+	// pk is the surrogate uuid, not (plugin_id,key,scope,scope_id): that
+	// table-level UNIQUE constraint includes scope_id, which is NULL on
+	// global rows, and SQLite treats NULLs as distinct -- ON CONFLICT on
+	// it would never fire. ux_plugin_settings_global (migration 053,
+	// ut-docs#787) IS a real, targetable unique constraint for global
+	// rows ((plugin_id, key) WHERE scope='global') -- applyPluginSettings
+	// still doesn't upsert against it, relying on its own per-plugin
+	// delete-then-insert instead (see applyPluginSettings' own comment).
 	{name: "plugin_settings", pk: []string{"id"}},
 	// The shop's till roster (ut-docs#405) — so a replica's sync chip / the
 	// /tills page has something real to show instead of an always-empty
