@@ -1,0 +1,166 @@
+package db
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+// TestMigration052DedupesGlobalPluginSettings simulates a till that already
+// has duplicate scope='global' plugin_settings rows from before ut-docs#785's
+// race fix, and confirms migration 052 repairs it on upgrade: the
+// most-recently-updated row per (plugin_id, key) survives, and
+// non-duplicated / non-global rows are left untouched. See
+// internal/db/migrations/052_dedupe_plugin_settings_global.sql.
+func TestMigration052DedupesGlobalPluginSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m052-upgrade.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.DB.Exec(`INSERT INTO plugin_catalog
+		(id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+		VALUES ('com.t.dupe', '1.0.0', 'Dupe Plugin', 'wasm', 'p.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`); err != nil {
+		t.Fatalf("seed plugin_catalog: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugins (id, name, version, entrypoint) VALUES ('com.t.dupe', 'Dupe Plugin', '1.0.0', 'p.wasm')`); err != nil {
+		t.Fatalf("seed plugins: %v", err)
+	}
+
+	// Simulate the pre-785 race: two 'global' rows for the same key, the
+	// unique index didn't catch it because scope_id is NULL on both. The
+	// newer one (later updated_at) holds the value an operator actually
+	// configured; the older one is the stale leftover.
+	if _, err := d.DB.Exec(`INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at) VALUES
+		('dup-old', 'com.t.dupe', 'apiKey', '"stale"', 'global', NULL, '2026-08-10T00:00:00Z'),
+		('dup-new', 'com.t.dupe', 'apiKey', '"configured"', 'global', NULL, '2026-08-12T00:00:00Z')`); err != nil {
+		t.Fatalf("seed duplicate global rows: %v", err)
+	}
+	// A non-duplicated global row must survive untouched.
+	if _, err := d.DB.Exec(`INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at) VALUES
+		('single', 'com.t.dupe', 'otherKey', '"solo"', 'global', NULL, '2026-08-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed non-duplicate global row: %v", err)
+	}
+	// A register-scoped pair sharing a key with a NULL scope_id must be
+	// left alone -- 052 is deliberately scoped to scope='global' only (see
+	// the migration's own header comment).
+	if _, err := d.DB.Exec(`INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at) VALUES
+		('reg-a', 'com.t.dupe', 'readerIp', '"1.2.3.4"', 'register', NULL, '2026-08-05T00:00:00Z'),
+		('reg-b', 'com.t.dupe', 'readerIp', '"5.6.7.8"', 'register', NULL, '2026-08-06T00:00:00Z')`); err != nil {
+		t.Fatalf("seed register-scoped rows: %v", err)
+	}
+
+	// Rewind the ledger so 052 replays on reopen. 052 is pure DML (no ALTER
+	// TABLE), so unlike the demo-seed migrations elsewhere in this package,
+	// there's no non-idempotent DDL to undo first.
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err = Open(path) // replays 052 against the simulated pre-repair till
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	rows, err := d.DB.Query(`SELECT id, value_json FROM plugin_settings WHERE plugin_id = 'com.t.dupe' AND scope = 'global' AND key = 'apiKey'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []struct{ id, value string }
+	for rows.Next() {
+		var r struct{ id, value string }
+		if err := rows.Scan(&r.id, &r.value); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("global apiKey rows after 052 = %d, want exactly 1 (%v)", len(got), got)
+	}
+	if got[0].id != "dup-new" || got[0].value != `"configured"` {
+		t.Errorf("surviving row = %+v, want the newer row (dup-new, \"configured\")", got[0])
+	}
+
+	// The non-duplicated global row survives untouched.
+	var soloValue string
+	if err := d.DB.QueryRow(`SELECT value_json FROM plugin_settings WHERE id = 'single'`).Scan(&soloValue); err != nil {
+		t.Fatalf("non-duplicate global row was affected: %v", err)
+	}
+	if soloValue != `"solo"` {
+		t.Errorf("non-duplicate global row value = %q, want %q", soloValue, `"solo"`)
+	}
+
+	// Both register-scoped rows survive -- 052 doesn't touch scope != 'global'.
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE scope = 'register' AND key = 'readerIp'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("register-scoped readerIp rows = %d, want 2 (052 must not touch non-global scopes)", n)
+	}
+}
+
+// TestMigration052IsIdempotentOnCleanData confirms 052 is a genuine no-op
+// the SECOND time it runs against a till with no duplicates -- the common
+// case, since #785 already stops new ones from forming, and the case every
+// till hits on its next-after-052 upgrade once it's already clean. Actually
+// re-applies 052 (not just checks the seeded state) so this test would fail
+// if a future edit made the DELETE non-idempotent (e.g. a tiebreak that
+// isn't stable, or a WHERE clause that widens on a second pass).
+func TestMigration052IsIdempotentOnCleanData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m052-clean.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.DB.Exec(`INSERT INTO plugin_catalog
+		(id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+		VALUES ('com.t.clean', '1.0.0', 'Clean Plugin', 'wasm', 'p.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`); err != nil {
+		t.Fatalf("seed plugin_catalog: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugins (id, name, version, entrypoint) VALUES ('com.t.clean', 'Clean Plugin', '1.0.0', 'p.wasm')`); err != nil {
+		t.Fatalf("seed plugins: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at) VALUES
+		('c1', 'com.t.clean', 'apiKey', '"v"', 'global', NULL, '2026-08-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed single global row: %v", err)
+	}
+
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.t.clean'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("seeded row count = %d, want 1", n)
+	}
+
+	// Rewind and re-apply 052 against data it already left clean.
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	d, err = Open(path) // re-applies 052 a second time
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var id, value string
+	if err := d.DB.QueryRow(`SELECT id, value_json FROM plugin_settings WHERE plugin_id = 'com.t.clean'`).Scan(&id, &value); err != nil {
+		t.Fatalf("row missing after second application of 052: %v", err)
+	}
+	if id != "c1" || value != `"v"` {
+		t.Errorf("surviving row after re-applying 052 = (%s, %s), want unchanged (c1, \"v\")", id, value)
+	}
+}
