@@ -40,32 +40,125 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 			dataAPIRespond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
-		// Bound the whole request body BEFORE the multipart parse can spool
-		// an arbitrarily large upload anywhere — the cheapest of the three
-		// rejection layers (body bound, declared-size fast reject, streamed
-		// byte count), so a 5GB upload never fully lands on disk first.
+		// Bound the whole request body BEFORE anything reads it — the
+		// cheapest of the two remaining rejection layers (body bound,
+		// streamed byte count), so a 5GB upload never fully lands on disk
+		// first.
 		r.Body = http.MaxBytesReader(w, r.Body, maxImportFileSize+importFormOverhead)
-		if err := r.ParseMultipartForm(4 << 20); err != nil {
-			var tooBig *http.MaxBytesError
-			if errors.As(err, &tooBig) {
-				dataAPIRespond(w, http.StatusBadRequest, false, fmt.Sprintf("uploaded file exceeds the %d-byte maximum", maxImportFileSize))
-				return
-			}
+
+		// Stream the multipart body directly via MultipartReader instead of
+		// ParseMultipartForm (ut-docs#613): ParseMultipartForm spools the
+		// whole upload to memory or its own "multipart-*" temp file FIRST,
+		// and the staging copy further down used to make a SECOND full
+		// copy into this handler's own "ut-import-*" file — up to 2x the
+		// upload's size on disk (or RAM, if TMPDIR is tmpfs) on the
+		// low-power till hardware this targets. Reading parts directly and
+		// copying the file part straight into the staged temp file keeps
+		// it a single copy. Field order on the wire is caller-controlled
+		// (the file field is typically written before entry_key/entities,
+		// see postImportUpload), so the small form fields are buffered as
+		// they're encountered and every validation below still runs only
+		// once every part has been read — same order of checks as before.
+		mr, err := r.MultipartReader()
+		if err != nil {
 			dataAPIRespond(w, http.StatusBadRequest, false, "invalid upload")
 			return
 		}
-		file, header, err := r.FormFile("file")
-		if err != nil {
-			dataAPIRespond(w, http.StatusBadRequest, false, "file required")
-			return
+
+		var (
+			tmpPath     string
+			fileName    string
+			written     int64
+			haveFile    bool
+			entryKeyRaw string
+			entitiesRaw string
+		)
+		// staged tracks whether the temp file's ownership has passed to the
+		// plugin registry (OpenImportFile) — mirrors the handle-ownership
+		// comment further down. Anything staged here that never reaches
+		// that point must be removed by us.
+		staged := false
+		defer func() {
+			if tmpPath != "" && !staged {
+				_ = os.Remove(tmpPath)
+			}
+		}()
+
+		for {
+			part, perr := mr.NextPart()
+			if perr == io.EOF {
+				break
+			}
+			if perr != nil {
+				var tooBig *http.MaxBytesError
+				if errors.As(perr, &tooBig) {
+					dataAPIRespond(w, http.StatusBadRequest, false, fmt.Sprintf("uploaded file exceeds the %d-byte maximum", maxImportFileSize))
+					return
+				}
+				dataAPIRespond(w, http.StatusBadRequest, false, "invalid upload")
+				return
+			}
+
+			switch {
+			case part.FormName() == "file" && part.FileName() != "":
+				// A second "file" part would silently overwrite tmpPath
+				// and orphan the first staged copy — the cleanup defer
+				// only ever removes the LAST tmpPath, so the first one
+				// would leak forever (review finding, ut-docs#613).
+				// Reject outright instead of accepting either one.
+				if haveFile {
+					_ = part.Close()
+					dataAPIRespond(w, http.StatusBadRequest, false, "invalid upload")
+					return
+				}
+				haveFile = true
+				fileName = part.FileName()
+				// Streaming-copy pattern catimport.ParseBkp proved
+				// (ut-docs#594): io.Copy through a LimitReader straight
+				// into the staged file — never buffered whole in memory,
+				// cap enforced on bytes ACTUALLY WRITTEN as the
+				// authoritative check (MultipartReader gives no reliable
+				// declared per-part size to fast-reject on first, unlike
+				// FormFile's header.Size).
+				tmp, cerr := os.CreateTemp("", "ut-import-*.upload")
+				if cerr != nil {
+					_ = part.Close()
+					dataAPIRespond(w, http.StatusInternalServerError, false, "could not stage the uploaded file")
+					return
+				}
+				tmpPath = tmp.Name()
+				var copyErr error
+				written, copyErr = io.Copy(tmp, io.LimitReader(part, maxImportFileSize+1))
+				closeErr := tmp.Close()
+				_ = part.Close()
+				if copyErr != nil || closeErr != nil {
+					logging.L().Errorf("[import-dispatch] stage upload: copy=%v close=%v", copyErr, closeErr)
+					dataAPIRespond(w, http.StatusInternalServerError, false, "could not stage the uploaded file")
+					return
+				}
+				if written > maxImportFileSize {
+					dataAPIRespond(w, http.StatusBadRequest, false, fmt.Sprintf("uploaded file exceeds the %d-byte maximum", maxImportFileSize))
+					return
+				}
+			case part.FormName() == "entry_key" || part.FormName() == "entities":
+				name := part.FormName()
+				buf, rerr := io.ReadAll(io.LimitReader(part, importFormOverhead))
+				_ = part.Close()
+				if rerr != nil {
+					dataAPIRespond(w, http.StatusBadRequest, false, "invalid upload")
+					return
+				}
+				if name == "entry_key" {
+					entryKeyRaw = string(buf)
+				} else {
+					entitiesRaw = string(buf)
+				}
+			default:
+				_ = part.Close()
+			}
 		}
-		defer file.Close()
-		// Declared-size fast reject (same shape as ParseBkp's, ut-docs#594):
-		// net/http fills header.Size from the bytes it actually spooled, so
-		// this is cheap and reliable; the streamed byte count below stays
-		// the authoritative check regardless.
-		if header.Size > maxImportFileSize {
-			dataAPIRespond(w, http.StatusBadRequest, false, fmt.Sprintf("uploaded file exceeds the %d-byte maximum", maxImportFileSize))
+		if !haveFile {
+			dataAPIRespond(w, http.StatusBadRequest, false, "file required")
 			return
 		}
 
@@ -80,7 +173,7 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// entry_key resolution — identical to export's four cases.
-		entryKey := strings.TrimSpace(r.FormValue("entry_key"))
+		entryKey := strings.TrimSpace(entryKeyRaw)
 		var entry data.ImportEntryRow
 		switch {
 		case entryKey != "":
@@ -118,7 +211,7 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 			declared[e] = true
 		}
 		requested := entry.Entities
-		if raw := strings.TrimSpace(r.FormValue("entities")); raw != "" {
+		if raw := strings.TrimSpace(entitiesRaw); raw != "" {
 			// Dedupe as parsed (review finding F4, ut-docs#599): an
 			// unbounded, unduplicated "entities" value would otherwise cost
 			// one CheckPermissionGranted DB round-trip AND one duplicate
@@ -152,43 +245,22 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		// Stage the upload to a temp file via the streaming-copy pattern
-		// catimport.ParseBkp proved (ut-docs#594): io.Copy through a
-		// LimitReader against os.CreateTemp — never buffered whole in
-		// memory, cap enforced on bytes ACTUALLY WRITTEN as the
-		// authoritative check behind the two cheap rejects above.
-		tmp, err := os.CreateTemp("", "ut-import-*.upload")
-		if err != nil {
-			dataAPIRespond(w, http.StatusInternalServerError, false, "could not stage the uploaded file")
-			return
-		}
-		tmpPath := tmp.Name()
-		written, copyErr := io.Copy(tmp, io.LimitReader(file, maxImportFileSize+1))
-		closeErr := tmp.Close()
-		if copyErr != nil || closeErr != nil {
-			_ = os.Remove(tmpPath)
-			logging.L().Errorf("[import-dispatch] stage upload: copy=%v close=%v", copyErr, closeErr)
-			dataAPIRespond(w, http.StatusInternalServerError, false, "could not stage the uploaded file")
-			return
-		}
-		if written > maxImportFileSize {
-			_ = os.Remove(tmpPath)
-			dataAPIRespond(w, http.StatusBadRequest, false, fmt.Sprintf("uploaded file exceeds the %d-byte maximum", maxImportFileSize))
-			return
-		}
-
+		// The file was already staged to tmpPath while reading the
+		// multipart parts above — a single copy, not a second one here.
 		handle, err := plugins.OpenImportFile(entry.PluginID, tmpPath)
 		if err != nil {
-			_ = os.Remove(tmpPath)
 			logging.L().Errorf("[import-dispatch] register staged file: %v", err)
 			dataAPIRespond(w, http.StatusInternalServerError, false, "could not stage the uploaded file")
 			return
 		}
-		// The registry owns the temp file from here. Always release the
-		// handle once the ask returns — success, decline, error or timeout:
-		// a plugin that never calls import_file_close must not leak the
-		// temp file, and the registry's Close is idempotent so this is safe
-		// alongside a well-behaved guest's own close.
+		// The registry owns the temp file from here — flip staged so the
+		// top-level defer no longer removes it out from under the
+		// registry. Always release the handle once the ask returns —
+		// success, decline, error or timeout: a plugin that never calls
+		// import_file_close must not leak the temp file, and the
+		// registry's Close is idempotent so this is safe alongside a
+		// well-behaved guest's own close.
+		staged = true
 		defer plugins.CloseImportFile(entry.PluginID, handle)
 
 		// AskPlugin, not Ask — same never-answer-for-another-plugin rule as
@@ -197,7 +269,7 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 			EntryKey:   entry.Key,
 			Entities:   granted,
 			FileHandle: handle,
-			FileName:   filepath.Base(header.Filename),
+			FileName:   filepath.Base(fileName),
 			FileSize:   written,
 		})
 		if err != nil {
