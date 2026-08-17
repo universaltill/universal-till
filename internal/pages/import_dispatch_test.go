@@ -237,6 +237,53 @@ func TestImportDispatch_PayloadCarriesHandleNeverBytes(t *testing.T) {
 	}
 }
 
+// TestImportDispatch_StagesUploadExactlyOnce is the regression test for
+// ut-docs#613: the handler used to call r.ParseMultipartForm(4<<20) (its
+// own spool of the whole upload, to memory or — for anything over 4MiB —
+// to a "multipart-*" temp file via the mime/multipart package itself) and
+// THEN separately io.Copy the same bytes again into its own "ut-import-*"
+// staged file: two full copies on disk for one upload. Neither existing
+// test caught this, because globImportTempFiles only globs the handler's
+// own "ut-import-*" prefix — it was structurally blind to the stdlib's
+// OWN spool file living alongside it. This asserts directly on the
+// mime/multipart package's own temp-file naming convention: a
+// large-enough upload (over the old 4MiB in-memory threshold) must never
+// produce one, because the fixed handler streams straight from the
+// multipart part into its own staged file without ever calling
+// ParseMultipartForm/ReadForm.
+func TestImportDispatch_StagesUploadExactlyOnce(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	// Isolate from the OS temp dir other tests/packages share — os.TempDir()
+	// re-reads TMPDIR on every call, so this scopes both this handler's own
+	// os.CreateTemp and (pre-fix) mime/multipart's spool to a private
+	// directory for the duration of this test, keeping the "multipart-*"
+	// glob below from racing sibling packages' own multipart parsing
+	// (review finding, ut-docs#613).
+	t.Setenv("TMPDIR", t.TempDir())
+	mux, dp := newDataAPITestDeps(t)
+	seedImportPlugin(t, dp.Db, "com.t.imp1", "bkp", "BKP Import", []string{"items"}, []string{"items"})
+	subscribeImportAsk(t, dp.Db, "com.t.imp1", json.RawMessage(`{"ok":true,"message":"ok"}`))
+
+	// 5MiB — past the old ParseMultipartForm(4<<20) in-memory threshold,
+	// so the pre-fix handler would have forced mime/multipart's own spool.
+	content := bytes.Repeat([]byte("x"), 5<<20)
+
+	stdlibBefore, _ := filepath.Glob(filepath.Join(os.TempDir(), "multipart-*"))
+	before := globImportTempFiles(t)
+	rec := postImportUpload(t, mux, content, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stdlibAfter, _ := filepath.Glob(filepath.Join(os.TempDir(), "multipart-*"))
+	if len(stdlibAfter) != len(stdlibBefore) {
+		t.Fatalf("upload was staged via mime/multipart's own spool too (double-staged): before=%v after=%v", stdlibBefore, stdlibAfter)
+	}
+	// The handler's own staged file must still be cleaned up as usual.
+	if after := globImportTempFiles(t); len(after) != len(before) {
+		t.Fatalf("staged temp file leaked: before=%v after=%v", before, after)
+	}
+}
+
 // TestImportDispatch_EntitiesFilteredByGrant: requested entities are
 // narrowed to declared ∩ granted "<entity>:write" — a partial grant omits
 // the ungranted entity but still dispatches (mirror of export's
@@ -353,6 +400,78 @@ func TestImportDispatch_FileFieldRequired(t *testing.T) {
 	}
 	if msg := exportErrorEnvelope(t, rec); msg != "file required" {
 		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+// TestImportDispatch_FilenamelessFieldNamedFileRejected: a form field named
+// "file" but with no filename (Content-Disposition: form-data; name="file",
+// no filename=) is a plain value part, not an upload — mime/multipart only
+// ever populated r.FormFile's map from filename-bearing parts, so the
+// pre-#613 handler already rejected this shape with "file required". The
+// MultipartReader rewrite must keep doing so instead of accepting any part
+// named "file" as the upload regardless of whether it actually carries one.
+func TestImportDispatch_FilenamelessFieldNamedFileRejected(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedImportPlugin(t, dp.Db, "com.t.imp1", "bkp", "BKP Import", []string{"items"}, []string{"items"})
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("file", "not-actually-a-file")
+	_ = w.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/data/import", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if msg := exportErrorEnvelope(t, rec); msg != "file required" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+// TestImportDispatch_DuplicateFilePartDoesNotLeak: two "file" parts in one
+// request must not orphan the first one's staged temp file — the handler
+// only tracks a single tmpPath, so a second file part silently overwrote it
+// and the cleanup defer only ever removed the last one, leaking the first
+// staged copy on every such request (found in review, ut-docs#613). The
+// second file part is rejected outright rather than silently kept/replaced.
+func TestImportDispatch_DuplicateFilePartDoesNotLeak(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedImportPlugin(t, dp.Db, "com.t.imp1", "bkp", "BKP Import", []string{"items"}, []string{"items"})
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw1, err := w.CreateFormFile("file", "first.bkp")
+	if err != nil {
+		t.Fatalf("create first form file: %v", err)
+	}
+	if _, err := fw1.Write([]byte("first")); err != nil {
+		t.Fatalf("write first: %v", err)
+	}
+	fw2, err := w.CreateFormFile("file", "second.bkp")
+	if err != nil {
+		t.Fatalf("create second form file: %v", err)
+	}
+	if _, err := fw2.Write([]byte("second")); err != nil {
+		t.Fatalf("write second: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	before := globImportTempFiles(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/data/import", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a duplicate file part, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if after := globImportTempFiles(t); len(after) != len(before) {
+		t.Fatalf("staged temp file leaked from a duplicate file part: before=%v after=%v", before, after)
 	}
 }
 
