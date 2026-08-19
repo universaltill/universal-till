@@ -57,7 +57,12 @@ func seedFullSale(t *testing.T, x func(q string, args ...any)) {
 	x(`INSERT INTO sales (id, receipt_no, subtotal, total, sale_type) VALUES ('s2','R2',-100,-100,'return')`)
 	x(`INSERT INTO sale_links (id, sale_id, original_sale_id, reason) VALUES ('sl1','s2','s1','return')`)
 	x(`INSERT INTO shifts (id, register_id, cashier_id, opening_cash) VALUES ('sh1','r1','u1',5000)`)
-	x(`INSERT INTO held_sales (id, label, total_minor, line_count, payload) VALUES ('h1','table 4',200,1,'{}')`)
+	// ut-docs#814/ADR-0054: held_sales.table_id (054_tables.sql) — seeded here
+	// so its round-trip through held_sales_archive (055_held_sales_archive_
+	// table_id.sql) is pinned by the same reset/restore tests as every other
+	// column, not left to the reviewer's manual check alone.
+	x(`INSERT INTO tables (id, label, area_zone, seat_count, shape, pos_x, pos_y, created_at, updated_at) VALUES ('tbl1','T1','Terrace',4,'rect',500,500,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	x(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','table 4',200,1,'{}','tbl1')`)
 	x(`INSERT INTO stock_movements (id, item_id, location_id, sale_line_id, type, quantity) VALUES ('sm1','i1','loc_main','l1','sale',-1)`)
 }
 
@@ -184,6 +189,12 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 	var payload string
 	if err := d.DB.QueryRow(`SELECT payload FROM held_sales WHERE id='h1'`).Scan(&payload); err != nil || payload != "{}" {
 		t.Fatalf("restored held sale: payload=%q err=%v", payload, err)
+	}
+	// ut-docs#814/ADR-0054, 055_held_sales_archive_table_id.sql: table_id
+	// must survive the archive round-trip like every other held_sales column.
+	var tableID string
+	if err := d.DB.QueryRow(`SELECT table_id FROM held_sales WHERE id='h1'`).Scan(&tableID); err != nil || tableID != "tbl1" {
+		t.Fatalf("restored held sale: table_id=%q err=%v, want tbl1", tableID, err)
 	}
 	var openingCash int64
 	if err := d.DB.QueryRow(`SELECT opening_cash FROM shifts WHERE id='sh1'`).Scan(&openingCash); err != nil || openingCash != 5000 {

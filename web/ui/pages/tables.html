@@ -1,0 +1,242 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "tables.title" }}</h1>
+</div>
+
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+<style>
+  /* Floor plan (ut-docs#814, ADR-0054): first SVG positional editor in the
+     product. Colors ride the theme tokens so every curated theme works. */
+  #floorplan-section .card { padding: 0.75rem; }
+  #floorplan-wrap svg { display: block; inline-size: 100%; block-size: auto; touch-action: none; }
+  .floorplan-bg { fill: var(--surface-2); stroke: var(--border); stroke-width: 2; }
+  .table-shape { fill: var(--surface); stroke-width: 4; }
+  .table-free .table-shape { stroke: var(--success); }
+  .table-occupied .table-shape { stroke: var(--danger); }
+  .table-label { fill: var(--text); font-size: 26px; font-weight: 600; text-anchor: middle; }
+  .table-sub { fill: var(--muted); font-size: 20px; text-anchor: middle; }
+  .table-occupied .table-elapsed { fill: var(--danger); font-weight: 600; }
+  #floorplan-section.editing .table-node { cursor: grab; }
+  #floorplan-section.editing .table-node.dragging { cursor: grabbing; }
+  #floorplan-section.editing .table-shape { stroke-dasharray: 8 6; }
+  .floorplan-legend { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-block: 0.5rem; }
+  .floorplan-legend .swatch { display: inline-block; inline-size: 0.9em; block-size: 0.9em; border-radius: 3px;
+    border: 3px solid var(--success); background: var(--surface); vertical-align: -0.1em; margin-inline-end: 0.35em; }
+  .floorplan-legend .swatch.occupied { border-color: var(--danger); }
+</style>
+
+<div id="floorplan-section">
+  <div class="floorplan-legend">
+    <span><span class="swatch"></span>{{ T "tables.legend.free" }}</span>
+    <span><span class="swatch occupied"></span>{{ T "tables.legend.occupied" }}</span>
+    <button type="button" id="tables-edit-toggle" class="btn secondary" style="margin-inline-start:auto">
+      <span data-when="view">{{ T "tables.edit.start" }}</span>
+      <span data-when="edit" hidden>{{ T "tables.edit.done" }}</span>
+    </button>
+  </div>
+  <p class="muted" id="tables-edit-hint" hidden>{{ T "tables.edit.hint" }}</p>
+  <p class="login-error" id="tables-status" hidden></p>
+
+  {{ if not .tables }}
+  {{/* Soft gate (ADR-0054): zero tables configured is a valid state — an
+       empty-state prompt, exactly how kitchen stations behaves. */}}
+  <p class="muted">{{ T "tables.none" }}</p>
+  {{ else }}
+  <div class="card">
+    {{/* The SVG plan loads (and then refreshes every 15s) as a partial so
+         live free/occupied state updates without a page reload. Polling
+         pauses while editing so a swap never rips a drag out from under
+         the operator's finger — drag-end saves immediately anyway. */}}
+    <div id="floorplan-wrap"
+         hx-get="/ui/tables/state"
+         hx-trigger="load, every 15s [!window.tablesEditing]"
+         hx-swap="innerHTML"></div>
+  </div>
+  {{ end }}
+</div>
+
+<div class="users-layout" style="margin-block-start:1rem">
+  <div class="card users-list">
+    {{ if .tables }}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "tables.col.name" }}</th>
+          <th>{{ T "tables.col.zone" }}</th>
+          <th>{{ T "tables.col.seats" }}</th>
+          <th>{{ T "tables.col.shape" }}</th>
+          <th>{{ T "tables.col.live" }}</th>
+          <th>{{ T "tables.col.status" }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .tables }}
+        <tr>
+          <td>{{ .Label }}</td>
+          <td>{{ .AreaZone }}</td>
+          <td>{{ .SeatCount }}</td>
+          <td>{{ if eq .Shape "round" }}{{ T "tables.shape.round" }}{{ else }}{{ T "tables.shape.rect" }}{{ end }}</td>
+          {{/* Text fallback for the SVG floor plan's colour-only free/occupied
+               signal (2026-08-19 code review, ut-docs#814): the plan itself
+               is role="img" with one static aria-label, so a screen-reader
+               operator has no other way to learn a table's live state. */}}
+          <td>{{ if .Occupied }}{{ printf (T "tables.status.open_minutes") .OpenMinutes }}{{ else }}{{ T "tables.legend.free" }}{{ end }}</td>
+          <td>{{ if .Enabled }}{{ T "tables.active" }}{{ else }}<span class="muted">{{ T "tables.inactive" }}</span>{{ end }}</td>
+          <td class="users-actions">
+            <form method="post" action="/api/tables/{{ .ID }}" class="users-inline">
+              <input type="text" name="label" value="{{ .Label }}" maxlength="64" required />
+              <input type="text" name="area_zone" value="{{ .AreaZone }}" maxlength="64" />
+              <input type="number" name="seat_count" value="{{ .SeatCount }}" min="0" max="999" style="inline-size:4.5rem" />
+              <select name="shape">
+                <option value="rect" {{ if eq .Shape "rect" }}selected{{ end }}>{{ T "tables.shape.rect" }}</option>
+                <option value="round" {{ if eq .Shape "round" }}selected{{ end }}>{{ T "tables.shape.round" }}</option>
+              </select>
+              <button type="submit" class="btn secondary">{{ T "tables.save" }}</button>
+            </form>
+            <form method="post" action="/api/tables/{{ .ID }}/active" class="users-inline">
+              <input type="hidden" name="active" value="{{ if .Enabled }}0{{ else }}1{{ end }}" />
+              <button type="submit" class="btn secondary">
+                {{ if .Enabled }}{{ T "tables.deactivate" }}{{ else }}{{ T "tables.activate" }}{{ end }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ end }}
+  </div>
+
+  <div class="card users-form">
+    <h3>{{ T "tables.new.title" }}</h3>
+    <form method="post" action="/api/tables" autocomplete="off">
+      <label>{{ T "tables.col.name" }} <input type="text" name="label" maxlength="64" required /></label>
+      <label>{{ T "tables.col.zone" }} <input type="text" name="area_zone" maxlength="64" /></label>
+      <label>{{ T "tables.col.seats" }} <input type="number" name="seat_count" min="0" max="999" value="4" /></label>
+      <label>{{ T "tables.col.shape" }}
+        <select name="shape">
+          <option value="rect">{{ T "tables.shape.rect" }}</option>
+          <option value="round">{{ T "tables.shape.round" }}</option>
+        </select>
+      </label>
+      <p class="muted">{{ T "tables.new.help" }}</p>
+      <button type="submit" class="btn primary" style="inline-size:100%">{{ T "tables.new.submit" }}</button>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // Page-local i18n lookup (guard-i18n: no hardcoded prose in inline JS),
+  // same pattern as bugreport_panel.html.
+  var TT = { saveFailed: "{{ T "tables.error.save_position" }}" };
+
+  var section = document.getElementById('floorplan-section');
+  var toggle = document.getElementById('tables-edit-toggle');
+  var hint = document.getElementById('tables-edit-hint');
+  var status = document.getElementById('tables-status');
+  window.tablesEditing = false;
+
+  toggle.addEventListener('click', function () {
+    window.tablesEditing = !window.tablesEditing;
+    section.classList.toggle('editing', window.tablesEditing);
+    hint.hidden = !window.tablesEditing;
+    toggle.querySelector('[data-when="view"]').hidden = window.tablesEditing;
+    toggle.querySelector('[data-when="edit"]').hidden = !window.tablesEditing;
+  });
+
+  // Drag-to-place (ADR-0054): pointer events — one code path for the
+  // kiosk touchscreen and a desktop mouse — extending the free-drag
+  // pattern from bugreport_panel.html to N independently-draggable SVG
+  // groups. Listeners are DELEGATED to the section because the whole
+  // <svg> is replaced by every HTMX state refresh.
+  var CANVAS = {{ .canvasSize }};
+  // Mirrors data.TableEdgeInset (internal/data/tables_repo.go) — the
+  // server clamps to the same bound on save, so this is cosmetic (avoids a
+  // visible snap-back on drop) not the source of truth. Keeps a dragged
+  // table's own shape from rendering clipped against the canvas edge
+  // (2026-08-19 code review, ut-docs#814).
+  var INSET = {{ .canvasInset }};
+  var drag = null; // { id, node, pointerId, startPt, startX, startY }
+
+  function svgPoint(svg, evt) {
+    var pt = svg.createSVGPoint();
+    pt.x = evt.clientX; pt.y = evt.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+  function clamp(v) { return Math.max(INSET, Math.min(CANVAS - INSET, v)); }
+
+  function onMove(e) {
+    // Only the pointer that started the drag steers it (a second finger on
+    // the touchscreen must not hijack it — see bugreport_panel.html).
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    var svg = drag.node.ownerSVGElement;
+    if (!svg) return endDrag(e);
+    var p = svgPoint(svg, e);
+    var x = clamp(Math.round(drag.startX + (p.x - drag.startPt.x)));
+    var y = clamp(Math.round(drag.startY + (p.y - drag.startPt.y)));
+    drag.node.setAttribute('transform', 'translate(' + x + ',' + y + ')');
+    drag.node.dataset.x = x; drag.node.dataset.y = y;
+  }
+
+  function endDrag(e) {
+    if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.pointerId)) return;
+    var d = drag; drag = null;
+    d.node.classList.remove('dragging');
+    if (d.node.hasPointerCapture && d.node.hasPointerCapture(d.pointerId)) {
+      d.node.releasePointerCapture(d.pointerId);
+    }
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', endDrag);
+    document.removeEventListener('pointercancel', endDrag);
+    var x = parseInt(d.node.dataset.x, 10), y = parseInt(d.node.dataset.y, 10);
+    if (x === d.startX && y === d.startY) return; // a tap, not a move
+    // Persist immediately — each drag-end auto-saves, so nothing is lost if
+    // the page reloads or the poll swaps the plan back in.
+    fetch('/api/tables/' + encodeURIComponent(d.id) + '/position', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ pos_x: String(x), pos_y: String(y) })
+    }).then(function (res) {
+      status.hidden = res.ok;
+      if (!res.ok) status.textContent = TT.saveFailed;
+    }).catch(function () {
+      status.hidden = false;
+      status.textContent = TT.saveFailed;
+    });
+  }
+
+  section.addEventListener('pointerdown', function (e) {
+    if (!window.tablesEditing || drag) return;
+    if (e.button !== undefined && e.button !== 0) return; // primary press only
+    var node = e.target.closest ? e.target.closest('.table-node') : null;
+    if (!node || !node.ownerSVGElement) return;
+    // Suppress the browser's own gesture (text selection / native drag)
+    // before it starts — same lesson bugreport_panel.html learned.
+    e.preventDefault();
+    var svg = node.ownerSVGElement;
+    drag = {
+      id: node.dataset.id,
+      node: node,
+      pointerId: e.pointerId,
+      startPt: svgPoint(svg, e),
+      startX: parseInt(node.dataset.x, 10) || 0,
+      startY: parseInt(node.dataset.y, 10) || 0
+    };
+    node.classList.add('dragging');
+    if (node.setPointerCapture) {
+      try { node.setPointerCapture(e.pointerId); } catch (err) { /* keep dragging uncaptured */ }
+    }
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', endDrag);
+    // pointercancel is not optional on a touchscreen (palm rejection, system
+    // swipe) — without it the table follows the pointer forever.
+    document.addEventListener('pointercancel', endDrag);
+    node.addEventListener('lostpointercapture', endDrag, { once: true });
+  });
+})();
+</script>
+{{ end }}
