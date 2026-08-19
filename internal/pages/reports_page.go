@@ -344,10 +344,17 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			if len(tills) < 2 {
 				tills = nil
 			}
+			// Manual cash adjustments/payouts (float top-ups, till-count
+			// corrections, Pfandrückgabe payouts) grouped by reason —
+			// ut-docs#267: SumShiftAdjustments only ever gives one net
+			// total per shift, with no way to pull e.g. "total
+			// Pfandrückgabe paid out this period".
+			cashAdjustments, _ := repo.CashAdjustmentsByReason(r.Context(), window.From, window.To)
 			httpx.RenderPartial("ui/partials/reports_tab_payments.html", map[string]any{
-				"Methods":     methods,
-				"Departments": departments,
-				"Tills":       tills,
+				"Methods":         methods,
+				"Departments":     departments,
+				"Tills":           tills,
+				"CashAdjustments": cashAdjustments,
 			})(w, r)
 		case "eod":
 			// Gated by the eod_report action (#709/#555) before the repo calls,

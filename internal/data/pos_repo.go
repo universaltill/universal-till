@@ -1510,6 +1510,51 @@ GROUP BY p.method_id ORDER BY applied DESC`, fromStr, toStr)
 	return out, rows.Err()
 }
 
+// CashAdjustmentReasonTotal is one grouped total of manual cash
+// adjustments/payouts (RecordCashAdjustment) for a reporting window —
+// e.g. "how much Pfandrückgabe was paid out this week" (ut-docs#267).
+// Amount is the net signed total in minor units: negative for a reason
+// dominated by payouts, positive for one dominated by cash-in
+// adjustments (a float top-up).
+type CashAdjustmentReasonTotal struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+	Amount int64  `json:"amount"`
+}
+
+// CashAdjustmentsByReason groups manual cash adjustments/payouts
+// (audit_log action='cash_adjustment' on entity_type='shift', written by
+// RecordCashAdjustment) by their reason within [from, to). Fills the gap
+// ut-docs#267 found: a fixed reason like CashAdjustmentReasonPfandrueckgabe
+// already makes a payout structurally distinct in the audit trail, but
+// nothing read that field back out grouped — SumShiftAdjustments only ever
+// returns one net total per shift, with no reason breakdown, so the only
+// way to see individual payouts was the raw data_json blob on /audit.
+func (r *POSRepo) CashAdjustmentsByReason(ctx context.Context, from, to time.Time) ([]CashAdjustmentReasonTotal, error) {
+	fromStr, toStr := windowArgs(from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(json_extract(data_json, '$.reason'), ''), COUNT(*),
+       COALESCE(SUM(CAST(json_extract(data_json, '$.amount') AS INTEGER)), 0) AS net
+FROM audit_log
+WHERE entity_type = 'shift' AND action = 'cash_adjustment'
+  AND datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
+GROUP BY json_extract(data_json, '$.reason')
+ORDER BY ABS(net) DESC`, fromStr, toStr)
+	if err != nil {
+		return nil, fmt.Errorf("cash adjustments by reason: %w", err)
+	}
+	defer rows.Close()
+	var out []CashAdjustmentReasonTotal
+	for rows.Next() {
+		var c CashAdjustmentReasonTotal
+		if err := rows.Scan(&c.Reason, &c.Count, &c.Amount); err != nil {
+			return nil, fmt.Errorf("scan cash adjustment reason total: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // EODMethod is one payment method's day: taken in on sales, paid out on
 // refunds (minor units).
 type EODMethod struct {

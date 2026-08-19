@@ -83,6 +83,12 @@ cihazın önce hangi kasa olduğunu bilmesi gerekir: Ayarlar → Kasalar'da
 "Bu cihazın kasası"nı ayarlayın; yoksa çıkış, sizi oraya yönlendiren bir
 mesajla reddedilir.
 
+Raporlar'daki Ödemeler ve kanallar sekmesi, seçili dönem için bir "Nedene
+göre nakit düzeltmeleri" dökümü gösterir — örneğin o dönemdeki tüm
+"Pfandrückgabe" çıkışlarının toplamı — böylece Denetim sayfasını açmadan
+"bu hafta ödenen toplam depozito iadesi" gibi bir rakam görebilirsiniz. Bu
+bölüm yalnızca dönem içinde en az bir düzeltme olduğunda görünür.
+
 ## Tüm kasaların satışlarını görme (İşlem geçmişi)
 
 İşlem geçmişi sayfası (fiş/eşitleme listesi, satış ekranının dışında)

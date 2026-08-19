@@ -181,6 +181,44 @@ func TestReportsPage_NetGoesNegativeWhenRefundsExceedSales(t *testing.T) {
 	}
 }
 
+func TestReportsPage_CashAdjustmentsByReasonSectionHiddenUntilThereAreAny(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	// No cash_adjustment audit entries yet -- the section must not render
+	// at all (mirrors the Tills section's hidden-when-not-applicable rule).
+	rec := getReportsTab(t, mux, "payments", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Cash adjustments by reason") {
+		t.Fatalf("expected the cash-adjustments section hidden with no adjustments, got: %s", rec.Body.String())
+	}
+
+	// Two Pfandrückgabe payouts (ut-docs#267's motivating case) plus a
+	// float top-up under a different reason, written the same way
+	// RecordCashAdjustment (internal/pos/shifts.go) does.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES
+('a1','user1','shift','shift1','cash_adjustment','{"amount":-500,"reason":"Pfandrückgabe"}',datetime('now')),
+('a2','user1','shift','shift1','cash_adjustment','{"amount":-300,"reason":"Pfandrückgabe"}',datetime('now')),
+('a3','user1','shift','shift1','cash_adjustment','{"amount":2000,"reason":"float top-up"}',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = getReportsTab(t, mux, "payments", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Cash adjustments by reason") {
+		t.Fatalf("expected the cash-adjustments section shown once there are adjustments, got: %s", body)
+	}
+	if !strings.Contains(body, "Pfandrückgabe") || !strings.Contains(body, "float top-up") {
+		t.Fatalf("expected both reasons listed, got: %s", body)
+	}
+}
+
 func TestReportsPage_TillsSectionHiddenUnlessMultipleRegisters(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)
