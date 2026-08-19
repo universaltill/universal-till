@@ -175,7 +175,12 @@ async function ensureOperator(page: Page) {
 // (internal/pages/promotions_page.go), no UT_AUTH=off bypass.
 // "country-settings" (ut-docs#659) joined on the same grounds
 // (internal/pages/country_settings_page.go).
-const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations', 'promotions', 'country-settings'];
+// "tables" (ut-docs#814) joined for the same reason — its GET /tables
+// handler uses the same requireManager closure
+// (internal/pages/tables_page.go), no UT_AUTH=off bypass. Found live
+// 2026-08-19: this is exactly the blank-`dir`-attribute failure the
+// comment above describes, not a new failure mode.
+const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations', 'promotions', 'country-settings', 'tables'];
 
 const topics = routedTopics() as { id: string; route: string }[];
 
