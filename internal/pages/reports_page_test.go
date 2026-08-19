@@ -181,6 +181,86 @@ func TestReportsPage_NetGoesNegativeWhenRefundsExceedSales(t *testing.T) {
 	}
 }
 
+func TestReportsPage_CashAdjustmentsByReasonSectionHiddenUntilThereAreAny(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	// No cash_adjustment audit entries yet -- the section must not render
+	// at all (mirrors the Tills section's hidden-when-not-applicable rule).
+	rec := getReportsTab(t, mux, "payments", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Cash adjustments by reason") {
+		t.Fatalf("expected the cash-adjustments section hidden with no adjustments, got: %s", rec.Body.String())
+	}
+
+	// Two Pfandrückgabe payouts (ut-docs#267's motivating case) plus a
+	// float top-up under a different reason, written the same way
+	// RecordCashAdjustment (internal/pos/shifts.go) does.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES
+('a1','user1','shift','shift1','cash_adjustment','{"amount":-500,"reason":"Pfandrückgabe"}',datetime('now')),
+('a2','user1','shift','shift1','cash_adjustment','{"amount":-300,"reason":"Pfandrückgabe"}',datetime('now')),
+('a3','user1','shift','shift1','cash_adjustment','{"amount":2000,"reason":"float top-up"}',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = getReportsTab(t, mux, "payments", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Cash adjustments by reason") {
+		t.Fatalf("expected the cash-adjustments section shown once there are adjustments, got: %s", body)
+	}
+	if !strings.Contains(body, "Pfandrückgabe") || !strings.Contains(body, "float top-up") {
+		t.Fatalf("expected both reasons listed, got: %s", body)
+	}
+}
+
+// The only other surface for this data, /audit, is manager/admin-only
+// ("this reads system-wide history" — audit_page.go) because a reason is
+// staff free text. The reporting shortcut must not widen that: gated on
+// the same "audit" action, not just "reports" (which a cashier also
+// holds), per the independent review of this card.
+func TestReportsPage_CashAdjustmentsByReasonGatedOnAuditPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES
+('a1','user1','shift','shift1','cash_adjustment','{"amount":-500,"reason":"Pfandrückgabe"}',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	roleReq := func(role string) *httptest.ResponseRecorder {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/payments", nil), auth.User{ID: "u1", Role: role})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// A cashier holds "reports" (sees the tab and its other cards) but not
+	// "audit" -- the cash-adjustments card must stay hidden for them.
+	rec := roleReq("cashier")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Cash adjustments by reason") {
+		t.Fatalf("expected the cash-adjustments card hidden for a cashier (no audit permission), got: %s", rec.Body.String())
+	}
+
+	// A manager holds "audit" and must see it.
+	rec = roleReq("manager")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Cash adjustments by reason") {
+		t.Fatalf("expected the cash-adjustments card shown for a manager, got: %s", rec.Body.String())
+	}
+}
+
 func TestReportsPage_TillsSectionHiddenUnlessMultipleRegisters(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)

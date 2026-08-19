@@ -95,6 +95,13 @@ than one register, the till has to know which register it is first: set
 "This till's register" in Settings → Tills, or the payout is refused with
 a message pointing you there.
 
+The Payments & channels tab on Reports shows a **Cash adjustments by
+reason** breakdown for the selected period — e.g. a total for
+"Pfandrückgabe" across every payout in that window — so you can see a
+figure like "total bottle deposits paid out this week" without opening
+the Audit page. It only appears once there's at least one adjustment in
+the period.
+
 ## Seeing every till's sales (Journal)
 
 The Journal page (the receipts/sync list, off the sale screen) shows every

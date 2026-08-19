@@ -344,10 +344,25 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			if len(tills) < 2 {
 				tills = nil
 			}
+			// Manual cash adjustments/payouts (float top-ups, till-count
+			// corrections, Pfandrückgabe payouts) grouped by reason —
+			// ut-docs#267: SumShiftAdjustments only ever gives one net
+			// total per shift, with no way to pull e.g. "total
+			// Pfandrückgabe paid out this period". Gated on the "audit"
+			// action, same as it is today: this data only otherwise
+			// surfaces via /audit (audit_page.go), which is manager/admin
+			// only ("this reads system-wide history") — reasons are staff
+			// free text (e.g. "cash short - Anna's till"), so a reporting
+			// shortcut must not widen who can read it beyond that gate.
+			var cashAdjustments []data.CashAdjustmentReasonTotal
+			if canPerform(d, r, "audit") {
+				cashAdjustments, _ = repo.CashAdjustmentsByReason(r.Context(), window.From, window.To)
+			}
 			httpx.RenderPartial("ui/partials/reports_tab_payments.html", map[string]any{
-				"Methods":     methods,
-				"Departments": departments,
-				"Tills":       tills,
+				"Methods":         methods,
+				"Departments":     departments,
+				"Tills":           tills,
+				"CashAdjustments": cashAdjustments,
 			})(w, r)
 		case "eod":
 			// Gated by the eod_report action (#709/#555) before the repo calls,
