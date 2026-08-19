@@ -255,7 +255,23 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 // the pull after the install. Delete-then-insert per plugin (not a prune):
 // it propagates key deletion within a plugin without seeing per-till rows,
 // which are absent from the bundle by design.
+//
+// Defensive dedupe (ut-docs#807): a primary that hasn't yet applied
+// migration 053's ux_plugin_settings_global index (e.g. still running an
+// older release, or mid-upgrade) can still hand this a bundle carrying two
+// global rows for the same (plugin_id, key) — the schema-level backstop
+// only stops a NEW duplicate from forming on a till that already has the
+// index, it does nothing to sanitize what an un-upgraded primary sends.
+// Without dedupeGlobalPluginSettings, the second row's insert below hits
+// that same index on THIS (already-upgraded) till and aborts the entire
+// admin-bundle apply — not just plugin_settings, but catalog, users, tax
+// codes, payment methods and the till roster too, on every pull, until the
+// primary itself is fixed. Deduping here turns that shop-wide outage into
+// a self-healing collapse: the loser is dropped, the winner applies, and
+// the primary's own next migration/repair (052) is what actually cleans up
+// its source data — this is just refusing to import a primary's bug.
 func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any) error {
+	recs = dedupeGlobalPluginSettings(recs)
 	installed := map[string]bool{}
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM plugins`)
 	if err != nil {
@@ -299,6 +315,67 @@ func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []m
 		}
 	}
 	return nil
+}
+
+// dedupeGlobalPluginSettings keeps one winning row per (plugin_id, key)
+// among scope='global' bundle rows, dropping the rest before they ever
+// reach an INSERT. Non-global rows pass through untouched — scope='global'
+// rows are the only ones with a real uniqueness constraint on (plugin_id,
+// key) (ux_plugin_settings_global, migration 053); register/user-scoped
+// rows are additionally distinguished by scope_id, so deduping them the
+// same way would wrongly conflate distinct rows. See applyPluginSettings's
+// comment for why this exists at all.
+//
+// A drop is logged (not silent): converting a loud whole-bundle-abort
+// failure into a quiet one otherwise leaves no signal anywhere that a
+// primary is shipping duplicate rows — an operator/support engineer would
+// have no way to notice until the primary's own migration 052 repairs it,
+// same reasoning deleteMissing's own Warnf (below) already applies to a
+// row it can't prune.
+func dedupeGlobalPluginSettings(recs []map[string]any) []map[string]any {
+	winners := map[string]map[string]any{}
+	order := make([]string, 0, len(recs))
+	out := make([]map[string]any, 0, len(recs))
+	for _, rec := range recs {
+		if fmt.Sprint(rec["scope"]) != "global" {
+			out = append(out, rec)
+			continue
+		}
+		k := fmt.Sprint(rec["plugin_id"]) + "\x1f" + fmt.Sprint(rec["key"])
+		cur, seen := winners[k]
+		if !seen {
+			order = append(order, k)
+			winners[k] = rec
+			continue
+		}
+		if pluginSettingWins(rec, cur) {
+			logging.L().Warnf("sync pull: dropping stale duplicate global plugin_settings row id=%v for plugin_id=%v key=%v (keeping id=%v) — the primary is shipping duplicates, likely running pre-migration-053",
+				cur["id"], rec["plugin_id"], rec["key"], rec["id"])
+			winners[k] = rec
+		} else {
+			logging.L().Warnf("sync pull: dropping stale duplicate global plugin_settings row id=%v for plugin_id=%v key=%v (keeping id=%v) — the primary is shipping duplicates, likely running pre-migration-053",
+				rec["id"], rec["plugin_id"], rec["key"], cur["id"])
+		}
+	}
+	for _, k := range order {
+		out = append(out, winners[k])
+	}
+	return out
+}
+
+// pluginSettingWins reports whether candidate should replace incumbent as
+// the surviving row for one (plugin_id, key) pair, mirroring migration
+// 052's own tiebreak so a replica applying a duplicate-carrying bundle
+// converges on the same winner the primary's own repair migration would
+// pick: newer updated_at wins; a tie (updated_at collides at
+// second-resolution) breaks on id, both TEXT columns compared the same
+// lexicographic way SQL's ORDER BY does for them.
+func pluginSettingWins(candidate, incumbent map[string]any) bool {
+	cu, iu := fmt.Sprint(candidate["updated_at"]), fmt.Sprint(incumbent["updated_at"])
+	if cu != iu {
+		return cu > iu
+	}
+	return fmt.Sprint(candidate["id"]) > fmt.Sprint(incumbent["id"])
 }
 
 // pkOf renders a composite key for set membership.

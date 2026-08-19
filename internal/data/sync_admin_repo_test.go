@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
@@ -497,41 +496,93 @@ func TestAdminSyncSharedPluginSettings(t *testing.T) {
 	}
 }
 
-// A primary-side bug (or any other future writer) could in principle hand
-// the sync apply path a bundle with two global-scope rows for the same
-// (plugin_id, key). ut-docs#787's ux_plugin_settings_global index
-// (migration 053) is the backstop: applyPluginSettings has no
-// upsert-in-place semantics of its own for plugin_settings (it deletes
-// then re-inserts each bundle row by its own id), so without the index a
-// bundle like this would silently create two rows on the replica.
-func TestAdminSyncSharedPluginSettingsRejectsDuplicateGlobalRowsInBundle(t *testing.T) {
+// A stale pre-#785 primary (or any other future writer with the same bug)
+// could in principle hand the sync apply path a bundle with two global-scope
+// rows for the same (plugin_id, key). Before ut-docs#807, that aborted the
+// ENTIRE admin-bundle apply — not just plugin_settings — against
+// ux_plugin_settings_global (migration 053), on every pull, until the
+// primary itself was fixed. applyPluginSettings now dedupes defensively
+// (dedupeGlobalPluginSettings) before ever inserting: the loser is dropped,
+// the winner applies, and the rest of the bundle (catalog, users, tax
+// codes, …) is unaffected. The raw index itself still rejects a genuine
+// duplicate INSERT at the DB level — see
+// TestUxPluginSettingsGlobalRejectsDuplicateRow in internal/db.
+func TestAdminSyncSharedPluginSettingsDedupesDuplicateGlobalRowsInBundle(t *testing.T) {
 	ctx := context.Background()
 	replica := openMigratedDB(t, "replica.db")
 
 	mustExec(t, replica, `INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at) VALUES ('com.ut.dup', '1.0.0', 'com.ut.dup', 'wasm', 'plugin.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`)
 	mustExec(t, replica, `INSERT INTO plugins (id, name, version, entrypoint, runtime) VALUES ('com.ut.dup', 'com.ut.dup', '1.0.0', 'plugin.wasm', 'wasm')`)
 
+	// Two rows for the same key, plus an unrelated key that must survive
+	// untouched — the dedupe must be scoped to the actual (plugin_id, key)
+	// collision, not the whole plugin. The older row (dup-old) is the
+	// tiebreak-losing candidate on BOTH signals (older updated_at AND a
+	// lexicographically-smaller id), AND it's listed SECOND (after the
+	// winner) — a degenerate "last row in wins" implementation (ignoring
+	// updated_at/id entirely) would still pick dup-old here and fail this
+	// assertion; only TestAdminSyncSharedPluginSettingsDedupeTiebreaksOnIDWhenUpdatedAtTies's
+	// winner-listed-last ordering would let that degenerate implementation
+	// slip through — the two tests together pin the real direction either
+	// way the rows happen to arrive in a bundle.
 	bundle := AdminBundle{Tables: map[string][]map[string]any{
 		"plugin_settings": {
-			{"id": "d1", "plugin_id": "com.ut.dup", "key": "k", "value_json": `"a"`, "scope": "global"},
-			{"id": "d2", "plugin_id": "com.ut.dup", "key": "k", "value_json": `"b"`, "scope": "global"},
+			{"id": "dup-new", "plugin_id": "com.ut.dup", "key": "k", "value_json": `"configured"`, "scope": "global", "updated_at": "2026-08-12T00:00:00Z"},
+			{"id": "dup-old", "plugin_id": "com.ut.dup", "key": "k", "value_json": `"stale"`, "scope": "global", "updated_at": "2026-08-10T00:00:00Z"},
+			{"id": "solo", "plugin_id": "com.ut.dup", "key": "other", "value_json": `"untouched"`, "scope": "global", "updated_at": "2026-08-01T00:00:00Z"},
 		},
 	}}
 
-	err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle))
-	if err == nil {
-		t.Fatal("expected duplicate global plugin_settings rows in one bundle to be rejected")
-	}
-	if !strings.Contains(err.Error(), "UNIQUE constraint failed: plugin_settings.plugin_id, plugin_settings.key") {
-		t.Fatalf("apply failed for an unexpected reason, want the ux_plugin_settings_global constraint: %v", err)
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
 	}
 
+	var v string
+	if err := replica.QueryRow(`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.ut.dup' AND key = 'k'`).Scan(&v); err != nil {
+		t.Fatalf("query surviving row: %v", err)
+	}
+	if v != `"configured"` {
+		t.Fatalf("surviving value = %q, want the newer row's %q", v, `"configured"`)
+	}
 	var n int
-	if err := replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.dup'`).Scan(&n); err != nil {
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.dup' AND key = 'k'`).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if n != 0 {
-		t.Fatalf("partial apply left %d row(s) behind; expected the whole bundle apply to roll back", n)
+	if n != 1 {
+		t.Fatalf("rows for the colliding key = %d, want exactly 1 (loser must be dropped, not both kept)", n)
+	}
+	if err := replica.QueryRow(`SELECT value_json FROM plugin_settings WHERE id = 'solo'`).Scan(&v); err != nil || v != `"untouched"` {
+		t.Fatalf("unrelated key was affected by the dedupe: %q %v", v, err)
+	}
+}
+
+// A tie on updated_at (the bundle rows collided at second-resolution, same
+// as migration 052's own comment anticipates) must still pick a single,
+// deterministic winner — id DESC, same tiebreak 052 uses — not silently
+// keep both or panic.
+func TestAdminSyncSharedPluginSettingsDedupeTiebreaksOnIDWhenUpdatedAtTies(t *testing.T) {
+	ctx := context.Background()
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, replica, `INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at) VALUES ('com.ut.tie', '1.0.0', 'com.ut.tie', 'wasm', 'plugin.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`)
+	mustExec(t, replica, `INSERT INTO plugins (id, name, version, entrypoint, runtime) VALUES ('com.ut.tie', 'com.ut.tie', '1.0.0', 'plugin.wasm', 'wasm')`)
+
+	bundle := AdminBundle{Tables: map[string][]map[string]any{
+		"plugin_settings": {
+			{"id": "a-loses", "plugin_id": "com.ut.tie", "key": "k", "value_json": `"a"`, "scope": "global", "updated_at": "2026-08-12T00:00:00Z"},
+			{"id": "z-wins", "plugin_id": "com.ut.tie", "key": "k", "value_json": `"z"`, "scope": "global", "updated_at": "2026-08-12T00:00:00Z"},
+		},
+	}}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var id string
+	if err := replica.QueryRow(`SELECT id FROM plugin_settings WHERE plugin_id = 'com.ut.tie' AND key = 'k'`).Scan(&id); err != nil {
+		t.Fatalf("query surviving row: %v", err)
+	}
+	if id != "z-wins" {
+		t.Fatalf("surviving id = %q, want %q (id DESC tiebreak)", id, "z-wins")
 	}
 }
 

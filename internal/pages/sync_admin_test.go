@@ -414,6 +414,60 @@ func TestSyncPullTick_ChangedBundleAppliesAndUpdatesCursorState(t *testing.T) {
 	}
 }
 
+// TestSyncPullTick_ApplyFailureDoesNotSetLastContactAt confirms ut-docs#807's
+// fix: sync.last_contact_at (the sync chip's only freshness signal, see
+// GET /ui/sync-chip above) must not be set on a tick whose ApplyAdmin call
+// fails, or the chip lies "healthy" while sync.pull_version never advances.
+// The failing bundle here (two items sharing a SKU) is deliberately
+// unrelated to the plugin_settings dedupe fix (also ut-docs#807, tested in
+// internal/data) so this test exercises the ordering fix in isolation, not
+// a scenario the dedupe itself would already have prevented.
+func TestSyncPullTick_ApplyFailureDoesNotSetLastContactAt(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/sync/admin", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": adminBundleResponse{
+				Version:   "bad-bundle-v1",
+				Unchanged: false,
+				Bundle: data.AdminBundle{Tables: map[string][]map[string]any{
+					"items": {
+						{"id": "item-a", "sku": "DUP-SKU", "name": "A", "base_price": 100},
+						{"id": "item-b", "sku": "DUP-SKU", "name": "B", "base_price": 200},
+					},
+				}},
+			},
+			"error": nil,
+		})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	replica := newPullTestReplica(t, server.URL)
+	ctx := t.Context()
+	client := &http.Client{Timeout: 5 * time.Second}
+	refreshed := false
+
+	syncPullTick(ctx, replica, client, func(context.Context) { refreshed = true })
+
+	if refreshed {
+		t.Fatal("expected no refresh when ApplyAdmin fails")
+	}
+	if v, _, _ := replica.Settings.Get(ctx, "sync.last_contact_at"); v != "" {
+		t.Fatalf("expected sync.last_contact_at untouched after a failed apply, got %q", v)
+	}
+	if v, _, _ := replica.Settings.Get(ctx, "sync.pull_version"); v != "" {
+		t.Fatalf("expected sync.pull_version untouched after a failed apply, got %q", v)
+	}
+	var n int
+	if err := replica.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items`).Scan(&n); err != nil {
+		t.Fatalf("query replica items: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected the failed apply to leave no items behind (rolled back), got %d", n)
+	}
+}
+
 func TestSyncPullTick_StockCorrections_SkippedWhilePushQueuePending(t *testing.T) {
 	primary := newPullTestPrimary(t)
 	ctx := t.Context()
