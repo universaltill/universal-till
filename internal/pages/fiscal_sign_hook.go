@@ -161,6 +161,17 @@ const (
 	fiscalSignStatusApproved        = "approved"
 	fiscalSignStatusNotThisTerminal = "not-this-terminal"
 	fiscalSignStatusUnreachable     = "unreachable"
+	// fiscalSignStatusCannotSign (contract 1.3.0, ut-docs#835): the plugin
+	// declares THIS sale cannot be signed as presented — a property of the
+	// sale's own data (e.g. a tip or sale-level discount the signer can't
+	// reconcile, see ut-docs#833/#834), deterministic, and will never
+	// resolve on a plain retry, unlike "unreachable" (a backend-level
+	// condition that heals on its own). Routed to the per-entry failure
+	// path (fiscalSignCannotSign, below) rather than the backend/tick-abort
+	// one — before this status existed, a signer had no way to say this
+	// except "unreachable", which starved every genuinely-signable sale
+	// queued behind it (ut-docs#835's whole reason for being).
+	fiscalSignStatusCannotSign = "cannot-sign"
 )
 
 // fiscalSignOutcome classifies one dispatch's result for the tender path.
@@ -179,10 +190,15 @@ const (
 	// dispatch was skipped entirely (ADR-0044 D1's known-offline
 	// short-circuit) → proceed-and-declare.
 	fiscalSignSkippedOffline
-	// fiscalSignFailedBackend: a backend-level failure — timeout,
-	// transport/handler error, or the plugin explicitly declaring its
-	// backend "unreachable" — evidence the signing backend itself cannot
-	// be reached right now → proceed-and-declare. The background retry
+	// fiscalSignFailedBackend: a backend-level failure — the ask's own
+	// budget genuinely expiring (context.DeadlineExceeded — nothing
+	// answered in time, said nothing about the reason) or the plugin
+	// explicitly declaring its backend "unreachable" — evidence the
+	// signing backend itself cannot be reached right now →
+	// proceed-and-declare. Deliberately NOT a bare transport/handler error
+	// within budget (askFiscalSign routes that to fiscalSignFailedEntry
+	// instead, per-entry — see its own comment; review of ut-docs#835
+	// caught this comment drifting from that split). The background retry
 	// tick aborts early on this outcome: everything left in the queue
 	// shares the same down backend, so re-paying the 3s budget per entry
 	// this tick is pointless.
@@ -195,13 +211,25 @@ const (
 	// rest of the queue (review of ut-docs#675, B3 — one
 	// permanently-confusing entry must not starve every entry behind it).
 	fiscalSignFailedEntry
+	// fiscalSignCannotSign (ut-docs#835): the plugin explicitly declared
+	// this SALE cannot be signed as presented — deterministic, a property
+	// of the sale's own data, and will not change on a plain retry. Like
+	// fiscalSignFailedEntry it is a PER-ENTRY outcome (the tick must not
+	// abort on it — the sales behind it are unaffected), but it is
+	// journaled and worded differently (declareUnsignedFiscalSale,
+	// saleFiscalSigningGapKind): never as a connectivity outage, and the
+	// background retry backs off far past the standard 2-minute interval
+	// once it's seen (fiscalSignCannotSignBackoff) rather than re-asking a
+	// question whose answer will not change.
+	fiscalSignCannotSign
 )
 
-// isFailure reports whether the outcome is a signing failure of either
-// level — the tender path treats both identically (proceed-and-declare);
-// only the retry tick's abort-early decision distinguishes them.
+// isFailure reports whether the outcome is a signing failure of any kind —
+// the tender path treats all three identically (proceed-and-declare); only
+// the retry tick's abort-early decision distinguishes fiscalSignFailedBackend
+// from the two per-entry outcomes.
 func (o fiscalSignOutcome) isFailure() bool {
-	return o == fiscalSignFailedBackend || o == fiscalSignFailedEntry
+	return o == fiscalSignFailedBackend || o == fiscalSignFailedEntry || o == fiscalSignCannotSign
 }
 
 // fiscalSignResult is one dispatch's outcome plus what the declare path
@@ -314,6 +342,11 @@ func askFiscalSign(ctx context.Context, bus *plugins.EventBus, payload fiscalSig
 		// The plugin's own authoritative "my backend is down" — treated as
 		// backend-level, same as a transport failure.
 		return fiscalSignResult{Outcome: fiscalSignFailedBackend, Reason: "signing backend declared unreachable by the plugin", Payload: payload}
+	case fiscalSignStatusCannotSign:
+		// The plugin's own authoritative "not THIS backend is down, THIS
+		// sale can't be signed as presented" (ut-docs#835) — a per-entry
+		// outcome, not evidence the shared backend is unreachable.
+		return fiscalSignResult{Outcome: fiscalSignCannotSign, Reason: "signing plugin declared this sale cannot be signed as presented", Payload: payload}
 	default:
 		// Protocol-level, same as unparseable JSON: an unrecognized status
 		// (e.g. a future contract version's new state) proves the backend
@@ -454,53 +487,102 @@ func recordFiscalTSEEvidence(ctx context.Context, repo *data.POSRepo, saleID, ac
 func declareUnsignedFiscalSale(ctx context.Context, d *common.Deps, repo *data.POSRepo, saleID, actorID string, res fiscalSignResult) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	knownOffline := res.Outcome == fiscalSignSkippedOffline
+	cannotSign := res.Outcome == fiscalSignCannotSign
 
 	// (a) Journal marker. Same InsertAudit shape as the unsigned_override
 	// block in completeTender: best-effort after the fact, logged never
-	// fatal.
-	if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, "unsigned_fiscal_signing", map[string]any{
+	// fatal. A cannot-sign refusal gets its OWN action name (ut-docs#835),
+	// not the shared "unsigned_fiscal_signing" one — saleFiscalSigningGapKind
+	// and both receipt render paths key off this to show wording that never
+	// implies a connectivity outage for a sale that was never going to sign.
+	action := fiscalSignGapActionSigning
+	if cannotSign {
+		action = fiscalSignGapActionCannotSign
+	}
+	if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, action, map[string]any{
 		"reason":        res.Reason,
 		"known_offline": knownOffline,
 		"failed_at":     now,
 	}, now, ""); auditErr != nil {
-		log.Printf("fiscal signing: unsigned_fiscal_signing audit marker for sale %s failed: %v", saleID, auditErr)
+		log.Printf("fiscal signing: %s audit marker for sale %s failed: %v", action, saleID, auditErr)
 	}
 
 	// (c) Operator alert — Warn populates the Problems ring
 	// (logging.remember), same surface warnIfStockNegative uses for its
 	// per-sale condition; the cloud heartbeat's problems digest picks it up.
-	logging.L().Warnf("fiscal signing: sale %s completed UNSIGNED (%s) — journaled, receipt carries an outage notice, signing will be retried in the background (fiscal.sign.ask proceed-and-declare, ADR-0044)", saleID, res.Reason)
+	if cannotSign {
+		logging.L().Warnf("fiscal signing: sale %s completed UNSIGNED — could not be signed as presented (%s) — journaled, receipt carries a notice, background retry backs off since the input will not change (fiscal.sign.ask proceed-and-declare, ADR-0044, ut-docs#835)", saleID, res.Reason)
+	} else {
+		logging.L().Warnf("fiscal signing: sale %s completed UNSIGNED (%s) — journaled, receipt carries an outage notice, signing will be retried in the background (fiscal.sign.ask proceed-and-declare, ADR-0044)", saleID, res.Reason)
+	}
 
-	// (d) Queue the background retry (survives restart via settings).
-	if err := enqueueFiscalSignRetry(ctx, d, pendingFiscalSignRetry{
+	// (d) Queue the background retry (survives restart via settings). A
+	// cannot-sign entry starts its life already past the standard 30s/2min
+	// cadence (fiscalSignCannotSignBackoff) — we already know, synchronously,
+	// that re-asking in 30 seconds would burn budget on a question whose
+	// answer cannot have changed (ut-docs#835).
+	entry := pendingFiscalSignRetry{
 		SaleID:          saleID,
 		FailedAt:        now,
 		Payload:         res.Payload,
 		ContractVersion: fiscalSignContractVersion,
-	}); err != nil {
+	}
+	if cannotSign {
+		entry.NextRetryAt = time.Now().UTC().Add(fiscalSignCannotSignBackoff).Format(time.RFC3339)
+	}
+	if err := enqueueFiscalSignRetry(ctx, d, entry); err != nil {
 		logging.L().Errorf("fiscal signing: queue background retry for sale %s: %v", saleID, err)
 	}
 }
 
-// saleHasUnresolvedSigningGap decides the receipt outage notice for both
-// render paths (renderReceipt's flag in pos_api.go, the ESC/POS Meta line in
-// print_api.go): true only while the sale carries an unsigned_fiscal_signing
-// marker WITHOUT a later fiscal_signing_resolved row — a sale the background
-// retry already signed prints clean on any reprint (review of ut-docs#675,
-// alongside B1-B4). Errors degrade conservatively: can't read the marker →
-// no notice (the authoritative record is the audit row itself, same policy
-// as before); marker present but can't read the resolution → keep the
-// notice, which was truthful at write time.
-func saleHasUnresolvedSigningGap(ctx context.Context, repo *data.POSRepo, saleID string) bool {
-	hasGap, err := repo.HasAuditEntry(ctx, "sale", saleID, "unsigned_fiscal_signing")
-	if err != nil || !hasGap {
-		return false
+// fiscalSignGapActionSigning / -CannotSign are the two audit actions
+// declareUnsignedFiscalSale can write (ut-docs#835 split the original single
+// "unsigned_fiscal_signing" action in two, by outcome kind) and the two
+// saleFiscalSigningGapKind checks for, in this priority order — an entry
+// never carries both, but checking cannot-sign first costs nothing on the
+// far more common outage case (one extra indexed lookup only when it's
+// actually present).
+const (
+	fiscalSignGapActionSigning    = "unsigned_fiscal_signing"
+	fiscalSignGapActionCannotSign = "unsigned_fiscal_cannot_sign"
+)
+
+// saleFiscalSigningGapKind decides the receipt notice for both render paths
+// (renderReceipt's flags in pos_api.go, the ESC/POS Meta lines in
+// print_api.go): returns the audit action name of the sale's unresolved
+// fiscal.sign.ask gap, or "" when there is none — either because the sale
+// never had one, or because a later fiscal_signing_resolved row shows the
+// background retry already signed it (a sale the retry recovers prints clean
+// on any reprint, review of ut-docs#675, alongside B1-B4). The returned
+// action name is what the caller uses to pick wording: the original
+// "unsigned_fiscal_signing" (outage/unproven wording) or ut-docs#835's
+// "unsigned_fiscal_cannot_sign" (a signer's deterministic refusal — never
+// worded as a connectivity problem, since it wasn't one). Errors degrade
+// conservatively: can't read a marker → treated as absent (the authoritative
+// record is the audit row itself, same policy as before); marker present but
+// can't read the resolution → keep the gap, which was truthful at write time.
+func saleFiscalSigningGapKind(ctx context.Context, repo *data.POSRepo, saleID string) string {
+	for _, action := range []string{fiscalSignGapActionCannotSign, fiscalSignGapActionSigning} {
+		hasGap, err := repo.HasAuditEntry(ctx, "sale", saleID, action)
+		if err != nil || !hasGap {
+			continue
+		}
+		resolved, err := repo.HasAuditEntry(ctx, "sale", saleID, "fiscal_signing_resolved")
+		if err != nil || !resolved {
+			return action
+		}
+		// This action's gap is resolved — but don't assume that means "no
+		// gap at all" and short-circuit: the invariant that a sale never
+		// carries both actions is enforced by declareUnsignedFiscalSale
+		// being the sole writer of either, not by anything this read-side
+		// helper can see. Keep checking the other action so a future
+		// path that could violate that invariant (a hand-edited or
+		// imported journal) fails safe — an unresolved gap under the
+		// other action still surfaces its notice — rather than a resolved
+		// one silently masking it.
+		continue
 	}
-	resolved, err := repo.HasAuditEntry(ctx, "sale", saleID, "fiscal_signing_resolved")
-	if err != nil {
-		return true
-	}
-	return !resolved
+	return ""
 }
 
 // --- background retry (ADR-0044 D1: "retry signing in the background") -----
@@ -523,6 +605,17 @@ type pendingFiscalSignRetry struct {
 	// worse than the pre-1.2.0 build's honest "no flag, please infer".
 	// fiscalSignRetryTick refreshes what it safely can before replay.
 	ContractVersion string `json:"contract_version,omitempty"`
+	// NextRetryAt (ut-docs#835), RFC3339: the tick skips this entry — without
+	// spending its 3s ask budget — while now is before this time. Empty
+	// means "eligible now", the behaviour every entry has always had; only a
+	// fiscalSignCannotSign outcome ever sets it (fiscalSignCannotSignBackoff
+	// out from the most recent attempt), because that outcome is
+	// deterministic on the sale's own data — re-asking on the standard
+	// 2-minute cadence would burn budget on a question whose answer cannot
+	// have changed. It IS re-asked eventually, not dropped forever: a
+	// plugin update or a fix to the underlying reconciliation gap could
+	// still resolve it.
+	NextRetryAt string `json:"next_retry_at,omitempty"`
 }
 
 // fiscalSignRetryInitialDelay/-Interval shape the retry loop, mirroring
@@ -539,6 +632,15 @@ type pendingFiscalSignRetry struct {
 const (
 	fiscalSignRetryInitialDelay = 30 * time.Second
 	fiscalSignRetryInterval     = 2 * time.Minute
+	// fiscalSignCannotSignBackoff (ut-docs#835) is how far out a
+	// fiscalSignCannotSign entry's NextRetryAt is pushed each time it's
+	// re-confirmed — deliberately far past fiscalSignRetryInterval: the
+	// condition is a property of the sale's own data, not a backend blip,
+	// so re-asking every 2 minutes forever would never do anything but
+	// spend budget. Still finite and still retried, not abandoned — a
+	// plugin update or a fix upstream (ut-docs#833/#834's tip/discount
+	// handling) could resolve it without a restart.
+	fiscalSignCannotSignBackoff = 6 * time.Hour
 )
 
 // fiscalSignRetryMu serializes list read-modify-write between the tender
@@ -630,8 +732,19 @@ func fiscalSignRetryTick(ctx context.Context, d *common.Deps) {
 		return
 	}
 	repo := data.NewPOSRepo(d.Db)
+	now := time.Now().UTC()
 	var resolvedIDs []string
+	nextRetryUpdates := map[string]string{}
 	for _, entry := range pending {
+		if entry.NextRetryAt != "" {
+			if nextAt, perr := time.Parse(time.RFC3339, entry.NextRetryAt); perr == nil && now.Before(nextAt) {
+				// ut-docs#835: a cannot-sign entry backed off past this
+				// moment — skip it without spending its 3s budget. Not a
+				// backend-level signal, so it must not abort the tick; the
+				// rest of the queue is asked normally.
+				continue
+			}
+		}
 		payload := entry.Payload
 		payload.Retry = true
 		if entry.ContractVersion != fiscalSignContractVersion {
@@ -655,11 +768,16 @@ func fiscalSignRetryTick(ctx context.Context, d *common.Deps) {
 			// field set a live-signed sale's do. Idempotent — if evidence
 			// somehow already exists for the sale, the first write stands.
 			recordFiscalTSEEvidence(ctx, repo, entry.SaleID, "", res.Evidence)
-			now := time.Now().UTC().Format(time.RFC3339)
+			// A distinct name from the outer `now` (time.Time, used for the
+			// NextRetryAt backoff arithmetic above) — both are live in this
+			// loop body, and shadowing one with the other's own RFC3339
+			// string rendering was an easy foot-gun on a compliance path to
+			// leave for later (review of ut-docs#835).
+			resolvedAt := time.Now().UTC().Format(time.RFC3339)
 			if auditErr := repo.InsertAudit(ctx, nil, "", "sale", entry.SaleID, "fiscal_signing_resolved", map[string]any{
-				"resolved_at":       now,
+				"resolved_at":       resolvedAt,
 				"originally_failed": entry.FailedAt,
-			}, now, ""); auditErr != nil {
+			}, resolvedAt, ""); auditErr != nil {
 				logging.L().Errorf("fiscal signing retry: resolved marker for sale %s failed: %v", entry.SaleID, auditErr)
 			}
 			logging.L().Infof("fiscal signing retry: sale %s signed on background retry (originally failed %s)", entry.SaleID, entry.FailedAt)
@@ -681,40 +799,57 @@ func fiscalSignRetryTick(ctx context.Context, d *common.Deps) {
 			logging.L().Warnf("fiscal signing retry: sale %s still unsigned (%s) — kept queued, continuing with the rest of the backlog", entry.SaleID, res.Reason)
 			continue
 		}
+		if res.Outcome == fiscalSignCannotSign {
+			// ut-docs#835: re-confirmed deterministic refusal — per-entry,
+			// must not abort the tick. Push NextRetryAt out again instead of
+			// re-asking on the standard 2-minute cadence.
+			nextRetryUpdates[entry.SaleID] = now.Add(fiscalSignCannotSignBackoff).Format(time.RFC3339)
+			logging.L().Warnf("fiscal signing retry: sale %s still cannot be signed as presented (%s) — kept queued, continuing with the rest of the backlog, next attempt not before %s", entry.SaleID, res.Reason, nextRetryUpdates[entry.SaleID])
+			continue
+		}
 		// Backend-level failure: everything left shares the same down
 		// backend — stop burning the budget this tick.
 		break
 	}
-	if _, err := removeResolvedFiscalSignRetries(ctx, d, resolvedIDs); err != nil {
+	if _, err := finalizeFiscalSignRetryTick(ctx, d, resolvedIDs, nextRetryUpdates); err != nil {
 		logging.L().Errorf("fiscal signing retry: persist pending list: %v", err)
 	}
 }
 
-// removeResolvedFiscalSignRetries drops the given sale IDs from the
-// persisted pending list under the lock, re-loading first so entries
-// enqueued while the tick was dispatching are preserved. Returns how many
-// entries remain queued.
-func removeResolvedFiscalSignRetries(ctx context.Context, d *common.Deps, resolvedIDs []string) (int, error) {
+// finalizeFiscalSignRetryTick applies one tick's outcome to the persisted
+// pending list under the lock, re-loading first so entries enqueued while
+// the tick was dispatching are preserved: drops every resolved sale ID, and
+// for the rest applies any NextRetryAt update a fiscalSignCannotSign
+// re-confirmation produced (ut-docs#835) — everything else is left exactly
+// as re-loaded. Returns how many entries remain queued.
+func finalizeFiscalSignRetryTick(ctx context.Context, d *common.Deps, resolvedIDs []string, nextRetryUpdates map[string]string) (int, error) {
 	fiscalSignRetryMu.Lock()
 	defer fiscalSignRetryMu.Unlock()
 	current, err := loadPendingFiscalSignRetries(ctx, d)
 	if err != nil {
 		return 0, err
 	}
-	if len(resolvedIDs) == 0 {
+	if len(resolvedIDs) == 0 && len(nextRetryUpdates) == 0 {
 		return len(current), nil
 	}
 	resolved := make(map[string]bool, len(resolvedIDs))
 	for _, id := range resolvedIDs {
 		resolved[id] = true
 	}
+	changed := false
 	remaining := make([]pendingFiscalSignRetry, 0, len(current))
 	for _, e := range current {
-		if !resolved[e.SaleID] {
-			remaining = append(remaining, e)
+		if resolved[e.SaleID] {
+			changed = true
+			continue
 		}
+		if next, ok := nextRetryUpdates[e.SaleID]; ok && e.NextRetryAt != next {
+			e.NextRetryAt = next
+			changed = true
+		}
+		remaining = append(remaining, e)
 	}
-	if len(remaining) != len(current) {
+	if changed {
 		if err := savePendingFiscalSignRetries(ctx, d, remaining); err != nil {
 			return len(remaining), err
 		}
