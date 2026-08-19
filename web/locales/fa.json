@@ -556,6 +556,7 @@
   "reports.business_day_start.label": "شروع روز کاری در ساعت",
   "reports.by_day": "فروش روزانه",
   "reports.by_department": "فروش بر اساس بخش",
+  "reports.by_cash_adjustment_reason": "تعدیل‌های نقدی به تفکیک دلیل",
   "reports.by_method": "پرداخت به تفکیک روش",
   "reports.by_till": "فروش بر اساس صندوق",
   "reports.day": "روز",

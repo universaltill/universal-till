@@ -556,6 +556,7 @@
   "reports.business_day_start.label": "İşletme günü şu saatte başlar",
   "reports.by_day": "Güne göre satışlar",
   "reports.by_department": "Departmana göre satışlar",
+  "reports.by_cash_adjustment_reason": "Nedene göre nakit düzeltmeleri",
   "reports.by_method": "Yönteme göre ödemeler",
   "reports.by_till": "Kasaya göre satışlar",
   "reports.day": "Gün",
