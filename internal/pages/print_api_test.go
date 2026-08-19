@@ -942,11 +942,12 @@ func TestPostPrintReceipt_ReprintFailsCleanlyWithNoPrinter(t *testing.T) {
 }
 
 // Review of ut-docs#675 (smaller finding alongside B1-B4): a sale whose
-// signing gap was RESOLVED by the background retry (a later
-// fiscal_signing_resolved audit row for the same sale) must reprint clean —
-// the outage notice derives from the unsigned_fiscal_signing marker ONLY
-// while no resolution row exists. Same sale, minutes later, signed: any
-// reprint after that must not still claim TSE signing was unavailable.
+// signing gap was RESOLVED by a pre-1.4.0 build's background retry
+// (a historical fiscal_signing_resolved audit row for the same sale — no
+// current code path writes that row, ADR-0056/ut-docs#839) must reprint
+// clean — the outage notice derives from the unsigned_fiscal_signing marker
+// ONLY while no resolution row exists. An old sale whose recovery was
+// already recorded back then must not claim on reprint that it is unsigned.
 func TestBuildReceiptDoc_ResolvedSigningGapPrintsClean(t *testing.T) {
 	_, dp := newPrintAPITestDeps(t)
 	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
@@ -964,11 +965,12 @@ func TestBuildReceiptDoc_ResolvedSigningGapPrintsClean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(doc.Meta, "\n"), "TSE signing was unavailable") {
+	if !strings.Contains(strings.Join(doc.Meta, "\n"), "TSE unreachable") {
 		t.Fatalf("unresolved signing gap must print the outage notice, got %+v", doc.Meta)
 	}
 
-	// Resolved by the background retry: reprints are clean.
+	// Resolved by a pre-1.4.0 build's background retry (historical row):
+	// reprints are clean.
 	if err := repo.InsertAudit(ctx, nil, "", "sale", "sale1", "fiscal_signing_resolved", map[string]any{
 		"resolved_at": "2026-08-15T10:02:00Z",
 	}, "2026-08-15T10:02:00Z", ""); err != nil {
@@ -978,16 +980,17 @@ func TestBuildReceiptDoc_ResolvedSigningGapPrintsClean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(doc.Meta, "\n"), "TSE signing") {
+	if strings.Contains(strings.Join(doc.Meta, "\n"), "TSE unreachable") {
 		t.Fatalf("a resolved sale must reprint clean (no outage notice), got %+v", doc.Meta)
 	}
 }
 
 // ut-docs#835: a sale whose signer declared "cannot-sign" carries its OWN
 // ESC/POS notice line, worded so it never implies a connectivity outage —
-// and, same as the outage marker above, prints clean once a later
-// fiscal_signing_resolved row shows the background retry signed it after
-// all. Regression test for a gap the independent review of this card
+// and, same as the outage marker above, prints clean when a historical
+// fiscal_signing_resolved row shows a pre-1.4.0 build's background retry
+// signed it back then (no current code writes that row — ADR-0056,
+// ut-docs#839). Regression test for a gap the independent review of this card
 // caught: the ESC/POS path had no coverage at all — deleting its
 // cannot-sign case passed the full suite silently, which on this path means
 // a printed customer receipt that looks identical to a signed sale.
@@ -1013,11 +1016,12 @@ func TestBuildReceiptDoc_CannotSignPrintsDistinctNoticeAndResolvesClean(t *testi
 	if !strings.Contains(meta, "could not be signed as presented") {
 		t.Fatalf("unresolved cannot-sign gap must print its own notice, got %+v", doc.Meta)
 	}
-	if strings.Contains(meta, "TSE signing was unavailable") {
+	if strings.Contains(meta, "TSE unreachable") {
 		t.Fatalf("cannot-sign must not also print the outage wording, got %+v", doc.Meta)
 	}
 
-	// Resolved by the background retry: reprints are clean.
+	// Resolved by a pre-1.4.0 build's background retry (historical row):
+	// reprints are clean.
 	if err := repo.InsertAudit(ctx, nil, "", "sale", "sale1", "fiscal_signing_resolved", map[string]any{
 		"resolved_at": "2026-08-15T10:02:00Z",
 	}, "2026-08-15T10:02:00Z", ""); err != nil {
@@ -1028,7 +1032,7 @@ func TestBuildReceiptDoc_CannotSignPrintsDistinctNoticeAndResolvesClean(t *testi
 		t.Fatal(err)
 	}
 	meta = strings.Join(doc.Meta, "\n")
-	if strings.Contains(meta, "could not be signed as presented") || strings.Contains(meta, "TSE signing was unavailable") {
+	if strings.Contains(meta, "could not be signed as presented") || strings.Contains(meta, "TSE unreachable") {
 		t.Fatalf("a resolved cannot-sign sale must reprint clean (no notice), got %+v", doc.Meta)
 	}
 }

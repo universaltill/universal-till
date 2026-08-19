@@ -105,7 +105,8 @@
          dispatch failed or was skipped known-offline, so this sale went
          out unsigned — stated factually on the receipt, never silently
          (ADR-0041 Decision E), and never as a compliance outcome claim
-         (ADR-0040). Signing is retried automatically in the background. -->
+         (ADR-0040). The gap is permanent: signing is never re-attempted
+         for a completed sale (ADR-0056, ut-docs#839). -->
     <div class="receipt-legal">
       <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_signing" }}</div>
     </div>
