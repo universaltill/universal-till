@@ -982,3 +982,53 @@ func TestBuildReceiptDoc_ResolvedSigningGapPrintsClean(t *testing.T) {
 		t.Fatalf("a resolved sale must reprint clean (no outage notice), got %+v", doc.Meta)
 	}
 }
+
+// ut-docs#835: a sale whose signer declared "cannot-sign" carries its OWN
+// ESC/POS notice line, worded so it never implies a connectivity outage —
+// and, same as the outage marker above, prints clean once a later
+// fiscal_signing_resolved row shows the background retry signed it after
+// all. Regression test for a gap the independent review of this card
+// caught: the ESC/POS path had no coverage at all — deleting its
+// cannot-sign case passed the full suite silently, which on this path means
+// a printed customer receipt that looks identical to a signed sale.
+func TestBuildReceiptDoc_CannotSignPrintsDistinctNoticeAndResolvesClean(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+	now := "2026-08-15T10:00:00Z"
+	if err := repo.InsertAudit(ctx, nil, "", "sale", "sale1", "unsigned_fiscal_cannot_sign", map[string]any{
+		"reason": "signing plugin declared this sale cannot be signed as presented",
+	}, now, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unresolved: the cannot-sign notice prints — and the outage wording
+	// must NOT also appear (the two are mutually exclusive).
+	doc, err := buildReceiptDoc(ctx, dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := strings.Join(doc.Meta, "\n")
+	if !strings.Contains(meta, "could not be signed as presented") {
+		t.Fatalf("unresolved cannot-sign gap must print its own notice, got %+v", doc.Meta)
+	}
+	if strings.Contains(meta, "TSE signing was unavailable") {
+		t.Fatalf("cannot-sign must not also print the outage wording, got %+v", doc.Meta)
+	}
+
+	// Resolved by the background retry: reprints are clean.
+	if err := repo.InsertAudit(ctx, nil, "", "sale", "sale1", "fiscal_signing_resolved", map[string]any{
+		"resolved_at": "2026-08-15T10:02:00Z",
+	}, "2026-08-15T10:02:00Z", ""); err != nil {
+		t.Fatal(err)
+	}
+	doc, err = buildReceiptDoc(ctx, dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta = strings.Join(doc.Meta, "\n")
+	if strings.Contains(meta, "could not be signed as presented") || strings.Contains(meta, "TSE signing was unavailable") {
+		t.Fatalf("a resolved cannot-sign sale must reprint clean (no notice), got %+v", doc.Meta)
+	}
+}

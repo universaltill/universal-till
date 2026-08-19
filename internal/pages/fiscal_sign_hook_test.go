@@ -272,6 +272,73 @@ func TestFiscalSignAsk_UnreachableDeclaredProceedsAndDeclares(t *testing.T) {
 	}
 }
 
+// ut-docs#835: a signer's explicit "cannot-sign" declares proceed-and-declare
+// exactly like "unreachable" does (journal + receipt + operator alert +
+// retry), but on its OWN audit action with different, non-outage wording —
+// and the queued retry entry starts already backed off past the standard
+// 2-minute cadence, since the condition is a property of the sale's own
+// data and re-asking in 30 seconds cannot change the answer.
+func TestFiscalSignAsk_CannotSignDeclaresWithDifferentWordingAndBackoff(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	logging.ResetRecent()
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-cannotsign", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"cannot-sign"}`), nil
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := fiscalSignTender(t, mux, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sale must complete despite the signing refusal, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var saleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales`).Scan(&saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// (a) its OWN journal marker — never the shared outage one.
+	if n := countAuditRows(t, dp, "unsigned_fiscal_cannot_sign"); n != 1 {
+		t.Fatalf("expected 1 unsigned_fiscal_cannot_sign marker, got %d", n)
+	}
+	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
+		t.Fatalf("cannot-sign must not also write the outage marker, got %d", n)
+	}
+
+	// (b) receipt notice: the cannot-sign wording, never the outage one.
+	if !strings.Contains(rec.Body.String(), "could not be signed as presented") {
+		t.Fatalf("expected the cannot-sign receipt notice, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "TSE signing was unavailable") {
+		t.Fatalf("cannot-sign must not render the outage wording, got: %s", rec.Body.String())
+	}
+
+	// (c) operator alert still fires.
+	foundProblem := false
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, saleID) && strings.Contains(p.Msg, "UNSIGNED") {
+			foundProblem = true
+		}
+	}
+	if !foundProblem {
+		t.Fatalf("expected a Problems-ring warning naming sale %s; recent: %+v", saleID, logging.Recent())
+	}
+
+	// (d) queued, but already backed off past the standard cadence — not
+	// eligible for the very next tick.
+	pending, err := loadPendingFiscalSignRetries(context.Background(), dp)
+	if err != nil || len(pending) != 1 || pending[0].SaleID != saleID {
+		t.Fatalf("expected 1 pending retry for sale %s, got %+v (err %v)", saleID, pending, err)
+	}
+	nextAt, perr := time.Parse(time.RFC3339, pending[0].NextRetryAt)
+	if perr != nil {
+		t.Fatalf("expected a parseable NextRetryAt, got %q (%v)", pending[0].NextRetryAt, perr)
+	}
+	if !nextAt.After(time.Now().UTC().Add(fiscalSignRetryInterval)) {
+		t.Fatalf("expected NextRetryAt pushed well past the standard %s cadence, got %s", fiscalSignRetryInterval, pending[0].NextRetryAt)
+	}
+}
+
 // B1 (review of ut-docs#675), the consequence that makes the wiring a
 // blocker: with the ADR-0048 hard gate armed (DE, system-of-record, TSE
 // configured), repeated fiscal.sign.ask failures must never trip the gate —
@@ -629,6 +696,80 @@ func TestFiscalSignRetry_NoSignerKeepsPending(t *testing.T) {
 	fiscalSignRetryTick(ctx, dp)
 	if pending, err := loadPendingFiscalSignRetries(ctx, dp); err != nil || len(pending) != 1 {
 		t.Fatalf("expected the entry kept with no signer, got %+v (err %v)", pending, err)
+	}
+}
+
+// ut-docs#835: a re-confirmed "cannot-sign" is a per-entry outcome exactly
+// like a protocol failure — it must not abort the tick early, and the sales
+// behind it in the same tick still get their attempt.
+func TestFiscalSignRetry_CannotSignDoesNotStarveQueueAndBacksOff(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	ctx := context.Background()
+	var asked []string
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-stillcannotsign", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		var p fiscalSignAskPayload
+		if err := json.Unmarshal(ev.Payload, &p); err != nil {
+			t.Errorf("unmarshal ask payload: %v", err)
+		}
+		asked = append(asked, p.SaleID)
+		if p.SaleID == "sale-1" {
+			return json.RawMessage(`{"status":"cannot-sign"}`), nil
+		}
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	if err := savePendingFiscalSignRetries(ctx, dp, []pendingFiscalSignRetry{
+		{SaleID: "sale-1", FailedAt: "2026-08-15T09:00:00Z", Payload: fiscalSignAskPayload{SaleID: "sale-1"}},
+		{SaleID: "sale-2", FailedAt: "2026-08-15T09:01:00Z", Payload: fiscalSignAskPayload{SaleID: "sale-2"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fiscalSignRetryTick(ctx, dp)
+
+	if len(asked) != 2 || asked[0] != "sale-1" || asked[1] != "sale-2" {
+		t.Fatalf("entry 2 must still be attempted in the SAME tick after entry 1's cannot-sign re-confirmation, asked: %v", asked)
+	}
+	pending, err := loadPendingFiscalSignRetries(ctx, dp)
+	if err != nil || len(pending) != 1 || pending[0].SaleID != "sale-1" {
+		t.Fatalf("expected only the cannot-sign entry kept queued, got %+v (err %v)", pending, err)
+	}
+	nextAt, perr := time.Parse(time.RFC3339, pending[0].NextRetryAt)
+	if perr != nil || !nextAt.After(time.Now().UTC().Add(fiscalSignRetryInterval)) {
+		t.Fatalf("expected NextRetryAt pushed well past the standard cadence, got %q (err %v)", pending[0].NextRetryAt, perr)
+	}
+}
+
+// ut-docs#835: an entry whose NextRetryAt is still in the future is skipped
+// by the tick entirely — not even asked — while other, eligible entries in
+// the same tick proceed normally.
+func TestFiscalSignRetry_SkipsEntryStillBackedOff(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	ctx := context.Background()
+	var asked []string
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-backoff", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		var p fiscalSignAskPayload
+		if err := json.Unmarshal(ev.Payload, &p); err != nil {
+			t.Errorf("unmarshal ask payload: %v", err)
+		}
+		asked = append(asked, p.SaleID)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	futureRetry := time.Now().UTC().Add(3 * time.Hour).Format(time.RFC3339)
+	if err := savePendingFiscalSignRetries(ctx, dp, []pendingFiscalSignRetry{
+		{SaleID: "sale-1", FailedAt: "2026-08-15T09:00:00Z", Payload: fiscalSignAskPayload{SaleID: "sale-1"}, NextRetryAt: futureRetry},
+		{SaleID: "sale-2", FailedAt: "2026-08-15T09:01:00Z", Payload: fiscalSignAskPayload{SaleID: "sale-2"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fiscalSignRetryTick(ctx, dp)
+
+	if len(asked) != 1 || asked[0] != "sale-2" {
+		t.Fatalf("expected only the eligible entry asked, got: %v", asked)
+	}
+	pending, err := loadPendingFiscalSignRetries(ctx, dp)
+	if err != nil || len(pending) != 1 || pending[0].SaleID != "sale-1" || pending[0].NextRetryAt != futureRetry {
+		t.Fatalf("expected the backed-off entry kept untouched, got %+v (err %v)", pending, err)
 	}
 }
 

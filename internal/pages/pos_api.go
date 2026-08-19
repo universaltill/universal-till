@@ -894,13 +894,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if g, gErr := evaluateFiscalGate(r.Context(), d); gErr == nil && g.Decision == fiscal.AllowedWithOverride {
 			unsignedOverride = true
 		}
-		// fiscal.sign.ask outage notice (ADR-0044 proceed-and-declare):
-		// derived from the sale's own audit rows — NOT a gate/settings
-		// re-evaluation, since this flag is a per-sale outcome, not
-		// current-settings state — and suppressed once a later
-		// fiscal_signing_resolved row shows the background retry signed
-		// the sale (review of ut-docs#675: a resolved sale renders clean).
-		unsignedFiscalSigning := saleHasUnresolvedSigningGap(r.Context(), repo, saleID)
+		// fiscal.sign.ask outage/cannot-sign notice (ADR-0044
+		// proceed-and-declare, ut-docs#835): derived from the sale's own
+		// audit rows — NOT a gate/settings re-evaluation, since this is a
+		// per-sale outcome, not current-settings state — and suppressed
+		// once a later fiscal_signing_resolved row shows the background
+		// retry signed the sale (review of ut-docs#675: a resolved sale
+		// renders clean). The two notices are mutually exclusive: a sale
+		// carries at most one of the two audit actions.
+		fiscalGapAction := saleFiscalSigningGapKind(r.Context(), repo, saleID)
+		unsignedFiscalSigning := fiscalGapAction == fiscalSignGapActionSigning
+		unsignedCannotSign := fiscalGapAction == fiscalSignGapActionCannotSign
 		// ut-docs#585: the sale's recorded TSE evidence, if any — same
 		// per-sale derivation as the two flags above (the sale's own
 		// records, never current settings). A read error degrades to "no
@@ -910,7 +914,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if tseErr != nil {
 			tseSignature = nil
 		}
-		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, tseSignature,
+		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature,
 			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d))
 		if renderErr != nil {
 			printerUnavailable = true
@@ -1103,7 +1107,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, tseSignature *data.FiscalTSESignature, storeName string, design receiptDesign) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, storeName string, design receiptDesign) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFS(uiassets.FS,
 		"ui/partials/receipt.html",
 	)
@@ -1184,6 +1188,11 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		// dispatch failed (or was skipped known-offline) carries a visible
 		// outage notice — the gap must never look like a normal sale.
 		"UnsignedFiscalSigning": unsignedFiscalSigning,
+		// ut-docs#835: a sale whose signer explicitly declared it CANNOT be
+		// signed as presented (a property of the sale's own data, not a
+		// connectivity problem) gets its own notice, worded accordingly —
+		// mutually exclusive with UnsignedFiscalSigning above.
+		"UnsignedCannotSign": unsignedCannotSign,
 		// ut-docs#585: recorded TSE signing evidence — nil means no block.
 		"TSESignature": tseView,
 		// Receipt design (docs: receipt-designer.md): the on-screen copy
