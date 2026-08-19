@@ -1474,6 +1474,7 @@
   "fiscal.banner.override_active": "TSE geçersiz kılma etkin — satışlar TSE imzası olmadan kaydediliyor; bitiş:",
   "receipt.fiscal.unsigned_override": "Belgelenmiş bir TSE arızası sırasında, süreli sahip geçersiz kılması altında kaydedildi.",
   "receipt.fiscal.unsigned_signing": "Bu satış kaydedilirken TSE imzalama kullanılamıyordu; imzalama otomatik olarak yeniden denenir.",
+  "receipt.fiscal.unsigned_cannot_sign": "Bu satış mevcut haliyle imzalanamadı; imzalama otomatik olarak yeniden denenir.",
   "receipt.fiscal.tse.title": "TSE imzası",
   "receipt.fiscal.tse.serial_number": "TSE seri numarası",
   "receipt.fiscal.tse.transaction_number": "TSE işlem numarası",

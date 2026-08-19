@@ -1474,6 +1474,7 @@
   "fiscal.banner.override_active": "TSE override active — sales are being recorded without a TSE signature until",
   "receipt.fiscal.unsigned_override": "Recorded during a documented TSE outage, under a time-limited owner override.",
   "receipt.fiscal.unsigned_signing": "TSE signing was unavailable when this sale was recorded; signing is retried automatically.",
+  "receipt.fiscal.unsigned_cannot_sign": "This sale could not be signed as presented; signing is retried automatically.",
   "receipt.fiscal.tse.title": "TSE signature",
   "receipt.fiscal.tse.serial_number": "TSE serial number",
   "receipt.fiscal.tse.transaction_number": "TSE transaction no.",
