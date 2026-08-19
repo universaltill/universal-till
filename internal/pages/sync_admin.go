@@ -258,7 +258,6 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_ = d.Settings.Set(ctx, "sync.last_contact_at", now)
 	// Files ride alongside the row data: item images can change
 	// without moving the admin fingerprint, so this runs every tick
 	// (the manifest is cheap; only missing/changed files download).
@@ -266,6 +265,17 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	if !out.Data.Unchanged {
 		if err := adminRepo.ApplyAdmin(ctx, out.Data.Bundle); err != nil {
 			logging.L().Errorf("sync pull: apply failed: %v", err)
+			// ut-docs#807: sync.last_contact_at deliberately NOT set here.
+			// It backs the sync chip's freshness signal (withinLast check
+			// below) — setting it unconditionally right after the HTTP
+			// round-trip (the pre-#807 behavior) made the chip show healthy
+			// contact even on a tick whose apply failed and whose
+			// sync.pull_version never advanced, hiding a stuck admin pull.
+			// Note this is a strict improvement, not a complete fix: an
+			// otherwise-healthy replica whose sales journal is still
+			// pushing normally also refreshes this same key from the push
+			// side (sync_sales.go), which can mask a stuck admin pull too —
+			// pre-existing, not introduced or fixed here.
 			return
 		}
 		_ = d.Settings.Set(ctx, "sync.pull_version", out.Data.Version)
@@ -275,6 +285,10 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		refresh(ctx)
 		logging.L().Infof("sync pull: admin state %s applied from the primary", out.Data.Version)
 	}
+	// Reached only when the poll round-tripped AND (nothing changed, or the
+	// apply above actually succeeded) — see the early return in the failure
+	// branch just above.
+	_ = d.Settings.Set(ctx, "sync.last_contact_at", now)
 
 	// ut-docs#460 — the plugin set follows the primary. Best-effort like
 	// everything else in this tick: syncPullPlugins logs and returns on any
