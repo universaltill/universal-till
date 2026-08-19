@@ -110,6 +110,16 @@
       <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_signing" }}</div>
     </div>
     {{ end }}
+    {{ if .UnsignedCannotSign }}
+    <!-- ut-docs#835: the signer explicitly declared this sale cannot be
+         signed as presented — a property of the sale's own data (never a
+         connectivity problem), stated factually, never as a compliance
+         outcome claim (ADR-0040). Mutually exclusive with the outage
+         notice above. -->
+    <div class="receipt-legal">
+      <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_cannot_sign" }}</div>
+    </div>
+    {{ end }}
     {{ if .TSESignature }}
     <!-- ut-docs#585 (fiscal.sign.ask contract v1.1.0): the sale's recorded
          §6 KassenSichV TSE evidence, rendered from the persisted

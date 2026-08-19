@@ -188,14 +188,20 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		doc.Meta = append(doc.Meta, "Recorded during a documented TSE outage, under a time-limited owner override.")
 	}
 	// ADR-0044 proceed-and-declare (ut-docs#675): same audit-row derivation
-	// as the override line above — the sale's own unsigned_fiscal_signing
-	// marker, written by completeTender at tender time, decides the notice;
-	// a reprint long after the outage still shows what happened to THIS
-	// sale. Suppressed once the background retry's fiscal_signing_resolved
-	// row shows the sale WAS signed after all — a resolved sale reprints
-	// clean (review of ut-docs#675).
-	if saleHasUnresolvedSigningGap(ctx, data.NewPOSRepo(d.Db), detail.ID) {
+	// as the override line above — the sale's own unsigned_fiscal_signing /
+	// unsigned_fiscal_cannot_sign marker, written by completeTender at
+	// tender time, decides the notice; a reprint long after the fact still
+	// shows what happened to THIS sale. Suppressed once the background
+	// retry's fiscal_signing_resolved row shows the sale WAS signed after
+	// all — a resolved sale reprints clean (review of ut-docs#675). The two
+	// notices are worded differently on purpose (ut-docs#835): a genuine
+	// outage vs. a signer's deterministic "cannot sign this one" must never
+	// look like the same thing.
+	switch saleFiscalSigningGapKind(ctx, data.NewPOSRepo(d.Db), detail.ID) {
+	case fiscalSignGapActionSigning:
 		doc.Meta = append(doc.Meta, "TSE signing was unavailable when this sale was recorded; signing is retried automatically.")
+	case fiscalSignGapActionCannotSign:
+		doc.Meta = append(doc.Meta, "This sale could not be signed as presented; signing is retried automatically.")
 	}
 	// ut-docs#585: the sale's recorded §6 KassenSichV TSE evidence, when any
 	// — same per-sale derivation as the two notices above (the sale's own

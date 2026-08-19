@@ -1474,6 +1474,7 @@
   "fiscal.banner.override_active": "تجاوز TSE نشط — تُسجَّل المبيعات بدون توقيع TSE حتى",
   "receipt.fiscal.unsigned_override": "سُجِّلت أثناء عطل موثَّق في وحدة TSE، بموجب تجاوز مؤقت من المالك.",
   "receipt.fiscal.unsigned_signing": "تعذّر توقيع TSE عند تسجيل هذه العملية؛ ستُعاد محاولة التوقيع تلقائيًا.",
+  "receipt.fiscal.unsigned_cannot_sign": "تعذّر توقيع هذه العملية بصيغتها الحالية؛ ستُعاد محاولة التوقيع تلقائيًا.",
   "receipt.fiscal.tse.title": "توقيع TSE",
   "receipt.fiscal.tse.serial_number": "الرقم التسلسلي لوحدة TSE",
   "receipt.fiscal.tse.transaction_number": "رقم معاملة TSE",
