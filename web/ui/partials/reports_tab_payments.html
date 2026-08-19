@@ -40,7 +40,7 @@
   <table class="table">
     <tbody>
       {{ range .CashAdjustments }}
-      <tr><td><strong>{{ .Reason }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Amount }}</td></tr>
+      <tr><td><strong>{{ if .Reason }}{{ .Reason }}{{ else }}{{ T "reports.uncategorized" }}{{ end }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Amount }}</td></tr>
       {{ end }}
     </tbody>
   </table>
