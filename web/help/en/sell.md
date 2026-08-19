@@ -32,18 +32,17 @@ This check only looks at your shop's own settings on the till — it never depen
 
 ### When TSE signing can't be reached mid-sale
 
-If a fiscal signing plugin is installed, the till asks it to sign each sale at the moment of payment (this takes up to a few seconds when the signing service is slow). When the signing service can't be reached — or the till already knows it's offline — the sale still completes normally: checkout is never blocked by the network. Instead, the gap is recorded openly:
+If a fiscal signing plugin is installed, the till asks it to sign each sale at the moment of payment (this takes up to a few seconds when the signing service is slow). When the signing service can't be reached — or the till already knows it's offline — the sale still completes normally: checkout is never blocked by the network. Instead, the gap is recorded openly, permanently:
 
 - the sale is flagged as unsigned in the audit trail,
-- the customer receipt carries a notice that TSE signing was unavailable,
-- a warning appears in the till's problems list, and
-- the till keeps retrying automatically in the background, every couple of minutes, until the sale is signed — each recovered sale gets its own entry in the audit trail.
+- the customer receipt carries a notice that the sale was recorded without a TSE signature,
+- and a warning appears in the till's problems list.
 
-A signing outage never pauses selling by itself — whether the cause is the network or the signing service, the till keeps completing sales and recording the gap as described above. Once a background retry signs a sale, the recovery is recorded in the audit trail and any later reprint of that receipt comes out clean, without the outage notice. (The system-of-record pause described earlier on this page is a separate safeguard; a signing outage does not trigger it.)
+This is permanent, not a pending recovery: the till does not retry signing a sale after it has completed. TSE providers (fiskaly's own guidance for the German SIGN DE service, among others) do not permit signing a transaction after the fact, so a sale that fails to sign at the moment of payment stays on the till's own records as unsigned — the notice on the receipt and in the audit trail is the final word on that sale, not a placeholder waiting to be replaced. A signing outage never pauses selling by itself — whether the cause is the network or the signing service, the till keeps completing sales and recording the gap exactly as described above. (The system-of-record pause described earlier on this page is a separate safeguard; a signing outage does not trigger it.)
 
 ### When a sale can't be signed at all
 
-Separately from an outage, a signing plugin can say that one specific sale can't be signed as it stands — for example a tip or a discount that its signing service can't reconcile into a valid receipt record. This is different from the service being unreachable: it's a property of that one sale, so retrying it every couple of minutes wouldn't help. The sale still completes normally, and the same three things happen as with an outage — it's flagged in the audit trail, a warning appears in the till's problems list, and the till keeps trying again in the background (on a much longer interval than an outage retry, since the situation won't change on its own) — but the customer receipt notice reads differently: it says the sale could not be signed as presented, not that TSE signing was unavailable, so it never suggests a connectivity problem that didn't happen. As with an outage, a later successful retry is recorded and any reprint comes out clean.
+Separately from an outage, a signing plugin can say that one specific sale can't be signed as it stands — for example a tip or a discount that its signing service can't reconcile into a valid receipt record. This is different from the service being unreachable: it's a property of that one sale. The sale still completes normally, and the same things happen as with an outage — it's flagged in the audit trail and a warning appears in the till's problems list — but the customer receipt notice reads differently: it says the sale could not be signed as presented, not that TSE signing was unavailable, so it never suggests a connectivity problem that didn't happen. As with an outage, this is permanent — the till does not attempt to sign the sale again later.
 
 ### The TSE signature block on receipts
 

@@ -193,10 +193,12 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// the sale is already committed — a failed (or known-offline-skipped)
 	// signing dispatch is now DECLARED, never unwound: journal marker,
 	// receipt outage notice (derived from that marker by both render
-	// paths), operator Problem, background retry. Best-effort, log-only on
-	// failure, exactly like the unsigned_override block above.
+	// paths), operator Problem. The declaration is permanent — signing is
+	// never re-attempted for a completed sale (ADR-0056, ut-docs#839).
+	// Best-effort, log-only on failure, exactly like the unsigned_override
+	// block above.
 	if signRes.Outcome.isFailure() || signRes.Outcome == fiscalSignSkippedOffline {
-		declareUnsignedFiscalSale(ctx, d, repo, saleID, actorID, signRes)
+		declareUnsignedFiscalSale(ctx, repo, saleID, actorID, signRes)
 	}
 	// ut-docs#585 (contract v1.1.0): an approved answer that carried the §6
 	// KassenSichV evidence gets it persisted against the sale so both
@@ -898,10 +900,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// proceed-and-declare, ut-docs#835): derived from the sale's own
 		// audit rows — NOT a gate/settings re-evaluation, since this is a
 		// per-sale outcome, not current-settings state — and suppressed
-		// once a later fiscal_signing_resolved row shows the background
-		// retry signed the sale (review of ut-docs#675: a resolved sale
-		// renders clean). The two notices are mutually exclusive: a sale
-		// carries at most one of the two audit actions.
+		// only when a historical fiscal_signing_resolved row shows a
+		// pre-1.4.0 build's background retry signed the sale back when
+		// that mechanism existed (no current code writes that row —
+		// ADR-0056, ut-docs#839). The two notices are mutually exclusive:
+		// a sale carries at most one of the two audit actions.
 		fiscalGapAction := saleFiscalSigningGapKind(r.Context(), repo, saleID)
 		unsignedFiscalSigning := fiscalGapAction == fiscalSignGapActionSigning
 		unsignedCannotSign := fiscalGapAction == fiscalSignGapActionCannotSign
