@@ -32,6 +32,15 @@ import (
 // exclusivity (ADR-0041 Decision B) without importing this package.
 const fiscalSignAskEvent = plugins.FiscalSignAskEvent
 
+// fiscalSignContractVersion identifies the payload SHAPE this build emits —
+// stamped onto each queued retry entry (pendingFiscalSignRetry.
+// ContractVersion) so the background tick can tell a freshly-enqueued entry
+// from one persisted by an OLDER build before replaying it (ut-docs#834's
+// review, SHOULD-FIX 3). Bump this alongside any future request-payload
+// field addition to fiscal-sign-ask.md, not on response-only/additive
+// changes like 1.1.0's `tse` evidence (which never touched the request).
+const fiscalSignContractVersion = "1.2.0"
+
 // fiscalSignAskBudget is the point's own tender-phase budget — ADR-0041
 // Decision D's 3000ms figure, sized for a legally-required cloud TSE round
 // trip. It is timed independently of the payment.<key>.authorize loop's own
@@ -60,6 +69,30 @@ type fiscalSignAskPayload struct {
 	// VATBreakdown aggregates the sale's lines per tax rate (net after
 	// line discounts, before any sale-level discount — see the contract).
 	VATBreakdown []fiscalSignAskVATLine `json:"vat_breakdown"`
+	// TaxInclusive is the till's pricing mode for this sale (ut-docs#834,
+	// contract 1.2.0) — mirrors pos.SaleInput.TaxInclusive /
+	// pos.ComputeTaxBasisPoints' own third argument, the exact switch
+	// buildFiscalSignPayload already used internally to compute Net/Tax
+	// below, just no longer hidden from the signer. Exclusive: Net is the
+	// true net, gross is Net+Tax. Inclusive (the German norm): Net already
+	// HOLDS the gross, tax is contained within it, gross is Net. A signer
+	// building a Beleg's gross-per-rate line from `net`/`tax` alone had to
+	// infer this by testing which reading reconciles with Total; this flag
+	// removes the inference.
+	TaxInclusive bool `json:"tax_inclusive"`
+	// SaleDiscount / ServiceCharge are the sale-level (not per-line)
+	// amounts already folded into Total but NOT reflected anywhere in
+	// VATBreakdown (ut-docs#834) — mirrors pos.SaleInput.SaleDiscount /
+	// .ServiceCharge verbatim (minor units, money.Money wire form).
+	// VATBreakdown's own net/tax per rate is aggregated purely from lines
+	// (after line-level discounts, per the existing doc note), so for a
+	// sale carrying either of these, sum(gross per rate) will NOT equal
+	// Total unless the signer apportions these two amounts across rates
+	// itself — see the contract for the recommended method. Omitted when
+	// zero (the common case) so an existing signer that never reads them
+	// sees no shape change.
+	SaleDiscount  int64 `json:"sale_discount,omitempty"`
+	ServiceCharge int64 `json:"service_charge,omitempty"`
 	// Retry marks a background re-attempt for an already-completed sale
 	// (the proceed-and-declare retry loop), so a signer can distinguish it
 	// from a live tender.
@@ -336,12 +369,15 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		})
 	}
 	return fiscalSignAskPayload{
-		SaleID:       in.SaleID,
-		Currency:     in.Currency,
-		Total:        total.Minor(),
-		TenderedAt:   now.Format(time.RFC3339),
-		Payments:     payments,
-		VATBreakdown: vat,
+		SaleID:        in.SaleID,
+		Currency:      in.Currency,
+		Total:         total.Minor(),
+		TenderedAt:    now.Format(time.RFC3339),
+		Payments:      payments,
+		VATBreakdown:  vat,
+		TaxInclusive:  in.TaxInclusive,
+		SaleDiscount:  in.SaleDiscount.Minor(),
+		ServiceCharge: in.ServiceCharge.Minor(),
 	}
 }
 
@@ -437,9 +473,10 @@ func declareUnsignedFiscalSale(ctx context.Context, d *common.Deps, repo *data.P
 
 	// (d) Queue the background retry (survives restart via settings).
 	if err := enqueueFiscalSignRetry(ctx, d, pendingFiscalSignRetry{
-		SaleID:   saleID,
-		FailedAt: now,
-		Payload:  res.Payload,
+		SaleID:          saleID,
+		FailedAt:        now,
+		Payload:         res.Payload,
+		ContractVersion: fiscalSignContractVersion,
 	}); err != nil {
 		logging.L().Errorf("fiscal signing: queue background retry for sale %s: %v", saleID, err)
 	}
@@ -475,6 +512,17 @@ type pendingFiscalSignRetry struct {
 	SaleID   string               `json:"sale_id"`
 	FailedAt string               `json:"failed_at"`
 	Payload  fiscalSignAskPayload `json:"payload"`
+	// ContractVersion is the fiscalSignContractVersion the enqueuing build
+	// emitted (ut-docs#834's review, SHOULD-FIX 3). An entry persisted by a
+	// build older than the current one (empty, or any value other than
+	// fiscalSignContractVersion) carries a Payload whose newer fields
+	// (TaxInclusive/SaleDiscount/ServiceCharge, added in 1.2.0) are Go zero
+	// values from a JSON blob that never had those keys — NOT genuine data
+	// about the sale. Replaying that verbatim would emit a confidently
+	// WRONG tax_inclusive=false for an inclusive-pricing (German) shop,
+	// worse than the pre-1.2.0 build's honest "no flag, please infer".
+	// fiscalSignRetryTick refreshes what it safely can before replay.
+	ContractVersion string `json:"contract_version,omitempty"`
 }
 
 // fiscalSignRetryInitialDelay/-Interval shape the retry loop, mirroring
@@ -586,6 +634,19 @@ func fiscalSignRetryTick(ctx context.Context, d *common.Deps) {
 	for _, entry := range pending {
 		payload := entry.Payload
 		payload.Retry = true
+		if entry.ContractVersion != fiscalSignContractVersion {
+			// Legacy entry (ut-docs#834's review, SHOULD-FIX 3): its
+			// TaxInclusive is a zero value from before this field existed,
+			// not real data — refresh it from the CURRENTLY configured
+			// pricing mode (store.tax_inclusive is a store-level setting
+			// that in practice is set once at onboarding, so "current" is
+			// the best available stand-in for "at tender time"). No such
+			// live source exists for SaleDiscount/ServiceCharge, which stay
+			// at their legacy zero — the same absence of information a
+			// pre-1.2.0 signer already had to live with, not a regression.
+			payload.TaxInclusive = d.CurrentState().TaxInclusive
+			logging.L().Warnf("fiscal signing retry: sale %s was queued before contract %s — refreshed tax_inclusive from the current config before replay", entry.SaleID, fiscalSignContractVersion)
+		}
 		res := askFiscalSign(ctx, bus, payload)
 		if res.Outcome == fiscalSignApproved {
 			resolvedIDs = append(resolvedIDs, entry.SaleID)

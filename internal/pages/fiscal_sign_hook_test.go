@@ -727,6 +727,174 @@ func TestFiscalSignPayload_PaymentAmountNetsChangeGiven(t *testing.T) {
 	}
 }
 
+// ut-docs#834 (contract 1.2.0): the payload must carry an explicit
+// tax_inclusive flag rather than leaving a signer to infer the pricing mode
+// by testing which reading of net/tax reconciles with Total.
+func TestFiscalSignPayload_TaxInclusiveFlagMirrorsSaleInput(t *testing.T) {
+	cases := []struct {
+		name         string
+		taxInclusive bool
+	}{
+		{name: "exclusive pricing", taxInclusive: false},
+		{name: "inclusive pricing (German norm)", taxInclusive: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := &pos.SaleInput{
+				SaleID:       "sale-tax-inclusive",
+				Currency:     "EUR",
+				TaxInclusive: tc.taxInclusive,
+				Lines: []pos.SaleLineInput{
+					{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(1190), TaxRateBasisPoints: 1900},
+				},
+			}
+			payload := buildFiscalSignPayload(in, time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC))
+			if payload.TaxInclusive != tc.taxInclusive {
+				t.Fatalf("payload.TaxInclusive = %v, want %v", payload.TaxInclusive, tc.taxInclusive)
+			}
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(raw, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := wire["tax_inclusive"]; !ok || got != tc.taxInclusive {
+				t.Fatalf("wire payload tax_inclusive = %v (present=%v), want %v", got, ok, tc.taxInclusive)
+			}
+		})
+	}
+}
+
+// ut-docs#834 (contract 1.2.0): sale-level discount/service charge are
+// folded into Total but never reflected in VATBreakdown (which is aggregated
+// purely from lines) — a signer needs the raw amounts to apportion them
+// across rates itself. Zero amounts stay omitted (omitempty) so an existing
+// signer that never reads these two fields sees no shape change on the
+// common no-sale-level-adjustment sale.
+func TestFiscalSignPayload_SaleDiscountAndServiceChargeBreakout(t *testing.T) {
+	in := &pos.SaleInput{
+		SaleID:        "sale-discount-service",
+		Currency:      "EUR",
+		SaleDiscount:  money.FromMinor(200),
+		ServiceCharge: money.FromMinor(150),
+		Lines: []pos.SaleLineInput{
+			{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(1000), TaxRateBasisPoints: 1900},
+		},
+	}
+	payload := buildFiscalSignPayload(in, time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC))
+	if payload.SaleDiscount != 200 {
+		t.Fatalf("payload.SaleDiscount = %d, want 200", payload.SaleDiscount)
+	}
+	if payload.ServiceCharge != 150 {
+		t.Fatalf("payload.ServiceCharge = %d, want 150", payload.ServiceCharge)
+	}
+	// Pin the reconciliation the contract doc promises (exclusive pricing:
+	// total = subtotal - sale_discount + service_charge + tax-on-subtotal):
+	// 1000 - 200 + 150 + 190 (19% of the undiscounted 1000 line net) = 1140.
+	// Catches future drift between buildFiscalSignPayload and
+	// pos.computeSaleTotals (ut-docs#834's review, NIT 9).
+	if payload.Total != 1140 {
+		t.Fatalf("payload.Total = %d, want 1140", payload.Total)
+	}
+	// The non-zero amounts must actually reach the wire under their
+	// contract-documented snake_case keys, not just the Go struct fields —
+	// a wrong/renamed json tag would pass the Go-field assertions above but
+	// silently break every real consumer (ut-docs#834's review,
+	// SHOULD-FIX 6).
+	rawNonZero, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wireNonZero map[string]any
+	if err := json.Unmarshal(rawNonZero, &wireNonZero); err != nil {
+		t.Fatal(err)
+	}
+	if got := wireNonZero["sale_discount"]; got != float64(200) {
+		t.Fatalf(`wire "sale_discount" = %v, want 200`, got)
+	}
+	if got := wireNonZero["service_charge"]; got != float64(150) {
+		t.Fatalf(`wire "service_charge" = %v, want 150`, got)
+	}
+
+	// A sale with neither omits both fields on the wire.
+	plain := &pos.SaleInput{
+		SaleID:   "sale-no-sale-level-adjustments",
+		Currency: "EUR",
+		Lines: []pos.SaleLineInput{
+			{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(1000), TaxRateBasisPoints: 1900},
+		},
+	}
+	raw, err := json.Marshal(buildFiscalSignPayload(plain, time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wire["sale_discount"]; ok {
+		t.Fatalf("expected sale_discount omitted on the wire when zero, got %v", wire["sale_discount"])
+	}
+	if _, ok := wire["service_charge"]; ok {
+		t.Fatalf("expected service_charge omitted on the wire when zero, got %v", wire["service_charge"])
+	}
+}
+
+// ut-docs#834's review (SHOULD-FIX 3): an entry a PRE-1.2.0 build queued
+// carries no ContractVersion, so its persisted TaxInclusive is a Go zero
+// value, not real sale-time data. Replaying it verbatim would emit a
+// confidently WRONG tax_inclusive=false for an inclusive-pricing (German)
+// shop. The tick must refresh such a legacy entry's TaxInclusive from the
+// CURRENTLY configured pricing mode before replay, while leaving a
+// current-version entry's genuine (possibly also false) value untouched.
+func TestFiscalSignRetry_LegacyEntryRefreshesTaxInclusiveFromCurrentConfig(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	ctx := context.Background()
+	dp.UpdateState(func(s *common.RuntimeState) { s.TaxInclusive = true })
+
+	var got []fiscalSignAskPayload
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-legacy", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		var p fiscalSignAskPayload
+		if err := json.Unmarshal(ev.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, p)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	if err := savePendingFiscalSignRetries(ctx, dp, []pendingFiscalSignRetry{
+		// No ContractVersion set -- simulates an entry a pre-1.2.0 build
+		// persisted, where TaxInclusive: false is a zero value, not data.
+		{SaleID: "sale-legacy", FailedAt: "2026-08-15T09:00:00Z",
+			Payload: fiscalSignAskPayload{SaleID: "sale-legacy", TaxInclusive: false}},
+		// Current-version entry: TaxInclusive: false is real sale-time data
+		// and must survive the tick unchanged even though the current
+		// config (set above) is true.
+		{SaleID: "sale-current", FailedAt: "2026-08-15T09:01:00Z",
+			Payload:         fiscalSignAskPayload{SaleID: "sale-current", TaxInclusive: false},
+			ContractVersion: fiscalSignContractVersion},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fiscalSignRetryTick(ctx, dp)
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 replayed payloads, got %d: %+v", len(got), got)
+	}
+	byID := map[string]fiscalSignAskPayload{}
+	for _, p := range got {
+		byID[p.SaleID] = p
+	}
+	if !byID["sale-legacy"].TaxInclusive {
+		t.Fatal("legacy entry (no ContractVersion) must have TaxInclusive refreshed from the current config (true), got false")
+	}
+	if byID["sale-current"].TaxInclusive {
+		t.Fatal("current-version entry's genuine TaxInclusive=false must not be overwritten by the current config")
+	}
+}
+
 // --- ut-docs#585: §6 KassenSichV TSE evidence on "approved" (contract 1.1.0)
 
 // The parsed dispatch result carries the optional `tse` evidence through to
