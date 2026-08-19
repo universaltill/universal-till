@@ -4,8 +4,8 @@
 // plugin whose backend is "down" — it answers every ask with the declared
 // unreachable status, so the e2e tests can prove the proceed-and-declare
 // path (sale completes anyway, journal marker, receipt outage notice,
-// operator Problem, background retry queued) through the REAL wazero
-// runtime. Counterpart of testdata/fiscalsign_guest.
+// operator Problem — permanent, never re-signed, ADR-0056/ut-docs#839)
+// through the REAL wazero runtime. Counterpart of testdata/fiscalsign_guest.
 package main
 
 import "fmt"
