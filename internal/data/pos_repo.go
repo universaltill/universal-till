@@ -1538,8 +1538,8 @@ SELECT COALESCE(json_extract(data_json, '$.reason'), ''), COUNT(*),
 FROM audit_log
 WHERE entity_type = 'shift' AND action = 'cash_adjustment'
   AND datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
-GROUP BY json_extract(data_json, '$.reason')
-ORDER BY ABS(net) DESC`, fromStr, toStr)
+GROUP BY 1
+ORDER BY ABS(net) DESC, COUNT(*) DESC, 1`, fromStr, toStr)
 	if err != nil {
 		return nil, fmt.Errorf("cash adjustments by reason: %w", err)
 	}

@@ -143,9 +143,14 @@ func TestCashAdjustmentsByReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Two Pfandrückgabe payouts (negative) in-window, same reason.
+	// Two Pfandrückgabe payouts (negative) in-window, same reason. Kept
+	// larger in magnitude than the top-up below on purpose: plain `net
+	// DESC` would rank the positive top-up first (2000 > -5300), so this
+	// only comes out ahead under the intended `ABS(net) DESC` — a
+	// same-order fixture wouldn't actually pin that behavior (caught by
+	// mutation-testing this test during review).
 	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "cash_adjustment",
-		map[string]any{"amount": -500, "reason": "Pfandrückgabe"}, relDays(-1), ""); err != nil {
+		map[string]any{"amount": -5000, "reason": "Pfandrückgabe"}, relDays(-1), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "cash_adjustment",
@@ -162,6 +167,12 @@ func TestCashAdjustmentsByReason(t *testing.T) {
 		map[string]any{"amount": 9999, "reason": "Pfandrückgabe"}, relDays(-1), ""); err != nil {
 		t.Fatal(err)
 	}
+	// A cash_adjustment action on a non-'shift' entity must not be picked
+	// up either -- pins the entity_type filter, not just the action one.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "sale", "sale1", "cash_adjustment",
+		map[string]any{"amount": 8888, "reason": "Pfandrückgabe"}, relDays(-1), ""); err != nil {
+		t.Fatal(err)
+	}
 	// Outside the window.
 	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "cash_adjustment",
 		map[string]any{"amount": -100, "reason": "Pfandrückgabe"}, relDays(-30), ""); err != nil {
@@ -175,12 +186,12 @@ func TestCashAdjustmentsByReason(t *testing.T) {
 	if len(totals) != 2 {
 		t.Fatalf("expected 2 reasons grouped, got %+v", totals)
 	}
-	// ORDER BY ABS(net) DESC: the top-up (2000) outranks the combined
-	// Pfandrückgabe payout (-800).
-	if totals[0].Reason != "float top-up" || totals[0].Count != 1 || totals[0].Amount != 2000 {
+	// ORDER BY ABS(net) DESC: the combined Pfandrückgabe payout (-5300)
+	// outranks the top-up (2000) despite being the smaller signed value.
+	if totals[0].Reason != "Pfandrückgabe" || totals[0].Count != 2 || totals[0].Amount != -5300 {
 		t.Fatalf("unexpected first row: %+v", totals[0])
 	}
-	if totals[1].Reason != "Pfandrückgabe" || totals[1].Count != 2 || totals[1].Amount != -800 {
+	if totals[1].Reason != "float top-up" || totals[1].Count != 1 || totals[1].Amount != 2000 {
 		t.Fatalf("unexpected second row: %+v", totals[1])
 	}
 }
