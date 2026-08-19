@@ -191,21 +191,22 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// as the override line above — the sale's own unsigned_fiscal_signing /
 	// unsigned_fiscal_cannot_sign marker, written by completeTender at
 	// tender time, decides the notice; a reprint long after the fact still
-	// shows what happened to THIS sale. Suppressed once the background
-	// retry's fiscal_signing_resolved row shows the sale WAS signed after
-	// all — a resolved sale reprints clean (review of ut-docs#675). The two
-	// notices are worded differently on purpose (ut-docs#835): a genuine
-	// outage vs. a signer's deterministic "cannot sign this one" must never
-	// look like the same thing.
+	// shows what happened to THIS sale. Suppressed only for a HISTORICAL
+	// fiscal_signing_resolved row a pre-1.4.0 build's background retry
+	// wrote — no current code writes that row (ADR-0056, ut-docs#839); the
+	// gap is permanent, so the notice states it as a fact, never a promise
+	// of later signing. The two notices are worded differently on purpose
+	// (ut-docs#835): a genuine outage vs. a signer's deterministic "cannot
+	// sign this one" must never look like the same thing.
 	switch saleFiscalSigningGapKind(ctx, data.NewPOSRepo(d.Db), detail.ID) {
 	case fiscalSignGapActionSigning:
-		doc.Meta = append(doc.Meta, "TSE signing was unavailable when this sale was recorded; signing is retried automatically.")
+		doc.Meta = append(doc.Meta, "TSE unreachable — this receipt was recorded without a TSE signature and will not be signed later.")
 	case fiscalSignGapActionCannotSign:
-		doc.Meta = append(doc.Meta, "This sale could not be signed as presented; signing is retried automatically.")
+		doc.Meta = append(doc.Meta, "This sale could not be signed as presented — the receipt was recorded without a TSE signature and will not be signed later.")
 	}
 	// ut-docs#585: the sale's recorded §6 KassenSichV TSE evidence, when any
 	// — same per-sale derivation as the two notices above (the sale's own
-	// fiscal_tse_signatures row, written at tender/retry time). Plain-text
+	// fiscal_tse_signatures row, written at tender time). Plain-text
 	// lines only on this path (ESC/POS QR raster support is a declared
 	// non-goal for #585); fields the signer didn't return are skipped —
 	// never placeholders — and a read error degrades to no lines, same

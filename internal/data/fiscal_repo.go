@@ -27,9 +27,8 @@ type FiscalTSESignature struct {
 
 // RecordFiscalTSESignature stores one sale's TSE evidence. Idempotent by
 // design (INSERT ... ON CONFLICT DO NOTHING on the sale_id primary key): a
-// duplicated bookkeeping call for the same sale — or a background-retry
-// re-sign of a sale whose first evidence already landed — neither errors nor
-// duplicates nor overwrites the first recorded evidence.
+// duplicated bookkeeping call for the same sale never errors, duplicates, or
+// overwrites the first recorded evidence.
 func (r *POSRepo) RecordFiscalTSESignature(ctx context.Context, sig FiscalTSESignature) error {
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO fiscal_tse_signatures

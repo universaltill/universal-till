@@ -32,18 +32,17 @@ Bu denetim yalnızca mağazanızın kasadaki kendi ayarlarına bakar — asla a�
 
 ### Satış sırasında TSE imzalamaya ulaşılamazsa
 
-Bir mali imzalama eklentisi kuruluysa, kasa her satışı ödeme anında imzalatmak ister (imzalama hizmeti yavaşsa bu birkaç saniye sürebilir). İmzalama hizmetine ulaşılamadığında — veya kasa zaten çevrimdışı olduğunu biliyorsa — satış yine normal şekilde tamamlanır: ödeme asla ağ yüzünden engellenmez. Bunun yerine eksik açıkça kaydedilir:
+Bir mali imzalama eklentisi kuruluysa, kasa ödeme anında her satışı imzalamasını ister (imzalama hizmeti yavaşsa bu birkaç saniye sürebilir). İmzalama hizmetine ulaşılamadığında — ya da kasa zaten çevrimdışı olduğunu biliyorsa — satış yine normal şekilde tamamlanır: ödeme hiçbir zaman ağ yüzünden engellenmez. Bunun yerine, eksiklik açıkça ve kalıcı olarak kaydedilir:
 
-- satış, denetim kaydında imzasız olarak işaretlenir,
-- müşteri fişinde TSE imzalamanın kullanılamadığına dair bir not yer alır,
-- kasanın sorun listesinde bir uyarı görünür ve
-- kasa, satış imzalanana kadar arka planda birkaç dakikada bir otomatik olarak yeniden dener — kurtarılan her satış denetim kaydına kendi girişini alır.
+- satış denetim kaydında imzasız olarak işaretlenir,
+- müşteri fişinde satışın TSE imzası olmadan kaydedildiğine dair bir not yer alır,
+- ve kasanın sorun listesinde bir uyarı görünür.
 
-İmzalama kesintisi tek başına satışı asla duraklatmaz — neden ağ da olsa imzalama hizmeti de olsa, kasa satışları tamamlamaya ve açığı yukarıda anlatıldığı gibi kaydetmeye devam eder. Arka plandaki bir yeniden deneme satışı imzaladığında, kurtarma denetim kaydına işlenir ve o fişin sonraki her yeniden baskısı kesinti notu olmadan, temiz çıkar. (Bu sayfada daha önce anlatılan resmi kayıt modu duraklatması ayrı bir güvencedir; imzalama kesintisi onu tetiklemez.)
+Bu kalıcıdır, bekleyen bir kurtarma değildir: kasa, bir satış tamamlandıktan sonra onu imzalamayı yeniden denemez. TSE sağlayıcıları (Almanya'daki SIGN DE hizmeti için fiskaly'nin kendi kılavuzu dahil) bir işlemin sonradan imzalanmasına izin vermez, bu yüzden ödeme anında imzalanamayan bir satış, kasanın kendi kayıtlarında imzasız kalır — fişteki ve denetim kayıtındaki not, o satış hakkındaki son sözdür, değiştirilmeyi bekleyen bir yer tutucu değildir. Bir imzalama kesintisi satışı asla kendiliğinden durdurmaz — neden ağ olsun, imzalama hizmeti olsun, kasa satışları tamamlamaya ve eksikliği yukarıda açıklandığı gibi kaydetmeye devam eder. (Bu sayfada daha önce açıklanan duraklama ayrı bir güvenlik önlemidir; bir imzalama kesintisi bunu tetiklemez.)
 
-### Bir satış hiç imzalanamadığında
+### Bir satış hiçbir şekilde imzalanamıyorsa
 
-Kesintiden ayrı olarak, imzalama eklentisi belirli bir satışın olduğu haliyle imzalanamayacağını bildirebilir — örneğin imzalama hizmetinin geçerli bir fiş kaydına dönüştüremediği bir bahşiş veya indirim. Bu, hizmete ulaşılamamasından farklıdır: bu, o tek satışa özgü bir durumdur, bu yüzden birkaç dakikada bir yeniden denemek işe yaramaz. Satış yine normal şekilde tamamlanır ve kesintiyle aynı üç şey olur — denetim kaydında işaretlenir, kasanın sorun listesinde bir uyarı görünür ve kasa arka planda yeniden denemeye devam eder (durum kendiliğinden değişmeyeceği için kesinti yeniden denemesinden çok daha uzun bir aralıkla) — ama müşteri fişindeki not farklıdır: TSE imzalamanın kullanılamadığını değil, satışın olduğu haliyle imzalanamadığını belirtir, böylece hiçbir zaman yaşanmamış bir bağlantı sorununu ima etmez. Kesintide olduğu gibi, sonraki başarılı bir yeniden deneme kaydedilir ve yeniden baskı temiz çıkar.
+Kesintiden ayrı olarak, imzalama eklentisi belirli bir satışın olduğu haliyle imzalanamayacağını bildirebilir — örneğin imzalama hizmetinin geçerli bir fiş kaydına dönüştüremediği bir bahşiş veya indirim. Bu, hizmete ulaşılamamasından farklıdır: bu, o tek satışa özgü bir durumdur. Satış yine normal şekilde tamamlanır ve kesintiyle aynı şeyler olur — denetim kaydında işaretlenir ve kasanın sorun listesinde bir uyarı görünür — ama müşteri fişindeki not farklıdır: TSE imzalamanın kullanılamadığını değil, satışın olduğu haliyle imzalanamadığını belirtir, böylece hiçbir zaman yaşanmamış bir bağlantı sorununu ima etmez. Kesintide olduğu gibi, bu kalıcıdır — kasa daha sonra satışı yeniden imzalamayı denemez.
 
 ### Fişlerdeki TSE imza bloğu
 

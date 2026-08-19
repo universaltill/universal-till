@@ -57,13 +57,15 @@ const (
 	// also drop an entry from Settings without installing it — this is a
 	// helpful default, not a lock-in.
 	KeyPendingBasePlugins = "setup.pending_base_plugins"
-	// KeyPendingFiscalSignRetries holds the JSON list of sales that
-	// completed UNSIGNED under fiscal.sign.ask's proceed-and-declare policy
-	// (ADR-0044 Decision 1, ut-docs#675): appended by the tender path the
-	// moment a signing dispatch fails (or is skipped known-offline), and
-	// drained entry-by-entry by the background retry loop
-	// (pages.fiscalSignRetryTick) once the signing backend answers again.
-	// Empty/unset means no signing backlog.
+	// KeyPendingFiscalSignRetries used to hold the JSON list of sales
+	// queued for background re-signing under fiscal.sign.ask's old
+	// proceed-and-declare retry loop (ADR-0044 Decision 1, ut-docs#675).
+	// That retry mechanism was removed outright (ADR-0056, ut-docs#839 —
+	// TSE vendors do not permit belated signing of a completed
+	// transaction), so this key is READ ONLY by the one-time boot
+	// migration (pages.dropStaleFiscalSignRetryQueue), which clears any
+	// value a pre-1.4.0 build left behind. No live code path ever writes
+	// it.
 	KeyPendingFiscalSignRetries = "fiscal.pending_sign_retries"
 )
 
