@@ -147,6 +147,9 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 			t.Fatalf("rewind payments_archive.%s column: %v", col, err)
 		}
 	}
+	// Migration 054 adds the `tables` table and held_sales.table_id -- same
+	// non-idempotent replay problem (ut-docs#814).
+	rewindTables054(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -170,5 +173,30 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	}
 	if v != "true" {
 		t.Fatalf("store.tax_inclusive = %q after upgrade, want %q untouched", v, "true")
+	}
+}
+
+// rewindTables054 undoes migration 054's non-idempotent DDL (the table
+// floor plan's `tables` table plus held_sales.table_id, ut-docs#814) — and,
+// riding along, 055's (held_sales_archive.table_id, added 2026-08-19 to keep
+// the archive twin column-identical to held_sales per 040's own invariant)
+// — so the upgrade tests in this package — which rewind schema_migrations
+// below 54 and reopen — can replay both cleanly. 055 has no independent
+// rewind path: it only exists because 054 does, so any test rewinding past
+// 054 must rewind 055 too, or the replay hits 055's ADD COLUMN a second
+// time. Order matters: SQLite refuses to drop a column an index still
+// references, so the index goes first; both `table_id` columns are dropped
+// before `tables` itself, since both reference it.
+func rewindTables054(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`DROP INDEX idx_held_sales_table`,
+		`ALTER TABLE held_sales DROP COLUMN table_id`,
+		`ALTER TABLE held_sales_archive DROP COLUMN table_id`,
+		`DROP TABLE tables`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 054 (%s): %v", q, err)
+		}
 	}
 }

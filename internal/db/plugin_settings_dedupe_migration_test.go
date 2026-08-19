@@ -59,9 +59,10 @@ func TestMigration052DedupesGlobalPluginSettings(t *testing.T) {
 		t.Fatalf("seed register-scoped rows: %v", err)
 	}
 
-	// Rewind the ledger so 052 replays on reopen. 052 is pure DML (no ALTER
-	// TABLE), so unlike the demo-seed migrations elsewhere in this package,
-	// there's no non-idempotent DDL to undo first.
+	// Rewind the ledger so 052 replays on reopen. 052 itself is pure DML (no
+	// ALTER TABLE), but 054 (which replays too) creates the floor-plan
+	// `tables` table and held_sales.table_id — undo that DDL first.
+	rewindTables054(t, d)
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
@@ -152,7 +153,9 @@ func TestMigration052IsIdempotentOnCleanData(t *testing.T) {
 		t.Fatalf("seeded row count = %d, want 1", n)
 	}
 
-	// Rewind and re-apply 052 against data it already left clean.
+	// Rewind and re-apply 052 against data it already left clean (054
+	// replays too, so its DDL is undone first).
+	rewindTables054(t, d)
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}

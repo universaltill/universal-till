@@ -1,0 +1,33 @@
+{{/* Live floor-plan SVG (universaltill/ut-docs#814, ADR-0054). Rendered as
+     the WHOLE <svg> element so an HTML-parsed HTMX swap keeps the SVG
+     namespace (a fragment rooted at <svg> parses into real SVG elements).
+     Positions are logical-canvas units (0..canvasSize), scaled to the
+     viewport by the viewBox — the same layout renders on phone and tablet.
+
+     Free vs occupied comes from ListTablesWithState's LEFT JOIN on
+     held_sales.table_id. Nothing writes that column until ut-docs#820
+     ships, so today every table renders free — correct, not a stub.
+     Disabled tables don't render on the map; they stay in the page's edit
+     list for reactivation. */}}
+<svg id="floorplan" viewBox="0 0 {{ .canvasSize }} {{ .canvasSize }}" preserveAspectRatio="xMidYMid meet"
+     role="img" aria-label="{{ T "tables.plan_aria" }}">
+  <rect class="floorplan-bg" x="0" y="0" width="{{ .canvasSize }}" height="{{ .canvasSize }}" rx="12" />
+  {{ range .tables }}{{ if .Enabled }}
+  <g class="table-node {{ if .Occupied }}table-occupied{{ else }}table-free{{ end }}"
+     data-id="{{ .ID }}" data-x="{{ .PosX }}" data-y="{{ .PosY }}"
+     transform="translate({{ .PosX }},{{ .PosY }})">
+    {{ if eq .Shape "round" }}
+    <circle class="table-shape" r="55" />
+    {{ else }}
+    <rect class="table-shape" x="-65" y="-45" width="130" height="90" rx="10" />
+    {{ end }}
+    <text class="table-label" y="{{ if or .Occupied (gt .SeatCount 0) }}-6{{ else }}6{{ end }}">{{ .Label }}</text>
+    {{ if .Occupied }}
+    {{/* Deliberately minimal: elapsed time only — no total, no customer. */}}
+    <text class="table-sub table-elapsed" y="20">{{ printf (T "tables.status.open_minutes") .OpenMinutes }}</text>
+    {{ else if gt .SeatCount 0 }}
+    <text class="table-sub" y="20">{{ printf (T "tables.seats_n") .SeatCount }}</text>
+    {{ end }}
+  </g>
+  {{ end }}{{ end }}
+</svg>
