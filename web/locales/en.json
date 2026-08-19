@@ -556,6 +556,7 @@
   "reports.business_day_start.label": "Business day starts at",
   "reports.by_day": "Sales by day",
   "reports.by_department": "Sales by department",
+  "reports.by_cash_adjustment_reason": "Cash adjustments by reason",
   "reports.by_method": "Payments by method",
   "reports.by_till": "Sales by till",
   "reports.day": "Day",

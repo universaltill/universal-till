@@ -34,3 +34,15 @@
   </table>
 </div>
 {{ end }}
+{{ if .CashAdjustments }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.by_cash_adjustment_reason" }}</h2>
+  <table class="table">
+    <tbody>
+      {{ range .CashAdjustments }}
+      <tr><td><strong>{{ .Reason }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Amount }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ end }}

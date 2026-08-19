@@ -556,6 +556,7 @@
   "reports.business_day_start.label": "يبدأ يوم العمل الساعة",
   "reports.by_day": "المبيعات حسب اليوم",
   "reports.by_department": "المبيعات حسب القسم",
+  "reports.by_cash_adjustment_reason": "التعديلات النقدية حسب السبب",
   "reports.by_method": "المدفوعات حسب الطريقة",
   "reports.by_till": "المبيعات حسب الصندوق",
   "reports.day": "اليوم",

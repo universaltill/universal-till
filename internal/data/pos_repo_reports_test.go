@@ -134,3 +134,53 @@ func TestPaymentBreakdown(t *testing.T) {
 		t.Fatalf("expected net amount 310 (amount - change_given), got %d", breakdown[0].Amount)
 	}
 }
+
+func TestCashAdjustmentsByReason(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if err := dbx.repo.InsertShift(ctx, nil, "shift1", "reg1", "user1", 5000, relDays(-3)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two Pfandrückgabe payouts (negative) in-window, same reason.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "cash_adjustment",
+		map[string]any{"amount": -500, "reason": "Pfandrückgabe"}, relDays(-1), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "cash_adjustment",
+		map[string]any{"amount": -300, "reason": "Pfandrückgabe"}, relDays(-2), ""); err != nil {
+		t.Fatal(err)
+	}
+	// A different, free-text reason, also in-window.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "cash_adjustment",
+		map[string]any{"amount": 2000, "reason": "float top-up"}, relDays(-1), ""); err != nil {
+		t.Fatal(err)
+	}
+	// A different action type on the same shift must not be picked up.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "note",
+		map[string]any{"amount": 9999, "reason": "Pfandrückgabe"}, relDays(-1), ""); err != nil {
+		t.Fatal(err)
+	}
+	// Outside the window.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "cash_adjustment",
+		map[string]any{"amount": -100, "reason": "Pfandrückgabe"}, relDays(-30), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	totals, err := dbx.repo.CashAdjustmentsByReason(ctx, winFrom(7), winTo())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(totals) != 2 {
+		t.Fatalf("expected 2 reasons grouped, got %+v", totals)
+	}
+	// ORDER BY ABS(net) DESC: the top-up (2000) outranks the combined
+	// Pfandrückgabe payout (-800).
+	if totals[0].Reason != "float top-up" || totals[0].Count != 1 || totals[0].Amount != 2000 {
+		t.Fatalf("unexpected first row: %+v", totals[0])
+	}
+	if totals[1].Reason != "Pfandrückgabe" || totals[1].Count != 2 || totals[1].Amount != -800 {
+		t.Fatalf("unexpected second row: %+v", totals[1])
+	}
+}
