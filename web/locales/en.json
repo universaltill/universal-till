@@ -1052,6 +1052,7 @@
   "users.role.admin": "admin",
   "users.role.cashier": "cashier",
   "users.role.manager": "manager",
+  "users.saved": "Saved.",
   "users.set_pin": "Set PIN",
   "users.title": "Users",
   "locations.title": "Locations",
@@ -1528,5 +1529,10 @@
   "elevation.summary.eod_settings_enabled": "Turn on the automatic end-of-day report, scheduled for %s.",
   "elevation.summary.eod_settings_disabled": "Turn off the automatic end-of-day report.",
   "elevation.summary.report_retention": "Change the report retention mode to %s.",
-  "elevation.summary.archive_export": "Export the report archive for %s – %s (%s)."
+  "elevation.summary.archive_export": "Export the report archive for %s – %s (%s).",
+  "elevation.summary.user_create": "Create user %s with the %s role.",
+  "elevation.summary.user_pin_set": "Set a new PIN for %s.",
+  "elevation.summary.user_activate": "Activate %s.",
+  "elevation.summary.user_deactivate": "Deactivate %s.",
+  "elevation.summary.user_role_change": "Change %s's role from %s to %s."
 }

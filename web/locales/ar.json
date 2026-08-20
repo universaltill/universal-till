@@ -1052,6 +1052,7 @@
   "users.role.admin": "مدير عام",
   "users.role.cashier": "صرّاف",
   "users.role.manager": "مدير",
+  "users.saved": "تم الحفظ.",
   "users.set_pin": "تعيين الرمز السري",
   "users.title": "المستخدمون",
   "locations.title": "المواقع",
@@ -1528,5 +1529,10 @@
   "elevation.summary.eod_settings_enabled": "تفعيل تقرير نهاية اليوم التلقائي، المجدول للساعة %s.",
   "elevation.summary.eod_settings_disabled": "إيقاف تقرير نهاية اليوم التلقائي.",
   "elevation.summary.report_retention": "تغيير وضع الاحتفاظ بالتقارير إلى %s.",
-  "elevation.summary.archive_export": "تصدير أرشيف التقارير من %s إلى %s (%s)."
+  "elevation.summary.archive_export": "تصدير أرشيف التقارير من %s إلى %s (%s).",
+  "elevation.summary.user_create": "إنشاء مستخدم %s بدور %s.",
+  "elevation.summary.user_pin_set": "تعيين رمز سري جديد لـ %s.",
+  "elevation.summary.user_activate": "تفعيل %s.",
+  "elevation.summary.user_deactivate": "إلغاء تفعيل %s.",
+  "elevation.summary.user_role_change": "تغيير دور %s من %s إلى %s."
 }
