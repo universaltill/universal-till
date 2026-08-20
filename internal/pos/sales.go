@@ -42,7 +42,13 @@ type SaleInput struct {
 	// whatever the checkout's basket already carries (Service.OrderType);
 	// persisted so a completed sale's receipt/journal/kitchen ticket can
 	// show it after the fact.
-	OrderType      string
+	OrderType string
+	// TableID (ut-docs#820, ADR-0054) is the dining table this sale was
+	// served at, or "" when none was assigned -- whatever the checkout's
+	// basket already carries (Service.TableID), persisted so a completed
+	// sale's receipt/journal/kitchen ticket can show it after the fact,
+	// same convention as OrderType above.
+	TableID        string
 	Lines          []SaleLineInput
 	Payments       []PaymentInput
 	OriginalSaleID string // for returns; creates sale_links entry when set
@@ -356,7 +362,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
-			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), serviceCharge.Minor(), in.Note, now, tenderType, in.OrderType, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
+			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), serviceCharge.Minor(), in.Note, now, tenderType, in.OrderType, in.TableID, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}

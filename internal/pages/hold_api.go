@@ -35,6 +35,60 @@ func truncateRunes(s string, max int) string {
 // (held_sales table) so they survive a till restart — offline-first.
 func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewHeldSalesRepo(d.Db)
+	// posRepo backs table-assignment reads (ut-docs#820): resolving a held
+	// sale's table_id to its current display label for the strip, and the
+	// free-table check the "move to a different table" handler enforces.
+	posRepo := data.NewPOSRepo(d.Db)
+
+	// renderHeldStrip builds the held-sales strip fragment -- the shared
+	// body behind both GET /ui/held (first paint / hx-trigger="held-changed"
+	// re-fetch) and POST /api/pos/held/table (re-rendered in place after a
+	// move, same as every other mutating handler here re-renders its own
+	// fragment). Table labels are resolved via a single ListTables call
+	// rather than teaching HeldSalesRepo about `tables` — display-only
+	// joins like this stay at the pages layer, same choice kitchenTicketFor
+	// makes for order-type text.
+	renderHeldStrip := func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		locale := httpx.ResolveLocale(w, r)
+		items, err := repo.List(ctx)
+		if err != nil {
+			items = nil
+		}
+		labelByTableID := map[string]string{}
+		if tables, err := posRepo.ListTables(ctx); err == nil {
+			for _, t := range tables {
+				labelByTableID[t.ID] = t.Label
+			}
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		var b strings.Builder
+		b.WriteString(`<div id="held-sales" class="held-strip" hx-get="/ui/held" hx-trigger="held-changed from:body" hx-swap="outerHTML">`)
+		if len(items) > 0 {
+			fmt.Fprintf(&b, `<span class="held-title">%s</span>`, template.HTMLEscapeString(httpx.T(locale, "hold.strip.title")))
+			funcs := httpx.FuncsFor(locale)
+			moneyFn, _ := funcs["money"].(func(v any) string)
+			for _, h := range items {
+				total := fmt.Sprintf("%d", h.TotalMinor)
+				if moneyFn != nil {
+					total = moneyFn(h.TotalMinor)
+				}
+				tableChip := ""
+				if h.TableID != "" {
+					label := labelByTableID[h.TableID]
+					if label == "" {
+						label = h.TableID
+					}
+					tableChip = fmt.Sprintf(` <span class="held-chip-table">%s</span>`, template.HTMLEscapeString(label))
+				}
+				fmt.Fprintf(&b,
+					`<button class="btn secondary held-chip" hx-post="/api/pos/resume" hx-vals='{"id":%q}' hx-target="#basket" hx-swap="outerHTML">%s · %d × · %s%s</button>`,
+					h.ID, template.HTMLEscapeString(h.Label), h.LineCount, template.HTMLEscapeString(total), tableChip)
+			}
+		}
+		b.WriteString(`</div>`)
+		_, _ = w.Write([]byte(b.String()))
+	}
 
 	renderBasket := func(w http.ResponseWriter, r *http.Request, toast, level string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -73,6 +127,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			TotalMinor: snap.Total.Minor(),
 			LineCount:  len(snap.Lines),
 			Payload:    string(payload),
+			TableID:    snap.TableID,
 		}
 		if err := repo.Insert(ctx, held); err != nil {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
@@ -117,31 +172,35 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Held-sales strip: chips the cashier taps to resume.
-	mux.HandleFunc("GET /ui/held", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /ui/held", renderHeldStrip)
+
+	// Move a held (parked) order onto a different table (ut-docs#820) --
+	// distinct from resuming it: the order stays parked, only its table_id
+	// changes. Rejects moving onto a table another held sale already
+	// occupies (IsTableFree), leaving the held sale untouched; a held sale
+	// may move back onto its own current table (IsTableFree's self-exclusion
+	// handles that as a no-op, not a rejection).
+	mux.HandleFunc("POST /api/pos/held/table", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		locale := httpx.ResolveLocale(w, r)
-		items, err := repo.List(ctx)
-		if err != nil {
-			items = nil
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		tableID := strings.TrimSpace(r.Form.Get("table_id"))
+		if id == "" {
+			renderHeldStrip(w, r)
+			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		var b strings.Builder
-		b.WriteString(`<div id="held-sales" class="held-strip" hx-get="/ui/held" hx-trigger="held-changed from:body" hx-swap="outerHTML">`)
-		if len(items) > 0 {
-			fmt.Fprintf(&b, `<span class="held-title">%s</span>`, template.HTMLEscapeString(httpx.T(locale, "hold.strip.title")))
-			funcs := httpx.FuncsFor(locale)
-			moneyFn, _ := funcs["money"].(func(v any) string)
-			for _, h := range items {
-				total := fmt.Sprintf("%d", h.TotalMinor)
-				if moneyFn != nil {
-					total = moneyFn(h.TotalMinor)
-				}
-				fmt.Fprintf(&b,
-					`<button class="btn secondary held-chip" hx-post="/api/pos/resume" hx-vals='{"id":%q}' hx-target="#basket" hx-swap="outerHTML">%s · %d × · %s</button>`,
-					h.ID, template.HTMLEscapeString(h.Label), h.LineCount, template.HTMLEscapeString(total))
+		if tableID != "" {
+			free, err := posRepo.IsTableFree(ctx, tableID, id)
+			if err != nil || !free {
+				renderHeldStrip(w, r)
+				return
 			}
 		}
-		b.WriteString(`</div>`)
-		_, _ = w.Write([]byte(b.String()))
+		if err := repo.SetTable(ctx, id, tableID); err != nil {
+			renderHeldStrip(w, r)
+			return
+		}
+		w.Header().Set("HX-Trigger", "held-changed")
+		renderHeldStrip(w, r)
 	})
 }

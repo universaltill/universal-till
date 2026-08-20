@@ -39,7 +39,7 @@ VALUES ('cash', 'Cash', 'cash', 1)`)
 
 	// subtotal 1000, discount 100, tax 180, total 1080 — exact minor units.
 	if err := repo.InsertSale(ctx, nil, saleID, receiptNo, "sale", "", "", "", "GBP",
-		1000, 100, 180, 1080, 0, "batch8 note", createdAt, "cash", "", true, "queued", 2, "", ""); err != nil {
+		1000, 100, 180, 1080, 0, "batch8 note", createdAt, "cash", "", "", true, "queued", 2, "", ""); err != nil {
 		t.Fatalf("InsertSale: %v", err)
 	}
 	// Insert line 2 first: ListSaleLineSnapshots/GetSaleDetail must order by line_no,
@@ -221,7 +221,7 @@ func TestPOSRepo_InsertSale_ReadBackRoundtrip(t *testing.T) {
 	// Duplicate receipt_no violates the sales UNIQUE constraint — checkout
 	// relies on this to make receipt reuse impossible.
 	err = repo.InsertSale(ctx, nil, "sale-dup", "000000001", "sale", "", "", "", "GBP",
-		1, 0, 0, 1, 0, "", created, "cash", "", false, "queued", 0, "", "")
+		1, 0, 0, 1, 0, "", created, "cash", "", "", false, "queued", 0, "", "")
 	if err == nil {
 		t.Fatal("InsertSale with duplicate receipt_no must fail")
 	}
@@ -248,7 +248,7 @@ VALUES ('itm-ot', 'OT-SKU', 'Order Type Item', 500, 1)`)
 
 	created := "2026-08-02T09:00:00Z"
 	if err := repo.InsertSale(ctx, nil, "sale-ot", "000000099", "sale", "", "", "", "GBP",
-		500, 0, 0, 500, 0, "", created, "cash", "takeaway", false, "synced", 0, "", ""); err != nil {
+		500, 0, 0, 500, 0, "", created, "cash", "takeaway", "", false, "synced", 0, "", ""); err != nil {
 		t.Fatalf("InsertSale: %v", err)
 	}
 	if err := repo.InsertSaleLine(ctx, nil, "sale-ot-l1", "sale-ot", 1, "itm-ot", "",
@@ -270,6 +270,71 @@ VALUES ('itm-ot', 'OT-SKU', 'Order Type Item', 500, 1)`)
 	}
 	if byID.OrderType != "takeaway" {
 		t.Fatalf("GetSaleDetailByID.OrderType = %q, want %q", byID.OrderType, "takeaway")
+	}
+}
+
+// TestPOSRepo_InsertSale_TableRoundtrip (ut-docs#820): a completed sale's
+// assigned table survives to GetSaleDetail/GetSaleDetailByID with its
+// LABEL resolved via a join against `tables`, not just the raw id -- the
+// receipt/kitchen-ticket rendering path (kitchenTicketFor) reads
+// TableLabel directly with no lookup of its own. Same shape as
+// TestPOSRepo_InsertSale_OrderTypeRoundtrip above.
+func TestPOSRepo_InsertSale_TableRoundtrip(t *testing.T) {
+	d := openBatch8DB(t, "table.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	mustExec(t, d, `INSERT OR IGNORE INTO items (id, sku, name, base_price, is_active)
+VALUES ('itm-tbl', 'TBL-SKU', 'Table Item', 500, 1)`)
+
+	tableID, err := repo.CreateTable(ctx, "T7", "Terrace", 4, "rect", 200, 300)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	created := "2026-08-02T09:00:00Z"
+	if err := repo.InsertSale(ctx, nil, "sale-tbl", "000000098", "sale", "", "", "", "GBP",
+		500, 0, 0, 500, 0, "", created, "cash", "", tableID, false, "synced", 0, "", ""); err != nil {
+		t.Fatalf("InsertSale: %v", err)
+	}
+	if err := repo.InsertSaleLine(ctx, nil, "sale-tbl-l1", "sale-tbl", 1, "itm-tbl", "",
+		"Table Item", "TBL-SKU", "", 1, 500, 0, 0, 0, 500, 500); err != nil {
+		t.Fatalf("InsertSaleLine: %v", err)
+	}
+
+	detail, ok, err := repo.GetSaleDetail(ctx, "000000098")
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetail: ok=%v err=%v", ok, err)
+	}
+	if detail.TableID != tableID {
+		t.Fatalf("GetSaleDetail.TableID = %q, want %q", detail.TableID, tableID)
+	}
+	if detail.TableLabel != "T7" {
+		t.Fatalf("GetSaleDetail.TableLabel = %q, want %q", detail.TableLabel, "T7")
+	}
+
+	byID, ok, err := repo.GetSaleDetailByID(ctx, "sale-tbl")
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetailByID: ok=%v err=%v", ok, err)
+	}
+	if byID.TableLabel != "T7" {
+		t.Fatalf("GetSaleDetailByID.TableLabel = %q, want %q", byID.TableLabel, "T7")
+	}
+
+	// A sale with no table assigned resolves both fields empty, not an error.
+	if err := repo.InsertSale(ctx, nil, "sale-notbl", "000000097", "sale", "", "", "", "GBP",
+		500, 0, 0, 500, 0, "", created, "cash", "", "", false, "synced", 0, "", ""); err != nil {
+		t.Fatalf("InsertSale (no table): %v", err)
+	}
+	if err := repo.InsertSaleLine(ctx, nil, "sale-notbl-l1", "sale-notbl", 1, "itm-tbl", "",
+		"Table Item", "TBL-SKU", "", 1, 500, 0, 0, 0, 500, 500); err != nil {
+		t.Fatalf("InsertSaleLine (no table): %v", err)
+	}
+	noTable, ok, err := repo.GetSaleDetail(ctx, "000000097")
+	if err != nil || !ok {
+		t.Fatalf("GetSaleDetail (no table): ok=%v err=%v", ok, err)
+	}
+	if noTable.TableID != "" || noTable.TableLabel != "" {
+		t.Fatalf("GetSaleDetail (no table) = id=%q label=%q, want both empty", noTable.TableID, noTable.TableLabel)
 	}
 }
 

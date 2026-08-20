@@ -27,6 +27,16 @@
             hx-post="/api/pos/order-type" hx-vals='{"order_type":"takeaway"}' hx-target="#basket" hx-swap="outerHTML">
       {{ if eq .OrderType "takeaway" }}✓ {{ end }}{{ T "basket.order_type.takeaway" }}</button>
   </div>
+  <!-- Table assignment (ut-docs#820, ADR-0054): current table + a picker of
+       free tables, loaded the same way the suggestions strip is below. -->
+  <div class="table-assignment" role="group" aria-label="{{ T "basket.table.label" }}">
+    <span class="table-current">{{ T "basket.table.label" }}: {{ if .TableLabel }}{{ .TableLabel }}{{ else }}{{ T "basket.table.none" }}{{ end }}</span>
+    {{ if .TableID }}
+      <button type="button" class="btn secondary btn-x" title="{{ T "basket.table.none" }}"
+              hx-post="/api/pos/table" hx-vals='{"table_id":""}' hx-target="#basket" hx-swap="outerHTML">✕</button>
+    {{ end }}
+  </div>
+  <div id="table-picker" class="table-picker" hx-get="/ui/pos/table-picker" hx-trigger="load" hx-swap="outerHTML"></div>
   <div class="basket-scroll">
     <table>
       <thead>

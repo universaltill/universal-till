@@ -43,6 +43,7 @@
     {{ if .StoreName }}<h2 class="receipt-store">{{ .StoreName }}</h2>{{ end }}
     {{ range .DesignHeader }}<div class="receipt-design-line"><small>{{ . }}</small></div>{{ end }}
     <h2>{{ T "receipt.title" }} #{{ .ReceiptNo }}</h2>
+    {{ if .TableLabel }}<p class="receipt-table"><small>{{ T "basket.table.label" }}: {{ .TableLabel }}</small></p>{{ end }}
     {{ if .OriginalReceiptNo }}<p><small>{{ T "receipt.return_for" }}: {{ .OriginalReceiptNo }}</small></p>{{ end }}
     {{ if .ShowBarcode }}<div class="barcode">{{ barcodesvg .ReceiptNo }}<small>{{ .ReceiptNo }}</small></div>{{ end }}
     <ul class="receipt-lines">

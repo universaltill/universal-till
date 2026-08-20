@@ -14,6 +14,7 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -174,6 +175,45 @@ UPDATE tables SET enabled = ?, updated_at = ? WHERE id = ?`, v, now, id)
 		return fmt.Errorf("set table enabled: %s not found", id)
 	}
 	return nil
+}
+
+// GetTable looks up a single table by id — the label-resolution lookup a
+// table-assignment handler (ut-docs#820) uses so pos.Service.SetTable can
+// be given the table's current label without the caller re-deriving it.
+func (r *POSRepo) GetTable(ctx context.Context, id string) (Table, bool, error) {
+	var t Table
+	var enabled int
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, label, area_zone, seat_count, shape, pos_x, pos_y, enabled, created_at, updated_at
+FROM tables WHERE id = ?`, id).Scan(&t.ID, &t.Label, &t.AreaZone, &t.SeatCount, &t.Shape, &t.PosX, &t.PosY, &enabled, &t.CreatedAt, &t.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return Table{}, false, nil
+	}
+	if err != nil {
+		return Table{}, false, fmt.Errorf("get table: %w", err)
+	}
+	t.Enabled = enabled == 1
+	return t, true, nil
+}
+
+// IsTableFree reports whether id has no open (held) order assigned to it —
+// the check a "move this order to a different table" handler (ut-docs#820)
+// must pass before accepting the move, so an order can never silently land
+// on a table another order already occupies. excludeHeldSaleID is the held
+// sale BEING moved: it may already legitimately hold the FROM table (or,
+// moving between two of its own past holds, could otherwise self-block a
+// no-op move onto its own current table), so its own row is excluded from
+// the occupancy check. Pass "" when there is no held sale to exclude (e.g.
+// assigning a table to a live, not-yet-held basket).
+func (r *POSRepo) IsTableFree(ctx context.Context, id string, excludeHeldSaleID string) (bool, error) {
+	var occupied int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM held_sales WHERE table_id = ? AND id != ?`,
+		id, excludeHeldSaleID).Scan(&occupied)
+	if err != nil {
+		return false, fmt.Errorf("is table free: %w", err)
+	}
+	return occupied == 0, nil
 }
 
 // ListTablesWithState returns every table with its live free/occupied state:

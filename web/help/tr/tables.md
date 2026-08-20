@@ -22,4 +22,4 @@ Dükkanınızın kat planını çizin — adı, alanı, koltuk sayısı ve şekl
 
 - Masada servis yapmayan bir dükkan bu sayfayı boş bırakabilir — masa eklenene kadar başka hiçbir yerde masayla ilgili bir şey görünmez.
 - Artık kullanmadığınız bir masayı silmek yerine devre dışı bırakın — plandan kaybolur ama geçmişi korunur ve daha sonra yeniden etkinleştirilebilir.
-- Bir siparişi bir masaya atamak (planın onu dolu göstermesi için) masa servisi takip çalışmasıyla gelecek; o zamana kadar her masa boş görünür.
+- Bir siparişi satış ekranındaki sepetten bir masaya atayın, ya da bekletilen siparişler şeridinden bekleyen bir siparişi başka bir masaya taşıyın — bkz. **Satış ve ödeme ekranı**. Plan, sipariş açık kaldığı sürece o masayı dolu gösterir; ödeme alındığında, taşındığında veya bekletilen sipariş silindiğinde tekrar boş görünür.

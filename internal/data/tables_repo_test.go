@@ -236,3 +236,61 @@ INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, c
 		t.Fatalf("T2 must stay free: %+v", t2)
 	}
 }
+
+// ut-docs#820: GetTable is the label-resolution lookup a table-assignment
+// handler uses so it can hand pos.Service.SetTable a resolved label without
+// re-deriving it from a full ListTables call.
+func TestGetTable(t *testing.T) {
+	_, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	if _, ok, err := repo.GetTable(ctx, "does-not-exist"); err != nil || ok {
+		t.Fatalf("expected no table, got ok=%v err=%v", ok, err)
+	}
+
+	id, err := repo.CreateTable(ctx, "T3", "Terrace", 2, "round", 400, 400)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	got, ok, err := repo.GetTable(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("GetTable: ok=%v err=%v", ok, err)
+	}
+	if got.ID != id || got.Label != "T3" || got.AreaZone != "Terrace" || got.SeatCount != 2 {
+		t.Fatalf("unexpected table: %+v", got)
+	}
+}
+
+// ut-docs#820: IsTableFree backs the "move a held order to a different
+// table" validation -- it must refuse to move onto a table another held
+// sale already occupies, but must NOT self-block moving a held sale back
+// onto (or off of) its own current table.
+func TestIsTableFree(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	free, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	busy, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 300, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if _, err := dbo.DB.Exec(`
+INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','',0,0,'{}',?)`, busy); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+
+	if ok, err := repo.IsTableFree(ctx, free, ""); err != nil || !ok {
+		t.Fatalf("expected T1 free, got ok=%v err=%v", ok, err)
+	}
+	if ok, err := repo.IsTableFree(ctx, busy, ""); err != nil || ok {
+		t.Fatalf("expected T2 occupied, got ok=%v err=%v", ok, err)
+	}
+	// h1 itself, moving off/back onto its own current table, must not be
+	// blocked by its own occupancy.
+	if ok, err := repo.IsTableFree(ctx, busy, "h1"); err != nil || !ok {
+		t.Fatalf("expected T2 free when excluding its own occupant h1, got ok=%v err=%v", ok, err)
+	}
+}

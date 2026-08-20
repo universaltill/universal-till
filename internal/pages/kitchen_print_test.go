@@ -55,6 +55,73 @@ func TestBuildKitchenTicket_IncludesLineModifiers(t *testing.T) {
 	}
 }
 
+// TestBuildKitchenTicket_IncludesTable (ut-docs#820, ADR-0054):
+// print.KitchenTicket.Table -- previously an unused free-text stub -- must
+// be populated from the real table a sale was assigned to, resolved via
+// GetSaleDetail's join against `tables`, the same way OrderType is resolved
+// via detail.OrderType above.
+func TestBuildKitchenTicket_IncludesTable(t *testing.T) {
+	chdirRoot(t)
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-table.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbase.Close()
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbase.DB.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-coffee','COFFEE','Flat White',370,1)`)
+	tableID, err := data.NewPOSRepo(dbase.DB).CreateTable(context.Background(), "T7", "Terrace", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, table_id) VALUES ('sale-1','R-0199','completed','sale','GBP',370,0,0,370,datetime('now'),?)`, tableID)
+	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-1','sale-1',1,'itm-coffee','Flat White',1,370,0,0,0,370,370)`)
+
+	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+	ticket, err := buildKitchenTicket(context.Background(), dp, "R-0199")
+	if err != nil {
+		t.Fatalf("buildKitchenTicket: %v", err)
+	}
+	if ticket.Table != "T7" {
+		t.Fatalf("ticket.Table = %q, want %q", ticket.Table, "T7")
+	}
+}
+
+// A sale with no table assigned must leave ticket.Table empty, not print a
+// stale/placeholder value.
+func TestBuildKitchenTicket_NoTableAssignedLeavesTableBlank(t *testing.T) {
+	chdirRoot(t)
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-no-table.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbase.Close()
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dbase.DB.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-coffee','COFFEE','Flat White',370,1)`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-1','R-0299','completed','sale','GBP',370,0,0,370,datetime('now'))`)
+	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-1','sale-1',1,'itm-coffee','Flat White',1,370,0,0,0,370,370)`)
+
+	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+	ticket, err := buildKitchenTicket(context.Background(), dp, "R-0299")
+	if err != nil {
+		t.Fatalf("buildKitchenTicket: %v", err)
+	}
+	if ticket.Table != "" {
+		t.Fatalf("ticket.Table = %q, want empty", ticket.Table)
+	}
+}
+
 // TestBuildKitchenTicket_IncludesOrderType covers ut-docs#181: order_type
 // is now persisted on the sales row (was tracked in-memory only and
 // discarded at completion), so a kitchen ticket built from a real
