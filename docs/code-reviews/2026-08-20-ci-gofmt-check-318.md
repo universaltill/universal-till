@@ -72,6 +72,25 @@ Two non-blocking nits raised and handled:
 - `bash scripts/ci/guard-data-access.sh`, `guard-kiosk-engine.sh`,
   `guard-plugin-menu-read.sh` all pass.
 
+## Post-review: CI red, fixed same-session
+
+First CI run failed `guard-docs-shots` — `internal/pages/fiscal_sign_hook.go` and
+`users_page.go` are non-test `.go` files under `internal/pages/` that register a
+screenshotted route, so the guard hashes them whole-file; the gofmt-only byte
+change to those two files was enough to change `surface_sha256` even though
+nothing user-visible changed. This is the guard working as designed (see its
+own doc comment on the `import_page.go`/`mergeTakeawayOverrides` precedent), not
+a false alarm to route around.
+
+Ran `make docs-shots` (pre-installed Chromium via `e2e/scripts/docs-shots.sh`'s
+cloud-session fallback — no network browser install needed). 80/80 screenshot
+tests passed; diffed every changed PNG against its prior version — only
+`alerts` and `designer` (all 4 locales) changed pixels at all, and the diff
+bbox in each is a small clock/timestamp region ("17:00" → "00:12", etc.) —
+confirmed by cropping the diff region on both before/after images. No topic
+markdown hash changed. Committed the regenerated manifest + PNGs; `guard-docs-shots.sh`
+now passes locally.
+
 ## Deferred / out of scope
 
 - Reworking the new step into a standalone `guard-gofmt.sh` + regression test to
