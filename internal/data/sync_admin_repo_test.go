@@ -198,6 +198,42 @@ func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
 	}
 }
 
+// ut-docs#844: fiscal.pending_sign_retries (common.KeyPendingFiscalSignRetries)
+// is inherently per-till, tender-time bookkeeping — it was never something
+// that should sync between tills — but was missing from PerTillSettingPrefixes.
+// During a mixed-version rollout a pre-1.4.0 primary could re-seed its stale
+// retry queue onto an already-migrated 1.4.0 replica after that replica's
+// one-time boot migration (pages.dropStaleFiscalSignRetryQueue, ADR-0056) had
+// already cleared it — the migration only runs at boot, not on every sync.
+func TestAdminDumpApplyRoundTrip_FiscalPendingSignRetriesNeverSyncs(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// The pre-1.4.0 primary still carries a stale retry queue.
+	mustExec(t, primary, `INSERT INTO settings (key, value) VALUES ('fiscal.pending_sign_retries', '["sale-1","sale-2"]')`)
+
+	repo := NewSyncAdminRepo(primary.DB)
+	bundle, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["settings"] {
+		if rec["key"] == "fiscal.pending_sign_retries" {
+			t.Fatal("fiscal.pending_sign_retries leaked into the admin dump")
+		}
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var n int
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'fiscal.pending_sign_retries'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("stale pre-1.4.0 retry queue re-synced onto the replica after an admin pull")
+	}
+}
+
 // ut-docs#405: the shop's till roster now syncs like any other admin
 // table, but bearer_hash is that row's sync-auth secret and must never
 // leave the primary — redactCols strips it out of the dump, and migration

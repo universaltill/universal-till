@@ -562,7 +562,11 @@ func saleFiscalSigningGapKind(ctx context.Context, repo *data.POSRepo, saleID st
 // it names stay permanently unsigned on their existing journal markers.
 // Called once from init.go's boot sequence; idempotent, and the common case
 // (nothing stored, or already migrated) costs one settings read and writes
-// nothing.
+// nothing. The "must not linger" claim is enforced end-to-end only because
+// data.PerTillSettingPrefixes also excludes this key from admin sync
+// (ut-docs#844) — otherwise a pre-1.4.0 primary could re-seed a replica's
+// already-dropped queue on a later sync, since this migration only runs
+// once at boot, not on every sync.
 func dropStaleFiscalSignRetryQueue(ctx context.Context, d *common.Deps) {
 	if d.Settings == nil {
 		return
