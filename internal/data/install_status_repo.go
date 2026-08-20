@@ -38,8 +38,9 @@ func NewInstallStatusRepo(db *sql.DB) *InstallStatusRepo {
 // identity broke replica pruning permanently: convergePluginSet's prune
 // loop needs the record's plugin_id to uninstall a listing the primary
 // removed (ut-docs#368, second review round BLOCKER). SQLite's COALESCE
-// only special-cases NULL — these columns arrive as '' — hence the
-// explicit CASE. Rows are only ever forgotten wholesale (DeleteForPlugin).
+// only special-cases NULL — these columns arrive as the empty string —
+// hence the explicit CASE. Rows are only ever forgotten wholesale
+// (DeleteForPlugin).
 func (r *InstallStatusRepo) Upsert(ctx context.Context, row InstallStatusRow) error {
 	retryable := 0
 	if row.Retryable {

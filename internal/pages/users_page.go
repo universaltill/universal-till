@@ -68,10 +68,10 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			rows = append(rows, row{UserRow: u, HasPIN: u.PinHash != "", CanEdit: canManage(actor, u)})
 		}
 		httpx.Render("ui/pages/users.html", map[string]any{
-			"title":              "Users",
-			"theme":              d.CurrentState().Theme,
-			"menuItems":          d.MenuSnapshot(),
-			"users":              rows,
+			"title":     "Users",
+			"theme":     d.CurrentState().Theme,
+			"menuItems": d.MenuSnapshot(),
+			"users":     rows,
 			// super_admin is the top of the role hierarchy (canManage
 			// above already treats it that way) — it must see at least
 			// what a plain admin sees, including the manager/admin role
