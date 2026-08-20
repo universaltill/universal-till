@@ -1,4 +1,4 @@
-:root { --brand:#1e293b; --accent:#10b981; }
+:root { --brand:#1e293b; --accent:#10b981; --focus-border:#0e9e6e; } /* ut-docs#797: --accent is 2.54:1 on white; --focus-border (darker green) is 3.42:1 (WCAG 1.4.11 >=3:1) */
 .nav { background:var(--brand); color:#fff; padding:.6rem 1rem; display:flex; justify-content:space-between; align-items:center }
 .nav a { color:#fff; margin-left:.8rem }
 .btn { background:var(--accent) }

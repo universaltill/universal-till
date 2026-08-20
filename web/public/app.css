@@ -21,6 +21,14 @@
      curated theme's white --surface) rather than a one-off literal, so it
      tracks --muted automatically if a theme ever retunes it. */
   --control-border: var(--muted);
+  /* ut-docs#797: the focus-state border of a form control is a UI component
+     boundary WCAG 1.4.11 covers, so it needs >=3:1 against --surface too.
+     --accent clears that in default (5.17:1) and slate (6.70:1), so those keep
+     using it via this token's default; amber/fresh/monarch override
+     --focus-border with a darker same-hue shade (their raw --accent is only
+     ~2.5-2.8:1) rather than darkening --accent itself, which paints ~15 other
+     non-boundary spots (buttons, prices, tabs) that 1.4.11 doesn't govern. */
+  --focus-border: var(--accent);
   --success: #16a34a;
   --danger: #dc2626;
   --warning: #d97706;
@@ -502,7 +510,7 @@ input, select, textarea {
   background: var(--surface);
 }
 input:focus, select:focus, textarea:focus {
-  outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--accent);
+  outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border);
 }
 .form-row input { padding: .55rem; }
 label { font-size: .85rem; color: var(--text); }
@@ -978,7 +986,7 @@ a.btn, a.btn:hover { text-decoration: none; }
    but caught by the new contrast test's focus-distinguishability check and
    fixed alongside it since it's the same file/selector. */
 .split-tender-form input:focus, .split-tender-form select:focus {
-  border-color: var(--accent);
+  border-color: var(--focus-border);
 }
 .split-controls { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
 .split-tender-payments { margin: .25rem 0; display: flex; flex-direction: column; gap: .4rem; }
@@ -1278,7 +1286,7 @@ body.login-screen {
              inline-size: 1.6rem; block-size: 1.6rem; margin-inline-start: .4rem;
              border: 1px solid var(--border); border-radius: 50%; text-decoration: none;
              color: var(--muted); font-size: .95rem; line-height: 1; vertical-align: middle; }
-.help-hint:hover, .help-hint:focus { color: inherit; border-color: var(--accent, #2b6cb0); }
+.help-hint:hover, .help-hint:focus { color: inherit; border-color: var(--focus-border, #2b6cb0); }
 
 /* Translation editor (/translations) */
 .translations-controls { display: flex; gap: 1rem; align-items: end; margin-block-end: .8rem; flex-wrap: wrap; }
