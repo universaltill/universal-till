@@ -158,6 +158,37 @@ func TestDetectFormatGenericERPNotStolenBySumUpFallback(t *testing.T) {
 	}
 }
 
+// Review finding N1 (ut-docs#587 → ut-docs#705): hasColumn strips a trailing
+// parenthetical before matching synonyms, so a decorated header like
+// "Dept (code)" now counts as a department column. DetectFormat's department
+// case is checked before the "item id"+"variant id" sumup fallback signature,
+// so a header set carrying BOTH the fallback signature and a paren-suffixed
+// department header must resolve to generic-erp — department wins, extending
+// the M1 "department wins over the sumup fallback" rule to the paren-lenient
+// match. This pins that decision so it stays a choice, not an accident.
+func TestDetectFormatParenSuffixDepartmentWinsOverSumUpFallback(t *testing.T) {
+	// SumUp fallback signature (exact "item id"+"variant id") present, plus a
+	// paren-suffixed department header: department must win → generic-erp.
+	headers := []string{"Item name", "Price", "Item id", "Variant id", "Dept (code)"}
+	if got := DetectFormat(headers); got != "generic-erp" {
+		t.Errorf("DetectFormat(%v) = %s, want generic-erp (paren-suffixed department must win over the sumup fallback)", headers, got)
+	}
+	// Same signature but the department header carries no paren suffix — the
+	// plain "Department" synonym already wins here; asserted so a future change
+	// to hasColumn's paren handling can't silently diverge the two shapes.
+	plain := []string{"Item name", "Price", "Item id", "Variant id", "Department"}
+	if got := DetectFormat(plain); got != "generic-erp" {
+		t.Errorf("DetectFormat(%v) = %s, want generic-erp", plain, got)
+	}
+	// Control: the same fallback signature with NO department column at all
+	// (paren-suffixed or otherwise) still detects as sumup — the paren
+	// leniency must not manufacture a department axis out of nothing.
+	noDept := []string{"Item name", "Price", "Item id", "Variant id", "Notes (internal)"}
+	if got := DetectFormat(noDept); got != "sumup" {
+		t.Errorf("DetectFormat(%v) = %s, want sumup (no department column present)", noDept, got)
+	}
+}
+
 func TestParseGenericAndZeroDecimals(t *testing.T) {
 	res, err := Parse(strings.NewReader(genericCSV), 0)
 	if err != nil {
