@@ -12,6 +12,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -384,6 +385,67 @@ func TestReportsPage_ManagerAndSuperAdminSessionsSeeEODTab(t *testing.T) {
 				t.Fatalf("expected the EOD settings form shown to role=%s, got: %s", role, rec.Body.String())
 			}
 		})
+	}
+}
+
+// ut-docs#794 review finding (blocker): before this card, the EOD tab's
+// entire body — including the Run/Print/Settings buttons checkOrElevate now
+// gates — was hidden behind eod_report itself, the SAME action. A shop that
+// grants `reports` to a role without also granting `eod_report` (exactly
+// what the permission matrix, ut-docs#557's own sibling feature, exists to
+// let a shop do) would see the elevation dialog become unreachable dead
+// code: no button, nothing to click, nothing to approve. This pins the fix
+// — the view gate (`reports`) and the run gate (`eod_report`) are
+// independent, and a viewer without eod_report still gets the buttons
+// (checkOrElevate is what actually stops them), but not the archived
+// report rows (real money figures stay behind eod_report specifically).
+func TestReportsPage_EODTabButtonsVisibleWithoutEODReportPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	authRepo := data.NewAuthRepo(dp.Db)
+
+	// A role that can view Reports but is explicitly NOT trusted to run/
+	// approve EOD on its own — grant `reports`, leave `eod_report` denied
+	// (cashier's default).
+	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, keyEODEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, keyEODTime, "22:30"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01','{"day":"2026-01-01","sales_count":3,"net":500}')`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/eod", nil), auth.User{ID: "u1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/api/reports/eod/run"`) {
+		t.Fatalf("expected the Run button visible to a reports-only viewer (checkOrElevate is the real gate, not this render), got: %s", body)
+	}
+	if !strings.Contains(body, `name="time"`) {
+		t.Fatalf("expected the schedule form visible, got: %s", body)
+	}
+	if !strings.Contains(body, "22:30") {
+		t.Fatalf("expected the REAL current schedule time shown (operational, not sensitive), got: %s", body)
+	}
+	if strings.Contains(body, "500") || strings.Contains(body, "£5.00") {
+		t.Fatalf("expected the archived report's money figures NOT shown to a role without eod_report, got: %s", body)
+	}
+	// ut-docs#794 review finding (residual): the Reprint button is the
+	// ONLY trigger for checkOrElevate on print/{period} — without this,
+	// that site's elevation dialog is exactly as unreachable as the whole
+	// tab was before the main fix.
+	if !strings.Contains(body, `hx-post="/api/reports/eod/print/2026-01-01"`) {
+		t.Fatalf("expected the Reprint button visible (without money columns) so print/{period}'s elevation dialog stays reachable, got: %s", body)
 	}
 }
 

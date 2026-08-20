@@ -1517,8 +1517,16 @@
   "elevation.error_insufficient_role": "This PIN doesn't have permission for this action",
   "elevation.error_unavailable": "Approval isn't available on this device right now.",
   "elevation.hint": "Manager approval needed — see the dialog.",
+  "elevation.approved": "Approved and saved.",
   "elevation.summary.backup_now": "Create a new local backup now.",
   "elevation.summary.sync_promote": "Promote this till to a standalone primary, ending sync with its current primary.",
   "elevation.summary.permission_grant": "Grant the %s role the \"%s\" permission.",
-  "elevation.summary.permission_revoke": "Revoke the \"%s\" permission from the %s role."
+  "elevation.summary.permission_revoke": "Revoke the \"%s\" permission from the %s role.",
+  "elevation.summary.eod_run": "Run today's end-of-day report now.",
+  "elevation.summary.eod_reprint": "Reprint the %s end-of-day report.",
+  "elevation.summary.eod_range_export": "Export a Z-report for %s – %s.",
+  "elevation.summary.eod_settings_enabled": "Turn on the automatic end-of-day report, scheduled for %s.",
+  "elevation.summary.eod_settings_disabled": "Turn off the automatic end-of-day report.",
+  "elevation.summary.report_retention": "Change the report retention mode to %s.",
+  "elevation.summary.archive_export": "Export the report archive for %s – %s (%s)."
 }

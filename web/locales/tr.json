@@ -1517,8 +1517,16 @@
   "elevation.error_insufficient_role": "Bu PIN bu işlem için yetkili değil",
   "elevation.error_unavailable": "Onay şu anda bu cihazda kullanılamıyor.",
   "elevation.hint": "Yönetici onayı gerekli — iletişim kutusuna bakın.",
+  "elevation.approved": "Onaylandı ve kaydedildi.",
   "elevation.summary.backup_now": "Şimdi yeni bir yerel yedek oluştur.",
   "elevation.summary.sync_promote": "Bu kasayı bağımsız bir birincil kasaya yükselt ve mevcut birincil kasayla senkronizasyonu sonlandır.",
   "elevation.summary.permission_grant": "%s rolüne \"%s\" yetkisini ver.",
-  "elevation.summary.permission_revoke": "\"%s\" yetkisini %s rolünden geri al."
+  "elevation.summary.permission_revoke": "\"%s\" yetkisini %s rolünden geri al.",
+  "elevation.summary.eod_run": "Bugünün gün sonu raporunu şimdi çalıştır.",
+  "elevation.summary.eod_reprint": "%s gün sonu raporunu yeniden yazdır.",
+  "elevation.summary.eod_range_export": "%s – %s için bir Z-raporu dışa aktar.",
+  "elevation.summary.eod_settings_enabled": "Otomatik gün sonu raporunu aç, %s için planlandı.",
+  "elevation.summary.eod_settings_disabled": "Otomatik gün sonu raporunu kapat.",
+  "elevation.summary.report_retention": "Rapor saklama modunu %s olarak değiştir.",
+  "elevation.summary.archive_export": "%s – %s (%s) için rapor arşivini dışa aktar."
 }
