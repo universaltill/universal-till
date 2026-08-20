@@ -414,6 +414,7 @@
   "plugins.install.error.invalid_request": "درخواست نصب معتبر نیست.",
   "plugins.install.error.network": "خطای شبکه",
   "plugins.install.error.not_entitled": "این افزونه پیش از نصب به تأیید نیاز دارد — از مدیر فروشگاه بخواهید آن را در بازار تأیید کند.",
+  "plugins.install.error.registered_required": "این افزونه به یک حساب فروشگاه ثبت‌شده نیاز دارد — برای نصب آن وارد شوید و فروشگاه خود را ثبت کنید.",
   "plugins.install.error.not_found": "افزونه انتخاب‌شده در فهرست پیدا نشد.",
   "plugins.install.error.page_conflict": "کلید صفحه این افزونه با یک مورد موجود تداخل دارد. کلید دیگری انتخاب کرده و دوباره تلاش کنید.",
   "plugins.install.error.page_route_conflict": "مسیر صفحه این افزونه با یک مورد موجود تداخل دارد. مسیر دیگری انتخاب کرده و دوباره تلاش کنید.",
