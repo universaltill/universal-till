@@ -52,6 +52,15 @@ func newSyncSalesTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Pm:       pm,
 		Settings: settings.NewStore(db),
 	}
+	// Registered AFTER the db.Close cleanup above, so LIFO order runs this
+	// FIRST: none of registerSyncSales's own handlers fire AsyncWork today
+	// (the two-till stock-ownership tests call pos.CompleteSale directly on
+	// this helper's primary, not the pages completeTender handler that
+	// fires printReceiptAsync/printKitchenAsync — that goes through the
+	// replica, built with newPOSTestDeps, which already drains). Kept here
+	// for uniformity/future-proofing, and pinned by the regression test
+	// (ut-docs#425, #514).
+	t.Cleanup(dp.WaitForAsyncWork)
 	mux := http.NewServeMux()
 	registerSyncSales(mux, dp)
 	return mux, dp

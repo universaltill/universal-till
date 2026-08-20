@@ -52,6 +52,11 @@ func newPOSTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Pm:       pm,
 		Settings: setStore,
 	}
+	// Registered AFTER the db.Close cleanup above, so LIFO order runs this
+	// FIRST: any printReceiptAsync/printKitchenAsync goroutine a test's
+	// tender started (ut-docs#425, #514) finishes before Close and
+	// TempDir removal can race its still-in-flight Db/Settings access.
+	t.Cleanup(dp.WaitForAsyncWork)
 	mux := http.NewServeMux()
 	registerPOSAPI(mux, dp)
 	return mux, dp
