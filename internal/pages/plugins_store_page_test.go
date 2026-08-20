@@ -63,6 +63,44 @@ func TestPluginStoreRendersCategoryChips(t *testing.T) {
 	}
 }
 
+// TestPluginStoreJSErrorLookupCoversServerErrorKeys guards ut-docs#703: the
+// store page's own inline script maps a server-returned i18n message KEY to
+// translated text via a page-local `T` lookup object (CLAUDE.md's mandated
+// pattern for inline <script> blocks — guard-i18n.sh can't see this gap,
+// since the key IS routed through `{{ T "..." }}` server-side; the miss is
+// the client-side lookup table not listing every key the handler can
+// actually send). A key missing from T falls through to `T[j.error] ||
+// j.error`, which shows the shop owner the raw locale-key string instead
+// of a translated message — exactly what happened here for
+// plugins.install.error.not_found before this fix. Every
+// "plugins.install.error.*" code registerPluginStoreAPI's download/install
+// handlers can emit (see plugins_store_page.go's `respond` calls) must
+// have a matching entry in the rendered page's T object.
+func TestPluginStoreJSErrorLookupCoversServerErrorKeys(t *testing.T) {
+	chdirRoot(t)
+	initPagesI18n(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/plugins/store", nil)
+	httpx.Render("ui/pages/plugins_store.html", map[string]any{
+		"title":      "Plugin Store",
+		"menuItems":  nil,
+		"Items":      []storeItem{},
+		"Categories": storeCategories(nil),
+	})(rec, req)
+
+	body := rec.Body.String()
+	for _, key := range []string{
+		"plugins.install.error.replica_use_primary",
+		"plugins.install.error.not_entitled",
+		"plugins.install.error.not_found",
+	} {
+		if !strings.Contains(body, "'"+key+"':") {
+			t.Errorf("store page's inline-script T lookup is missing %q — a shop owner would see the raw key instead of a translated message", key)
+		}
+	}
+}
+
 // FR-006: a card with manifest-declared permissions must show them as
 // badges; a card with none must not render an empty badge row. Every
 // not-yet-installed card (installed or not) shows the manager-approval

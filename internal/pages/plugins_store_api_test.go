@@ -144,6 +144,30 @@ func TestStoreAPI_DownloadNotEntitled_403(t *testing.T) {
 	}
 }
 
+// TestStoreAPI_DownloadListingNotFound_404 pins ut-docs#703: a listing that
+// doesn't exist at all (stale catalog cache, a listing removed from the
+// marketplace) must surface as plugins.install.error.not_found, not the
+// same not_entitled key a real approval gate uses — there's nothing to
+// approve here, just a stale catalog.
+func TestStoreAPI_DownloadListingNotFound_404(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"listing_not_found","message":"plugin listing not found"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
+
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-stale"}}, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("download of an unknown listing = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+	if ok, msg := storeRespOf(t, rec); ok || msg != "plugins.install.error.not_found" {
+		t.Fatalf("download envelope wrong: success=%v msg=%q, want the not_found i18n key", ok, msg)
+	}
+}
+
 func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{
