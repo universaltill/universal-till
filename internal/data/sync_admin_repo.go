@@ -111,10 +111,32 @@ var adminTables = []adminTable{
 	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at"}},
 }
 
+// FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0
+// fiscal-signing retry queue lived under. Duplicated from
+// internal/pages/common.KeyPendingFiscalSignRetries ("fiscal.pending_sign_retries")
+// rather than imported: internal/pages/common already imports internal/data
+// (see internal/pages/common/barcode_conflict.go), so the reverse import
+// would cycle — same constraint as data.StoreCountrySettingsKey just above
+// in this package's sibling reset_archive_repo.go. Exported (rather than a
+// private literal re-typed in two places) so
+// TestFiscalPendingSignRetriesSettingsKeyMatchesCommon (in
+// internal/pages/common) can assert the two never drift apart instead of
+// each just trusting the other's copy.
+const FiscalPendingSignRetriesSettingsKey = "fiscal.pending_sign_retries"
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
-// the replica's own sync identity/cursors, its printer, its screen, and its
-// own end-of-day schedule (a replica Z-report would only cover local data).
-var PerTillSettingPrefixes = []string{"sync.", "printer.", "display.", "reports.eod_"}
+// the replica's own sync identity/cursors, its printer, its screen, its own
+// end-of-day schedule (a replica Z-report would only cover local data), and
+// its own fiscal-signing retry bookkeeping (ut-docs#844: tender-time state,
+// never something that should sync between tills in the first place — and
+// its exclusion here is what actually enforces
+// pages.dropStaleFiscalSignRetryQueue's "must not linger" claim, since that
+// migration only runs once at boot and can't otherwise stop a pre-1.4.0
+// primary re-seeding it onto an already-migrated replica on a later sync).
+// FiscalPendingSignRetriesSettingsKey is a full key, not a prefix family
+// like the other four entries — strings.HasPrefix on an equal-length string
+// is a true equality test, so this works as an exact match.
+var PerTillSettingPrefixes = []string{"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey}
 
 func perTillSetting(key string) bool {
 	for _, p := range PerTillSettingPrefixes {
