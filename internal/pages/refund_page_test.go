@@ -189,6 +189,10 @@ func newRefundTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *auth.Servic
 		Pm:       pm,
 		Settings: settings.NewStore(db),
 	}
+	// Registered AFTER the db.Close cleanup above, so LIFO order runs this
+	// FIRST: a refund's detached print goroutines (ut-docs#425, #514)
+	// finish before Close and TempDir removal can race them.
+	t.Cleanup(dp.WaitForAsyncWork)
 	svc := auth.NewService(db)
 	mux := http.NewServeMux()
 	registerRefund(mux, dp, svc)

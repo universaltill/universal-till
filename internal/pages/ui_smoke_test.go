@@ -197,6 +197,10 @@ func TestPOSTenderSplitPayments(t *testing.T) {
 		Pm:       pm,
 		Settings: setStore,
 	}
+	// Deferred AFTER db.Close above, so LIFO order drains this FIRST: the
+	// tender below fires printReceiptAsync/printKitchenAsync (ut-docs#425,
+	// #514), which must finish touching db before Close and TempDir removal.
+	defer dp.WaitForAsyncWork()
 
 	mux := http.NewServeMux()
 	registerPOSAPI(mux, dp)
@@ -271,6 +275,10 @@ VALUES ('com.tax.plugin', 'receipt_legal', '', 'Receipt Legal', '', 'receipt_tem
 		Pm:       pm,
 		Settings: setStore,
 	}
+	// Deferred AFTER db.Close above, so LIFO order drains this FIRST: the
+	// tender below fires printReceiptAsync/printKitchenAsync (ut-docs#425,
+	// #514), which must finish touching db before Close and TempDir removal.
+	defer dp.WaitForAsyncWork()
 
 	mux := http.NewServeMux()
 	registerPOSAPI(mux, dp)
