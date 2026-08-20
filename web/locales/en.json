@@ -414,6 +414,7 @@
   "plugins.install.error.invalid_request": "The install request was invalid.",
   "plugins.install.error.network": "Network error",
   "plugins.install.error.not_entitled": "This plugin needs approval before it can be installed — ask your merchant manager to approve it in the marketplace portal.",
+  "plugins.install.error.registered_required": "This plugin requires a claimed store account — sign in and claim your store to install it.",
   "plugins.install.error.not_found": "The selected plugin was not found in the catalog.",
   "plugins.install.error.page_conflict": "This plugin's page key conflicts with an existing one. Pick a different key and try again.",
   "plugins.install.error.page_route_conflict": "This plugin's page route conflicts with an existing one. Pick a different route and try again.",
