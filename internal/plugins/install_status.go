@@ -133,6 +133,13 @@ func ClassifyInstallError(err error) InstallFailure {
 	if errors.As(err, &apiErr) && apiErr.Code == "not_entitled" {
 		return InstallFailure{MessageKey: "plugins.install.error.not_entitled", Message: "This plugin needs approval before it can be installed.", Retryable: false}
 	}
+	// ut-docs#703: a listing_not_found marketplace.APIError means the listing
+	// doesn't exist at all (stale catalog cache, a listing removed from the
+	// marketplace) — distinct from not_entitled, and retrying without a fresh
+	// catalog can never succeed either.
+	if errors.As(err, &apiErr) && apiErr.Code == "listing_not_found" {
+		return InstallFailure{MessageKey: "plugins.install.error.not_found", Message: "The selected plugin was not found in the catalog.", Retryable: false}
+	}
 
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {

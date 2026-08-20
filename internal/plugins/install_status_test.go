@@ -96,6 +96,33 @@ func TestClassifyInstallError_NotEntitled(t *testing.T) {
 	}
 }
 
+// TestClassifyInstallError_ListingNotFound covers ut-docs#703: a genuinely
+// unknown/deleted listing (stale catalog cache, a listing removed from the
+// marketplace) now reaches ut-cloud as a distinct listing_not_found
+// APIError, not the same not_entitled code a real approval gate uses — the
+// two need different messages, since there's nothing to approve here, just
+// a stale catalog.
+func TestClassifyInstallError_ListingNotFound(t *testing.T) {
+	apiErr := &marketplace.APIError{Code: "listing_not_found", Message: "plugin listing not found"}
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"bare APIError", apiErr},
+		{"wrapped APIError", fmt.Errorf("install: %w", apiErr)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := ClassifyInstallError(tc.err)
+			if failure.MessageKey != "plugins.install.error.not_found" {
+				t.Fatalf("message key = %q, want plugins.install.error.not_found", failure.MessageKey)
+			}
+			if failure.Retryable {
+				t.Fatal("retryable = true, want false — retrying a listing that doesn't exist can never succeed")
+			}
+		})
+	}
+}
+
 // TestClassifyInstallError_KeysResolveInLocales guards a gap guard-i18n.sh
 // can't see (review finding, ut-docs#169): the UI renders a MessageKey via
 // {{ T .StatusMessageKey }} — a DYNAMIC key, not a literal `{{ T "..." }}`
@@ -119,6 +146,7 @@ func TestClassifyInstallError_KeysResolveInLocales(t *testing.T) {
 		"plugins.install.error.page_conflict",
 		"plugins.install.error.page_route_conflict",
 		"plugins.install.error.not_entitled",
+		"plugins.install.error.not_found",
 	}
 	for _, key := range keys {
 		if got := i18n.T("en", key); got == key {
