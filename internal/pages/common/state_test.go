@@ -546,3 +546,20 @@ func TestStoreCountrySettingsKeyMatchesCommon(t *testing.T) {
 		t.Fatalf("data.StoreCountrySettingsKey = %q, want it to match common.KeyCountry = %q", data.StoreCountrySettingsKey, KeyCountry)
 	}
 }
+
+// TestFiscalPendingSignRetriesSettingsKeyMatchesCommon guards
+// data.FiscalPendingSignRetriesSettingsKey against drifting from
+// KeyPendingFiscalSignRetries: internal/data cannot import this package
+// (this package already imports internal/data — see barcode_conflict.go —
+// so the reverse import would cycle), so data.PerTillSettingPrefixes
+// duplicates the literal instead (ut-docs#844). If the two ever disagree,
+// PerTillSettingPrefixes silently stops excluding the real retry-queue key
+// from admin sync, reintroducing #844's original bug with no test catching
+// it — this is exactly the drift TestAdminDumpApplyRoundTrip_
+// FiscalPendingSignRetriesNeverSyncs (internal/data) cannot detect on its
+// own, since that test hardcodes the same literal independently.
+func TestFiscalPendingSignRetriesSettingsKeyMatchesCommon(t *testing.T) {
+	if data.FiscalPendingSignRetriesSettingsKey != KeyPendingFiscalSignRetries {
+		t.Fatalf("data.FiscalPendingSignRetriesSettingsKey = %q, want it to match common.KeyPendingFiscalSignRetries = %q", data.FiscalPendingSignRetriesSettingsKey, KeyPendingFiscalSignRetries)
+	}
+}
