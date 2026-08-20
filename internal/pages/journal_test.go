@@ -42,6 +42,11 @@ func TestOfflineTenderUpdatesJournal(t *testing.T) {
 		Settings: setStore,
 	}
 
+	// Deferred AFTER db.Close above, so LIFO order drains this FIRST: the
+	// offline tender below fires printReceiptAsync (ut-docs#425, #514),
+	// which must finish touching db before Close and TempDir removal.
+	defer dp.WaitForAsyncWork()
+
 	mux := http.NewServeMux()
 	registerPOSAPI(mux, dp)
 	registerJournal(mux, dp)

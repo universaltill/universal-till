@@ -62,6 +62,10 @@ func newInvoiceTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Pm:       pm,
 		Settings: settings.NewStore(db),
 	}
+	// Registered AFTER the db.Close cleanup above, so LIFO order runs this
+	// FIRST: the invoice/receipt print goroutines (ut-docs#425, #514)
+	// finish before Close and TempDir removal can race them.
+	t.Cleanup(dp.WaitForAsyncWork)
 	mux := http.NewServeMux()
 	registerInvoices(mux, dp)
 	return mux, dp
