@@ -10,16 +10,30 @@ VERSION?=0.1.0
 # release minutes later (ut-docs#369, found deploying a field hotfix).
 LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: build run test e2e e2e-seed docs-shots
+.PHONY: build run test test-race-pages e2e e2e-seed docs-shots
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
 
 run: build
 	./bin/$(BIN)
-	
+
 test:
 	go test ./...
+
+# internal/pages' own -race runtime sits with no margin against (or past)
+# the plain `go test` 600s per-package default (ut-docs#648) — this package
+# is DB-heavy and -race instrumentation multiplies that cost, unlike the
+# package's plain (non-race) runtime, which `make test` above already
+# covers comfortably. -race isn't run in CI (ci.yml deliberately never
+# uses it, see its own comment on the internal/plugins step) — this target
+# is the safe way to run it by hand (e.g. during Reviewer/Tester gate
+# verification) without an unqualified `go test ./internal/pages/... -race`
+# risking the bare default timeout. Same shape as the internal/plugins fix
+# (ut-docs#643): a longer, explicit timeout instead of raising it globally,
+# so a genuine hang elsewhere still fails within the normal default.
+test-race-pages:
+	go test -race -timeout 30m ./internal/pages/...
 
 e2e-seed:
 	UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go

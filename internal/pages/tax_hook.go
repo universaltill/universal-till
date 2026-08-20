@@ -83,6 +83,21 @@ type pluginTaxRateAsker struct {
 	brokenGen   uint64
 	brokenKnown bool
 	broken      bool
+	// cacheMax overrides taxAskCacheMax when non-zero — test-only hook
+	// (ut-docs#648) so the overflow-eviction test can exercise the same
+	// eviction path with a small bound instead of 4096 real round-trips.
+	// Zero (every real construction site, e.g. init.go) keeps production
+	// behaviour exactly as before.
+	cacheMax int
+}
+
+// maxCache returns the cache's real eviction bound: cacheMax when a test
+// has overridden it, else the production constant.
+func (a *pluginTaxRateAsker) maxCache() int {
+	if a.cacheMax > 0 {
+		return a.cacheMax
+	}
+	return taxAskCacheMax
 }
 
 // AskTaxRateBP answers (rate, ok, blocked) for one line. blocked=true is
@@ -149,7 +164,7 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 
 	a.mu.Lock()
 	if a.gen == gen && a.cache != nil {
-		if len(a.cache) >= taxAskCacheMax {
+		if len(a.cache) >= a.maxCache() {
 			a.cache = make(map[taxRateAskPayload]taxAskAnswer)
 		}
 		a.cache[payload] = ans
