@@ -36,6 +36,9 @@ functions LIFO, so registering `t.Cleanup(dp.WaitForAsyncWork)` (or `defer`-ing 
 - **`stock_ownership_test.go`** — has no helper of its own; it constructs Deps via
   `newPOSTestDeps` and `newSyncSalesTestDeps`, both fixed above, so it is covered
   transitively (the two listed test files that share the exposure).
+- **`ui_smoke_test.go`** (`TestPOSTenderSplitPayments`,
+  `TestPOSTender_PrinterFallbackAndLegalText`, both inline Deps) — added after the
+  independent review found them; see Findings.
 
 ### Regression test
 
@@ -59,7 +62,43 @@ Cross-goroutine reads of `queryErr`/`ran` are mutex-guarded.
 
 ## Findings
 
-<!-- filled in from the independent review below -->
+The independent reviewer verified every claim against the code (not the diff
+description), audited **all** `openPagesTestDB` construction sites, and proved the
+regression test is not a false-pass by deleting the drain from `newPOSTestDeps` and
+watching it fail via the `!ran` branch. Verdict: the five named sites are correct;
+two same-class sites were missed.
+
+**should-fix (fixed in this branch) — two missed sites.** `ui_smoke_test.go` had no
+drain at all, yet two inline tests build a Deps over `openPagesTestDB`, POST
+`/api/pos/tender` (→ `completeTender` → both `printReceiptAsync` *and*
+`printKitchenAsync`), and close with a bare `defer db.Close()`:
+`TestPOSTenderSplitPayments` and `TestPOSTender_PrinterFallbackAndLegalText`. This is
+exactly the class #514 targets, and `journal_test.go` — also an inline, non-helper
+test — was already in scope, so the same treatment applies. Fixed by adding
+`defer dp.WaitForAsyncWork()` after each `defer db.Close()`.
+
+**nit (fixed) — inaccurate comment rationale in `sync_sales_test.go`.** The first
+draft justified the drain by saying the helper backs the two-till stock-ownership
+tests "which do drive completeTender through the primary till." Wrong on the
+mechanism: `registerSyncSales` only wires `POST /api/sync/sales` and never calls
+`completeTender`; in `TestTwoTills_…` the **primary** (this helper) calls
+`pos.CompleteSale` directly, which does not fire the pages print goroutines, while the
+handler-driven `completeTender` runs through the **replica**, built with
+`newPOSTestDeps`. The drain is kept (harmless defence-in-depth, and pinned by the
+regression test), but the comment now states the real reason.
+
+**Observations, no action needed.** `newReceiptPrintInvoiceGateTestDeps` builds a Deps
+over `openPagesTestDB` without a drain, but its tests POST `/api/invoices/issue` with
+no valid sale, so `issueInvoice` errors out before the async dispatch — no goroutine
+fires. `newFiscalTestDeps` and `newFiscalSignDeps` both drive `/api/pos/tender` and
+**already** drain correctly — not misses. No copy-paste errors in the pos/invoice/
+refund comments; each accurately names the goroutines its path fires.
+
+**Not escalated to a second review round.** Neither finding is blocker-class
+(money/tax, data loss, security) — both are test-only cleanup ordering, and the fixes
+are the same one-line pattern already reviewed here. Per the pipeline's one-round
+default, the fixes were verified directly instead (`-race -count=20` over the two
+newly-drained tests, plus the regression test and guards).
 
 ## Non-goals (unchanged from the card)
 
