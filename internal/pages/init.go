@@ -286,6 +286,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerInvoices(mux, dp)                       // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
+	registerTablePicker(mux, dp) // basket table-assignment picker (ut-docs#820, ADR-0054)
 	registerInventoryAPI(mux, dp)
 	registerInventoryPage(mux, dp)
 	registerShiftsAPI(mux, dp)

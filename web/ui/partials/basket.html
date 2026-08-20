@@ -27,6 +27,15 @@
             hx-post="/api/pos/order-type" hx-vals='{"order_type":"takeaway"}' hx-target="#basket" hx-swap="outerHTML">
       {{ if eq .OrderType "takeaway" }}✓ {{ end }}{{ T "basket.order_type.takeaway" }}</button>
   </div>
+  <!-- Table assignment (ut-docs#820, ADR-0054): the current table and the
+       picker of free tables both live INSIDE this fragment, not inline here,
+       so a shop with zero tables configured gets no table chrome in the order
+       flow at all -- ADR-0054's soft-gate ("zero tables configured = today's
+       behavior exactly"). Rendering an always-on "Table: none" row here
+       instead cost two rows of basket height on every till, which is what
+       broke the sale-screen-213 / phone-width-413 layout assertions.
+       Loaded the same way the suggestions strip below is. -->
+  <div id="table-picker" class="table-picker" hx-get="/ui/pos/table-picker" hx-trigger="load" hx-swap="outerHTML"></div>
   <div class="basket-scroll">
     <table>
       <thead>

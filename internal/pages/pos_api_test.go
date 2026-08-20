@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -164,6 +165,63 @@ func TestOrderTypeHandler_TogglesTakeawayAndBack(t *testing.T) {
 	}
 	if got := dp.Engine.Basket().OrderType; got != "" {
 		t.Fatalf("expected order type reset to dine-in (empty), got %q", got)
+	}
+}
+
+// TestTableHandler_AssignsResolvesLabelAndClears (ut-docs#820) mirrors
+// TestOrderTypeHandler_TogglesTakeawayAndBack's shape: POST a table_id,
+// the handler resolves its current label and stamps both onto the live
+// basket; posting an empty table_id clears the assignment.
+func TestTableHandler_AssignsResolvesLabelAndClears(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	tableID, err := data.NewPOSRepo(dp.Db).CreateTable(context.Background(), "T5", "Terrace", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	rec := posPostForm(mux, "/api/pos/table", "table_id="+tableID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != tableID {
+		t.Fatalf("expected TableID %q, got %q", tableID, got)
+	}
+	if got := dp.Engine.Basket().TableLabel; got != "T5" {
+		t.Fatalf("expected TableLabel resolved to T5, got %q", got)
+	}
+	// The label itself renders in the table-picker fragment (which the basket
+	// re-loads on every swap), not inline in the basket partial -- so a
+	// no-tables shop pays no basket height for table chrome (ADR-0054
+	// soft-gate; ut-docs#820 review B fix). Assert the re-rendered basket
+	// wires that fragment; the label text is covered by the picker's own
+	// tests (TestTablePicker_*).
+	if !strings.Contains(rec.Body.String(), `hx-get="/ui/pos/table-picker"`) {
+		t.Fatalf("expected the re-rendered basket to load the table picker, got: %s", rec.Body.String())
+	}
+
+	rec = posPostForm(mux, "/api/pos/table", "table_id=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("expected TableID cleared, got %q", got)
+	}
+	if got := dp.Engine.Basket().TableLabel; got != "" {
+		t.Fatalf("expected TableLabel cleared, got %q", got)
+	}
+}
+
+// An unknown/garbage table_id must not silently stamp a bogus label onto
+// the basket -- it degrades to "no table assigned", the same way an
+// unrecognized order_type value degrades to dine-in.
+func TestTableHandler_UnknownTableIDIgnored(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	rec := posPostForm(mux, "/api/pos/table", "table_id=does-not-exist")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("expected an unknown table_id to be ignored, got TableID %q", got)
 	}
 }
 

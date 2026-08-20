@@ -49,7 +49,7 @@
 - Receipt printing (thermal and regular)
 - Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff)
 - Kitchen station routing (send each category — or a single item — to its own kitchen printer)
-- Table floor plan (draw your dining room, name each table, drag it into place — free vs. open-order status lights up once table assignment ships)
+- Table floor plan and assignment (draw your dining room, name each table, drag it into place; assign an order to a table from the basket or move a held order to a different free table, and the plan's free/open-order status lights up live)
 - Barcode scanning (USB/Bluetooth scanner, or a device camera — no dedicated hardware required)
 - Multi-currency support
 - Tax calculation (configurable by region)
