@@ -60,9 +60,9 @@ func TestExternalProxy_UnknownAndEmptyPlugin(t *testing.T) {
 	registerExternalProxy(mux, dp)
 
 	cases := []string{
-		"/ext/",         // empty plugin id
-		"/ext/unknown",  // not in MenuPlugins
-		"/ext/noroute",  // registered but has no route
+		"/ext/",        // empty plugin id
+		"/ext/unknown", // not in MenuPlugins
+		"/ext/noroute", // registered but has no route
 	}
 	for _, path := range cases {
 		req := httptest.NewRequest(http.MethodGet, path, nil)

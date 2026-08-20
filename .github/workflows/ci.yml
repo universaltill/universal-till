@@ -22,6 +22,15 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+      - name: gofmt check
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$unformatted"
+            echo "Run: gofmt -w <file>"
+            exit 1
+          fi
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test
