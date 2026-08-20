@@ -105,10 +105,15 @@ func pushNotify(ctx context.Context, cfg *config.Config, typ string, body map[st
 		"store_id": m.StoreID,
 		"type":     typ,
 		"payload":  body,
-		// The till's own configured UI locale (ut-docs#658) — a background
-		// job has no request to resolve one from, so DefaultLocale() is the
-		// documented "no request" source. The marketplace falls back to a
-		// region guess, then "en", when this is empty or unrecognised.
+		// The till's install-time default locale (ut-docs#658) — a BCP-47
+		// tag (e.g. "de-DE"), NOT necessarily a shop's live in-app language
+		// switch: DefaultLocale() reflects UT_DEFAULT_LOCALE at boot, and a
+		// background job has no per-request cookie/query to resolve a
+		// fresher value from. Wiring a shop's actually-switched language
+		// into this signal is a separate follow-up (ut-docs#658's own
+		// close-out notes the gap). The marketplace normalizes the tag and
+		// falls back to a region guess, then "en", when this is empty or
+		// unrecognised.
 		"locale": httpx.DefaultLocale(),
 	})
 	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/notify"
