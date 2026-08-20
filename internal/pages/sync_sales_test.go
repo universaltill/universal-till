@@ -52,6 +52,12 @@ func newSyncSalesTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Pm:       pm,
 		Settings: settings.NewStore(db),
 	}
+	// Registered AFTER the db.Close cleanup above, so LIFO order runs this
+	// FIRST: any detached tender print goroutine (ut-docs#425, #514)
+	// finishes before Close and TempDir removal can race them. This helper
+	// backs the two-till/replica stock-ownership tests, which do drive
+	// completeTender through the primary till.
+	t.Cleanup(dp.WaitForAsyncWork)
 	mux := http.NewServeMux()
 	registerSyncSales(mux, dp)
 	return mux, dp
