@@ -101,7 +101,17 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 
 // generateEOD produces, archives and (best-effort) prints the day's report.
 // Idempotent per day: returns createdNew=false when already archived.
-func generateEOD(ctx context.Context, d *common.Deps, day string) (data.EODReport, bool, error) {
+//
+// actor/blockedActorID (ut-docs#794) let the two very different callers
+// each get the audit attribution they need from the SAME function, rather
+// than forking generateEOD in two: StartEODScheduler's unattended ticker
+// passes ("system", "") — unchanged from before this card, no elevation
+// involved, never prompts. POST /api/reports/eod/run runs checkOrElevate
+// FIRST and passes the resolved actor (session user, or the approver once
+// elevated) plus blockedActorID (the originally-blocked session user, set
+// only when elevated) so the eod_generated entry gets the same dual
+// attribution every other checkOrElevate site already writes.
+func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID string) (data.EODReport, bool, error) {
 	repo := data.NewPOSRepo(d.Db)
 	rep, err := repo.EndOfDay(ctx, day)
 	if err != nil {
@@ -115,9 +125,13 @@ func generateEOD(ctx context.Context, d *common.Deps, day string) (data.EODRepor
 	if err != nil || !created {
 		return rep, created, err
 	}
-	_ = repo.InsertAudit(ctx, nil, "system", "report", day, "eod_generated",
-		map[string]any{"net": rep.Net, "sales": rep.SalesCount},
-		time.Now().UTC().Format(time.RFC3339), "")
+	payload := map[string]any{"net": rep.Net, "sales": rep.SalesCount}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if blockedActorID != "" {
+		_ = repo.InsertAuditElevated(ctx, nil, actor, blockedActorID, "report", day, "eod_generated", payload, now, "")
+	} else {
+		_ = repo.InsertAudit(ctx, nil, actor, "report", day, "eod_generated", payload, now, "")
+	}
 	if cfg := printerConfig(ctx, d); cfg.Enabled() {
 		doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset)
 		pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -213,6 +227,35 @@ func pruneReportArchive(ctx context.Context, d *common.Deps, repo *data.POSRepo,
 	}
 }
 
+// eodSchedulerTick is StartEODScheduler's per-tick body, pulled out to a
+// package-level function (ut-docs#794 review — same shape as
+// pruneReportArchive below) so a test can drive the REAL scheduler code
+// path directly instead of only proving generateEOD behaves given
+// test-supplied ("system", "") args. Unattended by construction: there is
+// no *http.Request here, so it's never reachable through checkOrElevate —
+// generateEOD is always called with the literal ("system", "") actor pair.
+func eodSchedulerTick(ctx context.Context, d *common.Deps, repo *data.POSRepo) {
+	get := func(key string) string {
+		v, _, _ := d.Settings.Get(ctx, key)
+		return strings.TrimSpace(v)
+	}
+	enabled := get(keyEODEnabled) == "true"
+	hhmm := get(keyEODTime)
+	day := time.Now().Format("2006-01-02")
+	done, err := repo.HasArchivedReport(ctx, "eod", day)
+	if err != nil {
+		return
+	}
+	if !eodDue(time.Now(), enabled, hhmm, done) {
+		return
+	}
+	if _, created, err := generateEOD(ctx, d, day, "system", ""); err != nil {
+		logging.L().Errorf("eod scheduled run: %v", err)
+	} else if created {
+		logging.L().Infof("end-of-day report generated for %s", day)
+	}
+}
+
 // StartEODScheduler runs the background end-of-day loop (docs: G30). Lives
 // in pages because the printer/settings plumbing is here. wg registers the
 // loop with app.Run's shutdown drain (ut-docs#153) — the caller must pass
@@ -223,27 +266,6 @@ func StartEODScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) 
 		defer wg.Done()
 		repo := data.NewPOSRepo(d.Db)
 		lastPruneDay := ""
-		check := func() {
-			get := func(key string) string {
-				v, _, _ := d.Settings.Get(ctx, key)
-				return strings.TrimSpace(v)
-			}
-			enabled := get(keyEODEnabled) == "true"
-			hhmm := get(keyEODTime)
-			day := time.Now().Format("2006-01-02")
-			done, err := repo.HasArchivedReport(ctx, "eod", day)
-			if err != nil {
-				return
-			}
-			if !eodDue(time.Now(), enabled, hhmm, done) {
-				return
-			}
-			if _, created, err := generateEOD(ctx, d, day); err != nil {
-				logging.L().Errorf("eod scheduled run: %v", err)
-			} else if created {
-				logging.L().Infof("end-of-day report generated for %s", day)
-			}
-		}
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -251,7 +273,7 @@ func StartEODScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				check()
+				eodSchedulerTick(ctx, d, repo)
 				pruneReportArchive(ctx, d, repo, time.Now(), &lastPruneDay)
 			}
 		}
@@ -259,17 +281,49 @@ func StartEODScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) 
 }
 
 // registerEODAPI mounts run-now, settings and the archive list endpoints.
+//
+// ut-docs#794 / ADR-0052 §2 scope note: the ADR originally scoped
+// checkOrElevate to handlers that ALREADY wrote an audit entry for their
+// action — only POST /api/reports/eod/run met that bar (via generateEOD's
+// own InsertAudit). The other 5 eod_report sites here (print/{period},
+// range, and — in registerReportArchiveAPI below — report-retention and
+// archive/export) wrote NO audit entry before this card, and 2 of those 5
+// (range, archive/export) are read-only exports rather than state
+// mutations, which §2 also carves out ("mutating ... actions only").
+// Judgment call made here, not a formal ADR amendment: this card's own
+// text named all 6 as in scope, an export still leaves a real trail of
+// which financial data left the shop and to whom, and wiring elevation
+// onto a site without also giving it the audit write §2 requires would be
+// a silent, undetectable gap — so all 5 get the same
+// checkOrElevate/InsertAuditElevated treatment as the 3 already-shipped
+// sites, rather than leaving 5 of this card's own 6 named sites
+// unimplemented. Mirrors migration 042's own precedent of recording a
+// judgment call inline rather than blocking on a new ADR for it.
+
 func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 
 	mux.HandleFunc("POST /api/reports/eod/run", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "eod_report") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+		// Mutating + audit-writing (ut-docs#557/#794): a denied session gets
+		// an in-place PIN re-auth instead of a flat 403. generateEOD's own
+		// audit write (inside it, not here) is what actually needs the
+		// resolved actor/blockedActorID — see its doc comment.
+		elev := checkOrElevate(d, r, "eod_report", r.FormValue("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/reports/eod/run", "#eod-msg",
+				httpx.T(locale, "elevation.summary.eod_run"), nil, elev)
 			return
+		}
+		actorID := elev.ActorID
+		blockedActorID := ""
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
+			blockedActorID = elev.ActorID
 		}
 		day := time.Now().Format("2006-01-02")
 		locale := httpx.ResolveLocale(w, r)
-		rep, created, err := generateEOD(r.Context(), d, day)
+		rep, created, err := generateEOD(r.Context(), d, day, actorID, blockedActorID)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -286,11 +340,35 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Reprint an archived report.
 	mux.HandleFunc("POST /api/reports/eod/print/{period}", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "eod_report") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+		period := r.PathValue("period")
+		// ut-docs#794 review finding (nit): confirm the period actually
+		// exists BEFORE elevating — sync_api.go's own precedent (cited
+		// elsewhere in this file) is "don't burn a PIN entry/shared-device
+		// lockout slot on a request that's refused either way."
+		has, err := repo.HasArchivedReport(r.Context(), "eod", period)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		period := r.PathValue("period")
+		if !has {
+			http.Error(w, "report not found", http.StatusNotFound)
+			return
+		}
+		// Mutating + audit-writing (ut-docs#794): no extra form fields to
+		// replay on retry — the dialog re-POSTs to r.URL.Path, which already
+		// carries {period} — so no Hidden entries needed, unlike the sites
+		// below whose fields live in the request body.
+		elev := checkOrElevate(d, r, "eod_report", r.FormValue("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, r.URL.Path, "#eod-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.eod_reprint"), period), nil, elev)
+			return
+		}
+		actorID := elev.ActorID
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
+		}
 		reports, err := repo.ListArchivedReports(r.Context(), 100)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -318,6 +396,12 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 				fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 				return
 			}
+			now := time.Now().UTC().Format(time.RFC3339)
+			if elev.Outcome == elevated {
+				_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", period, "eod_reprinted", nil, now, "")
+			} else {
+				_ = repo.InsertAudit(r.Context(), nil, actorID, "report", period, "eod_reprinted", nil, now, "")
+			}
 			fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "journal.reprinted"))
 			return
 		}
@@ -329,10 +413,6 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 	// Downloaded directly as a JSON file (Content-Disposition: attachment),
 	// same precedent as GET /api/backup/download/{name}.
 	mux.HandleFunc("POST /api/reports/eod/range", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "eod_report") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
 		_ = r.ParseForm()
 		from := strings.TrimSpace(r.Form.Get("from"))
 		to := strings.TrimSpace(r.Form.Get("to"))
@@ -344,6 +424,24 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "from must not be after to", http.StatusBadRequest)
 			return
 		}
+		// Mutating + audit-writing (ut-docs#794): the SAME checkOrElevate
+		// gate as every other site here, but this handler's caller is raw
+		// fetch(), not htmx (it needs Content-Disposition-triggered blob
+		// download, which htmx can't do) — see app.js's
+		// utPostWithElevation, which detects this HTML response by
+		// Content-Type (renderElevationPrompt sets it explicitly for
+		// exactly this reason) and drives the SAME shared dialog manually.
+		elev := checkOrElevate(d, r, "eod_report", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/reports/eod/range", "#eod-range-msg",
+				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.eod_range_export"), from, to),
+				[]elevationHiddenField{{Name: "from", Value: from}, {Name: "to", Value: to}}, elev)
+			return
+		}
+		actorID := elev.ActorID
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
+		}
 		rep, err := repo.EndOfDayRange(r.Context(), from, to)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -353,6 +451,13 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		payload := map[string]any{"from": from, "to": to}
+		if elev.Outcome == elevated {
+			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", from+"_to_"+to, "eod_range_exported", payload, now, "")
+		} else {
+			_ = repo.InsertAudit(r.Context(), nil, actorID, "report", from+"_to_"+to, "eod_range_exported", payload, now, "")
 		}
 		filename := fmt.Sprintf("z-report-%s-to-%s.json", from, to)
 		w.Header().Set("Content-Type", "application/json")
@@ -365,13 +470,10 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 	// the reports business-day-start boundary — a sibling field on this
 	// same settings panel/endpoint rather than a new settings page.
 	mux.HandleFunc("POST /api/settings/eod", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "eod_report") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
 		_ = r.ParseForm()
 		hhmm := strings.TrimSpace(r.Form.Get("time"))
-		enabled := r.Form.Get("enabled") == "on" || r.Form.Get("enabled") == "1"
+		enabledRaw := r.Form.Get("enabled")
+		enabled := enabledRaw == "on" || enabledRaw == "1"
 		if enabled && !eodTimeRe.MatchString(hhmm) {
 			http.Error(w, "time must be HH:MM", http.StatusBadRequest)
 			return
@@ -381,9 +483,57 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "business_day_start must be HH:MM", http.StatusBadRequest)
 			return
 		}
+		// Mutating + audit-writing (ut-docs#794): validated above (sync_api.go's
+		// precedent — don't burn a PIN entry on a request that 400s either
+		// way), gated below. Hidden replays the other two fields so the
+		// dialog's retry re-submits the SAME settings, not blank ones —
+		// this form has hx-swap="none" (no visible hx-target of its own),
+		// so HxTarget here points at a dedicated message span
+		// (#eod-settings-msg, reports_tab_eod.html) that exists purely for
+		// the elevation retry's response to land in.
+		elev := checkOrElevate(d, r, "eod_report", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			// ut-docs#794 review finding (should-fix): the summary must
+			// name the actual value being approved, not just "the schedule
+			// changed" — silently turning OFF the automatic Z-report is the
+			// concrete risk a static summary would hide from the approver
+			// (ADR-0052 §3).
+			summary := httpx.T(locale, "elevation.summary.eod_settings_disabled")
+			if enabled {
+				summary = fmt.Sprintf(httpx.T(locale, "elevation.summary.eod_settings_enabled"), hhmm)
+			}
+			renderElevationPrompt(w, r, "/api/settings/eod", "#eod-settings-msg", summary,
+				[]elevationHiddenField{
+					{Name: "enabled", Value: enabledRaw},
+					{Name: "time", Value: hhmm},
+					{Name: "business_day_start", Value: bizDayStart},
+				}, elev)
+			return
+		}
+		actorID := elev.ActorID
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
+		}
 		_ = d.Settings.Set(r.Context(), keyEODEnabled, fmt.Sprintf("%t", enabled))
 		_ = d.Settings.Set(r.Context(), keyEODTime, hhmm)
 		_ = d.Settings.Set(r.Context(), keyReportsBusinessDayStart, bizDayStart)
+		now := time.Now().UTC().Format(time.RFC3339)
+		payload := map[string]any{"enabled": enabled, "time": hhmm, "business_day_start": bizDayStart}
+		if elev.Outcome == elevated {
+			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", "-", "eod_settings_changed", payload, now, "")
+			// ut-docs#794 review finding (should-fix): a 204 never swaps at
+			// all under htmx (not even the dialog retry's own OOB content),
+			// so the plain-session path below keeps its existing 204 +
+			// page-managed reload, but the elevation dialog's retry — which
+			// has no reload of its own — needs a real body landing in
+			// #eod-settings-msg or the approver gets zero confirmation that
+			// anything happened.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(httpx.ResolveLocale(w, r), "elevation.approved"))
+			return
+		}
+		_ = repo.InsertAudit(r.Context(), nil, actorID, "report", "-", "eod_settings_changed", payload, now, "")
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
@@ -416,20 +566,47 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 	// UI renders cloud/both as visible-but-disabled for the same reason;
 	// this is the server-side half of that guarantee.
 	mux.HandleFunc("POST /api/settings/report-retention", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "eod_report") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
 		if mode != common.ReportRetentionModeTill {
 			http.Error(w, "cloud/both report retention isn't implemented yet — only till is available", http.StatusBadRequest)
 			return
 		}
+		// Mutating + audit-writing (ut-docs#794): validated above, gated
+		// below, same as every other site in this file. hx-swap="none" here
+		// too (settings.html reloads the page itself on success via
+		// hx-on::after-request) — HxTarget points at a dedicated
+		// #retention-msg span added purely for the elevation retry.
+		elev := checkOrElevate(d, r, "eod_report", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			modeLabel := httpx.T(locale, fmt.Sprintf("settings.retention.mode_%s", mode))
+			renderElevationPrompt(w, r, "/api/settings/report-retention", "#retention-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.report_retention"), modeLabel),
+				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
+			return
+		}
+		actorID := elev.ActorID
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
+		}
 		if err := d.Settings.Set(r.Context(), common.KeyReportRetentionMode, mode); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		payload := map[string]any{"mode": mode}
+		if elev.Outcome == elevated {
+			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", "-", "report_retention_mode_changed", payload, now, "")
+			// ut-docs#794 review finding (should-fix): same reasoning as
+			// /api/settings/eod above — a 204 never swaps under htmx, so the
+			// dialog retry (no reload of its own, unlike the plain-session
+			// form below) needs a real body to confirm anything happened.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(httpx.ResolveLocale(w, r), "elevation.approved"))
+			return
+		}
+		_ = repo.InsertAudit(r.Context(), nil, actorID, "report", "-", "report_retention_mode_changed", payload, now, "")
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -439,10 +616,6 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 	// text column, keeping the shape simple rather than flattening each
 	// report kind's own fields). JSON: the same rows as an array.
 	mux.HandleFunc("POST /api/reports/archive/export", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "eod_report") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
 		_ = r.ParseForm()
 		from := strings.TrimSpace(r.Form.Get("from"))
 		to := strings.TrimSpace(r.Form.Get("to"))
@@ -476,10 +649,36 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// Mutating + audit-writing (ut-docs#794): same raw-fetch shape as
+		// /api/reports/eod/range above (file download, so htmx can't drive
+		// it) — see app.js's utPostWithElevation.
+		elev := checkOrElevate(d, r, "eod_report", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/reports/archive/export", "#retention-export-msg",
+				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.archive_export"), from, to, format),
+				[]elevationHiddenField{
+					{Name: "from", Value: from},
+					{Name: "to", Value: to},
+					{Name: "format", Value: format},
+				}, elev)
+			return
+		}
+		actorID := elev.ActorID
+		if elev.Outcome == elevated {
+			actorID = elev.ApproverID
+		}
+
 		rows, err := repo.ArchivedReportsInRange(r.Context(), from, to)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		payload := map[string]any{"from": from, "to": to, "format": format}
+		if elev.Outcome == elevated {
+			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", from+"_to_"+to, "report_archive_exported", payload, now, "")
+		} else {
+			_ = repo.InsertAudit(r.Context(), nil, actorID, "report", from+"_to_"+to, "report_archive_exported", payload, now, "")
 		}
 
 		if format == "json" {

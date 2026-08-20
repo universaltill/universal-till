@@ -635,7 +635,14 @@
 <div class="card">
   <h2>🗄️ {{ T "settings.retention.title" }} {{ helpLink "reports" }}</h2>
   <p class="muted">{{ T "settings.retention.help" }}</p>
-  <form hx-post="/api/settings/report-retention" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+  <!-- ut-docs#794 review finding (blocker): checkOrElevate's needsElevation
+       response is ALSO a 2xx (200 + the elevation dialog HTML), so plain
+       event.detail.successful can't distinguish "saved" from "needs a
+       manager's PIN" — the reload below would fire immediately and destroy
+       the just-opened dialog before anyone could use it. Content-Type
+       (text/html only on the elevation prompt; the real 204 success has
+       none) is the same signal app.js's utPostWithElevation uses. -->
+  <form hx-post="/api/settings/report-retention" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $mode := .reportRetentionMode }}
     <label>{{ T "settings.retention.mode_label" }}
       <select name="mode">
@@ -645,6 +652,12 @@
       </select>
     </label>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    <!-- ut-docs#794: hx-swap="none" above means this form's own response
+         is never swapped anywhere (the page just reloads on success) — but
+         checkOrElevate's dialog retry (elevation_prompt.html) still needs a
+         real hx-target to land its response in, so this span exists purely
+         for that. -->
+    <span id="retention-msg" aria-live="polite"></span>
   </form>
   <p class="muted">{{ T "settings.retention.capacity_advisory" }}</p>
   <p>
@@ -690,34 +703,40 @@
   btn.addEventListener('click', function () {
     if (!from.value || !to.value) { msg.textContent = '✗ ' + T.pickDatesRequired; return; }
     btn.disabled = true; msg.textContent = '⏳ …';
-    fetch('/api/reports/archive/export', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ from: from.value, to: to.value, format: format.value }).toString()
-    }).then(function (r) {
-      // Same file-vs-JSON-status convention as the Data card's export
-      // above: Content-Disposition: attachment marks the file branch, not
-      // Content-Type -- a CSV or JSON export file both legitimately carry
-      // a Content-Type that could otherwise be confused with a status
-      // response.
-      var cd = r.headers.get('Content-Disposition') || '';
-      if (cd.indexOf('attachment') !== -1) {
-        var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
-        var filename = m ? m[1] : 'report-archive.bin';
-        return r.blob().then(function (blob) {
-          btn.disabled = false; msg.textContent = '✓ ' + T.downloaded + ' ' + filename;
-          var url = URL.createObjectURL(blob);
-          var a = document.createElement('a');
-          a.href = url; a.download = filename;
-          document.body.appendChild(a); a.click(); a.remove();
-          URL.revokeObjectURL(url);
+    // ut-docs#794: this endpoint triggers a file download (Content-Disposition),
+    // which htmx can't drive — utPostWithElevation (app.js) is the raw-fetch
+    // equivalent of checkOrElevate's shared elevation dialog for exactly
+    // this case. onDone only fires for a REAL success/error, never another
+    // elevation prompt (that's handled internally); onCancel fires if the
+    // approval dialog is dismissed instead, so this button doesn't stay
+    // stuck disabled.
+    window.utPostWithElevation('/api/reports/archive/export',
+      { from: from.value, to: to.value, format: format.value },
+      function (r) {
+        // Same file-vs-JSON-status convention as the Data card's export
+        // above: Content-Disposition: attachment marks the file branch, not
+        // Content-Type -- a CSV or JSON export file both legitimately carry
+        // a Content-Type that could otherwise be confused with a status
+        // response.
+        var cd = r.headers.get('Content-Disposition') || '';
+        if (cd.indexOf('attachment') !== -1) {
+          var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
+          var filename = m ? m[1] : 'report-archive.bin';
+          return r.blob().then(function (blob) {
+            btn.disabled = false; msg.textContent = '✓ ' + T.downloaded + ' ' + filename;
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+          });
+        }
+        return r.text().then(function (t) {
+          btn.disabled = false;
+          msg.textContent = '✗ ' + (t || ('HTTP ' + r.status));
         });
-      }
-      return r.text().then(function (t) {
-        btn.disabled = false;
-        msg.textContent = '✗ ' + (t || ('HTTP ' + r.status));
-      });
-    }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+      }, function () { btn.disabled = false; msg.textContent = ''; })
+      .catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
   });
 })();
 </script>

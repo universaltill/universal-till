@@ -1517,8 +1517,16 @@
   "elevation.error_insufficient_role": "این پین برای این عملیات مجوز ندارد",
   "elevation.error_unavailable": "در حال حاضر تأیید در این دستگاه امکان‌پذیر نیست.",
   "elevation.hint": "تأیید مدیر لازم است — به کادر مراجعه کنید.",
+  "elevation.approved": "تأیید و ذخیره شد.",
   "elevation.summary.backup_now": "اکنون یک پشتیبان محلی جدید ایجاد کن.",
   "elevation.summary.sync_promote": "این دستگاه را به یک دستگاه اصلی مستقل ارتقا بده و همگام‌سازی با دستگاه اصلی فعلی را پایان بده.",
   "elevation.summary.permission_grant": "دسترسی «%s» را به نقش %s بده.",
-  "elevation.summary.permission_revoke": "دسترسی «%s» را از نقش %s بگیر."
+  "elevation.summary.permission_revoke": "دسترسی «%s» را از نقش %s بگیر.",
+  "elevation.summary.eod_run": "اجرای گزارش پایان روز امروز.",
+  "elevation.summary.eod_reprint": "چاپ مجدد گزارش پایان روز %s.",
+  "elevation.summary.eod_range_export": "خروجی گرفتن از گزارش Z از %s تا %s.",
+  "elevation.summary.eod_settings_enabled": "روشن کردن گزارش خودکار پایان روز، زمان‌بندی‌شده برای %s.",
+  "elevation.summary.eod_settings_disabled": "خاموش کردن گزارش خودکار پایان روز.",
+  "elevation.summary.report_retention": "تغییر حالت نگهداری گزارش‌ها به %s.",
+  "elevation.summary.archive_export": "خروجی گرفتن از آرشیو گزارش‌ها از %s تا %s (%s)."
 }

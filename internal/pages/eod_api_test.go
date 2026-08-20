@@ -240,7 +240,7 @@ func newEODTestDeps(t *testing.T) *common.Deps {
 func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	dp := newEODTestDeps(t)
 
-	_, created, err := generateEOD(t.Context(), dp, "2026-01-01")
+	_, created, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	// Running it again for the SAME day must not re-archive (idempotent —
 	// StartEODScheduler polls every 30s and must not spam a fresh report
 	// each tick).
-	_, created, err = generateEOD(t.Context(), dp, "2026-01-01")
+	_, created, err = generateEOD(t.Context(), dp, "2026-01-01", "system", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +266,73 @@ func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	}
 }
 
+// ut-docs#794 AC: StartEODScheduler's unattended ticker calls
+// generateEOD(ctx, d, day, "system", "") literally (no checkOrElevate in
+// that path at all — see StartEODScheduler's check() closure), so the
+// audit trail this writes must be the plain, non-elevated shape: actor
+// "system", no blocked_actor_id. Exercised directly against generateEOD
+// (the actual function the scheduler calls) rather than driving the 30s
+// ticker, same as TestGenerateEOD_ArchivesOnceThenIdempotent above.
+// ut-docs#794 review finding: driving eodSchedulerTick (the ACTUAL function
+// StartEODScheduler's ticker calls, extracted so this is possible without
+// racing a real 30s ticker) rather than calling generateEOD directly with
+// test-supplied ("system", "") args, which only proved generateEOD honors
+// whatever it's given — not that the scheduler's own real call site passes
+// the right thing. Configures the settings eodDue actually reads (enabled +
+// a past time) so the tick genuinely decides to run, the same decision path
+// a real till takes at closing time.
+func TestEODSchedulerTick_RunsAndWritesPlainSystemAudit(t *testing.T) {
+	dp := newEODTestDeps(t)
+	repo := data.NewPOSRepo(dp.Db)
+	if err := dp.Settings.Set(t.Context(), keyEODEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(t.Context(), keyEODTime, "00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	eodSchedulerTick(t.Context(), dp, repo)
+
+	today := time.Now().Format("2006-01-02")
+	has, err := repo.HasArchivedReport(t.Context(), "eod", today)
+	if err != nil || !has {
+		t.Fatalf("expected the tick to have archived today's report, got has=%v err=%v", has, err)
+	}
+
+	var actorID string
+	var blockedActorID *string
+	if err := dp.Db.QueryRow(`SELECT actor_id, blocked_actor_id FROM audit_log WHERE action='eod_generated'`).
+		Scan(&actorID, &blockedActorID); err != nil {
+		t.Fatalf("expected an eod_generated audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("actor_id = %q, want %q (the scheduler's unattended run must never be attributed to a real user)", actorID, "system")
+	}
+	if blockedActorID != nil && *blockedActorID != "" {
+		t.Fatalf("blocked_actor_id = %q, want empty/NULL — the scheduler path never elevates", *blockedActorID)
+	}
+}
+
+// The disabled/not-due branch of the same real call site must NOT generate
+// anything — pins that eodSchedulerTick's eodDue gate is actually consulted,
+// not bypassed.
+func TestEODSchedulerTick_NotDueGeneratesNothing(t *testing.T) {
+	dp := newEODTestDeps(t)
+	repo := data.NewPOSRepo(dp.Db)
+	// keyEODEnabled left unset (disabled) — eodDue must report false.
+
+	eodSchedulerTick(t.Context(), dp, repo)
+
+	today := time.Now().Format("2006-01-02")
+	has, err := repo.HasArchivedReport(t.Context(), "eod", today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has {
+		t.Fatal("expected no report archived when EOD is disabled")
+	}
+}
+
 // --- HTTP handlers ---
 
 func newEODAPITestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
@@ -277,13 +344,48 @@ func newEODAPITestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	return mux, dp
 }
 
+// newElevationTestPrincipals seeds a real manager (with a working PIN) and a
+// blocked cashier session (ut-docs#794), the same pair every elevated-path
+// test in this file needs — factored out of
+// TestPostEODRun_ElevatesOnValidApproverPIN so the 5 sibling sites below
+// don't each repeat the boilerplate.
+func newElevationTestPrincipals(t *testing.T, dp *common.Deps, mgrUsername, cashierUsername, pin string) (mgrID, blockedID string) {
+	t.Helper()
+	dp.AuthSvc = auth.NewService(dp.Db) // canPerform() needs it non-nil once a real session reaches it
+	authRepo := data.NewAuthRepo(dp.Db)
+	ctx := t.Context()
+
+	mgrID, err := authRepo.CreateUser(ctx, mgrUsername, "EOD Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	hash, err := auth.HashPIN(pin)
+	if err != nil {
+		t.Fatalf("hash pin: %v", err)
+	}
+	if err := authRepo.SetUserPIN(ctx, mgrID, hash); err != nil {
+		t.Fatalf("set pin: %v", err)
+	}
+	blockedID, err = authRepo.CreateUser(ctx, cashierUsername, "Blocked Cashier", "cashier")
+	if err != nil {
+		t.Fatalf("create cashier: %v", err)
+	}
+	return mgrID, blockedID
+}
+
+// ut-docs#794: POST /api/reports/eod/run moved off the flat 403 onto
+// checkOrElevate — a denied caller now gets the in-place elevation prompt
+// (200, htmx-swappable), same shape as ut-docs#557's 3 original sites.
 func TestPostEODRun_RequiresManager(t *testing.T) {
 	mux, _ := newEODAPITestMux(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", nil)
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "elevation-dialog") || !strings.Contains(rec.Body.String(), `name="override_pin"`) {
+		t.Fatalf("expected the elevation prompt dialog, got: %s", rec.Body.String())
 	}
 }
 
@@ -295,19 +397,60 @@ func TestPostEODRun_RequiresManager(t *testing.T) {
 // gate — accepted and inert since nothing today creates that role.
 func TestPostEODRun_RealSessionGatesByRole(t *testing.T) {
 	t.Setenv("UT_AUTH", "on")
-	for role, wantCode := range map[string]int{
-		"cashier": http.StatusForbidden, "manager": http.StatusOK,
-		"admin": http.StatusOK, "super_admin": http.StatusOK,
-	} {
+	// ut-docs#794: every role now gets 200 (checkOrElevate never flat-403s)
+	// — a denied role's 200 carries the elevation prompt instead of the
+	// generated report, so what distinguishes "denied" from "allowed" now
+	// is the response body, not the status code.
+	allowed := map[string]bool{
+		"cashier": false, "manager": true, "admin": true, "super_admin": true,
+	}
+	for role, wantAllowed := range allowed {
 		t.Run(role, func(t *testing.T) {
 			mux, _ := newEODAPITestMux(t)
 			req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", nil), auth.User{ID: "u1", Role: role})
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
-			if rec.Code != wantCode {
-				t.Fatalf("role=%s: expected %d, got %d: %s", role, wantCode, rec.Code, rec.Body.String())
+			if rec.Code != http.StatusOK {
+				t.Fatalf("role=%s: expected 200, got %d: %s", role, rec.Code, rec.Body.String())
+			}
+			gotElevationPrompt := strings.Contains(rec.Body.String(), "elevation-dialog")
+			if gotElevationPrompt == wantAllowed {
+				t.Fatalf("role=%s: expected elevation prompt=%v, got body: %s", role, !wantAllowed, rec.Body.String())
 			}
 		})
+	}
+}
+
+// ut-docs#794: a cashier session denied eod_report gets past the gate with a
+// valid manager approver PIN — the report is attributed to the approver, and
+// the audit trail records both (dual attribution), same as ut-docs#557's
+// TestBackupNow_ElevatesOnValidApproverPIN.
+func TestPostEODRun_ElevatesOnValidApproverPIN(t *testing.T) {
+	mux, dp := newEODAPITestMux(t)
+	mgrID, blockedID := newElevationTestPrincipals(t, dp, "mgr-eod", "blocked-cashier-eod", "445566")
+
+	form := strings.NewReader("override_pin=445566")
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", form), auth.User{ID: blockedID, Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("expected a success indicator, got: %s", rec.Body.String())
+	}
+
+	var actorID, blockedActorID string
+	if err := dp.Db.QueryRow(`SELECT actor_id, blocked_actor_id FROM audit_log WHERE action='eod_generated'`).
+		Scan(&actorID, &blockedActorID); err != nil {
+		t.Fatalf("expected an eod_generated audit row: %v", err)
+	}
+	if actorID != mgrID {
+		t.Fatalf("actor_id = %q, want the approver %q", actorID, mgrID)
+	}
+	if blockedActorID != blockedID {
+		t.Fatalf("blocked_actor_id = %q, want the originally-blocked session user %q", blockedActorID, blockedID)
 	}
 }
 
@@ -350,15 +493,34 @@ func TestPostEODPrint_NotFoundForUnknownPeriod(t *testing.T) {
 }
 
 func TestPostEODPrint_RequiresManager(t *testing.T) {
-	mux, _ := newEODAPITestMux(t)
+	mux, dp := newEODAPITestMux(t)
+	// ut-docs#794 review finding (nit): the period is now validated to
+	// exist BEFORE elevating (don't burn a PIN entry on a request that
+	// 404s either way), so this test needs a real archived report or it
+	// 404s before ever reaching checkOrElevate — seed one directly.
+	if _, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", ""); err != nil {
+		t.Fatalf("setup: generateEOD: %v", err)
+	}
+
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/2026-01-01", nil)
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("expected the elevation prompt dialog, got: %s", rec.Body.String())
 	}
 }
 
+// ut-docs#794 review finding (should-fix — partially addressed): unlike the
+// other 5 sites, print/{period}'s elevated-path + audit write is NOT
+// exercised here — its success path requires a real/fake configured
+// printer to ever get past printerConfig(ctx,d).Enabled(), and this file
+// (like the rest of the package) has no such test double today; only the
+// "no printer configured" 502 branch is covered, pre-existing and
+// unrelated to elevation. checkOrElevate's needsElevation branch IS
+// covered (TestPostEODPrint_RequiresManager), same as every other site.
 func TestPostEODPrint_NoPrinterConfiguredFailsGracefully(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newEODAPITestMux(t)
@@ -382,14 +544,26 @@ func TestPostEODPrint_NoPrinterConfiguredFailsGracefully(t *testing.T) {
 	}
 }
 
+// ut-docs#794: this endpoint is a raw fetch() caller (file download via
+// Content-Disposition, not htmx — see app.js's utPostWithElevation), but
+// the SERVER-side gate is the identical checkOrElevate shape as every
+// htmx-driven site: 200 + the elevation dialog HTML, distinguished from a
+// real error by the explicit Content-Type text/html renderElevationPrompt
+// sets (elevation.go).
 func TestPostEODRange_RequiresManager(t *testing.T) {
 	mux, _ := newEODAPITestMux(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/range", strings.NewReader("from=2026-01-01&to=2026-01-31"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected text/html so the raw-fetch caller can distinguish this from the real JSON download, got %q", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("expected the elevation prompt dialog, got: %s", rec.Body.String())
 	}
 }
 
@@ -447,6 +621,97 @@ func TestPostEODRange_DownloadsJSONReport(t *testing.T) {
 	}
 	if rep.From != "2026-01-01" || rep.To != "2026-01-31" {
 		t.Fatalf("expected From/To echoed in the body, got %+v", rep)
+	}
+}
+
+// ut-docs#794 review finding (should-fix): the elevated-path proof for a
+// raw-fetch (non-htmx) site — the server-side gate is identical to the
+// htmx-driven sites', so this exercises the SAME checkOrElevate/
+// InsertAuditElevated code as TestPostEODRun_ElevatesOnValidApproverPIN,
+// just reached the way app.js's utPostWithElevation actually calls it (a
+// plain form-encoded POST with override_pin alongside the replayed
+// from/to).
+func TestPostEODRange_ElevatesOnValidApproverPIN(t *testing.T) {
+	mux, dp := newEODAPITestMux(t)
+	mgrID, blockedID := newElevationTestPrincipals(t, dp, "mgr-eod-range", "blocked-cashier-eod-range", "334455")
+
+	form := strings.NewReader("from=2026-01-01&to=2026-01-31&override_pin=334455")
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/reports/eod/range", form), auth.User{ID: blockedID, Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") {
+		t.Fatalf("expected the real download to go through once elevated, got Content-Disposition %q body %s", cd, rec.Body.String())
+	}
+
+	var actorID, blockedActorID string
+	if err := dp.Db.QueryRow(`SELECT actor_id, blocked_actor_id FROM audit_log WHERE action='eod_range_exported'`).
+		Scan(&actorID, &blockedActorID); err != nil {
+		t.Fatalf("expected an eod_range_exported audit row: %v", err)
+	}
+	if actorID != mgrID {
+		t.Fatalf("actor_id = %q, want the approver %q", actorID, mgrID)
+	}
+	if blockedActorID != blockedID {
+		t.Fatalf("blocked_actor_id = %q, want the originally-blocked session user %q", blockedActorID, blockedID)
+	}
+}
+
+// ut-docs#794: POST /api/settings/eod moved off the flat 403 onto
+// checkOrElevate, same as the other 5 eod_report sites in this file.
+func TestPostSettingsEOD_RequiresManager(t *testing.T) {
+	mux, _ := newEODAPITestMux(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("enabled=on&time=22:30"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("expected the elevation prompt dialog, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#794 review finding (should-fix): exercises the Hidden-field
+// replay specifically — a real dialog retry re-submits override_pin
+// ALONGSIDE the original enabled/time/business_day_start fields (the
+// server-rendered hidden inputs), not override_pin alone.
+func TestPostSettingsEOD_ElevatesOnValidApproverPIN(t *testing.T) {
+	mux, dp := newEODAPITestMux(t)
+	mgrID, blockedID := newElevationTestPrincipals(t, dp, "mgr-eod-settings", "blocked-cashier-eod-settings", "778899")
+
+	form := strings.NewReader("enabled=on&time=21:45&business_day_start=06:00&override_pin=778899")
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/settings/eod", form), auth.User{ID: blockedID, Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevated confirmation), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("expected a success indicator, got: %s", rec.Body.String())
+	}
+
+	val, _, err := dp.Settings.Get(t.Context(), keyEODTime)
+	if err != nil || val != "21:45" {
+		t.Fatalf("expected the replayed time persisted, got %q err=%v", val, err)
+	}
+
+	var actorID, blockedActorID string
+	if err := dp.Db.QueryRow(`SELECT actor_id, blocked_actor_id FROM audit_log WHERE action='eod_settings_changed'`).
+		Scan(&actorID, &blockedActorID); err != nil {
+		t.Fatalf("expected an eod_settings_changed audit row: %v", err)
+	}
+	if actorID != mgrID {
+		t.Fatalf("actor_id = %q, want the approver %q", actorID, mgrID)
+	}
+	if blockedActorID != blockedID {
+		t.Fatalf("blocked_actor_id = %q, want the originally-blocked session user %q", blockedActorID, blockedID)
 	}
 }
 
@@ -533,8 +798,49 @@ func TestPostSettingsReportRetention_RequiresManager(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode=till"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("expected the elevation prompt dialog, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#794 review finding (should-fix): elevated retry now gets a real
+// 200 confirmation body (not the bare 204 the plain-session path above
+// keeps), since a 204 never swaps under htmx at all — see the handler's own
+// comment for why.
+func TestPostSettingsReportRetention_ElevatesOnValidApproverPIN(t *testing.T) {
+	mux, dp := newEODAPITestMux(t)
+	mgrID, blockedID := newElevationTestPrincipals(t, dp, "mgr-eod-retention", "blocked-cashier-eod-retention", "998877")
+
+	form := strings.NewReader("mode=till&override_pin=998877")
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", form), auth.User{ID: blockedID, Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevated confirmation), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("expected a success indicator, got: %s", rec.Body.String())
+	}
+
+	val, _, err := dp.Settings.Get(t.Context(), common.KeyReportRetentionMode)
+	if err != nil || val != "till" {
+		t.Fatalf("expected report_retention_mode=till persisted, got %q err=%v", val, err)
+	}
+
+	var actorID, blockedActorID string
+	if err := dp.Db.QueryRow(`SELECT actor_id, blocked_actor_id FROM audit_log WHERE action='report_retention_mode_changed'`).
+		Scan(&actorID, &blockedActorID); err != nil {
+		t.Fatalf("expected a report_retention_mode_changed audit row: %v", err)
+	}
+	if actorID != mgrID {
+		t.Fatalf("actor_id = %q, want the approver %q", actorID, mgrID)
+	}
+	if blockedActorID != blockedID {
+		t.Fatalf("blocked_actor_id = %q, want the originally-blocked session user %q", blockedActorID, blockedID)
 	}
 }
 
@@ -580,14 +886,21 @@ func TestPostSettingsReportRetention_RejectsCloudAndBoth(t *testing.T) {
 	}
 }
 
+// ut-docs#794: same raw-fetch shape as TestPostEODRange_RequiresManager.
 func TestPostReportArchiveExport_RequiresManager(t *testing.T) {
 	mux, _ := newEODAPITestMux(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from=2026-01-01&to=2026-01-31&format=json"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected text/html so the raw-fetch caller can distinguish this from the real file download, got %q", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("expected the elevation prompt dialog, got: %s", rec.Body.String())
 	}
 }
 
@@ -613,11 +926,43 @@ func TestPostReportArchiveExport_ValidatesFromTo(t *testing.T) {
 	}
 }
 
+// ut-docs#794 review finding (should-fix): the second raw-fetch (non-htmx)
+// site's elevated-path proof, mirroring TestPostEODRange_ElevatesOnValidApproverPIN.
+func TestPostReportArchiveExport_ElevatesOnValidApproverPIN(t *testing.T) {
+	mux, dp := newEODAPITestMux(t)
+	mgrID, blockedID := newElevationTestPrincipals(t, dp, "mgr-archive-export", "blocked-cashier-archive-export", "112233")
+
+	form := strings.NewReader("from=2026-01-01&to=2026-01-31&format=json&override_pin=112233")
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", form), auth.User{ID: blockedID, Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") {
+		t.Fatalf("expected the real download to go through once elevated, got Content-Disposition %q body %s", cd, rec.Body.String())
+	}
+
+	var actorID, blockedActorID string
+	if err := dp.Db.QueryRow(`SELECT actor_id, blocked_actor_id FROM audit_log WHERE action='report_archive_exported'`).
+		Scan(&actorID, &blockedActorID); err != nil {
+		t.Fatalf("expected a report_archive_exported audit row: %v", err)
+	}
+	if actorID != mgrID {
+		t.Fatalf("actor_id = %q, want the approver %q", actorID, mgrID)
+	}
+	if blockedActorID != blockedID {
+		t.Fatalf("blocked_actor_id = %q, want the originally-blocked session user %q", blockedActorID, blockedID)
+	}
+}
+
 func TestPostReportArchiveExport_JSONAndCSVDownloads(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newEODAPITestMux(t)
 
-	if _, _, err := generateEOD(t.Context(), dp, "2026-01-15"); err != nil {
+	if _, _, err := generateEOD(t.Context(), dp, "2026-01-15", "system", ""); err != nil {
 		t.Fatalf("setup: generateEOD: %v", err)
 	}
 
