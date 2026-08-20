@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 )
 
 // The digest pushes the running-out count to the marketplace with the store
@@ -116,6 +117,16 @@ func TestPushDigest(t *testing.T) {
 		t.Fatal("unregistered till must not push")
 	}
 
+	// The till's install-time default locale (ut-docs#658) rides along on
+	// the push, verbatim as DefaultLocale() reports it — a BCP-47 tag
+	// ("de-DE"), same shape UT_DEFAULT_LOCALE actually takes
+	// (internal/config), not a bare code. Normalizing that shape into
+	// mailText's bare-code keys is the marketplace's job (ut-cloud's own
+	// resolveLocale test), not this repo's — this test only proves the
+	// till sends what it's actually configured with, unmassaged.
+	httpx.InitI18n(nil, "de-DE")
+	t.Cleanup(func() { httpx.InitI18n(nil, "en") })
+
 	cfg := &config.Config{Marketplace: config.MarketplaceConfig{
 		EndpointURL: mp.URL + "/api", StoreID: "store-abc", MerchantToken: "tok-1",
 	}}
@@ -124,6 +135,9 @@ func TestPushDigest(t *testing.T) {
 	}
 	if got == nil || got["type"] != "low_stock_digest" || got["store_id"] != "store-abc" {
 		t.Fatalf("pushed = %+v", got)
+	}
+	if got["locale"] != "de-DE" {
+		t.Fatalf("locale = %v, want de-DE", got["locale"])
 	}
 	payload, _ := got["payload"].(map[string]any)
 	if payload["running_out"] != float64(1) {
