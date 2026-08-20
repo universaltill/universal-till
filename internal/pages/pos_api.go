@@ -498,6 +498,29 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = basketView.Render(w, *b)
 	})
 
+	// Table assignment (ut-docs#820, ADR-0054): assign the current basket to
+	// a dining table, or clear the assignment when table_id is empty. The
+	// label is resolved SERVER-SIDE from the tables repo, never trusted from
+	// the request -- the picker only ever POSTs an id, and an id that
+	// doesn't resolve (deleted/garbage) degrades to "no table assigned"
+	// rather than stamping a stale/bogus label onto the basket, same
+	// fail-safe shape as order-type's own clamp-to-known-values above.
+	mux.HandleFunc("/api/pos/table", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		tableID := strings.TrimSpace(r.Form.Get("table_id"))
+		var b *pos.Basket
+		if tableID == "" {
+			b = d.Engine.ClearTable()
+		} else if tbl, ok, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), tableID); err == nil && ok {
+			b = d.Engine.SetTable(tableID, tbl.Label)
+		} else {
+			b = d.Engine.ClearTable()
+		}
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		_ = basketView.Render(w, *b)
+	})
+
 	// Reset basket for new customer.
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
 		d.Engine.Reset()
@@ -752,6 +775,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			customerID = d.Engine.CustomerID()
 		}
 
+		// Captured BEFORE completeTender (which resets the basket on
+		// success) -- the receipt render below needs the table label the
+		// sale was actually served at, same reasoning as capturing
+		// discountType/discountRaw from the basket further down.
+		tableLabelForReceipt := d.Engine.TableLabel()
+
 		if in.SimFail {
 			failureReason := in.FailReason
 			if failureReason == "" {
@@ -779,6 +808,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			SaleDiscount:           discount,
 			ServiceCharge:          serviceCharge,
 			OrderType:              d.Engine.OrderType(),
+			TableID:                d.Engine.TableID(),
 			Lines:                  saleLines,
 			Payments:               payments,
 			Note:                   in.Note,
@@ -918,7 +948,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			tseSignature = nil
 		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature,
-			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d))
+			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt)
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
@@ -1110,7 +1140,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, storeName string, design receiptDesign) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, storeName string, design receiptDesign, tableLabel string) (string, error) {
 	t, err := template.New("receipt.html").Funcs(funcs).ParseFS(uiassets.FS,
 		"ui/partials/receipt.html",
 	)
@@ -1200,7 +1230,12 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		"TSESignature": tseView,
 		// Receipt design (docs: receipt-designer.md): the on-screen copy
 		// follows the same owner-styled design as the thermal print.
-		"StoreName":    storeName,
+		"StoreName": storeName,
+		// TableLabel (ut-docs#820, ADR-0054): the dining table this sale was
+		// served at, resolved server-side before the basket was reset — ""
+		// when no table was assigned, guarded by {{ if .TableLabel }} in the
+		// template.
+		"TableLabel":   tableLabel,
 		"DesignHeader": design.Header,
 		"DesignFooter": design.Footer,
 		"ShowTax":      design.ShowTax,

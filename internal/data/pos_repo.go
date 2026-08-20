@@ -2297,15 +2297,15 @@ WHERE location_id = ?
 // till-set service-charge amount for this sale (distinct from a payment's
 // tip_amount) -- it already participates in total, so it is stored
 // separately only so it can be broken out on the receipt/journal.
-func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total, serviceCharge int64, note, createdAt, tenderType, orderType string, offline bool, syncStatus string, syncAttempts int, syncNextAttemptAt, syncLastError string) error {
+func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total, serviceCharge int64, note, createdAt, tenderType, orderType, tableID string, offline bool, syncStatus string, syncAttempts int, syncNextAttemptAt, syncLastError string) error {
 	offlineVal := 0
 	if offline {
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, rounding, note, created_at, completed_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, saleID, receiptNo, saleType, tenderType, orderType, offlineVal, syncStatus, syncAttempts, nullIfEmpty(syncNextAttemptAt), nullIfEmpty(syncLastError), nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, serviceCharge, nullIfEmpty(note), createdAt, createdAt)
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, rounding, note, created_at, completed_at)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+`, saleID, receiptNo, saleType, tenderType, orderType, nullIfEmpty(tableID), offlineVal, syncStatus, syncAttempts, nullIfEmpty(syncNextAttemptAt), nullIfEmpty(syncLastError), nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, serviceCharge, nullIfEmpty(note), createdAt, createdAt)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
@@ -3428,12 +3428,22 @@ func (r *POSRepo) SaleCompletedAt(ctx context.Context, saleID string) (time.Time
 // the json tags below are load-bearing for universal-till/CLAUDE.md's
 // snake_case rule on that surface, not just documentation (ut-docs#262).
 type SaleDetail struct {
-	ID            string              `json:"id"`
-	ReceiptNo     string              `json:"receipt_no"`
-	Status        string              `json:"status"`
-	SaleType      string              `json:"sale_type"`
-	TenderType    string              `json:"tender_type"`
-	OrderType     string              `json:"order_type"`
+	ID         string `json:"id"`
+	ReceiptNo  string `json:"receipt_no"`
+	Status     string `json:"status"`
+	SaleType   string `json:"sale_type"`
+	TenderType string `json:"tender_type"`
+	OrderType  string `json:"order_type"`
+	// TableID/TableLabel (ut-docs#820, ADR-0054) are the dining table this
+	// sale was served at -- both empty when none was assigned. TableLabel
+	// is resolved via a join against `tables` in GetSaleDetail so callers
+	// (the receipt/kitchen-ticket render paths) never need a lookup of
+	// their own; it reflects the table's CURRENT label, same "snapshot vs.
+	// live" trade-off order_type's own plain string avoids by not needing
+	// one -- a renamed table changes how past receipts display it, which
+	// is an acceptable, deliberately simple choice for a v1.
+	TableID       string              `json:"table_id,omitempty"`
+	TableLabel    string              `json:"table_label,omitempty"`
 	Offline       bool                `json:"offline"`
 	SyncStatus    string              `json:"sync_status"`
 	Currency      string              `json:"currency"`
@@ -3496,13 +3506,14 @@ func (r *POSRepo) GetSaleDetailByID(ctx context.Context, saleID string) (SaleDet
 func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDetail, bool, error) {
 	var d SaleDetail
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, receipt_no, status, sale_type, tender_type, order_type, offline, sync_status,
-       currency, subtotal, discount_total, tax_total, total, service_charge_amount, created_at,
-       COALESCE(cashier_id, '')
-FROM sales WHERE receipt_no = ?`, receiptNo).Scan(
+SELECT s.id, s.receipt_no, s.status, s.sale_type, s.tender_type, s.order_type, s.offline, s.sync_status,
+       s.currency, s.subtotal, s.discount_total, s.tax_total, s.total, s.service_charge_amount, s.created_at,
+       COALESCE(s.cashier_id, ''), COALESCE(s.table_id, ''), COALESCE(t.label, '')
+FROM sales s LEFT JOIN tables t ON t.id = s.table_id
+WHERE s.receipt_no = ?`, receiptNo).Scan(
 		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.OrderType, &d.Offline,
 		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
-		&d.Total, &d.ServiceCharge, &d.CreatedAt, &d.CashierID)
+		&d.Total, &d.ServiceCharge, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel)
 	if err == sql.ErrNoRows {
 		return SaleDetail{}, false, nil
 	}

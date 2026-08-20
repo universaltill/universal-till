@@ -41,6 +41,14 @@ type Service struct {
 	// orderType is "" (no explicit choice) or OrderTypeTakeaway. What (if
 	// anything) it does to tax is entirely up to taxAsker.
 	orderType string
+	// tableID/tableLabel (ut-docs#820, ADR-0054) are the dining table this
+	// sale is assigned to — both empty when unassigned. tableLabel is
+	// carried alongside the id purely for display (the basket header, the
+	// held-orders strip, receipts/tickets) so those surfaces never need a
+	// tables-repo lookup just to render; the id is what actually persists
+	// and what a "move to a different table" operation keys on.
+	tableID    string
+	tableLabel string
 	// taxAsker, when set, can override a line's tax rate per the current
 	// order type — see TaxRateAsker. nil (the default) means core just uses
 	// each line's own configured rate, unaffected by order type.
@@ -202,6 +210,10 @@ type Basket struct {
 	ToastLevel string `json:"toastLevel,omitempty"`
 	// OrderType is "" (dine-in/standard) or OrderTypeTakeaway.
 	OrderType string `json:"orderType,omitempty"`
+	// TableID/TableLabel (ut-docs#820) are the assigned dining table, both
+	// empty when the sale has none.
+	TableID    string `json:"tableId,omitempty"`
+	TableLabel string `json:"tableLabel,omitempty"`
 }
 
 // ItemCount is the total quantity in the basket for the sale screen's
@@ -443,6 +455,8 @@ func (s *Service) recomputeTotals() {
 	s.basket.CustomerID = s.customerID
 	s.basket.CustomerName = s.customerName
 	s.basket.OrderType = s.orderType
+	s.basket.TableID = s.tableID
+	s.basket.TableLabel = s.tableLabel
 	// Per-line, not a single subtotal-wide rate: lines can carry different
 	// tax codes, and the order-type dine-in/takeaway switch (§12 UStG) only
 	// changes SOME lines' rate — a flat sub-wide engine can't represent that.
@@ -474,6 +488,8 @@ func (s *Service) Tender(amount money.Money, method string) (map[string]any, err
 	s.basket = Basket{}
 	s.lines = nil
 	s.orderType = ""
+	s.tableID = ""
+	s.tableLabel = ""
 	return map[string]any{"status": "ok", "method": method, "amount": amount}, nil
 }
 
@@ -511,6 +527,51 @@ func (s *Service) SetOrderType(orderType string) *Basket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.orderType = orderType
+	s.recomputeTotals()
+	return s.basketCopyLocked()
+}
+
+// TableID returns the id of the table the current sale is assigned to, or
+// "" if unassigned.
+func (s *Service) TableID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tableID
+}
+
+// TableLabel returns the display label of the table the current sale is
+// assigned to, or "" if unassigned.
+func (s *Service) TableLabel() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tableLabel
+}
+
+// SetTable assigns (or, moving from one table to another, re-assigns) the
+// current sale's table (ut-docs#820, ADR-0054). label is the table's
+// display label at the time of assignment, resolved by the caller (the
+// handler, via the tables repo) — kept alongside the id purely for display,
+// mirroring how SetCustomer carries both id and name. Passing an empty
+// tableID is equivalent to ClearTable.
+func (s *Service) SetTable(tableID, label string) *Basket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tableID = tableID
+	if tableID == "" {
+		label = ""
+	}
+	s.tableLabel = label
+	s.recomputeTotals()
+	return s.basketCopyLocked()
+}
+
+// ClearTable removes the current sale's table assignment — the "no table"
+// choice, same convention as SetOrderType("").
+func (s *Service) ClearTable() *Basket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tableID = ""
+	s.tableLabel = ""
 	s.recomputeTotals()
 	return s.basketCopyLocked()
 }
@@ -605,6 +666,8 @@ func (s *Service) resetLocked() {
 	s.basket.CustomerName = ""
 	s.scanCache = map[string]BasketLine{}
 	s.orderType = ""
+	s.tableID = ""
+	s.tableLabel = ""
 }
 
 func (s *Service) clearCacheForCode(code string) {

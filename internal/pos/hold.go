@@ -32,7 +32,11 @@ type BasketSnapshot struct {
 	DiscountPercentBP int64          `json:"discount_percent_bp,omitempty"`
 	CustomerID        string         `json:"customer_id,omitempty"`
 	CustomerName      string         `json:"customer_name,omitempty"`
-	Total             money.Money    `json:"total"`
+	// TableID/TableLabel (ut-docs#820) carry the assigned dining table
+	// through a hold/resume cycle, same convention as CustomerID/Name.
+	TableID    string      `json:"table_id,omitempty"`
+	TableLabel string      `json:"table_label,omitempty"`
+	Total      money.Money `json:"total"`
 }
 
 // HasItems reports whether the current basket has any lines.
@@ -53,6 +57,8 @@ func (s *Service) Snapshot() BasketSnapshot {
 		DiscountPercentBP: s.discountPercentBP,
 		CustomerID:        s.customerID,
 		CustomerName:      s.customerName,
+		TableID:           s.tableID,
+		TableLabel:        s.tableLabel,
 		Total:             s.basket.Total,
 	}
 	for _, l := range s.lines {
@@ -96,5 +102,7 @@ func (s *Service) Restore(snap BasketSnapshot) {
 	s.discountValue = snap.DiscountValue
 	s.discountPercentBP = snap.DiscountPercentBP
 	s.setCustomerLocked(snap.CustomerID, snap.CustomerName)
+	s.tableID = snap.TableID
+	s.tableLabel = snap.TableLabel
 	s.recomputeTotals()
 }

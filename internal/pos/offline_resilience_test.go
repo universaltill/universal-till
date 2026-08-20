@@ -330,6 +330,7 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			sale_type TEXT NOT NULL,
 			tender_type TEXT NOT NULL DEFAULT 'unknown',
 			order_type TEXT NOT NULL DEFAULT '',
+			table_id TEXT,
 			offline INTEGER NOT NULL DEFAULT 0,
 			sync_status TEXT NOT NULL DEFAULT 'queued',
 			sync_attempts INTEGER NOT NULL DEFAULT 0,

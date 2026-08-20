@@ -212,3 +212,52 @@ func TestOrderTypeTaxSwitching(t *testing.T) {
 		t.Fatalf("dine-in (reverted) tax = %v, want %v", b.Tax, dineInTax)
 	}
 }
+
+// TestSetTableAndClearTable mirrors TestOrderTypeTaxSwitching's shape for
+// the table-assignment state (ut-docs#820): SetTable stamps both the id and
+// the resolved label onto the basket, and ClearTable (the "no table"
+// choice, same convention as SetOrderType("")) removes both again.
+func TestSetTableAndClearTable(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, mapResolver{})
+
+	if got := s.TableID(); got != "" {
+		t.Fatalf("new service TableID = %q, want empty", got)
+	}
+	if got := s.TableLabel(); got != "" {
+		t.Fatalf("new service TableLabel = %q, want empty", got)
+	}
+
+	b := *s.SetTable("tbl-1", "T1")
+	if b.TableID != "tbl-1" || b.TableLabel != "T1" {
+		t.Fatalf("basket after SetTable = id=%q label=%q, want tbl-1/T1", b.TableID, b.TableLabel)
+	}
+	if s.TableID() != "tbl-1" || s.TableLabel() != "T1" {
+		t.Fatalf("accessors after SetTable = id=%q label=%q, want tbl-1/T1", s.TableID(), s.TableLabel())
+	}
+
+	// Moving to a different table overwrites both fields, not just the id.
+	b = *s.SetTable("tbl-2", "T2")
+	if b.TableID != "tbl-2" || b.TableLabel != "T2" {
+		t.Fatalf("basket after re-SetTable = id=%q label=%q, want tbl-2/T2", b.TableID, b.TableLabel)
+	}
+
+	b = *s.ClearTable()
+	if b.TableID != "" || b.TableLabel != "" {
+		t.Fatalf("basket after ClearTable = id=%q label=%q, want both empty", b.TableID, b.TableLabel)
+	}
+	if s.TableID() != "" || s.TableLabel() != "" {
+		t.Fatalf("accessors after ClearTable = id=%q label=%q, want both empty", s.TableID(), s.TableLabel())
+	}
+}
+
+// TestReset_ClearsTable confirms a table assignment doesn't leak into the
+// next customer's basket after Reset/Tender, the same guarantee already
+// held for OrderType and the discount/customer fields.
+func TestReset_ClearsTable(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, mapResolver{})
+	s.SetTable("tbl-1", "T1")
+	s.Reset()
+	if s.TableID() != "" || s.TableLabel() != "" {
+		t.Fatalf("expected table cleared after Reset, got id=%q label=%q", s.TableID(), s.TableLabel())
+	}
+}
