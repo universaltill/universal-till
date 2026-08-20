@@ -168,6 +168,30 @@ func TestStoreAPI_DownloadListingNotFound_404(t *testing.T) {
 	}
 }
 
+// TestStoreAPI_DownloadRegisteredRequired_403 pins ut-docs#704: an anonymous
+// till hitting a "registered" access-tier listing (ADR-0013) gets the cloud's
+// registered_required code, which must surface as the actionable
+// plugins.install.error.registered_required i18n key ("claim your store"),
+// not the generic "download failed: <status>" 502.
+func TestStoreAPI_DownloadRegisteredRequired_403(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"registered_required","message":"this plugin requires a claimed store account — sign in to claim your store"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
+
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-registered"}}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("download of a registered-required listing = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+	if ok, msg := storeRespOf(t, rec); ok || msg != "plugins.install.error.registered_required" {
+		t.Fatalf("download envelope wrong: success=%v msg=%q, want the registered_required i18n key", ok, msg)
+	}
+}
+
 func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{

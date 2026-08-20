@@ -251,6 +251,14 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 				respond(w, http.StatusNotFound, "plugins.install.error.not_found")
 				return
 			}
+			// ut-docs#704: an anonymous till hitting a "registered" access-tier
+			// listing (ADR-0013) — the cloud REST path now returns this code
+			// instead of a generic 500. Surface the actionable "claim your
+			// store" message, same pattern as the cases above.
+			if errors.As(err, &apiErr) && apiErr.Code == "registered_required" {
+				respond(w, http.StatusForbidden, "plugins.install.error.registered_required")
+				return
+			}
 			respond(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))
 			return
 		}

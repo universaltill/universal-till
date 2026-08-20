@@ -414,6 +414,7 @@
   "plugins.install.error.invalid_request": "Kurulum isteği geçersizdi.",
   "plugins.install.error.network": "Ağ hatası",
   "plugins.install.error.not_entitled": "Bu eklentinin kurulabilmesi için onay gerekir — işletme yöneticinizden marketplace portalında onaylamasını isteyin.",
+  "plugins.install.error.registered_required": "Bu eklenti, sahiplenilmiş bir mağaza hesabı gerektirir — kurmak için oturum açıp mağazanızı sahiplenin.",
   "plugins.install.error.not_found": "Seçilen eklenti katalogda bulunamadı.",
   "plugins.install.error.page_conflict": "Bu eklentinin sayfa anahtarı mevcut biriyle çakışıyor. Farklı bir anahtar seçip yeniden deneyin.",
   "plugins.install.error.page_route_conflict": "Bu eklentinin sayfa rotası mevcut biriyle çakışıyor. Farklı bir rota seçip yeniden deneyin.",

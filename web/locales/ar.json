@@ -414,6 +414,7 @@
   "plugins.install.error.invalid_request": "طلب التثبيت غير صالح.",
   "plugins.install.error.network": "خطأ في الشبكة",
   "plugins.install.error.not_entitled": "تحتاج هذه الإضافة إلى موافقة قبل تثبيتها — اطلب من مدير متجرك اعتمادها في بوابة المتجر.",
+  "plugins.install.error.registered_required": "تتطلب هذه الإضافة حساب متجر مُطالَبًا به — سجّل الدخول وطالِب بمتجرك لتثبيتها.",
   "plugins.install.error.not_found": "الإضافة المحددة غير موجودة في الكتالوج.",
   "plugins.install.error.page_conflict": "يتعارض مفتاح الصفحة في هذه الإضافة مع مفتاح موجود بالفعل. اختر مفتاحًا مختلفًا وأعد المحاولة.",
   "plugins.install.error.page_route_conflict": "يتعارض مسار الصفحة في هذه الإضافة مع مسار موجود بالفعل. اختر مسارًا مختلفًا وأعد المحاولة.",
