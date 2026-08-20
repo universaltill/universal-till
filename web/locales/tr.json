@@ -1052,6 +1052,7 @@
   "users.role.admin": "yönetici",
   "users.role.cashier": "kasiyer",
   "users.role.manager": "müdür",
+  "users.saved": "Kaydedildi.",
   "users.set_pin": "PIN ayarla",
   "users.title": "Kullanıcılar",
   "locations.title": "Konumlar",
@@ -1528,5 +1529,10 @@
   "elevation.summary.eod_settings_enabled": "Otomatik gün sonu raporunu aç, %s için planlandı.",
   "elevation.summary.eod_settings_disabled": "Otomatik gün sonu raporunu kapat.",
   "elevation.summary.report_retention": "Rapor saklama modunu %s olarak değiştir.",
-  "elevation.summary.archive_export": "%s – %s (%s) için rapor arşivini dışa aktar."
+  "elevation.summary.archive_export": "%s – %s (%s) için rapor arşivini dışa aktar.",
+  "elevation.summary.user_create": "%s kullanıcısını %s rolüyle oluştur.",
+  "elevation.summary.user_pin_set": "%s için yeni bir PIN belirle.",
+  "elevation.summary.user_activate": "%s kullanıcısını etkinleştir.",
+  "elevation.summary.user_deactivate": "%s kullanıcısını devre dışı bırak.",
+  "elevation.summary.user_role_change": "%s kullanıcısının rolünü %s'den %s'e değiştir."
 }
