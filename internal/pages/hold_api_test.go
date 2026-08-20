@@ -35,8 +35,14 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));`); err != nil {
 		t.Fatalf("create held_sales: %v", err)
+	}
+	// ut-docs#820: POST /api/pos/held/table validates the target table is
+	// free via POSRepo.IsTableFree, which queries `tables` and `held_sales`
+	// directly -- needed even by tests that never assign a table.
+	if _, err := db.Exec(`CREATE TABLE tables (id TEXT PRIMARY KEY, label TEXT NOT NULL, area_zone TEXT NOT NULL DEFAULT '', seat_count INTEGER NOT NULL DEFAULT 0, shape TEXT NOT NULL DEFAULT 'rect', pos_x INTEGER NOT NULL DEFAULT 0, pos_y INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`); err != nil {
+		t.Fatalf("create tables: %v", err)
 	}
 
 	resolver := stubResolver{
@@ -309,6 +315,153 @@ func TestHeldStrip_ListsHeldSalesAsChips(t *testing.T) {
 	}
 	if !strings.Contains(body, "1 ×") {
 		t.Fatalf("expected the chip to show the 1-line count, got: %s", body)
+	}
+}
+
+// ut-docs#820: a table assigned to the live basket survives hold -> the
+// held_sales row -> resume, and shows on the held-strip chip in between.
+func TestHoldThenResume_PreservesTable(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	dp.Engine.SetTable("tbl-1", "T1")
+
+	holdReq := httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil)
+	holdRec := httptest.NewRecorder()
+	mux.ServeHTTP(holdRec, holdReq)
+	if holdRec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", holdRec.Code, holdRec.Body.String())
+	}
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales`).Scan(&tableID); err != nil {
+		t.Fatalf("query held_sales.table_id: %v", err)
+	}
+	if tableID != "tbl-1" {
+		t.Fatalf("held sale table_id = %q, want tbl-1", tableID)
+	}
+
+	stripReq := httptest.NewRequest(http.MethodGet, "/ui/held", nil)
+	stripRec := httptest.NewRecorder()
+	mux.ServeHTTP(stripRec, stripReq)
+	if !strings.Contains(stripRec.Body.String(), "T1") {
+		t.Fatalf("expected the held strip to show the table label T1, got: %s", stripRec.Body.String())
+	}
+
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+		t.Fatalf("query held_sales id: %v", err)
+	}
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id))
+	resumeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resumeRec := httptest.NewRecorder()
+	mux.ServeHTTP(resumeRec, resumeReq)
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", resumeRec.Code, resumeRec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "tbl-1" {
+		t.Fatalf("resumed basket TableID = %q, want tbl-1", got)
+	}
+	if got := dp.Engine.Basket().TableLabel; got != "T1" {
+		t.Fatalf("resumed basket TableLabel = %q, want T1", got)
+	}
+}
+
+// TestHeldTableHandler_MovesToFreeTable (ut-docs#820): the "move a parked
+// order to a different table" operation. It updates only the held_sales
+// row's table_id, without resuming it into the live basket.
+func TestHeldTableHandler_MovesToFreeTable(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES
+ ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),
+ ('tbl-2','T2','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed tables: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','Table 1',100,1,'{}','tbl-1')`); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id=h1&table_id=tbl-2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("HX-Trigger") != "held-changed" {
+		t.Fatalf("expected HX-Trigger: held-changed, got %q", rec.Header().Get("HX-Trigger"))
+	}
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales WHERE id='h1'`).Scan(&tableID); err != nil {
+		t.Fatalf("query held_sales.table_id: %v", err)
+	}
+	if tableID != "tbl-2" {
+		t.Fatalf("held sale table_id after move = %q, want tbl-2", tableID)
+	}
+	if !strings.Contains(rec.Body.String(), "T2") {
+		t.Fatalf("expected the re-rendered held strip to show T2, got: %s", rec.Body.String())
+	}
+}
+
+// Moving onto a table another held sale already occupies must be rejected,
+// leaving both held sales' table assignments untouched.
+func TestHeldTableHandler_RejectsOccupiedTarget(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES
+ ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),
+ ('tbl-2','T2','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed tables: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES
+ ('h1','Table 1',100,1,'{}','tbl-1'),
+ ('h2','Table 2',100,1,'{}','tbl-2')`); err != nil {
+		t.Fatalf("seed held sales: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id=h1&table_id=tbl-2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (in-place rejection), got %d: %s", rec.Code, rec.Body.String())
+	}
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales WHERE id='h1'`).Scan(&tableID); err != nil {
+		t.Fatalf("query held_sales.table_id: %v", err)
+	}
+	if tableID != "tbl-1" {
+		t.Fatalf("h1's table_id must be unchanged after a rejected move, got %q", tableID)
+	}
+}
+
+// A held sale may move back onto ITS OWN current table (a no-op from the
+// operator's perspective) without being rejected as "occupied" -- the same
+// self-occupancy exclusion IsTableFree provides.
+func TestHeldTableHandler_MoveOntoOwnCurrentTableSucceeds(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','Table 1',100,1,'{}','tbl-1')`); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id=h1&table_id=tbl-1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales WHERE id='h1'`).Scan(&tableID); err != nil {
+		t.Fatalf("query held_sales.table_id: %v", err)
+	}
+	if tableID != "tbl-1" {
+		t.Fatalf("h1's table_id = %q, want tbl-1", tableID)
 	}
 }
 

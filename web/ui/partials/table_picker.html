@@ -1,0 +1,16 @@
+<!-- Table-assignment picker (ut-docs#820, ADR-0054): every currently free
+     table, plus whichever table the basket is already assigned to. Loaded
+     under the basket the same way suggestions.html is -- re-fetched on
+     every basket swap, so it always reflects live occupancy. -->
+<div id="table-picker" class="table-picker">
+  {{ if .Options }}
+    <span class="table-picker-title">{{ T "basket.table.picker_title" }}</span>
+    {{ range .Options }}
+      <button type="button" class="btn{{ if ne .ID $.Current }} secondary{{ end }} table-picker-option"
+              hx-post="/api/pos/table" hx-vals='{{ jsonVals "table_id" .ID }}'
+              hx-target="#basket" hx-swap="outerHTML">{{ .Label }}</button>
+    {{ end }}
+  {{ else }}
+    <span class="muted table-picker-empty">{{ T "basket.table.no_free_tables" }}</span>
+  {{ end }}
+</div>

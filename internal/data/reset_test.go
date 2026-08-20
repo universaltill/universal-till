@@ -267,6 +267,48 @@ func TestResetThenRestoreRoundTrip_CardPresentFields(t *testing.T) {
 	}
 }
 
+// ut-docs#820 (ADR-0054 follow-on): sales.table_id (056_sale_table_id.sql)
+// must round-trip through sales_archive exactly like every earlier ALTER
+// this migration's own 040_reset_archive.sql header documents — the same
+// reviewer finding that caught held_sales_archive missing table_id
+// (055_held_sales_archive_table_id.sql) applies here, so this is pinned
+// directly rather than left to a manual column-list check.
+func TestResetThenRestoreRoundTrip_SaleTableID(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore_sale_table_id.db")
+	seedFullSale(t, x)
+	if _, err := d.DB.Exec(`UPDATE sales SET table_id=? WHERE id='s1'`, "tbl1"); err != nil {
+		t.Fatalf("seed sale table_id: %v", err)
+	}
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	var archivedTableID string
+	if err := d.DB.QueryRow(`SELECT table_id FROM sales_archive WHERE id='s1' AND reset_batch_id=?`, batchID).Scan(&archivedTableID); err != nil {
+		t.Fatalf("read archived table_id: %v", err)
+	}
+	if archivedTableID != "tbl1" {
+		t.Fatalf("archived table_id = %q, want tbl1", archivedTableID)
+	}
+
+	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if c := count("sales"); c != 2 {
+		t.Fatalf("sales after restore: %d rows, want 2", c)
+	}
+	var restoredTableID string
+	if err := d.DB.QueryRow(`SELECT table_id FROM sales WHERE id='s1'`).Scan(&restoredTableID); err != nil {
+		t.Fatalf("read restored table_id: %v", err)
+	}
+	if restoredTableID != "tbl1" {
+		t.Fatalf("restored table_id = %q, want tbl1", restoredTableID)
+	}
+}
+
 // Independent review, ut-docs#187: seedFullSale's one invoice has no credit
 // note, so the invoices self-FK two-phase archive/restore ordering
 // (original_invoice_id) was previously exercised by neither existing test —

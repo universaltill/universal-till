@@ -77,6 +77,47 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSnapshotRestoreRoundTrip_PreservesTable (ut-docs#820): a held/resumed
+// order must not lose its assigned table, the same guarantee
+// TestSnapshotRestoreRoundTrip already holds for the customer/discount
+// fields.
+func TestSnapshotRestoreRoundTrip_PreservesTable(t *testing.T) {
+	s := newHoldService()
+	_, _ = s.Scan("A")
+	s.SetTable("tbl-1", "T1")
+
+	snap := s.Snapshot()
+	if snap.TableID != "tbl-1" || snap.TableLabel != "T1" {
+		t.Fatalf("snapshot table = id=%q label=%q, want tbl-1/T1", snap.TableID, snap.TableLabel)
+	}
+
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back BasketSnapshot
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+
+	// Serve another customer in between, at a different table.
+	s.Reset()
+	_, _ = s.Scan("A")
+	s.SetTable("tbl-9", "T9")
+	s.Reset()
+
+	s.Restore(back)
+	if got := s.TableID(); got != "tbl-1" {
+		t.Fatalf("restored TableID = %q, want tbl-1", got)
+	}
+	if got := s.TableLabel(); got != "T1" {
+		t.Fatalf("restored TableLabel = %q, want T1", got)
+	}
+	if got := s.Basket().TableID; got != "tbl-1" {
+		t.Fatalf("restored basket TableID = %q, want tbl-1", got)
+	}
+}
+
 func TestHasItems(t *testing.T) {
 	s := newHoldService()
 	if s.HasItems() {

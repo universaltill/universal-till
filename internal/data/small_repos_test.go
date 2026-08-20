@@ -21,7 +21,7 @@ func newHeldSalesTestDB(t *testing.T) *HeldSalesRepo {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dbc.Close() })
-	if _, err := dbc.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`); err != nil {
+	if _, err := dbc.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`); err != nil {
 		t.Fatal(err)
 	}
 	return NewHeldSalesRepo(dbc)
@@ -78,6 +78,82 @@ func TestHeldSalesRepo_InsertGetListDelete(t *testing.T) {
 	// Deleting an id that was never held is a no-op, not an error.
 	if err := repo.Delete(ctx, "never-existed"); err != nil {
 		t.Fatalf("expected no error deleting an unknown held sale, got %v", err)
+	}
+}
+
+// ut-docs#820: a held sale's assigned table survives Insert/Get/List, and
+// SetTable is the "move a parked order to a different table" write --
+// updating table_id alone, leaving everything else about the held sale
+// (its payload, its label, its total) untouched.
+func TestHeldSalesRepo_TableID(t *testing.T) {
+	repo := newHeldSalesTestDB(t)
+	ctx := context.Background()
+
+	if err := repo.Insert(ctx, HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1200, LineCount: 3, Payload: `{"lines":[]}`, TableID: "tbl-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Insert(ctx, HeldSale{ID: "h2", Label: "Walk-in", TotalMinor: 500, LineCount: 1, Payload: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := repo.Get(ctx, "h1")
+	if err != nil || !ok {
+		t.Fatalf("Get h1: ok=%v err=%v", ok, err)
+	}
+	if got.TableID != "tbl-1" {
+		t.Fatalf("Get h1: TableID = %q, want tbl-1", got.TableID)
+	}
+	got2, ok, err := repo.Get(ctx, "h2")
+	if err != nil || !ok {
+		t.Fatalf("Get h2: ok=%v err=%v", ok, err)
+	}
+	if got2.TableID != "" {
+		t.Fatalf("Get h2: TableID = %q, want empty", got2.TableID)
+	}
+
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]HeldSale{}
+	for _, h := range list {
+		byID[h.ID] = h
+	}
+	if byID["h1"].TableID != "tbl-1" {
+		t.Fatalf("List: h1.TableID = %q, want tbl-1", byID["h1"].TableID)
+	}
+	if byID["h2"].TableID != "" {
+		t.Fatalf("List: h2.TableID = %q, want empty", byID["h2"].TableID)
+	}
+
+	// SetTable moves h2 onto tbl-2, without touching its other fields.
+	if err := repo.SetTable(ctx, "h2", "tbl-2"); err != nil {
+		t.Fatal(err)
+	}
+	moved, ok, err := repo.Get(ctx, "h2")
+	if err != nil || !ok {
+		t.Fatalf("Get h2 after SetTable: ok=%v err=%v", ok, err)
+	}
+	if moved.TableID != "tbl-2" {
+		t.Fatalf("h2.TableID after SetTable = %q, want tbl-2", moved.TableID)
+	}
+	if moved.Label != "Walk-in" || moved.TotalMinor != 500 {
+		t.Fatalf("SetTable must not disturb other fields, got %+v", moved)
+	}
+
+	// SetTable("") clears the assignment (moving a held order off any table).
+	if err := repo.SetTable(ctx, "h2", ""); err != nil {
+		t.Fatal(err)
+	}
+	cleared, _, _ := repo.Get(ctx, "h2")
+	if cleared.TableID != "" {
+		t.Fatalf("h2.TableID after clearing = %q, want empty", cleared.TableID)
+	}
+
+	// SetTable on an unknown id is a no-op, not an error -- mirroring
+	// Delete's existing convention for an unknown id.
+	if err := repo.SetTable(ctx, "never-existed", "tbl-1"); err != nil {
+		t.Fatalf("expected no error setting table on an unknown held sale, got %v", err)
 	}
 }
 

@@ -117,9 +117,14 @@ func kitchenTicketFor(detail data.SaleDetail, cfg print.Config, locale, station 
 		OrderNo:    detail.ReceiptNo,
 		OrderLabel: kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.order_label"),
 		OrderType:  kitchenOrderTypeLabel(locale, cfg.Charset, detail.OrderType),
-		Timestamp:  detail.CreatedAt,
-		Charset:    cfg.Charset,
-		Items:      items,
+		// Table (ut-docs#820, ADR-0054): detail.TableLabel is already
+		// resolved by GetSaleDetail's join against `tables` -- "" when no
+		// table was assigned, which print.KitchenTicket already treats as
+		// "print nothing" (see its own doc comment).
+		Table:     detail.TableLabel,
+		Timestamp: detail.CreatedAt,
+		Charset:   cfg.Charset,
+		Items:     items,
 	}
 }
 

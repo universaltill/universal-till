@@ -23,4 +23,4 @@ Draw your shop's floor plan — every dining table with its name, area, seats an
 
 - A shop with no dine-in service can simply leave this page empty — nothing table-related appears anywhere else until tables are added.
 - Deactivate a table you no longer use instead of deleting it — it disappears from the plan but keeps its history, and can be reactivated later.
-- Assigning an order to a table (so the plan shows it occupied) arrives with the table-service follow-up; until then every table shows as free.
+- Assign an order to a table from the sale screen's basket, or move a held order onto a different table from the held-orders strip — see **Selling & checkout**. The floor plan then shows that table occupied for as long as the order stays open, and free again the moment it's paid, moved off, or the held order is deleted.
