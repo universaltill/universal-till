@@ -176,6 +176,16 @@ type elevationHiddenField struct{ Name, Value string }
 // approved (Fix for ut-docs#557's "approver can't see what they're
 // approving" finding) — empty renders no summary line.
 func renderElevationPrompt(w http.ResponseWriter, r *http.Request, postAction, hxTarget, summary string, hidden []elevationHiddenField, check elevationCheck) {
+	// Explicit rather than relying on Go's automatic content-sniffing (which
+	// would land on the same value anyway, since the template's first bytes
+	// are HTML): ut-docs#794's two non-htmx, raw-fetch callers
+	// (POST /api/reports/eod/range, POST /api/reports/archive/export — see
+	// app.js's postWithElevation) have no htmx runtime doing OOB-swap
+	// detection for them, so they distinguish "this response is the
+	// elevation prompt" from "this response is a real error" (http.Error's
+	// text/plain) purely by this header. Every htmx-driven site is
+	// unaffected either way.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	httpx.RenderPartial("ui/partials/elevation_prompt.html", map[string]any{
 		"Action":   postAction,
 		"HxTarget": hxTarget,

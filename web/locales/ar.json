@@ -1517,8 +1517,16 @@
   "elevation.error_insufficient_role": "هذا الرمز لا يملك صلاحية لهذا الإجراء",
   "elevation.error_unavailable": "الموافقة غير متاحة على هذا الجهاز حاليًا.",
   "elevation.hint": "مطلوب موافقة المدير — راجع النافذة.",
+  "elevation.approved": "تمت الموافقة والحفظ.",
   "elevation.summary.backup_now": "إنشاء نسخة احتياطية محلية جديدة الآن.",
   "elevation.summary.sync_promote": "ترقية هذا الجهاز إلى جهاز رئيسي مستقل، مع إنهاء المزامنة مع الجهاز الرئيسي الحالي.",
   "elevation.summary.permission_grant": "منح دور %s صلاحية \"%s\".",
-  "elevation.summary.permission_revoke": "سحب صلاحية \"%s\" من دور %s."
+  "elevation.summary.permission_revoke": "سحب صلاحية \"%s\" من دور %s.",
+  "elevation.summary.eod_run": "تشغيل تقرير نهاية اليوم الآن.",
+  "elevation.summary.eod_reprint": "إعادة طباعة تقرير نهاية اليوم لـ %s.",
+  "elevation.summary.eod_range_export": "تصدير تقرير Z من %s إلى %s.",
+  "elevation.summary.eod_settings_enabled": "تفعيل تقرير نهاية اليوم التلقائي، المجدول للساعة %s.",
+  "elevation.summary.eod_settings_disabled": "إيقاف تقرير نهاية اليوم التلقائي.",
+  "elevation.summary.report_retention": "تغيير وضع الاحتفاظ بالتقارير إلى %s.",
+  "elevation.summary.archive_export": "تصدير أرشيف التقارير من %s إلى %s (%s)."
 }

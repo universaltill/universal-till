@@ -9,8 +9,9 @@ keywords: [pin, onay, yönetici pin, geçersiz kılma, izin]
 
 # Anında yönetici onayı
 
-Bir izni değiştirmek, bir cihazı yükseltmek, yedek almak gibi bazı işlemler
-bir yöneticinin veya adminin onayını gerektirir. Kendi hesabınız bu
+Bir izni değiştirmek, bir cihazı yükseltmek, yedek almak, gün sonu raporunu
+çalıştırmak veya yeniden yazdırmak gibi bazı işlemler bir yöneticinin veya
+adminin onayını gerektirir. Kendi hesabınız bu
 işlemlerden birini yapmaya yetkili değilse, ekran işlemi sadece
 reddetmez: hemen orada küçük bir PIN penceresi açar.
 
