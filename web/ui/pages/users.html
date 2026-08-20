@@ -29,12 +29,45 @@
           <td>{{ if .IsActive }}{{ T "users.active" }}{{ else }}<span class="muted">{{ T "users.inactive" }}</span>{{ end }}</td>
           <td class="users-actions">
             {{ if .CanEdit }}
-            <form method="post" action="/api/users/{{ .ID }}/pin" class="users-inline">
+            {{/* ut-docs#795: converted to hx-post — pin/active/role are all
+                 checkOrElevate("user_management") sites now, matching the
+                 eod family's own htmx conventions (reports_tab_eod.html):
+                 hx-target/hx-swap="innerHTML" so BOTH the elevation dialog's
+                 needsElevation hint and this handler's own success/error
+                 message land in the same per-row span, and
+                 hx-on::after-request reloads the page on success only —
+                 mirrors shifts.html's close/open-shift forms exactly, since
+                 (like a shift close) a successful write here changes what
+                 this row itself displays (role/PIN-set/active state), not
+                 just a side panel a plain message span would be enough for.
+
+                 ut-docs#795 review Blocker 1/2: a plain
+                 `event.detail.successful` check is WRONG here —
+                 renderElevationPrompt's needsElevation response is also a
+                 200 (so `successful` is true), which would reload the page
+                 and destroy the just-opened dialog before a PIN could ever
+                 be entered, and usersRespondError's business-rule refusals
+                 are now ALSO 200 (so htmx actually swaps the message —
+                 permission_settings_page.go's own doc comment explains why
+                 a 4xx/5xx here would only ever produce app.js's generic
+                 "server error" banner instead). settings.html's own
+                 Content-Type-based discriminator (its report-retention
+                 form) doesn't carry over unmodified either: THAT works only
+                 because its real success is a bare 204 with no
+                 Content-Type, whereas usersRespondOK/usersRespondError both
+                 render a real text/html body on every branch here. The
+                 X-UT-Response response header (elevation.go's
+                 renderElevationPrompt / users_page.go's usersRespondOK|
+                 Error) is the one signal that actually distinguishes all
+                 THREE outcomes — reload only fires on "ok". */}}
+            <form hx-post="/api/users/{{ .ID }}/pin" hx-target="#user-msg-{{ .ID }}" hx-swap="innerHTML"
+                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') window.location.reload()" class="users-inline">
               <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8"
                      placeholder="{{ T "users.new_pin" }}" required />
               <button type="submit" class="btn secondary">{{ T "users.set_pin" }}</button>
             </form>
-            <form method="post" action="/api/users/{{ .ID }}/active" class="users-inline">
+            <form hx-post="/api/users/{{ .ID }}/active" hx-target="#user-msg-{{ .ID }}" hx-swap="innerHTML"
+                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') window.location.reload()" class="users-inline">
               <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
               <button type="submit" class="btn secondary">
                 {{ if .IsActive }}{{ T "users.deactivate" }}{{ else }}{{ T "users.activate" }}{{ end }}
@@ -42,6 +75,8 @@
             </form>
             {{ end }}
             {{ if and $.canEditPermissions (ne .Role "super_admin") (ne .ID "kiosk") }}
+            {{/* OUT OF SCOPE (ut-docs#796 covers permission_management) —
+                 left as a plain full-page POST, untouched. */}}
             <form method="post" action="/api/users/{{ .ID }}/promote-super-admin" class="users-inline">
               <button type="submit" class="btn secondary">{{ T "users.promote_super_admin" }}</button>
             </form>
@@ -56,7 +91,10 @@
                  wrong-role-displayed dead end (ut-docs#766 review finding
                  1) or an always-inert button (finding 3). */}}
             {{ if and .CanEdit (ne .ID "kiosk") (or $.canEditPermissions (and $.isAdmin (ne .Role "super_admin"))) }}
-            <form method="post" action="/api/users/{{ .ID }}/role" class="users-inline">
+            {{/* Same X-UT-Response discriminator as the pin/active forms
+                 above — see their shared comment. */}}
+            <form hx-post="/api/users/{{ .ID }}/role" hx-target="#user-msg-{{ .ID }}" hx-swap="innerHTML"
+                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') window.location.reload()" class="users-inline">
               <select name="role">
                 <option value="cashier" {{ if eq .Role "cashier" }}selected{{ end }}>{{ T "users.role.cashier" }}</option>
                 {{ if $.isAdmin }}
@@ -70,6 +108,11 @@
               <button type="submit" class="btn secondary">{{ T "users.change_role" }}</button>
             </form>
             {{ end }}
+            {{/* Shared per-row target for all 3 forms above: only one of
+                 pin/active/role is ever submitted at a time, and this is
+                 also the elevation dialog's own HxTarget (renderElevationPrompt
+                 in users_page.go), so its needsElevation hint lands here too. */}}
+            <div id="user-msg-{{ .ID }}" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
           </td>
         </tr>
         {{ end }}
@@ -79,7 +122,15 @@
 
   <div class="card users-form">
     <h3>{{ T "users.new.title" }}</h3>
-    <form method="post" action="/api/users" autocomplete="off">
+    {{/* ut-docs#795: POST /api/users is a checkOrElevate("user_management")
+         site now — same hx-target/hx-swap/hx-on::after-request convention
+         as the row forms above (a new row appearing in the list IS this
+         form's own "success" state, so a reload is the simplest correct
+         refresh, matching shifts.html's precedent). Same X-UT-Response
+         discriminator as the row forms above — see their shared comment
+         (Blocker 1/2, ut-docs#795 review). */}}
+    <form hx-post="/api/users" hx-target="#new-user-msg" hx-swap="innerHTML"
+          hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') window.location.reload()" autocomplete="off">
       <label>{{ T "users.new.username" }} <input type="text" name="username" required /></label>
       <label>{{ T "users.new.display" }} <input type="text" name="display_name" required /></label>
       <label>{{ T "users.col.role" }}
@@ -95,6 +146,7 @@
         </select>
       </label>
       <button type="submit" class="btn primary" style="width:100%">{{ T "users.new.submit" }}</button>
+      <div id="new-user-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
     </form>
     <p class="muted">{{ T "users.new.hint" }}</p>
   </div>

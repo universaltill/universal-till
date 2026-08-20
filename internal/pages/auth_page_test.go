@@ -9,12 +9,19 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
+	// ut-docs#795: registerUsers' mutating handlers now render translated
+	// inline messages (usersRespondError/usersRespondOK) instead of a bare
+	// "/users?err=key" redirect, so this fixture needs a real translator
+	// wired — same requirement newUsersTestDeps (users_page_test.go) already
+	// has.
+	initPagesI18n(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	for _, s := range []string{
@@ -169,20 +176,25 @@ func TestUsersPagePermissions(t *testing.T) {
 	admin := auth.User{ID: adminID, Role: "admin", DisplayName: "Boss"}
 	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
 
-	// Cashiers cannot open the users page or its APIs.
+	// Cashiers cannot open the users page (GET stays a flat 403 — elevation
+	// is for mutations only, ADR-0052 §2). The mutating APIs (ut-docs#795)
+	// no longer flat-403 a denied cashier: with no override_pin supplied,
+	// checkOrElevate renders the in-place elevation prompt instead (200,
+	// htmx-swappable), same shape as every other checkOrElevate site.
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/users", nil), cashier)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier /users = %d, want 403", rec.Code)
 	}
-	if rec := postForm(mux, "/api/users", url.Values{"username": {"x"}, "display_name": {"x"}, "role": {"cashier"}}, &cashier); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier create = %d, want 403", rec.Code)
+	if rec := postForm(mux, "/api/users", url.Values{"username": {"x"}, "display_name": {"x"}, "role": {"cashier"}}, &cashier); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier create = %d, want 200 with the elevation prompt: %s", rec.Code, rec.Body.String())
 	}
 
-	// Admin creates a cashier and sets their PIN.
-	if rec := postForm(mux, "/api/users", url.Values{"username": {"jo"}, "display_name": {"Jo"}, "role": {"cashier"}}, &admin); rec.Code != http.StatusSeeOther {
-		t.Fatalf("create = %d", rec.Code)
+	// Admin creates a cashier and sets their PIN. ut-docs#795: success is
+	// now an in-place htmx confirmation (200), not a 303 redirect.
+	if rec := postForm(mux, "/api/users", url.Values{"username": {"jo"}, "display_name": {"Jo"}, "role": {"cashier"}}, &admin); rec.Code != http.StatusOK {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
 	}
 	users, _ := repo.ListUsers(t.Context())
 	var joID string
@@ -194,21 +206,25 @@ func TestUsersPagePermissions(t *testing.T) {
 	if joID == "" {
 		t.Fatal("jo not created")
 	}
-	if rec := postForm(mux, "/api/users/"+joID+"/pin", url.Values{"pin": {"1234"}}, &admin); rec.Code != http.StatusSeeOther {
-		t.Fatalf("set pin = %d", rec.Code)
+	if rec := postForm(mux, "/api/users/"+joID+"/pin", url.Values{"pin": {"1234"}}, &admin); rec.Code != http.StatusOK {
+		t.Fatalf("set pin = %d: %s", rec.Code, rec.Body.String())
 	}
 	if _, _, err := svc.Login(t.Context(), "1234"); err != nil {
 		t.Fatalf("jo cannot log in after PIN set: %v", err)
 	}
 
 	// A PIN already owned by someone else is refused (PIN-only login).
-	if rec := postForm(mux, "/api/users/"+adminID+"/pin", url.Values{"pin": {"1234"}}, &admin); rec.Header().Get("Location") != "/users?err=users.error.pin_taken" {
-		t.Fatalf("duplicate pin: loc=%q", rec.Header().Get("Location"))
+	// ut-docs#795 review Blocker 2: the error renders inline (no
+	// redirect/Location to inspect) with status ALWAYS 200 (a non-2xx here
+	// would never be swapped by htmx) and X-UT-Response: refused as the
+	// actual "this was a refusal, not a success" signal.
+	if rec := postForm(mux, "/api/users/"+adminID+"/pin", url.Values{"pin": {"1234"}}, &admin); rec.Code != http.StatusOK || rec.Header().Get("X-UT-Response") != "refused" || !strings.Contains(rec.Body.String(), httpx.T("en", "users.error.pin_taken")) {
+		t.Fatalf("duplicate pin: code=%d X-UT-Response=%q body=%q", rec.Code, rec.Header().Get("X-UT-Response"), rec.Body.String())
 	}
 
 	// The last active admin with a PIN cannot be deactivated.
-	if rec := postForm(mux, "/api/users/"+adminID+"/active", url.Values{"active": {"0"}}, &admin); rec.Header().Get("Location") != "/users?err=users.error.last_admin" {
-		t.Fatalf("last admin: loc=%q", rec.Header().Get("Location"))
+	if rec := postForm(mux, "/api/users/"+adminID+"/active", url.Values{"active": {"0"}}, &admin); rec.Code != http.StatusOK || rec.Header().Get("X-UT-Response") != "refused" || !strings.Contains(rec.Body.String(), httpx.T("en", "users.error.last_admin")) {
+		t.Fatalf("last admin: code=%d X-UT-Response=%q body=%q", rec.Code, rec.Header().Get("X-UT-Response"), rec.Body.String())
 	}
 
 	// Deactivating jo revokes jo's sessions.
@@ -216,8 +232,8 @@ func TestUsersPagePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec := postForm(mux, "/api/users/"+joID+"/active", url.Values{"active": {"0"}}, &admin); rec.Code != http.StatusSeeOther {
-		t.Fatalf("deactivate = %d", rec.Code)
+	if rec := postForm(mux, "/api/users/"+joID+"/active", url.Values{"active": {"0"}}, &admin); rec.Code != http.StatusOK {
+		t.Fatalf("deactivate = %d: %s", rec.Code, rec.Body.String())
 	}
 	if _, ok := svc.Resolve(t.Context(), tok); ok {
 		t.Error("deactivated user's session still resolves")

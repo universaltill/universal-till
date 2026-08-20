@@ -186,6 +186,20 @@ func renderElevationPrompt(w http.ResponseWriter, r *http.Request, postAction, h
 	// text/plain) purely by this header. Every htmx-driven site is
 	// unaffected either way.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// X-UT-Response: elevation-prompt (ut-docs#795 review Blocker 1) — a
+	// SECOND, explicit signal alongside Content-Type above, for htmx-driven
+	// callers whose own success/refusal responses ALSO carry
+	// Content-Type: text/html (so Content-Type alone can't tell "prompt"
+	// apart from "done" the way settings.html's report-retention form does —
+	// that form's real success is a bare 204 with no Content-Type at all,
+	// but users_page.go's usersRespondOK/usersRespondError both render a
+	// real HTML body on every branch, colliding with this header's own
+	// text/html value). Harmless to every OTHER checkOrElevate site: they
+	// simply never look at it and keep using the Content-Type check. See
+	// users_page.go's usersRespondOK/usersRespondError for the "ok"/"refused"
+	// counterparts, and users.html / elevation_prompt.html for the client
+	// side that reads all three.
+	w.Header().Set("X-UT-Response", "elevation-prompt")
 	httpx.RenderPartial("ui/partials/elevation_prompt.html", map[string]any{
 		"Action":   postAction,
 		"HxTarget": hxTarget,
