@@ -4,6 +4,7 @@
   --brand: #1c1917;
   --accent: #f97316;          /* orange */
   --accent-contrast: #ffffff;
+  --focus-border: #e76206;    /* ut-docs#797: --accent is 2.80:1 on white; this darker orange is 3.42:1 (WCAG 1.4.11 >=3:1) */
   --bg: #fbf7f2;
   --surface: #ffffff;
   --surface-2: #f6efe6;
