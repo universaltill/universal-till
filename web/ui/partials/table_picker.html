@@ -1,16 +1,30 @@
-<!-- Table-assignment picker (ut-docs#820, ADR-0054): every currently free
-     table, plus whichever table the basket is already assigned to. Loaded
-     under the basket the same way suggestions.html is -- re-fetched on
-     every basket swap, so it always reflects live occupancy. -->
+<!-- Table-assignment picker (ut-docs#820, ADR-0054): the basket's whole
+     table surface -- the currently-assigned table, a clear button, and every
+     currently free table to move onto. Loaded under the basket the same way
+     suggestions.html is -- re-fetched on every basket swap, so it always
+     reflects live occupancy.
+
+     When the shop has NO tables configured this renders an empty div and
+     nothing else: ADR-0054 soft-gates table service on configuration ("zero
+     tables configured = today's behavior exactly"), so a till that doesn't do
+     table service must not pay any basket height for this feature. -->
 <div id="table-picker" class="table-picker">
-  {{ if .Options }}
-    <span class="table-picker-title">{{ T "basket.table.picker_title" }}</span>
-    {{ range .Options }}
-      <button type="button" class="btn{{ if ne .ID $.Current }} secondary{{ end }} table-picker-option"
-              hx-post="/api/pos/table" hx-vals='{{ jsonVals "table_id" .ID }}'
-              hx-target="#basket" hx-swap="outerHTML">{{ .Label }}</button>
+  {{ if .Configured }}
+    <span class="table-current">{{ T "basket.table.label" }}: {{ if .CurrentLabel }}{{ .CurrentLabel }}{{ else }}{{ T "basket.table.none" }}{{ end }}</span>
+    {{ if .Current }}
+      <button type="button" class="btn secondary table-picker-clear" title="{{ T "basket.table.none" }}"
+              hx-post="/api/pos/table" hx-vals='{"table_id":""}'
+              hx-target="#basket" hx-swap="outerHTML">✕</button>
     {{ end }}
-  {{ else }}
-    <span class="muted table-picker-empty">{{ T "basket.table.no_free_tables" }}</span>
+    {{ if .Options }}
+      <span class="table-picker-title">{{ T "basket.table.picker_title" }}</span>
+      {{ range .Options }}
+        <button type="button" class="btn{{ if ne .ID $.Current }} secondary{{ end }} table-picker-option"
+                hx-post="/api/pos/table" hx-vals='{{ jsonVals "table_id" .ID }}'
+                hx-target="#basket" hx-swap="outerHTML">{{ .Label }}</button>
+      {{ end }}
+    {{ else }}
+      <span class="muted table-picker-empty">{{ T "basket.table.no_free_tables" }}</span>
+    {{ end }}
   {{ end }}
 </div>

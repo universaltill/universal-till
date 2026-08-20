@@ -34,19 +34,29 @@ func registerTablePicker(mux *http.ServeMux, d *common.Deps) {
 			states = nil
 		}
 		current := d.Engine.TableID()
+		// configured tracks whether this shop does table service at all --
+		// ADR-0054 soft-gates the whole feature on configuration, so with no
+		// enabled tables the fragment renders nothing rather than an
+		// always-on "Table: none" row. Counted separately from options
+		// below, which excludes occupied tables: "all tables are busy" is a
+		// real state worth a message, "this shop has no tables" is not.
+		configured := false
 		var options []tablePickerOption
 		for _, s := range states {
 			if !s.Enabled {
 				continue
 			}
+			configured = true
 			if s.Occupied && s.ID != current {
 				continue
 			}
 			options = append(options, tablePickerOption{ID: s.ID, Label: s.Label})
 		}
 		httpx.RenderPartial("ui/partials/table_picker.html", map[string]any{
-			"Options": options,
-			"Current": current,
+			"Options":      options,
+			"Current":      current,
+			"CurrentLabel": d.Engine.TableLabel(),
+			"Configured":   configured,
 		})(w, r)
 	})
 }

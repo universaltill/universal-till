@@ -318,6 +318,62 @@ func TestHeldStrip_ListsHeldSalesAsChips(t *testing.T) {
 	}
 }
 
+// TestHeldStrip_RendersMoveControlToFreeTable (ut-docs#820 review B1): the
+// held strip must expose a UI control that reaches POST /api/pos/held/table,
+// otherwise the "move a held order to a different table" deliverable (and the
+// manual's "tap Move table on the strip" instruction) is backend-only. The
+// control offers only free tables, never the order's own current table.
+func TestHeldStrip_RendersMoveControlToFreeTable(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES
+ ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),
+ ('tbl-2','T2','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed tables: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	dp.Engine.SetTable("tbl-1", "T1")
+	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/held", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/api/pos/held/table"`) {
+		t.Fatalf("expected a Move control posting to /api/pos/held/table, got: %s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "basket.table.move")) {
+		t.Fatalf("expected the Move-table label, got: %s", body)
+	}
+	// The free table T2 is offered; the order's own current table T1 is not a target.
+	if !strings.Contains(body, `"table_id":"tbl-2"`) {
+		t.Fatalf("expected T2 offered as a move target, got: %s", body)
+	}
+	if strings.Contains(body, `"table_id":"tbl-1"`) {
+		t.Fatalf("the order's own current table must NOT be a move target, got: %s", body)
+	}
+}
+
+// A shop with no tables configured gets no Move control at all (ADR-0054
+// soft-gate) -- the strip is just resume chips, same as before this feature.
+func TestHeldStrip_NoMoveControlWhenNoTables(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/held", nil))
+	body := rec.Body.String()
+	if strings.Contains(body, "/api/pos/held/table") {
+		t.Fatalf("no-tables shop must not render a Move control, got: %s", body)
+	}
+}
+
 // ut-docs#820: a table assigned to the live basket survives hold -> the
 // held_sales row -> resume, and shows on the held-strip chip in between.
 func TestHoldThenResume_PreservesTable(t *testing.T) {

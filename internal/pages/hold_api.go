@@ -55,10 +55,22 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			items = nil
 		}
+		// ListTablesWithState (not ListTables) so the per-order "Move table"
+		// control below can offer only tables that are actually free -- the
+		// same occupancy source the basket picker uses. A shop with no tables
+		// configured yields an empty map/list, so no table chrome renders at
+		// all (ADR-0054 soft-gate).
 		labelByTableID := map[string]string{}
-		if tables, err := posRepo.ListTables(ctx); err == nil {
-			for _, t := range tables {
-				labelByTableID[t.ID] = t.Label
+		var freeTables []data.TableWithState
+		if states, err := posRepo.ListTablesWithState(ctx); err == nil {
+			for _, s := range states {
+				if !s.Enabled {
+					continue
+				}
+				labelByTableID[s.ID] = s.Label
+				if !s.Occupied {
+					freeTables = append(freeTables, s)
+				}
 			}
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -81,9 +93,36 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 					}
 					tableChip = fmt.Sprintf(` <span class="held-chip-table">%s</span>`, template.HTMLEscapeString(label))
 				}
+				fmt.Fprintf(&b, `<span class="held-item">`)
 				fmt.Fprintf(&b,
 					`<button class="btn secondary held-chip" hx-post="/api/pos/resume" hx-vals='{"id":%q}' hx-target="#basket" hx-swap="outerHTML">%s · %d × · %s%s</button>`,
 					h.ID, template.HTMLEscapeString(h.Label), h.LineCount, template.HTMLEscapeString(total), tableChip)
+				// Move-table control (ut-docs#820): only when at least one other
+				// table is free to move onto -- a parked order can't "move" to a
+				// table already occupied, and a shop with no free tables gets no
+				// control rather than an empty menu. Posts to the existing,
+				// IsTableFree-validated POST /api/pos/held/table; the handler
+				// re-renders this whole strip, so the target is #held-sales.
+				// Fresh slice per order -- never alias freeTables' backing
+				// array, which is reused for every held item in this loop.
+				moveTargets := make([]data.TableWithState, 0, len(freeTables))
+				for _, ft := range freeTables {
+					if ft.ID == h.TableID {
+						// The order's own current table is never a move target.
+						continue
+					}
+					moveTargets = append(moveTargets, ft)
+				}
+				if len(moveTargets) > 0 {
+					fmt.Fprintf(&b, `<details class="held-move"><summary>%s</summary>`, template.HTMLEscapeString(httpx.T(locale, "basket.table.move")))
+					for _, ft := range moveTargets {
+						fmt.Fprintf(&b,
+							`<button type="button" class="btn secondary held-move-option" hx-post="/api/pos/held/table" hx-vals='{"id":%q,"table_id":%q}' hx-target="#held-sales" hx-swap="outerHTML">%s</button>`,
+							h.ID, ft.ID, template.HTMLEscapeString(ft.Label))
+					}
+					b.WriteString(`</details>`)
+				}
+				b.WriteString(`</span>`)
 			}
 		}
 		b.WriteString(`</div>`)
