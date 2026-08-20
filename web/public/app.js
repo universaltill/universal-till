@@ -715,3 +715,120 @@ function initOfflineOverride(updateFn){
     if ((Date.now() - last) / 1000 > secs) window.location.replace('/login');
   }, 5000);
 })();
+
+// utPostWithElevation (ut-docs#794): a raw-fetch equivalent of the
+// checkOrElevate/elevation_prompt.html dialog (elevation.go, ut-docs#557)
+// for the handful of endpoints that can't be driven by htmx at all —
+// specifically POST /api/reports/eod/range and POST
+// /api/reports/archive/export, both of which trigger a browser file
+// download via a Content-Disposition response header, something htmx has
+// no way to do (it swaps response bodies as HTML). Every OTHER
+// checkOrElevate site is a normal hx-post button/form, so the dialog's own
+// OOB swap (hx-swap-oob="true" into the shared #elevation-modal
+// placeholder, web/ui/layouts/base.html) is handled by htmx automatically
+// — this helper exists ONLY for the two sites that bypass htmx.
+//
+// url/params: the endpoint and its (non-PIN) form fields, exactly what
+// would otherwise go straight into a fetch() body.
+// onDone(response): called once with the FINAL response — a real success
+// or a real error, never another elevation prompt (that case is handled
+// internally, recursively). Any dialog this call opened is already closed
+// by the time onDone runs, so onDone never needs to close it itself.
+// onCancel(): optional — called if the user dismisses the dialog (Cancel,
+// or any other way it closes) before a terminal response was ever reached,
+// so the caller can undo whatever "request in flight" UI state (disabled
+// button, spinner text) it set before calling this. Never called once
+// onDone has fired.
+//
+// Detecting "this response IS the elevation prompt" (vs. a real
+// success/error): renderElevationPrompt explicitly sets Content-Type:
+// text/html for exactly this reason (elevation.go) — a real success here
+// always carries Content-Disposition: attachment, and a real error is
+// http.Error's text/plain, so text/html is unambiguous.
+window.utPostWithElevation = function (url, params, onDone, onCancel) {
+  var openDialog = null;
+  var finished = false; // true once onDone has fired or close() was called for it
+  function close() {
+    finished = true;
+    if (!openDialog) return;
+    try { openDialog.close(); } catch (e) { /* already closed */ }
+    openDialog = null;
+  }
+  function showDialog(html) {
+    var wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    var dialog = wrap.querySelector('#elevation-modal');
+    if (!dialog) return false; // shouldn't happen — server always renders it on needsElevation
+    // Defensive: keeps htmx from processing this manually-inserted
+    // instance if anything ever calls htmx.process() on an ancestor later
+    // — every htmx-DRIVEN checkOrElevate site still needs its own hx-post
+    // form processed normally, so this only touches the one instance we
+    // insert by hand here, never the shared template itself.
+    dialog.setAttribute('hx-disable', '');
+    var old = document.getElementById('elevation-modal');
+    if (old) old.replaceWith(dialog); else document.body.appendChild(dialog);
+    openDialog = dialog;
+    if (typeof dialog.show === 'function') dialog.show();
+    // Fires on Cancel (elevation_prompt.html's button calls
+    // this.closest('dialog').close()) and on our own close() above — the
+    // `finished` guard means it's a no-op in the latter case, so this is
+    // purely the "user backed out" signal.
+    dialog.addEventListener('close', function () {
+      if (!finished && onCancel) onCancel();
+    }, { once: true });
+    var form = dialog.querySelector('form');
+    if (form) {
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        // The retry's own promise chain is otherwise disconnected from
+        // whatever the caller attached to the original send(params) call
+        // (this listener fires later, asynchronously) — without this
+        // catch, a network failure on the RETRY specifically would be an
+        // unhandled rejection that never reaches the caller's .catch(),
+        // leaving its UI state (disabled button, spinner text) stuck.
+        send(new FormData(form)).catch(function (e) {
+          if (window.console) console.error('utPostWithElevation: retry failed', e);
+          close();
+          if (onCancel) onCancel();
+        });
+      });
+    }
+    return true;
+  }
+  function send(bodyParams) {
+    var body = new URLSearchParams();
+    if (bodyParams instanceof FormData) {
+      bodyParams.forEach(function (v, k) { body.append(k, v); });
+    } else {
+      Object.keys(bodyParams || {}).forEach(function (k) { body.append(k, bodyParams[k]); });
+    }
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    }).then(function (r) {
+      var cd = r.headers.get('Content-Disposition') || '';
+      var ct = r.headers.get('Content-Type') || '';
+      if (cd.indexOf('attachment') === -1 && ct.indexOf('text/html') !== -1) {
+        // Read the body ONLY here, and only decide what to do with it
+        // afterward — never also hand `r` to onDone from this branch (its
+        // body is already consumed by the time showDialog resolves).
+        return r.text().then(function (html) {
+          if (!showDialog(html)) {
+            close();
+            // Nothing left to show the caller — this genuinely shouldn't
+            // happen (the server always renders the dialog on
+            // needsElevation), so surface it AND release the caller's UI
+            // state the same way a cancelled dialog would, rather than
+            // leaving a disabled button stuck forever.
+            if (window.console) console.error('utPostWithElevation: elevation response had no #elevation-modal', html);
+            if (onCancel) onCancel();
+          }
+        });
+      }
+      close();
+      return onDone(r);
+    });
+  }
+  return send(params);
+};

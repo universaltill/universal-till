@@ -365,35 +365,71 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"CashAdjustments": cashAdjustments,
 			})(w, r)
 		case "eod":
-			// Gated by the eod_report action (#709/#555) before the repo calls,
-			// not just in the template: the partial only ever renders its body
-			// {{ if .IsManager }}, so a non-manager gets nothing back either
-			// way — but pre-this-fix, ListArchivedReports and two Settings.Get
-			// calls still ran for a role that can never see the result.
-			isManager := canPerform(d, r, "eod_report")
+			// ut-docs#794 review finding (blocker): this used to gate the
+			// WHOLE tab — buttons included — on eod_report, the exact same
+			// action checkOrElevate now gates each POST handler on. Once a
+			// shop customizes role_permissions so a role holds `reports`
+			// (can view the Reports page at all) but not `eod_report`
+			// (can run/approve EOD), that role must see the buttons to
+			// EVER trigger the elevation dialog — gating visibility on
+			// eod_report made the dialog dead code for exactly the
+			// cashier-with-manager-approval scenario ADR-0052 exists for.
+			// Mirrors the settings.html/backup_api.go precedent: the page-
+			// level view permission (`reports`, matching this tab's own
+			// outer /reports page gate) controls whether the card renders
+			// at all; checkOrElevate("eod_report") is the real
+			// authorization boundary on each action.
+			canView := canPerform(d, r, "reports")
+			canRunEOD := canPerform(d, r, "eod_report")
 			type eodRow struct {
 				Period string
 				Net    int64
 				Sales  int
 			}
 			var eodRows []eodRow
-			var eodEnabled, eodTime string
-			if isManager {
+			// ut-docs#794 review finding (residual on the blocker-1 fix):
+			// the row list itself — just the periods, so the Reprint
+			// button has something to attach to — is shown to anyone who
+			// can view the tab at all, same as the schedule below,
+			// otherwise print/{period}'s elevation dialog stays exactly as
+			// unreachable as the rest of the tab was before that fix (its
+			// only trigger lives in this table). The money figures
+			// (Net/Sales) stay behind eod_report specifically — real
+			// report history, gated same as before — so they're populated
+			// only when canRunEOD; the template renders those two columns
+			// only when CanRunEOD is set. Still skipped entirely for a
+			// non-viewer (the original perf rationale — no repo call for a
+			// role that gets no card at all).
+			if canView {
 				archived, _ := repo.ListArchivedReports(r.Context(), 14)
 				for _, a := range archived {
 					if a.Kind != "eod" {
 						continue
 					}
-					var rep data.EODReport
-					if json.Unmarshal([]byte(a.Content), &rep) == nil {
-						eodRows = append(eodRows, eodRow{Period: a.Period, Net: rep.Net, Sales: rep.SalesCount})
+					row := eodRow{Period: a.Period}
+					if canRunEOD {
+						var rep data.EODReport
+						if json.Unmarshal([]byte(a.Content), &rep) == nil {
+							row.Net = rep.Net
+							row.Sales = rep.SalesCount
+						}
 					}
+					eodRows = append(eodRows, row)
 				}
+			}
+			// The schedule (enabled/time) is operational, not financial —
+			// shown to anyone who can view the tab at all, same as
+			// BusinessDayStart already is, so the settings form reflects
+			// real state for an operator who may need a manager's approval
+			// to change it.
+			var eodEnabled, eodTime string
+			if canView {
 				eodEnabled, _, _ = d.Settings.Get(r.Context(), keyEODEnabled)
 				eodTime, _, _ = d.Settings.Get(r.Context(), keyEODTime)
 			}
 			httpx.RenderPartial("ui/partials/reports_tab_eod.html", map[string]any{
-				"IsManager":        isManager,
+				"IsManager":        canView,
+				"CanRunEOD":        canRunEOD,
 				"EODRows":          eodRows,
 				"EODEnabled":       eodEnabled == "true",
 				"EODTime":          eodTime,

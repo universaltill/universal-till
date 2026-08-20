@@ -14,17 +14,32 @@
         <input type="time" name="business_day_start" value="{{ .BusinessDayStart }}">
       </label>
       <button class="btn secondary" type="submit">{{ T "settings.printer.apply" }}</button>
+      <!-- ut-docs#794: hx-swap="none" above means this form's OWN response
+           is never swapped anywhere — but checkOrElevate's dialog retry
+           (elevation_prompt.html) still needs a real hx-target to land its
+           response in, so this span exists purely for that. The initial
+           "needs elevation" OOB swap into #elevation-modal happens
+           regardless of hx-swap (independent of the main target). -->
+      <span id="eod-settings-msg" aria-live="polite"></span>
     </form>
   </div>
   {{ if .EODRows }}
+  <!-- ut-docs#794 review finding (residual on the blocker-1 fix): the
+       Reprint button is this table's only trigger for
+       checkOrElevate("eod_report"), so the row list itself (period +
+       button) renders for anyone who can view this tab at all — a viewer
+       without eod_report still needs a way to REACH the elevation dialog.
+       The money columns (Sales/Net — real report history) stay behind
+       CanRunEOD specifically, same gate the Go side already applies to
+       whether they're even populated. -->
   <table class="table" style="margin-top:.6rem">
-    <thead><tr><th>{{ T "reports.day" }}</th><th>{{ T "reports.sales" }}</th><th>{{ T "reports.eod.net" }}</th><th></th></tr></thead>
+    <thead><tr><th>{{ T "reports.day" }}</th>{{ if .CanRunEOD }}<th>{{ T "reports.sales" }}</th><th>{{ T "reports.eod.net" }}</th>{{ end }}<th></th></tr></thead>
     <tbody>
+      {{ $canRunEOD := .CanRunEOD }}
       {{ range .EODRows }}
       <tr>
         <td>{{ .Period }}</td>
-        <td>{{ .Sales }}</td>
-        <td>{{ money .Net }}</td>
+        {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
       {{ end }}
@@ -53,11 +68,14 @@
   btn.addEventListener('click', function () {
     if (!from.value || !to.value) { msg.textContent = '✗ ' + "{{ T "reports.eod.range_pick_dates" }}"; return; }
     btn.disabled = true; msg.textContent = '⏳ ' + "{{ T "reports.eod.range_loading" }}";
-    fetch('/api/reports/eod/range', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ from: from.value, to: to.value }).toString()
-    }).then(function (r) {
+    // ut-docs#794: this endpoint triggers a file download (Content-Disposition),
+    // which htmx can't drive — utPostWithElevation (app.js) is the raw-fetch
+    // equivalent of checkOrElevate's shared elevation dialog for exactly
+    // this case. onDone only fires for a REAL success/error, never another
+    // elevation prompt (that's handled internally); onCancel fires if the
+    // approval dialog is dismissed instead, so this button doesn't stay
+    // stuck disabled.
+    window.utPostWithElevation('/api/reports/eod/range', { from: from.value, to: to.value }, function (r) {
       var cd = r.headers.get('Content-Disposition') || '';
       if (cd.indexOf('attachment') !== -1) {
         var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
@@ -74,7 +92,8 @@
       return r.text().then(function (t) {
         btn.disabled = false; msg.textContent = '✗ ' + t;
       });
-    }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+    }, function () { btn.disabled = false; msg.textContent = ''; })
+      .catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
   });
 })();
 </script>
