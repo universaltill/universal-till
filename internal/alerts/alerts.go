@@ -19,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -104,6 +105,11 @@ func pushNotify(ctx context.Context, cfg *config.Config, typ string, body map[st
 		"store_id": m.StoreID,
 		"type":     typ,
 		"payload":  body,
+		// The till's own configured UI locale (ut-docs#658) — a background
+		// job has no request to resolve one from, so DefaultLocale() is the
+		// documented "no request" source. The marketplace falls back to a
+		// region guess, then "en", when this is empty or unrecognised.
+		"locale": httpx.DefaultLocale(),
 	})
 	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/notify"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
