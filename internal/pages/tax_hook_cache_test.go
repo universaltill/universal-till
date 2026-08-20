@@ -340,8 +340,9 @@ func TestAskTaxRateBP_UnparseableAnswerIsNotCached(t *testing.T) {
 	}
 }
 
-// The overflow eviction (full map drop at taxAskCacheMax) must keep answers
-// correct, and concurrent asks must be race-free (run under -race in CI).
+// The overflow eviction (full map drop at the cache's bound) must keep
+// answers correct, and concurrent asks must be race-free (run under -race
+// in CI).
 func TestAskTaxRateBP_OverflowAndConcurrency(t *testing.T) {
 	db := openPagesTestDB(t)
 	defer db.Close()
@@ -365,9 +366,17 @@ func TestAskTaxRateBP_OverflowAndConcurrency(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 
-	asker := &pluginTaxRateAsker{db: db}
+	// ut-docs#648: exercise the real overflow-eviction path (same code,
+	// same `len(a.cache) >= a.maxCache()` branch) with a small bound
+	// instead of the production 4096 — 4097 sequential bus.Ask round-trips
+	// under -race put this package's whole-suite runtime right at the
+	// default 600s `go test` deadline with no margin. Coverage is
+	// unchanged: overflow eviction only cares that the bound is crossed by
+	// exactly one distinct payload, not what the bound's numeric value is.
+	const testCacheMax = 8
+	asker := &pluginTaxRateAsker{db: db, cacheMax: testCacheMax}
 	// Overflow: one more distinct payload than the cache holds.
-	for i := 0; i < taxAskCacheMax+1; i++ {
+	for i := 0; i < testCacheMax+1; i++ {
 		line := pos.BasketLine{ItemID: fmt.Sprintf("itm-%d", i), TaxCodeID: "tax_std", TaxRateBP: i + 1}
 		if rate, ok, _ := asker.AskTaxRateBP(line, "eat_in"); !ok || rate != i+2 {
 			t.Fatalf("ask %d: got (%d,%v), want (%d,true)", i, rate, ok, i+2)
