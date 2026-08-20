@@ -6,6 +6,7 @@
   --brand: #0b1324;
   --accent: #0ea5e9;          /* sky blue */
   --accent-contrast: #ffffff;
+  --focus-border: #0d94d1;    /* ut-docs#797: --accent is 2.77:1 on white; this darker sky blue is 3.40:1 (WCAG 1.4.11 >=3:1) */
   --bg: #f5f8fc;
   --surface: #ffffff;
   --surface-2: #eef4fb;
