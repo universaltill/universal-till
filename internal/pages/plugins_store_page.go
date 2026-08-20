@@ -244,6 +244,13 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 				respond(w, http.StatusForbidden, "plugins.install.error.not_entitled")
 				return
 			}
+			// ut-docs#703: a listing that doesn't exist at all (stale catalog
+			// cache, a listing removed from the marketplace) — distinct from
+			// not_entitled, same pattern as the case above.
+			if errors.As(err, &apiErr) && apiErr.Code == "listing_not_found" {
+				respond(w, http.StatusNotFound, "plugins.install.error.not_found")
+				return
+			}
 			respond(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))
 			return
 		}
