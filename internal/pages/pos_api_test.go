@@ -189,8 +189,14 @@ func TestTableHandler_AssignsResolvesLabelAndClears(t *testing.T) {
 	if got := dp.Engine.Basket().TableLabel; got != "T5" {
 		t.Fatalf("expected TableLabel resolved to T5, got %q", got)
 	}
-	if !strings.Contains(rec.Body.String(), "T5") {
-		t.Fatalf("expected the re-rendered basket to show the table label, got: %s", rec.Body.String())
+	// The label itself renders in the table-picker fragment (which the basket
+	// re-loads on every swap), not inline in the basket partial -- so a
+	// no-tables shop pays no basket height for table chrome (ADR-0054
+	// soft-gate; ut-docs#820 review B fix). Assert the re-rendered basket
+	// wires that fragment; the label text is covered by the picker's own
+	// tests (TestTablePicker_*).
+	if !strings.Contains(rec.Body.String(), `hx-get="/ui/pos/table-picker"`) {
+		t.Fatalf("expected the re-rendered basket to load the table picker, got: %s", rec.Body.String())
 	}
 
 	rec = posPostForm(mux, "/api/pos/table", "table_id=")
