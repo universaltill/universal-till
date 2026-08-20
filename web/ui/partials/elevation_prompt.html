@@ -46,7 +46,31 @@
      failed — elevationErrorKey in elevation.go). */}}
 <span class="elevation-hint muted">{{ T "elevation.hint" }}</span>
 <dialog id="elevation-modal" class="modifier-modal elevation-dialog" hx-swap-oob="true">
-  <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML">
+  {{/* ut-docs#795 review S7: this form had NO after-request handler of its
+       own before — a successful retry swapped its confirmation into
+       HxTarget but left the dialog sitting open over what, on users.html's
+       4 sites, is now a stale row (the outer form's own reload only fires
+       from ITS OWN hx-on::after-request, never from a submit through this
+       separate dialog form). X-UT-Response (elevation.go's
+       renderElevationPrompt / users_page.go's usersRespondOK|Error — see
+       users.html's own comment on the same header) tells the three
+       outcomes apart:
+         - "elevation-prompt": a re-prompt (e.g. wrong PIN retried) — the
+           OOB swap above already replaced this whole dialog with a fresh
+           one carrying the error, so there's nothing left to do here.
+         - anything else (a real 200 success OR a real 200 business-rule
+           refusal — both terminal, this dialog's job is done either way):
+           close the dialog so its swapped message (success or refusal) is
+           actually visible instead of sitting behind it, then additionally
+           reload ONLY on "ok" — a refusal changed nothing, so there's
+           nothing to refresh, and reloading would just discard the
+           refusal message before anyone could read it.
+       Sites other than users.html's 4 forms don't set X-UT-Response at
+       all on their own success/refusal responses, so for them this still
+       closes the dialog (itself already a strict improvement over never
+       closing at all) but never auto-reloads — no worse than before. */}}
+  <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
+        hx-on::after-request="var xr=(event.detail.xhr.getResponseHeader('X-UT-Response')||''); if (xr!=='elevation-prompt'){ this.closest('dialog').close(); if (xr==='ok'){ window.location.reload(); } }">
     <h3>{{ T "elevation.prompt_title" }} {{ helpLink "elevation" }}</h3>
     <p class="muted">{{ T "elevation.prompt_help" }}</p>
     {{ if .Summary }}<p class="elevation-summary">{{ .Summary }}</p>{{ end }}

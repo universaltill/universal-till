@@ -1052,6 +1052,7 @@
   "users.role.admin": "مدیر کل",
   "users.role.cashier": "صندوقدار",
   "users.role.manager": "مدیر",
+  "users.saved": "ذخیره شد.",
   "users.set_pin": "تنظیم پین",
   "users.title": "کاربران",
   "locations.title": "مکان‌ها",
@@ -1528,5 +1529,10 @@
   "elevation.summary.eod_settings_enabled": "روشن کردن گزارش خودکار پایان روز، زمان‌بندی‌شده برای %s.",
   "elevation.summary.eod_settings_disabled": "خاموش کردن گزارش خودکار پایان روز.",
   "elevation.summary.report_retention": "تغییر حالت نگهداری گزارش‌ها به %s.",
-  "elevation.summary.archive_export": "خروجی گرفتن از آرشیو گزارش‌ها از %s تا %s (%s)."
+  "elevation.summary.archive_export": "خروجی گرفتن از آرشیو گزارش‌ها از %s تا %s (%s).",
+  "elevation.summary.user_create": "ایجاد کاربر %s با نقش %s.",
+  "elevation.summary.user_pin_set": "تنظیم پین جدید برای %s.",
+  "elevation.summary.user_activate": "فعال‌سازی %s.",
+  "elevation.summary.user_deactivate": "غیرفعال‌سازی %s.",
+  "elevation.summary.user_role_change": "تغییر نقش %s از %s به %s."
 }
