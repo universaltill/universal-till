@@ -31,7 +31,7 @@ func buildBkpDBBytesForPagesTest(t *testing.T) []byte {
 type bkpTaxRow struct {
 	ProductNumber, Name, Category string
 	Price                         float64
-	TaxPct, TaxPct2                any
+	TaxPct, TaxPct2               any
 }
 
 // buildBkpDBBytesForPagesTestWithTaxRows is buildBkpDBBytesForPagesTest's

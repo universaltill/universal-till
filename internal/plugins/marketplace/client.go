@@ -294,7 +294,7 @@ type PluginSummary struct {
 	TrustTier     string   `json:"trust_tier"`
 	Capabilities  []string `json:"capabilities,omitempty"`
 	Permissions   []string `json:"permissions,omitempty"` // manifest capability scopes (FR-006 permission badges)
-	CanonicalType string   `json:"canonical_type"` // For backward compatibility
+	CanonicalType string   `json:"canonical_type"`        // For backward compatibility
 	PriceFlag     string   `json:"price_flag,omitempty"`
 	Architectures []string `json:"architectures,omitempty"`
 	DeviceArch    string   `json:"device_arch"` // For backward compatibility

@@ -64,7 +64,7 @@ func TestReportRetentionCutoff_TenYearsBackFormattedAsPeriod(t *testing.T) {
 // this asserts it rather than assuming it).
 func TestReportRetentionCutoffNeverShorterThanGlobalArchiveMinDays(t *testing.T) {
 	for _, now := range []time.Time{
-		time.Date(2021, 3, 1, 0, 0, 0, 0, time.UTC),  // spans leap years 2020, 2024
+		time.Date(2021, 3, 1, 0, 0, 0, 0, time.UTC),   // spans leap years 2020, 2024
 		time.Date(2026, 8, 12, 15, 4, 5, 0, time.UTC), // spans leap years 2020, 2024
 		time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),   // 2100 is NOT a Gregorian leap year
 		time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC),   // spans leap years 1996, 2000

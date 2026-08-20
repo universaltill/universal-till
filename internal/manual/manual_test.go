@@ -299,7 +299,7 @@ func TestLoadRouteConflictNamesEnglishTopicAsOwner(t *testing.T) {
 // new conditional swap must not disturb that already-correct ordering.
 func TestLoadRouteConflictNamesEnglishTopicAsOwnerWhenEnScansFirst(t *testing.T) {
 	dup := fstest.MapFS{
-		"help/en/catalog.md": &fstest.MapFile{Data: []byte("---\nid: catalog\ntitle: Catalog\nroutes: [/invoices]\n---\nb\n")},
+		"help/en/catalog.md":  &fstest.MapFile{Data: []byte("---\nid: catalog\ntitle: Catalog\nroutes: [/invoices]\n---\nb\n")},
 		"help/fa/invoices.md": &fstest.MapFile{Data: []byte("---\nid: invoices\ntitle: Invoices\nroutes: [/invoices]\n---\nb\n")},
 	}
 	_, err := Load(dup, "help")

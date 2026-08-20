@@ -109,6 +109,7 @@ type fiscalSignAskVATLine struct {
 //     semantics, treated exactly like no answer, NOT a failure.
 //   - "unreachable":       the plugin declares its signing backend
 //     unreachable — a genuine failure → proceed-and-declare.
+//
 // Since contract v1.1.0 (ut-docs#585) an "approved" answer MAY additionally
 // carry a `tse` object with the §6 KassenSichV receipt evidence — see
 // fiscalTSEEvidence. Purely additive: a bare {"status":"approved"} stays a
