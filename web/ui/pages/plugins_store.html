@@ -164,7 +164,8 @@ window.utTrustPrompt = {{ printf "%q" (T "plugins.trust.confirm") }};
   // download/install are rejected with this key.
   var T = {
     'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
-    'plugins.install.error.not_entitled': '{{ T "plugins.install.error.not_entitled" }}'
+    'plugins.install.error.not_entitled': '{{ T "plugins.install.error.not_entitled" }}',
+    'plugins.install.error.not_found': '{{ T "plugins.install.error.not_found" }}'
   };
   document.addEventListener('click', function (ev) {
     var btn = ev.target.closest('[data-store-action]');
