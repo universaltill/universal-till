@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 )
 
 // The digest pushes the running-out count to the marketplace with the store
@@ -116,6 +117,12 @@ func TestPushDigest(t *testing.T) {
 		t.Fatal("unregistered till must not push")
 	}
 
+	// The till's own configured locale (ut-docs#658) rides along on the
+	// push — DefaultLocale() is the "no request" source a background job
+	// uses.
+	httpx.InitI18n(nil, "fa")
+	t.Cleanup(func() { httpx.InitI18n(nil, "en") })
+
 	cfg := &config.Config{Marketplace: config.MarketplaceConfig{
 		EndpointURL: mp.URL + "/api", StoreID: "store-abc", MerchantToken: "tok-1",
 	}}
@@ -124,6 +131,9 @@ func TestPushDigest(t *testing.T) {
 	}
 	if got == nil || got["type"] != "low_stock_digest" || got["store_id"] != "store-abc" {
 		t.Fatalf("pushed = %+v", got)
+	}
+	if got["locale"] != "fa" {
+		t.Fatalf("locale = %v, want fa", got["locale"])
 	}
 	payload, _ := got["payload"].(map[string]any)
 	if payload["running_out"] != float64(1) {
