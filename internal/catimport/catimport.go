@@ -228,6 +228,15 @@ func DetectFormat(headers []string) string {
 		// Checked before the sumup fallback below: an ERP master's own ID
 		// columns (e.g. "Item Identifier") must never be mistaken for
 		// SumUp's "Item id"/"Variant id" (ut-docs#581 review finding M1).
+		//
+		// hasColumn strips a trailing parenthetical (ut-docs#587), so a
+		// decorated header like "Dept (code)" also lands here. That is the
+		// deliberately-chosen behaviour (ut-docs#705): a department axis is a
+		// department axis however its header is qualified, so department wins
+		// over the sumup fallback signature even when the header carries a
+		// paren suffix — the same "department wins" rule as M1, extended to the
+		// paren-lenient match. Pinned by
+		// TestDetectFormatParenSuffixDepartmentWinsOverSumUpFallback.
 		return "generic-erp"
 	case hasExactHeader(headers, "item id") && hasExactHeader(headers, "variant id"):
 		// Fallback SumUp signature for an export missing the takeaway-toggle
