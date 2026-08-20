@@ -162,6 +162,24 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
+		// The held_sales.table_id COLUMN -- not the payload snapshot -- is the
+		// authoritative table assignment (ut-docs#820). POST /api/pos/held/table
+		// moves a parked order by updating only that column, leaving the payload
+		// holding the pre-move table; restoring the snapshot verbatim would
+		// silently revert a moved order to its old table and tender the sale,
+		// receipt and kitchen ticket against the wrong one. Re-resolve the label
+		// here too, so a table renamed while the order was parked resumes under
+		// its current name -- same ListTables-at-the-pages-layer choice the strip
+		// makes, rather than trusting a label snapshotted at hold time.
+		snap.TableID = held.TableID
+		snap.TableLabel = ""
+		if held.TableID != "" {
+			if t, found, err := posRepo.GetTable(ctx, held.TableID); err == nil && found {
+				snap.TableLabel = t.Label
+			} else {
+				snap.TableLabel = held.TableID
+			}
+		}
 		d.Engine.Restore(snap)
 		if err := repo.Delete(ctx, id); err != nil {
 			// The sale is restored either way; a stale row is the lesser evil.

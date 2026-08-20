@@ -465,6 +465,107 @@ func TestHeldTableHandler_MoveOntoOwnCurrentTableSucceeds(t *testing.T) {
 	}
 }
 
+// TestHoldMoveThenResume_ReflectsMovedTable (ut-docs#820) closes the gap
+// between the two tests above: TestHeldTableHandler_MovesToFreeTable moves a
+// parked order WITHOUT resuming it, and TestHoldThenResume_PreservesTable
+// resumes one that was never moved -- so neither covers move-then-resume.
+// That chain is where it matters: the move writes only held_sales.table_id,
+// while resume restores the basket from held_sales.payload, so a resumed
+// order used to silently revert to its PRE-move table and tender the sale
+// (and its receipt/kitchen ticket) against the wrong one.
+func TestHoldMoveThenResume_ReflectsMovedTable(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES
+ ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),
+ ('tbl-2','T2','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed tables: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	dp.Engine.SetTable("tbl-1", "T1")
+
+	holdReq := httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil)
+	holdRec := httptest.NewRecorder()
+	mux.ServeHTTP(holdRec, holdReq)
+	if holdRec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", holdRec.Code, holdRec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+		t.Fatalf("query held_sales id: %v", err)
+	}
+
+	moveReq := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id="+id+"&table_id=tbl-2"))
+	moveReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	moveRec := httptest.NewRecorder()
+	mux.ServeHTTP(moveRec, moveReq)
+	if moveRec.Code != http.StatusOK {
+		t.Fatalf("move: expected 200, got %d: %s", moveRec.Code, moveRec.Body.String())
+	}
+
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id))
+	resumeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resumeRec := httptest.NewRecorder()
+	mux.ServeHTTP(resumeRec, resumeReq)
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", resumeRec.Code, resumeRec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "tbl-2" {
+		t.Fatalf("resumed basket TableID = %q, want tbl-2 (the MOVED table)", got)
+	}
+	if got := dp.Engine.Basket().TableLabel; got != "T2" {
+		t.Fatalf("resumed basket TableLabel = %q, want T2 (the MOVED table)", got)
+	}
+}
+
+// Clearing a parked order's table (move to ""), then resuming it, must leave
+// the basket with no table -- the same column-is-authoritative rule as the
+// move case above, in its unassign direction.
+func TestHoldClearTableThenResume_ReflectsCleared(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	dp.Engine.SetTable("tbl-1", "T1")
+
+	holdReq := httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil)
+	holdRec := httptest.NewRecorder()
+	mux.ServeHTTP(holdRec, holdReq)
+	if holdRec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", holdRec.Code, holdRec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+		t.Fatalf("query held_sales id: %v", err)
+	}
+
+	clearReq := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id="+id+"&table_id="))
+	clearReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	clearRec := httptest.NewRecorder()
+	mux.ServeHTTP(clearRec, clearReq)
+	if clearRec.Code != http.StatusOK {
+		t.Fatalf("clear: expected 200, got %d: %s", clearRec.Code, clearRec.Body.String())
+	}
+
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id))
+	resumeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resumeRec := httptest.NewRecorder()
+	mux.ServeHTTP(resumeRec, resumeReq)
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", resumeRec.Code, resumeRec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("resumed basket TableID = %q, want \"\" (table was cleared)", got)
+	}
+	if got := dp.Engine.Basket().TableLabel; got != "" {
+		t.Fatalf("resumed basket TableLabel = %q, want \"\" (table was cleared)", got)
+	}
+}
+
 func TestHeldStrip_EmptyWhenNothingHeld(t *testing.T) {
 	mux, _ := newHoldTestDeps(t)
 	req := httptest.NewRequest(http.MethodGet, "/ui/held", nil)
