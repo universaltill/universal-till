@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { watchConsole } from './helpers';
 
-// ut-docs#46: cashier can name a held sale (e.g. "Haaft 1") instead of it
+// ut-docs#46: cashier can name a held sale (e.g. "Tab 1") instead of it
 // always falling back to the CRM customer name or a bare timestamp.
 test('holding a sale with a typed name shows that name in the held strip', async ({ page }) => {
   const assertClean = watchConsole(page);
@@ -23,12 +23,12 @@ test('holding a sale with a typed name shows that name in the held strip', async
   expect(await page.evaluate(() => document.body.inert)).toBe(false);
   expect(await page.evaluate(() => document.querySelector('input[name=code]')?.disabled)).toBe(false);
 
-  await page.locator('#hold-label-input').fill('Haaft 1');
+  await page.locator('#hold-label-input').fill('Tab 1');
   await page.locator('#hold-modal button[type=submit]').click();
 
   await expect(page.locator('#hold-modal')).toBeHidden();
   await expect(page.locator('#basket')).not.toContainText('Coca-Cola');
-  await expect(page.locator('#held-sales')).toContainText('Haaft 1');
+  await expect(page.locator('#held-sales')).toContainText('Tab 1');
   assertClean();
 });
 

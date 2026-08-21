@@ -251,7 +251,7 @@ func TestHoldHandler_ExplicitLabelWithNoCustomer(t *testing.T) {
 		t.Fatalf("seed scan: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/pos/hold", strings.NewReader("label=Haaft+1"))
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/hold", strings.NewReader("label=Tab+1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -262,7 +262,7 @@ func TestHoldHandler_ExplicitLabelWithNoCustomer(t *testing.T) {
 	if err := dp.Db.QueryRow(`SELECT label FROM held_sales`).Scan(&label); err != nil {
 		t.Fatalf("query held_sales: %v", err)
 	}
-	if label != "Haaft 1" {
+	if label != "Tab 1" {
 		t.Fatalf("expected the explicit label to be stored even with no customer attached, got %q", label)
 	}
 }

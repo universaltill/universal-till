@@ -118,3 +118,15 @@ unrelated pre-existing failure noted above), `guard-data-access.sh`,
 
 ## Verdict
 Safe to merge.
+
+## Correction (2026-08-21, ut-docs#521)
+The "No real client/shop name used" claim above was wrong, unknowingly, at
+the time it was written. "Haaft" is in fact a real German café's real name
+(a genuine prospect — see ut-docs#511, which surfaced this eight days
+after this review). The example/test data has since been changed to
+"Tab 1" throughout (`internal/pages/hold_api.go`,
+`internal/pages/hold_api_test.go`, `e2e/tests/hold-named-tab.spec.ts`,
+`web/ui/pages/index.html`) — see ut-docs#521's PR. The "Context" and
+"Verified beyond automated tests" sections above are left unedited as an
+accurate record of what this review actually said at the time; they should
+not be read as still describing the current code.
