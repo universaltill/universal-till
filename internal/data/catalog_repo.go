@@ -32,6 +32,16 @@ func (e *BarcodeConflictError) Error() string {
 	return fmt.Sprintf("barcode already assigned to %s %s", e.TargetType, e.TargetID)
 }
 
+// ErrTaxCodeNameExists reports that tax_codes.name's UNIQUE constraint
+// rejected a CreateTaxCode/UpdateTaxCode call (ut-docs#259's tax-code
+// management UI) -- the handler surfaces a validation message instead of a
+// raw 500, same style as ErrPromotionCodeExists (pos_repo.go).
+var ErrTaxCodeNameExists = errors.New("tax code name already exists")
+
+// ErrTaxCodeNotFound reports that GetTaxCode/UpdateTaxCode's id doesn't
+// match any tax_codes row.
+var ErrTaxCodeNotFound = errors.New("tax code not found")
+
 func NewCatalogRepo(db *sql.DB) *CatalogRepo {
 	return &CatalogRepo{db: db}
 }
@@ -392,6 +402,12 @@ type TaxCodeView struct {
 	Name           string
 	RateBP         int64
 	TakeawayRateBP *int64
+	// IsActive is set by GetTaxCode/ListAllTaxCodes (ut-docs#259's tax-code
+	// management UI, which needs to show and reactivate retired codes).
+	// ListTaxCodes/FindOrCreateTaxCode leave it at its zero value (false) --
+	// neither of their callers reads it, since ListTaxCodes only ever
+	// returns already-active rows.
+	IsActive bool
 }
 
 // ListTaxCodes returns every active tax code, highest dine-in rate first
@@ -423,6 +439,105 @@ ORDER BY rate_basis_points DESC, name`)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list tax codes: %w", err)
+	}
+	return out, nil
+}
+
+// CreateTaxCode adds a new, active tax code by hand (ut-docs#259's tax-code
+// management UI) -- distinct from FindOrCreateTaxCode's import-driven
+// (rate, takeaway) pair matching above, this always inserts. tax_codes.name
+// is UNIQUE; a conflict is reported as ErrTaxCodeNameExists rather than a
+// raw 500 so the handler can surface a validation message.
+func (r *CatalogRepo) CreateTaxCode(ctx context.Context, name string, rateBP int, takeawayBP *int) (string, error) {
+	id := uuid.NewString()
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO tax_codes (id, name, rate_basis_points, takeaway_rate_basis_points, is_active)
+VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return "", ErrTaxCodeNameExists
+		}
+		return "", fmt.Errorf("create tax code: %w", err)
+	}
+	return id, nil
+}
+
+// UpdateTaxCode edits an existing tax code's name/rate/takeaway rate/active
+// flag in one write (ut-docs#259) -- the SAME endpoint the manage-UI's
+// activate/deactivate toggle uses (just isActive flipped, other fields
+// resubmitted unchanged); there is no separate delete method since
+// tax_codes.id is FK-referenced by items.tax_code_id (001_init.sql).
+func (r *CatalogRepo) UpdateTaxCode(ctx context.Context, id, name string, rateBP int, takeawayBP *int, isActive bool) error {
+	res, err := r.db.ExecContext(ctx, `
+UPDATE tax_codes SET name = ?, rate_basis_points = ?, takeaway_rate_basis_points = ?, is_active = ?
+WHERE id = ?`, name, rateBP, nullableIntPtr(takeawayBP), boolToInt(isActive), id)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrTaxCodeNameExists
+		}
+		return fmt.Errorf("update tax code: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrTaxCodeNotFound
+	}
+	return nil
+}
+
+// GetTaxCode looks up a single tax code by id, wrapping sql.ErrNoRows as
+// ErrTaxCodeNotFound so the handler can respond 404 cleanly (ut-docs#259).
+func (r *CatalogRepo) GetTaxCode(ctx context.Context, id string) (TaxCodeView, error) {
+	var v TaxCodeView
+	var takeaway sql.NullInt64
+	var active int
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, name, rate_basis_points, takeaway_rate_basis_points, is_active
+FROM tax_codes WHERE id = ?`, id).Scan(&v.ID, &v.Name, &v.RateBP, &takeaway, &active)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TaxCodeView{}, ErrTaxCodeNotFound
+	}
+	if err != nil {
+		return TaxCodeView{}, fmt.Errorf("get tax code: %w", err)
+	}
+	if takeaway.Valid {
+		tv := takeaway.Int64
+		v.TakeawayRateBP = &tv
+	}
+	v.IsActive = active == 1
+	return v, nil
+}
+
+// ListAllTaxCodes returns every tax code, active and inactive alike --
+// same ordering as ListTaxCodes, just without the WHERE is_active = 1
+// filter, so the tax-code management UI (ut-docs#259) can show and
+// reactivate a retired code. ListTaxCodes itself is UNCHANGED: it must keep
+// excluding inactive codes, exactly as today, because catalog_lookups.html's
+// read-only autocomplete depends on that.
+func (r *CatalogRepo) ListAllTaxCodes(ctx context.Context) ([]TaxCodeView, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, rate_basis_points, takeaway_rate_basis_points, is_active
+FROM tax_codes
+ORDER BY rate_basis_points DESC, name`)
+	if err != nil {
+		return nil, fmt.Errorf("list all tax codes: %w", err)
+	}
+	defer rows.Close()
+	var out []TaxCodeView
+	for rows.Next() {
+		var v TaxCodeView
+		var takeaway sql.NullInt64
+		var active int
+		if err := rows.Scan(&v.ID, &v.Name, &v.RateBP, &takeaway, &active); err != nil {
+			return nil, fmt.Errorf("scan tax code: %w", err)
+		}
+		if takeaway.Valid {
+			tv := takeaway.Int64
+			v.TakeawayRateBP = &tv
+		}
+		v.IsActive = active == 1
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list all tax codes: %w", err)
 	}
 	return out, nil
 }

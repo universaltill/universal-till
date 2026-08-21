@@ -1,0 +1,84 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "taxcodes.title" }} {{ helpLink "tax-codes" }}</h1>
+  <a class="btn secondary" href="/catalog">← {{ T "nav.catalog" }}</a>
+</div>
+
+<div class="catalog-layout">
+  <div class="catalog-list">
+    {{ template "tax_codes_table" . }}
+    <p><a href="/plugins">{{ T "taxcodes.manage_overrides_link" }} →</a></p>
+  </div>
+
+  <div class="card catalog-form">
+    <div class="catalog-form-head">
+      <h3 id="tax-code-form-title">{{ T "taxcodes.new" }}</h3>
+      <button class="btn secondary" type="button" id="tax-code-form-reset" hidden>{{ T "catalog.plus_new" }}</button>
+    </div>
+    <form id="tax-code-form" autocomplete="off">
+      <input type="hidden" name="id" id="tax-code-id">
+      <label>{{ T "taxcodes.col.name" }} <input type="text" name="name" id="tax-code-name" required></label>
+      <label>{{ T "taxcodes.col.rate" }} (%) <input type="number" name="rate" id="tax-code-rate" min="0" max="100" step="0.01" required></label>
+      <label>{{ T "taxcodes.col.takeaway_rate" }} (%) <input type="number" name="takeawayRate" id="tax-code-takeaway-rate" min="0" max="100" step="0.01"></label>
+      <div class="field-checks" id="tax-code-active-field" hidden>
+        <input type="hidden" name="isActive" value="0">
+        <label><input type="checkbox" name="isActive" id="tax-code-active" value="1" checked> {{ T "taxcodes.col.active" }}</label>
+      </div>
+      <button class="btn primary" type="submit" id="tax-code-form-submit" style="width:100%">{{ T "taxcodes.save" }}</button>
+      <div id="tax-code-form-msg" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  var form = document.getElementById('tax-code-form');
+  var title = document.getElementById('tax-code-form-title');
+  var submit = document.getElementById('tax-code-form-submit');
+  var resetBtn = document.getElementById('tax-code-form-reset');
+  var activeField = document.getElementById('tax-code-active-field');
+  var msg = document.getElementById('tax-code-form-msg');
+  var NEW_TITLE = "{{ T "taxcodes.new" }}";
+  var SAVE_LABEL = "{{ T "taxcodes.save" }}";
+
+  function setMode(editing, name) {
+    title.textContent = editing ? name : NEW_TITLE;
+    submit.textContent = SAVE_LABEL;
+    resetBtn.hidden = !editing;
+    activeField.hidden = !editing;
+  }
+
+  function clearForm() {
+    form.reset();
+    document.getElementById('tax-code-id').value = '';
+    setMode(false);
+    msg.textContent = '';
+  }
+  resetBtn.addEventListener('click', clearForm);
+
+  document.addEventListener('click', function (ev) {
+    var row = ev.target.closest('.tax-code-row');
+    if (!row) return;
+    if (ev.target.closest('.btn') && !ev.target.classList.contains('tax-code-edit')) return;
+    document.getElementById('tax-code-id').value = row.dataset.id;
+    document.getElementById('tax-code-name').value = row.dataset.name;
+    document.getElementById('tax-code-rate').value = row.dataset.rate;
+    document.getElementById('tax-code-takeaway-rate').value = row.dataset.takeaway || '';
+    document.getElementById('tax-code-active').checked = row.dataset.active === '1';
+    setMode(true, row.dataset.name);
+  });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var editing = document.getElementById('tax-code-id').value !== '';
+    var url = editing ? '/api/catalog/tax-codes/update' : '/api/catalog/tax-codes';
+    msg.textContent = '⏳';
+    htmx.ajax('POST', url, { source: '#tax-code-form', target: '#tax-codes-table', swap: 'outerHTML' })
+      .then(function () { msg.textContent = '✓'; if (!editing) clearForm(); });
+  });
+  document.body.addEventListener('htmx:responseError', function (ev) {
+    msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+  });
+})();
+</script>
+{{ end }}

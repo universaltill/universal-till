@@ -1,0 +1,47 @@
+{{ define "tax_codes_table" }}
+<div class="card" id="tax-codes-table">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "taxcodes.col.name" }}</th>
+        <th>{{ T "taxcodes.col.rate" }}</th>
+        <th>{{ T "taxcodes.col.takeaway_rate" }}</th>
+        <th>{{ T "taxcodes.col.active" }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ if .TaxCodes }}
+        {{ range .TaxCodes }}
+          <tr class="tax-code-row"
+              data-id="{{ .ID }}" data-name="{{ .Name }}"
+              data-rate="{{ .RatePercent }}"
+              data-takeaway="{{ .TakeawayPercent }}"
+              data-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
+            <td class="catalog-name">{{ .Name }}</td>
+            <td>{{ .RatePercent }}%</td>
+            <td>{{ if .TakeawayPercent }}{{ .TakeawayPercent }}%{{ else }}—{{ end }}</td>
+            <td>{{ if .IsActive }}✓{{ else }}—{{ end }}</td>
+            <td class="btn-actions">
+              <button class="btn secondary tax-code-edit" type="button">{{ T "common.edit" }}</button>
+              {{ if .IsActive }}
+              <button class="btn danger" type="button"
+                      hx-post="/api/catalog/tax-codes/update"
+                      hx-vals='{{ .ToggleVals }}'
+                      hx-target="#tax-codes-table" hx-swap="outerHTML">{{ T "taxcodes.deactivate" }}</button>
+              {{ else }}
+              <button class="btn secondary" type="button"
+                      hx-post="/api/catalog/tax-codes/update"
+                      hx-vals='{{ .ToggleVals }}'
+                      hx-target="#tax-codes-table" hx-swap="outerHTML">{{ T "taxcodes.reactivate" }}</button>
+              {{ end }}
+            </td>
+          </tr>
+        {{ end }}
+      {{ else }}
+        <tr><td colspan="5" class="empty">{{ T "basket.empty" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ end }}

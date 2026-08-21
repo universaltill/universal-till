@@ -228,6 +228,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerImport(mux, dp)
 	registerReceiptDesigner(mux, dp)
 	registerPluginSettings(mux, dp)
+	registerTaxCodes(mux, dp) // ut-docs#259: tax-code management UI
 	enrolTokens := registerSyncAPI(mux, dp)
 	registerPairingAPI(mux, dp, authSvc, enrolTokens) // ADR-0033 part 2/3
 	registerDiscoveryAPI(mux, dp)                     // ADR-0033 part 1/3
