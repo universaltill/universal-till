@@ -1548,5 +1548,17 @@
   "elevation.summary.till_name": "إعادة تسمية هذا الجهاز إلى \"%s\".",
   "elevation.summary.till_register": "ربط هذا الجهاز بالصندوق %s.",
   "elevation.summary.store_save": "حفظ التغييرات على عملة المتجر أو الدولة أو المنطقة أو نسبة الضريبة.",
-  "elevation.summary.setting_upsert": "تعيين الإعداد \"%s\" إلى \"%s\"."
+  "elevation.summary.setting_upsert": "تعيين الإعداد \"%s\" إلى \"%s\".",
+  "elevation.summary.idle_lock": "تعيين مهلة القفل التلقائي عند عدم النشاط إلى %s.",
+  "elevation.summary.kiosk_idle_reset": "تعيين نافذة إعادة ضبط الخمول لكشك الطلب الذاتي إلى %s.",
+  "elevation.summary.window_mode": "تعيين وضع النافذة إلى %s.",
+  "elevation.summary.launch_on_startup_on": "تفعيل التشغيل عند بدء التشغيل.",
+  "elevation.summary.launch_on_startup_off": "إيقاف التشغيل عند بدء التشغيل.",
+  "elevation.summary.telemetry_on": "تفعيل مشاركة بيانات تتبع الإضافات.",
+  "elevation.summary.telemetry_off": "إيقاف مشاركة بيانات تتبع الإضافات.",
+  "elevation.summary.display_mode": "تعيين ملف تعريف هذا الجهاز إلى %s.",
+  "elevation.summary.dismiss_restore_prompt": "تجاهل رسالة الاستعادة من نقطة بيع أخرى دون استيراد أي شيء.",
+  "elevation.summary.dismiss_pending_base_plugin": "تجاهل الإضافة الأساسية المعلّقة %s دون تثبيتها.",
+  "elevation.summary.enrol_claim_code": "إنشاء رمز مطالبة جديد للمتجر ورابط رمز الاستجابة السريعة.",
+  "elevation.summary.enrol_now": "محاولة تسجيل هذا الجهاز في السوق الآن."
 }

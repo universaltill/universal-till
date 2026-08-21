@@ -96,7 +96,11 @@
     </label>
   </form>
   {{ if .isManager }}
-  <form hx-post="/api/settings/display-mode" hx-swap="none" hx-on::after-request="window.location.href='/'" class="set-gap">
+  <!-- ut-docs#865: Content-Type reload guard, same as the till-name/save
+       forms (#796) — an elevation prompt (text/html) must not trigger the
+       unconditional navigate-away that used to sit here, which would
+       destroy the just-opened dialog before an operator could even see it. -->
+  <form hx-post="/api/settings/display-mode" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.href='/'} } else {document.getElementById('settings-save-error').hidden=false}" class="set-gap">
     {{ $dmode := index .settingsMap "display.mode" }}
     <label class="set-row">{{ T "settings.display.mode" }}
       <select name="mode">
@@ -106,6 +110,7 @@
       </select>
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
+    <span id="display-mode-msg" aria-live="polite"></span>
   </form>
 
   <div class="set-divider">
@@ -128,8 +133,31 @@
     </form>
 
     <div class="set-gap">
+      <!-- ut-docs#865: was a raw fetch() with no elevation path at all —
+           now a real htmx-triggered POST (hx-trigger="change" on the
+           checkbox itself, a valid htmx target same as a form/button) so a
+           denied session gets the same in-place PIN dialog as every other
+           site in this file, not a silently-swallowed 200-prompt body a
+           bare fetch() would have misread as success. -->
+      <!-- ut-docs#865 review findings F3/F4:
+           - hx-vals reads the checkbox by id, not `event.target` — a `js:`
+             hx-vals expression is evaluated as a bare function body with no
+             `event` parameter (htmx.min.js's Rr), so it silently falls back
+             to `window.event`, which is undefined for a request htmx
+             re-issues from its own queue (two rapid toggles on a slow
+             link) — `event.target.checked` would throw and drop that
+             request entirely.
+           - on failure, revert the checkbox and clear the stale message —
+             the old fetch()-based handler did both; the first htmx
+             conversion only showed the error banner, leaving the checkbox
+             showing an unsaved state until a manual reload. -->
       <label class="set-row">
-        <input type="checkbox" id="launch-on-startup-cb" {{ if .launchOnStartup }}checked{{ end }}>
+        <input type="checkbox" id="launch-on-startup-cb" name="enabled"
+               hx-post="/api/settings/launch-on-startup" hx-trigger="change" hx-swap="none"
+               hx-vals="js:{enabled: document.getElementById('launch-on-startup-cb').checked}"
+               hx-on::before-request="document.getElementById('launch-on-startup-msg').textContent=''"
+               hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+               {{ if .launchOnStartup }}checked{{ end }}>
         {{ T "settings.display.launch_on_startup_label" }}
       </label>
       <p class="muted">{{ T "settings.display.launch_on_startup_pending_note" }}</p>
@@ -157,29 +185,27 @@
   if (!form) return;
   var msg = document.getElementById('window-mode-msg');
   var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  // ut-docs#865: Content-Type guard — a 200 elevation prompt (text/html) is
+  // htmx:afterRequest "successful" too, and without this check it would
+  // wrongly flash "✓ Saved" over the just-opened PIN dialog.
   form.addEventListener('htmx:afterRequest', function (ev) {
-    if (ev.detail.successful) { msg.textContent = '✓ ' + T.saved; }
+    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { msg.textContent = '✓ ' + T.saved; }
   });
 })();
 (function () {
+  // ut-docs#865: launch-on-startup moved off a raw fetch() (see the
+  // checkbox's own hx-post/hx-trigger attributes) onto a real htmx request,
+  // same Content-Type-guarded confirmation pattern as window-mode-form
+  // above — a bare fetch() had no way to tell an elevation-prompt response
+  // apart from real success.
   var cb = document.getElementById('launch-on-startup-cb');
   if (!cb) return;
   var msg = document.getElementById('launch-on-startup-msg');
-  var T = {
-    saved: "{{ T "settings.display.change_saved" }}",
-    saveFailed: "{{ T "settings.error.save_failed" }}"
-  };
-  cb.addEventListener('change', function () {
-    var enabled = cb.checked;
-    msg.textContent = '';
-    fetch('/api/settings/launch-on-startup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ enabled: enabled ? 'true' : 'false' }).toString()
-    }).then(function (r) {
-      if (r.ok) { msg.textContent = '✓ ' + T.saved; }
-      else { cb.checked = !enabled; msg.textContent = '✗ ' + T.saveFailed; }
-    }).catch(function () { cb.checked = !enabled; msg.textContent = '✗ ' + T.saveFailed; });
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  cb.addEventListener('htmx:afterRequest', function (ev) {
+    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { msg.textContent = '✓ ' + T.saved; }
   });
 })();
 (function () {
@@ -351,6 +377,16 @@
               hx-post="/api/settings/dismiss-restore-prompt"
               hx-target="#restore-resume-block" hx-swap="outerHTML"
               hx-disabled-elt="this">{{ T "settings.data.restore_dismiss_btn" }}</button>
+      <!-- ut-docs#865 review finding F1: the elevation dialog's retry form
+           always hx-swap="innerHTML"s into its own hxTarget
+           (elevation_prompt.html) — pointing that at #restore-resume-block
+           (the SAME node the button's own outerHTML swap can remove) meant
+           a denial's hint span replaced the whole block, leaving the
+           retry's own hx-target pointing at nothing and the approver's PIN
+           submit firing no request (htmx:targetError). A dedicated span,
+           same as remove-demo-catalogue's #demo-remove-msg precedent,
+           gives the hint somewhere harmless to land. -->
+      <span id="restore-resume-msg" aria-live="polite"></span>
     </div>
   </div>
   {{ end }}
@@ -359,13 +395,25 @@
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "setup.base_plugins.title" }}</h3>
   {{ range .pendingBasePlugins }}
-  <div class="chip-row" data-testid="pending-base-plugin" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin:.3rem 0">
+  <!-- id is the elevation dialog's own retry target (ut-docs#865): a stable
+       per-chip selector the Go handler builds as
+       [id="pending-plugin-<canonical_type>"] rather than a bare #id, since
+       an arbitrary canonical_type could contain characters a bare #id
+       selector would need escaping for (the shipped catalogue only ever
+       produces "language" today — setup_base_plugins.go — but nothing
+       enforces that at this handler). -->
+  <div class="chip-row" id="pending-plugin-{{ .CanonicalType }}" data-testid="pending-base-plugin" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin:.3rem 0">
     <span class="chip">{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}</span>
     <button class="btn secondary" data-testid="pending-base-plugin-dismiss"
             hx-post="/api/settings/dismiss-pending-base-plugin"
             hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale }}'
             hx-target="closest .chip-row" hx-swap="outerHTML"
             hx-disabled-elt="this">{{ T "setup.base_plugins.dismiss_btn" }}</button>
+    <!-- ut-docs#865 review finding F1: same reasoning as
+         #restore-resume-msg above — the elevation dialog's own retry
+         hx-target must be a node the button's own outerHTML removal can't
+         make disappear out from under it. -->
+    <span id="pending-plugin-msg-{{ .CanonicalType }}" aria-live="polite"></span>
   </div>
   {{ end }}
   {{ end }}
@@ -840,7 +888,11 @@
 <div class="card">
   <h2>{{ T "settings.idle_lock.title" }}</h2>
   <p class="muted">{{ T "settings.idle_lock.help" }}</p>
-  <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+  <!-- ut-docs#865: same Content-Type reload guard as till-name/save
+       (#796) — a 200 elevation prompt (text/html) must not trigger the
+       success reload, which would destroy the just-opened dialog; the
+       real success is a bare 204 with no Content-Type. -->
+  <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $idle := .settings.IdleLockMinutes }}
     <select name="minutes">
       <option value="0"  {{ if eq $idle 0 }}selected{{ end }}>{{ T "settings.idle_lock.off" }}</option>
@@ -852,6 +904,10 @@
       <option value="60" {{ if eq $idle 60 }}selected{{ end }}>60 {{ T "settings.idle_lock.minutes" }}</option>
     </select>
     <button class="btn" type="submit">{{ T "settings.idle_lock.apply" }}</button>
+    <!-- Exists purely as the elevation dialog retry's hx-target (ut-docs#865,
+         same pattern as till-name-msg/#796) — the form's own hx-swap="none"
+         discards it on the direct-allowed path. -->
+    <span id="idle-lock-msg" aria-live="polite"></span>
   </form>
 </div>
 <div class="card">
@@ -867,15 +923,20 @@
       <option value="180" {{ if eq $kioskIdle 180 }}selected{{ end }}>180 {{ T "settings.kiosk_idle_reset.seconds" }}</option>
     </select>
     <button class="btn" type="submit">{{ T "settings.kiosk_idle_reset.apply" }}</button>
+    <span id="kiosk-idle-reset-msg" aria-live="polite"></span>
   </form>
 </div>
 <div class="card">
   <h2>{{ T "settings.telemetry.title" }}</h2>
   <p class="muted">{{ T "settings.telemetry.help" }}</p>
-  <form hx-post="/api/settings/telemetry" hx-swap="none" hx-on::after-request="window.location.reload()">
+  <!-- ut-docs#865: same Content-Type reload guard as idle-lock above — the
+       unconditional reload previously here would destroy an elevation
+       prompt the instant it appeared. -->
+  <form hx-post="/api/settings/telemetry" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
     <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.telemetry_opt_in") "true" }}checked{{ end }}> {{ T "settings.telemetry.enable" }}</label>
     <div class="set-gap-s">
       <button class="btn" type="submit">{{ T "settings.telemetry.save" }}</button>
+      <span id="telemetry-msg" aria-live="polite"></span>
     </div>
   </form>
 </div>

@@ -165,8 +165,9 @@ func TestDisplayModeSelfOrderRequiresManagerRole(t *testing.T) {
 	req = auth.WithUser(req, auth.User{ID: "cashier-1", Role: "cashier"})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier setting self_order mode = %d, want 403", rec.Code)
+	// ut-docs#865: elevation prompt, not a flat 403.
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier setting self_order mode = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 }
 
