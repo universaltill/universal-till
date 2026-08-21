@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -606,7 +607,7 @@ func TestPOSRepo_ListSalesJournal_TillFilter(t *testing.T) {
 	seedJournalSale(t, d, "sale-t2-1", "T2-1", "till-2", "2026-08-15T09:05:00Z", 200)
 	seedJournalSale(t, d, "sale-t2-2", "T2-2", "till-2", "2026-08-15T09:10:00Z", 300)
 
-	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{TillID: "till-2", Limit: 10})
+	entries, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{TillID: "till-2", Limit: 10})
 	if err != nil {
 		t.Fatalf("ListSalesJournal(till-2): %v", err)
 	}
@@ -621,7 +622,7 @@ func TestPOSRepo_ListSalesJournal_TillFilter(t *testing.T) {
 	}
 
 	// TillID: "" selects this till's own local (till_id='') sales only.
-	local, err := repo.ListSalesJournal(ctx, SalesJournalFilter{TillID: "", Limit: 10})
+	local, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{TillID: "", Limit: 10})
 	if err != nil {
 		t.Fatalf("ListSalesJournal(local): %v", err)
 	}
@@ -645,7 +646,7 @@ func TestPOSRepo_ListSalesJournal_AllTills(t *testing.T) {
 	seedJournalSale(t, d, "sale-t2-1", "T2-1", "till-2", "2026-08-15T09:05:00Z", 200)
 	seedJournalSale(t, d, "sale-t3-1", "T3-1", "till-3", "2026-08-15T09:10:00Z", 300)
 
-	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
+	entries, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListSalesJournal(AllTills): %v", err)
 	}
@@ -666,6 +667,13 @@ func TestPOSRepo_ListSalesJournal_AllTills(t *testing.T) {
 
 // TestPOSRepo_ListSalesJournal_DayFilter covers ut-docs#550's day filter:
 // only rows whose created_at falls on the given calendar day are returned.
+// The query matches on shop-local calendar day (date(s.created_at,
+// 'localtime') = date(?), ut-docs#774 — same convention as DayTotal, not
+// SalesByDay's business-day-start shift), so under this suite's UTC CI the
+// numbers below are identical to a bare UTC date() match; the localtime
+// conversion only changes behavior on a non-UTC host, same accepted,
+// pre-existing test-environment limitation TestPOSRepo_DayTotal_* already
+// lives with.
 func TestPOSRepo_ListSalesJournal_DayFilter(t *testing.T) {
 	d := openBatch8DB(t, "journal-dayfilter.db")
 	ctx := context.Background()
@@ -675,7 +683,7 @@ func TestPOSRepo_ListSalesJournal_DayFilter(t *testing.T) {
 	seedJournalSale(t, d, "sale-d2", "D2", "", "2026-08-15T08:00:00Z", 200)
 	seedJournalSale(t, d, "sale-d3", "D3", "", "2026-08-15T20:00:00Z", 300)
 
-	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Day: "2026-08-15", Limit: 10})
+	entries, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Day: "2026-08-15", Limit: 10})
 	if err != nil {
 		t.Fatalf("ListSalesJournal(day filter): %v", err)
 	}
@@ -687,7 +695,7 @@ func TestPOSRepo_ListSalesJournal_DayFilter(t *testing.T) {
 	}
 
 	// Empty Day = no day filter (falls back to till-scoped only).
-	all, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
+	all, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListSalesJournal(no day filter): %v", err)
 	}
@@ -719,7 +727,7 @@ func TestPOSRepo_ListSalesJournal_RevokedTill(t *testing.T) {
 		t.Fatalf("DeleteTill: %v", err)
 	}
 
-	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
+	entries, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListSalesJournal: %v", err)
 	}
@@ -747,11 +755,60 @@ func TestPOSRepo_ListSalesJournal_LimitDefault(t *testing.T) {
 		seedJournalSale(t, d, "sale-ld"+string(rune('1'+i)), "LD"+string(rune('1'+i)), "",
 			"2026-08-15T09:0"+string(rune('0'+i))+":00Z", int64(100+i))
 	}
-	entries, err := repo.ListSalesJournal(ctx, SalesJournalFilter{Limit: 0})
+	entries, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{Limit: 0})
 	if err != nil {
 		t.Fatalf("ListSalesJournal(limit=0): %v", err)
 	}
 	if len(entries) != 5 {
 		t.Fatalf("want 5 entries (default limit), got %d", len(entries))
+	}
+}
+
+// TestPOSRepo_ListSalesJournal_Truncated covers ut-docs#774: when more rows
+// exist for a filter than the requested limit, the caller needs to know the
+// result was capped (to show a "showing the latest N" notice) without a
+// separate COUNT(*) query.
+func TestPOSRepo_ListSalesJournal_Truncated(t *testing.T) {
+	d := openBatch8DB(t, "journal-truncated.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	for i := 0; i < 12; i++ {
+		seedJournalSale(t, d, fmt.Sprintf("sale-tr%d", i), fmt.Sprintf("TR%02d", i), "",
+			fmt.Sprintf("2026-08-15T%02d:00:00Z", i), int64(100+i))
+	}
+
+	entries, truncated, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(limit 10 of 12): %v", err)
+	}
+	if len(entries) != 10 {
+		t.Fatalf("want exactly 10 entries (capped at limit), got %d", len(entries))
+	}
+	if !truncated {
+		t.Fatalf("want truncated=true when 12 rows exist for limit 10")
+	}
+
+	entries, truncated, err = repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 20})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(limit 20 of 12): %v", err)
+	}
+	if len(entries) != 12 {
+		t.Fatalf("want all 12 entries under a 20 limit, got %d", len(entries))
+	}
+	if truncated {
+		t.Fatalf("want truncated=false when fewer rows exist than the limit")
+	}
+
+	// Exact boundary: rows == limit must NOT be flagged truncated (fencepost).
+	entries, truncated, err = repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: 12})
+	if err != nil {
+		t.Fatalf("ListSalesJournal(limit 12 of 12): %v", err)
+	}
+	if len(entries) != 12 {
+		t.Fatalf("want all 12 entries at the exact limit, got %d", len(entries))
+	}
+	if truncated {
+		t.Fatalf("want truncated=false when rows exactly equal the limit (fencepost)")
 	}
 }
