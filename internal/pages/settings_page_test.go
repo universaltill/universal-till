@@ -35,10 +35,13 @@ var cashUser = auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
 func TestPaymentsSettingsEndpoints(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	// A cashier is refused (HTMX swap target → 200 with an error span).
+	// A cashier without an approver PIN gets the in-place elevation prompt
+	// (ut-docs#796) — still 200 (HTMX swap target), no longer the flat
+	// forbidden error span.
 	rec := postForm(mux, "/api/settings/payments-default", url.Values{"method": {"cash"}}, &cashUser)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `class="error"`) {
-		t.Fatalf("cashier payments-default: code=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") ||
+		!strings.Contains(rec.Body.String(), `name="override_pin"`) {
+		t.Fatalf("cashier payments-default: code=%d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 
 	// A manager sets the default and it persists.
@@ -448,8 +451,14 @@ func TestServiceChargeRateUpsertEndpoint(t *testing.T) {
 func TestTillNameEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	if rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"Front Register"}}, &cashUser); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier till-name = %d, want 403", rec.Code)
+	// ut-docs#796: a denied cashier gets the elevation prompt (200), not a
+	// flat 403 — and nothing is written.
+	if rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"Front Register"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier till-name = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
+	}
+	if _, ok, _ := d.Settings.Get(t.Context(), "till.name"); ok {
+		t.Fatal("cashier's denied till-name attempt must not have written till.name")
 	}
 	if rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"Front Register"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("manager till-name = %d, want 204", rec.Code)
@@ -507,8 +516,14 @@ func TestTillRegisterEndpoint(t *testing.T) {
 		}
 	}
 
-	if rec := postForm(mux, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, &cashUser); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier till-register = %d, want 403", rec.Code)
+	// ut-docs#796: a denied cashier gets the elevation prompt (200), not a
+	// flat 403 — and nothing is written.
+	if rec := postForm(mux, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier till-register = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
+	}
+	if _, ok, _ := d.Settings.Get(t.Context(), pos.SettingsKeyTillRegisterID); ok {
+		t.Fatal("cashier's denied till-register attempt must not have written till.register_id")
 	}
 	if rec := postForm(mux, "/api/settings/till-register", url.Values{}, &mgrUser); rec.Code != http.StatusBadRequest {
 		t.Fatalf("missing register_id = %d, want 400", rec.Code)
@@ -620,9 +635,10 @@ func TestSettingsPage_PrinterAddressFieldsAreLTR(t *testing.T) {
 }
 
 // A cashier (and an unauthenticated/no-session request) is refused on both
-// mutating settings endpoints, matching every other mutating settings
-// endpoint's isManagerOrAuthOff gate in this file (ut-docs#179 — /save and
-// /upsert were the two exceptions that had none).
+// mutating settings endpoints (ut-docs#179 — /save and /upsert were the two
+// exceptions that had none). Since ut-docs#796 the refusal is the in-place
+// elevation prompt (200 with the dialog, nothing written) rather than a
+// flat 403.
 func TestSaveAndUpsertSettings_RequireManager(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
@@ -634,11 +650,15 @@ func TestSaveAndUpsertSettings_RequireManager(t *testing.T) {
 		{"cashier", &cashUser},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, tc.user); rec.Code != http.StatusForbidden {
-				t.Fatalf("save = %d, want 403", rec.Code)
+			rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"GBP"}}, tc.user)
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") ||
+				!strings.Contains(rec.Body.String(), `name="override_pin"`) {
+				t.Fatalf("save = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 			}
-			if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, tc.user); rec.Code != http.StatusForbidden {
-				t.Fatalf("upsert = %d, want 403", rec.Code)
+			rec = postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, tc.user)
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") ||
+				!strings.Contains(rec.Body.String(), `name="override_pin"`) {
+				t.Fatalf("upsert = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 			}
 		})
 	}
@@ -912,50 +932,63 @@ const settingsForbiddenText = "Only a manager or admin can register this till."
 // span everywhere, same as a cashier) and confirmed to pass once every site
 // in settings_page.go was switched.
 //
-// Most endpoints answer a hard 403 when denied. Six are HTMX swap targets
-// that always answer 200 (HTMX drops non-2xx bodies) with the localized
-// forbidden text in an error/muted span instead — those are marked htmx
-// below and asserted by text rather than status code; "past the gate" for
-// them means downstream processing was reached, not that it necessarily
-// succeeded (e.g. enrol/now still fails offline-first with no reachable
-// marketplace, which is fine — this test only proves the auth gate itself).
+// Denied behavior comes in three flavors since ut-docs#796:
+//   - gate403: a hard 403 (the not-yet-elevation-wired plain handlers).
+//   - gateForbiddenSpan: an HTMX swap target that always answers 200 with
+//     the localized forbidden text in an error/muted span (HTMX drops
+//     non-2xx bodies) — the enrol endpoints, still on the flat gate.
+//   - gateElevation: the 8 handlers wired to checkOrElevate (ut-docs#796) —
+//     a denied cashier gets 200 with the in-place elevation prompt dialog
+//     (neither the forbidden text nor a 403).
+//
+// "Past the gate" for manager/admin/super_admin means downstream processing
+// was reached ON THEIR OWN SESSION — no PIN involved (an already-authorized
+// user hits checkOrElevate's allowed branch, never needsElevation) — not
+// that it necessarily succeeded (e.g. enrol/now still fails offline-first
+// with no reachable marketplace, which is fine — this test only proves the
+// auth gate itself).
 func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	if _, err := d.Db.Exec(`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`); err != nil {
 		t.Fatal(err)
 	}
 
-	cases := []struct {
+	type gateKind int
+	const (
+		gate403 gateKind = iota
+		gateForbiddenSpan
+		gateElevation
+	)
+
+	type matrixCase struct {
 		name, method, path string
 		form               url.Values
-		htmx               bool
-	}{
-		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, true},
-		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, true},
-		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, true},
-		{"enrol-now", http.MethodPost, "/api/enrol/now", nil, true},
-		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, true},
-		{"idle-lock", http.MethodPost, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, false},
-		{"kiosk-idle-reset", http.MethodPost, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, false},
-		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, false},
-		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, false},
-		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, false},
-		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, false},
-		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, false},
-		{"remove-demo-catalogue", http.MethodPost, "/api/settings/remove-demo-catalogue", nil, true},
-		{"dismiss-restore-prompt", http.MethodPost, "/api/settings/dismiss-restore-prompt", nil, false},
-		{"dismiss-pending-base-plugin", http.MethodPost, "/api/settings/dismiss-pending-base-plugin", url.Values{"canonical_type": {"x"}}, false},
-		{"till-name", http.MethodPost, "/api/settings/till-name", url.Values{"name": {"X"}}, false},
-		{"till-register", http.MethodPost, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, false},
-		{"save", http.MethodPost, "/api/settings/save", url.Values{"currency": {"GBP"}}, false},
-		{"upsert", http.MethodPost, "/api/settings/upsert", url.Values{"key": {"x"}, "value": {"y"}}, false},
+		gate               gateKind
 	}
 
-	doReq := func(tc struct {
-		name, method, path string
-		form               url.Values
-		htmx               bool
-	}, u auth.User) *httptest.ResponseRecorder {
+	cases := []matrixCase{
+		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, gateElevation},
+		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, gateElevation},
+		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateForbiddenSpan},
+		{"enrol-now", http.MethodPost, "/api/enrol/now", nil, gateForbiddenSpan},
+		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, gateForbiddenSpan},
+		{"idle-lock", http.MethodPost, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, gate403},
+		{"kiosk-idle-reset", http.MethodPost, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, gate403},
+		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, gate403},
+		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, gate403},
+		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gate403},
+		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, gate403},
+		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, gateElevation},
+		{"remove-demo-catalogue", http.MethodPost, "/api/settings/remove-demo-catalogue", nil, gateElevation},
+		{"dismiss-restore-prompt", http.MethodPost, "/api/settings/dismiss-restore-prompt", nil, gate403},
+		{"dismiss-pending-base-plugin", http.MethodPost, "/api/settings/dismiss-pending-base-plugin", url.Values{"canonical_type": {"x"}}, gate403},
+		{"till-name", http.MethodPost, "/api/settings/till-name", url.Values{"name": {"X"}}, gateElevation},
+		{"till-register", http.MethodPost, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, gateElevation},
+		{"save", http.MethodPost, "/api/settings/save", url.Values{"currency": {"GBP"}}, gateElevation},
+		{"upsert", http.MethodPost, "/api/settings/upsert", url.Values{"key": {"x"}, "value": {"y"}}, gateElevation},
+	}
+
+	doReq := func(tc matrixCase, u auth.User) *httptest.ResponseRecorder {
 		var req *http.Request
 		if tc.form != nil {
 			req = httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.form.Encode()))
@@ -972,28 +1005,48 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name+"/cashier_denied", func(t *testing.T) {
 			rec := doReq(tc, cashUser)
-			if tc.htmx {
+			switch tc.gate {
+			case gateForbiddenSpan:
 				if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), settingsForbiddenText) {
 					t.Fatalf("%s %s cashier = %d %q, want 200 with the forbidden text", tc.method, tc.path, rec.Code, rec.Body.String())
 				}
-				return
-			}
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("%s %s cashier = %d, want 403", tc.method, tc.path, rec.Code)
+			case gateElevation:
+				if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") ||
+					!strings.Contains(rec.Body.String(), `name="override_pin"`) {
+					t.Fatalf("%s %s cashier = %d %q, want 200 with the elevation prompt", tc.method, tc.path, rec.Code, rec.Body.String())
+				}
+				if strings.Contains(rec.Body.String(), settingsForbiddenText) {
+					t.Fatalf("%s %s cashier got the OLD forbidden text alongside the prompt: %s", tc.method, tc.path, rec.Body.String())
+				}
+			default:
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("%s %s cashier = %d, want 403", tc.method, tc.path, rec.Code)
+				}
 			}
 		})
 		for _, role := range []string{"manager", "admin", "super_admin"} {
 			t.Run(tc.name+"/"+role+"_past_gate", func(t *testing.T) {
 				u := auth.User{ID: "u-" + role, Role: role}
 				rec := doReq(tc, u)
-				if tc.htmx {
+				switch tc.gate {
+				case gateForbiddenSpan:
 					if strings.Contains(rec.Body.String(), settingsForbiddenText) {
 						t.Fatalf("%s %s %s got the forbidden text, want past the auth gate: %s", tc.method, tc.path, role, rec.Body.String())
 					}
-					return
-				}
-				if rec.Code == http.StatusForbidden {
-					t.Fatalf("%s %s %s = 403, want past the auth gate", tc.method, tc.path, role)
+				case gateElevation:
+					// An already-authorized session hits the allowed branch
+					// on its own — no 403, and crucially NO elevation prompt
+					// (no PIN should ever be demanded of them).
+					if rec.Code == http.StatusForbidden {
+						t.Fatalf("%s %s %s = 403, want past the auth gate", tc.method, tc.path, role)
+					}
+					if strings.Contains(rec.Body.String(), "elevation-dialog") {
+						t.Fatalf("%s %s %s was shown the elevation prompt on an already-authorized session: %s", tc.method, tc.path, role, rec.Body.String())
+					}
+				default:
+					if rec.Code == http.StatusForbidden {
+						t.Fatalf("%s %s %s = 403, want past the auth gate", tc.method, tc.path, role)
+					}
 				}
 			})
 		}

@@ -1540,5 +1540,13 @@
   "elevation.summary.user_pin_set": "تنظیم پین جدید برای %s.",
   "elevation.summary.user_activate": "فعال‌سازی %s.",
   "elevation.summary.user_deactivate": "غیرفعال‌سازی %s.",
-  "elevation.summary.user_role_change": "تغییر نقش %s از %s به %s."
+  "elevation.summary.user_role_change": "تغییر نقش %s از %s به %s.",
+  "elevation.summary.payments_default": "تنظیم روش پرداخت پیش‌فرض روی %s.",
+  "elevation.summary.payments_fee": "تنظیم کارمزد روش پرداخت %s روی %s%% به‌علاوه %s مبلغ ثابت برای هر تراکنش.",
+  "elevation.summary.remove_demo_data": "حذف دائمی همه داده‌های نمونه دست‌نخورده (اقلام کاتالوگ، مشتریان و کدهای تخفیف).",
+  "elevation.summary.shop_type": "تغییر نوع فروشگاه به %s.",
+  "elevation.summary.till_name": "تغییر نام این دستگاه به «%s».",
+  "elevation.summary.till_register": "اختصاص این دستگاه به صندوق %s.",
+  "elevation.summary.store_save": "ذخیره تغییرات ارز، کشور، منطقه یا نرخ مالیات فروشگاه.",
+  "elevation.summary.setting_upsert": "تنظیم «%s» روی «%s»."
 }

@@ -1540,5 +1540,13 @@
   "elevation.summary.user_pin_set": "Set a new PIN for %s.",
   "elevation.summary.user_activate": "Activate %s.",
   "elevation.summary.user_deactivate": "Deactivate %s.",
-  "elevation.summary.user_role_change": "Change %s's role from %s to %s."
+  "elevation.summary.user_role_change": "Change %s's role from %s to %s.",
+  "elevation.summary.payments_default": "Set the preferred payment method to %s.",
+  "elevation.summary.payments_fee": "Set the %s payment fee to %s%% plus %s fixed per transaction.",
+  "elevation.summary.remove_demo_data": "Permanently remove all untouched sample data (catalogue items, customers and promo codes).",
+  "elevation.summary.shop_type": "Change the shop type to %s.",
+  "elevation.summary.till_name": "Rename this till to \"%s\".",
+  "elevation.summary.till_register": "Assign this till to register %s.",
+  "elevation.summary.store_save": "Save changes to the store's currency, country, region or tax rate.",
+  "elevation.summary.setting_upsert": "Set the setting \"%s\" to \"%s\"."
 }
