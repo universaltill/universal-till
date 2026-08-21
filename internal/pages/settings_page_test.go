@@ -688,10 +688,14 @@ func TestSaveAndUpsertSettings_RequireManager(t *testing.T) {
 	}
 }
 
-// The template half of the fix (ut-docs#179 review finding): a cashier's
-// rendered /settings page must not contain the currency card or the raw
-// key/value table — both post to now manager-gated endpoints, so a cashier
-// seeing them would be a dead, confusing control. A manager still sees both.
+// The template half of the fix (ut-docs#179 review finding, narrowed by
+// ut-docs#867): a cashier's rendered /settings page must not contain the raw
+// key/value table — it's an unbounded browser over the whole settings store
+// with no cashier use case, deliberately kept manager-only even though its
+// endpoint is elevation-wired. The currency card, by contrast, IS visible to
+// a cashier since ut-docs#867: its POST goes through checkOrElevate, so the
+// in-place PIN dialog — not template hiding — is the authorization layer
+// (see TestSettingsPage_ElevationWiredFormsVisibleToCashier).
 func TestSettingsPage_HidesManagerOnlyCardsFromCashier(t *testing.T) {
 	mux, _, _ := newFullAuthDeps(t)
 
@@ -712,8 +716,8 @@ func TestSettingsPage_HidesManagerOnlyCardsFromCashier(t *testing.T) {
 	if strings.Contains(cashierHTML, `id="new-setting"`) {
 		t.Fatal("cashier sees the raw settings.all key/value table")
 	}
-	if strings.Contains(cashierHTML, `name="currency"`) {
-		t.Fatal("cashier sees the currency card")
+	if !strings.Contains(cashierHTML, `name="currency"`) {
+		t.Fatal("cashier should see the elevation-wired currency card (ut-docs#867)")
 	}
 
 	managerHTML := get(&mgrUser)
@@ -1083,6 +1087,136 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// TestSettingsPage_ElevationWiredFormsVisibleToCashier is ut-docs#867's
+// template-visibility proof. Every settings form whose POST handler goes
+// through checkOrElevate (ADR-0052's in-place manager-PIN dialog,
+// elevation.go) must render for a cashier too — hiding it behind
+// {{ if .isManager }} (the same canPerform check elevation exists to soften)
+// meant the shipped UI could never trigger the dialog at all; a denied
+// cashier just never saw the form. Authorization is unchanged: the server
+// still answers a denied POST with the elevation prompt.
+//
+// Content that is NOT elevation-wired (flat canPerform/deny handlers, the
+// exit-to-os AuthorizeManager flow, real business data like backup files or
+// GDPR search) stays manager-gated exactly as before, as does the raw
+// key/value upsert browser (elevation-wired but deliberately excepted — an
+// unbounded settings-store browser has no cashier-triggerable action to
+// name in a PIN prompt).
+//
+// The enrollment card's enrolled branch (claim-code) can't be exercised
+// here — "enrolled" reads package-global enroll.CurrentStatus() — so the
+// card is covered via its unenrolled branch (/api/enrol/now), the identical
+// un-gating in the same card.
+func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	// Seed the DATA-availability guards (not permission guards — those must
+	// survive ut-docs#867 untouched) so every guarded un-gated site actually
+	// renders: a payment method ({{ if .payMethods }}), a sample catalogue
+	// item ({{ if gt .sampleCount 0 }}), a deferred restore prompt
+	// ({{ if .restorePromptDeferred }}), a pending base plugin
+	// ({{ range .pendingBasePlugins }}), and a register for the picker.
+	for _, s := range []string{
+		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT,
+		 is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT)`,
+		`INSERT INTO payment_methods (id, name, type, is_active, sort_order) VALUES ('cash', 'Cash', 'cash', 1, 1)`,
+		`CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT, is_sample_data INTEGER NOT NULL DEFAULT 0)`,
+		`INSERT INTO items (id, name, is_sample_data) VALUES ('demo-1', 'Demo Widget', 1)`,
+		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
+	} {
+		if _, err := d.Db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.Settings.Set(t.Context(), common.KeyRestorePromptStatus, common.RestorePromptStatusDeferred); err != nil {
+		t.Fatal(err)
+	}
+	if err := savePendingBasePlugins(t.Context(), d, []basePluginSpec{{CanonicalType: "language", Locale: "de"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(u auth.User) string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, u)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// One marker per elevation-wired site, unique to that form/button.
+	elevationWired := []string{
+		`hx-post="/api/enrol/now"`,                  // enrollment card, unenrolled branch
+		`hx-post="/api/settings/display-mode"`,      // display-advanced: mode form
+		`id="window-mode-form"`,                     // display-advanced: window mode
+		`id="launch-on-startup-cb"`,                 // display-advanced: autostart checkbox
+		`hx-post="/api/settings/payments-default"`,  // payments card (kept {{ if .payMethods }})
+		`hx-post="/api/settings/payments-fee"`,      // payments fee rows
+		`hx-post="/api/backup/now"`,                 // backup card: only the Backup-now button
+		`data-testid="demo-remove"`,                 // data card (kept sampleCount guard)
+		`data-testid="restore-dismiss"`,             // data card (kept restorePromptDeferred guard)
+		`data-testid="pending-base-plugin-dismiss"`, // data card (kept pendingBasePlugins guard)
+		`hx-post="/api/settings/report-retention"`,  // retention card: mode form only
+		`hx-post="/api/settings/till-name"`,         // tills card (kept IsPrimaryTill guard)
+		`hx-post="/api/settings/till-register"`,     // tills card: register picker
+		`hx-post="/api/settings/idle-lock"`,         // idle-lock card
+		`hx-post="/api/settings/kiosk-idle-reset"`,  // kiosk-idle-reset card
+		`hx-post="/api/settings/telemetry"`,         // telemetry card
+		`hx-post="/api/settings/save"`,              // currency card
+		`hx-post="/api/settings/shop-type"`,         // shop-type card
+	}
+
+	// Manager-only content — one marker per site that must stay gated. The
+	// prose markers are the empty-state strings those gated blocks render in
+	// this dataless fixture (their tables/exports have no structural marker
+	// until data exists).
+	managerOnly := []string{
+		`href="/report-issue"`,                     // issue-report card: not elevation-wired
+		`hx-post="/api/update/check"`,              // update card: flat canPerform(plugin_management)
+		`hx-post="/api/settings/update-schedule"`,  // update card
+		`id="exit-to-os-form"`,                     // its own AuthorizeManager PIN flow, out of scope
+		"No backups yet",                           // backup file table / empty-state: flat deny, real content
+		`data-testid="data-reset"`,                 // reset-transactions: flat-denied fetch()
+		`id="reset-archives"`,                      // archives restore/purge: flat-denied
+		`id="cust-search-btn"`,                     // GDPR search: flat-denied, surfaces PII
+		`id="cat-preview-btn"`,                     // catalog cleanup: flat-denied
+		"No export or report plugin is installed.", // data-export section: flat-denied
+		"No archived reports yet.",                 // retention coverage summary: business content
+		`data-testid="retention-export"`,           // retention export: flat-denied
+		`hx-post="/api/settings/printer"`,          // printer card: not elevation-wired
+		`hx-post="/api/settings/invoice"`,          // invoice card: not elevation-wired
+		`hx-post="/api/settings/upsert"`,           // raw upsert browser: deliberate exception
+		`id="new-setting"`,                         // raw upsert browser's add form
+	}
+
+	cashierHTML := get(cashUser)
+	for _, marker := range elevationWired {
+		if !strings.Contains(cashierHTML, marker) {
+			t.Errorf("cashier render is missing elevation-wired site %s — the in-place PIN dialog can never be reached from the UI", marker)
+		}
+	}
+	for _, marker := range managerOnly {
+		if strings.Contains(cashierHTML, marker) {
+			t.Errorf("cashier render leaks manager-only content %s", marker)
+		}
+	}
+
+	// No regression for the already-working case: a manager sees everything.
+	managerHTML := get(mgrUser)
+	for _, marker := range elevationWired {
+		if !strings.Contains(managerHTML, marker) {
+			t.Errorf("manager render is missing %s", marker)
+		}
+	}
+	for _, marker := range managerOnly {
+		if !strings.Contains(managerHTML, marker) {
+			t.Errorf("manager render is missing manager-only content %s", marker)
 		}
 	}
 }
