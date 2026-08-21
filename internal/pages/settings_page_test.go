@@ -1170,6 +1170,8 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		`hx-post="/api/settings/telemetry"`,         // telemetry card
 		`hx-post="/api/settings/save"`,              // currency card
 		`hx-post="/api/settings/shop-type"`,         // shop-type card
+		`hx-post="/api/settings/printer"`,           // ut-docs#866: printer card
+		`hx-post="/api/settings/invoice"`,           // ut-docs#866: invoice card
 	}
 
 	// Manager-only content — one marker per site that must stay gated. The
@@ -1189,8 +1191,6 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		"No export or report plugin is installed.", // data-export section: flat-denied
 		"No archived reports yet.",                 // retention coverage summary: business content
 		`data-testid="retention-export"`,           // retention export: elevation-wired endpoint, but stays gated — real business content (coverage stats + a sales-report download), not just an action
-		`hx-post="/api/settings/printer"`,          // printer card: not elevation-wired
-		`hx-post="/api/settings/invoice"`,          // invoice card: not elevation-wired
 		`hx-post="/api/settings/upsert"`,           // raw upsert browser: deliberate exception
 		`id="new-setting"`,                         // raw upsert browser's add form
 	}

@@ -1544,6 +1544,8 @@
   "elevation.summary.user_role_change": "تغییر نقش %s از %s به %s.",
   "elevation.summary.payments_default": "تنظیم روش پرداخت پیش‌فرض روی %s.",
   "elevation.summary.payments_fee": "تنظیم کارمزد روش پرداخت %s روی %s%% به‌علاوه %s مبلغ ثابت برای هر تراکنش.",
+  "elevation.summary.printer_settings": "تغییر تنظیمات چاپگر.",
+  "elevation.summary.invoice_seller": "تغییر اطلاعات فروشنده در فاکتور.",
   "elevation.summary.remove_demo_data": "حذف دائمی همه داده‌های نمونه دست‌نخورده (اقلام کاتالوگ، مشتریان و کدهای تخفیف).",
   "elevation.summary.shop_type": "تغییر نوع فروشگاه به %s.",
   "elevation.summary.till_name": "تغییر نام این دستگاه به «%s».",

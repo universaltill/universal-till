@@ -52,6 +52,16 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		}
 		add("/help", "nav.help")
 		// Manager-only destinations (mirrors the session chip).
+		//
+		// ut-docs#866: audited, not wired onto checkOrElevate. This gate
+		// controls which NAV TILES render, not a mutating+audit-writing
+		// action — checkOrElevate's own doc comment (elevation.go) scopes
+		// the mechanism to exactly that shape. Un-gating tile visibility
+		// wouldn't itself grant any capability (each destination page is
+		// independently gated), it would only let a cashier attempt
+		// navigation to a page that then bounces them — the same
+		// visible-but-blocked problem #870 tracks for the receipt-designer
+		// link, deliberately not solved here too.
 		if canPerform(d, r, "settings") {
 			add("/users", "users.title")
 			add("/locations", "locations.title")

@@ -803,14 +803,36 @@ func TestPostSettingsPrinter_ValidatesModeAndCharset(t *testing.T) {
 	}
 }
 
-func TestPostSettingsPrinter_RequiresManager(t *testing.T) {
-	mux, _ := newPrintAPITestDeps(t)
+// TestPostSettingsPrinter_BlockedSessionGetsElevationPrompt (ut-docs#866): a
+// denied session used to get a flat 403 (TestPostSettingsPrinter_
+// RequiresManager, pre-#866); this endpoint is now wired onto the #557
+// manager-override elevation mechanism, same as settings_page.go's own
+// sites — a blocked cashier gets an in-place PIN prompt instead, and the
+// setting is NOT changed until it's approved.
+func TestPostSettingsPrinter_BlockedSessionGetsElevationPrompt(t *testing.T) {
+	mux, dp := newPrintAPITestDeps(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/settings/printer", strings.NewReader("mode=off"))
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/printer",
+		strings.NewReader("mode=network&address=192.168.1.50:9100&charset=ascii"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") ||
+		!strings.Contains(rec.Body.String(), `name="override_pin"`) {
+		t.Fatalf("blocked printer save = %d, want 200 with the elevation prompt: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-UT-Response"); got != "elevation-prompt" {
+		t.Fatalf("blocked printer save: X-UT-Response = %q, want \"elevation-prompt\"", got)
+	}
+	// Hidden fields must replay the submitted form so the dialog's retry
+	// resubmits the SAME values, not blank ones.
+	if !strings.Contains(rec.Body.String(), `name="mode" value="network"`) ||
+		!strings.Contains(rec.Body.String(), `name="address" value="192.168.1.50:9100"`) ||
+		!strings.Contains(rec.Body.String(), `name="charset" value="ascii"`) {
+		t.Fatalf("expected mode/address/charset to round-trip via Hidden fields, got: %s", rec.Body.String())
+	}
+	cfg := printerConfig(context.Background(), dp)
+	if cfg.Mode == "network" {
+		t.Fatal("printer settings must not have been changed without approval")
 	}
 }
 

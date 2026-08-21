@@ -1544,6 +1544,8 @@
   "elevation.summary.user_role_change": "%s kullanıcısının rolünü %s'den %s'e değiştir.",
   "elevation.summary.payments_default": "Tercih edilen ödeme yöntemini %s olarak ayarla.",
   "elevation.summary.payments_fee": "%s ödeme yöntemi ücretini işlem başına %%%s artı %s sabit tutar olarak ayarla.",
+  "elevation.summary.printer_settings": "Yazıcı ayarlarını değiştir.",
+  "elevation.summary.invoice_seller": "Fatura satıcı bilgilerini değiştir.",
   "elevation.summary.remove_demo_data": "Dokunulmamış tüm örnek verileri (katalog ürünleri, müşteriler ve promosyon kodları) kalıcı olarak kaldır.",
   "elevation.summary.shop_type": "Mağaza türünü %s olarak değiştir.",
   "elevation.summary.till_name": "Bu kasayı \"%s\" olarak yeniden adlandır.",
