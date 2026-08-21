@@ -59,6 +59,18 @@ const (
 	keyDeviceRegistered = "marketplace.device_registered"
 )
 
+// StoreCountrySettingsKey is the settings.key a shop's chosen country lives
+// under (ADR-0026 setup wizard). Duplicated from
+// internal/pages/common.KeyCountry ("store.country") rather than imported —
+// same convention internal/data/reset_archive_repo.go already uses for this
+// exact key, to avoid a new cross-package dependency. Exported (rather than
+// a private literal) so TestEnrollStoreCountrySettingsKeyMatchesCommon (in
+// internal/pages/common) can assert the two never drift apart instead of
+// each just trusting the other's copy — see that test and
+// reset_archive_repo.go's own StoreCountrySettingsKey for why this matters:
+// a silent drift here means the region hint is never sent, with green CI.
+const StoreCountrySettingsKey = "store.country"
+
 type identity struct {
 	DeviceID   string
 	StoreID    string
@@ -317,18 +329,50 @@ func run(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv 
 	}
 }
 
+// regionForCountry derives the region auto-sent at store registration from
+// the shop's chosen country (store.country, ADR-0026 setup wizard) — no new
+// setup step for the shop owner. It returns "de" iff country is, after
+// trimming whitespace and uppercasing, exactly the ISO-3166 alpha-2 code
+// "DE"; any other value (including an empty/unset country, a 3-letter code,
+// or garbage/unicode input) returns "" with no panic. This is a jurisdiction
+// match, not a language match — ADR-0049 cares about the shop's legal
+// jurisdiction, so "de-AT"/"de-CH"-style language confusion must not apply
+// here (there is no such ambiguity with a country code, but the exactness is
+// deliberate: e.g. "DEU" must NOT match).
+func regionForCountry(country string) string {
+	if strings.ToUpper(strings.TrimSpace(country)) == "DE" {
+		return "de"
+	}
+	return ""
+}
+
 // register performs the anonymous enrolment call and persists the returned
 // identity (ADR-0013 layer 1; marketplace handler: /api/v1/stores/register).
+// The shop's chosen country (StoreCountrySettingsKey, read from kv) is
+// mapped to a region (regionForCountry); when it maps to one, that region
+// rides along in the payload so a fresh German till lands in the right
+// merchant region with no extra setup step. A failed/absent settings read is
+// treated as "no signal" — best-effort, same tolerant pattern used elsewhere
+// in this file — and never fails registration.
 func register(ctx context.Context, m config.MarketplaceConfig, storeName string, kv Settings) error {
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
 
-	payload, err := json.Marshal(map[string]string{
+	var region string
+	if country, _, err := kv.Get(ctx, StoreCountrySettingsKey); err == nil {
+		region = regionForCountry(country)
+	}
+
+	fields := map[string]string{
 		"store_name": storeName,
 		"device_id":  deviceID,
 		"version":    buildinfo.Version,
-	})
+	}
+	if region != "" {
+		fields["region"] = region
+	}
+	payload, err := json.Marshal(fields)
 	if err != nil {
 		return err
 	}
