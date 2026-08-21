@@ -61,7 +61,52 @@ func demoDataInLiveBasket(engines ...*pos.Service) bool {
 	return false
 }
 
+// settingsAudit writes the audit entry for one settings mutation wired to
+// checkOrElevate (ut-docs#796, mechanism ADR-0052/ut-docs#557): plain
+// InsertAudit attributed to the session user on the allowed path,
+// InsertAuditElevated (dual attribution — approver acted, session user was
+// blocked) once an approver's PIN got the request past the gate.
+// Best-effort like backup_api.go's precedent — the settings write itself
+// already succeeded by the time this runs, so a failed audit insert doesn't
+// fail the request — but logged rather than silently swallowed (same
+// posture as the ADR-0048 fiscal-toggle audit in the upsert handler).
+func settingsAudit(r *http.Request, repo *data.POSRepo, elev elevationCheck, entityType, entityID, action string, payload map[string]any) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	var err error
+	if elev.Outcome == elevated {
+		err = repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, entityType, entityID, action, payload, now, "")
+	} else {
+		err = repo.InsertAudit(r.Context(), nil, elev.ActorID, entityType, entityID, action, payload, now, "")
+	}
+	if err != nil {
+		logging.L().Errorf("settings audit: %s %s/%s failed: %v", action, entityType, entityID, err)
+	}
+}
+
+// settingsRespondSaved answers success on an elevation-wired handler whose
+// plain-session contract is a bare 204: unchanged (204) for an ordinarily
+// authorized session, but a real confirmation body once elevation was
+// involved — the elevation dialog's retry lands its response in an
+// hx-target, and a 204 never swaps under htmx, so the approver would get no
+// feedback at all (same reasoning as eod_api.go's report-retention handler,
+// ut-docs#794 review finding). X-UT-Response: ok (ut-docs#796 review
+// finding #4) is what elevation_prompt.html's own retry-form handler
+// actually keys its post-close reload off — without it, the dialog closes
+// but shop-type/till-name/till-register/save/upsert's own form still shows
+// the pre-change value, exactly the staleness those forms' plain
+// window.location.reload() exists to prevent on the ordinary 204 path.
+func settingsRespondSaved(w http.ResponseWriter, r *http.Request, elev elevationCheck) {
+	if elev.Outcome == elevated {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("X-UT-Response", "ok")
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(httpx.ResolveLocale(w, r), "elevation.approved"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
+	posRepo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		all, _ := d.Settings.All(r.Context())
@@ -219,16 +264,27 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/settings/payments-default", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !canPerform(d, r, "settings") {
-			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
-			return
-		}
+		// ParseForm moved ahead of the gate solely so override_pin is
+		// readable — it validates nothing, so an already-authorized
+		// request is checked exactly as before (ut-docs#796).
 		_ = r.ParseForm()
 		method := strings.TrimSpace(r.Form.Get("method"))
+		// Mutating + audit-writing (ut-docs#796, mechanism ut-docs#557): a
+		// denied session gets an in-place PIN re-auth instead of the flat
+		// forbidden span.
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/payments-default", "#pay-default-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.payments_default"), method),
+				[]elevationHiddenField{{Name: "method", Value: method}}, elev)
+			return
+		}
 		if err := d.Settings.Set(r.Context(), "payments.default_method", method); err != nil {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}
+		settingsAudit(r, posRepo, elev, "settings", "payments.default_method", "payments_default_changed",
+			map[string]any{"method": method})
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 
@@ -237,10 +293,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/settings/payments-fee", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !canPerform(d, r, "settings") {
-			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
-			return
-		}
+		// Validate BEFORE checking elevation (permission_settings_page.go's
+		// reviewed convention, ut-docs#557): burning a manager's live PIN
+		// entry on a request that was always going to reject is a needless
+		// cost.
 		_ = r.ParseForm()
 		method := strings.TrimSpace(r.Form.Get("method"))
 		if method == "" {
@@ -253,14 +309,33 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="error">✗ range</span>`)
 			return
 		}
+		// Mutating + audit-writing (ut-docs#796): in-place PIN re-auth
+		// instead of the flat forbidden span. Numbers pre-formatted in Go
+		// so every locale's summary string takes plain %s args.
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/payments-fee", "#fee-msg-"+method,
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.payments_fee"), method,
+					strconv.FormatFloat(pct, 'f', -1, 64), strconv.FormatFloat(fixedMaj, 'f', -1, 64)),
+				[]elevationHiddenField{
+					{Name: "method", Value: method},
+					{Name: "percent", Value: r.Form.Get("percent")},
+					{Name: "fixed", Value: r.Form.Get("fixed")},
+				}, elev)
+			return
+		}
+		bp := int64(math.Round(pct * 100))
+		fixedMinor := int64(math.Round(fixedMaj * 100))
 		raw, _ := json.Marshal(map[string]int64{
-			"bp":    int64(math.Round(pct * 100)),
-			"fixed": int64(math.Round(fixedMaj * 100)),
+			"bp":    bp,
+			"fixed": fixedMinor,
 		})
 		if err := d.Settings.Set(r.Context(), "payments.fee."+method, string(raw)); err != nil {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}
+		settingsAudit(r, posRepo, elev, "settings", "payments.fee."+method, "payments_fee_changed",
+			map[string]any{"method": method, "percent_bp": bp, "fixed_minor": fixedMinor})
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 
@@ -600,21 +675,37 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// Shop type (ut-docs#539, taxonomy per ADR-0026) — editable after setup.
 	// Manager-only, same gate as the other store-level settings.
 	mux.HandleFunc("POST /api/settings/shop-type", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
+		// Validate BEFORE the elevation gate (ut-docs#557 convention) — a
+		// bad shop type 400s without burning an approver's live PIN entry.
 		_ = r.ParseForm()
 		v := strings.TrimSpace(r.Form.Get("shop_type"))
 		if v != "" && !isValidShopType(v) {
 			http.Error(w, "unknown shop type", http.StatusBadRequest)
 			return
 		}
+		// Mutating + audit-writing (ut-docs#796): in-place PIN re-auth
+		// instead of the flat 403.
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			// Same label the picker itself shows; "—" mirrors the
+			// template's own empty (clear) option.
+			label := "—"
+			if v != "" {
+				label = httpx.T(locale, "setup.shop_type."+v)
+			}
+			renderElevationPrompt(w, r, "/api/settings/shop-type", "#shop-type-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.shop_type"), label),
+				[]elevationHiddenField{{Name: "shop_type", Value: v}}, elev)
+			return
+		}
 		if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyShopType, "shop_type_changed",
+			map[string]any{"shop_type": v})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Remove all opt-in sample data (ut-docs#539, extended to customers/
@@ -631,17 +722,29 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/settings/remove-demo-catalogue", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !canPerform(d, r, "settings") {
-			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
-			return
-		}
 		// ut-docs#633: a demo item/customer LIVE in the current (not yet
 		// held) basket has no held_sales row for remove_demo*.sql's own
 		// safety check to catch — block removal here instead of letting a
 		// later tender FK-fail with no clear recovery. Checks both baskets
 		// (ADR-0020 kiosk isolation: read-only here, so no guard conflict).
+		// Read-only rejecting VALIDATION, not authorization — checked
+		// BEFORE the elevation gate below (ut-docs#796 review finding #3),
+		// same reasoning as payments-fee's range check: an approver
+		// shouldn't burn a live PIN entry on a request the live basket was
+		// always going to refuse.
 		if demoDataInLiveBasket(d.Engine, d.KioskEngine) {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_in_basket"))
+			return
+		}
+		// Mutating, IRREVERSIBLE, and audit-writing (ut-docs#796): a denied
+		// session gets an in-place PIN re-auth instead of the flat
+		// forbidden span. ParseForm only reads override_pin — this handler
+		// takes no other input.
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/remove-demo-catalogue", "#demo-remove-msg",
+				httpx.T(locale, "elevation.summary.remove_demo_data"), nil, elev)
 			return
 		}
 		seedRepo := data.NewDemoSeedRepo(d.Db)
@@ -657,6 +760,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		removed := removedItems + removedCustPromo
 		kept := keptItems + keptCustPromo
+		// The single highest-value audit site in ut-docs#796 slice 1 — an
+		// irreversible bulk deletion — so the payload records both the
+		// per-category and the combined removed/kept counts the response
+		// itself reports.
+		settingsAudit(r, posRepo, elev, "demo_data", "-", "demo_data_removed", map[string]any{
+			"removed":                  removed,
+			"kept":                     kept,
+			"removed_items":            removedItems,
+			"kept_items":               keptItems,
+			"removed_customers_promos": removedCustPromo,
+			"kept_customers_promos":    keptCustPromo,
+		})
 		msg := fmt.Sprintf(httpx.T(locale, "settings.data.demo_removed"), removed)
 		if kept > 0 {
 			msg += " " + fmt.Sprintf(httpx.T(locale, "settings.data.demo_kept"), kept)
@@ -705,21 +820,32 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// This till's own display name (ut-docs#396) — distinct from a replica's
 	// own sync.till_name — shown in Settings and on the /tills page.
 	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+		// No rejecting validation here (the name is only trimmed/
+		// truncated), so the gate stays first, exactly as before —
+		// ParseForm only moved up to make override_pin readable
+		// (ut-docs#796).
+		_ = r.ParseForm()
+		name := strings.TrimSpace(r.Form.Get("name"))
+		if rs := []rune(name); len(rs) > 60 { // mirrors the field's own maxlength="60" server-side
+			name = string(rs[:60])
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/settings/till-name", "#till-name-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.till_name"), name),
+				[]elevationHiddenField{{Name: "name", Value: name}}, elev)
 			return
 		}
-		_ = r.ParseForm()
-		if name := strings.TrimSpace(r.Form.Get("name")); name != "" {
-			if rs := []rune(name); len(rs) > 60 { // mirrors the field's own maxlength="60" server-side
-				name = string(rs[:60])
-			}
+		if name != "" {
 			if err := d.Settings.Set(r.Context(), "till.name", name); err != nil {
 				http.Error(w, "could not save", http.StatusInternalServerError)
 				return
 			}
+			settingsAudit(r, posRepo, elev, "settings", "till.name", "till_name_changed",
+				map[string]any{"name": name})
 		}
-		w.WriteHeader(http.StatusNoContent)
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// This till's own register identity (ut-docs#268) — the register a
@@ -728,25 +854,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// settings key. An id that isn't an active register is rejected rather
 	// than persisted: garbage here would silently misroute payouts later.
 	mux.HandleFunc("POST /api/settings/till-register", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
+		// Required-field + real-register validation BEFORE the elevation
+		// gate (ut-docs#557 convention): a register id that would be
+		// rejected anyway must not burn an approver's live PIN entry.
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("register_id"))
 		if id == "" {
 			http.Error(w, "register_id required", http.StatusBadRequest)
 			return
 		}
-		regs, err := data.NewPOSRepo(d.Db).ListRegisters(r.Context())
+		regs, err := posRepo.ListRegisters(r.Context())
 		if err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
+		regName := ""
 		valid := false
 		for _, reg := range regs {
 			if reg.ID == id {
 				valid = true
+				regName = reg.Name
 				break
 			}
 		}
@@ -754,11 +881,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "unknown register", http.StatusBadRequest)
 			return
 		}
+		// Mutating + audit-writing (ut-docs#796): a wrong register here
+		// silently misroutes payouts later, so the approver sees the
+		// register's display name in the summary, not just its id.
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/settings/till-register", "#till-register-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.till_register"), regName),
+				[]elevationHiddenField{{Name: "register_id", Value: id}}, elev)
+			return
+		}
 		if err := d.Settings.Set(r.Context(), pos.SettingsKeyTillRegisterID, id); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", pos.SettingsKeyTillRegisterID, "till_register_changed",
+			map[string]any{"register_id": id, "register_name": regName})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	mux.HandleFunc("/api/settings/theme", func(w http.ResponseWriter, r *http.Request) {
@@ -776,20 +916,37 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/settings/save", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+		// No rejecting validation on this handler (empty fields are simply
+		// skipped, a bad taxRatePct is ignored), so the gate stays first —
+		// ParseForm only moved up to make override_pin readable
+		// (ut-docs#796).
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/settings/save", "#settings-save-msg",
+				httpx.T(locale, "elevation.summary.store_save"),
+				[]elevationHiddenField{
+					{Name: "currency", Value: r.Form.Get("currency")},
+					{Name: "country", Value: r.Form.Get("country")},
+					{Name: "region", Value: r.Form.Get("region")},
+					{Name: "taxRatePct", Value: r.Form.Get("taxRatePct")},
+				}, elev)
 			return
 		}
-		_ = r.ParseForm()
+		auditPayload := map[string]any{}
 		st := d.CurrentState()
 		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" {
 			st.Currency = v
+			auditPayload["currency"] = v
 		}
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
 			st.Country = v
+			auditPayload["country"] = v
 		}
 		if v := strings.TrimSpace(r.Form.Get("region")); v != "" {
 			st.Region = v
+			auditPayload["region"] = v
 		}
 		// TaxInclusive/AllowNegativeInventory are deliberately NOT set here:
 		// the only caller (the currency card) never posts them, and an
@@ -801,6 +958,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if v := r.Form.Get("taxRatePct"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 				st.TaxRatePct = n
+				auditPayload["tax_rate_pct"] = n
 			}
 		}
 		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
@@ -821,18 +979,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if d.KioskEngine != nil {
 			d.KioskEngine.SetConfig(newCfg)
 		}
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", "-", "store_settings_saved", auditPayload)
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// generic key/value upsert
 	mux.HandleFunc("POST /api/settings/upsert", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
 		_ = r.ParseForm()
 		key := strings.TrimSpace(r.Form.Get("key"))
 		value := strings.TrimSpace(r.Form.Get("value"))
+		// Key-independent validation BEFORE the elevation gate (ut-docs#557
+		// convention — a request that was always going to 400 must not burn
+		// an approver's live PIN entry). The fiscal.* key gates below are
+		// deliberately NOT moved: they are ADR-0048's own separate
+		// authorization layer, out of scope for ut-docs#796.
 		if key == "" {
 			http.Error(w, "key required", http.StatusBadRequest)
 			return
@@ -848,21 +1008,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		// ADR-0048: this generic editor must not be a side door around the
-		// fiscal gate. The override window/metadata is written only by
-		// POST /api/fiscal/tse-override (typed acknowledgement, duration
-		// cap, audit) — fabricating one here is refused for everyone;
-		// clearing (empty value = revoking an override early) stays
-		// possible for an owner. The fiscal.* flags themselves are
-		// owner(admin)-only, not manager-level like the rest of this page.
+		// ADR-0048 rejecting VALIDATION (not authorization) — applies
+		// regardless of who's asking, so hoisted above the elevation gate
+		// below (ut-docs#796 review finding #2): without this, a manager
+		// posting one of these two always-400 cases got walked through a
+		// live PIN entry for a request that was always going to fail,
+		// exactly the cost the key/service-charge checks above already
+		// avoid. The actual AUTHORIZATION checks (canPerform on
+		// "fiscal_tse_override") stay below, after the elevation gate,
+		// unchanged — they depend on the SESSION user, not on whether
+		// "settings" got elevated (see the comment there).
 		switch key {
 		case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
+			// Fabricating a non-empty override here is refused for
+			// everyone — real validation, not a role check. Clearing
+			// (empty value) is allowed past this point; its actual
+			// authorization (owner-only) is the canPerform check below.
 			if value != "" {
 				http.Error(w, "fiscal override state is managed via POST /api/fiscal/tse-override", http.StatusBadRequest)
-				return
-			}
-			if !canPerform(d, r, "fiscal_tse_override") {
-				http.Error(w, "owner (admin) required", http.StatusForbidden)
 				return
 			}
 		case fiscal.KeyTSEFailingSince:
@@ -872,9 +1035,43 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// let an operator manufacture or erase the very state the
 			// override exists to gate). Written only by tests directly, or
 			// by a future real fiscal.sign.ask failure callback (#675) —
-			// never through this generic editor, for anyone.
+			// never through this generic editor, for anyone. Always 400,
+			// for anyone — no role can ever make this key settable here.
 			http.Error(w, "fiscal.tse_failing_since is not settable via this endpoint", http.StatusBadRequest)
 			return
+		}
+		// Mutating + audit-writing (ut-docs#796): this replaces ONLY the
+		// old flat `if !canPerform(d, r, "settings") { 403 }` outer gate —
+		// the interior fiscal_tse_override gates below still check the
+		// SESSION user, exactly as before (ADR-0048); an elevated
+		// "settings" approval never grants "fiscal_tse_override".
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/settings/upsert", "#settings-upsert-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.setting_upsert"), key, value),
+				[]elevationHiddenField{
+					{Name: "key", Value: key},
+					{Name: "value", Value: value},
+				}, elev)
+			return
+		}
+		// ADR-0048: this generic editor must not be a side door around the
+		// fiscal gate. The override window/metadata is written only by
+		// POST /api/fiscal/tse-override (typed acknowledgement, duration
+		// cap, audit) — fabricating one here is refused for everyone
+		// (validated above); clearing (empty value = revoking an override
+		// early) stays possible for an owner, checked here. The fiscal.*
+		// flags themselves are owner(admin)-only, not manager-level like
+		// the rest of this page — this authorization check reads the
+		// SESSION user (canPerform, not the elevation's approver), so an
+		// elevated "settings" approval alone can never satisfy it.
+		switch key {
+		case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
+			if !canPerform(d, r, "fiscal_tse_override") {
+				http.Error(w, "owner (admin) required", http.StatusForbidden)
+				return
+			}
 		case fiscal.KeySystemOfRecord, fiscal.KeyTSEConfigured:
 			if !canPerform(d, r, "fiscal_tse_override") {
 				http.Error(w, "owner (admin) required", http.StatusForbidden)
@@ -912,6 +1109,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
 				logging.L().Errorf("fiscal settings: audit log for %s (%s -> %s) failed: %v", key, prevFiscalValue, value, auditErr)
 			}
+		}
+		// General upsert audit (ut-docs#796), mutually exclusive BY KEY with
+		// the ADR-0048 fiscal-toggle audit above: for the two fiscal posture
+		// toggles that block is the authoritative record (it captures the
+		// actual from→to transition, and skips no-op re-saves on purpose) —
+		// double-logging the same single write as a generic
+		// "setting_upserted" row too would make the trail ambiguous (two
+		// rows, one write). Every other key gets the generic entry here,
+		// including an early override-clear (fiscal.override_* set to ""),
+		// which previously left no trace at all.
+		if fiscalToggleAction == "" {
+			settingsAudit(r, posRepo, elev, "settings", key, "setting_upserted",
+				map[string]any{"key": key, "value": value})
 		}
 		// reflect into state for known keys
 		truthy := func(v string) bool { return strings.ToLower(v) == "true" || v == "1" || v == "on" }
@@ -956,6 +1166,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				d.KioskEngine.SetConfig(newCfg)
 			}
 		}
-		w.WriteHeader(http.StatusNoContent)
+		settingsRespondSaved(w, r, elev)
 	})
 }
