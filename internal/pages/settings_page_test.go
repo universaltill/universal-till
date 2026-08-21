@@ -1188,7 +1188,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		`id="cat-preview-btn"`,                     // catalog cleanup: flat-denied
 		"No export or report plugin is installed.", // data-export section: flat-denied
 		"No archived reports yet.",                 // retention coverage summary: business content
-		`data-testid="retention-export"`,           // retention export: flat-denied
+		`data-testid="retention-export"`,           // retention export: elevation-wired endpoint, but stays gated — real business content (coverage stats + a sales-report download), not just an action
 		`hx-post="/api/settings/printer"`,          // printer card: not elevation-wired
 		`hx-post="/api/settings/invoice"`,          // invoice card: not elevation-wired
 		`hx-post="/api/settings/upsert"`,           // raw upsert browser: deliberate exception
@@ -1218,5 +1218,30 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		if !strings.Contains(managerHTML, marker) {
 			t.Errorf("manager render is missing manager-only content %s", marker)
 		}
+	}
+}
+
+// ut-docs#867 review nit: with none of the Data card's data-availability
+// guards true (no demo sample, no pending base plugin, no deferred restore
+// prompt), a cashier must not get an empty bordered card containing only the
+// "🧹 Data management" heading — the card itself should be absent, same as
+// any other manager-only card with nothing to show.
+func TestSettingsPage_DataCardHiddenFromCashierWhenNothingPending(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	_ = d
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "Data management") {
+		t.Errorf("cashier with no pending demo/restore/plugin data still sees the Data management card heading")
+	}
+	if strings.Contains(body, `data-testid="demo-remove"`) || strings.Contains(body, `data-testid="restore-dismiss"`) || strings.Contains(body, `data-testid="pending-base-plugin-dismiss"`) {
+		t.Errorf("cashier sees a Data-card sub-action with nothing backing it")
 	}
 }
