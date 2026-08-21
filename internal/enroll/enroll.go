@@ -13,6 +13,20 @@
 // The marketplace's Ed25519 signing key (needed to verify plugin bundles) is
 // fetched alongside enrolment when UT_MARKETPLACE_PUBLIC_KEY is not set, and
 // persisted on first sight — a later key change never silently replaces it.
+//
+// This LAZY behavior is ADR-0015's deliberate decision (2026-07-17), and it
+// is still what ships today. ADR-0026 (2026-07-28) separately proposed
+// moving registration to eager-but-best-effort right after the setup
+// wizard, for every shop — that proposal was never accepted (it would
+// reverse ADR-0015 and its own privacy opt-out question is unresolved), so
+// don't read it as describing current behavior. The one thing that can
+// look like eager registration in practice: setup's automatic base-plugin
+// install for a handful of countries (setupBasePlugins in
+// internal/pages/setup_base_plugins.go) calls EnsureRegistered as part of
+// installing that plugin — that's this package's ordinary "first plugin
+// download/install" trigger firing earlier than a human browsing the
+// marketplace would, not a deliberate eager-enrolment step, and shops with
+// no mapped base plugin still only register lazily as documented above.
 package enroll
 
 import (
