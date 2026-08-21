@@ -375,6 +375,10 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Settings.Set(r.Context(), keyPrinterCharset, charset)
 		_ = d.Settings.Set(r.Context(), keyPrinterKitchen, kitchenAddr)
 		_ = d.Settings.Set(r.Context(), keyPrinterAuto, auto)
+		// ut-docs#866 review (N4): payload is deliberately partial — mode/
+		// charset/auto_print only, not address/device/kitchenAddr. Those are
+		// LAN network/device identifiers, not shop-config content worth
+		// journaling into the audit log's long-lived history.
 		settingsAudit(r, posRepo, elev, "settings", "printer", "printer_settings_changed",
 			map[string]any{"mode": mode, "charset": charset, "auto_print": auto})
 		settingsRespondSaved(w, r, elev)
