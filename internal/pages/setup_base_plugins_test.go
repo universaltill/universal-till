@@ -368,15 +368,22 @@ func TestSettingsDismissPendingBasePluginEndpoint(t *testing.T) {
 	}
 
 	form := url.Values{"canonical_type": {"language"}, "locale": {"de"}}
+	// ut-docs#865: elevation prompt, not a flat 403 (same as dismiss-restore-prompt).
 	rec := postForm(mux, "/api/settings/dismiss-pending-base-plugin", form, &cashUser)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier dismiss: code=%d, want 403", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier dismiss: code=%d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 	if pending, _ := loadPendingBasePlugins(t.Context(), d); len(pending) != 2 {
 		t.Fatalf("cashier attempt changed the pending list: %+v", pending)
 	}
 
 	rec = postForm(mux, "/api/settings/dismiss-pending-base-plugin", form, &mgrUser)
+	// ut-docs#865 review finding F9: plain-allowed path stays a bare empty
+	// body, no X-UT-Response — same reasoning as
+	// TestSettingsDismissRestorePromptEndpoint's identical assertion.
+	if rec.Header().Get("X-UT-Response") != "" {
+		t.Fatalf("manager dismiss set X-UT-Response = %q, want unset on the plain-allowed path", rec.Header().Get("X-UT-Response"))
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("manager dismiss: code=%d body=%s", rec.Code, rec.Body.String())
 	}

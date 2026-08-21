@@ -348,8 +348,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/enrol/claim-code", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !canPerform(d, r, "settings") {
-			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+		// ut-docs#865: same checkOrElevate/InsertAuditElevated mechanism as
+		// #796 — a denied session gets an in-place PIN re-auth instead of the
+		// flat forbidden span. No other form fields, so ParseForm only reads
+		// override_pin.
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/enrol/claim-code", "#claim-code-msg",
+				httpx.T(locale, "elevation.summary.enrol_claim_code"), nil, elev)
 			return
 		}
 		info, err := enroll.ClaimCode(r.Context(), d.Cfg)
@@ -357,6 +364,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}
+		settingsAudit(r, posRepo, elev, "enrollment", "-", "claim_code_generated", nil)
 		// QR of the claim URL: the owner scans it and claims FROM THEIR
 		// PHONE — the only escape hatch on shells that can't open an
 		// external browser (Pi kiosk, windows/linux webview).
@@ -385,8 +393,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// Always answer 200: this is an hx-swap target, and HTMX silently drops
 		// non-2xx responses — a 403/502 here is exactly why the button looked
 		// dead. The message carries the outcome (and the reason on failure).
-		if !canPerform(d, r, "settings") {
-			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+		// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796) in
+		// place of the flat forbidden span. No other form fields, so
+		// ParseForm only reads override_pin.
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/enrol/now", "#enrol-msg",
+				httpx.T(locale, "elevation.summary.enrol_now"), nil, elev)
 			return
 		}
 		status, err := enroll.RegisterNow(r.Context(), d.Cfg, d.Settings)
@@ -402,6 +416,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				httpx.T(locale, "settings.enrol.failed"), reason, endpoint)
 			return
 		}
+		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "enrol_now_registered", map[string]any{"store_id": status.StoreID})
 		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
 	})
@@ -442,15 +457,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 
 	// Idle auto-lock window (docs: pos-auth.md). Manager/admin only — an
 	// unattended till's security posture is not a cashier decision.
+	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796) — range
+	// validation runs BEFORE elevation (established convention: a value that
+	// would be rejected anyway must not burn an approver's live PIN entry).
 	mux.HandleFunc("POST /api/settings/idle-lock", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		n, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("minutes")))
 		if err != nil || n < 0 || n > 480 {
 			http.Error(w, "minutes must be between 0 and 480", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			label := httpx.T(locale, "settings.idle_lock.off")
+			if n != 0 {
+				label = fmt.Sprintf("%d %s", n, httpx.T(locale, "settings.idle_lock.minutes"))
+			}
+			renderElevationPrompt(w, r, "/api/settings/idle-lock", "#idle-lock-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.idle_lock"), label),
+				[]elevationHiddenField{{Name: "minutes", Value: r.Form.Get("minutes")}}, elev)
 			return
 		}
 		st := d.CurrentState()
@@ -464,22 +490,33 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if !auth.Disabled(os.Getenv("UT_AUTH")) {
 			httpx.InitIdleLock(n)
 		}
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyIdleLock, "idle_lock_changed", map[string]any{"minutes": n})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Self-order kiosk idle-reset window (ADR-0020): distinct from the
 	// idle-lock above — the kiosk route is auth-exempt (no session to
 	// revoke), so this is purely a client-side "reload to the start
 	// screen" timer, read at render time. Manager/admin only.
+	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796), same
+	// validation-before-elevation ordering as idle-lock above.
 	mux.HandleFunc("POST /api/settings/kiosk-idle-reset", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		n, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("seconds")))
 		if err != nil || n < 0 || n > 600 {
 			http.Error(w, "seconds must be between 0 and 600", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			label := httpx.T(locale, "settings.kiosk_idle_reset.off")
+			if n != 0 {
+				label = fmt.Sprintf("%d %s", n, httpx.T(locale, "settings.kiosk_idle_reset.seconds"))
+			}
+			renderElevationPrompt(w, r, "/api/settings/kiosk-idle-reset", "#kiosk-idle-reset-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.kiosk_idle_reset"), label),
+				[]elevationHiddenField{{Name: "seconds", Value: r.Form.Get("seconds")}}, elev)
 			return
 		}
 		st := d.CurrentState()
@@ -489,23 +526,30 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		d.SetState(st)
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyKioskIdleReset, "kiosk_idle_reset_changed", map[string]any{"seconds": n})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Window mode (ut-docs#608 scaffold): stores/surfaces the till's
 	// window/process display mode. This card does NOT apply it to the OS
 	// window — that's #609 (macOS)/#610 (Windows)/#611 (Linux/Pi).
+	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796),
+	// validation before elevation as elsewhere in this file.
 	mux.HandleFunc("POST /api/settings/window-mode", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
 		switch mode {
 		case "fullscreen", "kiosk", "maximized", "normal":
 		default:
 			http.Error(w, "mode must be one of fullscreen, kiosk, maximized, normal", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/window-mode", "#window-mode-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.window_mode"), httpx.T(locale, "settings.display.window_mode_"+mode)),
+				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
 			return
 		}
 		st := d.CurrentState()
@@ -515,21 +559,34 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		d.SetState(st)
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyWindowMode, "window_mode_changed", map[string]any{"mode": mode})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Launch-on-startup (ut-docs#608 scaffold): stores/surfaces the till's
 	// autostart-on-boot preference. Not wired to the OS's actual autostart
 	// mechanism yet — same future-card split as window-mode above.
+	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796). Two
+	// separate summary keys (on/off) rather than a %s placeholder — no
+	// generic "on"/"off" i18n key exists yet (mirrors eod_settings_enabled/
+	// eod_settings_disabled's precedent pair in eod_api.go).
 	mux.HandleFunc("POST /api/settings/launch-on-startup", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
 		if err != nil {
 			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.launch_on_startup_off"
+			if b {
+				summaryKey = "elevation.summary.launch_on_startup_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/launch-on-startup", "#launch-on-startup-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
 			return
 		}
 		st := d.CurrentState()
@@ -539,7 +596,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		d.SetState(st)
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyLaunchOnStartup, "launch_on_startup_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Exit to OS window (ut-docs#608 scaffold): a manager-session cookie
@@ -591,21 +649,32 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 
 	// Plugin telemetry opt-in (FR-013): off by default, manager-only —
 	// gates internal/plugins.TelemetryClient.ReportNow's scheduler tick.
+	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796). Two
+	// summary keys (on/off), same reasoning as launch-on-startup above.
 	mux.HandleFunc("POST /api/settings/telemetry", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		optIn := "false"
 		if r.Form.Get("optIn") == "on" || r.Form.Get("optIn") == "1" {
 			optIn = "true"
 		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.telemetry_off"
+			if optIn == "true" {
+				summaryKey = "elevation.summary.telemetry_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/telemetry", "#telemetry-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "optIn", Value: r.Form.Get("optIn")}}, elev)
+			return
+		}
 		if err := d.Settings.Set(r.Context(), "marketplace.telemetry_opt_in", optIn); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", "marketplace.telemetry_opt_in", "telemetry_opt_in_changed", map[string]any{"opt_in": optIn})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Interface scale for this till's screen; saved and applied immediately.
@@ -651,15 +720,32 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// (backoffice) or the locked customer-facing self-order flow
 	// (self_order). Per-till (display.* never LAN-syncs), so one shop can
 	// mix registers, a back-office device, and one or more kiosks.
+	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796), validation
+	// before elevation as elsewhere in this file. The display label is
+	// resolved BEFORE the "register" -> "" collapse below, since "" has no
+	// settings.display.mode_* translation of its own — used for the
+	// approver-facing summary ONLY. The audit payload records rawMode (the
+	// actual persisted value, matching every sibling handler's convention —
+	// e.g. window-mode audits {"mode": mode}, not a localized label) —
+	// review finding F2: auditing modeLabel made the trail locale-dependent
+	// (the same action wrote a different string per operator UI language)
+	// and, for "register", recorded a label for a value that isn't what
+	// actually gets persisted (mode collapses to "").
 	mux.HandleFunc("POST /api/settings/display-mode", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin role required", http.StatusForbidden)
-			return
-		}
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
 		if mode != "register" && mode != "backoffice" && mode != "self_order" {
 			http.Error(w, "mode must be register, backoffice, or self_order", http.StatusBadRequest)
+			return
+		}
+		rawMode := mode
+		modeLabel := httpx.T(locale, "settings.display.mode_"+mode)
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/display-mode", "#display-mode-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.display_mode"), modeLabel),
+				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
 			return
 		}
 		if mode == "register" {
@@ -669,7 +755,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", "display.mode", "display_mode_changed", map[string]any{"mode": rawMode})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Shop type (ut-docs#539, taxonomy per ADR-0026) — editable after setup.
@@ -785,14 +872,36 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// empty 200 body removes it; 204 wouldn't swap (see remove-demo-
 	// catalogue's comment above on why 2xx-with-body is used for hx-swap
 	// targets).
+	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796). hxTarget
+	// is the dedicated #restore-resume-msg span, NOT #restore-resume-block
+	// itself — review finding F1: the block is what the button's own
+	// hx-swap="outerHTML" removes, and the dialog's retry form always
+	// innerHTML-swaps into hxTarget (elevation_prompt.html's fixed
+	// hx-swap); pointing it at a node the denial hint had just replaced
+	// left the retry's own hx-target resolving to nothing — htmx bails
+	// with htmx:targetError instead of ever sending the approver's PIN.
+	// X-UT-Response: ok, set inline below (not via settingsRespondSaved,
+	// which this handler doesn't call — it keeps the pre-existing bare
+	// empty-200-body success shape), makes the dialog's own script reload
+	// the page on the elevated path instead of leaving a stale msg span —
+	// same fix #796's review made for till-name/till-register/save (a
+	// missing X-UT-Response: ok left stale values after approval).
 	mux.HandleFunc("POST /api/settings/dismiss-restore-prompt", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/dismiss-restore-prompt", "#restore-resume-msg",
+				httpx.T(locale, "elevation.summary.dismiss_restore_prompt"), nil, elev)
 			return
 		}
 		if err := d.Settings.Set(r.Context(), common.KeyRestorePromptStatus, ""); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", common.KeyRestorePromptStatus, "restore_prompt_dismissed", nil)
+		if elev.Outcome == elevated {
+			w.Header().Set("X-UT-Response", "ok")
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	})
@@ -802,17 +911,37 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// anything auto-installed" for the not-yet-installed case. hx-swap
 	// "outerHTML" on the chip itself, same reasoning as the restore-prompt
 	// dismiss above: an empty 200 body removes just that chip.
+	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796). hxTarget
+	// is this chip's own dedicated #pending-plugin-msg-<canonical_type>
+	// span (review finding F1 — same "don't point the retry at a node the
+	// button's own outerHTML removal can make vanish" reasoning as
+	// dismiss-restore-prompt above), NOT the chip-row itself, via a CSS
+	// attribute selector rather than "#id" since canonical_type isn't
+	// validated against the pending list before this point and an
+	// arbitrary value could contain characters a bare #id selector would
+	// need escaping for (the shipped catalogue only ever produces
+	// "language" today — setup_base_plugins.go). Same X-UT-Response: ok
+	// reasoning as dismiss-restore-prompt above.
 	mux.HandleFunc("POST /api/settings/dismiss-pending-base-plugin", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		canonicalType := strings.TrimSpace(r.Form.Get("canonical_type"))
 		localeVal := strings.TrimSpace(r.Form.Get("locale"))
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/dismiss-pending-base-plugin",
+				fmt.Sprintf(`[id="pending-plugin-msg-%s"]`, canonicalType),
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.dismiss_pending_base_plugin"), canonicalType),
+				[]elevationHiddenField{{Name: "canonical_type", Value: canonicalType}, {Name: "locale", Value: localeVal}}, elev)
+			return
+		}
 		if err := dismissPendingBasePlugin(r.Context(), d, canonicalType, localeVal); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", canonicalType, "pending_base_plugin_dismissed", map[string]any{"canonical_type": canonicalType, "locale": localeVal})
+		if elev.Outcome == elevated {
+			w.Header().Set("X-UT-Response", "ok")
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	})

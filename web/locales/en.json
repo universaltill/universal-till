@@ -1548,5 +1548,17 @@
   "elevation.summary.till_name": "Rename this till to \"%s\".",
   "elevation.summary.till_register": "Assign this till to register %s.",
   "elevation.summary.store_save": "Save changes to the store's currency, country, region or tax rate.",
-  "elevation.summary.setting_upsert": "Set the setting \"%s\" to \"%s\"."
+  "elevation.summary.setting_upsert": "Set the setting \"%s\" to \"%s\".",
+  "elevation.summary.idle_lock": "Set the idle auto-lock timeout to %s.",
+  "elevation.summary.kiosk_idle_reset": "Set the self-order kiosk idle-reset window to %s.",
+  "elevation.summary.window_mode": "Set the window mode to %s.",
+  "elevation.summary.launch_on_startup_on": "Turn on launch-on-startup.",
+  "elevation.summary.launch_on_startup_off": "Turn off launch-on-startup.",
+  "elevation.summary.telemetry_on": "Turn on plugin telemetry sharing.",
+  "elevation.summary.telemetry_off": "Turn off plugin telemetry sharing.",
+  "elevation.summary.display_mode": "Set this till's device profile to %s.",
+  "elevation.summary.dismiss_restore_prompt": "Dismiss the restore-from-another-till prompt without importing anything.",
+  "elevation.summary.dismiss_pending_base_plugin": "Dismiss the pending %s base plugin without installing it.",
+  "elevation.summary.enrol_claim_code": "Generate a new store-claim code and QR link.",
+  "elevation.summary.enrol_now": "Attempt to register this till with the marketplace now."
 }
