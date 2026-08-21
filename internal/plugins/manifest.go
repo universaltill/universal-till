@@ -388,6 +388,49 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 	return fmt.Errorf("page entry route %q is already provided by plugin %s — pick a different route", c.Route, c.Owner)
 }
 
+// validateSettingKeys enforces the within-manifest half of ut-docs#808:
+// PersistManifest had no in-manifest duplicate-key check for type:"settings"
+// entries at all, unlike the equivalent payment/page entry checks above.
+//
+// Two settings entries sharing a key at the default "global" scope both
+// attempt to INSERT during ReconcilePluginSettings — on a fresh install
+// there's no existing DB row to reconcile against, so both go straight to
+// the insert branch, and the second trips ux_plugin_settings_global
+// (migration 053's partial UNIQUE INDEX on (plugin_id, key) WHERE
+// scope='global'), surfacing as a raw SQLite "UNIQUE constraint failed"
+// error instead of a clean one naming the key, like every check above.
+//
+// register/user-scoped duplicates are a milder, distinct gap this also
+// closes: the table-level UNIQUE(plugin_id, key, scope, scope_id) never
+// fires for them (scope_id is always NULL, and SQLite treats NULLs as
+// distinct), so today both rows insert silently with no error at all.
+//
+// Keyed on (key, effective scope) rather than key alone: a manifest
+// declaring the same key at two genuinely different scopes is not a
+// conflict — ReconcilePluginSettings already treats moving a key between
+// scopes as a normal upgrade path. An empty Scope defaults to "global" here,
+// mirroring PersistManifest's own defaulting below, so an explicit-"global"
+// entry and an implicit-empty one are correctly compared as the same scope.
+func validateSettingKeys(settings []ManifestSetting) error {
+	type scopedKey struct{ key, scope string }
+	seen := make(map[scopedKey]bool, len(settings))
+	for _, s := range settings {
+		scope := s.Scope
+		if scope == "" {
+			scope = "global"
+		}
+		sk := scopedKey{s.Key, scope}
+		if seen[sk] {
+			if scope == "global" {
+				return fmt.Errorf("setting key %q is used by more than one entry in this manifest — pick distinct keys", s.Key)
+			}
+			return fmt.Errorf("setting key %q (scope %q) is used by more than one entry in this manifest — pick distinct keys", s.Key, scope)
+		}
+		seen[sk] = true
+	}
+	return nil
+}
+
 // FiscalSignAskEvent is the tender-phase fiscal signing extension point
 // (ADR-0044 Decision 1, ut-docs#675) — an ADR-0041 `exclusive` point, which
 // is why manifest persistence enforces single ownership below. The dispatch
@@ -476,6 +519,14 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// it through would mint a second active answerer with no /enable ever
 	// involved (review of ut-docs#675, B2).
 	if err := validateExclusiveHookOwnership(ctx, repo, tx, m.ID, m.Hooks); err != nil {
+		return err
+	}
+
+	// 0e. Settings keys must be unique within this manifest per effective
+	// scope — a duplicate either trips the DB's global-scope unique index
+	// with a raw error, or (register/user scope) silently double-inserts;
+	// reject it here, loudly, instead (ut-docs#808).
+	if err := validateSettingKeys(m.Settings); err != nil {
 		return err
 	}
 
