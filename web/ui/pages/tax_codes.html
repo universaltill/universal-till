@@ -68,15 +68,32 @@
     setMode(true, row.dataset.name);
   });
 
+  // htmx's ajax() promise RESOLVES on a 4xx too -- xhr.onload dispatches
+  // htmx:responseError synchronously and only then calls the promise's
+  // resolve, so a naive .then() success branch runs as a microtask AFTER the
+  // error handler and silently overwrites it. Without this flag a rejected
+  // save (duplicate name, out-of-range rate, missing code) flashed the
+  // localised '✗ …' for one tick and then told the user '✓' -- and on a
+  // create it also called clearForm(), wiping what they had just typed while
+  // nothing had been persisted. Review finding, ut-docs#259.
+  var failed = false;
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
     var editing = document.getElementById('tax-code-id').value !== '';
     var url = editing ? '/api/catalog/tax-codes/update' : '/api/catalog/tax-codes';
+    failed = false;
     msg.textContent = '⏳';
     htmx.ajax('POST', url, { source: '#tax-code-form', target: '#tax-codes-table', swap: 'outerHTML' })
-      .then(function () { msg.textContent = '✓'; if (!editing) clearForm(); });
+      .then(function () {
+        if (failed) return; // htmx:responseError already wrote the message
+        // clearForm() blanks msg, so set the tick AFTER it -- otherwise a
+        // successful create wipes its own confirmation on the same tick.
+        if (!editing) clearForm();
+        msg.textContent = '✓';
+      });
   });
   document.body.addEventListener('htmx:responseError', function (ev) {
+    failed = true;
     msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
   });
 })();

@@ -945,6 +945,7 @@
   "taxcodes.deactivate": "Devre dışı bırak",
   "taxcodes.err.duplicate_name": "Bu adla bir vergi kodu zaten var",
   "taxcodes.err.invalid_rate": "Geçersiz oran — 0 ile 100 arasında bir değer girin",
+  "taxcodes.err.name_required": "Ad gerekli",
   "taxcodes.err.not_found": "Vergi kodu bulunamadı",
   "taxcodes.manage_overrides_link": "Eklentiye özel istisnaları yönet",
   "taxcodes.new": "Yeni vergi kodu",

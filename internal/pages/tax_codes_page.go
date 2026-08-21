@@ -91,16 +91,31 @@ func taxCodeFormActive(r *http.Request) bool {
 // TaxRatePct*100 conversion already uses. There is no ParsePercent helper
 // in internal/taxrate (only FormatPercent, the display side), so this is
 // the parse-side counterpart, kept local to this handler. Rejects
-// unparseable, non-finite, negative, and >=100% (>=10000bp) input as a
+// unparseable, non-finite, negative, and >100% (>10000bp) input as a
 // basic sanity bound (ut-docs#259) -- not a real limit on any real tax
 // regime, just a guard against a fat-fingered entry silently persisting.
+//
+// The bound is INCLUSIVE of 100%, deliberately: catimport.ParseTaxRateBP
+// (the import-side parser this must agree with) accepts `f > 100` as its
+// reject condition, tax_codes.html's input carries max="100", and the
+// message the user gets back says "between 0 and 100". Review finding,
+// ut-docs#259: this originally rejected `bp >= 10000`, so entering exactly
+// 100 was refused with a message that claimed 100 was allowed, and a code
+// the CSV importer would happily create could not be re-entered by hand.
 func parsePercentToBP(val string) (int, error) {
+	// Both bounds are checked on the FLOAT, before the int conversion, for
+	// the same reason catimport.ParseTaxRateBP does it that way: Go leaves
+	// an out-of-range float64->int conversion implementation-defined (amd64
+	// wraps to MinInt64, arm64 saturates to MaxInt64), so a post-conversion
+	// range check on something like "1e300" is only accidentally correct on
+	// whichever machine it was tried. Review finding, ut-docs#259 -- same
+	// class as ut-docs#512's finding B1 on the import-side parser.
 	f, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
-	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > 100 {
 		return 0, fmt.Errorf("invalid rate")
 	}
 	bp := int(math.Round(f * 100))
-	if bp < 0 || bp >= 10000 {
+	if bp < 0 || bp > 10000 {
 		return 0, fmt.Errorf("invalid rate")
 	}
 	return bp, nil
@@ -114,7 +129,14 @@ func parsePercentToBP(val string) (int, error) {
 func parseTaxCodeForm(r *http.Request, locale string) (name string, rateBP int, takeawayBP *int, err error) {
 	name = strings.TrimSpace(r.Form.Get("name"))
 	if name == "" {
-		return "", 0, nil, httpStatusError{status: http.StatusBadRequest, msg: "name required"}
+		// Localised, not a bare English literal: the page's own JS renders
+		// this body verbatim into the form's status line, and a
+		// whitespace-only name passes the input's `required` attribute in
+		// the browser, so this IS user-reachable. Same key shape every
+		// sibling admin CRUD page already uses (locations.error.required,
+		// promotions.error.required, tables.error.required). Review
+		// finding, ut-docs#259.
+		return "", 0, nil, httpStatusError{status: http.StatusBadRequest, msg: httpx.T(locale, "taxcodes.err.name_required")}
 	}
 	rateBP, perr := parsePercentToBP(r.Form.Get("rate"))
 	if perr != nil {

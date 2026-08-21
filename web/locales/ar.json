@@ -945,6 +945,7 @@
   "taxcodes.deactivate": "إلغاء التفعيل",
   "taxcodes.err.duplicate_name": "يوجد رمز ضريبة بهذا الاسم بالفعل",
   "taxcodes.err.invalid_rate": "نسبة غير صالحة — أدخل قيمة بين 0 و100",
+  "taxcodes.err.name_required": "الاسم مطلوب",
   "taxcodes.err.not_found": "رمز الضريبة غير موجود",
   "taxcodes.manage_overrides_link": "إدارة تجاوزات كل إضافة",
   "taxcodes.new": "رمز ضريبة جديد",
