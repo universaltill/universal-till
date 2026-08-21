@@ -669,26 +669,46 @@ func TestPOSRepo_ListSalesJournal_AllTills(t *testing.T) {
 // only rows whose created_at falls on the given calendar day are returned.
 // The query matches on shop-local calendar day (date(s.created_at,
 // 'localtime') = date(?), ut-docs#774 — same convention as DayTotal, not
-// SalesByDay's business-day-start shift), so under this suite's UTC CI the
-// numbers below are identical to a bare UTC date() match; the localtime
-// conversion only changes behavior on a non-UTC host, same accepted,
-// pre-existing test-environment limitation TestPOSRepo_DayTotal_* already
-// lives with.
+// SalesByDay's business-day-start shift).
+//
+// ut-docs#875 (independent review of ut-docs#869, a sibling local-day-
+// boundary fix): the original version of this test hardcoded both the
+// seeded timestamps and the expected day boundary as fixed UTC literals
+// ("2026-08-15"), which only agreed with the production query's
+// date(created_at, 'localtime') semantics when the host's local time IS
+// UTC — under TZ=Asia/Tokyo the test failed even though ListSalesJournal's
+// own day filter is correct. This is the same class of bug ut-docs#559
+// already found and fixed elsewhere in this file (see b8ExpectedDay's doc
+// comment). Fixed the same way #869's regression tests were: anchor every
+// seeded instant on the host's own local noon (time.Now()-derived, not a
+// hardcoded literal — noon keeps a same-day instant inside its calendar
+// day for any real IANA offset, -12..+14) and derive the expected day
+// boundary via SQLite's own date(?, 'localtime') control query
+// (b8ExpectedDay), never a Go-side string literal. Verified passing under
+// TZ=UTC, TZ=Asia/Tokyo, TZ=America/New_York, TZ=Pacific/Kiritimati,
+// TZ=Etc/GMT+12.
 func TestPOSRepo_ListSalesJournal_DayFilter(t *testing.T) {
 	d := openBatch8DB(t, "journal-dayfilter.db")
 	ctx := context.Background()
 	repo := NewPOSRepo(d.DB)
 
-	seedJournalSale(t, d, "sale-d1", "D1", "", "2026-08-14T23:59:00Z", 100)
-	seedJournalSale(t, d, "sale-d2", "D2", "", "2026-08-15T08:00:00Z", 200)
-	seedJournalSale(t, d, "sale-d3", "D3", "", "2026-08-15T20:00:00Z", 300)
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	yesterday := today.AddDate(0, 0, -1)
 
-	entries, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Day: "2026-08-15", Limit: 10})
+	// Previous local day — must NOT appear in the day-filtered result.
+	seedJournalSale(t, d, "sale-d1", "D1", "", b8At(yesterday), 100)
+	// Two sales on the target local day.
+	seedJournalSale(t, d, "sale-d2", "D2", "", b8At(today), 200)
+	seedJournalSale(t, d, "sale-d3", "D3", "", b8At(today.Add(6*time.Hour)), 300)
+
+	day := b8ExpectedDay(t, d, today, 0, 0)
+	entries, _, err := repo.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Day: day, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListSalesJournal(day filter): %v", err)
 	}
 	if len(entries) != 2 {
-		t.Fatalf("want 2 entries for 2026-08-15, got %d: %+v", len(entries), entries)
+		t.Fatalf("want 2 entries for %s, got %d: %+v", day, len(entries), entries)
 	}
 	if entries[0].ReceiptNo != "D3" || entries[1].ReceiptNo != "D2" {
 		t.Fatalf("day-filtered entries mismatch: %+v", entries)
