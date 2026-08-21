@@ -114,10 +114,17 @@ func TestReceiptPrintInvoiceEndpoints_RealSessionGatesByRole(t *testing.T) {
 		// ut-docs#866: printer settings and invoice seller settings are now
 		// wired onto checkOrElevate (mutating + audit-writing, same as
 		// settings_page.go's own sites) — a denied cashier's "gate refusal"
-		// is a 200 elevation prompt, not a flat 403. print test/preview/
-		// designer-save/logo/test-print stay on the flat canPerform gate
-		// (ephemeral or not audit-writing; see print_api.go/receipt_
-		// designer.go's own comments), so their denyCode is unchanged.
+		// is a 200 elevation prompt, not a flat 403. designer-preview/
+		// designer-test-print/print-test stay on the flat canPerform gate
+		// because they're ephemeral (no persisted mutation, no audit row).
+		// designer-save and designer-logo ARE mutating+audit-writing (same
+		// shape as printer/invoice) but are deliberately deferred as ONE
+		// unit with the page itself: they're only reachable from GET
+		// /receipt-designer, which stays a flat-denied full-page redirect
+		// (ut-docs#870) — wiring the POST alone would offer a cashier an
+		// elevation dialog for a form they can never open. designer-logo
+		// also can't replay a multipart upload through elevationHiddenField
+		// even once #870 lands. See receipt_designer.go's own #870 comment.
 		// mode=off is a valid mode, so this reaches checkOrElevate instead
 		// of tripping the pre-elevation mode-validation 400.
 		{"printer settings", http.MethodPost, "/api/settings/printer", http.StatusOK, "mode=off"},

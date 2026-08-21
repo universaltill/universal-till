@@ -877,9 +877,19 @@
     <label><input type="checkbox" name="autoPrint" {{ if $p.AutoPrint }}checked{{ end }}> {{ T "settings.printer.auto" }}</label>
     <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
       <button class="btn" type="submit">{{ T "settings.printer.apply" }}</button>
+      <!-- ut-docs#866 review (N3): un-gating this card newly exposes these
+           two controls to a cashier — both are still flat-denied (test
+           print: no audit trail to elevate; receipt-designer: a full-page
+           GET redirect, ut-docs#870), so an un-gated button/link here would
+           be the exact "visible but silently blocked" bug #867/#866 exist
+           to remove — a cashier's click on Test print would fall through
+           to app.js's generic server-error banner, misreporting a
+           permission denial as a server fault. Kept manager-only. -->
+      {{ if .isManager }}
       <button class="btn secondary" type="button" hx-post="/api/print/test" hx-target="#print-test-msg" hx-swap="innerHTML">{{ T "settings.printer.test" }}</button>
       <a class="btn secondary" href="/receipt-designer">{{ T "designer.receipt.title" }}</a>
       <span id="print-test-msg" aria-live="polite"></span>
+      {{ end }}
     </div>
     <!-- Exists purely as the elevation dialog retry's hx-target (see the
          report-retention form's identical span) — the "test" button above
