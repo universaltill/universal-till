@@ -389,6 +389,141 @@ func TestInit_BackgroundLoopJoinsOnCancel(t *testing.T) {
 	}
 }
 
+// regionForCountry derives the region auto-sent at store registration from
+// the shop's chosen country (store.country, ADR-0026 setup wizard). Only an
+// exact ISO-3166 alpha-2 "DE" (case-insensitive, trimmed) maps to a region;
+// everything else — including a 3-letter code, empty/garbage input, and
+// unicode — sends none, with no panic. This is the fix for the first
+// attempt's regionForLocale bug, which wrongly base-language-matched
+// "de-AT"/"de-CH" too: a country code has no such ambiguity, and "DEU" must
+// NOT match "DE".
+func TestRegionForCountry(t *testing.T) {
+	cases := []struct {
+		country string
+		want    string
+	}{
+		{"DE", "de"},
+		{"de", "de"},   // case-insensitive
+		{" DE ", "de"}, // trimmed
+		{"GB", ""},
+		{"", ""},
+		{"DEU", ""}, // exact 2-letter code only, not a base/3-letter match
+		{"---", ""}, // garbage input must not panic
+		{"ドイツ", ""}, // unicode input must not panic
+	}
+	for _, c := range cases {
+		if got := regionForCountry(c.country); got != c.want {
+			t.Errorf("regionForCountry(%q) = %q, want %q", c.country, got, c.want)
+		}
+	}
+}
+
+// registerTestServer stands up a /v1/stores/register endpoint that captures
+// the POSTed body and always succeeds, for the payload-assertion tests below.
+func registerTestServer(t *testing.T, gotBody *map[string]any) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stores/register", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{
+			"store_id": "store-abc", "merchant_id": "store-abc", "token": "tok-123",
+		}})
+	})
+	mux.HandleFunc("/ui/api/signing-key", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{
+			"algorithm": "ed25519", "public_key_hex": strings.Repeat("ab", 32),
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// register() must include "region":"de" in the POSTed payload when the
+// shop's chosen country (settings key StoreCountrySettingsKey) is Germany,
+// and must send byte-for-byte the same payload as before (no region key at
+// all) for a non-German or unset country — this is a new field appearing
+// only for a country that maps to a region, never a behavioural change for
+// anyone else.
+func TestRegisterSendsRegionForGermanCountry(t *testing.T) {
+	resetState()
+	var gotBody map[string]any
+	srv := registerTestServer(t, &gotBody)
+
+	kv := newFakeKV()
+	if err := kv.Set(context.Background(), StoreCountrySettingsKey, "DE"); err != nil {
+		t.Fatalf("seed country: %v", err)
+	}
+	m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
+	if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if _, ok := gotBody["region"]; !ok {
+		t.Fatalf("payload missing region for DE country: %#v", gotBody)
+	}
+	if got := gotBody["region"]; got != "de" {
+		t.Fatalf("region = %v, want \"de\"", got)
+	}
+}
+
+// A non-German country, and an unset country, must both produce the exact
+// same payload as before this change: no "region" key present at all.
+func TestRegisterOmitsRegionForNonGermanCountry(t *testing.T) {
+	cases := []struct {
+		name    string
+		seed    bool
+		country string
+	}{
+		{"GB", true, "GB"},
+		{"unset", false, ""},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			resetState()
+			var gotBody map[string]any
+			srv := registerTestServer(t, &gotBody)
+
+			kv := newFakeKV()
+			if c.seed {
+				if err := kv.Set(context.Background(), StoreCountrySettingsKey, c.country); err != nil {
+					t.Fatalf("seed country: %v", err)
+				}
+			}
+			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
+			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			if _, ok := gotBody["region"]; ok {
+				t.Fatalf("payload has region for country case %q, want none: %#v", c.name, gotBody)
+			}
+		})
+	}
+}
+
+// RegisterNow must read the shop's chosen country from settings (via
+// register()) so a German till's marketplace registration carries region
+// "de" with no extra setup step for the shop owner.
+func TestRegisterNowSendsRegionFromConfiguredCountry(t *testing.T) {
+	resetState()
+	var gotBody map[string]any
+	srv := registerTestServer(t, &gotBody)
+
+	kv := newFakeKV()
+	if err := kv.Set(context.Background(), StoreCountrySettingsKey, "DE"); err != nil {
+		t.Fatalf("seed country: %v", err)
+	}
+	cfg := freshConfig(srv.URL)
+
+	if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
+		t.Fatalf("RegisterNow: %v", err)
+	}
+	if got := gotBody["region"]; got != "de" {
+		t.Fatalf("region = %v, want \"de\"", got)
+	}
+}
+
 func TestFetchSigningKeyRejectsBadKey(t *testing.T) {
 	resetState()
 	mux := http.NewServeMux()
