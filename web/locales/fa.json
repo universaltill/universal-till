@@ -1548,5 +1548,17 @@
   "elevation.summary.till_name": "تغییر نام این دستگاه به «%s».",
   "elevation.summary.till_register": "اختصاص این دستگاه به صندوق %s.",
   "elevation.summary.store_save": "ذخیره تغییرات ارز، کشور، منطقه یا نرخ مالیات فروشگاه.",
-  "elevation.summary.setting_upsert": "تنظیم «%s» روی «%s»."
+  "elevation.summary.setting_upsert": "تنظیم «%s» روی «%s».",
+  "elevation.summary.idle_lock": "تنظیم زمان قفل خودکار در حالت بی‌کاری روی %s.",
+  "elevation.summary.kiosk_idle_reset": "تنظیم بازه بازنشانی بی‌کاری کیوسک سفارش خودکار روی %s.",
+  "elevation.summary.window_mode": "تنظیم حالت پنجره روی %s.",
+  "elevation.summary.launch_on_startup_on": "روشن کردن اجرای خودکار هنگام راه‌اندازی.",
+  "elevation.summary.launch_on_startup_off": "خاموش کردن اجرای خودکار هنگام راه‌اندازی.",
+  "elevation.summary.telemetry_on": "روشن کردن اشتراک‌گذاری داده‌های ردیابی افزونه‌ها.",
+  "elevation.summary.telemetry_off": "خاموش کردن اشتراک‌گذاری داده‌های ردیابی افزونه‌ها.",
+  "elevation.summary.display_mode": "تنظیم نمایه دستگاه این صندوق روی %s.",
+  "elevation.summary.dismiss_restore_prompt": "نادیده گرفتن پیام بازیابی از یک صندوق فروش دیگر بدون وارد کردن هیچ داده‌ای.",
+  "elevation.summary.dismiss_pending_base_plugin": "نادیده گرفتن افزونه پایه در انتظار %s بدون نصب آن.",
+  "elevation.summary.enrol_claim_code": "ایجاد کد ادعای فروشگاه جدید و پیوند QR.",
+  "elevation.summary.enrol_now": "تلاش برای ثبت این صندوق در بازار همین حالا."
 }

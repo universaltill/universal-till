@@ -174,8 +174,10 @@ func TestDisplayModeBackofficeRequiresManagerRole(t *testing.T) {
 		return rec
 	}
 
-	if rec := setMode(&auth.User{ID: "cashier-1", Role: "cashier"}, "backoffice"); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier setting backoffice mode = %d, want 403", rec.Code)
+	// ut-docs#865: elevation prompt, not a flat 403.
+	if rec := setMode(&auth.User{ID: "cashier-1", Role: "cashier"}, "backoffice"); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier setting backoffice mode = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 	if rec := setMode(&auth.User{ID: "mgr-1", Role: "manager"}, "backoffice"); rec.Code != http.StatusNoContent {
 		t.Fatalf("manager setting backoffice mode = %d, want 204: %s", rec.Code, rec.Body.String())

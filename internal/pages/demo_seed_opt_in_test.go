@@ -380,15 +380,25 @@ func TestSettingsDismissRestorePromptEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// ut-docs#865: a denied cashier gets the in-place elevation prompt
+	// (ut-docs#557/#796 mechanism), not a flat 403.
 	rec := postForm(mux, "/api/settings/dismiss-restore-prompt", url.Values{}, &cashUser)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier dismiss: code=%d, want 403", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier dismiss: code=%d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 	if v, _, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); v != common.RestorePromptStatusDeferred {
 		t.Fatalf("cashier attempt cleared the flag: %q", v)
 	}
 
 	rec = postForm(mux, "/api/settings/dismiss-restore-prompt", url.Values{}, &mgrUser)
+	// ut-docs#865 review finding F9: the plain-allowed path must stay a
+	// bare empty body with no X-UT-Response header — that header is set
+	// ONLY on the elevated path (see TestDismissRestorePrompt_ElevationFlow
+	// in settings_elevation_test.go), so htmx's outerHTML removal on a
+	// manager's own direct dismiss is unaffected by this card.
+	if rec.Header().Get("X-UT-Response") != "" {
+		t.Fatalf("manager dismiss set X-UT-Response = %q, want unset on the plain-allowed path", rec.Header().Get("X-UT-Response"))
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("manager dismiss: code=%d body=%s", rec.Code, rec.Body.String())
 	}
