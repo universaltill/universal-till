@@ -565,19 +565,33 @@ func TestEndOfDay_AggregatesSalesReturnsAndMethods(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", "2026-01-01T10:00:00Z", 220, 20)
-	seedLifecycleSale(t, dbx, "sale2", "R002", "sale", "completed", "2026-01-01T14:00:00Z", 110, 10)
-	seedLifecycleSale(t, dbx, "return1", "R003", "return", "completed", "2026-01-01T15:00:00Z", 55, 5)
+	// Anchored on the host's own local noon, not a hardcoded UTC date
+	// literal (ut-docs#869 independent review finding): EndOfDay now
+	// matches the LOCAL calendar day (date(created_at, 'localtime')), so a
+	// fixed "2026-01-01T10:00:00Z"-style literal only holds together on a
+	// UTC host — under TZ=Asia/Tokyo this test regressed red. Local noon
+	// keeps every same-day instant inside its calendar day for any real
+	// IANA offset (-12..+14); the day argument is derived via the same
+	// date(?, 'localtime') control query production uses (b8ExpectedDay),
+	// never a Go-side literal.
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	tomorrow := today.AddDate(0, 0, 1)
+
+	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", b8At(today), 220, 20)
+	seedLifecycleSale(t, dbx, "sale2", "R002", "sale", "completed", b8At(today.Add(4*time.Hour)), 110, 10)
+	seedLifecycleSale(t, dbx, "return1", "R003", "return", "completed", b8At(today.Add(5*time.Hour)), 55, 5)
 	// A sale on a different day must not be included.
-	seedLifecycleSale(t, dbx, "sale3", "R004", "sale", "completed", "2026-01-02T10:00:00Z", 1000, 100)
+	seedLifecycleSale(t, dbx, "sale3", "R004", "sale", "completed", b8At(tomorrow), 1000, 100)
 	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES
-('pay1','sale1','cash',220,'GBP',0,'2026-01-01T10:00:00Z'),
-('pay2','sale2','card',110,'GBP',0,'2026-01-01T14:00:00Z'),
-('pay3','return1','cash',55,'GBP',0,'2026-01-01T15:00:00Z')`); err != nil {
+('pay1','sale1','cash',220,'GBP',0,?),
+('pay2','sale2','card',110,'GBP',0,?),
+('pay3','return1','cash',55,'GBP',0,?)`, b8At(today), b8At(today.Add(4*time.Hour)), b8At(today.Add(5*time.Hour))); err != nil {
 		t.Fatal(err)
 	}
 
-	rep, err := dbx.repo.EndOfDay(ctx, "2026-01-01")
+	day := b8ExpectedDay(t, dbx.d, today, 0, 0)
+	rep, err := dbx.repo.EndOfDay(ctx, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -605,18 +619,33 @@ func TestEndOfDayRange_AggregatesAcrossMultipleDaysInclusive(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", "2026-01-01T10:00:00Z", 220, 20)
-	seedLifecycleSale(t, dbx, "sale2", "R002", "sale", "completed", "2026-01-02T14:00:00Z", 110, 10)
-	seedLifecycleSale(t, dbx, "return1", "R003", "return", "completed", "2026-01-03T15:00:00Z", 55, 5)
-	// Outside the requested range on both ends — must not be included.
-	seedLifecycleSale(t, dbx, "before", "R000", "sale", "completed", "2025-12-31T23:00:00Z", 9999, 0)
-	seedLifecycleSale(t, dbx, "after", "R004", "sale", "completed", "2026-01-04T00:00:00Z", 9999, 0)
+	// Same local-noon-anchored, host-timezone-safe shape as
+	// TestEndOfDay_AggregatesSalesReturnsAndMethods above (ut-docs#869
+	// independent review finding) — day1/day2/day3 are three consecutive
+	// local calendar days; before/after sit a full local day outside
+	// either end of the range, safely clear of the boundary for any real
+	// IANA offset.
+	now := time.Now()
+	day1 := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	day2 := day1.AddDate(0, 0, 1)
+	day3 := day1.AddDate(0, 0, 2)
+	before := day1.AddDate(0, 0, -1)
+	after := day3.AddDate(0, 0, 1)
 
-	rep, err := dbx.repo.EndOfDayRange(ctx, "2026-01-01", "2026-01-03")
+	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", b8At(day1), 220, 20)
+	seedLifecycleSale(t, dbx, "sale2", "R002", "sale", "completed", b8At(day2), 110, 10)
+	seedLifecycleSale(t, dbx, "return1", "R003", "return", "completed", b8At(day3), 55, 5)
+	// Outside the requested range on both ends — must not be included.
+	seedLifecycleSale(t, dbx, "before", "R000", "sale", "completed", b8At(before), 9999, 0)
+	seedLifecycleSale(t, dbx, "after", "R004", "sale", "completed", b8At(after), 9999, 0)
+
+	fromDay := b8ExpectedDay(t, dbx.d, day1, 0, 0)
+	toDay := b8ExpectedDay(t, dbx.d, day3, 0, 0)
+	rep, err := dbx.repo.EndOfDayRange(ctx, fromDay, toDay)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.From != "2026-01-01" || rep.To != "2026-01-03" {
+	if rep.From != fromDay || rep.To != toDay {
 		t.Fatalf("expected From/To echoed back, got %q..%q", rep.From, rep.To)
 	}
 	if rep.Day != "" {
@@ -639,13 +668,19 @@ func TestEndOfDayRange_AggregatesAcrossMultipleDaysInclusive(t *testing.T) {
 func TestEndOfDayRange_SingleDayMatchesEndOfDay(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
-	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", "2026-01-01T10:00:00Z", 220, 20)
+	// Local-noon-anchored (ut-docs#869 independent review finding) so the
+	// seeded sale reliably lands inside `day` regardless of host timezone —
+	// see TestEndOfDay_AggregatesSalesReturnsAndMethods above.
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	seedLifecycleSale(t, dbx, "sale1", "R001", "sale", "completed", b8At(today), 220, 20)
 
-	fromEndOfDay, err := dbx.repo.EndOfDay(ctx, "2026-01-01")
+	day := b8ExpectedDay(t, dbx.d, today, 0, 0)
+	fromEndOfDay, err := dbx.repo.EndOfDay(ctx, day)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fromRange, err := dbx.repo.EndOfDayRange(ctx, "2026-01-01", "2026-01-01")
+	fromRange, err := dbx.repo.EndOfDayRange(ctx, day, day)
 	if err != nil {
 		t.Fatal(err)
 	}
