@@ -68,6 +68,16 @@ func sampleReceiptDoc(storeName string, rd receiptDesign) print.Doc {
 
 // registerReceiptDesigner mounts the designer page, live preview, save and
 // test print (docs: architecture/receipt-designer.md, G29).
+//
+// ut-docs#870: /api/receipt-designer/save and /api/receipt-designer/logo are
+// mutating + audit-writing (same shape as the sites ut-docs#866 wired onto
+// checkOrElevate), but stay on the flat canPerform gate below — they're only
+// reachable from GET /receipt-designer, itself a flat-denied full-page
+// redirect (not an HTMX form checkOrElevate's in-place dialog can attach
+// to). Wiring the POST endpoints alone would offer a cashier an elevation
+// dialog for a form they can never open. /logo also can't replay a
+// multipart file upload through elevationHiddenField's hidden-<input>
+// mechanism, so it needs its own design even once the page gate is solved.
 func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 

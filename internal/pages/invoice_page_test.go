@@ -288,6 +288,54 @@ func TestPostInvoicesIssue_SuccessThenIdempotentOnRetry(t *testing.T) {
 	}
 }
 
+// TestPostSettingsInvoice_SavesSellerIdentity (ut-docs#866): the seller
+// identity endpoint is wired onto the #557 manager-override elevation
+// mechanism, same as settings_page.go's own sites — no prior test existed
+// for it at all.
+func TestPostSettingsInvoice_SavesSellerIdentity(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newInvoiceTestDeps(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/invoice",
+		strings.NewReader("seller_name=Acme+Ltd&seller_address=1+High+St&seller_vat_no=GB123"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for an authorized session, got %d: %s", rec.Code, rec.Body.String())
+	}
+	name, _, _ := dp.Settings.Get(context.Background(), keyInvoiceSellerName)
+	addr, _, _ := dp.Settings.Get(context.Background(), keyInvoiceSellerAddress)
+	vat, _, _ := dp.Settings.Get(context.Background(), keyInvoiceSellerVATNo)
+	if name != "Acme Ltd" || addr != "1 High St" || vat != "GB123" {
+		t.Fatalf("expected seller identity persisted, got name=%q address=%q vat=%q", name, addr, vat)
+	}
+}
+
+// TestPostSettingsInvoice_BlockedSessionGetsElevationPrompt (ut-docs#866): a
+// blocked cashier gets an in-place PIN prompt instead of a flat 403, and
+// the seller identity is NOT changed until it's approved.
+func TestPostSettingsInvoice_BlockedSessionGetsElevationPrompt(t *testing.T) {
+	mux, dp := newInvoiceTestDeps(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/invoice",
+		strings.NewReader("seller_name=Blocked+Co&seller_address=&seller_vat_no="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") ||
+		!strings.Contains(rec.Body.String(), `name="override_pin"`) {
+		t.Fatalf("blocked invoice save = %d, want 200 with the elevation prompt: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-UT-Response"); got != "elevation-prompt" {
+		t.Fatalf("blocked invoice save: X-UT-Response = %q, want \"elevation-prompt\"", got)
+	}
+	if !strings.Contains(rec.Body.String(), `name="seller_name" value="Blocked Co"`) {
+		t.Fatalf("expected seller_name to round-trip via Hidden fields, got: %s", rec.Body.String())
+	}
+	if name, _, _ := dp.Settings.Get(context.Background(), keyInvoiceSellerName); name != "" {
+		t.Fatalf("seller identity must not have been changed without approval, got %q", name)
+	}
+}
+
 func TestGetInvoices_RedirectsWithoutSellerConfigured(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newInvoiceTestDeps(t)
