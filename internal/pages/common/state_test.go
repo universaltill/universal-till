@@ -8,6 +8,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -544,6 +545,21 @@ func TestBuildMenu_EmptyPlugins(t *testing.T) {
 func TestStoreCountrySettingsKeyMatchesCommon(t *testing.T) {
 	if data.StoreCountrySettingsKey != KeyCountry {
 		t.Fatalf("data.StoreCountrySettingsKey = %q, want it to match common.KeyCountry = %q", data.StoreCountrySettingsKey, KeyCountry)
+	}
+}
+
+// TestEnrollStoreCountrySettingsKeyMatchesCommon guards
+// enroll.StoreCountrySettingsKey against drifting from KeyCountry
+// (ut-docs#863): internal/enroll cannot import this package (this package
+// already imports internal/httpx, which imports internal/enroll for the
+// registration-status chip — so the reverse import would cycle), so
+// register()'s own read of the shop's country duplicates the literal
+// instead. If the two ever disagree, a German till's auto-registration
+// silently stops sending a region hint at all — no error, no failing test
+// other than this one, just a merchant stuck on region="default" forever.
+func TestEnrollStoreCountrySettingsKeyMatchesCommon(t *testing.T) {
+	if enroll.StoreCountrySettingsKey != KeyCountry {
+		t.Fatalf("enroll.StoreCountrySettingsKey = %q, want it to match common.KeyCountry = %q", enroll.StoreCountrySettingsKey, KeyCountry)
 	}
 }
 
