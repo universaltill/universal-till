@@ -11,22 +11,21 @@
     <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" class="set-gap-s">
       <span class="muted">{{ T "settings.enrol.fleet_loading" }}</span>
     </div>
-    {{ if .isManager }}
+    <!-- ut-docs#867: unconditional — the POST is elevation-wired (checkOrElevate),
+         so a denied session gets the in-place PIN dialog, not a hidden form. -->
     <div class="set-divider">
       <p class="muted">{{ T "settings.enrol.claim_help" }}</p>
       <button class="btn btn-touch" hx-post="/api/enrol/claim-code" hx-target="#claim-code-msg" hx-swap="innerHTML">{{ T "settings.enrol.claim_btn" }}</button>
       <div id="claim-code-msg" aria-live="polite" class="set-gap-s"></div>
     </div>
-    {{ end }}
   {{ else }}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
-    {{ if .isManager }}
+    <!-- ut-docs#867: unconditional — elevation-wired (see claim-code above). -->
     <div class="set-row">
       <button class="btn btn-touch" hx-post="/api/enrol/now" hx-target="#enrol-msg" hx-swap="innerHTML">{{ T "settings.enrol.retry" }}</button>
       <span id="enrol-msg" aria-live="polite"></span>
     </div>
-    {{ end }}
   {{ end }}
 </div>
 {{ if .isManager }}
@@ -95,7 +94,11 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
-  {{ if .isManager }}
+  <!-- ut-docs#867: the display-mode/window-mode/launch-on-startup forms below
+       render unconditionally — all three POST to elevation-wired endpoints
+       (checkOrElevate), so the server-side PIN dialog is the authorization
+       layer. Only the exit-to-os form (its own AuthorizeManager flow, not
+       elevation) stays manager-gated. -->
   <!-- ut-docs#865: Content-Type reload guard, same as the till-name/save
        forms (#796) — an elevation prompt (text/html) must not trigger the
        unconditional navigate-away that used to sit here, which would
@@ -164,6 +167,7 @@
       <span id="launch-on-startup-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
     </div>
 
+    {{ if .isManager }}
     <div class="set-gap">
       <h3 style="margin:0 0 .3rem">{{ T "settings.display.exit_to_os_title" }}</h3>
       <p class="muted">{{ T "settings.display.exit_to_os_help" }}</p>
@@ -175,8 +179,8 @@
         <span id="exit-to-os-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
       </form>
     </div>
+    {{ end }}
   </div>
-  {{ end }}
 </div>
 
 <script>
@@ -238,7 +242,10 @@
 })();
 </script>
 
-{{ if and .isManager .payMethods }}
+<!-- ut-docs#867: .payMethods is a data-availability guard, not a permission
+     check — the payments-default/fee endpoints are elevation-wired, so the
+     card renders for any session once methods exist. -->
+{{ if .payMethods }}
 <div class="card">
   <h2>{{ T "settings.payments.title" }} {{ helpLink "payments" }}</h2>
   <p class="muted">{{ T "settings.payments.default_help" }}</p>
@@ -270,14 +277,17 @@
   {{ end }}
 </div>
 {{ end }}
-{{ if .isManager }}
 <div class="card settings-wide">
   <h2>{{ T "settings.backup.title" }} {{ helpLink "backups" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>
+  <!-- ut-docs#867: the Backup-now button is elevation-wired, so it renders for
+       every session; the backup file list below (names/dates, save-copy,
+       restore — flat-denied endpoints, real content) stays manager-only. -->
   <div class="set-row set-below">
     <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML">{{ T "settings.backup.now" }}</button>
     <span id="backup-msg" aria-live="polite"></span>
   </div>
+  {{ if .isManager }}
   {{ if .backups }}
   <table class="table">
     <thead><tr><th>{{ T "settings.backup.col_file" }}</th><th>{{ T "settings.backup.col_date" }}</th><th>{{ T "settings.backup.col_size" }}</th><th></th></tr></thead>
@@ -305,10 +315,19 @@
   {{ else }}
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
   {{ end }}
+  {{ end }}
 </div>
 
 <div class="card">
   <h2>🧹 {{ T "settings.data.title" }}</h2>
+  <!-- ut-docs#867: only the three elevation-wired actions in this card
+       (remove-demo-catalogue, dismiss-restore-prompt,
+       dismiss-pending-base-plugin) render unconditionally, each behind its
+       own DATA guard exactly as before. The destructive/PII tools —
+       reset-transactions, archive restore/purge, GDPR search/erase, catalog
+       cleanup, export — are flat-denied raw fetch() flows with no elevation
+       path, so they stay manager-only. -->
+  {{ if .isManager }}
   <p class="muted">{{ T "settings.data.help" }}</p>
   <p class="muted" style="color:#b45309">{{ T "settings.data.warn" }}</p>
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
@@ -365,6 +384,7 @@
     <span id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
   </div>
   <div id="cat-results" class="set-gap-s"></div>
+  {{ end }}
 
   {{ if .restorePromptDeferred }}
   <div id="restore-resume-block">
@@ -432,6 +452,7 @@
   </div>
   {{ end }}
 
+  {{ if .isManager }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.export.title" }}</h3>
   <p class="muted">{{ T "settings.data.export.help" }}</p>
@@ -461,8 +482,14 @@
   {{ else }}
   <p class="muted">{{ T "settings.data.export.none_installed" }}</p>
   {{ end }}
+  {{ end }}
 </div>
 
+<!-- ut-docs#867: this whole script block only drives the manager-gated tools
+     above (reset, archives, GDPR, catalog cleanup, export — the three
+     elevation-wired buttons in the card are plain htmx, no JS), so it stays
+     inside the same gate. -->
+{{ if .isManager }}
 <script>
 (function () {
   var btn = document.getElementById('data-reset-btn');
@@ -680,9 +707,13 @@
   });
 })();
 </script>
+{{ end }}
 <div class="card">
   <h2>🗄️ {{ T "settings.retention.title" }} {{ helpLink "reports" }}</h2>
   <p class="muted">{{ T "settings.retention.help" }}</p>
+  <!-- ut-docs#867: the mode form is elevation-wired and renders for every
+       session; the coverage summary and the export block below (real report
+       content; the export endpoint is flat-denied) stay manager-only. -->
   <!-- ut-docs#794 review finding (blocker): checkOrElevate's needsElevation
        response is ALSO a 2xx (200 + the elevation dialog HTML), so plain
        event.detail.successful can't distinguish "saved" from "needs a
@@ -708,6 +739,7 @@
     <span id="retention-msg" aria-live="polite"></span>
   </form>
   <p class="muted">{{ T "settings.retention.capacity_advisory" }}</p>
+  {{ if .isManager }}
   <p>
     {{ if eq .reportArchiveCoverage.Count 0 }}
     {{ T "settings.retention.coverage_none" }}
@@ -734,8 +766,11 @@
     <button class="btn secondary" id="retention-export-run-btn" data-testid="retention-export">{{ T "settings.retention.export_run_btn" }}</button>
     <span id="retention-export-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
   </div>
+  {{ end }}
 </div>
 
+<!-- ut-docs#867: drives only the manager-gated retention-export button above. -->
+{{ if .isManager }}
 <script>
 (function () {
   var btn = document.getElementById('retention-export-run-btn');
@@ -788,6 +823,9 @@
   });
 })();
 </script>
+{{ end }}
+<!-- ut-docs#867: printer card is not elevation-wired — stays manager-only. -->
+{{ if .isManager }}
 <div class="card">
   <h2>{{ T "settings.printer.title" }} {{ helpLink "printing" }}</h2>
   <p class="muted">{{ T "settings.printer.help" }}</p>
@@ -827,6 +865,9 @@
     </div>
   </form>
 </div>
+{{ end }}
+<!-- ut-docs#867: till-name and till-register are elevation-wired — the card
+     renders for every session (the .IsPrimaryTill data guard is unchanged). -->
 <div class="card">
   <h2>🔗 {{ T "tills.title" }}</h2>
   {{ if .IsPrimaryTill }}
@@ -868,6 +909,8 @@
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
 </div>
+<!-- ut-docs#867: invoice card is not elevation-wired — stays manager-only. -->
+{{ if .isManager }}
 <div class="card">
   <h2>🧾 {{ T "settings.invoice.title" }}</h2>
   <p class="muted">{{ T "settings.invoice.help" }}</p>
@@ -885,6 +928,9 @@
     </div>
   </form>
 </div>
+{{ end }}
+<!-- ut-docs#867: idle-lock, kiosk-idle-reset and telemetry below are all
+     elevation-wired — their cards render for every session. -->
 <div class="card">
   <h2>{{ T "settings.idle_lock.title" }}</h2>
   <p class="muted">{{ T "settings.idle_lock.help" }}</p>
@@ -940,8 +986,8 @@
     </div>
   </form>
 </div>
-{{ end }}
-{{ if .isManager }}
+<!-- ut-docs#867: currency and shop-type post to elevation-wired endpoints —
+     both cards render for every session. -->
 <div class="card">
   <h2>{{ T "settings.currency.title" }}</h2>
   <p class="muted">{{ T "settings.currency.help" }}</p>
@@ -974,6 +1020,12 @@
     <span id="shop-type-msg" aria-live="polite"></span>
   </form>
 </div>
+<!-- ut-docs#867 deliberate exception: /api/settings/upsert IS elevation-wired,
+     but this card stays manager-only anyway — it's an unbounded, un-field-scoped
+     browser over the entire settings key/value store with no concrete cashier
+     action to elevate, unlike every named form above. Do not "fix" this as a
+     missed site. -->
+{{ if .isManager }}
 <div class="card settings-wide">
   <h2>{{ T "settings.all" }}</h2>
   <table class="table">
