@@ -945,6 +945,7 @@
   "taxcodes.deactivate": "غیرفعال‌سازی",
   "taxcodes.err.duplicate_name": "کدی با این نام از قبل وجود دارد",
   "taxcodes.err.invalid_rate": "نرخ نامعتبر — عددی بین ۰ تا ۱۰۰ وارد کنید",
+  "taxcodes.err.name_required": "نام الزامی است",
   "taxcodes.err.not_found": "کد مالیات یافت نشد",
   "taxcodes.manage_overrides_link": "مدیریت استثناهای هر افزونه",
   "taxcodes.new": "کد مالیات جدید",

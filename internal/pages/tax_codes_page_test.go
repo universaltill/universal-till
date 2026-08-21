@@ -8,6 +8,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -74,6 +75,57 @@ func TestTaxCodesPage_RealSessionGatesByRole(t *testing.T) {
 				t.Fatalf("GET role=%s: got %d, want %d", role, rec.Code, want)
 			}
 		})
+	}
+}
+
+// Real-session role gating for the two WRITE endpoints, not just the GET
+// page. Review finding (ut-docs#259): before this test existed, deleting the
+// `canPerform` call from the POST /api/catalog/tax-codes/update handler
+// entirely left every one of the eleven tax-code tests green -- the endpoint
+// that rewrites a tax rate and retires a code had no gating coverage at all,
+// only the read-only page did. Asserting per-role here (not merely the
+// no-session 403 the *_RequiresPermission tests cover) is what makes a
+// regression to "any signed-in cashier may edit tax rates" fail.
+func TestTaxCodesAPI_RealSessionGatesByRole(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	endpoints := []struct {
+		name string
+		path string
+		form string
+	}{
+		{"create", "/api/catalog/tax-codes", "name=Gated+Code&rate=11"},
+		{"update", "/api/catalog/tax-codes/update", "id=tax_std&name=Standard&rate=20&isActive=1"},
+	}
+	for _, ep := range endpoints {
+		for role, want := range map[string]int{
+			"cashier": http.StatusForbidden, "manager": http.StatusOK,
+			"admin": http.StatusOK, "super_admin": http.StatusOK,
+		} {
+			t.Run(ep.name+"/"+role, func(t *testing.T) {
+				mux, dp := newTaxCodesTestDeps(t)
+				req := httptest.NewRequest(http.MethodPost, ep.path, strings.NewReader(ep.form))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				req = auth.WithUser(req, auth.User{ID: "u1", Role: role})
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, req)
+				if rec.Code != want {
+					t.Fatalf("POST %s role=%s: got %d, want %d (body %s)", ep.path, role, rec.Code, want, rec.Body.String())
+				}
+				if want != http.StatusForbidden {
+					return
+				}
+				// A 403 must also mean nothing was written: a gate that
+				// answers 403 after already having mutated the row would
+				// still pass a status-only assertion.
+				var n int
+				if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM tax_codes WHERE name = 'Gated Code'`).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n != 0 {
+					t.Fatalf("cashier's rejected create still wrote %d row(s)", n)
+				}
+			})
+		}
 	}
 }
 
@@ -157,7 +209,11 @@ func TestTaxCodesAPI_Create_MalformedRateRejected(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newTaxCodesTestDeps(t)
 
-	for _, bad := range []string{"abc", "-5", "NaN", "150", "1e300"} {
+	// "100" is deliberately NOT in this list -- it is the inclusive upper
+	// bound (see TestTaxCodesAPI_Create_AcceptsExactly100 below), matching
+	// catimport.ParseTaxRateBP and the input's max="100". "100.01" is the
+	// first rejected value above it.
+	for _, bad := range []string{"abc", "-5", "NaN", "150", "1e300", "100.01"} {
 		form := "name=Bad+Rate+" + bad + "&rate=" + bad
 		req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes", strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -166,6 +222,56 @@ func TestTaxCodesAPI_Create_MalformedRateRejected(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("rate=%q: expected 400, got %d body %s", bad, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// Review finding (ut-docs#259): the validator originally rejected `bp >=
+// 10000`, so a rate of exactly 100% was refused -- while the input carries
+// max="100", the error message says "between 0 and 100", and
+// catimport.ParseTaxRateBP accepts 100, meaning a tax code the CSV importer
+// creates happily could not be re-entered or re-saved by hand.
+func TestTaxCodesAPI_Create_AcceptsExactly100(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newTaxCodesTestDeps(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes",
+		strings.NewReader("name=Full+Rate&rate=100&takeawayRate=100"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rate=100: expected 200, got %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var rateBP, takeawayBP int
+	if err := dp.Db.QueryRow(
+		`SELECT rate_basis_points, takeaway_rate_basis_points FROM tax_codes WHERE name = 'Full Rate'`,
+	).Scan(&rateBP, &takeawayBP); err != nil {
+		t.Fatal(err)
+	}
+	if rateBP != 10000 || takeawayBP != 10000 {
+		t.Fatalf("expected 10000bp/10000bp persisted, got %d/%d", rateBP, takeawayBP)
+	}
+}
+
+// A blank/whitespace-only name must come back as the localised
+// taxcodes.err.name_required, not a bare English literal: the page's JS
+// renders the response body verbatim into its status line, and " " passes
+// the browser's `required` attribute. Review finding, ut-docs#259.
+func TestTaxCodesAPI_Create_BlankNameRejectedWithLocalisedMessage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newTaxCodesTestDeps(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes", strings.NewReader("name=+++&rate=10"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank name: expected 400, got %d body %s", rec.Code, rec.Body.String())
+	}
+	want := httpx.T("en", "taxcodes.err.name_required")
+	if got := strings.TrimSpace(rec.Body.String()); got != want {
+		t.Fatalf("blank name: body %q, want the localised %q", got, want)
 	}
 }
 

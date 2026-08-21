@@ -945,6 +945,7 @@
   "taxcodes.deactivate": "Deactivate",
   "taxcodes.err.duplicate_name": "A tax code with this name already exists",
   "taxcodes.err.invalid_rate": "Enter a valid rate between 0 and 100",
+  "taxcodes.err.name_required": "Name is required",
   "taxcodes.err.not_found": "Tax code not found",
   "taxcodes.manage_overrides_link": "Manage per-plugin overrides",
   "taxcodes.new": "New tax code",
