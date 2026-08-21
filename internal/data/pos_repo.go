@@ -3599,7 +3599,8 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 }
 
 func (r *POSRepo) ListRecentSales(ctx context.Context, limit int) ([]SaleJournalEntry, error) {
-	return r.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: limit})
+	entries, _, err := r.ListSalesJournal(ctx, SalesJournalFilter{AllTills: true, Limit: limit})
+	return entries, err
 }
 
 // ListSalesJournal is the general sales-journal read: ListRecentSales (every
@@ -3610,7 +3611,14 @@ func (r *POSRepo) ListRecentSales(ctx context.Context, limit int) ([]SaleJournal
 // no primary/replica special-casing needed (ADR-0011: only the primary's
 // local sales table ever accumulates other tills' journaled sales, so a
 // replica's own local rows are all this query can ever find there).
-func (r *POSRepo) ListSalesJournal(ctx context.Context, f SalesJournalFilter) ([]SaleJournalEntry, error) {
+//
+// The bool return is ut-docs#774: true when more rows exist for this filter
+// than limit — detected by asking for one extra row rather than paying for a
+// separate COUNT(*). Day, when set, matches the shop's LOCAL calendar day
+// (date(s.created_at, 'localtime'), same convention DayTotal already uses)
+// rather than the raw stored UTC date, since Day comes from a browser date
+// picker in the operator's own local time.
+func (r *POSRepo) ListSalesJournal(ctx context.Context, f SalesJournalFilter) ([]SaleJournalEntry, bool, error) {
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 5
@@ -3627,29 +3635,33 @@ WHERE 1=1
 		args = append(args, f.TillID)
 	}
 	if f.Day != "" {
-		query += ` AND date(s.created_at) = date(?)`
+		query += ` AND date(s.created_at, 'localtime') = date(?)`
 		args = append(args, f.Day)
 	}
 	query += ` ORDER BY s.created_at DESC LIMIT ?`
-	args = append(args, limit)
+	args = append(args, limit+1)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list sales journal: %w", err)
+		return nil, false, fmt.Errorf("list sales journal: %w", err)
 	}
 	defer rows.Close()
 	var out []SaleJournalEntry
 	for rows.Next() {
 		var entry SaleJournalEntry
 		if err := rows.Scan(&entry.ReceiptNo, &entry.Total, &entry.TenderType, &entry.SyncStatus, &entry.CreatedAt, &entry.TillID, &entry.TillName); err != nil {
-			return nil, fmt.Errorf("scan sales journal: %w", err)
+			return nil, false, fmt.Errorf("scan sales journal: %w", err)
 		}
 		out = append(out, entry)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list sales journal: %w", err)
+		return nil, false, fmt.Errorf("list sales journal: %w", err)
 	}
-	return out, nil
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
 }
 
 func (r *POSRepo) ListQueuedSales(ctx context.Context, limit int, asOf string) ([]QueuedSale, error) {
