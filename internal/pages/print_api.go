@@ -333,11 +333,10 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	// Printer settings (manager): mode/address/device/charset/auto-print.
+	// ut-docs#866: checkOrElevate/InsertAuditElevated (#557/#796) — same
+	// mechanism as settings_page.go's own sites. ParseForm moved ahead of
+	// the gate solely so override_pin is readable (ut-docs#796 convention).
 	mux.HandleFunc("POST /api/settings/printer", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
-			return
-		}
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
 		if mode != "off" && mode != "network" && mode != "device" && mode != "system" {
@@ -348,17 +347,37 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if charset != "ascii" {
 			charset = "utf8"
 		}
-		_ = d.Settings.Set(r.Context(), keyPrinterMode, mode)
-		_ = d.Settings.Set(r.Context(), keyPrinterAddress, strings.TrimSpace(r.Form.Get("address")))
-		_ = d.Settings.Set(r.Context(), keyPrinterDevice, strings.TrimSpace(r.Form.Get("device")))
-		_ = d.Settings.Set(r.Context(), keyPrinterCharset, charset)
-		_ = d.Settings.Set(r.Context(), keyPrinterKitchen, strings.TrimSpace(r.Form.Get("kitchenAddr")))
+		address := strings.TrimSpace(r.Form.Get("address"))
+		device := strings.TrimSpace(r.Form.Get("device"))
+		kitchenAddr := strings.TrimSpace(r.Form.Get("kitchenAddr"))
 		auto := "false"
 		if r.Form.Get("autoPrint") == "on" || r.Form.Get("autoPrint") == "1" {
 			auto = "true"
 		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/settings/printer", "#printer-settings-msg",
+				httpx.T(locale, "elevation.summary.printer_settings"),
+				[]elevationHiddenField{
+					{Name: "mode", Value: mode},
+					{Name: "charset", Value: charset},
+					{Name: "address", Value: address},
+					{Name: "device", Value: device},
+					{Name: "kitchenAddr", Value: kitchenAddr},
+					{Name: "autoPrint", Value: r.Form.Get("autoPrint")},
+				}, elev)
+			return
+		}
+		_ = d.Settings.Set(r.Context(), keyPrinterMode, mode)
+		_ = d.Settings.Set(r.Context(), keyPrinterAddress, address)
+		_ = d.Settings.Set(r.Context(), keyPrinterDevice, device)
+		_ = d.Settings.Set(r.Context(), keyPrinterCharset, charset)
+		_ = d.Settings.Set(r.Context(), keyPrinterKitchen, kitchenAddr)
 		_ = d.Settings.Set(r.Context(), keyPrinterAuto, auto)
-		w.WriteHeader(http.StatusNoContent)
+		settingsAudit(r, posRepo, elev, "settings", "printer", "printer_settings_changed",
+			map[string]any{"mode": mode, "charset": charset, "auto_print": auto})
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Test print — the moment of truth for printer setup.

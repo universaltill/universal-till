@@ -1544,6 +1544,8 @@
   "elevation.summary.user_role_change": "Change %s's role from %s to %s.",
   "elevation.summary.payments_default": "Set the preferred payment method to %s.",
   "elevation.summary.payments_fee": "Set the %s payment fee to %s%% plus %s fixed per transaction.",
+  "elevation.summary.printer_settings": "Change the printer settings.",
+  "elevation.summary.invoice_seller": "Change the invoice seller details.",
   "elevation.summary.remove_demo_data": "Permanently remove all untouched sample data (catalogue items, customers and promo codes).",
   "elevation.summary.shop_type": "Change the shop type to %s.",
   "elevation.summary.till_name": "Rename this till to \"%s\".",

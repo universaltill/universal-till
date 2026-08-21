@@ -3,6 +3,7 @@ package pages
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
@@ -98,17 +99,31 @@ func TestReceiptPrintInvoiceEndpoints_RealSessionGatesByRole(t *testing.T) {
 
 	cases := []struct {
 		name, method, path string
-		denyCode           int // the gate's own refusal status; StatusForbidden unless noted
+		denyCode           int    // the gate's own refusal status; StatusForbidden unless noted
+		body               string // ut-docs#866: non-empty only where a field-validation
+		// check now runs BEFORE checkOrElevate (the established
+		// validate-before-elevate convention, settings_page.go's
+		// payments-fee handler) and would otherwise reject the empty
+		// fixture body with 400 before the elevation gate is ever reached.
 	}{
-		{"receipt designer page", http.MethodGet, "/receipt-designer", http.StatusSeeOther},
-		{"receipt designer preview", http.MethodPost, "/api/receipt-designer/preview", http.StatusForbidden},
-		{"receipt designer save", http.MethodPost, "/api/receipt-designer/save", http.StatusForbidden},
-		{"receipt designer logo", http.MethodPost, "/api/receipt-designer/logo", http.StatusForbidden},
-		{"receipt designer test print", http.MethodPost, "/api/receipt-designer/test", http.StatusForbidden},
-		{"printer settings", http.MethodPost, "/api/settings/printer", http.StatusForbidden},
-		{"print test", http.MethodPost, "/api/print/test", http.StatusForbidden},
-		{"invoices register page", http.MethodGet, "/invoices", http.StatusSeeOther},
-		{"invoices export", http.MethodGet, "/api/invoices/export", http.StatusForbidden},
+		{"receipt designer page", http.MethodGet, "/receipt-designer", http.StatusSeeOther, ""},
+		{"receipt designer preview", http.MethodPost, "/api/receipt-designer/preview", http.StatusForbidden, ""},
+		{"receipt designer save", http.MethodPost, "/api/receipt-designer/save", http.StatusForbidden, ""},
+		{"receipt designer logo", http.MethodPost, "/api/receipt-designer/logo", http.StatusForbidden, ""},
+		{"receipt designer test print", http.MethodPost, "/api/receipt-designer/test", http.StatusForbidden, ""},
+		// ut-docs#866: printer settings and invoice seller settings are now
+		// wired onto checkOrElevate (mutating + audit-writing, same as
+		// settings_page.go's own sites) — a denied cashier's "gate refusal"
+		// is a 200 elevation prompt, not a flat 403. print test/preview/
+		// designer-save/logo/test-print stay on the flat canPerform gate
+		// (ephemeral or not audit-writing; see print_api.go/receipt_
+		// designer.go's own comments), so their denyCode is unchanged.
+		// mode=off is a valid mode, so this reaches checkOrElevate instead
+		// of tripping the pre-elevation mode-validation 400.
+		{"printer settings", http.MethodPost, "/api/settings/printer", http.StatusOK, "mode=off"},
+		{"print test", http.MethodPost, "/api/print/test", http.StatusForbidden, ""},
+		{"invoices register page", http.MethodGet, "/invoices", http.StatusSeeOther, ""},
+		{"invoices export", http.MethodGet, "/api/invoices/export", http.StatusForbidden, ""},
 		// Must run LAST: its manager/admin/super_admin "past gate" requests
 		// POST a blank form, which overwrites the seller identity setSeller
 		// configured above with empty strings -- if this ran earlier, the
@@ -119,12 +134,21 @@ func TestReceiptPrintInvoiceEndpoints_RealSessionGatesByRole(t *testing.T) {
 		// re-verified by review: reordering this case first does make the
 		// register-page subtests fail as described, confirming the
 		// ordering dependency is real, not just asserted in a comment.
-		{"invoice seller settings", http.MethodPost, "/api/settings/invoice", http.StatusForbidden},
+		{"invoice seller settings", http.MethodPost, "/api/settings/invoice", http.StatusOK, ""},
+	}
+
+	newReq := func(method, path, body string) *http.Request {
+		if body == "" {
+			return httptest.NewRequest(method, path, nil)
+		}
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name+"/cashier_denied", func(t *testing.T) {
-			req := auth.WithUser(httptest.NewRequest(tc.method, tc.path, nil), auth.User{ID: "u1", Role: "cashier"})
+			req := auth.WithUser(newReq(tc.method, tc.path, tc.body), auth.User{ID: "u1", Role: "cashier"})
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 			if rec.Code != tc.denyCode {
@@ -133,7 +157,7 @@ func TestReceiptPrintInvoiceEndpoints_RealSessionGatesByRole(t *testing.T) {
 		})
 		for _, role := range []string{"manager", "admin", "super_admin"} {
 			t.Run(tc.name+"/"+role+"_past_gate", func(t *testing.T) {
-				req := auth.WithUser(httptest.NewRequest(tc.method, tc.path, nil), auth.User{ID: "u1", Role: role})
+				req := auth.WithUser(newReq(tc.method, tc.path, tc.body), auth.User{ID: "u1", Role: role})
 				rec := httptest.NewRecorder()
 				mux.ServeHTTP(rec, req)
 				if rec.Code == tc.denyCode {

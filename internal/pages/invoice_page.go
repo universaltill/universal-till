@@ -245,22 +245,31 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 	invRepo := data.NewInvoiceRepo(d.Db)
 
 	// Seller identity (manager). Configuring it turns the feature on.
+	// ut-docs#866: checkOrElevate/InsertAuditElevated (#557/#796) — same
+	// mechanism as settings_page.go's own sites. ParseForm moved ahead of
+	// the gate solely so override_pin is readable (ut-docs#796 convention).
 	mux.HandleFunc("POST /api/settings/invoice", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+		_ = r.ParseForm()
+		sellerName := strings.TrimSpace(r.Form.Get("seller_name"))
+		sellerAddress := strings.TrimSpace(r.Form.Get("seller_address"))
+		sellerVATNo := strings.TrimSpace(r.Form.Get("seller_vat_no"))
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/settings/invoice", "#invoice-settings-msg",
+				httpx.T(locale, "elevation.summary.invoice_seller"),
+				[]elevationHiddenField{
+					{Name: "seller_name", Value: sellerName},
+					{Name: "seller_address", Value: sellerAddress},
+					{Name: "seller_vat_no", Value: sellerVATNo},
+				}, elev)
 			return
 		}
-		_ = r.ParseForm()
-		for key, form := range map[string]string{
-			keyInvoiceSellerName:    "seller_name",
-			keyInvoiceSellerAddress: "seller_address",
-			keyInvoiceSellerVATNo:   "seller_vat_no",
-		} {
-			_ = d.Settings.Set(r.Context(), key, strings.TrimSpace(r.Form.Get(form)))
-		}
-		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "settings", "invoice", "invoice_seller_updated",
-			nil, time.Now().UTC().Format(time.RFC3339), "")
-		w.WriteHeader(http.StatusNoContent)
+		_ = d.Settings.Set(r.Context(), keyInvoiceSellerName, sellerName)
+		_ = d.Settings.Set(r.Context(), keyInvoiceSellerAddress, sellerAddress)
+		_ = d.Settings.Set(r.Context(), keyInvoiceSellerVATNo, sellerVATNo)
+		settingsAudit(r, posRepo, elev, "settings", "invoice", "invoice_seller_updated", nil)
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Issue an invoice for a completed sale (idempotent: an existing
