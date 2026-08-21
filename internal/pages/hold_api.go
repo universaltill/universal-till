@@ -16,7 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
-// maxHoldLabelRunes bounds a cashier-typed tab name (e.g. "Haaft 1") --
+// maxHoldLabelRunes bounds a cashier-typed tab name (e.g. "Tab 1") --
 // unlike the previous CustomerName/timestamp fallback, this field is now
 // free text straight off the request, and it's re-rendered on every sale
 // screen load until resumed.
