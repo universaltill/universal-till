@@ -1540,5 +1540,13 @@
   "elevation.summary.user_pin_set": "%s için yeni bir PIN belirle.",
   "elevation.summary.user_activate": "%s kullanıcısını etkinleştir.",
   "elevation.summary.user_deactivate": "%s kullanıcısını devre dışı bırak.",
-  "elevation.summary.user_role_change": "%s kullanıcısının rolünü %s'den %s'e değiştir."
+  "elevation.summary.user_role_change": "%s kullanıcısının rolünü %s'den %s'e değiştir.",
+  "elevation.summary.payments_default": "Tercih edilen ödeme yöntemini %s olarak ayarla.",
+  "elevation.summary.payments_fee": "%s ödeme yöntemi ücretini işlem başına %%%s artı %s sabit tutar olarak ayarla.",
+  "elevation.summary.remove_demo_data": "Dokunulmamış tüm örnek verileri (katalog ürünleri, müşteriler ve promosyon kodları) kalıcı olarak kaldır.",
+  "elevation.summary.shop_type": "Mağaza türünü %s olarak değiştir.",
+  "elevation.summary.till_name": "Bu kasayı \"%s\" olarak yeniden adlandır.",
+  "elevation.summary.till_register": "Bu kasayı %s yazar kasasına ata.",
+  "elevation.summary.store_save": "Mağazanın para birimi, ülke, bölge veya vergi oranı değişikliklerini kaydet.",
+  "elevation.summary.setting_upsert": "\"%s\" ayarını \"%s\" olarak ayarla."
 }
