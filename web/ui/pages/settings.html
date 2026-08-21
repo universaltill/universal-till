@@ -837,12 +837,17 @@
 })();
 </script>
 {{ end }}
-<!-- ut-docs#867: printer card is not elevation-wired — stays manager-only. -->
-{{ if .isManager }}
+<!-- ut-docs#866: printer settings are elevation-wired — the card renders for
+     every session (server-side checkOrElevate is the real gate). -->
 <div class="card">
   <h2>{{ T "settings.printer.title" }} {{ helpLink "printing" }}</h2>
   <p class="muted">{{ T "settings.printer.help" }}</p>
-  <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="window.location.reload()">
+  <!-- ut-docs#794 review finding: the elevation prompt is itself a 2xx
+       (200 + dialog HTML), so plain event.detail.successful can't tell
+       "saved" apart from "needs a manager's PIN" — Content-Type
+       (text/html only on the prompt; the real 204 success has none) is
+       the same signal the report-retention form above uses. -->
+  <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $p := .printer }}
     <div class="field-pair">
       <label>{{ T "settings.printer.mode" }}
@@ -872,13 +877,27 @@
     <label><input type="checkbox" name="autoPrint" {{ if $p.AutoPrint }}checked{{ end }}> {{ T "settings.printer.auto" }}</label>
     <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
       <button class="btn" type="submit">{{ T "settings.printer.apply" }}</button>
+      <!-- ut-docs#866 review (N3): un-gating this card newly exposes these
+           two controls to a cashier — both are still flat-denied (test
+           print: no audit trail to elevate; receipt-designer: a full-page
+           GET redirect, ut-docs#870), so an un-gated button/link here would
+           be the exact "visible but silently blocked" bug #867/#866 exist
+           to remove — a cashier's click on Test print would fall through
+           to app.js's generic server-error banner, misreporting a
+           permission denial as a server fault. Kept manager-only. -->
+      {{ if .isManager }}
       <button class="btn secondary" type="button" hx-post="/api/print/test" hx-target="#print-test-msg" hx-swap="innerHTML">{{ T "settings.printer.test" }}</button>
       <a class="btn secondary" href="/receipt-designer">{{ T "designer.receipt.title" }}</a>
       <span id="print-test-msg" aria-live="polite"></span>
+      {{ end }}
     </div>
+    <!-- Exists purely as the elevation dialog retry's hx-target (see the
+         report-retention form's identical span) — the "test" button above
+         keeps its own #print-test-msg target unchanged; that flat-denied
+         endpoint isn't part of this mechanism (ut-docs#866). -->
+    <span id="printer-settings-msg" aria-live="polite"></span>
   </form>
 </div>
-{{ end }}
 <!-- ut-docs#867: till-name and till-register are elevation-wired — the card
      renders for every session (the .IsPrimaryTill data guard is unchanged). -->
 <div class="card">
@@ -922,12 +941,16 @@
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
 </div>
-<!-- ut-docs#867: invoice card is not elevation-wired — stays manager-only. -->
-{{ if .isManager }}
+<!-- ut-docs#866: invoice seller identity is elevation-wired — the card
+     renders for every session (server-side checkOrElevate is the real
+     gate). -->
 <div class="card">
   <h2>🧾 {{ T "settings.invoice.title" }}</h2>
   <p class="muted">{{ T "settings.invoice.help" }}</p>
-  <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="window.location.reload()">
+  <!-- ut-docs#794 review finding: same Content-Type reload guard as the
+       report-retention form above — the elevation prompt is itself a 2xx
+       (200 + dialog HTML). -->
+  <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
     <div class="field-pair">
       <label>{{ T "settings.invoice.seller_name" }}
         <input type="text" name="seller_name" value="{{ index .settingsMap "invoice.seller_name" }}"></label>
@@ -939,9 +962,10 @@
     <div class="set-gap-s">
       <button class="btn" type="submit">{{ T "settings.invoice.apply" }}</button>
     </div>
+    <!-- Exists purely as the elevation dialog retry's hx-target. -->
+    <span id="invoice-settings-msg" aria-live="polite"></span>
   </form>
 </div>
-{{ end }}
 <!-- ut-docs#867: idle-lock, kiosk-idle-reset and telemetry below are all
      elevation-wired — their cards render for every session. -->
 <div class="card">

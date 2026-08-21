@@ -173,6 +173,100 @@ func TestSettingsTillRegister_ElevationFlow(t *testing.T) {
 	assertElevatedAudit(t, d, "till_register_changed", mgrID, cashierID)
 }
 
+// Printer settings (ut-docs#866): same shape as till-register above — mode
+// validation still rejects garbage BEFORE any PIN is asked for (ut-docs#557
+// convention, review finding N1 on #866 — no test previously pinned this
+// ordering with a real DENIED session; TestPostSettingsPrinter_
+// ValidatesModeAndCharset in print_api_test.go only covers the ALLOWED
+// path, which can't distinguish "validated first" from "elevation happens
+// to also allow it"), and a valid approver PIN writes the setting with a
+// dual-attributed audit row — this endpoint had NO audit write at all
+// before #866, so this is the first test to prove one lands correctly.
+// newFullAuthDeps doesn't mount print_api.go's routes by default (unlike
+// registerSettings), so registerPrintAPI is added here explicitly.
+func TestPostSettingsPrinter_ElevationFlow(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	registerPrintAPI(mux, d)
+	mgrID, cashierID := seedElevationUsers(t, d)
+	cashier := auth.User{ID: cashierID, Role: "cashier"}
+
+	// A cashier posting an invalid mode gets the 400 (validation runs
+	// before elevation) — never a PIN prompt for a request that would be
+	// rejected anyway.
+	rec := postForm(mux, "/api/settings/printer", url.Values{"mode": {"bogus"}}, &cashier)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid mode as cashier = %d, want 400 before any elevation", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("invalid-mode 400 must not carry the elevation prompt: %s", rec.Body.String())
+	}
+
+	// Deny, no PIN.
+	rec = postForm(mux, "/api/settings/printer", url.Values{"mode": {"network"}, "address": {"192.168.1.50:9100"}}, &cashier)
+	assertElevationPrompt(t, "no pin", rec.Code, rec.Body.String())
+	if _, ok, _ := d.Settings.Get(t.Context(), keyPrinterMode); ok {
+		t.Fatal("denied printer save must not have written the setting")
+	}
+
+	// Deny, wrong PIN.
+	rec = postForm(mux, "/api/settings/printer",
+		url.Values{"mode": {"network"}, "address": {"192.168.1.50:9100"}, "override_pin": {"000000"}}, &cashier)
+	assertElevationPrompt(t, "wrong pin", rec.Code, rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "login-error") {
+		t.Fatalf("failed PIN attempt must render the inline error: %s", rec.Body.String())
+	}
+
+	// Valid approver PIN.
+	rec = postForm(mux, "/api/settings/printer",
+		url.Values{"mode": {"network"}, "address": {"192.168.1.50:9100"}, "override_pin": {"555222"}}, &cashier)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("elevated printer save = %d body=%s, want 200 with a confirmation", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), keyPrinterMode); v != "network" {
+		t.Fatalf("elevated printer save wrote mode=%q, want network", v)
+	}
+	assertElevatedAudit(t, d, "printer_settings_changed", mgrID, cashierID)
+}
+
+// Invoice seller identity (ut-docs#866): no field validation on this
+// endpoint (unlike printer's mode/charset), so this only exercises deny/
+// elevate — the dual-attributed audit row is the coverage gap review
+// finding N1 flagged (this endpoint already had an audit write before
+// #866, but no prior test proved it survived the checkOrElevate wiring
+// with the correct approver/blocked-actor split).
+func TestPostSettingsInvoice_ElevationFlow(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	registerInvoices(mux, d)
+	mgrID, cashierID := seedElevationUsers(t, d)
+	cashier := auth.User{ID: cashierID, Role: "cashier"}
+
+	// Deny, no PIN.
+	rec := postForm(mux, "/api/settings/invoice", url.Values{"seller_name": {"Acme Ltd"}}, &cashier)
+	assertElevationPrompt(t, "no pin", rec.Code, rec.Body.String())
+	if _, ok, _ := d.Settings.Get(t.Context(), keyInvoiceSellerName); ok {
+		t.Fatal("denied invoice save must not have written the setting")
+	}
+
+	// Deny, wrong PIN.
+	rec = postForm(mux, "/api/settings/invoice",
+		url.Values{"seller_name": {"Acme Ltd"}, "override_pin": {"000000"}}, &cashier)
+	assertElevationPrompt(t, "wrong pin", rec.Code, rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "login-error") {
+		t.Fatalf("failed PIN attempt must render the inline error: %s", rec.Body.String())
+	}
+
+	// Valid approver PIN.
+	rec = postForm(mux, "/api/settings/invoice",
+		url.Values{"seller_name": {"Acme Ltd"}, "override_pin": {"555222"}}, &cashier)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("elevated invoice save = %d body=%s, want 200 with a confirmation", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), keyInvoiceSellerName); v != "Acme Ltd" {
+		t.Fatalf("elevated invoice save wrote seller_name=%q, want Acme Ltd", v)
+	}
+	assertElevatedAudit(t, d, "invoice_seller_updated", mgrID, cashierID)
+}
+
 // Remove-demo-catalogue — the irreversible one — against a REAL migrated DB
 // (newRealDBDeps: full catalogue tables, real audit_log FKs): denied
 // attempts leave every sample row in place; a valid approver PIN runs the
