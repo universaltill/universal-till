@@ -95,9 +95,17 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   (`internal/plugins/manifest_verifier.go`). Never run an unverified plugin.
 
 ## Before committing
-- `go build ./... && go test ./...` and `bash scripts/ci/guard-data-access.sh`
-  and `bash scripts/ci/guard-kiosk-engine.sh`
-  and `bash scripts/ci/guard-plugin-menu-read.sh`.
+- `gofmt -l .` (no output), `go build ./...`, `go test ./...`, and every
+  CI-blocking guard in `.github/workflows/ci.yml`'s `build` job — currently:
+  `guard-data-access.sh`, `guard-kiosk-engine.sh`, `guard-plugin-menu-read.sh`,
+  `guard-i18n.sh`, `guard-compliance-claims.sh`, `guard-docs-shots.sh`,
+  `guard-help-topics.sh`, `guard-webkit-version.sh`,
+  `guard-kiosk-launch-flags.sh`, `guard-android-status-address.sh`,
+  `guard-android-i18n.sh`, `guard-emoji-font.sh`, `guard-htmx-loaded.sh`,
+  `guard-autofill-suppression.sh`, `check-brand-assets.sh`, and
+  `guard-makefile-version.sh` (all under `scripts/ci/`). This list drifts as
+  guards are added — check the workflow file's `build` job for the
+  authoritative, current one rather than trusting this snapshot.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 
