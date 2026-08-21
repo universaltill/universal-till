@@ -334,6 +334,7 @@
   "journal.till_last_synced": "آخر اتصال من %s: %s",
   "journal.till_unknown": "صندوق غير معروف",
   "journal.title": "سجل المبيعات",
+  "journal.truncated": "يتم عرض أحدث 100 عملية — للاطلاع على الباقي، قم بالتصفية حسب الصندوق أو اليوم.",
   "kiosk.checkout_start": "بيع جديد",
   "kiosk.inventory": "المخزون",
   "kiosk.offline": "وضع دون اتصال",

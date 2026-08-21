@@ -36,6 +36,12 @@ type JournalViewData struct {
 	// internal/pages/journal_page.go for how it's computed.
 	IsReplica                  bool
 	ExplicitCrossTillOnReplica bool
+
+	// Truncated is ut-docs#774: true when ListSalesJournal capped the
+	// result at its limit and more rows exist for this filter — the
+	// sale-screen OOB mini-widget (see above) never sets this either, so
+	// it never shows the notice.
+	Truncated bool
 }
 
 func NewJournalView(funcs template.FuncMap) (*JournalView, error) {

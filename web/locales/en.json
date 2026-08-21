@@ -334,6 +334,7 @@
   "journal.till_last_synced": "Last contact from %s: %s",
   "journal.till_unknown": "Unknown till",
   "journal.title": "Journal",
+  "journal.truncated": "Showing the latest 100 — narrow by till or day to see the rest.",
   "kiosk.checkout_start": "New Sale",
   "kiosk.inventory": "Inventory",
   "kiosk.offline": "Offline mode",
