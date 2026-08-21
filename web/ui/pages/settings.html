@@ -318,6 +318,12 @@
   {{ end }}
 </div>
 
+<!-- ut-docs#867 review nit: with every guard below false (no demo sample,
+     no pending base plugin, no deferred restore prompt) a non-manager
+     session would otherwise get an empty card containing only this
+     heading — gate the whole card on "isManager OR any of the
+     elevation-wired sub-features actually has something to show". -->
+{{ if or .isManager (gt .sampleCount 0) .pendingBasePlugins .restorePromptDeferred }}
 <div class="card">
   <h2>🧹 {{ T "settings.data.title" }}</h2>
   <!-- ut-docs#867: only the three elevation-wired actions in this card
@@ -484,6 +490,7 @@
   {{ end }}
   {{ end }}
 </div>
+{{ end }}
 
 <!-- ut-docs#867: this whole script block only drives the manager-gated tools
      above (reset, archives, GDPR, catalog cleanup, export — the three
@@ -712,8 +719,14 @@
   <h2>🗄️ {{ T "settings.retention.title" }} {{ helpLink "reports" }}</h2>
   <p class="muted">{{ T "settings.retention.help" }}</p>
   <!-- ut-docs#867: the mode form is elevation-wired and renders for every
-       session; the coverage summary and the export block below (real report
-       content; the export endpoint is flat-denied) stay manager-only. -->
+       session; the coverage summary and the export block below stay
+       manager-only because they're real report content (archive coverage
+       dates/counts, a sales-report export) — the export endpoint
+       (/api/reports/archive/export) is itself elevation-wired too, but
+       showing the button/date-picker unconditionally would still let a
+       cashier browse coverage stats and attempt to pull sales data, which
+       is content this card is meant to keep manager-only regardless of the
+       PIN gate on the actual download. -->
   <!-- ut-docs#794 review finding (blocker): checkOrElevate's needsElevation
        response is ALSO a 2xx (200 + the elevation dialog HTML), so plain
        event.detail.successful can't distinguish "saved" from "needs a
