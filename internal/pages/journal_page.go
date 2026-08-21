@@ -131,7 +131,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			f.AllTills = true
 		}
 
-		entries, err := repo.ListSalesJournal(r.Context(), f)
+		entries, truncated, err := repo.ListSalesJournal(r.Context(), f)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -160,6 +160,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			Day:                        day,
 			IsReplica:                  isReplica,
 			ExplicitCrossTillOnReplica: explicitCrossTillOnReplica,
+			Truncated:                  truncated,
 		})
 	})
 }

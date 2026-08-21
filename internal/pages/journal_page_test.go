@@ -212,6 +212,79 @@ func TestJournalFragmentLimitsAndFullView(t *testing.T) {
 	}
 }
 
+// TestJournalUIFilters_TruncatedNotice covers ut-docs#774: the full view
+// (?limit=full, capped at 100 by ListSalesJournal) shows a notice when more
+// rows exist for the active filter than the cap, and shows no notice when
+// they don't.
+func TestJournalUIFilters_TruncatedNotice(t *testing.T) {
+	mux, d := newJournalMux(t)
+	for i := 1; i <= 101; i++ {
+		id := fmt.Sprintf("sale-tr-%d", i)
+		receipt := fmt.Sprintf("TR-%03d", i)
+		if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at)
+			VALUES (?, ?, 'completed', 'sale', 'cash', 0, 'synced', 'GBP', 100, 0, 20, 120, datetime('now', ?))`, id, receipt, fmt.Sprintf("-%d minutes", i)); err != nil {
+			t.Fatalf("seed sale %d: %v", i, err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/journal?limit=full", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/journal?limit=full = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Showing the latest 100") {
+		t.Fatalf("101 rows over a 100 cap must show the truncation notice: %s", rec.Body.String())
+	}
+}
+
+// TestJournalUIFilters_NoTruncatedNoticeUnderCap is the negative case for
+// TestJournalUIFilters_TruncatedNotice: fewer rows than the cap shows no
+// truncation notice.
+func TestJournalUIFilters_NoTruncatedNoticeUnderCap(t *testing.T) {
+	mux, d := newJournalMux(t)
+	for i := 1; i <= 3; i++ {
+		id := fmt.Sprintf("sale-notr-%d", i)
+		receipt := fmt.Sprintf("NT-%03d", i)
+		if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at)
+			VALUES (?, ?, 'completed', 'sale', 'cash', 0, 'synced', 'GBP', 100, 0, 20, 120, datetime('now', ?))`, id, receipt, fmt.Sprintf("-%d minutes", i)); err != nil {
+			t.Fatalf("seed sale %d: %v", i, err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/journal?limit=full", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/journal?limit=full = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "Showing the latest 100") {
+		t.Fatalf("3 rows under the 100 cap must not show the truncation notice: %s", rec.Body.String())
+	}
+}
+
+// TestJournalUIFilters_NoTruncatedNoticeAtExactCap is the fencepost case for
+// TestJournalUIFilters_TruncatedNotice/NoTruncatedNoticeUnderCap: exactly 100
+// rows (the cap itself, not one over it) must not show the notice.
+func TestJournalUIFilters_NoTruncatedNoticeAtExactCap(t *testing.T) {
+	mux, d := newJournalMux(t)
+	for i := 1; i <= 100; i++ {
+		id := fmt.Sprintf("sale-exact-%d", i)
+		receipt := fmt.Sprintf("EX-%03d", i)
+		if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at)
+			VALUES (?, ?, 'completed', 'sale', 'cash', 0, 'synced', 'GBP', 100, 0, 20, 120, datetime('now', ?))`, id, receipt, fmt.Sprintf("-%d minutes", i)); err != nil {
+			t.Fatalf("seed sale %d: %v", i, err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/journal?limit=full", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/journal?limit=full = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "Showing the latest 100") {
+		t.Fatalf("exactly 100 rows (the cap itself) must not show the truncation notice: %s", rec.Body.String())
+	}
+}
+
 // TestJournalUIFilters_TillAndDay covers ut-docs#550 plus the B3 review fix:
 // /ui/journal with no "till" param at all defaults to EVERY till's sales
 // (preserving pre-#550 behavior, matching ListRecentSales and the
