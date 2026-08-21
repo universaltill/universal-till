@@ -891,6 +891,7 @@ a.btn, a.btn:hover { text-decoration: none; }
 .journal-filters label { display: flex; flex-direction: column; gap: .2rem;
                           font-size: .78rem; color: var(--muted); }
 .journal-till-status { margin-block-end: .5rem; font-size: .8rem; }
+.journal-truncated-notice { margin-block-end: .5rem; font-size: .8rem; }
 /* B2 (ut-docs#550 review): an honest "can't show that here" notice for an
    explicit cross-till ask on a replica -- same warn tint .sync-chip.warn /
    .tag.warn already use, so it reads as a real notice, not muted status text. */

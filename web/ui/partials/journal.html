@@ -27,6 +27,9 @@
     {{ if .ExplicitCrossTillOnReplica }}
       <div class="journal-replica-notice">{{ T "journal.replica_no_cross_till" }}</div>
     {{ end }}
+    {{ if .Truncated }}
+      <div class="journal-truncated-notice muted">{{ T "journal.truncated" }}</div>
+    {{ end }}
   {{ end }}
   {{ if .Entries }}
     <table>

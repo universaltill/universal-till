@@ -334,6 +334,7 @@
   "journal.till_last_synced": "آخرین ارتباط از %s: %s",
   "journal.till_unknown": "صندوق ناشناس",
   "journal.title": "دفتر فروش",
+  "journal.truncated": "آخرین ۱۰۰ مورد نمایش داده می‌شود — برای دیدن بقیه، بر اساس صندوق یا روز محدود کنید.",
   "kiosk.checkout_start": "فروش جدید",
   "kiosk.inventory": "انبار",
   "kiosk.offline": "حالت آفلاین",

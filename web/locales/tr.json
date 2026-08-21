@@ -334,6 +334,7 @@
   "journal.till_last_synced": "%s kasasından son bağlantı: %s",
   "journal.till_unknown": "Bilinmeyen kasa",
   "journal.title": "İşlem geçmişi",
+  "journal.truncated": "Son 100 kayıt gösteriliyor — kalanını görmek için kasa veya güne göre daraltın.",
   "kiosk.checkout_start": "Yeni satış",
   "kiosk.inventory": "Envanter",
   "kiosk.offline": "Çevrimdışı mod",
