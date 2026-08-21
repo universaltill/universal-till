@@ -978,6 +978,14 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 	if _, err := d.Db.Exec(`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`); err != nil {
 		t.Fatal(err)
 	}
+	// ut-docs#868: dismiss-pending-base-plugin now validates canonical_type/
+	// locale against the pending list before checkOrElevate, so this row's
+	// {"canonical_type": {"x"}} (locale unset -> "") must actually be
+	// pending, or every case below sees the new 400 instead of the gate
+	// this test is about.
+	if err := savePendingBasePlugins(t.Context(), d, []basePluginSpec{{CanonicalType: "x", Locale: ""}}); err != nil {
+		t.Fatal(err)
+	}
 
 	type gateKind int
 	const (

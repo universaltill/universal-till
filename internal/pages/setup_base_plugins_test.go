@@ -395,3 +395,49 @@ func TestSettingsDismissPendingBasePluginEndpoint(t *testing.T) {
 		t.Fatalf("expected only the es entry left, got %+v", pending)
 	}
 }
+
+// ut-docs#868: canonical_type/locale must match a currently-pending spec
+// BEFORE checkOrElevate runs. A mismatched pair is rejected 400, even for a
+// manager (already-authorized session) — no PIN should ever be asked for a
+// request that was always going to be a no-op, and the pending list must be
+// left untouched. Covers both an unrelated valid-looking value and one
+// containing the `"` that would otherwise break the retry's
+// `[id="pending-plugin-msg-%s"]` CSS attribute selector / pollute the audit
+// entity_id (the review finding this card fixes).
+func TestSettingsDismissPendingBasePluginEndpoint_RejectsMismatch(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	if err := savePendingBasePlugins(t.Context(), d, []basePluginSpec{
+		{CanonicalType: "language", Locale: "de"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name          string
+		canonicalType string
+		locale        string
+	}{
+		{"unrelated value", "language", "fr"},
+		{"selector-breaking value", `language"]<script`, "de"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			form := url.Values{"canonical_type": {tc.canonicalType}, "locale": {tc.locale}}
+			// Manager: no PIN in play at all, so a bare 400 (not the
+			// elevation prompt) proves validation ran before checkOrElevate.
+			rec := postForm(mux, "/api/settings/dismiss-pending-base-plugin", form, &mgrUser)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("manager dismiss with mismatched pair: code=%d body=%s, want 400", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "elevation-dialog") {
+				t.Fatalf("manager dismiss with mismatched pair showed the elevation prompt, want a plain 400 before any gate check: %s", rec.Body.String())
+			}
+			pending, err := loadPendingBasePlugins(t.Context(), d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pending) != 1 || pending[0].CanonicalType != "language" || pending[0].Locale != "de" {
+				t.Fatalf("mismatched dismiss attempt changed the pending list: %+v", pending)
+			}
+		})
+	}
+}
