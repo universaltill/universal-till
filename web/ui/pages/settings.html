@@ -786,12 +786,19 @@
        a replica's identity is sync.till_name, set at join time — a separate,
        out-of-scope concern (see the card's non-goals) — so this field would
        be a dead control on a replica with nothing reading till.name back. -->
+  <!-- ut-docs#796: same Content-Type reload guard as the report-retention
+       form above — a 200 elevation prompt (text/html) must not trigger the
+       success reload, which would destroy the just-opened dialog; the real
+       success is a bare 204 with no Content-Type. -->
   <form hx-post="/api/settings/till-name" hx-swap="none"
-        hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
     <label>{{ T "settings.tills.name_label" }}
       <input type="text" name="name" maxlength="60" value="{{ .TillName }}">
     </label>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    <!-- Exists purely as the elevation dialog retry's hx-target (see the
+         report-retention form's identical span). -->
+    <span id="till-name-msg" aria-live="polite"></span>
   </form>
   {{ end }}
   <!-- This till's register identity (ut-docs#268): which register's shift a
@@ -799,7 +806,7 @@
        this renders on primary AND replica — every till processes its own
        local payouts, so its register identity matters everywhere. -->
   <form hx-post="/api/settings/till-register" hx-swap="none"
-        hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
     <label>{{ T "settings.tills.register_label" }}
       <select name="register_id" required>
         {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
@@ -807,6 +814,7 @@
       </select>
     </label>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    <span id="till-register-msg" aria-live="polite"></span>
     <p class="muted">{{ T "settings.tills.register_help" }}</p>
   </form>
   <p class="muted">{{ T "settings.tills.help" }}</p>
@@ -876,7 +884,9 @@
 <div class="card">
   <h2>{{ T "settings.currency.title" }}</h2>
   <p class="muted">{{ T "settings.currency.help" }}</p>
-  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+  <!-- ut-docs#796: Content-Type reload guard, same as the report-retention
+       form — see the till-name form's comment. -->
+  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $cur := currency }}
     <select name="currency">
       {{ range currencies }}
@@ -884,6 +894,7 @@
       {{ end }}
     </select>
     <button class="btn" type="submit">{{ T "settings.currency.apply" }}</button>
+    <span id="settings-save-msg" aria-live="polite"></span>
   </form>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
 </div>
@@ -899,6 +910,7 @@
       {{ end }}
     </select>
     <button class="btn" type="submit">{{ T "common.save" }}</button>
+    <span id="shop-type-msg" aria-live="polite"></span>
   </form>
 </div>
 <div class="card settings-wide">
@@ -926,6 +938,10 @@
     </tbody>
   </table>
   <form id="new-setting" hx-post="/api/settings/upsert" hx-swap="none"></form>
+  <!-- ut-docs#796: shared elevation-retry target for every upsert trigger in
+       this card (the per-row inputs/buttons and #new-setting are all
+       hx-swap="none", so nothing else ever lands here). -->
+  <span id="settings-upsert-msg" aria-live="polite"></span>
 </div>
 {{ end }}
 </div>

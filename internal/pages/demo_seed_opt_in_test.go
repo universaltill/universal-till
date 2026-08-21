@@ -177,10 +177,14 @@ func TestSetupWizardRendersShopTypeStep(t *testing.T) {
 func TestSettingsShopTypeEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	// Cashier: forbidden.
+	// Cashier: denied with the in-place elevation prompt (ut-docs#796),
+	// and nothing written.
 	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"retail"}}, &cashUser)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier shop-type: code=%d, want 403", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier shop-type: code=%d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
+	}
+	if _, ok, _ := d.Settings.Get(t.Context(), common.KeyShopType); ok {
+		t.Fatal("cashier's denied shop-type attempt must not have written shop.type")
 	}
 
 	// Manager, invalid value: rejected.

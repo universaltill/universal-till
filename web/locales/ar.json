@@ -1540,5 +1540,13 @@
   "elevation.summary.user_pin_set": "تعيين رمز سري جديد لـ %s.",
   "elevation.summary.user_activate": "تفعيل %s.",
   "elevation.summary.user_deactivate": "إلغاء تفعيل %s.",
-  "elevation.summary.user_role_change": "تغيير دور %s من %s إلى %s."
+  "elevation.summary.user_role_change": "تغيير دور %s من %s إلى %s.",
+  "elevation.summary.payments_default": "تعيين طريقة الدفع المفضلة إلى %s.",
+  "elevation.summary.payments_fee": "تعيين رسوم طريقة الدفع %s إلى %s%% بالإضافة إلى %s مبلغًا ثابتًا لكل عملية.",
+  "elevation.summary.remove_demo_data": "إزالة جميع البيانات التجريبية غير المستخدمة نهائيًا (أصناف الكتالوج والعملاء وأكواد العروض).",
+  "elevation.summary.shop_type": "تغيير نوع المتجر إلى %s.",
+  "elevation.summary.till_name": "إعادة تسمية هذا الجهاز إلى \"%s\".",
+  "elevation.summary.till_register": "ربط هذا الجهاز بالصندوق %s.",
+  "elevation.summary.store_save": "حفظ التغييرات على عملة المتجر أو الدولة أو المنطقة أو نسبة الضريبة.",
+  "elevation.summary.setting_upsert": "تعيين الإعداد \"%s\" إلى \"%s\"."
 }
