@@ -19,6 +19,12 @@
 #      check's web/ui/ glob) can carry the same class of hardcoded string —
 #      see ut-docs#205's own follow-up card before assuming this check is
 #      exhaustive.
+#   6. No hardcoded prose literal assigned straight to pos.Basket.ToastMessage
+#      (the sale screen's single notification field, ut-docs#213) — invisible
+#      to check 3, which only scans literals passed directly to
+#      w.Write/fmt.Fprint*, not a struct-field assignment (ut-docs#237: five
+#      real cases shipped in pos_api.go until #213 localized them; nothing
+#      stopped a sixth from shipping the same way).
 # Fails CI so a new page/string can't ship untranslated.
 set -euo pipefail
 
@@ -171,9 +177,47 @@ if jsassign_hits:
     for f, i, literal in jsassign_hits:
         print(f"  {f}:{i}: {literal!r}")
 
+# 6. Go-side ToastMessage literal assignments (ut-docs#237): a raw English
+#    string assigned straight to pos.Basket.ToastMessage (the sale screen's
+#    single notification field, ut-docs#213) is invisible to check 3 above,
+#    which only scans literals passed directly to w.Write/fmt.Fprint* — a
+#    struct-field assignment is a different shape entirely, and Go has two
+#    idiomatic syntaxes for it: `b.ToastMessage = "..."` and a composite
+#    literal's `ToastMessage: "..."` key. Same narrow, low-false-positive
+#    heuristic as check 3: only a literal double-quoted string assigned
+#    directly (either syntax) or passed as a literal Sprintf format string
+#    on the same line (ToastMessage: fmt.Sprintf("...", ...)) can match —
+#    an httpx.T(...) call (e.g. pos_api.go:846) or a plain identifier (the
+#    msg/toast/message variables this codebase already threads through from
+#    a caller that itself used httpx.T, e.g. pos_api.go:657, hold_api.go:136,
+#    self_order_shop.go:462, pos_modifiers_api.go:122) never matches, so
+#    those don't need re-auditing here. Only prose literals (same
+#    two-adjacent-word heuristic as check 3) flag. A reviewed exception can
+#    be marked `// i18n:ignore` on the same line.
+toast_re = re.compile(
+    r'\bToastMessage\s*[:=]\s*(?:fmt\.Sprintf\(\s*)?"((?:[^"\\]|\\.)*)"'
+)
+toast_hits = []
+for f in sorted(glob.glob("internal/**/*.go", recursive=True)):
+    if f.endswith("_test.go"):
+        continue
+    for i, line in enumerate(open(f, encoding="utf-8").read().splitlines(), 1):
+        if "i18n:ignore" in line:
+            continue
+        for m in toast_re.finditer(line):
+            literal = m.group(1).replace('\\"', '"')
+            if prose_re.search(literal):
+                toast_hits.append((f, i, literal))
+
+if toast_hits:
+    fail = True
+    print("guard-i18n: hardcoded literal assigned to ToastMessage (route through httpx.T):")
+    for f, i, literal in toast_hits:
+        print(f"  {f}:{i}: {literal!r}")
+
 if fail:
     sys.exit(1)
 print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json; "
       f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found; "
-      f"no hardcoded inline-JS status strings found")
+      f"no hardcoded inline-JS status strings found; no hardcoded ToastMessage literals found")
 PY
