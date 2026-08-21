@@ -916,17 +916,40 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// span (review finding F1 — same "don't point the retry at a node the
 	// button's own outerHTML removal can make vanish" reasoning as
 	// dismiss-restore-prompt above), NOT the chip-row itself, via a CSS
-	// attribute selector rather than "#id" since canonical_type isn't
-	// validated against the pending list before this point and an
-	// arbitrary value could contain characters a bare #id selector would
-	// need escaping for (the shipped catalogue only ever produces
-	// "language" today — setup_base_plugins.go). Same X-UT-Response: ok
-	// reasoning as dismiss-restore-prompt above.
+	// attribute selector rather than "#id" since canonical_type could
+	// contain characters a bare #id selector would need escaping for (the
+	// shipped catalogue only ever produces "language" today —
+	// setup_base_plugins.go). Same X-UT-Response: ok reasoning as
+	// dismiss-restore-prompt above.
+	// ut-docs#868: canonical_type/locale are now validated against the
+	// currently-pending list BEFORE checkOrElevate (this file's own
+	// established convention — till-register/payments-fee): previously
+	// neither was checked at all, so a mismatched pair broke the retry's
+	// `[id="pending-plugin-msg-%s"]` selector (a value containing `"` or
+	// `]`) and polluted the audit trail's entity_id with an arbitrary
+	// string. Rejecting here also means a request that was always going
+	// to be a no-op doesn't burn an approver's live PIN entry.
 	mux.HandleFunc("POST /api/settings/dismiss-pending-base-plugin", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		canonicalType := strings.TrimSpace(r.Form.Get("canonical_type"))
 		localeVal := strings.TrimSpace(r.Form.Get("locale"))
+		pending, err := loadPendingBasePlugins(r.Context(), d)
+		if err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		matched := false
+		for _, spec := range pending {
+			if spec.CanonicalType == canonicalType && spec.Locale == localeVal {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			http.Error(w, "unknown pending base plugin", http.StatusBadRequest)
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			renderElevationPrompt(w, r, "/api/settings/dismiss-pending-base-plugin",
