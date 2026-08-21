@@ -77,8 +77,11 @@ func TestPaymentsSettingsEndpoints(t *testing.T) {
 func TestIdleLockEndpoint(t *testing.T) {
 	mux, svc, d := newFullAuthDeps(t)
 
-	if rec := postForm(mux, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, &cashUser); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier idle-lock = %d, want 403", rec.Code)
+	// ut-docs#865: a denied cashier gets the in-place elevation prompt
+	// (ut-docs#557/#796 mechanism), not a flat 403.
+	if rec := postForm(mux, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier idle-lock = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 	if rec := postForm(mux, "/api/settings/idle-lock", url.Values{"minutes": {"999"}}, &mgrUser); rec.Code != http.StatusBadRequest {
 		t.Fatalf("out-of-range idle-lock = %d, want 400", rec.Code)
@@ -96,8 +99,10 @@ func TestIdleLockEndpoint(t *testing.T) {
 func TestKioskIdleResetEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	if rec := postForm(mux, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, &cashUser); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier kiosk-idle-reset = %d, want 403", rec.Code)
+	// ut-docs#865: elevation prompt, not a flat 403 (same as idle-lock).
+	if rec := postForm(mux, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier kiosk-idle-reset = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 	if rec := postForm(mux, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"999"}}, &mgrUser); rec.Code != http.StatusBadRequest {
 		t.Fatalf("out-of-range kiosk = %d, want 400", rec.Code)
@@ -115,8 +120,10 @@ func TestKioskIdleResetEndpoint(t *testing.T) {
 func TestWindowModeEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, &cashUser); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier window-mode = %d, want 403", rec.Code)
+	// ut-docs#865: elevation prompt, not a flat 403 (same as idle-lock).
+	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier window-mode = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"bogus"}}, &mgrUser); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid window-mode = %d, want 400", rec.Code)
@@ -150,8 +157,10 @@ func TestWindowModeEndpoint(t *testing.T) {
 func TestLaunchOnStartupEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	if rec := postForm(mux, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, &cashUser); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier launch-on-startup = %d, want 403", rec.Code)
+	// ut-docs#865: elevation prompt, not a flat 403 (same as idle-lock).
+	if rec := postForm(mux, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier launch-on-startup = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 	if rec := postForm(mux, "/api/settings/launch-on-startup", url.Values{"enabled": {"not-a-bool"}}, &mgrUser); rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed launch-on-startup = %d, want 400", rec.Code)
@@ -323,8 +332,10 @@ func TestExitToOSBlankPINRejectedWithoutBurningLockoutBudget(t *testing.T) {
 func TestTelemetryEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	if rec := postForm(mux, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, &cashUser); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier telemetry = %d, want 403", rec.Code)
+	// ut-docs#865: elevation prompt, not a flat 403 (same as idle-lock).
+	if rec := postForm(mux, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier telemetry = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
 	if rec := postForm(mux, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("manager telemetry = %d, want 204", rec.Code)
@@ -884,27 +895,38 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 	}
 }
 
-// the forbidden path). Each answers 200 (HTMX swap target) with an error/muted
-// notice rather than a hard status.
-func TestEnrolEndpointsRefuseNonManager(t *testing.T) {
+// GET /api/enrol/devices is read-only and stays on the flat canPerform gate
+// (out of ut-docs#865's scope, same as ut-docs#796's own non-goals) — a
+// denied cashier still gets the 200 HTMX swap target with a forbidden/muted
+// notice, never a hard status.
+func TestEnrolDevicesEndpointRefusesNonManager(t *testing.T) {
 	mux, _, _ := newFullAuthDeps(t)
 
-	for _, ep := range []struct {
-		method, path string
-	}{
-		{http.MethodPost, "/api/enrol/claim-code"},
-		{http.MethodPost, "/api/enrol/now"},
-		{http.MethodGet, "/api/enrol/devices"},
-	} {
-		req := auth.WithUser(httptest.NewRequest(ep.method, ep.path, nil), cashUser)
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/enrol/devices", nil), cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/enrol/devices: code=%d, want 200 (HTMX swap target)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="error"`) && !strings.Contains(body, `class="muted"`) {
+		t.Fatalf("GET /api/enrol/devices did not render a forbidden notice: %s", body)
+	}
+}
+
+// ut-docs#865: claim-code and enrol/now moved off the flat canPerform gate
+// onto checkOrElevate (#557/#796 mechanism) — a denied cashier now gets the
+// in-place elevation prompt, not the flat forbidden span.
+func TestEnrolClaimCodeAndNow_RefuseNonManagerViaElevation(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	for _, path := range []string{"/api/enrol/claim-code", "/api/enrol/now"} {
+		req := auth.WithUser(httptest.NewRequest(http.MethodPost, path, nil), cashUser)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s %s: code=%d, want 200 (HTMX swap target)", ep.method, ep.path, rec.Code)
-		}
-		body := rec.Body.String()
-		if !strings.Contains(body, `class="error"`) && !strings.Contains(body, `class="muted"`) {
-			t.Fatalf("%s %s did not render a forbidden notice: %s", ep.method, ep.path, body)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") ||
+			!strings.Contains(rec.Body.String(), `name="override_pin"`) {
+			t.Fatalf("POST %s: code=%d body=%s, want 200 with the elevation prompt", path, rec.Code, rec.Body.String())
 		}
 	}
 }
@@ -932,14 +954,18 @@ const settingsForbiddenText = "Only a manager or admin can register this till."
 // span everywhere, same as a cashier) and confirmed to pass once every site
 // in settings_page.go was switched.
 //
-// Denied behavior comes in three flavors since ut-docs#796:
-//   - gate403: a hard 403 (the not-yet-elevation-wired plain handlers).
+// Denied behavior comes in three flavors since ut-docs#796/#865:
+//   - gate403: a hard 403 (the not-yet-elevation-wired plain handlers —
+//     none remain in this file as of ut-docs#865; kept as a gateKind since
+//     it's still the right shape for a future not-yet-wired site).
 //   - gateForbiddenSpan: an HTMX swap target that always answers 200 with
 //     the localized forbidden text in an error/muted span (HTMX drops
-//     non-2xx bodies) — the enrol endpoints, still on the flat gate.
-//   - gateElevation: the 8 handlers wired to checkOrElevate (ut-docs#796) —
-//     a denied cashier gets 200 with the in-place elevation prompt dialog
-//     (neither the forbidden text nor a 403).
+//     non-2xx bodies) — GET /api/enrol/devices (read-only), still on the
+//     flat gate.
+//   - gateElevation: the handlers wired to checkOrElevate (ut-docs#796's
+//     original 8, plus #865's 10) — a denied cashier gets 200 with the
+//     in-place elevation prompt dialog (neither the forbidden text nor a
+//     403).
 //
 // "Past the gate" for manager/admin/super_admin means downstream processing
 // was reached ON THEIR OWN SESSION — no PIN involved (an already-authorized
@@ -969,19 +995,19 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 	cases := []matrixCase{
 		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, gateElevation},
 		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, gateElevation},
-		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateForbiddenSpan},
-		{"enrol-now", http.MethodPost, "/api/enrol/now", nil, gateForbiddenSpan},
+		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateElevation},
+		{"enrol-now", http.MethodPost, "/api/enrol/now", nil, gateElevation},
 		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, gateForbiddenSpan},
-		{"idle-lock", http.MethodPost, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, gate403},
-		{"kiosk-idle-reset", http.MethodPost, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, gate403},
-		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, gate403},
-		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, gate403},
-		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gate403},
-		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, gate403},
+		{"idle-lock", http.MethodPost, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, gateElevation},
+		{"kiosk-idle-reset", http.MethodPost, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, gateElevation},
+		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, gateElevation},
+		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, gateElevation},
+		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gateElevation},
+		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, gateElevation},
 		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, gateElevation},
 		{"remove-demo-catalogue", http.MethodPost, "/api/settings/remove-demo-catalogue", nil, gateElevation},
-		{"dismiss-restore-prompt", http.MethodPost, "/api/settings/dismiss-restore-prompt", nil, gate403},
-		{"dismiss-pending-base-plugin", http.MethodPost, "/api/settings/dismiss-pending-base-plugin", url.Values{"canonical_type": {"x"}}, gate403},
+		{"dismiss-restore-prompt", http.MethodPost, "/api/settings/dismiss-restore-prompt", nil, gateElevation},
+		{"dismiss-pending-base-plugin", http.MethodPost, "/api/settings/dismiss-pending-base-plugin", url.Values{"canonical_type": {"x"}}, gateElevation},
 		{"till-name", http.MethodPost, "/api/settings/till-name", url.Values{"name": {"X"}}, gateElevation},
 		{"till-register", http.MethodPost, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, gateElevation},
 		{"save", http.MethodPost, "/api/settings/save", url.Values{"currency": {"GBP"}}, gateElevation},

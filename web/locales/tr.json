@@ -1548,5 +1548,17 @@
   "elevation.summary.till_name": "Bu kasayı \"%s\" olarak yeniden adlandır.",
   "elevation.summary.till_register": "Bu kasayı %s yazar kasasına ata.",
   "elevation.summary.store_save": "Mağazanın para birimi, ülke, bölge veya vergi oranı değişikliklerini kaydet.",
-  "elevation.summary.setting_upsert": "\"%s\" ayarını \"%s\" olarak ayarla."
+  "elevation.summary.setting_upsert": "\"%s\" ayarını \"%s\" olarak ayarla.",
+  "elevation.summary.idle_lock": "Boşta otomatik kilit süresini %s olarak ayarla.",
+  "elevation.summary.kiosk_idle_reset": "Self-servis kiosk boşta sıfırlama süresini %s olarak ayarla.",
+  "elevation.summary.window_mode": "Pencere modunu %s olarak ayarla.",
+  "elevation.summary.launch_on_startup_on": "Başlangıçta çalıştırmayı aç.",
+  "elevation.summary.launch_on_startup_off": "Başlangıçta çalıştırmayı kapat.",
+  "elevation.summary.telemetry_on": "Eklenti telemetri paylaşımını aç.",
+  "elevation.summary.telemetry_off": "Eklenti telemetri paylaşımını kapat.",
+  "elevation.summary.display_mode": "Bu kasanın cihaz profilini %s olarak ayarla.",
+  "elevation.summary.dismiss_restore_prompt": "Başka bir kasadan geri yükleme istemini hiçbir şey içe aktarmadan kapat.",
+  "elevation.summary.dismiss_pending_base_plugin": "Bekleyen %s temel eklentisini yüklemeden kapat.",
+  "elevation.summary.enrol_claim_code": "Yeni bir mağaza talep kodu ve QR bağlantısı oluştur.",
+  "elevation.summary.enrol_now": "Bu kasayı pazar yerine şimdi kaydetmeyi dene."
 }

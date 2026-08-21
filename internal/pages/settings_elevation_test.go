@@ -311,3 +311,169 @@ func TestSettingsUpsert_ElevatedSettingsApprovalDoesNotGrantFiscalOverride(t *te
 		t.Fatalf("fiscal.system_of_record was written (%q) despite the 403 — the outer settings elevation leaked into the fiscal gate", v)
 	}
 }
+
+// ut-docs#865 (slice 2): the 6 remaining settingsRespondSaved-shaped sites
+// (idle-lock, kiosk-idle-reset, window-mode, launch-on-startup, telemetry,
+// display-mode) — same lighter deny+elevate coverage shape as
+// TestSettingsElevation_RemainingSites_DenyAndElevate above, plus an
+// audit-row assertion per site (that test's own five sites already prove
+// the response shape; the audit row is what's new to prove here since none
+// of these six wrote one before).
+func TestSettingsElevation_Slice2Sites_DenyAndElevate(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	mgrID, cashierID := seedElevationUsers(t, d)
+	cashier := auth.User{ID: cashierID, Role: "cashier"}
+
+	cases := []struct {
+		name, path, action string
+		form               url.Values
+		// badForm, when set, is an out-of-range/malformed input a cashier
+		// posts — review finding F5: the existing bad-input assertions in
+		// settings_page_test.go all use &mgrUser, who clears canPerform
+		// regardless of validation order, so they can't actually pin
+		// "validation runs before elevation" (an accidentally-reordered
+		// handler would still 400 for a manager either way). A cashier +
+		// bad input proves it: a 400 with no elevation-dialog means
+		// validation ran first, not that elevation happened to allow it.
+		badForm url.Values
+	}{
+		{"idle-lock", "/api/settings/idle-lock", "idle_lock_changed", url.Values{"minutes": {"15"}}, url.Values{"minutes": {"999"}}},
+		{"kiosk-idle-reset", "/api/settings/kiosk-idle-reset", "kiosk_idle_reset_changed", url.Values{"seconds": {"45"}}, url.Values{"seconds": {"999"}}},
+		{"window-mode", "/api/settings/window-mode", "window_mode_changed", url.Values{"mode": {"kiosk"}}, url.Values{"mode": {"bogus"}}},
+		{"launch-on-startup", "/api/settings/launch-on-startup", "launch_on_startup_changed", url.Values{"enabled": {"true"}}, url.Values{"enabled": {"not-a-bool"}}},
+		{"telemetry", "/api/settings/telemetry", "telemetry_opt_in_changed", url.Values{"optIn": {"on"}}, nil}, // no input validation to order against
+		{"display-mode", "/api/settings/display-mode", "display_mode_changed", url.Values{"mode": {"backoffice"}}, url.Values{"mode": {"bogus"}}},
+	}
+	for _, tc := range cases {
+		if tc.badForm != nil {
+			t.Run(tc.name+"/deny_bad_input_before_pin", func(t *testing.T) {
+				rec := postForm(mux, tc.path, tc.badForm, &cashier)
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("%s cashier bad input = %d, want 400 (validation before elevation)", tc.name, rec.Code)
+				}
+				if strings.Contains(rec.Body.String(), "elevation-dialog") {
+					t.Fatalf("%s cashier bad input showed the elevation prompt instead of 400: %s", tc.name, rec.Body.String())
+				}
+			})
+		}
+		t.Run(tc.name+"/deny_no_pin", func(t *testing.T) {
+			rec := postForm(mux, tc.path, tc.form, &cashier)
+			assertElevationPrompt(t, tc.name, rec.Code, rec.Body.String())
+		})
+		t.Run(tc.name+"/elevate_valid_pin", func(t *testing.T) {
+			form := url.Values{}
+			for k, v := range tc.form {
+				form[k] = v
+			}
+			form.Set("override_pin", "555222")
+			rec := postForm(mux, tc.path, form, &cashier)
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "✓") {
+				t.Fatalf("%s elevated = %d body=%s, want 200 with a confirmation", tc.name, rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "elevation-dialog") {
+				t.Fatalf("%s elevated still shows the prompt: %s", tc.name, rec.Body.String())
+			}
+			assertElevatedAudit(t, d, tc.action, mgrID, cashierID)
+		})
+	}
+}
+
+// dismiss-restore-prompt keeps its own empty-200-body removal convention
+// (hx-swap="outerHTML" on the direct-allowed path, unchanged) rather than
+// settingsRespondSaved's "✓" confirmation span, so it needs its own
+// assertions instead of the "✓" check the cases above share.
+func TestDismissRestorePrompt_ElevationFlow(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	mgrID, cashierID := seedElevationUsers(t, d)
+	cashier := auth.User{ID: cashierID, Role: "cashier"}
+	if err := d.Settings.Set(t.Context(), common.KeyRestorePromptStatus, common.RestorePromptStatusDeferred); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deny, no PIN: prompt, status unchanged.
+	rec := postForm(mux, "/api/settings/dismiss-restore-prompt", url.Values{}, &cashier)
+	assertElevationPrompt(t, "dismiss-restore-prompt", rec.Code, rec.Body.String())
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); v != common.RestorePromptStatusDeferred {
+		t.Fatalf("denied dismiss changed the status to %q", v)
+	}
+
+	// Valid approver PIN: dismissed, dual-attributed audit. X-UT-Response: ok
+	// (ut-docs#796 review finding #4's same fix, applied here) is what makes
+	// the dialog's own script reload instead of leaving the block's
+	// innerHTML-swapped-empty wrapper on screen.
+	rec = postForm(mux, "/api/settings/dismiss-restore-prompt", url.Values{"override_pin": {"555222"}}, &cashier)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("elevated dismiss = %d, want 200", rec.Code)
+	}
+	if rec.Header().Get("X-UT-Response") != "ok" {
+		t.Fatalf("elevated dismiss X-UT-Response = %q, want ok", rec.Header().Get("X-UT-Response"))
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); v != "" {
+		t.Fatalf("elevated dismiss did not clear the status, got %q", v)
+	}
+	assertElevatedAudit(t, d, "restore_prompt_dismissed", mgrID, cashierID)
+}
+
+// dismiss-pending-base-plugin — same empty-200-body convention as
+// dismiss-restore-prompt above, seeded with one real pending plugin so the
+// removal itself is provable, not just the gate.
+func TestDismissPendingBasePlugin_ElevationFlow(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	mgrID, cashierID := seedElevationUsers(t, d)
+	cashier := auth.User{ID: cashierID, Role: "cashier"}
+	if err := d.Settings.Set(t.Context(), common.KeyPendingBasePlugins, `[{"CanonicalType":"tax_de","Locale":"de"}]`); err != nil {
+		t.Fatal(err)
+	}
+
+	form := url.Values{"canonical_type": {"tax_de"}, "locale": {"de"}}
+
+	// Deny, no PIN: prompt, plugin still pending.
+	rec := postForm(mux, "/api/settings/dismiss-pending-base-plugin", form, &cashier)
+	assertElevationPrompt(t, "dismiss-pending-base-plugin", rec.Code, rec.Body.String())
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyPendingBasePlugins); !strings.Contains(v, "tax_de") {
+		t.Fatalf("denied dismiss removed the pending plugin: %q", v)
+	}
+
+	// Valid approver PIN: dismissed, dual-attributed audit, X-UT-Response: ok.
+	elevForm := url.Values{"canonical_type": {"tax_de"}, "locale": {"de"}, "override_pin": {"555222"}}
+	rec = postForm(mux, "/api/settings/dismiss-pending-base-plugin", elevForm, &cashier)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("elevated dismiss = %d, want 200", rec.Code)
+	}
+	if rec.Header().Get("X-UT-Response") != "ok" {
+		t.Fatalf("elevated dismiss X-UT-Response = %q, want ok", rec.Header().Get("X-UT-Response"))
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyPendingBasePlugins); strings.Contains(v, "tax_de") {
+		t.Fatalf("elevated dismiss did not remove the pending plugin: %q", v)
+	}
+	assertElevatedAudit(t, d, "pending_base_plugin_dismissed", mgrID, cashierID)
+}
+
+// claim-code/enrol-now call out to enroll.ClaimCode/enroll.RegisterNow, both
+// of which need a reachable marketplace — unavailable in this offline test
+// environment. This proves the checkOrElevate gate clears on a valid
+// approver PIN (no prompt left in the response), not that the marketplace
+// call itself succeeds — same "past the gate ≠ succeeded" reasoning
+// TestSettingsEndpoints_RoleMatrix's own doc comment already gives for
+// enrol-now.
+func TestEnrolClaimCodeAndNow_ElevationGateClears(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	seedElevationUsers(t, d)
+	cashier := auth.User{ID: "cashier-x", Role: "cashier"}
+
+	for _, path := range []string{"/api/enrol/claim-code", "/api/enrol/now"} {
+		t.Run(path+"/deny_no_pin", func(t *testing.T) {
+			rec := postForm(mux, path, url.Values{}, &cashier)
+			assertElevationPrompt(t, path, rec.Code, rec.Body.String())
+		})
+		t.Run(path+"/elevate_valid_pin", func(t *testing.T) {
+			rec := postForm(mux, path, url.Values{"override_pin": {"555222"}}, &cashier)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s elevated = %d, want 200", path, rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), "elevation-dialog") {
+				t.Fatalf("%s elevated still shows the prompt: %s", path, rec.Body.String())
+			}
+		})
+	}
+}
