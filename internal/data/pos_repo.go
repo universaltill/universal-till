@@ -826,7 +826,8 @@ ORDER BY revenue DESC`, fromStr, toStr)
 }
 
 // DepartmentsForDay is SalesByDepartment for a single business day (used by the
-// EOD Z-report). day is "YYYY-MM-DD".
+// EOD Z-report). day is "YYYY-MM-DD", matched on the shop's LOCAL calendar
+// day (ut-docs#869) — see dateRangeSummary's doc comment for why.
 func (r *POSRepo) DepartmentsForDay(ctx context.Context, day string) ([]DeptSales, error) {
 	rows, err := r.db.QueryContext(ctx, deptRootsCTE+`
 SELECT COALESCE(dr.root_name, '') AS department,
@@ -837,7 +838,7 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants iv ON iv.id = sl.variant_id
 LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
 LEFT JOIN dept_roots dr ON dr.id = it.category_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at) = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
 GROUP BY department
 ORDER BY revenue DESC`, day)
 	if err != nil {
@@ -1601,9 +1602,29 @@ func (r *POSRepo) EndOfDayRange(ctx context.Context, from, to string) (EODReport
 }
 
 // dateRangeSummary is the shared aggregation body behind EndOfDay and
-// EndOfDayRange. date(created_at) BETWEEN ? AND ? is equivalent to
-// date(created_at) = ? when from == to, so EndOfDay's behavior (and its
-// existing tests) are unaffected by sharing this with the range query.
+// EndOfDayRange. date(created_at, 'localtime') BETWEEN date(?) AND date(?)
+// is equivalent to date(created_at, 'localtime') = date(?) when from == to,
+// so EndOfDay's behavior (and its existing tests) are unaffected by sharing
+// this with the range query. Every from/to comparison in this function
+// (and DepartmentsForDay's) wraps its RHS in date(...) too, even though
+// from/to always arrive as canonical "YYYY-MM-DD" text — one consistent
+// convention across all four fragments this file uses for a "day" argument,
+// rather than three bare and one wrapped.
+//
+// from/to are matched on the shop's LOCAL calendar day (ut-docs#869) — the
+// same convention DayTotal and ListSalesJournal's Day filter already use
+// (ut-docs#774/PR#417), NOT SalesByDay's business-day-start shift (a
+// different semantic for trading-night merging, out of scope here — see
+// ADR-0057). This matters because eodSchedulerTick (eod_api.go) computes
+// its day argument from Go's local wall-clock time.Now(): before this
+// fix, that local calendar day was being matched against a bare UTC
+// date(created_at), so on any non-UTC host the scheduled/archived Z-report
+// silently aggregated the wrong calendar day's transactions. This only
+// changes report generation going forward — already-archived
+// report_archive rows are effectively immutable: ArchiveReport's
+// ON CONFLICT (kind, period) DO NOTHING makes each (kind, period) a
+// write-once row, so this fix cannot retroactively alter a report already
+// generated.
 func (r *POSRepo) dateRangeSummary(ctx context.Context, from, to string) (EODReport, error) {
 	rep := EODReport{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
 	err := r.db.QueryRowContext(ctx, `
@@ -1615,7 +1636,7 @@ SELECT
   COALESCE(SUM(CASE WHEN sale_type = 'sale' THEN tax_total ELSE -tax_total END), 0),
   COALESCE(MIN(receipt_no), ''), COALESCE(MAX(receipt_no), '')
 FROM sales
-WHERE status = 'completed' AND date(created_at) BETWEEN ? AND ?`,
+WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND date(?)`,
 		from, to).Scan(&rep.SalesCount, &rep.Gross, &rep.RefundCount, &rep.RefundTotal,
 		&rep.TaxNet, &rep.FirstReceipt, &rep.LastReceipt)
 	if err != nil {
@@ -1629,7 +1650,7 @@ SELECT p.method_id,
   COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND date(s.created_at) BETWEEN ? AND ?
+WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
 GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 	if err != nil {
 		return rep, fmt.Errorf("eod methods: %w", err)
@@ -1668,7 +1689,7 @@ GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 SELECT s.till_id, COALESCE(t.name, ''), COUNT(*), COALESCE(SUM(s.total), 0)
 FROM sales s
 LEFT JOIN tills t ON t.id = s.till_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at) = ?
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
 GROUP BY s.till_id ORDER BY 4 DESC`, from)
 	} else {
 		return rep, nil
