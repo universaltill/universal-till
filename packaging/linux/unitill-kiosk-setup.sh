@@ -194,6 +194,71 @@ systemctl daemon-reload
 systemctl enable unitill-kiosk.service
 systemctl set-default graphical.target
 
+# From here on, the kiosk itself is fully installed and will boot fine even
+# if anything below fails — everything past this point is the ut-docs#883
+# Settings-toggle enhancement (real enable/disable/start/stop control from
+# the window-mode selector), which is layered on top and must never be able
+# to leave a till without its kiosk over a problem in this optional part —
+# same "tolerated rather than fatal" reasoning as the screencast-portal
+# block above. Any failure here just means the Settings toggle keeps
+# surfacing a clear error (ut-docs#883's own acceptance criteria) instead of
+# actually flipping the service, until this is re-run successfully.
+
+echo "==> Marking this box as a dedicated kiosk till (UT_KIOSK=1)…"
+# A systemd drop-in, not /opt/unitill/pos.env: pos.env is a dpkg conffile
+# (packaging/pos.env.example -> /opt/unitill/pos.env, config|noreplace,
+# independent review F8) — scripting edits into it risks a future release's
+# conffile prompt, or --force-confnew silently reverting this. A drop-in is
+# root-owned (no pos:pos chown to worry about), idempotent to overwrite, and
+# needs no directory that might not exist yet. pages.Init reads UT_KIOSK (or
+# falls back to detecting unitill-kiosk.service itself, ut-docs#883 review
+# F1) to select the real KioskSystemdWindowController.
+install -d -m 0755 /etc/systemd/system/unitill-pos.service.d
+cat > /etc/systemd/system/unitill-pos.service.d/kiosk.conf << 'EOF'
+[Service]
+Environment=UT_KIOSK=1
+EOF
+systemctl daemon-reload
+# A unitill-pos already running (e.g. re-running this script after first
+# boot) started before this drop-in existed and won't see it without a
+# restart — best-effort: on a genuinely fresh install the service may not be
+# up yet, which is fine, it reads its environment at its own first start.
+systemctl restart unitill-pos.service 2>/dev/null || true
+
+echo "==> Granting the till service a scoped kiosk-service toggle (ut-docs#883)…"
+# unitill-pos runs as the unprivileged `pos` system user (unitill-
+# pos.service, User=pos) with no standing permission to enable/disable/
+# start/stop ANY systemd unit. The Settings window-mode toggle needs exactly
+# four calls against unitill-kiosk.service — grant precisely those four, no
+# wildcard, no other unit (smallest privilege that works, per the
+# ecosystem's security-first rule). Written to a DOT-PREFIXED temp file
+# inside /etc/sudoers.d first (independent review F2): sudo's own directory
+# scan skips dotfiles, so it is inert even before validation, then validated
+# with `visudo -c` and only `install`ed under its real name once that
+# passes — the drop-in is never live in a possibly-broken state, which
+# matters on a first-boot box where a power cut mid-write is a realistic
+# event and a malformed drop-in can lock out ALL sudo, not just this grant.
+# Skipped (not fatal) if `sudo` isn't installed at all — plausible on a
+# plain Debian box per this script's own header, and this whole feature is
+# optional on top of an already-working kiosk.
+if command -v visudo >/dev/null 2>&1; then
+  SYSTEMCTL_BIN="$(command -v systemctl)"
+  TMP_SUDOERS="$(mktemp /etc/sudoers.d/.unitill-kiosk.XXXXXX)"
+  cat > "$TMP_SUDOERS" << EOF
+pos ALL=(root) NOPASSWD: ${SYSTEMCTL_BIN} enable unitill-kiosk.service, ${SYSTEMCTL_BIN} disable unitill-kiosk.service, ${SYSTEMCTL_BIN} start unitill-kiosk.service, ${SYSTEMCTL_BIN} stop unitill-kiosk.service
+EOF
+  chmod 0440 "$TMP_SUDOERS"
+  if visudo -c -f "$TMP_SUDOERS" >/dev/null 2>&1; then
+    install -m 0440 -o root -g root "$TMP_SUDOERS" /etc/sudoers.d/unitill-kiosk
+    rm -f "$TMP_SUDOERS"
+  else
+    echo "⚠ generated sudoers drop-in failed visudo -c — not installing (Settings window-mode toggle will show a clear error until this is fixed)" >&2
+    rm -f "$TMP_SUDOERS"
+  fi
+else
+  echo "⚠ visudo not found — skipping the scoped kiosk-service sudoers grant (Settings window-mode toggle will show a clear error until this is fixed)" >&2
+fi
+
 # The marker tells the staged first-boot unit this box is done — written by
 # BOTH paths (a manual setup must also stop a later first-boot run from
 # re-doing it, e.g. re-enabling a kiosk the owner has since undone).

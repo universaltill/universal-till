@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -184,6 +185,29 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		log.Infof("AI env override present (UT_AI_*) — plugin settings take precedence when the AI plugin is active")
 	}
 
+	// WindowCtl (ut-docs#608/#883): the Pi headless kiosk appliance is the
+	// only platform whose window-mode toggle is wired to a real OS effect
+	// today — GOOS gated (not just the env check) so a manually-set
+	// UT_KIOSK=1 on macOS/Windows (touch-UI styling only, see httpx.InitKiosk
+	// above) never shells out to a `sudo systemctl` that doesn't exist there.
+	// The desktop shell (#609/#610/#611) and a plain browser session keep
+	// NoopWindowController — #611 applies its mode at its own next launch;
+	// a live cross-process channel for it is ut-docs#882, not this field.
+	//
+	// Detection is UT_KIOSK=1 OR the kiosk unit file already being present
+	// (independent review, ut-docs#883): unitill-kiosk-setup.sh's own
+	// is_pi_appliance gate deliberately never re-runs on an upgrade, so a
+	// box already kiosked before ut-docs#883 landed has unitill-kiosk.service
+	// on disk without pos.env ever gaining UT_KIOSK=1. Env-only detection
+	// would leave that box silently on NoopWindowController forever — the
+	// unit-file probe is what makes it instead attempt the real systemctl
+	// call and surface a clear "missing sudoers grant" error, which is the
+	// acceptance criteria's own named scenario.
+	windowCtl := common.WindowController(common.NoopWindowController{})
+	if runtime.GOOS == "linux" && (os.Getenv("UT_KIOSK") == "1" || piKioskServiceInstalled()) {
+		windowCtl = common.NewKioskSystemdWindowController()
+	}
+
 	dp := &common.Deps{
 		Cfg:         cfg,
 		Pm:          pm,
@@ -200,7 +224,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// Order-status pub/sub (ut-docs#526): one instance for the process —
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
-		WindowCtl:   common.NoopWindowController{},
+		WindowCtl:   windowCtl,
 	}
 
 	// Register routes

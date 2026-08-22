@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -119,11 +120,16 @@ func TestKioskIdleResetEndpoint(t *testing.T) {
 // closed enum, and round-trips through runtime state / GET /settings.
 func TestWindowModeEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
+	wc := &recordingWindowController{}
+	d.WindowCtl = wc
 
 	// ut-docs#865: elevation prompt, not a flat 403 (same as idle-lock).
 	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, &cashUser); rec.Code != http.StatusOK ||
 		!strings.Contains(rec.Body.String(), "elevation-dialog") {
 		t.Fatalf("cashier window-mode = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
+	}
+	if len(wc.applyModeCalls) != 0 {
+		t.Fatalf("cashier (unelevated) request must not reach ApplyMode: calls=%v", wc.applyModeCalls)
 	}
 	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"bogus"}}, &mgrUser); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid window-mode = %d, want 400", rec.Code)
@@ -137,6 +143,12 @@ func TestWindowModeEndpoint(t *testing.T) {
 	if v, _, _ := d.Settings.Get(t.Context(), common.KeyWindowMode); v != "kiosk" {
 		t.Fatalf("stored %s = %q, want kiosk", common.KeyWindowMode, v)
 	}
+	// ut-docs#883: the hook is what actually flips the Pi kiosk service (or
+	// any future real WindowController) — persisting the preference is not
+	// enough on its own.
+	if len(wc.applyModeCalls) != 1 || wc.applyModeCalls[0] != "kiosk" {
+		t.Fatalf("ApplyMode calls = %v, want exactly one call with %q", wc.applyModeCalls, "kiosk")
+	}
 
 	// Round-trips via GET /settings: the freshly saved mode renders as the
 	// selected <option>.
@@ -149,6 +161,42 @@ func TestWindowModeEndpoint(t *testing.T) {
 	}
 	if !regexp.MustCompile(`value="kiosk"\s+selected`).MatchString(rec.Body.String()) {
 		t.Fatalf("GET /settings body does not show kiosk as selected window mode:\n%s", rec.Body.String())
+	}
+}
+
+// TestWindowModeEndpoint_ApplyModeFailureSurfacesAndDoesNotPersist covers
+// ut-docs#883's "graceful, clearly-surfaced failure" requirement: a Pi that
+// hasn't got the sudoers grant yet (pre-#883 upgrade) makes ApplyMode fail —
+// the handler must report a server error rather than silently swallowing it,
+// and must not persist a WindowMode the OS never actually applied.
+func TestWindowModeEndpoint_ApplyModeFailureSurfacesAndDoesNotPersist(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	wc := &recordingWindowController{applyModeErr: errors.New("systemctl enable unitill-kiosk.service: sudo: a password is required")}
+	d.WindowCtl = wc
+
+	rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, &mgrUser)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("window-mode with failing ApplyMode = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if len(wc.applyModeCalls) != 1 || wc.applyModeCalls[0] != "kiosk" {
+		t.Fatalf("ApplyMode calls = %v, want exactly one call with %q", wc.applyModeCalls, "kiosk")
+	}
+	if d.CurrentState().WindowMode == "kiosk" {
+		t.Fatal("WindowMode must not be persisted as kiosk when ApplyMode failed to actually apply it")
+	}
+}
+
+// TestWindowModeEndpoint_NilWindowCtlDoesNotPanic mirrors
+// TestExitToOSEndpoint_NilWindowCtlDoesNotPanic: most test-Deps helpers
+// don't set WindowCtl, so the handler must fall back to
+// common.NoopWindowController rather than dereferencing a nil interface.
+func TestWindowModeEndpoint_NilWindowCtlDoesNotPanic(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	if d.WindowCtl != nil {
+		t.Fatal("test assumes newFullAuthDeps leaves WindowCtl unset")
+	}
+	if rec := postForm(mux, "/api/settings/window-mode", url.Values{"mode": {"fullscreen"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("nil WindowCtl window-mode = %d, want 204 (fallback to NoopWindowController): %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -187,13 +235,24 @@ func TestLaunchOnStartupEndpoint(t *testing.T) {
 }
 
 // recordingWindowController is a WindowController test double that records
-// whether ExitToOS was invoked, so exit-to-os tests can assert the hook
-// was (or, for rejected auth, was NOT) reached.
-type recordingWindowController struct{ called bool }
+// whether ExitToOS was invoked (so exit-to-os tests can assert the hook was,
+// or for rejected auth was NOT, reached) and every mode ApplyMode was called
+// with (ut-docs#883), optionally failing with applyModeErr to exercise the
+// window-mode handler's failure path.
+type recordingWindowController struct {
+	called         bool
+	applyModeCalls []string
+	applyModeErr   error
+}
 
 func (r *recordingWindowController) ExitToOS() error {
 	r.called = true
 	return nil
+}
+
+func (r *recordingWindowController) ApplyMode(mode string) error {
+	r.applyModeCalls = append(r.applyModeCalls, mode)
+	return r.applyModeErr
 }
 
 // Exit-to-os (ut-docs#608 scaffold) requires a LIVE manager PIN — an existing
