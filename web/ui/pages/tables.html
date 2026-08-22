@@ -20,6 +20,13 @@
   #floorplan-section.editing .table-node { cursor: grab; }
   #floorplan-section.editing .table-node.dragging { cursor: grabbing; }
   #floorplan-section.editing .table-shape { stroke-dasharray: 8 6; }
+  /* Keyboard reposition (ut-docs#826): focus-visible only, so a pointer
+     drag-start (which also focuses the <g>) doesn't draw a ring the
+     mouse/touch operator never asked for. --focus-border (not --accent)
+     per ut-docs#797 -- it's the token curated to clear 3:1 against
+     --surface-2 in every theme, including amber/fresh/monarch where raw
+     --accent doesn't. */
+  .table-node:focus-visible { outline: 3px solid var(--focus-border); outline-offset: 3px; }
   .floorplan-legend { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-block: 0.5rem; }
   .floorplan-legend .swatch { display: inline-block; inline-size: 0.9em; block-size: 0.9em; border-radius: 3px;
     border: 3px solid var(--success); background: var(--surface); vertical-align: -0.1em; margin-inline-end: 0.35em; }
@@ -140,12 +147,37 @@
   var status = document.getElementById('tables-status');
   window.tablesEditing = false;
 
+  // Keyboard reposition (ut-docs#826) is gated the same way pointer-drag
+  // already is (`window.tablesEditing`) — tabIndex mirrors that gate so a
+  // table only joins the Tab order while it's actually movable.
+  function applyTabIndex() {
+    section.querySelectorAll('.table-node').forEach(function (n) {
+      n.tabIndex = window.tablesEditing ? 0 : -1;
+    });
+  }
+
+  // The RECURRING poll is paused while editing (`hx-trigger` above), so a
+  // swap mid-edit never needs this — but the very FIRST `hx-get="load"`
+  // fetch is unconditional, and can still be in flight when the operator
+  // clicks "Edit floor plan" (a slow DB/query, a busy till). If it resolves
+  // AFTER that click, the freshly-swapped nodes carry the template's default
+  // tabindex="-1" and nothing re-applies 0 — Tab silently stops reaching any
+  // table, with no visible symptom (pointer-drag is unaffected: it reads
+  // window.tablesEditing fresh at pointerdown, not from a stale tabIndex).
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    if (ev.detail.target && ev.detail.target.id === 'floorplan-wrap') applyTabIndex();
+  });
+
   toggle.addEventListener('click', function () {
     window.tablesEditing = !window.tablesEditing;
     section.classList.toggle('editing', window.tablesEditing);
     hint.hidden = !window.tablesEditing;
     toggle.querySelector('[data-when="view"]').hidden = window.tablesEditing;
     toggle.querySelector('[data-when="edit"]').hidden = !window.tablesEditing;
+    applyTabIndex();
+    // A keyboard nudge debounces its save (see scheduleKeyboardSave below);
+    // leaving edit mode within that window must not drop any pending move.
+    if (!window.tablesEditing) flushPendingSave();
   });
 
   // Drag-to-place (ADR-0054): pointer events — one code path for the
@@ -160,7 +192,7 @@
   // table's own shape from rendering clipped against the canvas edge
   // (2026-08-19 code review, ut-docs#814).
   var INSET = {{ .canvasInset }};
-  var drag = null; // { id, node, pointerId, startPt, startX, startY }
+  var drag = null; // { node, pointerId, startPt, startX, startY }
 
   function svgPoint(svg, evt) {
     var pt = svg.createSVGPoint();
@@ -168,6 +200,23 @@
     return pt.matrixTransform(svg.getScreenCTM().inverse());
   }
   function clamp(v) { return Math.max(INSET, Math.min(CANVAS - INSET, v)); }
+
+  // Shared save path (ut-docs#826): both drag-end and a keyboard nudge read
+  // the node's already-clamped dataset.x/y and persist it the same way — one
+  // POST, one error surface, whichever gesture produced the move.
+  function persistPosition(node) {
+    fetch('/api/tables/' + encodeURIComponent(node.dataset.id) + '/position', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ pos_x: node.dataset.x, pos_y: node.dataset.y })
+    }).then(function (res) {
+      status.hidden = res.ok;
+      if (!res.ok) status.textContent = TT.saveFailed;
+    }).catch(function () {
+      status.hidden = false;
+      status.textContent = TT.saveFailed;
+    });
+  }
 
   function onMove(e) {
     // Only the pointer that started the drag steers it (a second finger on
@@ -196,17 +245,7 @@
     if (x === d.startX && y === d.startY) return; // a tap, not a move
     // Persist immediately — each drag-end auto-saves, so nothing is lost if
     // the page reloads or the poll swaps the plan back in.
-    fetch('/api/tables/' + encodeURIComponent(d.id) + '/position', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ pos_x: String(x), pos_y: String(y) })
-    }).then(function (res) {
-      status.hidden = res.ok;
-      if (!res.ok) status.textContent = TT.saveFailed;
-    }).catch(function () {
-      status.hidden = false;
-      status.textContent = TT.saveFailed;
-    });
+    persistPosition(d.node);
   }
 
   section.addEventListener('pointerdown', function (e) {
@@ -219,7 +258,6 @@
     e.preventDefault();
     var svg = node.ownerSVGElement;
     drag = {
-      id: node.dataset.id,
       node: node,
       pointerId: e.pointerId,
       startPt: svgPoint(svg, e),
@@ -236,6 +274,53 @@
     // swipe) — without it the table follows the pointer forever.
     document.addEventListener('pointercancel', endDrag);
     node.addEventListener('lostpointercapture', endDrag, { once: true });
+  });
+
+  // Keyboard reposition (ut-docs#826): a focused table (tabIndex is 0 only
+  // while editing — set above) nudges by STEP canvas units per arrow press,
+  // STEP_BIG with Shift, through the same clamp() pointer-drag uses. The
+  // save is debounced rather than fired per keydown — held-key auto-repeat
+  // would otherwise queue a POST per repeat tick; flushPendingSave() (called
+  // when edit mode ends, above) guarantees no pending nudge is dropped just
+  // because it lands inside that debounce window.
+  //
+  // Keyed by NODE, not a single global slot: an operator arranging several
+  // tables nudges one, Tabs to the next, and nudges that one too, all
+  // within the debounce window — a single shared slot would silently drop
+  // every table but the last one touched (found in review, ut-docs#826).
+  var STEP = 10, STEP_BIG = 40;
+  var ARROW_DELTA = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  var pendingSaves = new Map(); // node -> timer
+
+  function scheduleKeyboardSave(node) {
+    if (pendingSaves.has(node)) clearTimeout(pendingSaves.get(node));
+    pendingSaves.set(node, setTimeout(function () {
+      pendingSaves.delete(node);
+      persistPosition(node);
+    }, 400));
+  }
+
+  function flushPendingSave() {
+    pendingSaves.forEach(function (timer, node) {
+      clearTimeout(timer);
+      persistPosition(node);
+    });
+    pendingSaves.clear();
+  }
+
+  section.addEventListener('keydown', function (e) {
+    if (!window.tablesEditing) return;
+    var delta = ARROW_DELTA[e.key];
+    if (!delta) return;
+    var node = e.target.closest ? e.target.closest('.table-node') : null;
+    if (!node || !node.ownerSVGElement) return;
+    e.preventDefault(); // arrow keys must move the table, not scroll the page
+    var step = e.shiftKey ? STEP_BIG : STEP;
+    var x = clamp((parseInt(node.dataset.x, 10) || 0) + delta[0] * step);
+    var y = clamp((parseInt(node.dataset.y, 10) || 0) + delta[1] * step);
+    node.setAttribute('transform', 'translate(' + x + ',' + y + ')');
+    node.dataset.x = x; node.dataset.y = y;
+    scheduleKeyboardSave(node);
   });
 })();
 </script>
