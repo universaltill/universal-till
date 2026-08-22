@@ -23,6 +23,12 @@ func TestItemCreate_DuplicateSKUIs400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 for duplicate sku, got %d: %s", rec.Code, rec.Body.String())
 	}
+	// ut-docs#316's review: a duplicate SKU must stay a SPECIFIC, actionable
+	// message, not fall back to the generic "invalid request" every other
+	// repo-layer error now gets.
+	if !strings.Contains(rec.Body.String(), "already in use") {
+		t.Fatalf("want the specific duplicate-SKU message, got %s", rec.Body.String())
+	}
 }
 
 func TestItemUpdate_DuplicateSKUIs400(t *testing.T) {
@@ -32,6 +38,9 @@ func TestItemUpdate_DuplicateSKUIs400(t *testing.T) {
 	rec := postForm(t, mux, "/api/catalog/item/update", "id=itm2&name=Two&price=100&sku=A&isActive=1")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 for duplicate sku on update, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "already in use") {
+		t.Fatalf("want the specific duplicate-SKU message, got %s", rec.Body.String())
 	}
 }
 
@@ -74,6 +83,9 @@ func TestVariantUpdate_DuplicateSKUIs400(t *testing.T) {
 	rec := postForm(t, mux, "/api/catalog/variant", "id=v2&itemId=itm1&name=Medium&sku=S1-L&price=300&isActive=1")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 for duplicate variant sku, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "already in use") {
+		t.Fatalf("want the specific duplicate-SKU message, got %s", rec.Body.String())
 	}
 }
 

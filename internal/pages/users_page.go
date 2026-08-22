@@ -49,7 +49,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	// ut-docs#795 moved every mutating handler onto checkOrElevate instead.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "user_management") {
-			http.Error(w, "manager or admin role required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())

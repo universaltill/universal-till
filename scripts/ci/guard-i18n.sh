@@ -93,6 +93,20 @@ for path in sorted(glob.glob("web/locales/*.json")):
 #    occasionally, this just keeps the exact class found here from
 #    regressing silently. A reviewed exception can be marked `// i18n:ignore`
 #    on the same line.
+#
+#    On the http.Error exemption specifically -- why it's still open, not
+#    narrowed (ut-docs#316): the two most-repeated http.Error literals
+#    ("manager or admin required"/"invalid upload" and their variants,
+#    ~40 sites) and 22 of catalog/handlers.go's 26 err.Error()-to-the-
+#    operator sites now go through common.LocalizedError/
+#    LogAndLocalizedError (translated, never raw Go/SQL text or an
+#    internal ID) -- the remaining 4 in that file are deliberately
+#    untouched, clean hand-written validation errors, not this defect
+#    class. But the ~86 more raw err.Error() sites and the long tail of
+#    one-off literals scattered across the REST of internal/pages are NOT
+#    yet swept -- narrowing this exemption today would fail CI on all of
+#    them at once, well past what one card's diff should carry. Tracked
+#    as ut-docs#893 rather than left implicit.
 call_re = re.compile(
     r'(?:w\.Write\(\[\]byte\(|fmt\.Fprintf\(\s*w,\s*|fmt\.Fprint(?:ln)?\(\s*w,\s*)"((?:[^"\\]|\\.)*)"'
 )

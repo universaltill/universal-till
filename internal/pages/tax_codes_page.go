@@ -175,7 +175,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("GET /catalog/tax-codes", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "tax_code_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		views, err := repo.ListAllTaxCodes(r.Context())
@@ -200,7 +200,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/catalog/tax-codes", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "tax_code_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		_ = r.ParseForm()
@@ -227,7 +227,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/catalog/tax-codes/update", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "tax_code_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		_ = r.ParseForm()

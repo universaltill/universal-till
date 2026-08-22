@@ -227,7 +227,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// (encode/decodeEnrollCode keep the pairing "code" opaque — see below.)
 	mux.HandleFunc("POST /api/sync/enroll-token", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "sync_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		// ut-docs#405 (independent review finding): enrolling is the other
@@ -379,7 +379,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// Revoke a replica (manager, primary only).
 	mux.HandleFunc("POST /api/sync/tills/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "sync_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		// ut-docs#405: the shop's till roster now syncs to every replica
@@ -463,7 +463,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// snapshot, stages restore + identity — takes effect on restart (D2).
 	mux.HandleFunc("POST /api/sync/join", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "sync_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		_ = r.ParseForm()

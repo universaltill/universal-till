@@ -364,7 +364,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 	// Accountant handoff: the same range as CSV (credit notes negative).
 	mux.HandleFunc("GET /api/invoices/export", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "reports") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		from := strings.TrimSpace(r.URL.Query().Get("from"))
