@@ -9,9 +9,13 @@ test('scan adds seeded item to basket', async ({ page, request }) => {
     },
   });
   if (!createResponse.ok()) {
+    // PLU001 already exists from a prior run's seed data — idempotent
+    // create, not a real failure. ut-docs#316 gave duplicate-SKU its own
+    // specific, translated message (data.ErrSKUExists / "already in use")
+    // instead of the raw SQL/driver text this used to match.
     expect(createResponse.status()).toBe(400);
     const body = await createResponse.text();
-    expect(body).toMatch(/items\\.sku|constraint failed/i);
+    expect(body).toMatch(/already in use/i);
   }
 
   await page.goto('/');
