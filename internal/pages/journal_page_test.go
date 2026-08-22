@@ -176,6 +176,110 @@ func TestJournalDetail_ShowsServiceChargeDistinctFromTotal(t *testing.T) {
 	}
 }
 
+// ut-docs#792: the Journal detail view is where a shop owner reconciles a
+// *past* card payment, so the masked PAN/auth code (ut-docs#543) persisted
+// on the payment row must actually surface there, not just on the one-time
+// printed receipt. Terminal ID/trace ID are back-office reconciliation
+// fields and surface alongside them.
+func TestJournalDetail_ShowsCardPresentReconciliationFields(t *testing.T) {
+	mux, d := newJournalMux(t)
+	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at)
+		VALUES ('sale-cp', 'R-CP-1', 'completed', 'sale', 'card', 1, 'queued', 'GBP', 370, 0, 0, 370, datetime('now'))`); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES ('sale-cp-l1', 'sale-cp', 1, 'itm1', 'Journal Apple', 1, 370, 0, 0, 370, 370)`); err != nil {
+		t.Fatalf("seed sale line: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO payments(id, sale_id, method_id, amount, currency, masked_pan, auth_code, terminal_id, trace_id, paid_at)
+		VALUES ('sale-cp-p1', 'sale-cp', 'card', 370, 'GBP', 'VISA •••• 4242', '013579', 'TERM-01', 'TRACE-99', datetime('now'))`); err != nil {
+		t.Fatalf("seed payment: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/journal/R-CP-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/journal/R-CP-1 = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"VISA •••• 4242", "013579", "TERM-01", "TRACE-99"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("detail missing card-present field %q: %s", want, body)
+		}
+	}
+
+	// A cash sale (the existing seedJournalPageSale fixture -- no
+	// card-present fields set) must not show any of this, and must fall
+	// back to the plain Reference display as before.
+	seedJournalPageSale(t, d, "sale-cash", "R-CASH-1", "sale")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/journal/R-CASH-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/journal/R-CASH-1 = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "TERM-01") {
+		t.Fatalf("cash sale detail unexpectedly shows a card-present field: %s", rec.Body.String())
+	}
+
+	// A payment with only a free-text Reference (e.g. a SumUp transaction
+	// ref, today's non-card-present pattern) must still fall back to the
+	// plain Reference display -- MaskedPAN being unset must not suppress it.
+	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at)
+		VALUES ('sale-ref', 'R-REF-1', 'completed', 'sale', 'card', 1, 'queued', 'GBP', 370, 0, 0, 370, datetime('now'))`); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES ('sale-ref-l1', 'sale-ref', 1, 'itm1', 'Journal Apple', 1, 370, 0, 0, 370, 370)`); err != nil {
+		t.Fatalf("seed sale line: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO payments(id, sale_id, method_id, amount, currency, reference, paid_at)
+		VALUES ('sale-ref-p1', 'sale-ref', 'card', 370, 'GBP', 'SUMUP-TX-555', datetime('now'))`); err != nil {
+		t.Fatalf("seed payment: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/journal/R-REF-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/journal/R-REF-1 = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "SUMUP-TX-555") {
+		t.Fatalf("Reference-only payment should still show its Reference: %s", rec.Body.String())
+	}
+
+	// When MaskedPAN IS set alongside a Reference, MaskedPAN wins and the
+	// raw Reference must not also leak onto the page (mirrors
+	// receipt_test.go's TestRenderReceipt_ShowsMaskedPANAndAuthCode for the
+	// identical rendering logic on the printed receipt).
+	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at)
+		VALUES ('sale-both', 'R-BOTH-1', 'completed', 'sale', 'card', 1, 'queued', 'GBP', 370, 0, 0, 370, datetime('now'))`); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES ('sale-both-l1', 'sale-both', 1, 'itm1', 'Journal Apple', 1, 370, 0, 0, 370, 370)`); err != nil {
+		t.Fatalf("seed sale line: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO payments(id, sale_id, method_id, amount, currency, reference, masked_pan, terminal_id, paid_at)
+		VALUES ('sale-both-p1', 'sale-both', 'card', 370, 'GBP', 'RAW-REF-SHOULD-NOT-SHOW', 'VISA •••• 1111', 'TERM-02', datetime('now'))`); err != nil {
+		t.Fatalf("seed payment: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/journal/R-BOTH-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/journal/R-BOTH-1 = %d", rec.Code)
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, "VISA •••• 1111") {
+		t.Fatalf("expected MaskedPAN to render: %s", body)
+	}
+	if strings.Contains(body, "RAW-REF-SHOULD-NOT-SHOW") {
+		t.Fatalf("Reference must not also render once MaskedPAN is set: %s", body)
+	}
+	// Terminal ID alone (no TraceID) must render without the middle-dot
+	// join logic breaking or appending a trailing separator.
+	if !strings.Contains(body, "TERM-02") {
+		t.Fatalf("expected TerminalID to render standalone: %s", body)
+	}
+}
+
 func TestJournalFragmentLimitsAndFullView(t *testing.T) {
 	mux, d := newJournalMux(t)
 	for i := 1; i <= 7; i++ {
