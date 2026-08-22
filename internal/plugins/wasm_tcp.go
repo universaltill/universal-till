@@ -78,18 +78,35 @@ func tcpAddr(host string, port uint32) string {
 	return net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10))
 }
 
+// tcpHandleInfo pairs an open connection with the exact `tcp:<host>:<port>`
+// permission string that authorized it at Open time (ut-docs#606 item 1).
+// Re-checking permission on every tcp_write/tcp_read needs this same string
+// — not one re-derived from conn.RemoteAddr(), which can differ from the
+// requested hostname after DNS resolution and would then check a grant that
+// was never actually the one issued.
+type tcpHandleInfo struct {
+	conn net.Conn
+	addr string
+}
+
 // tcpConnRegistry tracks open device connections by (pluginID, handle).
-// Handles are sequential per plugin starting at 0 and never reused within a
-// plugin's registry lifetime, so a stale handle can't alias a new socket.
+// Handles are sequential per plugin starting at 0 and never reused within
+// one continuous registration lifetime — from a plugin's first Open until
+// its next CloseAll — so a stale handle from earlier in that same lifetime
+// can't alias a new socket. The guarantee does NOT span a CloseAll itself
+// (ut-docs#606 item 3): a disable→re-enable cycle, or a version reload,
+// restarts numbering at 0 for that plugin. This is a deliberately
+// documented, not fixed, gap — see CloseAll's own comment for why it's
+// academic.
 type tcpConnRegistry struct {
 	mu       sync.Mutex
-	byPlugin map[string]map[int32]net.Conn
+	byPlugin map[string]map[int32]tcpHandleInfo
 	next     map[string]int32
 }
 
 func newTCPConnRegistry() *tcpConnRegistry {
 	return &tcpConnRegistry{
-		byPlugin: map[string]map[int32]net.Conn{},
+		byPlugin: map[string]map[int32]tcpHandleInfo{},
 		next:     map[string]int32{},
 	}
 }
@@ -98,21 +115,23 @@ func newTCPConnRegistry() *tcpConnRegistry {
 // survive per-event module instances, and Sync must be able to reap them.
 var tcpConns = newTCPConnRegistry()
 
-// Open registers conn under the plugin's next handle. Returns (handle, true)
-// or (0, false) when the plugin is already at maxTCPHandlesPerPlugin — the
-// caller still owns (and must close) conn in that case.
-func (r *tcpConnRegistry) Open(pluginID string, conn net.Conn) (int32, bool) {
+// Open registers conn under the plugin's next handle, recording addr (the
+// `tcp:<host>:<port>` permission string checked to authorize this dial) for
+// later per-call re-checks. Returns (handle, true) or (0, false) when the
+// plugin is already at maxTCPHandlesPerPlugin — the caller still owns (and
+// must close) conn in that case.
+func (r *tcpConnRegistry) Open(pluginID string, conn net.Conn, addr string) (int32, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.byPlugin[pluginID]) >= maxTCPHandlesPerPlugin {
 		return 0, false
 	}
 	if r.byPlugin[pluginID] == nil {
-		r.byPlugin[pluginID] = map[int32]net.Conn{}
+		r.byPlugin[pluginID] = map[int32]tcpHandleInfo{}
 	}
 	h := r.next[pluginID]
 	r.next[pluginID] = h + 1
-	r.byPlugin[pluginID][h] = conn
+	r.byPlugin[pluginID][h] = tcpHandleInfo{conn: conn, addr: addr}
 	return h, true
 }
 
@@ -120,35 +139,64 @@ func (r *tcpConnRegistry) Open(pluginID string, conn net.Conn) (int32, bool) {
 func (r *tcpConnRegistry) Get(pluginID string, handle int32) (net.Conn, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	conn, ok := r.byPlugin[pluginID][handle]
-	return conn, ok
+	info, ok := r.byPlugin[pluginID][handle]
+	return info.conn, ok
+}
+
+// GetWithAddr is Get plus the `tcp:<host>:<port>` permission string that was
+// checked when the handle was opened, in a single locked lookup —
+// hostTCPWrite/hostTCPRead need both the connection and its authorization
+// address per call, and looking them up as two separately-locked calls
+// leaves a re-lock window where a concurrent Close/CloseAll for the same
+// handle could interleave between them (reviewed 2026-08-22, ut-docs#606
+// review finding, non-blocking: analysis showed the window already fails
+// closed or, in the narrowest cross-reload race, degrades to a spurious
+// closed-connection I/O error rather than misdirecting a call onto a
+// different plugin's connection — this closes the window regardless,
+// since a single lock is free to have).
+func (r *tcpConnRegistry) GetWithAddr(pluginID string, handle int32) (net.Conn, string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	info, ok := r.byPlugin[pluginID][handle]
+	return info.conn, info.addr, ok
 }
 
 // Close closes and removes one handle; unknown handles are a no-op
 // (tcp_close is idempotent).
 func (r *tcpConnRegistry) Close(pluginID string, handle int32) {
 	r.mu.Lock()
-	conn, ok := r.byPlugin[pluginID][handle]
+	info, ok := r.byPlugin[pluginID][handle]
 	if ok {
 		delete(r.byPlugin[pluginID], handle)
 	}
 	r.mu.Unlock()
 	if ok {
-		_ = conn.Close()
+		_ = info.conn.Close()
 	}
 }
 
-// CloseAll force-closes every handle a plugin holds and clears its entry.
-// Called from WasmRuntime.Sync when a plugin's module is dropped, so a
-// disabled/removed/reloaded plugin never leaks an open socket.
+// CloseAll force-closes every handle a plugin holds and clears its entry,
+// INCLUDING the handle counter (`next`) — a disable→re-enable cycle (or a
+// version reload, ut-docs#606 item 2) restarts handle numbering at 0 for
+// that plugin. Numbering is therefore only guaranteed monotonic within one
+// registration lifetime, not across a CloseAll — see TestTCPConnRegistry's
+// "no reuse" case, which asserts this within a lifetime, and
+// TestTCPConnRegistryHandleNumberingAfterCloseAll, which asserts the reset
+// across one. A plugin can only ever alias its own past connections this
+// way (registries are per-plugin), so the impact is academic; `next` is
+// int32 and unguarded against wraparound at 2^31 opens for the same
+// reason — also academic given the 4-handle cap. Called from
+// WasmRuntime.Sync when a plugin's module is dropped (disabled, removed,
+// or updated to a new version), so a disabled/removed/reloaded plugin
+// never leaks an open socket.
 func (r *tcpConnRegistry) CloseAll(pluginID string) {
 	r.mu.Lock()
-	conns := r.byPlugin[pluginID]
+	infos := r.byPlugin[pluginID]
 	delete(r.byPlugin, pluginID)
 	delete(r.next, pluginID)
 	r.mu.Unlock()
-	for _, conn := range conns {
-		_ = conn.Close()
+	for _, info := range infos {
+		_ = info.conn.Close()
 	}
 }
 
@@ -174,10 +222,9 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 	// permission (tcp:<host>:<port>) or the wildcard (tcp:*). Configurable
 	// terminal plugins learn their device address from install-time settings,
 	// so they declare tcp:* and are review-gated accordingly (like net:*).
-	if err := CheckPermission(ctx, s.db, s.pluginID, "tcp:"+tcpAddr(host, port)); err != nil {
-		if err2 := CheckPermission(ctx, s.db, s.pluginID, "tcp:*"); err2 != nil {
-			return hostErrDenied
-		}
+	addr := tcpAddr(host, port)
+	if !tcpAddrAuthorized(ctx, s, addr) {
+		return hostErrDenied
 	}
 	// DialContext, not DialTimeout (review finding B1): the guest's own
 	// timeout is clamped as before, but the dial must ALSO give up the
@@ -190,13 +237,48 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 		logging.L().Infof("[wasm:%s] tcp open %s:%d failed: %v", s.pluginID, host, port, err)
 		return hostErrInternal
 	}
-	handle, ok := tcpConns.Open(s.pluginID, conn)
+	handle, ok := tcpConns.Open(s.pluginID, conn, addr)
 	if !ok {
 		_ = conn.Close()
 		logging.L().Infof("[wasm:%s] tcp open %s:%d refused: max %d handles", s.pluginID, host, port, maxTCPHandlesPerPlugin)
 		return hostErrInvalid
 	}
 	return handle
+}
+
+// tcpAddrAuthorized checks addr (a `tcp:<host>:<port>` permission string)
+// against the plugin's current grants — exact address, else the `tcp:*`
+// wildcard. It is called both at tcp_open and on every subsequent
+// tcp_write/tcp_read for the SAME handle (ut-docs#606 item 1), so revoking a
+// plugin's tcp: grant mid-flight denies its very next call on an
+// already-open socket, matching wasm_hostfns.go's module-wide invariant
+// ("every capability is permission-gated per call... denials are audited
+// and grants are revocable live") that tcp_write/tcp_read previously
+// violated by only authorizing once, at open time.
+//
+// The exact/wildcard probes here use the repository's plain CheckPermission
+// (no audit side effect), not the auditing plugins.CheckPermission — a
+// device-plugin declaring only the tcp:* wildcard (the documented common
+// case: "configurable terminal plugins learn their device address from
+// install-time settings") would otherwise fail the exact-address probe on
+// EVERY write/read of an active protocol exchange, writing a spurious
+// "permission_denied" audit_log row for a call that then succeeds one line
+// later on the wildcard. A genuine denial (neither probe grants) still gets
+// audited, via the same two auditing calls hostTCPOpen already made before
+// this helper existed — reviewed 2026-08-22 (ut-docs#606 review finding,
+// non-blocking).
+func tcpAddrAuthorized(ctx context.Context, s *hostState, addr string) bool {
+	repo := data.NewPluginRepo(s.db)
+	if granted, exists, err := repo.CheckPermission(ctx, s.pluginID, "tcp:"+addr); err == nil && exists && granted {
+		return true
+	}
+	if granted, exists, err := repo.CheckPermission(ctx, s.pluginID, "tcp:*"); err == nil && exists && granted {
+		return true
+	}
+	// Genuine denial: audit it, same as hostTCPOpen's pre-existing pattern.
+	_ = CheckPermission(ctx, s.db, s.pluginID, "tcp:"+addr)
+	_ = CheckPermission(ctx, s.db, s.pluginID, "tcp:*")
+	return false
 }
 
 // hostTCPWrite writes the guest buffer to the connection under a fixed 10s
@@ -206,9 +288,12 @@ func hostTCPWrite(ctx context.Context, m api.Module, handle int32, ptr, length u
 	if !ok {
 		return hostErrInternal
 	}
-	conn, ok := tcpConns.Get(s.pluginID, handle)
+	conn, addr, ok := tcpConns.GetWithAddr(s.pluginID, handle)
 	if !ok {
 		return hostErrNotFound
+	}
+	if !tcpAddrAuthorized(ctx, s, addr) {
+		return hostErrDenied
 	}
 	buf, ok := readGuest(m, ptr, length)
 	if !ok {
@@ -234,9 +319,12 @@ func hostTCPRead(ctx context.Context, m api.Module, handle int32, dstPtr, dstCap
 	if !ok {
 		return hostErrInternal
 	}
-	conn, ok := tcpConns.Get(s.pluginID, handle)
+	conn, addr, ok := tcpConns.GetWithAddr(s.pluginID, handle)
 	if !ok {
 		return hostErrNotFound
+	}
+	if !tcpAddrAuthorized(ctx, s, addr) {
+		return hostErrDenied
 	}
 	if dstCap == 0 {
 		return hostErrInvalid

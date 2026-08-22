@@ -431,6 +431,16 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 	}
 	if old, ok := w.modules[pluginID]; ok {
 		_ = old.Close(context.Background())
+		// ut-docs#606 item 2: Sync's own module-drop loop only force-closes
+		// TCP handles for a plugin that went inactive (!active[id]) — an
+		// updated-but-still-active plugin reaches this branch instead, and
+		// until now its OLD compiled module's open sockets were never
+		// force-closed, leaking (bounded at maxTCPHandlesPerPlugin) until the
+		// plugin was next disabled or the process exited. A version bump
+		// recompiles the module fresh, so the old module's handles are
+		// meaningless to it regardless — close them here, at the one place
+		// that actually knows a reload (not just a drop) just happened.
+		tcpConns.CloseAll(pluginID)
 	}
 	w.modules[pluginID] = compiled
 	w.versions[pluginID] = version
