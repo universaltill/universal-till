@@ -1179,6 +1179,15 @@ body.login-screen {
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
 
+/* Fiscalisation status chip (ut-docs#685) — same pill shape/tint as
+   .sync-chip above; empty (no TSE configured) renders nothing, so there is
+   no zero-state style to define. No link inside, so none of .sync-chip's
+   `a`-specificity workaround is needed here. */
+.fiscal-chip { display: inline-flex; align-items: center; margin-inline-start: .6rem;
+  padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
+.fiscal-chip.ok { background: rgba(22, 163, 74, .12); color: var(--success); }
+.fiscal-chip.warn { background: rgba(217, 119, 6, .12); color: var(--warning); }
+
 /* Operator chip + lock button in the nav */
 .session-chip { display: inline-flex; align-items: center; gap: .5rem; margin-inline-start: .8rem; }
 .session-user { font-weight: 600; }
