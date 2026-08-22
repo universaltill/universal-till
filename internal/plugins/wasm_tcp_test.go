@@ -86,6 +86,18 @@ func readGuestResults(t *testing.T, d *sql.DB, pluginID string) map[string]any {
 	return results
 }
 
+// revokePerm flips an already-granted permission back to not-granted,
+// without un-declaring it -- the shape of a live revoke from the plugins
+// admin UI (ut-docs#606 item 1's regression test uses this to prove
+// tcp_write/tcp_read stop authorizing an already-open handle immediately,
+// rather than only on the next tcp_open).
+func revokePerm(t *testing.T, d *sql.DB, pluginID, perm string) {
+	t.Helper()
+	if err := data.NewPluginRepo(d).SetPermission(context.Background(), pluginID, perm, false); err != nil {
+		t.Fatalf("revoke %s: %v", perm, err)
+	}
+}
+
 func newTCPTestRuntime(t *testing.T, guest, pluginID string) *WasmRuntime {
 	t.Helper()
 	w := NewWasmRuntime(t.TempDir())
@@ -124,6 +136,158 @@ func TestHostTCPOpenDeniedWithoutPermission(t *testing.T) {
 	}
 	if n := accepts.Load(); n != 0 {
 		t.Fatalf("device saw %d connection(s) without a tcp: grant", n)
+	}
+}
+
+// TestHostTCPWriteReadDeniedAfterLiveRevocation proves ut-docs#606 item 1:
+// tcp_write/tcp_read re-check the plugin's tcp: grant on every call, not
+// only once at tcp_open, so revoking a plugin's tcp:<host>:<port>
+// permission mid-flight denies its very next write/read on an
+// already-open socket -- matching wasm_hostfns.go's documented invariant
+// that every capability is permission-gated PER CALL and revocable live.
+// Before the fix, tcp_write/tcp_read authorized purely via the open
+// handle and this revoke had no effect until the plugin was next disabled.
+func TestHostTCPWriteReadDeniedAfterLiveRevocation(t *testing.T) {
+	guest := buildTCPGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.tcprevoke"
+
+	host, port, _, conns := startTCPFixture(t, nil)
+	perm := fmt.Sprintf("tcp:%s:%d", host, port)
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, perm)
+
+	w := newTCPTestRuntime(t, guest, pluginID)
+	res := runTCPGuest(t, w, d, pluginID, map[string]any{
+		"mode": "openonly", "host": host, "port": port,
+		"connect_timeout_ms": 2000,
+	})
+	if res["open_code"] != float64(0) {
+		t.Fatalf("open_code = %v, want 0", res["open_code"])
+	}
+
+	var deviceConn net.Conn
+	select {
+	case deviceConn = <-conns:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fixture never received the connection")
+	}
+	defer deviceConn.Close()
+
+	revokePerm(t, d, pluginID, perm)
+
+	// Direct host-function calls, bypassing the guest: both fail the
+	// permission re-check before ever touching the module, so a nil
+	// api.Module is safe here (readGuest/m.Memory() are never reached).
+	bgCtx := withHostState(context.Background(), &hostState{pluginID: pluginID, db: d})
+	if got := hostTCPWrite(bgCtx, nil, 0, 0, 0); got != hostErrDenied {
+		t.Errorf("tcp_write after live revoke = %d, want %d (denied)", got, hostErrDenied)
+	}
+	if got := hostTCPRead(bgCtx, nil, 0, 0, 1, 100); got != hostErrDenied {
+		t.Errorf("tcp_read after live revoke = %d, want %d (denied)", got, hostErrDenied)
+	}
+}
+
+// TestHostTCPExactPermissionBoundary proves the exact-match half of the
+// tcp: grant model at the host-function layer (ut-docs#606 item 4) -- a
+// plugin granted only tcp:<host>:<portA> is denied dialing <portB> on the
+// SAME host. Previously the exact-match behavior was only proven at the
+// "some grant vs none" level (TestHostTCPOpenDeniedWithoutPermission).
+func TestHostTCPExactPermissionBoundary(t *testing.T) {
+	guest := buildTCPGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.tcpboundary"
+
+	hostA, portA, acceptsA, _ := startTCPFixture(t, nil)
+	_, portB, acceptsB, _ := startTCPFixture(t, nil) // different port, same host
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, fmt.Sprintf("tcp:%s:%d", hostA, portA)) // grant covers portA only
+
+	w := newTCPTestRuntime(t, guest, pluginID)
+
+	// Same host, a DIFFERENT port the grant does not cover -- must be denied.
+	res := runTCPGuest(t, w, d, pluginID, map[string]any{
+		"mode": "openonly", "host": hostA, "port": portB,
+		"connect_timeout_ms": 1000,
+	})
+	if res["open_code"] != float64(hostErrDenied) {
+		t.Fatalf("open_code (ungranted port) = %v, want %d (denied)", res["open_code"], hostErrDenied)
+	}
+	if n := acceptsB.Load(); n != 0 {
+		t.Fatalf("device on the ungranted port saw %d connection(s)", n)
+	}
+
+	// The actually-granted host:port still works -- proves the denial above
+	// is the exact-match boundary, not a broken grant lookup altogether.
+	res = runTCPGuest(t, w, d, pluginID, map[string]any{
+		"mode": "openonly", "host": hostA, "port": portA,
+		"connect_timeout_ms": 1000,
+	})
+	if res["open_code"] != float64(0) {
+		t.Fatalf("open_code (granted port) = %v, want 0", res["open_code"])
+	}
+	if n := acceptsA.Load(); n != 1 {
+		t.Fatalf("device on the granted port saw %d connection(s), want 1", n)
+	}
+}
+
+// TestHostTCPCrossPluginHandleRejected proves rejection at the HOST-FUNCTION
+// layer (ut-docs#606 item 4), not just the bare registry
+// (TestTCPConnRegistry's "plugin.b sees plugin.a's handle" case already
+// covers that level). hostTCPWrite/hostTCPRead/hostTCPClose all resolve the
+// caller's registry slot from stateFrom(ctx)'s hostState.pluginID -- never
+// from anything a guest itself claims -- so plugin B, even holding its OWN
+// valid grant for the same address, cannot touch handle 0 opened by plugin
+// A: B's slice of the shared registry simply has no such entry.
+func TestHostTCPCrossPluginHandleRejected(t *testing.T) {
+	guest := buildTCPGuest(t)
+	d := hostfnTestDB(t)
+	const pluginA = "com.test.tcpcrossA"
+	const pluginB = "com.test.tcpcrossB"
+
+	host, port, _, _ := startTCPFixture(t, nil)
+	perm := fmt.Sprintf("tcp:%s:%d", host, port)
+
+	seedPlugin(t, d, pluginA)
+	grantPerm(t, d, pluginA, "storage")
+	grantPerm(t, d, pluginA, perm)
+	seedPlugin(t, d, pluginB)
+	grantPerm(t, d, pluginB, "storage")
+	grantPerm(t, d, pluginB, perm) // B's own valid grant for the SAME address
+
+	w := newTCPTestRuntime(t, guest, pluginA)
+	tcpConns.CloseAll(pluginB)
+	t.Cleanup(func() { tcpConns.CloseAll(pluginB) })
+
+	res := runTCPGuest(t, w, d, pluginA, map[string]any{
+		"mode": "openonly", "host": host, "port": port,
+		"connect_timeout_ms": 2000,
+	})
+	if res["open_code"] != float64(0) {
+		t.Fatalf("plugin A open_code = %v, want 0", res["open_code"])
+	}
+
+	// Plugin B addressing handle 0: for B's own registry slot that handle
+	// doesn't exist (it's A's) -- Get fails before m/dstCap are ever
+	// touched, so nil/zero arguments here are safe.
+	bCtx := withHostState(context.Background(), &hostState{pluginID: pluginB, db: d})
+	if got := hostTCPWrite(bCtx, nil, 0, 0, 0); got != hostErrNotFound {
+		t.Errorf("hostTCPWrite cross-plugin handle 0 = %d, want %d (not found)", got, hostErrNotFound)
+	}
+	if got := hostTCPRead(bCtx, nil, 0, 0, 0, 0); got != hostErrNotFound {
+		t.Errorf("hostTCPRead cross-plugin handle 0 = %d, want %d (not found)", got, hostErrNotFound)
+	}
+	if got := hostTCPClose(bCtx, 0); got != 0 {
+		t.Errorf("hostTCPClose cross-plugin handle 0 = %d, want 0 (idempotent no-op)", got)
+	}
+
+	// Plugin A's own handle must be untouched by B's no-op close attempt.
+	if _, ok := tcpConns.Get(pluginA, 0); !ok {
+		t.Error("plugin A's handle was affected by plugin B's cross-plugin close attempt")
 	}
 }
 
@@ -388,6 +552,91 @@ func TestHostTCPCloseAllOnPluginUnload(t *testing.T) {
 	}
 }
 
+// TestHostTCPCloseAllOnPluginVersionUpdate proves ut-docs#606 item 2: a
+// plugin updated to a new version -- not just disabled/removed -- must also
+// have its OLD module's open TCP handles force-closed. Before the fix,
+// Sync's module-drop loop only covered `!active[id]`; an updated plugin
+// stays active, so w.load's recompile branch swapped in a new compiled
+// module while the old module's sockets (now unreachable -- nothing
+// references the old module anymore) sat open until the plugin was next
+// disabled or the process exited. Asserted on the REAL device side, same
+// as TestHostTCPCloseAllOnPluginUnload.
+func TestHostTCPCloseAllOnPluginVersionUpdate(t *testing.T) {
+	guest := buildTCPGuest(t)
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.tcpversionbump"
+
+	host, port, _, conns := startTCPFixture(t, nil)
+
+	seedPlugin(t, d, pluginID)
+	grantPerm(t, d, pluginID, "storage")
+	grantPerm(t, d, pluginID, fmt.Sprintf("tcp:%s:%d", host, port))
+
+	w := newTCPTestRuntime(t, guest, pluginID)
+	res := runTCPGuest(t, w, d, pluginID, map[string]any{
+		"mode": "openonly", "host": host, "port": port,
+		"connect_timeout_ms": 2000,
+	})
+	if res["open_code"] != float64(0) {
+		t.Fatalf("open_code = %v, want 0", res["open_code"])
+	}
+
+	var deviceConn net.Conn
+	select {
+	case deviceConn = <-conns:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fixture never received the connection")
+	}
+	defer deviceConn.Close()
+
+	if _, ok := tcpConns.Get(pluginID, 0); !ok {
+		t.Fatal("open handle not in the registry after the event")
+	}
+
+	// Sync loads by convention (baseDir/pluginID/version/entrypoint), unlike
+	// newTCPTestRuntime's direct w.load(guest) above -- so the "new version"
+	// needs a real module on disk at that path, or Sync's own load would
+	// fail and never reach the recompile branch this test exercises. Same
+	// guest bytes are fine: the point is the version STRING changed, which
+	// is what w.load's recompile check keys on.
+	newVersionDir := filepath.Join(w.baseDir, pluginID, "2.0.0")
+	if err := os.MkdirAll(newVersionDir, 0o755); err != nil {
+		t.Fatalf("mkdir new version dir: %v", err)
+	}
+	guestBytes, err := os.ReadFile(guest)
+	if err != nil {
+		t.Fatalf("read guest bytes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(newVersionDir, "plugin.wasm"), guestBytes, 0o644); err != nil {
+		t.Fatalf("write new version module: %v", err)
+	}
+
+	// Bump the plugin's version and Sync: the plugin stays active
+	// throughout, so this exercises w.load's recompile branch, not Sync's
+	// own !active[id] drop branch. plugin_catalog is keyed (id, version) —
+	// a version bump is a new catalog row, like a real publish, not an
+	// UPDATE of the 1.0.0 row (which plugins.version still needs to FK to
+	// were we to touch it, since this fixture doesn't remove 1.0.0).
+	if _, err := d.Exec(`INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at)
+		VALUES (?, '2.0.0', 'test', 'wasm', './plugin.wasm', 'file://x', 'x', '0.0.1', '1.0', datetime('now'))`, pluginID); err != nil {
+		t.Fatalf("seed new catalog version: %v", err)
+	}
+	if _, err := d.Exec(`UPDATE plugins SET version = '2.0.0' WHERE id = ?`, pluginID); err != nil {
+		t.Fatalf("bump installed version: %v", err)
+	}
+	w.Sync(context.Background(), d)
+	defer SharedBus(d).ResetSubscribers()
+
+	if _, ok := tcpConns.Get(pluginID, 0); ok {
+		t.Error("registry still holds the old version's handle after a version update")
+	}
+	_ = deviceConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	if _, err := deviceConn.Read(buf); err == nil {
+		t.Error("device-side read succeeded — the old module's socket was not closed on version update")
+	}
+}
+
 // Sync populates hasTCP from granted tcp: permissions the same way it does
 // hasNet from net:, and timeoutFor widens the deadline for either.
 func TestWasmRuntimeTCPTimeoutWidening(t *testing.T) {
@@ -434,15 +683,15 @@ func TestTCPConnRegistry(t *testing.T) {
 		return c1
 	}
 
-	hA0, ok := r.Open("plugin.a", fixtureConn())
+	hA0, ok := r.Open("plugin.a", fixtureConn(), "1.2.3.4:1")
 	if !ok || hA0 != 0 {
 		t.Fatalf("first handle for plugin.a = %d,%v, want 0,true", hA0, ok)
 	}
-	hA1, _ := r.Open("plugin.a", fixtureConn())
+	hA1, _ := r.Open("plugin.a", fixtureConn(), "1.2.3.4:2")
 	if hA1 != 1 {
 		t.Fatalf("second handle = %d, want sequential 1", hA1)
 	}
-	hB0, _ := r.Open("plugin.b", fixtureConn())
+	hB0, _ := r.Open("plugin.b", fixtureConn(), "1.2.3.4:1")
 	if hB0 != 0 {
 		t.Fatalf("plugin.b first handle = %d, want its own sequence starting 0", hB0)
 	}
@@ -464,7 +713,7 @@ func TestTCPConnRegistry(t *testing.T) {
 	r.Close("plugin.a", hA0) // idempotent: closing again must not panic
 
 	// Handles are never reused within a plugin's lifetime.
-	hA2, _ := r.Open("plugin.a", fixtureConn())
+	hA2, _ := r.Open("plugin.a", fixtureConn(), "1.2.3.4:3")
 	if hA2 != 2 {
 		t.Errorf("handle after close = %d, want 2 (no reuse)", hA2)
 	}
@@ -479,19 +728,50 @@ func TestTCPConnRegistry(t *testing.T) {
 	r.CloseAll("plugin.b")
 }
 
+// TestTCPConnRegistryHandleNumberingAfterCloseAll documents ut-docs#606
+// item 3's accepted (not fixed) behavior: CloseAll deletes the plugin's
+// handle counter along with its handles, so numbering restarts at 0 on the
+// NEXT registration lifetime for that plugin (a disable→re-enable cycle, or
+// a version reload). This is deliberately not "never reused" in the
+// stronger, whole-registry sense -- see tcpConnRegistry's and CloseAll's
+// doc comments for why the gap is accepted: a plugin can only ever alias
+// its own past connections this way.
+func TestTCPConnRegistryHandleNumberingAfterCloseAll(t *testing.T) {
+	r := newTCPConnRegistry()
+	fixtureConn := func() net.Conn {
+		c1, c2 := net.Pipe()
+		t.Cleanup(func() { c1.Close(); c2.Close() })
+		return c1
+	}
+
+	h0, _ := r.Open("plugin.reload", fixtureConn(), "1.2.3.4:1")
+	h1, _ := r.Open("plugin.reload", fixtureConn(), "1.2.3.4:2")
+	if h0 != 0 || h1 != 1 {
+		t.Fatalf("handles before CloseAll = %d,%d, want 0,1", h0, h1)
+	}
+
+	r.CloseAll("plugin.reload")
+
+	h2, ok := r.Open("plugin.reload", fixtureConn(), "1.2.3.4:1")
+	if !ok || h2 != 0 {
+		t.Fatalf("first handle after CloseAll = %d,%v, want 0,true (numbering resets)", h2, ok)
+	}
+	r.CloseAll("plugin.reload")
+}
+
 // Max concurrent handles per plugin is 4 at the registry level too.
 func TestTCPConnRegistryMaxHandles(t *testing.T) {
 	r := newTCPConnRegistry()
 	for i := 0; i < maxTCPHandlesPerPlugin; i++ {
 		c1, c2 := net.Pipe()
 		t.Cleanup(func() { c1.Close(); c2.Close() })
-		if _, ok := r.Open("plugin.max", c1); !ok {
+		if _, ok := r.Open("plugin.max", c1, fmt.Sprintf("1.2.3.4:%d", i)); !ok {
 			t.Fatalf("open #%d refused below the cap", i+1)
 		}
 	}
 	c1, c2 := net.Pipe()
 	t.Cleanup(func() { c1.Close(); c2.Close() })
-	if _, ok := r.Open("plugin.max", c1); ok {
+	if _, ok := r.Open("plugin.max", c1, "1.2.3.4:99"); ok {
 		t.Fatal("open beyond the per-plugin cap succeeded")
 	}
 	r.CloseAll("plugin.max")
