@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -37,9 +38,74 @@ type TSEOverrideResponse struct {
 	Actor   string `json:"actor"`
 }
 
-// registerFiscalAPI registers the fiscal endpoints (ADR-0048).
+// registerFiscalAPI registers the fiscal endpoints (ADR-0048) plus the
+// fiscalisation status chip (ut-docs#685).
 func registerFiscalAPI(mux *http.ServeMux, dp *common.Deps) {
 	mux.HandleFunc("POST /api/fiscal/tse-override", createTSEOverride(dp))
+	mux.HandleFunc("GET /ui/fiscal-chip", fiscalChipHandler(dp))
+}
+
+// fiscalChipHandler answers GET /ui/fiscal-chip (ut-docs#685) — a nav status
+// chip, same pattern as /ui/sync-chip (sync_admin.go). There is no
+// fiscal.status.ask extension point (ADR-0044 registers only
+// fiscal.sign.ask, and nothing in this codebase queries a signer for
+// health), so the primary signal is the till's OWN audit trail:
+// fiscal.tse_configured plus the unsigned_fiscal_signing/
+// unsigned_fiscal_cannot_sign gap markers declareUnsignedFiscalSale
+// (fiscal_sign_hook.go) already writes on every real tender.
+func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if dp.Settings == nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		configured, _, err := dp.Settings.Get(ctx, fiscal.KeyTSEConfigured)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		v := strings.ToLower(strings.TrimSpace(configured))
+		if v != "true" && v != "1" && v != "on" {
+			// Never configured: render nothing — no chip, no scary state,
+			// for a shop that will never have fiscalisation (ut-docs#685 AC).
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		repo := data.NewPOSRepo(dp.Db)
+		class := "ok"
+		if latestID, ok, err := repo.LatestSaleID(ctx); err == nil && ok {
+			// Reuses the exact read-side logic the receipt renderer already
+			// trusts (fiscal_sign_hook.go) rather than re-deriving it here.
+			if gapKind := saleFiscalSigningGapKind(ctx, repo, latestID); gapKind != "" {
+				class = "warn"
+			}
+		}
+
+		// Unresolved-gap count for the CURRENT business day (reports.
+		// business_day_start, same boundary reports/EOD already use — see
+		// parseReportWindow's "day" case, reports_page.go). Deliberately
+		// windowed, not all-time: ADR-0056 removed the background re-sign
+		// retry, so a gap is now permanent on its own sale — an all-time
+		// total would only ever grow. The business-day boundary is the
+		// natural, honest reset point instead of a self-clearing counter
+		// that no longer exists.
+		bizDayStart, _, _ := dp.Settings.Get(ctx, keyReportsBusinessDayStart)
+		hh, mm := parseBusinessDayStart(bizDayStart)
+		anchor := businessDateFor(reportNow(), hh, mm)
+		from := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), hh, mm, 0, 0, anchor.Location())
+		count, err := repo.CountUnresolvedAuditActionsSince(ctx, "sale",
+			[]string{fiscalSignGapActionSigning, fiscalSignGapActionCannotSign}, from)
+		if err != nil {
+			count = 0
+		}
+
+		httpx.RenderPartial("ui/partials/fiscal_chip.html", map[string]any{
+			"class": class,
+			"count": count,
+		})(w, r)
+	}
 }
 
 // createTSEOverride handles POST /api/fiscal/tse-override — modeled on
