@@ -1158,6 +1158,7 @@
   "tables.edit.start": "Edit floor plan",
   "tables.edit.done": "Done editing",
   "tables.edit.hint": "Drag a table to move it — its position is saved automatically.",
+  "tables.node.aria": "%s — use arrow keys to move (hold Shift for a bigger step)",
   "tables.status.open_minutes": "%d min",
   "tables.seats_n": "%d seats",
   "tables.col.name": "Table",

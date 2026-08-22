@@ -1158,6 +1158,7 @@
   "tables.edit.start": "تعديل مخطط الصالة",
   "tables.edit.done": "إنهاء التعديل",
   "tables.edit.hint": "اسحب طاولة لتحريكها — يُحفظ موضعها تلقائيًا.",
+  "tables.node.aria": "%s — استخدم مفاتيح الأسهم للتحريك (اضغط مع الاستمرار على Shift لخطوة أكبر)",
   "tables.status.open_minutes": "%d دقيقة",
   "tables.seats_n": "%d مقاعد",
   "tables.col.name": "الطاولة",
