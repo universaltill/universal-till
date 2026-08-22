@@ -71,8 +71,23 @@ func uploadPendingIssueReports(ctx context.Context, cfg *config.Config, db *sql.
 			if errors.Is(err, errNotRegistered) {
 				reason = issuereport.UploadFailReasonNotRegistered
 			}
-			if _, rerr := issuereport.RecordUploadFailure(b.Meta.ID, reason); rerr != nil {
-				logging.L().Warnf("cloudsync: issue report %s upload-fail count not recorded: %v", b.Meta.ID, rerr)
+			// ut-docs#642: once /my-reports is already presenting this bundle
+			// as failing — not_registered flags it from the very first
+			// failure, other only once UploadFailCount reaches
+			// issuereport.UploadFailingThreshold — and the reason hasn't
+			// changed since the last recorded failure, another tick would
+			// just fsync an identical meta.json rewrite that changes nothing
+			// the operator sees, forever, while UploadFailCount grows
+			// unbounded for no display benefit. Skip the write in that case.
+			// Still record it the moment the reason changes (e.g.
+			// not_registered -> other once enrolment finishes and a fresh
+			// failure happens) — that IS a real state change.
+			alreadyPresentedAsFailing := b.Meta.UploadFailReason == reason &&
+				(reason == issuereport.UploadFailReasonNotRegistered || b.Meta.UploadFailCount >= issuereport.UploadFailingThreshold)
+			if !alreadyPresentedAsFailing {
+				if _, rerr := issuereport.RecordUploadFailure(b.Meta.ID, reason); rerr != nil {
+					logging.L().Warnf("cloudsync: issue report %s upload-fail count not recorded: %v", b.Meta.ID, rerr)
+				}
 			}
 			logging.L().Warnf("cloudsync: issue report %s not uploaded (will retry): %v", b.Meta.ID, err)
 			continue
