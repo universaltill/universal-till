@@ -17,6 +17,10 @@
          gating — empty body when the operator can't report issues. -->
     <span id="bugreport-chip" hx-get="/ui/bugreport-chip" hx-trigger="load"></span>
     <span id="sync-chip" hx-get="/ui/sync-chip" hx-trigger="load, every 30s"></span>
+    <!-- Fiscalisation status (ut-docs#685): empty body when this shop has
+         no fiscalisation configured — same "nothing shown" convention as
+         the other chips' zero-state. -->
+    <span id="fiscal-chip" hx-get="/ui/fiscal-chip" hx-trigger="load, every 30s"></span>
     <span id="session-chip" hx-get="/ui/session-chip" hx-trigger="load"></span>
   </div>
 </nav>
