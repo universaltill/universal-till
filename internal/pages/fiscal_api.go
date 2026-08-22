@@ -75,7 +75,11 @@ func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
 
 		repo := data.NewPOSRepo(dp.Db)
 		class := "ok"
-		if latestID, ok, err := repo.LatestSaleID(ctx); err == nil && ok {
+		// LatestLocalSaleID, not "latest sale": on a primary the newest row
+		// in `sales` is routinely a replica's journaled-in sale, which never
+		// ran this node's fiscal.sign.ask hook and so can never carry a
+		// local gap marker (independent review, ut-docs#685).
+		if latestID, ok, err := repo.LatestLocalSaleID(ctx); err == nil && ok {
 			// Reuses the exact read-side logic the receipt renderer already
 			// trusts (fiscal_sign_hook.go) rather than re-deriving it here.
 			if gapKind := saleFiscalSigningGapKind(ctx, repo, latestID); gapKind != "" {
@@ -90,15 +94,19 @@ func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
 		// retry, so a gap is now permanent on its own sale — an all-time
 		// total would only ever grow. The business-day boundary is the
 		// natural, honest reset point instead of a self-clearing counter
-		// that no longer exists.
-		bizDayStart, _, _ := dp.Settings.Get(ctx, keyReportsBusinessDayStart)
-		hh, mm := parseBusinessDayStart(bizDayStart)
-		anchor := businessDateFor(reportNow(), hh, mm)
-		from := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), hh, mm, 0, 0, anchor.Location())
-		count, err := repo.CountUnresolvedAuditActionsSince(ctx, "sale",
-			[]string{fiscalSignGapActionSigning, fiscalSignGapActionCannotSign}, from)
-		if err != nil {
-			count = 0
+		// that no longer exists. Only the warn branch of the template
+		// renders it, so the healthy path doesn't pay for the query on
+		// every 30s poll.
+		count := 0
+		if class == "warn" {
+			bizDayStart, _, _ := dp.Settings.Get(ctx, keyReportsBusinessDayStart)
+			hh, mm := parseBusinessDayStart(bizDayStart)
+			anchor := businessDateFor(reportNow(), hh, mm)
+			from := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), hh, mm, 0, 0, anchor.Location())
+			if n, err := repo.CountUnresolvedAuditActionsSince(ctx, "sale",
+				[]string{fiscalSignGapActionSigning, fiscalSignGapActionCannotSign}, from); err == nil {
+				count = n
+			}
 		}
 
 		httpx.RenderPartial("ui/partials/fiscal_chip.html", map[string]any{
