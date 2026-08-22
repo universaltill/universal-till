@@ -1158,6 +1158,7 @@
   "tables.edit.start": "ویرایش نقشهٔ سالن",
   "tables.edit.done": "پایان ویرایش",
   "tables.edit.hint": "یک میز را بکشید تا جابه‌جا شود — موقعیت آن به‌طور خودکار ذخیره می‌شود.",
+  "tables.node.aria": "%s — برای جابه‌جایی از کلیدهای جهت‌دار استفاده کنید (برای گام بزرگ‌تر Shift را نگه دارید)",
   "tables.status.open_minutes": "%d دقیقه",
   "tables.seats_n": "%d صندلی",
   "tables.col.name": "میز",
