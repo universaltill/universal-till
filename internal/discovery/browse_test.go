@@ -486,7 +486,12 @@ func TestBrowse_ReturnsErrorWhenTheV4OnlyAttemptFailsOnAHostWithNoIPv6Support(t 
 
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
+	var mu sync.Mutex
+	var calls []bool // recorded DisableIPv6 per call, in order
 	mdnsQuery = func(p *mdns.QueryParam) error {
+		mu.Lock()
+		calls = append(calls, p.DisableIPv6)
+		mu.Unlock()
 		return errors.New("failed to bind to any multicast udp port")
 	}
 
@@ -499,5 +504,16 @@ func TestBrowse_ReturnsErrorWhenTheV4OnlyAttemptFailsOnAHostWithNoIPv6Support(t 
 	}
 	if !strings.Contains(err.Error(), "failed to bind to any multicast udp port") {
 		t.Fatalf("error %q does not carry the underlying failure", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// The load-bearing assertion (ut-docs#272 review finding): without it,
+	// this test can't distinguish the fast path (one v4-only call) from the
+	// pre-fix v4+v6-then-retry path (two calls) — both produce a non-nil
+	// error containing this same message, so both would pass otherwise.
+	if len(calls) != 1 || calls[0] != true {
+		t.Fatalf("got mdnsQuery calls (DisableIPv6 per call) = %v, want exactly one call with DisableIPv6=true — "+
+			"a host with no IPv6 support must never attempt the v4+v6 query even on the failure path", calls)
 	}
 }
