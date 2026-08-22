@@ -123,11 +123,34 @@ func TestCandidateFromEntry_RejectsEntryWithoutPort(t *testing.T) {
 	}
 }
 
+// forceIPv6Supported overrides the ipv6Supported seam for the duration of
+// the test, so Browse's control flow is deterministic regardless of
+// whatever IPv6 support the machine actually running this test has —
+// several tests below assert an exact mdnsQuery call sequence that only
+// happens on the v4+v6-first path (ut-docs#272 added a v4-only fast path
+// for hosts without IPv6 support at all, exercised by its own tests below).
+func forceIPv6Supported(t *testing.T, v bool) {
+	t.Helper()
+	orig := ipv6Supported
+	ipv6Supported = func() bool { return v }
+	t.Cleanup(func() { ipv6Supported = orig })
+}
+
+// TestDetectIPv6Support_ReturnsWithoutPanicking is a light smoke test for
+// the real (non-seamed) implementation — every other test below exercises
+// Browse's control flow deterministically via the ipv6Supported seam
+// instead; this just confirms the actual socket check is wired correctly.
+func TestDetectIPv6Support_ReturnsWithoutPanicking(t *testing.T) {
+	_ = detectIPv6Support()
+}
+
 // TestBrowse_RespectsAlreadyCancelledContext exercises Browse's ctx-aware
 // exit path without needing a real mDNS responder on the network: an
 // already-cancelled ctx must return immediately with ctx.Err(), not block
 // for the full timeout.
 func TestBrowse_RespectsAlreadyCancelledContext(t *testing.T) {
+	forceIPv6Supported(t, true)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -155,6 +178,8 @@ func TestBrowse_RespectsAlreadyCancelledContext(t *testing.T) {
 // triggered by something as ordinary as a manager closing the Tills tab
 // mid-scan.
 func TestBrowse_DoesNotLeakCollectorGoroutineWhenCancelledMidScan(t *testing.T) {
+	forceIPv6Supported(t, true)
+
 	queryReturned := make(chan struct{})
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
@@ -200,6 +225,8 @@ func TestBrowse_DoesNotLeakCollectorGoroutineWhenCancelledMidScan(t *testing.T) 
 // malfunctioning host can grow this slice (and the JSON response built
 // from it) for the whole scan window. Results must be capped.
 func TestBrowse_CapsCandidatesFromAFloodingResponder(t *testing.T) {
+	forceIPv6Supported(t, true)
+
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
 	mdnsQuery = func(p *mdns.QueryParam) error {
@@ -229,6 +256,8 @@ func TestBrowse_CapsCandidatesFromAFloodingResponder(t *testing.T) {
 // before mdns.Query reports an error must survive, not be thrown away. A
 // partial failure is not a total one.
 func TestBrowse_ReturnsCollectedCandidatesDespiteALateQueryError(t *testing.T) {
+	forceIPv6Supported(t, true)
+
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
 	mdnsQuery = func(p *mdns.QueryParam) error {
@@ -257,6 +286,8 @@ func TestBrowse_ReturnsCollectedCandidatesDespiteALateQueryError(t *testing.T) {
 // (the test above) would still return zero candidates for this exact bug.
 // The actual fix is a same-scan retry with IPv6 disabled.
 func TestBrowse_RetriesIPv4OnlyWhenTheFullQueryFailsOutright(t *testing.T) {
+	forceIPv6Supported(t, true)
+
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
 
@@ -296,6 +327,8 @@ func TestBrowse_RetriesIPv4OnlyWhenTheFullQueryFailsOutright(t *testing.T) {
 // distinguishes "no peers found" from "the scan failed" (ut-docs#538's
 // third acceptance criterion) via exactly this: err == nil here.
 func TestBrowse_DoesNotRetryOnAGenuineEmptyResult(t *testing.T) {
+	forceIPv6Supported(t, true)
+
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
 	var calls int
@@ -326,6 +359,8 @@ func TestBrowse_DoesNotRetryOnAGenuineEmptyResult(t *testing.T) {
 // all), Browse must still surface an error rather than silently reporting
 // "no peers found," which would look identical to a genuinely empty LAN.
 func TestBrowse_ReturnsErrorWhenBothTheFullAndV4OnlyRetryFail(t *testing.T) {
+	forceIPv6Supported(t, true)
+
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
 	var calls int
@@ -366,6 +401,8 @@ func TestBrowse_ReturnsErrorWhenBothTheFullAndV4OnlyRetryFail(t *testing.T) {
 // cancelled, rather than reshaping it into a "lan scan failed" error the
 // handler logs and answers 500 to.
 func TestBrowse_ReportsCancellationDuringTheV4OnlyRetryAsAContextError(t *testing.T) {
+	forceIPv6Supported(t, true)
+
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
 
@@ -395,5 +432,88 @@ func TestBrowse_ReportsCancellationDuringTheV4OnlyRetryAsAContextError(t *testin
 	}
 	if len(got) != 0 {
 		t.Fatalf("got %d candidates on a cancelled retry, want 0", len(got))
+	}
+}
+
+// TestBrowse_SkipsV4V6AttemptWhenHostHasNoIPv6Support is the direct
+// regression test for ut-docs#272: mdns's client always tries udp6 first
+// and logs two [ERR] lines straight to the global stdlib logger — bypassing
+// internal/logging entirely — before Browse's own v4-only retry ever gets a
+// chance to run, on any host that can't open IPv6 sockets at all
+// (containers, many Pi/kiosk images, IPv6-disabled sandboxes — including,
+// per the original report, the CI sandbox itself). Browse must go straight
+// to a single v4-only attempt on such a host instead of provoking that
+// noise on every single scan.
+func TestBrowse_SkipsV4V6AttemptWhenHostHasNoIPv6Support(t *testing.T) {
+	forceIPv6Supported(t, false)
+
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	var mu sync.Mutex
+	var calls []bool // recorded DisableIPv6 per call, in order
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		mu.Lock()
+		calls = append(calls, p.DisableIPv6)
+		mu.Unlock()
+		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=till-noipv6", "name=No IPv6 Till"}, AddrV4: net.IPv4(192, 168, 1, 62), Port: 8080}
+		return nil
+	}
+
+	got, err := Browse(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("Browse: unexpected error %v", err)
+	}
+	if len(got) != 1 || got[0].TillID != "till-noipv6" {
+		t.Fatalf("got %+v, want the one candidate from the v4-only scan", got)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 1 || calls[0] != true {
+		t.Fatalf("got mdnsQuery calls (DisableIPv6 per call) = %v, want exactly one call with DisableIPv6=true — "+
+			"a host with no IPv6 support must never attempt the v4+v6 query that provokes mdns's own noisy bind failure", calls)
+	}
+}
+
+// TestBrowse_ReturnsErrorWhenTheV4OnlyAttemptFailsOnAHostWithNoIPv6Support
+// covers the fast path's own failure branch, mirroring
+// TestBrowse_ReturnsErrorWhenBothTheFullAndV4OnlyRetryFail above for the
+// no-IPv6-support case: a host that can't do IPv6 and also can't complete
+// even a v4-only scan (e.g. no usable network interface at all) must still
+// surface an error, not silently report "no peers found."
+func TestBrowse_ReturnsErrorWhenTheV4OnlyAttemptFailsOnAHostWithNoIPv6Support(t *testing.T) {
+	forceIPv6Supported(t, false)
+
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	var mu sync.Mutex
+	var calls []bool // recorded DisableIPv6 per call, in order
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		mu.Lock()
+		calls = append(calls, p.DisableIPv6)
+		mu.Unlock()
+		return errors.New("failed to bind to any multicast udp port")
+	}
+
+	got, err := Browse(context.Background(), 3*time.Second)
+	if err == nil {
+		t.Fatal("expected an error when the v4-only attempt fails on a host with no IPv6 support")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d candidates on a total failure, want 0", len(got))
+	}
+	if !strings.Contains(err.Error(), "failed to bind to any multicast udp port") {
+		t.Fatalf("error %q does not carry the underlying failure", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// The load-bearing assertion (ut-docs#272 review finding): without it,
+	// this test can't distinguish the fast path (one v4-only call) from the
+	// pre-fix v4+v6-then-retry path (two calls) — both produce a non-nil
+	// error containing this same message, so both would pass otherwise.
+	if len(calls) != 1 || calls[0] != true {
+		t.Fatalf("got mdnsQuery calls (DisableIPv6 per call) = %v, want exactly one call with DisableIPv6=true — "+
+			"a host with no IPv6 support must never attempt the v4+v6 query even on the failure path", calls)
 	}
 }
