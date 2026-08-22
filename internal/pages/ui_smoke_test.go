@@ -323,7 +323,11 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE variant_barcodes (barcode TEXT PRIMARY KEY, variant_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, sku TEXT UNIQUE, name TEXT NOT NULL, price INTEGER NOT NULL, cost_price INTEGER, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, name TEXT NOT NULL, rate_basis_points INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, takeaway_rate_basis_points INTEGER);`,
+		// name UNIQUE: column-identical to 001_init.sql (ut-docs#259) -- a
+		// drifted fixture here would let CreateTaxCode/UpdateTaxCode's
+		// duplicate-name conflict handling pass its handler test against a
+		// constraint production actually enforces but this fixture didn't.
+		`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, rate_basis_points INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, takeaway_rate_basis_points INTEGER);`,
 		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1);`,
@@ -434,7 +438,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 			t.Fatalf("seed role %s: %v", role, err)
 		}
 	}
-	catalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "reports", "audit", "plugin_management", "data_management", "sync_management", "import_export", "issue_reporting"}
+	catalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "reports", "audit", "plugin_management", "data_management", "sync_management", "import_export", "issue_reporting", "tax_code_management"}
 	for _, action := range catalog {
 		if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES (?)`, action); err != nil {
 			t.Fatalf("seed permission_action %s: %v", action, err)

@@ -313,6 +313,12 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 .field-checks { display: flex; gap: 1rem; margin: .3rem 0 .7rem; }
 .field-checks label { flex-direction: row; align-items: center; gap: .4rem; margin: 0; }
+/* Same [hidden]-override precedent as .btn/.suggest-strip/.pos-notice above:
+   a class selector's own `display` always beats the UA `[hidden]` style, so
+   without this a `hidden`-attributed .field-checks (tax_codes.html's
+   isActive checkbox, meant to show only in edit mode) stays visibly
+   flex-displayed on page load. Found live while testing ut-docs#259. */
+.field-checks[hidden] { display: none; }
 /* The catalog's right panel must never tower over the page: it sticks and
    scrolls inside itself (Farshid: "right panel is too long"). */
 .catalog-form { position: sticky; inset-block-start: .8rem;

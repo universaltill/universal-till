@@ -2,6 +2,7 @@ package data_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -137,5 +138,146 @@ func TestFindOrCreateTaxCode_NameCollisionWithDifferentPairErrors(t *testing.T) 
 	// The wrong-rate manual code must never be returned as a match.
 	if id == "tax_manual" {
 		t.Fatal("must not return a code whose rate does not match the requested pair")
+	}
+}
+
+// CreateTaxCode backs the tax-code management UI (ut-docs#259): a manager
+// creating a new code by hand, distinct from FindOrCreateTaxCode's
+// import-driven (rate, takeaway) pair matching above -- this always inserts.
+func TestCreateTaxCode(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "taxcreate.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	repo := data.NewCatalogRepo(d.DB)
+	ctx := context.Background()
+
+	ta := 700
+	id, err := repo.CreateTaxCode(ctx, "New Reduced VAT", 1900, &ta)
+	if err != nil || id == "" {
+		t.Fatalf("CreateTaxCode: id=%q err=%v", id, err)
+	}
+
+	view, err := repo.GetTaxCode(ctx, id)
+	if err != nil {
+		t.Fatalf("GetTaxCode after create: %v", err)
+	}
+	if view.Name != "New Reduced VAT" || view.RateBP != 1900 {
+		t.Fatalf("unexpected view: %+v", view)
+	}
+	if view.TakeawayRateBP == nil || *view.TakeawayRateBP != 700 {
+		t.Fatalf("expected takeaway rate 700, got %+v", view)
+	}
+	if !view.IsActive {
+		t.Fatalf("expected a newly created tax code to be active, got %+v", view)
+	}
+}
+
+// tax_codes.name is UNIQUE -- CreateTaxCode must surface that conflict as a
+// distinguishable error (ErrTaxCodeNameExists), not a raw 500-shaped one.
+func TestCreateTaxCode_DuplicateNameConflict(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "taxcreatedup.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	repo := data.NewCatalogRepo(d.DB)
+	ctx := context.Background()
+
+	if _, err := repo.CreateTaxCode(ctx, "Custom Rate A", 2000, nil); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := repo.CreateTaxCode(ctx, "Custom Rate A", 500, nil); !errors.Is(err, data.ErrTaxCodeNameExists) {
+		t.Fatalf("expected ErrTaxCodeNameExists, got %v", err)
+	}
+}
+
+// UpdateTaxCode edits name/rate/takeaway/active in one write -- the same
+// endpoint the activate/deactivate toggle uses (ut-docs#259: no separate
+// delete path, tax_codes.id is FK-referenced by items.tax_code_id).
+func TestUpdateTaxCode(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "taxupdate.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	repo := data.NewCatalogRepo(d.DB)
+	ctx := context.Background()
+
+	id, err := repo.CreateTaxCode(ctx, "Draft Rate", 1000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ta := 550
+	if err := repo.UpdateTaxCode(ctx, id, "Final Rate", 1500, &ta, false); err != nil {
+		t.Fatalf("UpdateTaxCode: %v", err)
+	}
+
+	view, err := repo.GetTaxCode(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Name != "Final Rate" || view.RateBP != 1500 {
+		t.Fatalf("unexpected view after update: %+v", view)
+	}
+	if view.TakeawayRateBP == nil || *view.TakeawayRateBP != 550 {
+		t.Fatalf("expected takeaway rate 550, got %+v", view)
+	}
+	if view.IsActive {
+		t.Fatalf("expected the deactivate toggle to persist, got %+v", view)
+	}
+}
+
+func TestUpdateTaxCode_NotFound(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "taxupdatenf.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	repo := data.NewCatalogRepo(d.DB)
+	ctx := context.Background()
+
+	if err := repo.UpdateTaxCode(ctx, "does-not-exist", "X", 1000, nil, true); !errors.Is(err, data.ErrTaxCodeNotFound) {
+		t.Fatalf("expected ErrTaxCodeNotFound, got %v", err)
+	}
+}
+
+func TestUpdateTaxCode_DuplicateNameConflict(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "taxupdatedup.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	repo := data.NewCatalogRepo(d.DB)
+	ctx := context.Background()
+
+	if _, err := repo.CreateTaxCode(ctx, "Rate A", 1000, nil); err != nil {
+		t.Fatal(err)
+	}
+	idB, err := repo.CreateTaxCode(ctx, "Rate B", 2000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.UpdateTaxCode(ctx, idB, "Rate A", 2000, nil, true); !errors.Is(err, data.ErrTaxCodeNameExists) {
+		t.Fatalf("expected ErrTaxCodeNameExists, got %v", err)
+	}
+}
+
+// GetTaxCode's not-found path wraps sql.ErrNoRows into ErrTaxCodeNotFound so
+// the handler can respond 404 cleanly.
+func TestGetTaxCode_NotFound(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "taxgetnf.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	repo := data.NewCatalogRepo(d.DB)
+	ctx := context.Background()
+
+	if _, err := repo.GetTaxCode(ctx, "does-not-exist"); !errors.Is(err, data.ErrTaxCodeNotFound) {
+		t.Fatalf("expected ErrTaxCodeNotFound, got %v", err)
 	}
 }
