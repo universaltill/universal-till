@@ -174,3 +174,43 @@ export async function setOskMode(page: Page, mode: string) {
   ]);
   await page.waitForEvent('load');
 }
+
+// Same PIN tests-docs/docs-shots.spec.ts sets during its own first-boot
+// wizard completion, so a shared AUTH-project server (8092) already set up
+// by one spec file in this run still logs in for another.
+export const ADMIN_PIN = '482913';
+
+// The AUTH project's server (playwright.config.ts) is a genuinely fresh
+// install: some manager-gated pages (e.g. /tables — internal/pages/
+// tables_page.go's requireManager has no UT_AUTH=off bypass, same gap
+// tests-docs/docs-shots.spec.ts's own AUTH_TILL_TOPICS works around) 403 on
+// the default (auth-off) till and can only be driven here. Completes the
+// first-boot wizard if it appears (fresh server), or PIN-logs in (server
+// reused across spec files in the same run, already set up) — mirrors
+// login.spec.ts and docs-shots.spec.ts's own ensureOperator.
+export async function ensureOperator(page: Page) {
+  await page.goto('/');
+  if (page.url().includes('/setup')) {
+    const step = (n: number) => page.locator(`[data-step="${n}"]`);
+    await step(1).locator('.setup-nav button', { hasText: 'Next' }).click(); // language
+    await page.locator('select[name=country]').selectOption('GB');
+    await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
+    await page.locator('input[name=store_name]').fill('Demo Shop');
+    await step(3).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name
+    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type + demo data
+    await step(5).locator('.setup-nav button.primary', { hasText: 'No' }).click(); // restore from another POS? — No
+    await step(6).locator('input[name=pin]').fill(ADMIN_PIN);
+    await step(6).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
+    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
+    await Promise.all([
+      page.waitForURL((u) => !u.pathname.includes('/setup')),
+      step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
+    ]);
+  } else if (page.url().includes('/login')) {
+    for (const d of ADMIN_PIN.split('')) {
+      await page.locator('.pin-pad button').getByText(d, { exact: true }).click();
+    }
+    await page.locator('button[type=submit].pin-key').click();
+    await page.waitForURL((u) => !u.pathname.includes('/login'));
+  }
+}

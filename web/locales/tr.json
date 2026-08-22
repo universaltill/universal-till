@@ -1158,6 +1158,7 @@
   "tables.edit.start": "Kat planını düzenle",
   "tables.edit.done": "Düzenlemeyi bitir",
   "tables.edit.hint": "Bir masayı taşımak için sürükleyin — konumu otomatik olarak kaydedilir.",
+  "tables.node.aria": "%s — taşımak için ok tuşlarını kullanın (daha büyük adım için Shift'e basılı tutun)",
   "tables.status.open_minutes": "%d dk",
   "tables.seats_n": "%d koltuk",
   "tables.col.name": "Masa",

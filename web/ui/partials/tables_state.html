@@ -13,8 +13,13 @@
      role="img" aria-label="{{ T "tables.plan_aria" }}">
   <rect class="floorplan-bg" x="0" y="0" width="{{ .canvasSize }}" height="{{ .canvasSize }}" rx="12" />
   {{ range .tables }}{{ if .Enabled }}
+  {{/* tabindex starts at -1 (not in the Tab order): the table is only
+       keyboard-movable in edit mode, and the edit-toggle handler in
+       tables.html's script flips every node's tabIndex to 0/-1 in lockstep
+       with the pointer-drag gate (`window.tablesEditing`) — ut-docs#826. */}}
   <g class="table-node {{ if .Occupied }}table-occupied{{ else }}table-free{{ end }}"
      data-id="{{ .ID }}" data-x="{{ .PosX }}" data-y="{{ .PosY }}"
+     tabindex="-1" role="button" aria-label="{{ printf (T "tables.node.aria") .Label }}"
      transform="translate({{ .PosX }},{{ .PosY }})">
     {{ if eq .Shape "round" }}
     <circle class="table-shape" r="55" />

@@ -14,7 +14,7 @@ Dükkanınızın kat planını çizin — adı, alanı, koltuk sayısı ve şekl
 ## Nasıl kullanılır
 
 1. Menüden **Masalar ve kat planı**nı açın (yalnızca yönetici) ve dükkanınızdaki her yemek masası için bir masa ekleyin — bir ad veya numara ("T1", "Pencere 2"), bulunduğu alan ("Teras", "Ana salon"), kaç koltuğu olduğu ve dikdörtgen mi yuvarlak mı olduğu.
-2. **Kat planını düzenle**ye dokunun, ardından her masayı odada gerçekte durduğu yere sürükleyin. Konumlar bıraktığınız anda otomatik kaydedilir ve aynı yerleşim her ekrana — telefon veya tablet — sığar.
+2. **Kat planını düzenle**ye dokunun, ardından her masayı odada gerçekte durduğu yere sürükleyin. Konumlar bıraktığınız anda otomatik kaydedilir ve aynı yerleşim her ekrana — telefon veya tablet — sığar. Klavye mi tercih edersiniz? Plandaki bir masayı seçin (Tab ile ona gelin) ve ok tuşlarıyla hareket ettirin — daha büyük adımlar için Shift'e basılı tutun — konumu aynı şekilde kaydedilir.
 3. Canlı görünüme dönmek için **Düzenlemeyi bitir**e dokunun. Yeşil çerçeve masanın boş olduğu, kırmızı çerçeve ise açık bir siparişi olduğu anlamına gelir; o siparişin açıldığından bu yana geçen dakikalar masanın üzerinde gösterilir.
 4. İstediğiniz zaman geri dönüp yeniden düzenleyin — kat planı kurulumdan sonra asla kilitlenmez.
 
