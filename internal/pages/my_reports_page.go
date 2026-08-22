@@ -74,11 +74,11 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to load reports", http.StatusInternalServerError)
 			return
 		}
-		rows := make([]myReportRow, 0, len(reports))
+		sentRows := make([]myReportRow, 0, len(reports))
 		sentIDs := make(map[string]bool, len(reports))
 		for _, rec := range reports {
 			sentIDs[rec.ID] = true
-			rows = append(rows, myReportRow{
+			sentRows = append(sentRows, myReportRow{
 				ID:             rec.ID,
 				Note:           rec.Note,
 				CapturedAt:     rec.CapturedAt.UTC().Format("2006-01-02 15:04"),
@@ -105,6 +105,7 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 		if perr != nil {
 			logging.L().Warnf("my-reports: listing pending issue reports: %v", perr)
 		}
+		pendingRows := make([]myReportRow, 0, len(pending))
 		for _, b := range pending {
 			// A successful upload's Discard normally removes the bundle from
 			// disk in the same tick that adds its issue_reports_sent row, but
@@ -139,21 +140,42 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 			default:
 				row.StatusKey = "issuereport.status.pending"
 			}
-			rows = append(rows, row)
+			pendingRows = append(pendingRows, row)
 		}
-		// Newest-captured first, matching ListSent's own ordering — sent and
-		// still-pending rows are otherwise built in two separate passes above.
-		// Stable: captured_at is only second-precision (parseStoredTime), so
-		// two rows can tie — an unstable sort would let their relative order
-		// (ListSent's own DESC ordering, for the sent ones) flip between
-		// renders for no reason.
-		sort.SliceStable(rows, func(i, j int) bool { return rows[i].capturedAtTime.After(rows[j].capturedAtTime) })
-		// The merged list can exceed rowLimit (pending bundles are added on
-		// top of an already-capped sent list) — keep the same "most recent
-		// N" promise the page's intro text and help topic make.
-		if len(rows) > rowLimit {
-			rows = rows[:rowLimit]
+		// Newest-captured first within each group. Stable: captured_at is
+		// only second-precision (parseStoredTime), so two rows can tie — an
+		// unstable sort would let their relative order (ListSent's own DESC
+		// ordering, for the sent ones) flip between renders for no reason.
+		byCapturedDesc := func(rs []myReportRow) func(i, j int) bool {
+			return func(i, j int) bool { return rs[i].capturedAtTime.After(rs[j].capturedAtTime) }
 		}
+		sort.SliceStable(sentRows, byCapturedDesc(sentRows))
+		sort.SliceStable(pendingRows, byCapturedDesc(pendingRows))
+
+		// ut-docs#642: the merged list can exceed rowLimit (pending bundles
+		// are added on top of an already-capped sent list), so something has
+		// to give to keep the page's "most recent N" promise. A naive
+		// time-only truncation would drop whichever rows are oldest —
+		// including an old, long-failing pending bundle, hidden from the
+		// operator exactly when it matters most. Prioritize pending/failing
+		// rows instead: reserve their room in the cap first (a healthy till
+		// has none pending, so in practice this costs nothing), then fill
+		// whatever capacity remains with the most recent sent rows.
+		if len(pendingRows) > rowLimit {
+			pendingRows = pendingRows[:rowLimit]
+		}
+		sentCapacity := rowLimit - len(pendingRows)
+		if sentCapacity < 0 {
+			sentCapacity = 0
+		}
+		if len(sentRows) > sentCapacity {
+			sentRows = sentRows[:sentCapacity]
+		}
+
+		rows := make([]myReportRow, 0, len(sentRows)+len(pendingRows))
+		rows = append(rows, sentRows...)
+		rows = append(rows, pendingRows...)
+		sort.SliceStable(rows, byCapturedDesc(rows))
 
 		httpx.Render("ui/pages/my_reports.html", map[string]any{
 			"title":     "My reports",
