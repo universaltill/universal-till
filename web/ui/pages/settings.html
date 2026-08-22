@@ -117,9 +117,11 @@
   </form>
 
   <div class="set-divider">
-    <!-- ut-docs#608 scaffold: stores/surfaces the setting only — no OS
-         window-manager call yet, see the pending-note copy below. Real
-         platform implementations land in #609/#610/#611. -->
+    <!-- ut-docs#608 scaffold, #883 for the Pi kiosk path: stores the setting
+         and applies it via WindowCtl. Real OS effect today: the Pi headless
+         kiosk (#883, immediately) and the Linux desktop shell (#611, at its
+         own next launch). macOS (#609)/Windows (#610) still owe real
+         implementations — see the pending-note copy below. -->
     <form id="window-mode-form" hx-post="/api/settings/window-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
       {{ $windowMode := .windowMode }}
       <label class="set-row">{{ T "settings.display.window_mode_label" }}

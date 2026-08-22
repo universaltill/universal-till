@@ -696,3 +696,168 @@ func lineContaining(lines []string, prefix, sub string) string {
 	}
 	return ""
 }
+
+// TestKioskSetupInstallsScopedSudoersGrant covers ut-docs#883's security
+// surface: unitill-pos runs as the unprivileged `pos` user (unitill-
+// pos.service, User=pos) with no standing permission to enable/disable/
+// start/stop any systemd unit — the Settings window-mode toggle needs
+// exactly four narrowly-scoped NOPASSWD calls against unitill-kiosk.service,
+// no other unit, no wildcard (the ecosystem's security-first rule: smallest
+// privilege that works). This must be validated with `visudo -c` before
+// being left in place — a malformed drop-in left on disk can silently lock
+// out ALL sudo on the box, not just this grant. Independent review (F2):
+// written to a DOT-PREFIXED temp file inside /etc/sudoers.d first (sudo's
+// own directory scan skips dotfiles, so it's inert even before validation),
+// then `install`ed under its real name only once `visudo -c` passes — the
+// real drop-in path is never live in a possibly-broken state.
+func TestKioskSetupInstallsScopedSudoersGrant(t *testing.T) {
+	setup := readScript(t, "packaging/linux/unitill-kiosk-setup.sh")
+	code := codeLines(setup)
+	// The heredoc now writes to the mktemp'd $TMP_SUDOERS, not the final
+	// path directly (F2) — heredocBlock matches on the literal "cat > "+arg
+	// text in the script, so pass the exact shell expression used there.
+	grant := heredocBlock(t, setup, `"$TMP_SUDOERS"`)
+
+	if !anyLineContains(grant, "pos ALL=", "NOPASSWD:") {
+		t.Fatalf("sudoers drop-in does not grant pos a NOPASSWD rule: %v", grant)
+	}
+	// The systemctl binary is resolved dynamically (command -v), not
+	// hardcoded — assert each verb+service pair appears, and separately
+	// that its line actually invokes something systemctl-shaped (matches a
+	// literal "systemctl" or a resolver variable like "SYSTEMCTL_BIN").
+	for _, verb := range []string{"enable", "disable", "start", "stop"} {
+		want := verb + " unitill-kiosk.service"
+		found := false
+		for _, l := range grant {
+			if strings.Contains(l, want) && strings.Contains(strings.ToLower(l), "systemctl") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("sudoers drop-in missing a systemctl %s unitill-kiosk.service command: %v", verb, grant)
+		}
+	}
+	// No wildcard anywhere in the grant (a bare "*" or a command with no
+	// service name would widen this far past the four exact calls above).
+	if anyLineContains(grant, "*") {
+		t.Errorf("sudoers drop-in must not contain a wildcard: %v", grant)
+	}
+	// Every command line naming systemctl pins it to unitill-kiosk.service —
+	// never a bare `systemctl enable` with no unit.
+	for _, l := range grant {
+		if strings.Contains(strings.ToLower(l), "systemctl") && !strings.Contains(l, "unitill-kiosk.service") {
+			t.Errorf("sudoers grant line mentions systemctl without pinning it to unitill-kiosk.service: %q", l)
+		}
+	}
+
+	// F2: the temp file lives INSIDE /etc/sudoers.d, dot-prefixed (inert to
+	// sudo's directory scan before it's validated/installed).
+	if !anyLineContains(code, "mktemp", "/etc/sudoers.d/.unitill-kiosk") {
+		t.Error("sudoers temp file is not a dot-prefixed mktemp inside /etc/sudoers.d")
+	}
+	// Validated with visudo -c against the TEMP file specifically, before
+	// anything is installed under the real /etc/sudoers.d/unitill-kiosk name.
+	if !anyLineContains(code, "visudo", "-c", "-f", `"$TMP_SUDOERS"`) {
+		t.Error("sudoers temp file is not validated with visudo -c -f \"$TMP_SUDOERS\" before being installed")
+	}
+	// Only `install`ed to the real path, at 0440, after validation passes —
+	// never chmod'd/cat'd directly onto the real path (that ordering is
+	// exactly what F2 replaced).
+	if !anyLineContains(code, "install", "-m", "0440", "/etc/sudoers.d/unitill-kiosk") {
+		t.Error("validated sudoers file is not installed to /etc/sudoers.d/unitill-kiosk at mode 0440")
+	}
+	if anyLineContains(code, "chmod", "0440", "/etc/sudoers.d/unitill-kiosk") {
+		t.Error("sudoers drop-in must not be chmod'd directly at its real path — install -m 0440 is what sets the final file's mode atomically (F2)")
+	}
+
+	// F3: a failed grant must NOT abort the whole script — the kiosk itself
+	// is already fully installed by this point (this block runs after the
+	// unit is created/enabled), and this feature is optional on top of it.
+	// Scope the check to just this grant's own block (bounded by its own
+	// echo header and the next section's "marker" comment) so it can't be
+	// satisfied by an unrelated exit 1 elsewhere in the script (e.g. the
+	// --auto branch's "kiosk did not become active" check).
+	grantStart := strings.Index(setup, "Granting the till service a scoped kiosk-service toggle")
+	if grantStart < 0 {
+		t.Fatal("could not find the sudoers-grant section header")
+	}
+	grantEnd := strings.Index(setup[grantStart:], "The marker tells the staged first-boot unit")
+	if grantEnd < 0 {
+		t.Fatal("could not find the end-of-grant-section marker")
+	}
+	grantSection := codeLines(setup[grantStart : grantStart+grantEnd])
+	if anyLineContains(grantSection, "exit 1") {
+		t.Errorf("sudoers-grant section contains exit 1 — a missing/broken grant must warn and continue (kiosk already installed by this point), not abort the whole setup: %v", grantSection)
+	}
+	if !anyLineContains(grantSection, "rm -f", `"$TMP_SUDOERS"`) {
+		t.Error("the failure branch does not clean up the temp sudoers file")
+	}
+}
+
+// TestKioskSetupGrantRunsAfterKioskServiceIsInstalled covers independent
+// review finding F3: the UT_KIOSK/sudoers block must run AFTER the kiosk
+// service unit is written+enabled, not before — a box whose kiosk mostly
+// worked before ut-docs#883 must still get a working kiosk even if the
+// grant step itself hits something unexpected (missing `sudo` package,
+// `/etc/sudoers.d` unwritable, a `visudo -c` rejection). Position, not just
+// presence, is what this asserts.
+func TestKioskSetupGrantRunsAfterKioskServiceIsInstalled(t *testing.T) {
+	setup := readScript(t, "packaging/linux/unitill-kiosk-setup.sh")
+	kioskEnableIdx := strings.Index(setup, "systemctl enable unitill-kiosk.service")
+	if kioskEnableIdx < 0 {
+		t.Fatal("could not find `systemctl enable unitill-kiosk.service`")
+	}
+	grantIdx := strings.Index(setup, "Granting the till service a scoped kiosk-service toggle")
+	if grantIdx < 0 {
+		t.Fatal("could not find the sudoers-grant section header")
+	}
+	if grantIdx < kioskEnableIdx {
+		t.Fatal("the sudoers-grant block runs BEFORE unitill-kiosk.service is enabled — a failure there would abort setup before the kiosk itself is installed (independent review F3)")
+	}
+}
+
+// TestKioskSetupMarksUTKioskForThePosProcess covers the other half of
+// ut-docs#883: pages.Init wires KioskSystemdWindowController when it sees
+// UT_KIOSK=1 in the unitill-pos process's own environment (or, per review
+// finding F1, detects the kiosk unit file directly — see
+// internal/pages/init_kiosk_detect_test.go for that half), and nothing in
+// the packaging previously set UT_KIOSK for the Pi appliance path
+// (unitill-pos.service's own Environment= line only carries UT_DATA_DIR).
+// Independent review (F8): a systemd drop-in under
+// unitill-pos.service.d/, NOT /opt/unitill/pos.env — pos.env is a dpkg
+// conffile (packaging/pos.env.example, config|noreplace), and scripting
+// edits into it risks a future release's conffile prompt or a
+// --force-confnew silently reverting this. A drop-in is root-owned
+// throughout (no pos:pos chown needed) and idempotent to overwrite.
+func TestKioskSetupMarksUTKioskForThePosProcess(t *testing.T) {
+	setup := readScript(t, "packaging/linux/unitill-kiosk-setup.sh")
+	code := codeLines(setup)
+	dropin := heredocBlock(t, setup, "/etc/systemd/system/unitill-pos.service.d/kiosk.conf")
+
+	if !anyLineContains(dropin, "Environment=UT_KIOSK=1") {
+		t.Fatalf("unitill-pos.service.d/kiosk.conf does not set Environment=UT_KIOSK=1: %v", dropin)
+	}
+	if !anyLineContains(dropin, "[Service]") {
+		t.Errorf("unitill-pos.service.d/kiosk.conf is missing its [Service] section header: %v", dropin)
+	}
+	// pos.env must NOT be used for this — the whole point of F8's fix.
+	if anyLineContains(code, "/opt/unitill/pos.env") {
+		t.Error("UT_KIOSK is written via /opt/unitill/pos.env (a dpkg conffile) instead of a systemd drop-in — independent review F8")
+	}
+	if !anyLineContains(code, "install", "-d", "/etc/systemd/system/unitill-pos.service.d") {
+		t.Error("the unitill-pos.service.d drop-in directory is never created")
+	}
+	if !anyLineContains(code, "systemctl", "daemon-reload") {
+		t.Error("systemd is never reloaded after the drop-in is written — the new Environment= line would never take effect")
+	}
+	// A stale unitill-pos process (already running before this script wrote
+	// the drop-in) won't pick up the new env var without a restart — the
+	// window-mode toggle would otherwise silently stay wired to
+	// NoopWindowController until the next reboot (mitigated by the F1
+	// unit-file-probe fallback, but the restart still closes the gap for a
+	// box whose pos process is already up when this script runs).
+	if !anyLineContains(code, "systemctl", "restart", "unitill-pos") {
+		t.Error("unitill-pos.service is never restarted after the drop-in is written — an already-running pos process won't pick it up")
+	}
+}

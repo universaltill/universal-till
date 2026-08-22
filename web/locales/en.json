@@ -741,7 +741,7 @@
   "settings.display.window_mode_label": "Window mode",
   "settings.display.window_mode_maximized": "Maximized",
   "settings.display.window_mode_normal": "Normal window",
-  "settings.display.window_mode_pending_note": "Takes effect once this platform's window-mode support ships.",
+  "settings.display.window_mode_pending_note": "On the Pi kiosk, this applies immediately. On Linux desktop, it applies the next time you start the till. On macOS and Windows, your choice is saved but nothing changes yet.",
   "settings.enrol.benefits": "Registering is free and connects your till to the plugin store: install plugins with one tap and unlock cloud features as they arrive. It happens automatically when the till is online — or register now with the button below.",
   "settings.enrol.claim_btn": "Claim this store",
   "settings.enrol.claim_expires": "The code is valid for 15 minutes.",
