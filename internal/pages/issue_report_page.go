@@ -61,7 +61,7 @@ func readCappedOrReject(r io.Reader, limit int64) ([]byte, error) {
 func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/report-issue", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "issue_reporting") {
-			http.Error(w, "manager or admin role required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		httpx.Render("ui/pages/report_issue.html", map[string]any{
@@ -91,7 +91,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/issue-reports", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "issue_reporting") {
-			http.Error(w, "manager or admin role required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		// http.MaxBytesReader must run before ParseMultipartForm: once a
@@ -102,7 +102,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 		// below ever run.
 		r.Body = http.MaxBytesReader(w, r.Body, issueReportMaxBytes)
 		if err := r.ParseMultipartForm(issueReportMaxBytes); err != nil {
-			http.Error(w, "invalid upload", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
 		}
 		note := strings.TrimSpace(r.Form.Get("note"))

@@ -29,7 +29,7 @@ type apiGate func(w http.ResponseWriter, r *http.Request) bool
 func managerGate(d *common.Deps) apiGate {
 	return func(w http.ResponseWriter, r *http.Request) bool {
 		if !canPerform(d, r, "sync_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return false
 		}
 		return true

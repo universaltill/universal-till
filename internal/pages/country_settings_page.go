@@ -39,7 +39,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		u, ok := auth.FromContext(r.Context())
 		if !ok || !u.IsManager() {
-			http.Error(w, "manager or admin role required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return auth.User{}, false
 		}
 		return u, true
