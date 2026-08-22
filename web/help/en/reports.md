@@ -42,6 +42,11 @@ alongside the automatic end-of-day time) to when your trading day actually
 begins, e.g. 06:00, and Day/Week/Month/Year periods line up with your real
 trading day instead of the clock.
 
+This shift also applies to Sales trend's busiest-hour chart — a sale made
+just after midnight can show under a pre-midnight hour label (e.g. 22:00)
+rather than its real clock time, consistent with Day/Week/Month/Year
+already counting that sale as part of the previous business day.
+
 ## Report retention
 
 Every archived end-of-day report is kept for **10 years** — this is a legal
