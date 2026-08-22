@@ -91,7 +91,14 @@
         <tbody>
           {{ range .Sale.Payments }}
             <tr>
-              <td><strong>{{ .Method }}</strong>{{ if .Reference }}<br><small class="muted">{{ .Reference }}</small>{{ end }}</td>
+              <td><strong>{{ .Method }}</strong>
+                {{ if .MaskedPAN }}
+                  <br><small class="muted">{{ .MaskedPAN }}{{ if .AuthCode }} &middot; {{ T "receipt.auth_code" }} {{ .AuthCode }}{{ end }}</small>
+                {{ else if .Reference }}<br><small class="muted">{{ .Reference }}</small>{{ end }}
+                {{ if or .TerminalID .TraceID }}
+                  <br><small class="muted">{{ if .TerminalID }}{{ T "journal.detail.terminal_id" }} {{ .TerminalID }}{{ end }}{{ if and .TerminalID .TraceID }} &middot; {{ end }}{{ if .TraceID }}{{ T "journal.detail.trace_id" }} {{ .TraceID }}{{ end }}</small>
+                {{ end }}
+              </td>
               <td style="text-align:end">{{ money .Amount }}{{ if .ChangeGiven }}<br><small class="muted">{{ T "journal.detail.change" }} {{ money .ChangeGiven }}</small>{{ end }}</td>
             </tr>
           {{ end }}

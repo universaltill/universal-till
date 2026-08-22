@@ -139,3 +139,15 @@ primary and never receives siblings' sales back down. Picking "All tills"
 or a specific other till on a replica shows a message explaining that
 cross-till sales are only available on the shop's primary till, instead of
 a table that's quietly empty with nothing to explain why.
+
+## Reconciling a card payment (receipt detail)
+
+Opening a receipt from the Journal shows its full payment detail — this is
+where a card payment gets reconciled after the fact, days after the sale.
+When a payment was taken on a card-present terminal, its payment row shows
+the masked card number and approval code (the same reconciliation line the
+printed receipt showed at the moment of tender), plus the terminal and
+trace ID for matching it against the terminal's own settlement report.
+These fields only appear once a payment method actually records them —
+today's built-in payment methods (cash, Stripe, SumUp, QR pay) don't, so
+existing receipts are unaffected.
