@@ -46,7 +46,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		rows, err := repo.ExportRows(r.Context())
@@ -100,11 +100,11 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		if err := r.ParseMultipartForm(20 << 20); err != nil {
-			http.Error(w, "invalid upload", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
 		}
 		file, header, err := r.FormFile("file")

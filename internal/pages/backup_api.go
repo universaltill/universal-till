@@ -87,7 +87,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		if canPerform(d, r, "data_management") {
 			return false
 		}
-		http.Error(w, "manager or admin required", http.StatusForbidden)
+		common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 		return true
 	}
 
