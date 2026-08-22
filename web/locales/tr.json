@@ -741,7 +741,7 @@
   "settings.display.window_mode_label": "Pencere modu",
   "settings.display.window_mode_maximized": "Büyütülmüş",
   "settings.display.window_mode_normal": "Normal pencere",
-  "settings.display.window_mode_pending_note": "Bu platform için pencere modu desteği çıkınca etkinleşir.",
+  "settings.display.window_mode_pending_note": "Raspberry Pi kiosk kasasında hemen uygulanır. Linux masaüstünde kasayı bir sonraki başlatışınızda uygulanır. macOS ve Windows'ta seçiminiz kaydedilir ama henüz hiçbir şey değişmez.",
   "settings.enrol.benefits": "Kayıt ücretsizdir ve kasanızı eklenti mağazasına bağlar: eklentileri tek dokunuşla kurun ve bulut özellikleri geldikçe kullanın. Kasa çevrimiçiyken otomatik gerçekleşir — ya da aşağıdaki düğmeyle şimdi kaydolun.",
   "settings.enrol.claim_btn": "Bu mağazayı sahiplen",
   "settings.enrol.claim_expires": "Kod 15 dakika geçerlidir.",

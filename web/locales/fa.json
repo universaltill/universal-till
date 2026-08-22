@@ -741,7 +741,7 @@
   "settings.display.window_mode_label": "حالت پنجره",
   "settings.display.window_mode_maximized": "بزرگ‌شده",
   "settings.display.window_mode_normal": "پنجره عادی",
-  "settings.display.window_mode_pending_note": "پس از عرضه پشتیبانی حالت پنجره برای این پلتفرم فعال می‌شود.",
+  "settings.display.window_mode_pending_note": "در دستگاه کیوسک Raspberry Pi بلافاصله اعمال می‌شود. در دسکتاپ لینوکس، در دفعهٔ بعدی که دستگاه را روشن می‌کنید اعمال می‌شود. در macOS و Windows، انتخاب شما ذخیره می‌شود اما هنوز چیزی تغییر نمی‌کند.",
   "settings.enrol.benefits": "ثبت‌نام رایگان است و صندوق شما را به فروشگاه افزونه‌ها متصل می‌کند: افزونه‌ها را با یک لمس نصب کنید و از امکانات ابری بهره‌مند شوید. وقتی صندوق آنلاین باشد به‌صورت خودکار انجام می‌شود — یا همین حالا با دکمه زیر ثبت کنید.",
   "settings.enrol.claim_btn": "تصاحب این فروشگاه",
   "settings.enrol.claim_expires": "کد ۱۵ دقیقه اعتبار دارد.",

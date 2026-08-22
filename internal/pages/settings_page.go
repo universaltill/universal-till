@@ -530,9 +530,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
-	// Window mode (ut-docs#608 scaffold): stores/surfaces the till's
-	// window/process display mode. This card does NOT apply it to the OS
-	// window — that's #609 (macOS)/#610 (Windows)/#611 (Linux/Pi).
+	// Window mode (ut-docs#608 scaffold, #883 for the Pi kiosk path): stores
+	// the till's window/process display mode AND applies it via WindowCtl.
+	// Real OS effect today: the Pi headless kiosk (#883, immediately, no
+	// restart). Still scaffolding-only (persists but doesn't apply until
+	// next launch/that platform's support ships): macOS (#609), Windows
+	// (#610), and a live apply on the Linux desktop shell (#611 applies at
+	// its own next launch; a live cross-process channel for it is #882).
 	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796),
 	// validation before elevation as elsewhere in this file.
 	mux.HandleFunc("POST /api/settings/window-mode", func(w http.ResponseWriter, r *http.Request) {
@@ -550,6 +554,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			renderElevationPrompt(w, r, "/api/settings/window-mode", "#window-mode-msg",
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.window_mode"), httpx.T(locale, "settings.display.window_mode_"+mode)),
 				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
+			return
+		}
+		// ut-docs#883: apply BEFORE persisting — on the Pi kiosk path this is
+		// what actually flips unitill-kiosk.service; if it fails (e.g. a
+		// pre-#883 Pi upgraded without the sudoers grant), the operator sees
+		// a clear error and the stored preference never lies about what the
+		// OS actually did. WindowCtl is set in pages.Init (NoopWindowController
+		// on every platform except the Pi kiosk path); nil-checked here so
+		// bare-Deps tests/helpers that predate ut-docs#608 stay valid, same
+		// convention as the exit-to-os handler below.
+		wc := d.WindowCtl
+		if wc == nil {
+			wc = common.NoopWindowController{}
+		}
+		if err := wc.ApplyMode(mode); err != nil {
+			logging.L().Errorf("window mode apply %s: %v", mode, err)
+			http.Error(w, "could not apply window mode", http.StatusInternalServerError)
 			return
 		}
 		st := d.CurrentState()

@@ -741,7 +741,7 @@
   "settings.display.window_mode_label": "وضع النافذة",
   "settings.display.window_mode_maximized": "مكبّرة",
   "settings.display.window_mode_normal": "نافذة عادية",
-  "settings.display.window_mode_pending_note": "يصبح فعّالاً بمجرد صدور دعم وضع النافذة لهذه المنصة.",
+  "settings.display.window_mode_pending_note": "على جهاز كشك Raspberry Pi، يُطبَّق فورًا. على سطح مكتب لينكس، يُطبَّق في المرة التالية التي تشغّل فيها الجهاز. على macOS وWindows، يُحفظ اختيارك لكن لا يتغيّر شيء بعد.",
   "settings.enrol.benefits": "التسجيل مجاني ويربط صندوقك بمتجر الإضافات: ثبّت الإضافات بلمسة واحدة واستفد من ميزات السحابة عند وصولها. يحدث تلقائياً عندما يكون الصندوق متصلاً — أو سجّل الآن بالزر أدناه.",
   "settings.enrol.claim_btn": "ربط هذا المتجر",
   "settings.enrol.claim_expires": "الرمز صالح لمدة ١٥ دقيقة.",
