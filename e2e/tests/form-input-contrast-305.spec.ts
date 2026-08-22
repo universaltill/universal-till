@@ -33,6 +33,22 @@ import { watchConsole } from './helpers';
 
 const THEMES = ['default', 'amber', 'fresh', 'monarch', 'slate'] as const;
 
+// ut-docs#864: 'default' here is a control-flow key ("skip theme stylesheet
+// injection"), not a real selectable theme -- there's no web/public/themes/
+// default.css. The till this spec drives boots with UT_THEME unset, which
+// internal/config/config.go defaults to "monarch" (e2e/run-till.sh never
+// overrides it), so what actually renders for the 'default' key is
+// monarch's live CSS. This label map makes the test title say that, rather
+// than implying a genuine themeless/base-app.css state that was never
+// actually measured.
+const THEME_LABELS: Record<(typeof THEMES)[number], string> = {
+  default: 'server-default (monarch)',
+  amber: 'amber',
+  fresh: 'fresh',
+  monarch: 'monarch',
+  slate: 'slate',
+};
+
 // [label, HTML to insert the probe <input>/<select> into]. `{{control}}`
 // is replaced with the actual control element by the in-page script below.
 const PROBES: Array<{ label: string; wrapperHTML: string | null }> = [
@@ -46,7 +62,7 @@ const PROBES: Array<{ label: string; wrapperHTML: string | null }> = [
 test.describe('form-control borders meet WCAG 1.4.11 non-text contrast (ut-docs#305)', () => {
   for (const theme of THEMES) {
     for (const probe of PROBES) {
-      test(`${theme} theme: ${probe.label} resting border is >= 3:1 against its own background`, async ({
+      test(`${THEME_LABELS[theme]} theme: ${probe.label} resting border is >= 3:1 against its own background`, async ({
         page,
       }) => {
         const assertClean = watchConsole(page);
@@ -103,13 +119,13 @@ test.describe('form-control borders meet WCAG 1.4.11 non-text contrast (ut-docs#
 
         expect(
           result.ratio,
-          `${theme}/${probe.label}: border ${result.restingBorder} vs background ${result.background} must be >= 3:1`,
+          `${THEME_LABELS[theme]}/${probe.label}: border ${result.restingBorder} vs background ${result.background} must be >= 3:1`,
         ).toBeGreaterThanOrEqual(3);
         // The focus state must still read as visually distinct from resting
         // (don't fix resting contrast by making focus less obvious).
         expect(
           result.focusBorder,
-          `${theme}/${probe.label}: focus border must differ from resting border`,
+          `${THEME_LABELS[theme]}/${probe.label}: focus border must differ from resting border`,
         ).not.toBe(result.restingBorder);
 
         assertClean();
