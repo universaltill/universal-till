@@ -602,6 +602,71 @@ func TestUploadPendingIssueReportsClassifiesOtherAndAccumulates(t *testing.T) {
 	}
 }
 
+// ut-docs#642: once a not-registered bundle has been recorded as failing
+// once, /my-reports already flags it immediately (see
+// issueReportStatusKey/pages' Failing logic) regardless of how high
+// UploadFailCount climbs — so further identical-reason ticks must skip the
+// fsync'd meta.json rewrite entirely, not merely slow its growth. A till
+// left unregistered for a long stretch, ticking every 2 minutes, must not
+// keep rewriting the same bundle's metadata forever for no display benefit.
+func TestUploadPendingIssueReportsUnregisteredSkipsWriteAfterFirstFailure(t *testing.T) {
+	withTempPendingDir(t)
+	d := openMigratedDB(t, "issue_reports_unregistered_skip.db")
+	id, err := issuereport.Save("till never enrolled, ticking forever", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		uploadPendingIssueReports(context.Background(), &config.Config{}, d.DB)
+	}
+
+	remaining, err := issuereport.Pending()
+	if err != nil || len(remaining) != 1 || remaining[0].Meta.ID != id {
+		t.Fatalf("Pending: %v (%d)", err, len(remaining))
+	}
+	if remaining[0].Meta.UploadFailReason != issuereport.UploadFailReasonNotRegistered {
+		t.Fatalf("UploadFailReason = %q, want %q", remaining[0].Meta.UploadFailReason, issuereport.UploadFailReasonNotRegistered)
+	}
+	if remaining[0].Meta.UploadFailCount != 1 {
+		t.Fatalf("UploadFailCount = %d, want 1 — the write must be skipped once the reason is unchanged and the bundle is already presented as failing (not_registered flags immediately)", remaining[0].Meta.UploadFailCount)
+	}
+}
+
+// ut-docs#642: a generic ("other") failure keeps recording — and the write
+// churn is legitimate — until UploadFailCount reaches
+// issuereport.UploadFailingThreshold, the point at which /my-reports starts
+// presenting the bundle as failing. From then on, further identical-reason
+// ticks must skip the write and the count must freeze at the threshold,
+// same reasoning as the not-registered case above.
+func TestUploadPendingIssueReportsOtherFreezesCountAtThreshold(t *testing.T) {
+	withTempPendingDir(t)
+	d := openMigratedDB(t, "issue_reports_other_freeze.db")
+	id, err := issuereport.Save("cloud keeps 500ing forever", "", []byte("audio"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < issuereport.UploadFailingThreshold+5; i++ {
+		uploadPendingIssueReports(context.Background(), registeredCfg(srv.URL), d.DB)
+	}
+
+	remaining, err := issuereport.Pending()
+	if err != nil || len(remaining) != 1 || remaining[0].Meta.ID != id {
+		t.Fatalf("Pending: %v (%d)", err, len(remaining))
+	}
+	if remaining[0].Meta.UploadFailReason != issuereport.UploadFailReasonOther {
+		t.Fatalf("UploadFailReason = %q, want %q", remaining[0].Meta.UploadFailReason, issuereport.UploadFailReasonOther)
+	}
+	if remaining[0].Meta.UploadFailCount != issuereport.UploadFailingThreshold {
+		t.Fatalf("UploadFailCount = %d, want %d — count must freeze once the bundle is already presented as failing, not keep climbing forever", remaining[0].Meta.UploadFailCount, issuereport.UploadFailingThreshold)
+	}
+}
+
 // A bundle that eventually uploads successfully is discarded outright — its
 // UploadFailCount from earlier failed ticks doesn't linger anywhere to be
 // misread, because there's no bundle left to read it from.
