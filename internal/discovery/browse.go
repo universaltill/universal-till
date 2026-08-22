@@ -39,6 +39,28 @@ const maxCandidates = 64
 // same package-var seam style as internal/pages's discoveryBrowse.
 var mdnsQuery = mdns.Query
 
+// ipv6Supported is a seam over detectIPv6Support so tests can force either
+// answer deterministically, the same pattern as mdnsQuery above.
+var ipv6Supported = detectIPv6Support
+
+// detectIPv6Support reports whether this host's kernel can open an AF_INET6
+// UDP socket at all — the exact condition hashicorp/mdns's own client bind
+// fails on ("address family not supported by protocol") on a host without
+// usable IPv6: containers, many Pi/kiosk images, IPv6-disabled sandboxes
+// (ut-docs#272). mdns's client always tries udp6 first and logs two [ERR]
+// lines straight to the global stdlib logger — bypassing internal/logging
+// entirely — before Browse's existing v4-only retry below ever gets a
+// chance to run. Checking this once, upfront, lets Browse skip straight to
+// the v4-only attempt on such a host so that noise is never produced.
+func detectIPv6Support() bool {
+	conn, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6unspecified, Port: 0})
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // Browse queries the LAN for tills advertising ServiceName and returns
 // whatever answers within timeout. Bounded and synchronous — meant to be
 // invoked per explicit user action (the Tills page "Find a primary"
@@ -56,9 +78,24 @@ var mdnsQuery = mdns.Query
 // this way has collected nothing to fall back on by itself; Browse
 // recovers by retrying once with IPv6 disabled, which is exactly the
 // scan the operator's own `dns-sd`/`avahi-browse` diagnosis proved works.
+//
+// On a host that can't open IPv6 sockets at all, Browse skips the v4+v6
+// attempt entirely and goes straight to the same v4-only scan the retry
+// above would have reached anyway — see ipv6Supported (ut-docs#272).
 func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+
+	if !ipv6Supported() {
+		v4Candidates, v4Err := browseOnce(ctx, timeout, true)
+		if v4Err == nil || len(v4Candidates) > 0 {
+			return v4Candidates, nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("lan scan failed (v4-only, no IPv6 support: %w)", v4Err)
 	}
 
 	candidates, err := browseOnce(ctx, timeout, false)
