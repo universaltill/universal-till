@@ -2476,21 +2476,34 @@ LIMIT 1
 	return true, nil
 }
 
-// LatestSaleID returns the id of the most recently created sale, or
-// ok=false when no sale exists yet — used by the fiscalisation status chip
-// (ut-docs#685) to find "the till's own last-signing outcome" without a new
-// fiscal.status.ask extension point (none exists; ADR-0044 registers only
-// fiscal.sign.ask).
-func (r *POSRepo) LatestSaleID(ctx context.Context) (string, bool, error) {
+// LatestLocalSaleID returns the id of the most recently created sale rung up
+// on THIS till, or ok=false when this till has none yet — used by the
+// fiscalisation status chip (ut-docs#685) to find "the till's own
+// last-signing outcome" without a new fiscal.status.ask extension point
+// (none exists; ADR-0044 registers only fiscal.sign.ask).
+//
+// An empty till_id is the same "this till's own sales" filter
+// LocalSalesSince uses (ADR-0011 D3: a journaled-in replica sale is stamped with its source
+// till by SetSaleProvenance, along with the ORIGIN's created_at — so on a
+// primary the newest row overall is routinely a REPLICA's sale). Without
+// this filter the chip would decide the local till's health from a foreign
+// sale that, by construction, can never carry a local
+// unsigned_fiscal_signing marker (sync_sales.go's applyJournal replays a
+// sale through CompleteSale, never through completeTender's fiscal.sign.ask
+// hook) — a silent false green on exactly the condition the chip exists to
+// surface. `rowid` breaks a same-second created_at tie by real insertion
+// order, so the answer is stable across the chip's 30s polls instead of
+// flickering between two equally-timestamped sales.
+func (r *POSRepo) LatestLocalSaleID(ctx context.Context) (string, bool, error) {
 	var id string
 	err := r.db.QueryRowContext(ctx, `
-SELECT id FROM sales ORDER BY created_at DESC LIMIT 1
+SELECT id FROM sales WHERE till_id = '' ORDER BY created_at DESC, rowid DESC LIMIT 1
 `).Scan(&id)
 	if err == sql.ErrNoRows {
 		return "", false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("latest sale id: %w", err)
+		return "", false, fmt.Errorf("latest local sale id: %w", err)
 	}
 	return id, true, nil
 }

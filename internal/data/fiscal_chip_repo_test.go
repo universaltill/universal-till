@@ -19,7 +19,7 @@ func newFiscalChipTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	stmts := []string{
-		`CREATE TABLE sales (id TEXT PRIMARY KEY, created_at TEXT NOT NULL);`,
+		`CREATE TABLE sales (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, till_id TEXT NOT NULL DEFAULT '');`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), blocked_actor_id TEXT);`,
 	}
 	for _, s := range stmts {
@@ -30,14 +30,14 @@ func newFiscalChipTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func TestPOSRepo_LatestSaleID(t *testing.T) {
+func TestPOSRepo_LatestLocalSaleID(t *testing.T) {
 	db := newFiscalChipTestDB(t)
 	repo := NewPOSRepo(db)
 	ctx := context.Background()
 
 	// No sales at all.
-	if _, ok, err := repo.LatestSaleID(ctx); err != nil {
-		t.Fatalf("LatestSaleID on empty table: %v", err)
+	if _, ok, err := repo.LatestLocalSaleID(ctx); err != nil {
+		t.Fatalf("LatestLocalSaleID on empty table: %v", err)
 	} else if ok {
 		t.Fatal("expected ok=false with no sales")
 	}
@@ -52,12 +52,45 @@ func TestPOSRepo_LatestSaleID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, ok, err := repo.LatestSaleID(ctx)
+	id, ok, err := repo.LatestLocalSaleID(ctx)
 	if err != nil {
-		t.Fatalf("LatestSaleID: %v", err)
+		t.Fatalf("LatestLocalSaleID: %v", err)
 	}
 	if !ok || id != "s2" {
 		t.Fatalf("expected the most recently created sale s2, got id=%q ok=%v", id, ok)
+	}
+
+	// Independent review, ut-docs#685: a journaled-in REPLICA sale
+	// (till_id != '', stamped by SetSaleProvenance with the ORIGIN's
+	// created_at, so it can legitimately be the newest row in the table)
+	// must never be picked. It never went through completeTender's
+	// fiscal.sign.ask hook on this node, so it can never carry a local
+	// unsigned_fiscal_signing marker — letting it win would flip the chip
+	// green while THIS till's own last sale sits unsigned.
+	if _, err := db.Exec(`INSERT INTO sales(id, created_at, till_id) VALUES ('foreign','2026-08-20T23:00:00Z','till-b')`); err != nil {
+		t.Fatal(err)
+	}
+	id, ok, err = repo.LatestLocalSaleID(ctx)
+	if err != nil {
+		t.Fatalf("LatestLocalSaleID after a journaled-in sale: %v", err)
+	}
+	if !ok || id != "s2" {
+		t.Fatalf("a replica's journaled-in sale must not win: got id=%q ok=%v, want s2", id, ok)
+	}
+
+	// Same-second tie: the later-inserted row wins, deterministically, so
+	// the chip doesn't flicker between two equally-timestamped sales.
+	if _, err := db.Exec(`INSERT INTO sales(id, created_at) VALUES ('tie-a','2026-08-20T12:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sales(id, created_at) VALUES ('tie-b','2026-08-20T12:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		id, ok, err = repo.LatestLocalSaleID(ctx)
+		if err != nil || !ok || id != "tie-b" {
+			t.Fatalf("same-second tie must resolve stably to the later insert: got id=%q ok=%v err=%v", id, ok, err)
+		}
 	}
 }
 
