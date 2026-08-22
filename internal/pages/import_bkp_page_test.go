@@ -52,6 +52,19 @@ func buildBkpDBBytesForPagesTestWithTaxRows(t *testing.T, extra []bkpTaxRow) []b
 	if err != nil {
 		t.Fatalf("open temp db: %v", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	// ut-docs#878: same disposable-scratch reasoning as openPagesTestDB —
+	// this file is read back as raw bytes and deleted at test end, nothing
+	// durable to protect. Skips the default rollback-journal fsync-on-
+	// commit that hung this package's test binary under contended
+	// CI-runner I/O elsewhere in this package.
+	if _, err := db.Exec(`PRAGMA journal_mode = MEMORY`); err != nil {
+		t.Fatalf("journal_mode: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous = OFF`); err != nil {
+		t.Fatalf("synchronous: %v", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE Products (
 		ProductNumber TEXT,
 		ProductTextShort TEXT,

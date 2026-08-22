@@ -432,6 +432,16 @@ func newSyncDepsWithPath(t *testing.T, name string) (*common.Deps, string) {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		t.Fatalf("foreign_keys: %v", err)
 	}
+	// ut-docs#878: same disposable-scratch reasoning as openPagesTestDB —
+	// single-connection, t.TempDir()-scoped, nothing durable to lose. Skips
+	// the default rollback-journal fsync-on-commit that hung this package's
+	// test binary under contended CI-runner I/O.
+	if _, err := db.Exec(`PRAGMA journal_mode = MEMORY`); err != nil {
+		t.Fatalf("journal_mode: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous = OFF`); err != nil {
+		t.Fatalf("synchronous: %v", err)
+	}
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
