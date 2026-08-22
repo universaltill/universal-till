@@ -3,7 +3,9 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -30,6 +32,23 @@ func showWindow(url, title string, childPid int) {
 	defer w.Destroy()
 	w.SetTitle(title)
 	w.SetSize(1280, 860, webview.HintNone)
+	// Both applied once at launch, from whatever's persisted right now
+	// (ut-docs#611) — "applies live or on next launch" is explicitly
+	// acceptable per #549; the live, no-relaunch case needs a cross-process
+	// channel to the already-running unitill-pos server, split off as
+	// ut-docs#882. A fetch failure degrades to defaultShellPrefs (see
+	// fetchShellPrefs) rather than blocking the window from opening.
+	//
+	// Autostart is reconciled here — in this process, not unitill-pos's —
+	// because this is the process that actually knows its own executable
+	// path and, critically on a .deb install, is the one running as the
+	// interactive desktop user (see reconcileAutostart's doc comment;
+	// ut-docs#611 review, M2/M3).
+	prefs := fetchShellPrefs(url)
+	applyWindowMode(w, prefs.WindowMode)
+	if err := reconcileAutostart(prefs.LaunchOnStartup); err != nil {
+		fmt.Fprintln(os.Stderr, "reconcile autostart entry:", err)
+	}
 	w.Navigate(url)
 	w.Run()
 }
