@@ -10,7 +10,7 @@ import (
 )
 
 // newFiscalChipTestDB is a minimal hand-rolled schema with just what
-// LatestSaleID/CountUnresolvedAuditActionsSince need — same convention as
+// LatestLocalSaleID/CountUnresolvedAuditActionsSince need — same convention as
 // newAuditTestDB (audit_test.go), plus a bare sales table.
 func newFiscalChipTestDB(t *testing.T) *sql.DB {
 	t.Helper()
