@@ -2,6 +2,7 @@ package pages
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -332,5 +333,59 @@ func TestMyReportsPage_SentAndPendingRowsSortedTogether(t *testing.T) {
 	}
 	if newIdx > oldIdx {
 		t.Fatalf("expected the newer pending row before the older sent row, got: %s", body)
+	}
+}
+
+// ut-docs#642: a till with more than rowLimit sent reports plus an old,
+// long-failing pending bundle must not have the failing row silently
+// truncated away by a naive newest-captured-first cap — that's exactly the
+// case where the operator most needs to see it. The pending/failing row is
+// prioritized within the cap, at the cost of the single oldest sent row.
+func TestMyReportsPage_FailingRowSurvivesCapOverOldestSentRow(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, db := newMyReportsTestMux(t)
+
+	// 100 sent rows, all dated well after "now" so every one of them sorts
+	// newer than the pending bundle created below — the scenario the fix
+	// targets: a naive time-only truncation would keep all 100 of these and
+	// drop the pending row instead, being the oldest overall.
+	const sentCount = 100
+	for i := 0; i < sentCount; i++ {
+		capturedAt := fmt.Sprintf("2027-06-01T%02d:%02d:00Z", i/60, i%60)
+		note := fmt.Sprintf("sent row %03d", i)
+		if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status) VALUES (?, ?, ?, 'sent')`,
+			fmt.Sprintf("rep-sent-%03d", i), note, capturedAt); err != nil {
+			t.Fatalf("seed sent row %d: %v", i, err)
+		}
+	}
+
+	id, err := issuereport.Save("old bundle that keeps failing to upload", "", []byte("a"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for i := 0; i < issuereport.UploadFailingThreshold; i++ {
+		if _, err := issuereport.RecordUploadFailure(id, issuereport.UploadFailReasonOther); err != nil {
+			t.Fatalf("RecordUploadFailure #%d: %v", i, err)
+		}
+	}
+
+	rec := getMyReports(t, mux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "old bundle that keeps failing to upload") {
+		t.Fatalf("the failing pending row must survive the cap, not be truncated away: %s", body)
+	}
+	if !strings.Contains(body, "Couldn&#39;t send") {
+		t.Fatalf("expected the translated failing status for the surviving row, got: %s", body)
+	}
+	// The single oldest sent row (i=0) is the one that must give way — every
+	// other sent row (i=1..99) still fits comfortably within the cap.
+	if strings.Contains(body, "sent row 000") {
+		t.Fatalf("expected the oldest sent row to be dropped to make room for the failing row, got: %s", body)
+	}
+	if !strings.Contains(body, "sent row 099") {
+		t.Fatalf("expected the newest sent row to still render: %s", body)
 	}
 }
