@@ -55,7 +55,53 @@ func openPagesTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		t.Fatalf("enable foreign keys: %v", err)
 	}
+	// ut-docs#878: this DB is single-connection, disposable scratch that
+	// lives only in t.TempDir() for one test — nothing durable to protect
+	// against a crash. The default rollback-journal mode fsyncs on every
+	// commit, a real disk syscall that hung a whole package's test binary
+	// under contended CI-runner I/O (twice, on unrelated PRs). Keeping the
+	// journal in memory and skipping the sync removes that syscall from
+	// the hot path entirely.
+	if _, err := db.Exec(`PRAGMA journal_mode = MEMORY`); err != nil {
+		t.Fatalf("set journal_mode: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous = OFF`); err != nil {
+		t.Fatalf("set synchronous: %v", err)
+	}
 	return db
+}
+
+// TestOpenPagesTestDB_NoFsyncOnHotPath guards ut-docs#878: this package's
+// shared test-DB helper hung a whole test binary run (10m `go test`
+// timeout) with a goroutine stuck in a syscall.Syscall6 -> fsync deep
+// inside modernc.org/sqlite, twice on unrelated PRs (universal-till#425,
+// #429). openPagesTestDB opened its temp-file DB with SQLite's default
+// rollback-journal mode, which fsyncs the journal on every commit — a real
+// disk syscall that can stall badly under contended CI-runner I/O. These
+// DBs are single-connection (MaxOpenConns=1, so WAL's concurrent-reader
+// benefit doesn't apply here) and live only in t.TempDir() for the
+// duration of one test — durability across a crash is worthless for them,
+// so there's nothing to trade away by keeping the journal in memory and
+// skipping the sync entirely.
+func TestOpenPagesTestDB_NoFsyncOnHotPath(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+
+	var journalMode string
+	if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	if journalMode != "memory" {
+		t.Errorf("journal_mode = %q, want %q (keeps the rollback journal off disk entirely — no fsync on it)", journalMode, "memory")
+	}
+
+	var synchronous int
+	if err := db.QueryRow(`PRAGMA synchronous`).Scan(&synchronous); err != nil {
+		t.Fatalf("read synchronous: %v", err)
+	}
+	if synchronous != 0 {
+		t.Errorf("synchronous = %d, want 0 (OFF — this DB is disposable test scratch, not data worth an fsync)", synchronous)
+	}
 }
 
 func TestIndexAndBasketRender(t *testing.T) {
