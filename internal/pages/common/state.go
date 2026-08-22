@@ -33,8 +33,12 @@ const (
 	// #609 (macOS)/#610 (Windows)/#611 (Linux/Pi).
 	KeyWindowMode = "display.window_mode"
 	// KeyLaunchOnStartup is the till's autostart-on-boot preference
-	// (ut-docs#608 scaffold) — stored and surfaced only; wiring it into the
-	// OS's actual autostart mechanism is a future per-platform card.
+	// (ut-docs#608 scaffold) — this process (unitill-pos) only stores and
+	// surfaces it. OS-level application is the desktop shell's own job
+	// (ut-docs#611, Linux desktop) via GET /api/window-mode, since the
+	// shell — not this one — is the process actually running as the
+	// interactive desktop user; macOS/Windows/Pi kiosk are still future
+	// per-platform cards.
 	KeyLaunchOnStartup = "display.launch_on_startup"
 	// KeyReportRetentionMode is the per-shop report_archive retention
 	// destination (ADR-0040): "till" | "cloud" | "both". Till-writable
@@ -101,11 +105,15 @@ var validWindowModes = map[string]bool{
 	"normal":     true,
 }
 
-// clampWindowMode returns mode unchanged if it's one of the four valid
-// values, else DefaultWindowMode — used both when loading (defense against
-// corrupt/old stored data) and when saving (defense in depth: the HTTP
-// handler already rejects a bad value, but SaveState has other callers).
-func clampWindowMode(mode string) string {
+// ClampWindowMode returns mode unchanged if it's one of the four valid
+// values, else DefaultWindowMode — used when loading (defense against
+// corrupt/old stored data), when saving (defense in depth: the HTTP handler
+// already rejects a bad value, but SaveState has other callers), and by the
+// unauthenticated GET /api/window-mode endpoint (ut-docs#611) the desktop
+// shell reads at launch, which needs the same normalization without
+// duplicating the valid-mode enum. Exported for that last caller, outside
+// this package.
+func ClampWindowMode(mode string) string {
 	if validWindowModes[mode] {
 		return mode
 	}
@@ -172,7 +180,7 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		}
 	}
 
-	st.WindowMode = clampWindowMode(get(KeyWindowMode, DefaultWindowMode))
+	st.WindowMode = ClampWindowMode(get(KeyWindowMode, DefaultWindowMode))
 
 	st.LaunchOnStartup = false
 	if v := get(KeyLaunchOnStartup, "false"); v != "" {
@@ -224,7 +232,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		"pos.allow_negative_inventory": strconv.FormatBool(st.AllowNegativeInventory),
 		KeyIdleLock:                    strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:              strconv.Itoa(st.KioskIdleResetSeconds),
-		KeyWindowMode:                  clampWindowMode(st.WindowMode),
+		KeyWindowMode:                  ClampWindowMode(st.WindowMode),
 		KeyLaunchOnStartup:             strconv.FormatBool(st.LaunchOnStartup),
 	}
 	if st.UIScale > 0 {

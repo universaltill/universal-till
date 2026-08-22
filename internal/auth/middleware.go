@@ -20,7 +20,10 @@ func Disabled(env string) bool {
 func exempt(path string) bool {
 	// /setup + /api/setup are the first-boot wizard; both refuse to run once
 	// an operator exists, so exempting them leaks nothing.
-	if path == "/login" || path == "/healthz" || path == "/setup" || path == "/api/setup" {
+	// /api/window-mode (ut-docs#611): the desktop shell reads this at
+	// launch, before any operator has signed in — same shape as /healthz,
+	// and no more sensitive (UI display preferences, not shop data).
+	if path == "/login" || path == "/healthz" || path == "/setup" || path == "/api/setup" || path == "/api/window-mode" {
 		return true
 	}
 	// Machine-to-machine sync surface (ADR-0011): enroll is one-time-token

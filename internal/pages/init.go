@@ -307,6 +307,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerJournal(mux, dp)
 	registerOrderStatus(mux, dp) // order lifecycle status one-tap surface (ut-docs#526)
 	registerHealth(mux)
+	registerWindowState(mux, dp) // desktop shell reads this pre-login at launch (ut-docs#611)
 	registerExternalProxy(mux, dp)
 	registerPluginStore(mux, dp) // Marketplace plugin store
 	registerMarketplaceV1Stub(mux, dp)
