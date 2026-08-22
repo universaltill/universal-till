@@ -124,6 +124,7 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 	registerAuth(mux, d, svc)
 	registerSetup(mux, d, svc)
 	registerSettings(mux, d)
+	registerWindowState(mux, d) // ut-docs#611: desktop shell's pre-login window-mode read
 	return mux, svc, d
 }
 

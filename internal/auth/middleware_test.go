@@ -42,6 +42,11 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// 0033 pairing surface instead of the sync-pull loop.
 		"/api/sync/pair-request",
 		"/api/sync/pair-requests/some-request-id",
+		// ut-docs#611: the desktop shell (unitill-desktop) reads this at
+		// launch, before any operator has signed in, to decide which native
+		// window mode to apply — same "no session exists yet" shape as the
+		// pairing/sync paths above.
+		"/api/window-mode",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+
