@@ -564,8 +564,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Launch-on-startup (ut-docs#608 scaffold): stores/surfaces the till's
-	// autostart-on-boot preference. Not wired to the OS's actual autostart
-	// mechanism yet — same future-card split as window-mode above.
+	// autostart-on-boot preference. OS-level application (ut-docs#611) is
+	// deliberately NOT done here: this handler runs inside unitill-pos, a
+	// separate OS process from the desktop shell (unitill-desktop) that
+	// owns the actual window/autostart mechanism and — critically — is the
+	// process actually running as the interactive desktop user (on a .deb
+	// install, unitill-pos runs as the unprivileged system user `pos`,
+	// which has no meaningful XDG autostart directory of its own). The
+	// shell reads this persisted value itself via GET /api/window-mode and
+	// reconciles its own autostart entry at its own next launch — the same
+	// next-launch semantics window-mode already uses, and for the same
+	// reason (#549 explicitly allows either). See GET /api/window-mode
+	// (window_state_api.go) and cmd/unitill-desktop/autostart_linux.go.
 	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796). Two
 	// separate summary keys (on/off) rather than a %s placeholder — no
 	// generic "on"/"off" i18n key exists yet (mirrors eod_settings_enabled/

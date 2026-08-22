@@ -153,7 +153,11 @@ func TestWindowModeEndpoint(t *testing.T) {
 }
 
 // Launch-on-startup (ut-docs#608 scaffold) is manager-gated, boolean, and
-// round-trips through runtime state.
+// round-trips through runtime state. It does NOT touch the filesystem here
+// (ut-docs#611 review, M2/M3): OS-level application is the desktop shell's
+// own job at its own next launch, via GET /api/window-mode — see
+// TestWindowStateAPI_ExposesLaunchOnStartup and cmd/unitill-desktop's own
+// autostart tests. This handler only persists the preference.
 func TestLaunchOnStartupEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
