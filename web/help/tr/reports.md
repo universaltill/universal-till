@@ -29,6 +29,8 @@ Gün, reyon ve ödeme türüne göre satış toplamları; en çok/yavaş satanla
 
 Varsayılan olarak bir rapor "günü" gece yarısından gece yarısına kadar sürer. Gece yarısından sonra da satış yapıyorsanız — bir bar, geç saatlere kadar açık bir mutfak — bu, bir gecelik hasılatı iki rapor gününe böler. "İşletme günü şu saatte başlar" ayarını (Gün sonu sekmesinde, otomatik gün sonu saatinin yanında) işletme gününüzün gerçekten başladığı saate, örneğin 06:00'ya ayarlayın; böylece Gün/Hafta/Ay/Yıl dönemleri saatin değil gerçek işletme gününüzün sınırlarını izler.
 
+Bu kaydırma, Satış eğilimi sekmesindeki en yoğun saat grafiğine de uygulanır — gece yarısından hemen sonra yapılan bir satış, gerçek saati yerine gece yarısından önceki bir saat etiketinin altında (örneğin 22:00) görünebilir; bu, Gün/Hafta/Ay/Yıl'ın bu satışı zaten önceki işletme gününe ait saymasıyla tutarlıdır.
+
 ## Rapor saklama
 
 Arşivlenen her gün sonu raporu **10 yıl** saklanır — bu yasal bir kayıttır
