@@ -387,7 +387,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 	// Test print — the moment of truth for printer setup.
 	mux.HandleFunc("POST /api/print/test", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "settings") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

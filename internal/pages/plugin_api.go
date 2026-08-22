@@ -84,7 +84,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 
@@ -121,7 +121,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 
@@ -159,7 +159,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 
@@ -366,7 +366,7 @@ func handleEnablePlugin(d *common.Deps) http.HandlerFunc {
 func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		ctx := r.Context()
@@ -467,7 +467,7 @@ func handleDisablePlugin(d *common.Deps) http.HandlerFunc {
 func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		ctx := r.Context()
@@ -535,7 +535,7 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		ctx := r.Context()
@@ -645,7 +645,7 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		ctx := r.Context()
@@ -730,7 +730,7 @@ func handleCheckUpdates(d *common.Deps) http.HandlerFunc {
 func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		ctx := r.Context()
@@ -857,7 +857,7 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 func handleExportPlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		ctx := r.Context()

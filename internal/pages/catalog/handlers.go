@@ -143,7 +143,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
 		variants, err := repo.VariantsForItem(r.Context(), itemID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		type opt struct {
@@ -189,7 +189,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			minor = int64(math.Round(f * math.Pow(10, float64(decimals))))
 		}
 		if err := repo.SetItemCostPrice(r.Context(), itemID, minor); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		renderVariantsPanel(w, r, itemID, false)
@@ -220,7 +220,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			days = n
 		}
 		if err := repo.SetItemLeadTimeDays(r.Context(), itemID, days); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		renderVariantsPanel(w, r, itemID, false)
@@ -235,12 +235,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		items, err := repo.ListItems(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		cats, brands, taxCodes, err := listLookups(r.Context(), repo)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		barcodes, _ := repo.ItemBarcodes(r.Context())
@@ -276,6 +276,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		itemInput, err := parseItemInput(r)
 		if err != nil {
+			// parseItemInput/validateLookups return clean, bounded,
+			// hand-written validation errors ("name and price required",
+			// "invalid categories id", …) — never raw SQL/driver text or
+			// an internal ID, so these are out of ut-docs#316's scope
+			// (unlike the pos./data.-layer errors below, which can wrap
+			// real DB errors and go through the translated+logged path).
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -285,7 +291,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		itemID, err := pos.CreateItem(r.Context(), d.Db, itemInput)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			skuAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
 		// Auto-fill flow: attach the looked-up barcode so the new item is
@@ -323,6 +329,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		itemInput, err := parseItemInput(r)
 		if err != nil {
+			// See the matching comment in /api/catalog/item above.
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -332,7 +339,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := pos.UpdateItem(r.Context(), d.Db, itemInput); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			skuAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
 		renderCatalogTable(w, r)
@@ -351,7 +358,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := pos.DeactivateItem(r.Context(), d.Db, itemID); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 			return
 		}
 		renderCatalogTable(w, r)
@@ -408,12 +415,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		if vInput.ID == "" {
 			if _, err := pos.CreateVariant(r.Context(), d.Db, vInput); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				skuAwareError(w, r, http.StatusBadRequest, err)
 				return
 			}
 		} else {
 			if err := pos.UpdateVariant(r.Context(), d.Db, vInput); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				skuAwareError(w, r, http.StatusBadRequest, err)
 				return
 			}
 		}
@@ -456,12 +463,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		groupID := strings.TrimSpace(r.Form.Get("id"))
 		if groupID == "" {
 			if _, err := modRepo.CreateGroup(r.Context(), uuid.NewString(), itemID, name, required, minSelect, maxSelect, sortOrder); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
 		} else {
 			if err := modRepo.UpdateGroup(r.Context(), groupID, name, required, minSelect, maxSelect, sortOrder, active); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
 		}
@@ -507,12 +514,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		optionID := strings.TrimSpace(r.Form.Get("id"))
 		if optionID == "" {
 			if _, err := modRepo.CreateOption(r.Context(), uuid.NewString(), groupID, name, priceDeltaMinor, sortOrder); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
 		} else {
 			if err := modRepo.UpdateOption(r.Context(), optionID, name, priceDeltaMinor, sortOrder, active); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
 		}
@@ -532,7 +539,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := pos.DeactivateVariant(r.Context(), d.Db, variantID); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 			return
 		}
 		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
@@ -546,7 +553,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// convention the product tiles and designer use).
 	mux.HandleFunc("POST /api/catalog/item/image", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
-			http.Error(w, "invalid upload", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
 		}
 		itemID := strings.TrimSpace(r.Form.Get("item_id"))
@@ -571,17 +578,17 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		dir := paths.Data("public", "assets", "items", itemID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		out, err := os.Create(filepath.Join(dir, "thumb.png"))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		defer out.Close()
 		if err := png.Encode(out, img); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		renderCatalogTable(w, r)
@@ -592,7 +599,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// placeholder, resolved by the template's imgv versioned URLs.
 	mux.HandleFunc("POST /api/catalog/variant/image", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
-			http.Error(w, "invalid upload", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
 		}
 		variantID := strings.TrimSpace(r.Form.Get("variant_id"))
@@ -624,17 +631,17 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		dir := paths.Data("public", "assets", "items", itemID, "variants", variantID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		out, err := os.Create(filepath.Join(dir, "thumb.png"))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		defer out.Close()
 		if err := png.Encode(out, img); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
 		renderVariantsPanel(w, r, itemID, false)
@@ -691,7 +698,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := pos.RemoveBarcode(r.Context(), d.Db, barcode); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 			return
 		}
 		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
@@ -842,3 +849,18 @@ func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInp
 	return nil
 }
 func files(paths ...string) []string { return paths }
+
+// skuAwareError handles a Create/UpdateItem or Create/UpdateVariant error:
+// a duplicate SKU (data.ErrSKUExists) is common enough, and specific
+// enough to name, that downgrading it to the generic
+// "catalog.error.invalid_request" (ut-docs#316's review) throws away
+// actionable feedback — same reasoning ut-docs#303 already applied to
+// barcode conflicts via FriendlyBarcodeConflict. Anything else still goes
+// through the generic translated+logged path.
+func skuAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if errors.Is(err, data.ErrSKUExists) {
+		common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.sku_exists")
+		return
+	}
+	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)
+}

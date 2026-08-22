@@ -269,7 +269,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		pluginID := r.PathValue("id")

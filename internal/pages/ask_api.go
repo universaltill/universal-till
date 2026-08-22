@@ -124,7 +124,7 @@ func registerAskAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if !canPerform(d, r, "reports") {
-			http.Error(w, "manager or admin required", http.StatusForbidden)
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
 		_ = r.ParseForm()

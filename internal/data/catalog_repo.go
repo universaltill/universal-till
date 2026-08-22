@@ -42,6 +42,16 @@ var ErrTaxCodeNameExists = errors.New("tax code name already exists")
 // match any tax_codes row.
 var ErrTaxCodeNotFound = errors.New("tax code not found")
 
+// ErrSKUExists reports that items.sku or item_variants.sku's UNIQUE
+// constraint rejected a Create/UpdateItem or Create/UpdateVariant call
+// (ut-docs#316's review) -- items and item_variants each carry exactly one
+// UNIQUE column (sku, 001_init.sql), the same one-constraint assumption
+// isUniqueViolation's ErrTaxCodeNameExists usage above already relies on,
+// so the handler can surface a specific "that SKU is already in use"
+// message instead of downgrading to the generic invalid-request one that
+// names nothing.
+var ErrSKUExists = errors.New("SKU already in use")
+
 func NewCatalogRepo(db *sql.DB) *CatalogRepo {
 	return &CatalogRepo{db: db}
 }
@@ -737,6 +747,9 @@ INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, in.ID, in.SKU, in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
 	if err != nil {
+		if isUniqueViolation(err) {
+			return "", ErrSKUExists
+		}
 		return "", fmt.Errorf("insert item: %w", err)
 	}
 	// Without this, a newly created item has NO row in inventory at all
@@ -977,6 +990,9 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
 WHERE id = ?
 `, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), in.ID)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrSKUExists
+		}
 		return fmt.Errorf("update item: %w", err)
 	}
 	return nil
@@ -1001,6 +1017,9 @@ INSERT INTO item_variants (id, item_id, sku, name, price, cost_price, is_active)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 `, in.ID, in.ItemID, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return "", ErrSKUExists
+		}
 		return "", fmt.Errorf("insert variant: %w", err)
 	}
 	// Same reasoning as CreateItem: without this a new variant has no
@@ -1033,6 +1052,9 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
 WHERE id = ?
 `, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active, in.ID)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrSKUExists
+		}
 		return fmt.Errorf("update variant: %w", err)
 	}
 	return nil
