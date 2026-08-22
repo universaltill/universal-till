@@ -2476,6 +2476,61 @@ LIMIT 1
 	return true, nil
 }
 
+// LatestSaleID returns the id of the most recently created sale, or
+// ok=false when no sale exists yet — used by the fiscalisation status chip
+// (ut-docs#685) to find "the till's own last-signing outcome" without a new
+// fiscal.status.ask extension point (none exists; ADR-0044 registers only
+// fiscal.sign.ask).
+func (r *POSRepo) LatestSaleID(ctx context.Context) (string, bool, error) {
+	var id string
+	err := r.db.QueryRowContext(ctx, `
+SELECT id FROM sales ORDER BY created_at DESC LIMIT 1
+`).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("latest sale id: %w", err)
+	}
+	return id, true, nil
+}
+
+// CountUnresolvedAuditActionsSince counts distinct entities of entityType
+// carrying at least one of actions as an audit_log row at or after since,
+// excluding any entity that also carries a "fiscal_signing_resolved" row
+// (the historical resolved-marker shape a pre-ADR-0056 build could still
+// have written — see saleFiscalSigningGapKind in
+// internal/pages/fiscal_sign_hook.go, whose read-side logic this mirrors at
+// the aggregate level). Generic by design — entityType/actions are caller
+// params, not hardcoded — so any future "how many X have an unresolved Y"
+// chip can reuse it instead of a fiscal-specific query.
+func (r *POSRepo) CountUnresolvedAuditActionsSince(ctx context.Context, entityType string, actions []string, since time.Time) (int, error) {
+	if len(actions) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.Repeat("?,", len(actions))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(actions)+3)
+	args = append(args, entityType)
+	for _, a := range actions {
+		args = append(args, a)
+	}
+	args = append(args, since.UTC().Format(time.RFC3339), entityType)
+	query := fmt.Sprintf(`
+SELECT COUNT(DISTINCT al.entity_id) FROM audit_log al
+WHERE al.entity_type = ? AND al.action IN (%s) AND al.created_at >= ?
+  AND NOT EXISTS (
+    SELECT 1 FROM audit_log r
+    WHERE r.entity_type = ? AND r.entity_id = al.entity_id AND r.action = 'fiscal_signing_resolved'
+  )
+`, placeholders)
+	var n int
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count unresolved audit actions: %w", err)
+	}
+	return n, nil
+}
+
 // AuditEntry is one row for the audit-trail browse/filter page. ActorName
 // is resolved via a LEFT JOIN on users — plugin-originated entries
 // (internal/data/plugin_repo.go's InsertAudit/InsertAuditRaw) always write

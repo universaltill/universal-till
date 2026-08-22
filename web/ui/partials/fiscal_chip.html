@@ -1,0 +1,7 @@
+<span class="fiscal-chip {{ .class }}">
+  {{ if eq .class "warn" -}}
+  <span title="{{ T "fiscal.chip_degraded_title" }}">⚠ {{ T "fiscal.chip_degraded" }}{{ if .count }} · {{ .count }} {{ T "fiscal.chip_unsigned_count" }}{{ end }}</span>
+  {{- else -}}
+  <span title="{{ T "fiscal.chip_ok_title" }}">✓ {{ T "fiscal.chip_ok" }}</span>
+  {{- end }}
+</span>
