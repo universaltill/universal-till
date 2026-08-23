@@ -55,10 +55,42 @@ INSERT INTO users(id, username, display_name, role, is_active) VALUES('mgr-1', '
 		Menu:     []common.MenuItem{{Href: "/settings", Label: "Settings"}},
 		Pm:       pm,
 		Settings: settings.NewStore(d.DB),
+		AuthSvc:  auth.NewService(d.DB),
 	}
 	mux := http.NewServeMux()
 	registerTranslations(mux, dp, i18n)
 	return mux, dp, i18n
+}
+
+// ut-docs#902: GET /translations must be reachable under UT_AUTH=off with
+// no session — same fix and rationale as
+// country_settings_page_test.go's TestCountrySettingsPage_ReachableUnderAuthOff
+// (ut-docs#901's precedent).
+func TestTranslationsPage_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, _ := newTranslationsTestDeps(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/translations?edit_locale=en", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /translations under UT_AUTH=off = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Mutating handlers, not just the GET page, must also pick up canPerform's
+// UT_AUTH=off bypass — independent review finding on ut-docs#901, applied
+// here too.
+func TestTranslationsPageSet_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, _ := newTranslationsTestDeps(t)
+
+	rec := postForm(mux, "/api/translations/set", url.Values{
+		"edit_locale": {"en"}, "key": {"nav.help"}, "value": {"Auth-off override"},
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set under UT_AUTH=off: code=%d body=%q", rec.Code, rec.Body.String())
+	}
 }
 
 func withManager(req *http.Request) *http.Request {

@@ -180,6 +180,18 @@ async function ensureOperator(page: Page) {
 // (internal/pages/tables_page.go), no UT_AUTH=off bypass. Found live
 // 2026-08-19: this is exactly the blank-`dir`-attribute failure the
 // comment above describes, not a new failure mode.
+//
+// STALE AS OF ut-docs#901/#902 (independent review, 2026-08-23): every page
+// above now gates through canPerform(), which HAS the UT_AUTH=off bypass, so
+// none of them still *needs* the auth till — "users" moved to
+// canPerform(..., "user_management") in ut-docs#556, and the remaining five
+// moved to canPerform(..., "settings") in #902. The list is kept as-is on
+// purpose, not by omission: the auth till is a fresh, wizard-seeded install,
+// whereas the default till is shared with e2e/tests/ specs that leave their
+// own rows behind (tables-keyboard-reposition-826.spec.ts creates "E2E Kbd …"
+// tables there since #902), which would leak into the manual's screenshots.
+// Narrowing this list is therefore a deliberate follow-up decision about
+// screenshot fixtures, not a leftover of the auth fix.
 const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations', 'promotions', 'country-settings', 'tables'];
 
 const topics = routedTopics() as { id: string; route: string }[];
