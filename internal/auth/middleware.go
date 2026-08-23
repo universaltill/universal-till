@@ -64,6 +64,16 @@ func exempt(path string) bool {
 	if path == "/self-order" || strings.HasPrefix(path, "/self-order/") || strings.HasPrefix(path, "/api/self-order/") {
 		return true
 	}
+	// /o/{token} (ut-docs#527): the customer order-tracking page, reached by
+	// scanning the QR on the self-order confirmation screen from a personal
+	// phone — an anonymous customer with no session and no way to PIN-login,
+	// same reasoning as /self-order above. Read-only and single-purpose: the
+	// handlers expose an order's STATUS only, gated by the unguessable
+	// tracking token itself (128 random bits), never by a session. Bare "/o"
+	// is deliberately NOT exempt — only token-carrying paths exist here.
+	if strings.HasPrefix(path, "/o/") {
+		return true
+	}
 	for _, p := range []string{"/api/auth/", "/public/", "/themes/", "/plugin-icons/"} {
 		if strings.HasPrefix(path, p) {
 			return true

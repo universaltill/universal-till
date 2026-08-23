@@ -272,6 +272,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	// Migration 054 adds the `tables` table and held_sales.table_id -- same
 	// non-idempotent replay problem (ut-docs#814).
 	rewindTables054(t, d)
+	rewindTracking058(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -381,6 +382,7 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	// Migration 054 adds the `tables` table and held_sales.table_id -- same
 	// non-idempotent replay problem (ut-docs#814).
 	rewindTables054(t, d)
+	rewindTracking058(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

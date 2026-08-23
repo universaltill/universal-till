@@ -150,6 +150,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	// Migration 054 adds the `tables` table and held_sales.table_id -- same
 	// non-idempotent replay problem (ut-docs#814).
 	rewindTables054(t, d)
+	rewindTracking058(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +203,24 @@ func rewindTables054(t *testing.T, d *DB) {
 	} {
 		if _, err := d.DB.Exec(q); err != nil {
 			t.Fatalf("rewind 054 (%s): %v", q, err)
+		}
+	}
+}
+
+// rewindTracking058 undoes migration 058's non-idempotent DDL
+// (sales.tracking_token + its partial unique index + the sales_archive
+// mirror, ut-docs#527) — same replay problem as rewindTables054 above; the
+// index must go first, since SQLite refuses to drop a column an index still
+// references.
+func rewindTracking058(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`DROP INDEX idx_sales_tracking_token`,
+		`ALTER TABLE sales DROP COLUMN tracking_token`,
+		`ALTER TABLE sales_archive DROP COLUMN tracking_token`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 058 (%s): %v", q, err)
 		}
 	}
 }

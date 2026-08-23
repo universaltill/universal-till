@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<!-- Customer order tracking (ut-docs#527): a standalone document like
+     self_order.html — no base layout, no nav, no "?" manual link. The viewer
+     is an anonymous customer on their own phone, not an operator. -->
+<html lang="{{ locale }}" dir="{{ dir }}" style="font-size: {{ uiscalepx }}px">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="htmx-config" content='{"defaultSettleDelay":0}'>
+    <title>{{ T "tracking.title" }}</title>
+    <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
+    <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
+    <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
+    <!-- ut-docs#400: every standalone document loads the autofill
+         suppression sweep (guard-autofill-suppression.sh). No text inputs
+         on this page today; a future one is covered without needing to
+         remember this file. -->
+    <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
+    <style>
+      /* Logical properties only — this page renders RTL for fa/ar/… with no
+         extra CSS (httpx.IsRTL drives dir above). */
+      .tracking-screen { display:flex; flex-direction:column; align-items:center;
+        min-height:100vh; text-align:center; padding:2rem 1rem; gap:1rem; }
+      .tracking-logo { width:64px; height:64px; margin-block-start:1rem; }
+      .tracking-receipt { font-size:1.15rem; font-weight:700; margin:0; }
+      .tracking-state .order-status { font-size:1.6rem; font-weight:700; }
+      .tracking-fineprint { color:var(--muted, #64748b); max-width:32rem; font-size:.85rem; }
+    </style>
+  </head>
+  <body class="tracking-screen">
+    <main>
+      <img class="tracking-logo" src="/public/assets/logo/unitill-logo.svg" alt="" />
+      <h1>{{ T "tracking.title" }}</h1>
+      {{ if .NotFound }}
+      <p class="muted">{{ T "tracking.not_found" }}</p>
+      {{ else }}
+      <p class="tracking-receipt">{{ T "selforder.confirm.receipt" }}: {{ .ReceiptNo }}</p>
+      {{ template "order_tracking_status" . }}
+      <p class="tracking-fineprint">{{ T "tracking.disclosure" }}</p>
+      {{ end }}
+    </main>
+  </body>
+</html>

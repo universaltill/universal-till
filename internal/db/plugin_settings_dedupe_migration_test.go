@@ -64,6 +64,7 @@ func TestMigration052DedupesGlobalPluginSettings(t *testing.T) {
 	// ALTER TABLE), but 054 (which replays too) creates the floor-plan
 	// `tables` table and held_sales.table_id — undo that DDL first.
 	rewindTables054(t, d)
+	rewindTracking058(t, d)
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
@@ -157,6 +158,7 @@ func TestMigration052IsIdempotentOnCleanData(t *testing.T) {
 	// Rewind and re-apply 052 against data it already left clean (054
 	// replays too, so its DDL is undone first).
 	rewindTables054(t, d)
+	rewindTracking058(t, d)
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}

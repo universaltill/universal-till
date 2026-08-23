@@ -2,6 +2,34 @@ package auth
 
 import "testing"
 
+// /o/{token} (ut-docs#527): the customer order-tracking page is reached by
+// scanning a QR on the self-order confirmation screen from a personal phone —
+// there is no session and can never be one, same anonymous-customer shape as
+// /self-order. The exemption must stay a real path-segment prefix: "/o/"
+// only, never a bare "/o" and never a lookalike like "/o-not-really" — the
+// same boundary-anchoring concern TestSyncPullPathsAreExempt pins for the
+// pair-requests prefix.
+func TestOrderTrackingRoutesAreExempt(t *testing.T) {
+	for _, p := range []string{
+		"/o/0123456789abcdef0123456789abcdef",
+		"/o/0123456789abcdef0123456789abcdef/status",
+		"/o/anything",
+	} {
+		if !exempt(p) {
+			t.Errorf("%s is not exempt — a customer scanning the tracking QR would be bounced to /login", p)
+		}
+	}
+	for _, p := range []string{
+		"/o",
+		"/o-not-really",
+		"/orders", // the operator-facing order-status page must stay gated
+	} {
+		if exempt(p) {
+			t.Errorf("%s must NOT be exempt — only /o/{token} paths are the anonymous tracking surface", p)
+		}
+	}
+}
+
 // Every machine-to-machine sync path the replica's pull/push loop calls must
 // be exempt here, because this middleware runs BEFORE the handler's per-till
 // bearer check. A path missing from the list is rejected 401 while the till is
