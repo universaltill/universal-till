@@ -29,7 +29,7 @@
           </td>
           <td class="users-actions">
             <form method="post" action="/api/registers/{{ .ID }}" class="users-inline">
-              <input type="text" name="name" value="{{ .Name }}" required />
+              <input type="text" name="name" value="{{ .Name }}" required class="rename-input" />
               <select name="location_id" aria-label="{{ T "registers.new.location_label" }}">
                 <option value="" {{ if eq .LocationValue "" }}selected{{ end }}>{{ T "registers.new.location_none" }}</option>
                 {{ $current := .LocationValue }}

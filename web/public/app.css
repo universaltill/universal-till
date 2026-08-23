@@ -1199,6 +1199,22 @@ body.login-screen {
 .users-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .users-inline { display: inline-flex; gap: .35rem; margin: 0; }
 .users-inline input { width: 7.5rem; }
+/* Rename-field inputs (locations/registers "name" text input) hold longer,
+   free-text names than the other .users-inline inputs (PIN, printer
+   address, search, the country_settings checkbox) — a fixed 7.5rem clips
+   mid-word with no indication more text exists (ut-docs#898). Widen just
+   this variant and add an ellipsis fallback for anything longer than
+   realistic name lengths still allow; .users-inline's other consumers
+   (kitchen stations, tables, promotions, country_settings, users.html's
+   PIN field) are unaffected since they don't carry this class. Fixed
+   width, not min/max-width — nothing here ever needs to shrink below or
+   grow past it. (A `flex-wrap: wrap` on .users-inline itself was tried as
+   a narrow-viewport defence and reverted: it changes the container's
+   intrinsic-sizing algorithm enough to make the unrelated role-select +
+   "Change role" button on /users wrap onto two lines even at full desktop
+   width, a real regression on a page this fix has no business touching —
+   see the ut-docs#898 code-review record.) */
+.users-inline input.rename-input { width: 13rem; text-overflow: ellipsis; overflow: hidden; }
 .users-form form { display: flex; flex-direction: column; gap: .7rem; }
 @media (max-width: 900px) { .users-layout { grid-template-columns: 1fr; } }
 
