@@ -706,6 +706,94 @@ func TestSelfOrderShop_CheckoutRejectsEmptyBasket(t *testing.T) {
 	}
 }
 
+// Customer order tracking (ut-docs#527): the confirmation screen carries a QR
+// pointing at /o/{token} (with the kiosk's locale baked in), and the sale row
+// carries the persisted tracking_token the QR embeds. The request's Host is a
+// LAN-dialable address here (httptest's example.com), so the QR must render;
+// TestSelfOrderShop_CheckoutSurvivesUnadvertisableHost pins the
+// loopback-degradation path.
+func TestSelfOrderShop_CheckoutConfirmationCarriesTrackingQR(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	post("/api/self-order/scan", "code=5000001")
+	rec := post("/api/self-order/checkout", "method=card")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST checkout: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	var receiptNo, token string
+	if err := d.DB.QueryRow(`SELECT receipt_no, COALESCE(tracking_token,'') FROM sales WHERE status='completed'`).Scan(&receiptNo, &token); err != nil {
+		t.Fatalf("read completed sale: %v", err)
+	}
+	if token == "" {
+		t.Fatal("checkout must persist a tracking_token on the sale")
+	}
+	if !strings.Contains(body, "data:image/png;base64,") {
+		t.Fatalf("confirmation should embed the tracking QR as a data URI: %s", body)
+	}
+	// The URL under the QR: scheme + advertisable host + /o/{token}?lang=….
+	if !strings.Contains(body, "http://example.com/o/"+token+"?lang=en") {
+		t.Fatalf("confirmation should show the tracking URL for token %s: %s", token, body)
+	}
+	// The caption is i18n'd (selforder.confirm.qr_caption).
+	if !strings.Contains(body, "Scan to follow your order") {
+		t.Fatalf("confirmation should carry the QR caption: %s", body)
+	}
+}
+
+// A kiosk whose browser dials 127.0.0.1 (the production launch shape) on a
+// box with no LAN address cannot mint a URL another device could ever open —
+// advertisableHost errors. The confirmation must still render normally, just
+// without the QR: checkout is already committed and must never fail or
+// degrade over a networking detail (offline-first).
+func TestSelfOrderShop_CheckoutSurvivesUnadvertisableHost(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	scan := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	scan.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), scan)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/checkout", strings.NewReader("method=card"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST checkout: want 200 even when no QR URL can be minted, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Order placed") {
+		t.Fatalf("expected the normal confirmation screen: %s", rec.Body.String())
+	}
+	// Note: on a machine WITH a LAN interface advertisableHost substitutes
+	// that address, so we can't assert "no QR" portably here — only that
+	// checkout completed and confirmed. The sale still gets its token.
+	var token string
+	if err := d.DB.QueryRow(`SELECT COALESCE(tracking_token,'') FROM sales WHERE status='completed'`).Scan(&token); err != nil {
+		t.Fatal(err)
+	}
+	if token == "" {
+		t.Fatal("tracking_token should be minted even when the QR URL cannot be advertised")
+	}
+}
+
 // A plugin-provided payment method whose owning plugin declines the
 // blocking payment.<key>.authorize event must stop the kiosk sale exactly
 // like it stops a cashier's — proving the kiosk checkout goes through the

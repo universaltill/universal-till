@@ -2,6 +2,23 @@
   <h3>{{ T "selforder.confirm.title" }}</h3>
   <p class="order-confirmation-receipt">{{ T "selforder.confirm.receipt" }}: {{ .ReceiptNo }}</p>
   <p class="muted">{{ T "selforder.confirm.hint" }}</p>
+  {{ if .TrackingQR }}
+  <!-- Order-tracking QR (ut-docs#527): scanning opens /o/{token} on the
+       customer's phone. Only rendered when the till has a LAN-dialable
+       address to bake into the URL; TrackingQR is a data:image/png URI
+       (template.URL — html/template filters data: from plain strings). The
+       URL is repeated as text for phones that can't scan. -->
+  <div class="order-confirmation-tracking">
+    <img src="{{ .TrackingQR }}" alt="" width="200" height="200" />
+    <p class="muted">{{ T "selforder.confirm.qr_caption" }}</p>
+    <!-- Independent review, ut-docs#527: no CSS rule existed for this class
+         anywhere — a long LAN URL + 32-hex token has no guaranteed break
+         opportunity otherwise. Scoped inline since this partial has no
+         stylesheet of its own (matches receipt.html's own layout-only
+         <style> convention, just smaller). -->
+    <p class="muted order-confirmation-tracking-url" style="overflow-wrap: anywhere;">{{ .TrackingURL }}</p>
+  </div>
+  {{ end }}
   <button type="button" class="btn primary" onclick="window.location.href='/self-order'">
     {{ T "selforder.confirm.done" }}
   </button>
@@ -14,6 +31,9 @@
     // Auto-return to the start screen for the next customer — this modal
     // has no dialog-close affordance of its own since there's nothing left
     // to edit once the sale is complete (ADR-0020 idle-reset pattern).
-    setTimeout(function () { window.location.href = '/self-order'; }, 6000);
+    // 20s, up from 6s (ut-docs#527, deliberate): 6s was fine for reading an
+    // order number but is nowhere near enough to notice the tracking QR,
+    // get a phone out and scan it. "Done" still returns immediately.
+    setTimeout(function () { window.location.href = '/self-order'; }, 20000);
   </script>
 </div>
