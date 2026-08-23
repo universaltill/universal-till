@@ -36,12 +36,22 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 	countryRepo := data.NewCountrySettingsRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 
+	// requireManager gates on the "settings" action (039's catalog) via
+	// canPerform, not a raw IsManager() check on the session — matching
+	// every other admin page (#555's five successor cards; see authz.go's
+	// own doc comment). This page was missed by that migration
+	// (ut-docs#901/#902): with the old raw check, canPerform's
+	// UT_AUTH=off escape hatch never applied here, so this page 403'd
+	// permanently under the dev/CI auth-bypass — canPerform's
+	// auth.Disabled(...) branch fixes that, with no change to gated
+	// (UT_AUTH on) behavior: "settings" is granted to exactly
+	// manager/admin/super_admin, the same set IsManager() recognized.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
-		u, ok := auth.FromContext(r.Context())
-		if !ok || !u.IsManager() {
+		if !canPerform(d, r, "settings") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return auth.User{}, false
 		}
+		u, _ := auth.FromContext(r.Context())
 		return u, true
 	}
 

@@ -10,13 +10,15 @@ import { defineConfig } from '@playwright/test';
 // see (htmx swaps, Alpine, the OSK, JS errors).
 
 // Specs that need a real manager session the default (auth-off) till can
-// never provide: login.spec.ts (the wizard/PIN flow itself), plus any spec
-// driving a page whose requireManager gate has no UT_AUTH=off bypass (the
-// same gap tests-docs/docs-shots.spec.ts's own AUTH_TILL_TOPICS works
-// around for the screenshot harness) — tables-keyboard-reposition-826.spec.ts
-// is the first e2e/tests/ spec to hit one (GET /tables,
-// internal/pages/tables_page.go).
-const AUTH_ONLY_SPECS = /(login|tables-keyboard-reposition-826)\.spec\.ts$/;
+// never provide: login.spec.ts (the wizard/PIN flow itself). Prior to
+// ut-docs#901/#902, this also had to include tables-keyboard-reposition-826
+// .spec.ts and any spec driving country-settings/kitchen-stations/
+// promotions/translations, because those pages' requireManager gates had no
+// UT_AUTH=off bypass (the same gap tests-docs/docs-shots.spec.ts's own
+// AUTH_TILL_TOPICS works around for the screenshot harness) — #901 fixed
+// locations/registers, #902 fixed the remaining five, so every admin page
+// is reachable on the default project now.
+const AUTH_ONLY_SPECS = /login\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './tests',
