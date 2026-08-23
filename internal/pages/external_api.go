@@ -4,9 +4,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// externalProxyClient carries a bounded timeout so a hung external
+// menu-plugin host can't pin the handling goroutine indefinitely
+// (ut-docs#912) — same 60s bound used elsewhere for outbound HTTP, e.g.
+// sync_admin.go's StartSyncPull client.
+var externalProxyClient = &http.Client{Timeout: 60 * time.Second}
 
 // registerExternalProxy proxies external menu plugins defined in the plugin manager.
 func registerExternalProxy(mux *http.ServeMux, d *common.Deps) {
@@ -22,7 +29,12 @@ func registerExternalProxy(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
-		resp, err := http.Get(mp.Route)
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, mp.Route, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		resp, err := externalProxyClient.Do(req)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusBadGateway, "ext.error.unreachable", "ext_proxy", err)
 			return
