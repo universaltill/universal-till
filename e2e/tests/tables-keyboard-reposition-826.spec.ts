@@ -1,14 +1,17 @@
 import { test, expect } from '@playwright/test';
 import { watchConsole, ensureOperator } from './helpers';
 
-// GET /tables (internal/pages/tables_page.go) requireManager-gates every
-// route this spec drives, with no UT_AUTH=off bypass (the same gap
-// tests-docs/docs-shots.spec.ts's own AUTH_TILL_TOPICS already works around
-// for the screenshot harness -- "tables" is in that list) -- so the default
-// (auth-off) till 403s all of it. Routed to the AUTH project instead
-// (playwright.config.ts's AUTH_ONLY_SPECS), a genuinely fresh install: log
-// in as the wizard-created admin/manager first.
-test.use({ baseURL: 'http://127.0.0.1:8092' });
+// GET /tables (internal/pages/tables_page.go) used to requireManager-gate
+// every route this spec drives with no UT_AUTH=off bypass, so the default
+// (auth-off) till 403'd all of it and this spec had to run on the AUTH
+// project instead. Fixed by ut-docs#902 (following #901's precedent for
+// locations/registers): /tables now goes through canPerform(d, r,
+// "settings"), which has the UT_AUTH=off escape hatch every other admin
+// page already uses -- this spec runs on the default project now
+// (playwright.config.ts's AUTH_ONLY_SPECS no longer lists it).
+// ensureOperator() below is a no-op under UT_AUTH=off (neither the /setup
+// nor /login branch triggers), kept only so deactivateAllTables() stays
+// identical to before this fix.
 
 // ut-docs#826: follow-up from the 2026-08-19 independent review of #814
 // (Table floor plan, ADR-0054) -- the floor-plan editor's SVG table tiles

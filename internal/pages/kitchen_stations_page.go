@@ -31,12 +31,18 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	catRepo := data.NewCatalogRepo(d.Db)
 
+	// requireManager gates on the "settings" action (039's catalog) via
+	// canPerform — see country_settings_page.go's identical
+	// requireManager for why (ut-docs#901/#902): the old raw
+	// IsManager() check never saw canPerform's UT_AUTH=off escape hatch,
+	// so this page 403'd permanently under the dev/CI auth-bypass. No
+	// change to gated (UT_AUTH on) behavior.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
-		u, ok := auth.FromContext(r.Context())
-		if !ok || !u.IsManager() {
+		if !canPerform(d, r, "settings") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return auth.User{}, false
 		}
+		u, _ := auth.FromContext(r.Context())
 		return u, true
 	}
 
