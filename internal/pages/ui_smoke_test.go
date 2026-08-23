@@ -377,7 +377,11 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL, location_id TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
+		// name UNIQUE: column-identical to 001_init.sql (universaltill/ut-docs#651)
+		// -- a drifted fixture missing that constraint would pass the
+		// registers admin page's duplicate-name test against a schema that
+		// can't reject what production's UNIQUE index rejects.
+		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, location_id TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE shifts (id TEXT PRIMARY KEY, register_id TEXT NOT NULL, cashier_id TEXT NOT NULL, opened_at TEXT NOT NULL DEFAULT (datetime('now')), closed_at TEXT, opening_cash INTEGER NOT NULL DEFAULT 0, closing_cash INTEGER, expected_cash INTEGER, note TEXT);`,
 		// pin_hash is nullable — column-identical to 001_init.sql (ut-docs#761):
 		// AuthRepo.CreateUser's INSERT never sets it ("no PIN yet — set it

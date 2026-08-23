@@ -2175,6 +2175,122 @@ func (r *POSRepo) ListRegisters(ctx context.Context) ([]Register, error) {
 	return out, rows.Err()
 }
 
+// CreateRegister adds a new, active register (a till/checkout station).
+// The schema's UNIQUE constraint on name rejects duplicates. locationID is
+// optional (nil leaves the register unassigned to any stock location).
+func (r *POSRepo) CreateRegister(ctx context.Context, name string, locationID *string) (string, error) {
+	id := uuid.NewString()
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO registers (id, name, location_id, is_active) VALUES (?, ?, ?, 1)`, id, name, locationID); err != nil {
+		return "", fmt.Errorf("create register: %w", err)
+	}
+	return id, nil
+}
+
+// RenameRegister changes a register's display name; the id (and every
+// shift/sale row keyed by it) is unaffected.
+func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE registers SET name = ? WHERE id = ?`, newName, id)
+	if err != nil {
+		return fmt.Errorf("rename register: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("rename register: %s not found", id)
+	}
+	return nil
+}
+
+// SetRegisterActive soft-disables/re-enables a register, mirroring
+// SetStockLocationActive's pattern. Unlike a stock location, a register
+// with shift/sale history is still allowed to be deactivated (retiring a
+// till keeps its history) -- callers guard only the last-active-register
+// case, not RegisterInUse.
+func (r *POSRepo) SetRegisterActive(ctx context.Context, id string, active bool) error {
+	v := 0
+	if active {
+		v = 1
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE registers SET is_active = ? WHERE id = ?`, v, id)
+	if err != nil {
+		return fmt.Errorf("set register active: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("set register active: %s not found", id)
+	}
+	return nil
+}
+
+// RegisterInUse reports whether any shift or sale still references this
+// register. Informational only -- the registers admin page does not block
+// deactivation on it (unlike locations' guard), since a retired till should
+// still be deactivatable while keeping its history.
+func (r *POSRepo) RegisterInUse(ctx context.Context, id string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `
+SELECT 1 WHERE EXISTS (SELECT 1 FROM shifts WHERE register_id = ?)
+   OR EXISTS (SELECT 1 FROM sales WHERE register_id = ?)`,
+		id, id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check register in use: %w", err)
+	}
+	return exists == 1, nil
+}
+
+// CountActiveRegisters counts active registers -- guards "cannot deactivate
+// the last active register" (pos.OpenShift/ResolveTillRegisterID depend on
+// at least one active register existing), mirroring
+// CountActiveStockLocations' last-location guard.
+func (r *POSRepo) CountActiveRegisters(ctx context.Context) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM registers WHERE is_active = 1`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count active registers: %w", err)
+	}
+	return n, nil
+}
+
+// RegisterAdmin is a register as the registers admin page needs it
+// (includes the soft-disable state and location assignment the plain
+// picker list doesn't).
+type RegisterAdmin struct {
+	ID         string
+	Name       string
+	LocationID *string
+	IsActive   bool
+}
+
+// ListRegistersForAdmin returns every register (active and inactive),
+// ordered by name, for the registers management page. ListRegisters itself
+// stays active-only for the shift-open/Settings pickers, untouched.
+func (r *POSRepo) ListRegistersForAdmin(ctx context.Context) ([]RegisterAdmin, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, location_id, is_active FROM registers ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list registers for admin: %w", err)
+	}
+	defer rows.Close()
+	var out []RegisterAdmin
+	for rows.Next() {
+		var reg RegisterAdmin
+		var locationID sql.NullString
+		var active int
+		if err := rows.Scan(&reg.ID, &reg.Name, &locationID, &active); err != nil {
+			return nil, fmt.Errorf("scan register admin: %w", err)
+		}
+		if locationID.Valid {
+			v := locationID.String
+			reg.LocationID = &v
+		}
+		reg.IsActive = active == 1
+		out = append(out, reg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate registers for admin: %w", err)
+	}
+	return out, nil
+}
+
 // StockLocation is a named place stock lives (shop floor, back room, …).
 type StockLocation struct {
 	ID   string
