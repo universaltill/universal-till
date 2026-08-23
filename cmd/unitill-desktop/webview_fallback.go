@@ -20,8 +20,9 @@ import (
 // When the system WebView is unavailable (typically a Windows box without the
 // WebView2 runtime), webview.New returns nil — fall back to the default
 // browser and keep serving until the server itself exits, which is exactly
-// the pre-shell behaviour.
-func showWindow(url, title string, childPid int) {
+// the pre-shell behaviour. ctl is nil in that case (and whenever this
+// process's own control listener failed to bind) — no live channel to wire.
+func showWindow(url, title string, childPid int, ctl *controlServer) {
 	_ = childPid
 	w := webview.New(false)
 	if w == nil {
@@ -34,10 +35,8 @@ func showWindow(url, title string, childPid int) {
 	w.SetSize(1280, 860, webview.HintNone)
 	// Both applied once at launch, from whatever's persisted right now
 	// (ut-docs#611) — "applies live or on next launch" is explicitly
-	// acceptable per #549; the live, no-relaunch case needs a cross-process
-	// channel to the already-running unitill-pos server, split off as
-	// ut-docs#882. A fetch failure degrades to defaultShellPrefs (see
-	// fetchShellPrefs) rather than blocking the window from opening.
+	// acceptable per #549. A fetch failure degrades to defaultShellPrefs
+	// (see fetchShellPrefs) rather than blocking the window from opening.
 	//
 	// Autostart is reconciled here — in this process, not unitill-pos's —
 	// because this is the process that actually knows its own executable
@@ -49,6 +48,31 @@ func showWindow(url, title string, childPid int) {
 	if err := reconcileAutostart(prefs.LaunchOnStartup); err != nil {
 		fmt.Fprintln(os.Stderr, "reconcile autostart entry:", err)
 	}
+
+	// Live, no-relaunch channel (ut-docs#882): exit-to-os is "apply mode
+	// normal" — un-fullscreen and re-decorate, returning control to the OS
+	// desktop — and apply-mode forwards whatever mode a live Settings
+	// toggle sent. Both dispatch onto webview_go's own UI thread (required:
+	// this control listener's handler runs on its own goroutine, not the
+	// thread GTK/WebView2 calls must happen on) and report success
+	// immediately — Dispatch is fire-and-forget with no completion signal,
+	// the same best-effort-and-log convention #611's own review accepted
+	// for OS-level apply failures. On Windows, applyWindowMode is still
+	// #610's own no-op stub, so this wiring is inert there today but needs
+	// no further change once #610 lands a real implementation.
+	if ctl != nil {
+		ctl.SetOps(&windowOps{
+			ExitToOS: func() error {
+				w.Dispatch(func() { applyWindowMode(w, "normal") })
+				return nil
+			},
+			ApplyMode: func(mode string) error {
+				w.Dispatch(func() { applyWindowMode(w, mode) })
+				return nil
+			},
+		})
+	}
+
 	w.Navigate(url)
 	w.Run()
 }

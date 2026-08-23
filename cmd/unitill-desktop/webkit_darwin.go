@@ -254,7 +254,23 @@ import "unsafe"
 
 // showWindow opens the native WKWebView window and blocks until it closes.
 // childPid is the POS server process, stopped when the window closes.
-func showWindow(url, title string, childPid int) {
+//
+// ctl: the control channel runs on macOS too (it's plain Go, no cgo), but
+// wiring it into the actual Cocoa window is ut-docs#609's own scope (this
+// card, #882, covers the listener + Linux/Windows wiring only) — RunWebView
+// below is a blocking C call with no Go-side handle to dispatch onto safely
+// in the meantime. Ops are wired here as explicit no-ops (never nil) rather
+// than left unset: unset would 503 a live Settings toggle with "window not
+// ready" and regress today's actual behavior, which is silent
+// persist-and-apply-at-next-launch (matches NoopWindowController — the same
+// degradation this platform already had before this card).
+func showWindow(url, title string, childPid int, ctl *controlServer) {
+	if ctl != nil {
+		ctl.SetOps(&windowOps{
+			ExitToOS:  func() error { return nil },
+			ApplyMode: func(string) error { return nil },
+		})
+	}
 	cURL := C.CString(url)
 	cTitle := C.CString(title)
 	defer C.free(unsafe.Pointer(cURL))

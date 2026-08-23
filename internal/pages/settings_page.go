@@ -533,10 +533,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// Window mode (ut-docs#608 scaffold, #883 for the Pi kiosk path): stores
 	// the till's window/process display mode AND applies it via WindowCtl.
 	// Real OS effect today: the Pi headless kiosk (#883, immediately, no
-	// restart). Still scaffolding-only (persists but doesn't apply until
-	// next launch/that platform's support ships): macOS (#609), Windows
-	// (#610), and a live apply on the Linux desktop shell (#611 applies at
-	// its own next launch; a live cross-process channel for it is #882).
+	// restart) and the Linux desktop shell (#882, immediately too, over the
+	// shell's own cross-process control channel — #611's own next-launch
+	// apply still covers the case where nothing is listening at all, e.g.
+	// an old shell build). Still scaffolding-only on macOS (#609) and
+	// Windows (#610): the channel reaches their shells too, but neither has
+	// wired a native handler yet, so a live toggle there is accepted
+	// (204, same as before this card) and simply has no visible effect
+	// until next launch — deliberately NOT surfaced as an error, since that
+	// would regress a working persist-only flow into one that looks broken.
 	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796),
 	// validation before elevation as elsewhere in this file.
 	mux.HandleFunc("POST /api/settings/window-mode", func(w http.ResponseWriter, r *http.Request) {
