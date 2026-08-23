@@ -3,10 +3,12 @@ package common
 // WindowController is the host-OS hook for the till's own window/process —
 // exiting kiosk/fullscreen to the OS desktop, and applying a window-mode
 // change. This card (ut-docs#608) built the interface and a no-op stub;
-// #609 (macOS), #610 (Windows) still owe real implementations, #611 (Linux
-// desktop shell) applies its mode at its own next launch (no live channel
-// yet — that's ut-docs#882), and #883 (Pi headless kiosk) wires
-// KioskSystemdWindowController below.
+// #883 (Pi headless kiosk) wires KioskSystemdWindowController below, and
+// #882 wires HTTPWindowController for the desktop-shell platforms (talks to
+// unitill-desktop's own cross-process control channel) — real end-to-end on
+// Linux, present but inert on macOS/Windows (#609/#610 still owe the native
+// handler; a live call there is accepted and simply has no visible effect
+// until next launch, see settings_page.go's window-mode handler comment).
 type WindowController interface {
 	// ExitToOS leaves kiosk/fullscreen mode and returns control to the OS
 	// desktop. The scaffold's NoopWindowController is a no-op until a

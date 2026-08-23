@@ -533,10 +533,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// Window mode (ut-docs#608 scaffold, #883 for the Pi kiosk path): stores
 	// the till's window/process display mode AND applies it via WindowCtl.
 	// Real OS effect today: the Pi headless kiosk (#883, immediately, no
-	// restart). Still scaffolding-only (persists but doesn't apply until
-	// next launch/that platform's support ships): macOS (#609), Windows
-	// (#610), and a live apply on the Linux desktop shell (#611 applies at
-	// its own next launch; a live cross-process channel for it is #882).
+	// restart) and the Linux desktop shell (#882, immediately too, over the
+	// shell's own cross-process control channel — #611's own next-launch
+	// apply still covers the case where nothing is listening at all, e.g.
+	// an old shell build). Still scaffolding-only on macOS (#609) and
+	// Windows (#610): the channel reaches their shells too, but neither has
+	// wired a native handler yet, so a live toggle there is accepted
+	// (204, same as before this card) and simply has no visible effect
+	// until next launch — deliberately NOT surfaced as an error, since that
+	// would regress a working persist-only flow into one that looks broken.
 	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796),
 	// validation before elevation as elsewhere in this file.
 	mux.HandleFunc("POST /api/settings/window-mode", func(w http.ResponseWriter, r *http.Request) {
@@ -560,9 +565,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// what actually flips unitill-kiosk.service; if it fails (e.g. a
 		// pre-#883 Pi upgraded without the sudoers grant), the operator sees
 		// a clear error and the stored preference never lies about what the
-		// OS actually did. WindowCtl is set in pages.Init (NoopWindowController
-		// on every platform except the Pi kiosk path); nil-checked here so
-		// bare-Deps tests/helpers that predate ut-docs#608 stay valid, same
+		// OS actually did. That guarantee is real for KioskSystemdWindowController
+		// (a synchronous systemctl call that genuinely fails or succeeds) but
+		// only best-effort for common.HTTPWindowController (ut-docs#882's
+		// desktop-shell path): ApplyMode there always returns nil — the native
+		// call is dispatched fire-and-forget onto the shell's UI thread with
+		// no completion signal — so persistence still proceeds even though
+		// "applied" wasn't actually confirmed. WindowCtl is set in pages.Init
+		// (NoopWindowController on a plain browser session); nil-checked here
+		// so bare-Deps tests/helpers that predate ut-docs#608 stay valid, same
 		// convention as the exit-to-os handler below.
 		wc := d.WindowCtl
 		if wc == nil {
@@ -672,6 +683,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			wc = common.NoopWindowController{}
 		}
 		if err := wc.ExitToOS(); err != nil {
+			logging.L().Errorf("exit to OS: %v", err)
 			http.Error(w, "could not exit to OS", http.StatusInternalServerError)
 			return
 		}
