@@ -4,8 +4,8 @@ title: Multiple tills (one shop)
 section: Connecting & extending
 order: 310
 summary: "Run several tills on the same shop network: one is the main till, the others join it and share the catalog, prices, settings and stock automatically."
-routes: [/tills, /ui/tills/pending-pairings]
-keywords: [second till, pairing, sync, lan, primary]
+routes: [/tills, /ui/tills/pending-pairings, /registers]
+keywords: [second till, pairing, sync, lan, primary, register]
 ---
 
 # Multiple tills (one shop)
@@ -26,3 +26,10 @@ Run several tills on the same shop network: one is the main till, the others joi
 10. On a **joined till**, the Tills page shows the same shop-wide list too — the main till (labelled "the primary") and every other joined till, including itself (labelled "this till"). It's read-only there: only the main till can remove ("revoke") a joined till.
 11. The small sync chip in the top-right of the nav shows this till's own name and is clickable on both the main till and a joined till, opening the Tills page (its sync state comes through as the chip's colour: green means caught up, amber means it hasn't been heard from recently). A single-till shop with nothing joined yet doesn't show a chip at all — there's nothing to sync yet.
 12. Plugins follow the main till too: install or remove a plugin on the **main till** and every joined till applies the same change automatically within about half a minute. Each till downloads the plugin from the plugin store itself and verifies it before it runs — plugins are never copied from till to till. Trying to install, remove, enable, disable or update a plugin directly on a joined till is refused with a message pointing you to the main till. The one exception is a plugin imported from a file: importing still works on any till, including a joined one, but the plugin stays only on that till and does not spread.
+
+## Registers
+
+A **register** is a till/checkout station — the thing a shift is opened on and a sale is rung up against. A shop can have more than one: a front counter and a back counter, for instance, each taking sales at the same time.
+
+- Open **Registers** from the menu (manager only) to create one. Give it a name and, optionally, the stock location it draws from; a manager can rename it or deactivate it later (deactivating keeps its sales/shift history — it just stops offering it for a new shift).
+- Joining a second till (see above) does **not** assign it a register automatically. After a till finishes joining, first create a second register (from **Registers**, above) if one doesn't already exist, then on that till go to **Settings → Tills** and set **This till's register** to it — this is the one manual step: without it, a second till would otherwise resolve to the same register as the first, and opening a shift on it would be refused because that register already has an open shift.
