@@ -72,6 +72,19 @@ const (
 // apart is a worse failure mode than an occasional over-cautious block —
 // so a demo item/customer merely sitting in a basket blocks removal even
 // when the SQL script itself would have kept it anyway.
+//
+// ut-docs#745: deliberately does NOT check an applied demo promo code
+// (PROMO50/PROMO500/DISC10), unlike the item/variant lines and the
+// customer above. This is safe today, not an oversight: sale_discounts
+// (see 001_init.sql) records only the resulting discount amount for a
+// redeemed promo, not which code produced it, so removing a demo
+// promotion mid-basket can't leave a dangling reference the way an
+// item/customer FK could — there's nothing in this basket for the removed
+// row to break. remove_demo_customers_promos.sql's own header spells out
+// the same gap for its "untouched" check. If promo-code redemption ever
+// becomes durable (there's no promotions management UI yet, so it hasn't
+// needed to), this stops being true silently — a change there should
+// revisit this function too.
 func demoDataInLiveBasket(cashier, kiosk *pos.Service) demoBasketMatch {
 	baskets := []struct {
 		kind demoBasketMatch
