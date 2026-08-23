@@ -1405,6 +1405,7 @@
   "issuereport.my_reports.attached_video": "ضبط صفحه‌نمایش",
   "issuereport.my_reports.attached_images": "اسکرین‌شات",
   "issuereport.my_reports.view_on_github": "مشاهده در گیت‌هاب",
+  "issuereport.my_reports.more_not_shown": "%d گزارش دیگر نمایش داده نشده است — پس از اینکه گزارش‌های قدیمی‌تر در گیت‌هاب ثبت یا کنار گذاشته شوند دوباره سر بزنید.",
   "issuereport.status.sent": "ارسال شد، در انتظار بررسی",
   "issuereport.status.received": "دریافت شد",
   "issuereport.status.transcribing": "در حال رونویسی",

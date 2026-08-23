@@ -1405,6 +1405,7 @@
   "issuereport.my_reports.attached_video": "Ekran kaydı",
   "issuereport.my_reports.attached_images": "ekran görüntüsü",
   "issuereport.my_reports.view_on_github": "GitHub'da görüntüle",
+  "issuereport.my_reports.more_not_shown": "%d rapor daha gösterilmiyor — daha eski raporlar GitHub'a kaydedildikten veya kapatıldıktan sonra tekrar kontrol edin.",
   "issuereport.status.sent": "Gönderildi, inceleme bekliyor",
   "issuereport.status.received": "Alındı",
   "issuereport.status.transcribing": "Yazıya dökülüyor",

@@ -103,6 +103,22 @@ LIMIT ?
 	return out, nil
 }
 
+// CountSent returns the TRUE total number of retained sent-report rows —
+// independent of any caller's row limit — so a caller like /my-reports can
+// tell a shop owner how many more exist beyond whatever ListSent capped
+// itself to (ut-docs#445).
+func (r *IssueReportsRepo) CountSent(ctx context.Context) (int, error) {
+	var err error
+	done := issueReportsObs.trace("count_sent")
+	defer func() { done(err) }()
+	var n int
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM issue_reports_sent`).Scan(&n)
+	if err != nil {
+		return 0, issueReportsObs.wrap("count_sent", err)
+	}
+	return n, nil
+}
+
 // UpdateStatus applies one cloud-reported status to the retained row and
 // stamps last_synced_at. A row that doesn't exist locally (0 rows affected)
 // is NOT an error: a status pull can legitimately reference a report id this

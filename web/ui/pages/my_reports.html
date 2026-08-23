@@ -11,6 +11,7 @@
 
 <div class="card">
   <p class="muted">{{ T "issuereport.my_reports.intro" }}</p>
+  {{ if .MoreNotShownText }}<p class="muted">{{ .MoreNotShownText }}</p>{{ end }}
   <table class="table">
     <thead>
       <tr>

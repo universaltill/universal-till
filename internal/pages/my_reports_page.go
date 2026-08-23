@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -69,10 +70,25 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		const rowLimit = 100
-		reports, err := data.NewIssueReportsRepo(d.Db).ListSent(r.Context(), rowLimit)
+		repo := data.NewIssueReportsRepo(d.Db)
+		reports, err := repo.ListSent(r.Context(), rowLimit)
 		if err != nil {
 			http.Error(w, "failed to load reports", http.StatusInternalServerError)
 			return
+		}
+
+		// ut-docs#445: ListSent's rowLimit silently drops anything beyond
+		// it with no indication more exist. This count is a purely LOCAL
+		// SQLite read — zero network calls, same offline-first contract as
+		// the rest of this page — so a failure here is only logged, never
+		// worth 500ing an otherwise-successful page load over (same
+		// non-fatal handling issuereport.Pending()'s error gets below).
+		var moreNotShownText string
+		if totalSent, cerr := repo.CountSent(r.Context()); cerr != nil {
+			logging.L().Warnf("my-reports: counting sent issue reports: %v", cerr)
+		} else if totalSent > rowLimit {
+			locale := httpx.ResolveLocale(w, r)
+			moreNotShownText = fmt.Sprintf(httpx.T(locale, "issuereport.my_reports.more_not_shown"), totalSent-rowLimit)
 		}
 		sentRows := make([]myReportRow, 0, len(reports))
 		sentIDs := make(map[string]bool, len(reports))
@@ -178,10 +194,11 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 		sort.SliceStable(rows, byCapturedDesc(rows))
 
 		httpx.Render("ui/pages/my_reports.html", map[string]any{
-			"title":     "My reports",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"Rows":      rows,
+			"title":            "My reports",
+			"theme":            d.CurrentState().Theme,
+			"menuItems":        d.MenuSnapshot(),
+			"Rows":             rows,
+			"MoreNotShownText": moreNotShownText,
 		})(w, r)
 	})
 }
