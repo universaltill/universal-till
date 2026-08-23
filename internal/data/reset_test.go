@@ -309,6 +309,54 @@ func TestResetThenRestoreRoundTrip_SaleTableID(t *testing.T) {
 	}
 }
 
+// ut-docs#527 (independent review): sales.tracking_token (058) must
+// round-trip through sales_archive for exactly the reason 056 and 055 did —
+// 040_reset_archive.sql's own header says the archive is column-identical to
+// the live table across every later ALTER, and ResetTransactionHistory copies
+// an EXPLICIT column list, so a missed mirror silently drops the column
+// instead of failing loudly. Concretely: a shop that clears transaction
+// history and restores the batch would get its sales back with dead tracking
+// QRs, contradicting ADR-0042's "destroys nothing". Pinned here rather than
+// left to a manual column-list check.
+func TestResetThenRestoreRoundTrip_SaleTrackingToken(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore_sale_tracking_token.db")
+	seedFullSale(t, x)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	token, err := repo.EnsureOrderTrackingToken(ctx, "R1")
+	if err != nil {
+		t.Fatalf("EnsureOrderTrackingToken: %v", err)
+	}
+
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	var archivedToken string
+	if err := d.DB.QueryRow(`SELECT COALESCE(tracking_token,'') FROM sales_archive WHERE id='s1' AND reset_batch_id=?`, batchID).Scan(&archivedToken); err != nil {
+		t.Fatalf("read archived tracking_token: %v", err)
+	}
+	if archivedToken != token {
+		t.Fatalf("archived tracking_token = %q, want %q", archivedToken, token)
+	}
+
+	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if c := count("sales"); c != 2 {
+		t.Fatalf("sales after restore: %d rows, want 2", c)
+	}
+	// Restored, and still resolvable by the token the customer's QR carries.
+	o, found, err := repo.LookupOrderByTrackingToken(ctx, token)
+	if err != nil {
+		t.Fatalf("LookupOrderByTrackingToken after restore: %v", err)
+	}
+	if !found || o.ReceiptNo != "R1" {
+		t.Fatalf("restored sale must still resolve by its tracking token: found=%v %+v", found, o)
+	}
+}
+
 // Independent review, ut-docs#187: seedFullSale's one invoice has no credit
 // note, so the invoices self-FK two-phase archive/restore ordering
 // (original_invoice_id) was previously exercised by neither existing test —

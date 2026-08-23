@@ -397,8 +397,14 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		if receiptNo == "" {
 			receiptNo = saleID
 		}
+		// Customer order tracking QR (ut-docs#527) — best-effort: the sale
+		// is committed, so a missing QR (no LAN-dialable address, encode
+		// error) renders a plain confirmation, never an error.
+		trackingQR, trackingURL := orderTrackingQRView(r, repo, receiptNo, httpx.ResolveLocale(w, r))
 		httpx.RenderPartial("ui/partials/self_order_confirmation.html", map[string]any{
-			"ReceiptNo": receiptNo,
+			"ReceiptNo":   receiptNo,
+			"TrackingQR":  trackingQR,
+			"TrackingURL": trackingURL,
 		})(w, r)
 	})
 }
