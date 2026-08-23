@@ -4,7 +4,7 @@ title: Birden çok kasa (tek dükkân)
 section: Bağlantı ve eklentiler
 order: 310
 summary: "Aynı dükkân ağında birden çok kasa çalıştırın: biri ana kasadır, diğerleri ona katılır; katalog, fiyatlar, ayarlar ve stok otomatik paylaşılır."
-routes: [/tills, /ui/tills/pending-pairings]
+routes: [/tills, /ui/tills/pending-pairings, /registers]
 ---
 
 # Birden çok kasa (tek dükkân)
@@ -25,3 +25,10 @@ Aynı dükkân ağında birden çok kasa çalıştırın: biri ana kasadır, di�
 10. **Katılmış** bir kasada, Kasalar sayfası aynı dükkân genelindeki listeyi gösterir — ana kasa ("birincil" etiketiyle) ve kendisi dahil diğer her katılmış kasa ("bu kasa" etiketiyle). Orada salt okunurdur: bir katılmış kasayı yalnızca ana kasa kaldırabilir ("iptal edebilir").
 11. Gezinme çubuğunun sağ üstündeki küçük eşitleme rozeti bu kasanın kendi adını gösterir; hem ana kasada hem katılmış bir kasada tıklanabilir ve Kasalar sayfasını açar (eşitleme durumu rozetin rengiyle anlaşılır: yeşil güncel, turuncu bir süredir haber alınamadığı anlamına gelir). Henüz hiçbir kasa katılmamış tek kasalı bir dükkânda rozet hiç görünmez — eşitlenecek bir şey yoktur.
 12. Eklentiler de ana kasayı takip eder: bir eklentiyi **ana kasada** kurun veya kaldırın; her katılmış kasa aynı değişikliği yaklaşık yarım dakika içinde otomatik olarak uygular. Her kasa eklentiyi eklenti mağazasından kendisi indirir ve çalıştırmadan önce doğrular — eklentiler asla kasadan kasaya kopyalanmaz. Katılmış bir kasada doğrudan eklenti kurmaya, kaldırmaya, etkinleştirmeye/devre dışı bırakmaya veya güncellemeye çalışmak, sizi ana kasaya yönlendiren bir mesajla reddedilir. Tek istisna dosyadan içe aktarılan eklentidir: içe aktarma her kasada, katılmış bir kasada bile, çalışmaya devam eder; ancak eklenti yalnızca o kasada kalır ve yayılmaz.
+
+## Kasalar
+
+Bir **kasa**, vardiyanın açıldığı ve satışın işlendiği satış noktasıdır. Bir mağazada birden fazla kasa olabilir: örneğin aynı anda satış alan bir ön tezgah ve bir arka tezgah.
+
+- Bir kasa oluşturmak için menüden **Kasalar**'ı açın (yalnızca yönetici). Ona bir ad verin ve isteğe bağlı olarak beslendiği stok konumunu seçin; bir yönetici daha sonra yeniden adlandırabilir veya devre dışı bırakabilir (devre dışı bırakmak satış/vardiya geçmişini korur — yalnızca yeni bir vardiya için sunulmaz).
+- İkinci bir kasanın katılması (yukarıya bakın) ona **otomatik olarak** bir kasa atamaz. Katılma tamamlandıktan sonra, henüz yoksa önce (yukarıdaki **Kasalar**'dan) ikinci bir kasa oluşturun, ardından o cihazda **Ayarlar → Kasalar** bölümünden **Bu cihazın kasası**nı buna ayarlayın — tek manuel adım budur: bu yapılmazsa ikinci kasa birincisiyle aynı kasaya çözümlenir ve o kasada zaten açık bir vardiya olduğu için üzerinde vardiya açmak reddedilir.
