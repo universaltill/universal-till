@@ -1405,6 +1405,7 @@
   "issuereport.my_reports.attached_video": "تسجيل الشاشة",
   "issuereport.my_reports.attached_images": "لقطة شاشة",
   "issuereport.my_reports.view_on_github": "عرض على GitHub",
+  "issuereport.my_reports.more_not_shown": "%d تقريرًا إضافيًا غير معروض — تحقق لاحقًا بعد أن تُسجَّل التقارير الأقدم على GitHub أو تُستبعد.",
   "issuereport.status.sent": "أُرسل، في انتظار المراجعة",
   "issuereport.status.received": "تم الاستلام",
   "issuereport.status.transcribing": "جارٍ التفريغ النصي",
