@@ -170,6 +170,13 @@ func TestAuthorizeManager(t *testing.T) {
 // silently locked them out of every one of those pages. authz.go's own
 // comment used to say promoting to super_admin was inert; this diff is what
 // makes it not inert, so this gap had to close in the same change.
+//
+// Historical note (independent review, 2026-08-23): none of those five pages
+// gates on IsManager() any more — ut-docs#901 moved locations (and registers)
+// and ut-docs#902 moved promotions/country-settings/translations/kitchen-
+// stations onto canPerform(d, r, "settings"). This case still matters: it
+// pins the manager/admin/super_admin set that "settings" (039's seed) must
+// keep mirroring, and auth_page.go's session chip still reads IsManager().
 func TestUser_IsManager_IncludesSuperAdmin(t *testing.T) {
 	cases := map[string]bool{
 		"cashier":     false,
