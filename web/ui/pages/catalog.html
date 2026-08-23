@@ -5,7 +5,7 @@
     <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
     <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
     <button class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
-    <span id="export-msg" class="muted" aria-live="polite"></span>
+    <div id="export-msg" class="muted" aria-live="polite"></div>
     <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
   </div>
 </div>
@@ -113,6 +113,60 @@
   var resetBtn = document.getElementById('item-form-reset');
   var msg = document.getElementById('item-form-msg');
 
+  // ut-docs#238: item-form-msg/autofill-msg/keypad-log migrate off ad-hoc
+  // .textContent status strings onto the documented .pos-notice pattern
+  // (docs/sale-screen-notifications.md) — the same shape
+  // web/ui/partials/basket.html renders for the sale screen, so the
+  // generalized dismiss/auto-expire logic in app.js's
+  // scheduleToastDismiss picks these up too.
+  var NOTICE_MSG = {
+    dismiss: "{{ T "notice.dismiss" }}",
+    itemFormSaving: "{{ T "catalog.item_form.saving" }}",
+    itemFormSaved: "{{ T "catalog.item_form.saved" }}",
+    itemFormErrorGeneric: "{{ T "catalog.error.server" }}",
+    keypadNoTarget: "{{ T "catalog.keypad.no_target" }}",
+    keypadFailedGeneric: "{{ T "catalog.keypad.failed_generic" }}"
+  };
+
+  // Builds the .pos-notice markup into `el` (empty text clears the slot
+  // instead — nothing to say gets no notice, not an empty one). level:
+  // "error" | "success" | "info" — error gets role="alert" and persists
+  // until dismissed; anything else gets role="status" and auto-expires
+  // (app.js's scheduleToastDismiss, which this triggers a fresh pass of so
+  // a freshly-inserted notice isn't only picked up on the next htmx swap).
+  //
+  // Built with DOM calls, never an innerHTML string: `text` here is
+  // routinely NOT ours — a scanned/keyed-in barcode, an item name out of
+  // the table's dataset, a lookup service's JSON `error`, a raw
+  // xhr.responseText — so it goes in via textContent, which cannot
+  // produce markup at all. (An earlier draft of this assembled a template
+  // string with String.replace and a hand-rolled escapeHtml; review
+  // rejected it — String.replace treats `$&`, "$'" and dollar-backtick in
+  // the REPLACEMENT as substitution patterns, so a barcode containing
+  // dollar-backtick expanded to the unescaped markup built so far and
+  // defeated the escaping outright, and a `text` containing the literal
+  // word LABEL stole the aria-label placeholder's substitution.)
+  function renderNotice(el, level, text) {
+    if (!el) return;
+    el.textContent = '';
+    if (!text) return;
+    var notice = document.createElement('div');
+    notice.className = 'pos-notice ' + level;
+    notice.setAttribute('role', level === 'error' ? 'alert' : 'status');
+    var body = document.createElement('span');
+    body.className = 'notice-text';
+    body.textContent = text;
+    var dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'notice-dismiss';
+    dismiss.setAttribute('aria-label', NOTICE_MSG.dismiss);
+    dismiss.textContent = '✕';
+    notice.appendChild(body);
+    notice.appendChild(dismiss);
+    el.appendChild(notice);
+    if (typeof scheduleToastDismiss === 'function') scheduleToastDismiss();
+  }
+
   function setMode(editing, name) {
     title.textContent = editing ? 'Edit: ' + name : 'New Item';
     submit.textContent = editing ? 'Save Changes' : 'Create Item';
@@ -141,15 +195,21 @@
   function runAutofill() {
     var code = (barcodeInput.value || '').trim();
     if (!code) { barcodeInput.focus(); return; }
-    autofillMsg.textContent = '⏳ ' + AUTOFILL_MSG.searching;
+    renderNotice(autofillMsg, 'info', AUTOFILL_MSG.searching);
     fetch('/api/catalog/lookup?barcode=' + encodeURIComponent(code))
       .then(function (res) {
         return res.json().then(function (body) { return { ok: res.ok, status: res.status, body: body }; });
       })
       .then(function (r) {
         if (!r.ok) {
-          autofillMsg.textContent = '✗ ' + (r.status === 404 ? AUTOFILL_MSG.notFound
-            : (r.body && r.body.error) || AUTOFILL_MSG.failed);
+          // 404 (not found in the shared product databases) is an expected,
+          // routine outcome — informational, not an error; anything else
+          // (lookup unavailable, an unexpected server error) is.
+          if (r.status === 404) {
+            renderNotice(autofillMsg, 'info', AUTOFILL_MSG.notFound);
+          } else {
+            renderNotice(autofillMsg, 'error', (r.body && r.body.error) || AUTOFILL_MSG.failed);
+          }
           return;
         }
         var p = r.body.data;
@@ -167,10 +227,10 @@
             }
           });
         }
-        autofillMsg.textContent = '✓ ' + AUTOFILL_MSG.found + ' (' + p.source + ')';
+        renderNotice(autofillMsg, 'success', AUTOFILL_MSG.found + ' (' + p.source + ')');
         document.getElementById('item-price').focus();
       })
-      .catch(function () { autofillMsg.textContent = '✗ ' + AUTOFILL_MSG.failed; });
+      .catch(function () { renderNotice(autofillMsg, 'error', AUTOFILL_MSG.failed); });
   }
   document.getElementById('autofill-btn').addEventListener('click', runAutofill);
   // Barcode scanners terminate with Enter — scan straight into a lookup
@@ -245,12 +305,12 @@
     document.getElementById('item-price-minor').value = window.utCurrency.toMinor(document.getElementById('item-price').value || '0');
     var editing = document.getElementById('item-id').value !== '';
     var url = editing ? '/api/catalog/item/update' : '/api/catalog/item';
-    msg.textContent = '⏳ saving…';
+    renderNotice(msg, 'info', NOTICE_MSG.itemFormSaving);
     htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'outerHTML' })
-      .then(function () { msg.textContent = '✓ saved'; if (!editing) clearForm(); filterRows(); });
+      .then(function () { renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved); if (!editing) clearForm(); filterRows(); });
   });
   document.body.addEventListener('htmx:responseError', function (ev) {
-    msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+    renderNotice(msg, 'error', (ev.detail.xhr.responseText || '').trim() || NOTICE_MSG.itemFormErrorGeneric);
   });
 
   // Variant editor prices are entered in MAJOR units; convert to minor on
@@ -313,7 +373,7 @@
       var itemId = document.getElementById('keypad-item-id').value;
       var itemLabel = document.getElementById('keypad-item-label').value;
       if (!itemId) {
-        log.textContent = '✗ ' + "{{ T "catalog.keypad.no_target" }}";
+        renderNotice(log, 'error', NOTICE_MSG.keypadNoTarget);
         return;
       }
       var body = new URLSearchParams({ barcode: code, itemId: itemId, isPrimary: primary.checked ? '1' : '0' });
@@ -323,10 +383,10 @@
         body: body.toString()
       }).then(function (res) {
         if (!res.ok) { return res.text().then(function (t) { throw new Error(t); }); }
-        log.textContent = '✓ ' + code + ' → ' + itemLabel;
+        renderNotice(log, 'success', code + ' → ' + itemLabel);
         capture.focus();
       }).catch(function (err) {
-        log.textContent = '✗ ' + code + ': ' + (err.message || 'failed');
+        renderNotice(log, 'error', code + ': ' + ((err.message || '').trim() || NOTICE_MSG.keypadFailedGeneric));
         capture.focus();
       });
     });
