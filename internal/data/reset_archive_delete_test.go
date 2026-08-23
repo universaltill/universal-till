@@ -226,3 +226,146 @@ func TestDeleteResetBatch_UnknownCountryFallsBackToGlobalFloor(t *testing.T) {
 		t.Fatalf("reset_batches must survive a refused purge, got %d", c)
 	}
 }
+
+// ut-docs#698: ListResetBatches must compute the same purge eligibility
+// DeleteResetBatch itself gates on, read-only, so the Settings → Data UI can
+// show it BEFORE an operator goes through the confirm-and-fail motion. These
+// tests pin the same three cases the DeleteResetBatch tests above pin for the
+// enforcement path, plus the same #699 midnight boundary — the two paths
+// must never disagree.
+
+func TestListResetBatches_ZeroSalesBatch_AlwaysPurgeable(t *testing.T) {
+	d, x, _ := resetTestDB(t, "list_no_history.db")
+	x(`INSERT INTO registers (id, name) VALUES ('r1','Front Till')`)
+	x(`INSERT INTO users (id, username, display_name, role) VALUES ('u1','cashier1','Cashier One','cashier')`)
+	x(`INSERT INTO shifts (id, register_id, cashier_id, opening_cash) VALUES ('sh1','r1','u1',5000)`)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	batches, err := repo.ListResetBatches(ctx)
+	if err != nil {
+		t.Fatalf("list batches: %v", err)
+	}
+	if len(batches) != 1 || batches[0].ID != batchID {
+		t.Fatalf("ListResetBatches = %+v, want one batch %s", batches, batchID)
+	}
+	if !batches[0].Purgeable {
+		t.Fatalf("zero-sales batch must always be Purgeable, got %+v", batches[0])
+	}
+	if !batches[0].RetainedUntil.IsZero() {
+		t.Fatalf("zero-sales batch has no retention gate, want zero RetainedUntil, got %v", batches[0].RetainedUntil)
+	}
+}
+
+func TestListResetBatches_WithinRetentionWindow_NotPurgeable(t *testing.T) {
+	d, x, _ := resetTestDB(t, "list_within_window.db")
+	seedFullSale(t, x)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	// created_at is "now" -- fully inside the global floor window.
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	batches, err := repo.ListResetBatches(ctx)
+	if err != nil {
+		t.Fatalf("list batches: %v", err)
+	}
+	if len(batches) != 1 || batches[0].ID != batchID {
+		t.Fatalf("ListResetBatches = %+v, want one batch %s", batches, batchID)
+	}
+	if batches[0].Purgeable {
+		t.Fatalf("batch within its retention window must not be Purgeable, got %+v", batches[0])
+	}
+	if !batches[0].RetainedUntil.After(time.Now().UTC()) {
+		t.Fatalf("RetainedUntil = %v, want a time in the future", batches[0].RetainedUntil)
+	}
+}
+
+func TestListResetBatches_OutsideRetentionWindow_Purgeable(t *testing.T) {
+	d, x, _ := resetTestDB(t, "list_outside_window.db")
+	seedFullSale(t, x)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	setBatchCreatedAt(t, x, batchID, time.Now().AddDate(0, 0, -int(data.GlobalArchiveMinDays)-1))
+
+	batches, err := repo.ListResetBatches(ctx)
+	if err != nil {
+		t.Fatalf("list batches: %v", err)
+	}
+	if len(batches) != 1 || batches[0].ID != batchID {
+		t.Fatalf("ListResetBatches = %+v, want one batch %s", batches, batchID)
+	}
+	if !batches[0].Purgeable {
+		t.Fatalf("batch past its retention window must be Purgeable, got %+v", batches[0])
+	}
+	if batches[0].RetainedUntil.IsZero() {
+		t.Fatalf("a gated batch must still report the date it became purgeable, got zero RetainedUntil")
+	}
+}
+
+// Mirrors TestDeleteResetBatch_RetainedUntilDateIsPurgeableFromMidnight
+// (ut-docs#699): the read path must land on the exact same purgeable-from-
+// midnight semantics as the enforcement path, not a subtly different one.
+func TestListResetBatches_BoundaryMatchesDeleteResetBatchFromMidnight(t *testing.T) {
+	d, x, _ := resetTestDB(t, "list_midnight.db")
+	x(`UPDATE country_settings SET archive_min_days = 5 WHERE code = 'GB'`)
+	x(`INSERT INTO settings (key, value) VALUES ('store.country', 'GB')`)
+	seedFullSale(t, x)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	// Same clamped "5 days ago, a couple seconds later in the day than now"
+	// shape as the DeleteResetBatch #699 test -- the retained-until DATE is
+	// today, even though the archive's own time-of-day hasn't been reached
+	// yet.
+	now := time.Now().UTC()
+	laterHour, laterMin, laterSec := now.Hour(), now.Minute(), now.Second()+2
+	if laterSec > 59 {
+		laterSec, laterMin = laterSec-60, laterMin+1
+	}
+	if laterMin > 59 {
+		laterMin, laterHour = laterMin-60, laterHour+1
+	}
+	if laterHour > 23 {
+		laterHour, laterMin, laterSec = 23, 59, 59
+	}
+	shiftedDate := now.AddDate(0, 0, -5)
+	archivedAt := time.Date(shiftedDate.Year(), shiftedDate.Month(), shiftedDate.Day(),
+		laterHour, laterMin, laterSec, 0, time.UTC)
+	setBatchCreatedAt(t, x, batchID, archivedAt)
+
+	batches, err := repo.ListResetBatches(ctx)
+	if err != nil {
+		t.Fatalf("list batches: %v", err)
+	}
+	if len(batches) != 1 || batches[0].ID != batchID {
+		t.Fatalf("ListResetBatches = %+v, want one batch %s", batches, batchID)
+	}
+	if !batches[0].Purgeable {
+		t.Fatalf("retained-until date reached (even before the archive's own time-of-day) must be Purgeable, got %+v", batches[0])
+	}
+
+	// And DeleteResetBatch itself must agree -- the two paths must never
+	// disagree on the same batch.
+	if err := repo.DeleteResetBatch(ctx, batchID, ""); err != nil {
+		t.Fatalf("DeleteResetBatch disagreed with ListResetBatches' Purgeable=true: %v", err)
+	}
+}
