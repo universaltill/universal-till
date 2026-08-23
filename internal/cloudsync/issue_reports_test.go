@@ -834,6 +834,237 @@ func TestPullIssueReportStatusesBestEffortNoops(t *testing.T) {
 	assertUntouched("garbage body")
 }
 
+// --- pagination (ut-docs#445): bounded page loop against the cloud's own new cap ---
+
+// TestPullIssueReportStatusesPagesWhenMoreThanOnePage: the cloud endpoint
+// now caps a single response, so a store with more pending statuses than
+// one page requires a second round trip — both pages' statuses must land
+// locally, and the requests must carry the expected limit/offset.
+func TestPullIssueReportStatusesPagesWhenMoreThanOnePage(t *testing.T) {
+	d := openMigratedDB(t, "issue_reports_pull_paged.db")
+	repo := data.NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	for i, id := range []string{"rep-page0", "rep-page1"} {
+		if err := repo.SaveSent(ctx, data.SentReport{
+			ID:         id,
+			CapturedAt: time.Date(2026, 8, 1+i, 0, 0, 0, 0, time.UTC),
+		}); err != nil {
+			t.Fatalf("SaveSent %s: %v", id, err)
+		}
+	}
+
+	var gotOffsets, gotLimits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		gotOffsets = append(gotOffsets, offset)
+		gotLimits = append(gotLimits, r.URL.Query().Get("limit"))
+
+		var reports []map[string]any
+		if offset == "" || offset == "0" {
+			// First page: exactly 200 entries (matching the till's own page
+			// size) so the loop knows there MAY be more — the till has no
+			// way to tell "full page" from "happened to be exactly full"
+			// other than paging once more. The rest are ids this till never
+			// retained (silently skipped by UpdateStatus); only the last
+			// one is real.
+			for i := 0; i < 199; i++ {
+				reports = append(reports, map[string]any{
+					"id": fmt.Sprintf("filler-%d", i), "status": "filed", "github_issue_url": "", "captured_at": "2026-08-01T00:00:00Z",
+				})
+			}
+			reports = append(reports, map[string]any{
+				"id": "rep-page0", "status": "filed", "github_issue_url": "https://github.com/universaltill/ut-docs/issues/1", "captured_at": "2026-08-01T00:00:00Z",
+			})
+		} else {
+			// Second page: fewer rows than a full page — the loop must stop
+			// after this one, not request a third page.
+			reports = []map[string]any{
+				{"id": "rep-page1", "status": "transcribing", "github_issue_url": "", "captured_at": "2026-08-02T00:00:00Z"},
+			}
+		}
+		// True total across both pages (200 + 1) — the loop now terminates on
+		// offset+fetched reaching total (ut-docs#445 review fix), not on
+		// "did the last page come back full".
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  map[string]any{"store_id": "store-1", "reports": reports, "total": 201},
+			"error": nil,
+		})
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB)
+
+	if len(gotOffsets) != 2 {
+		t.Fatalf("requests made = %d, want 2 (a full first page must trigger exactly one more): offsets=%v", len(gotOffsets), gotOffsets)
+	}
+	if gotOffsets[0] != "0" && gotOffsets[0] != "" {
+		t.Errorf("first request offset = %q, want 0", gotOffsets[0])
+	}
+	if gotOffsets[1] != "200" {
+		t.Errorf("second request offset = %q, want 200", gotOffsets[1])
+	}
+	if gotLimits[0] != "200" || gotLimits[1] != "200" {
+		t.Errorf("limits = %v, want [200 200]", gotLimits)
+	}
+
+	sent, err := repo.ListSent(ctx, 300)
+	if err != nil {
+		t.Fatalf("ListSent: %v", err)
+	}
+	byID := map[string]data.SentReport{}
+	for _, r := range sent {
+		byID[r.ID] = r
+	}
+	if byID["rep-page0"].Status != "filed" {
+		t.Errorf("rep-page0 (page 1) not applied: %+v", byID["rep-page0"])
+	}
+	if byID["rep-page1"].Status != "transcribing" {
+		t.Errorf("rep-page1 (page 2) not applied: %+v", byID["rep-page1"])
+	}
+}
+
+// TestPullIssueReportStatusesStopsAfterOnePageAgainstOlderCloud: a cloud
+// predating ut-docs#445's pagination ignores limit/offset entirely and
+// returns every row in one response — which can easily be >= a full page's
+// worth, and carries no "total" field at all. Review finding on ut-docs#445:
+// terminating on "did the last page come back full" alone would misread
+// that as "there may be more" and burn up to pullStatusMaxPages identical,
+// wasted round trips re-applying the same statuses every tick. Terminating
+// on offset+fetched reaching total instead must stop after exactly one
+// request here, since the absent "total" decodes to its zero value and
+// offset+fetched (already > 0) reaches it immediately.
+func TestPullIssueReportStatusesStopsAfterOnePageAgainstOlderCloud(t *testing.T) {
+	d := openMigratedDB(t, "issue_reports_pull_no_total.db")
+	repo := data.NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	if err := repo.SaveSent(ctx, data.SentReport{
+		ID:         "rep-legacy",
+		CapturedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("SaveSent: %v", err)
+	}
+
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		// Exactly a full page's worth (>= pullStatusPageLimit), no "total"
+		// field — the pre-#445 cloud shape, which ignored limit/offset and
+		// returned everything unbounded in one response.
+		reports := make([]map[string]any, 200)
+		for i := range reports {
+			reports[i] = map[string]any{
+				"id": fmt.Sprintf("filler-%d", i), "status": "filed", "github_issue_url": "", "captured_at": "2026-08-01T00:00:00Z",
+			}
+		}
+		reports[0] = map[string]any{"id": "rep-legacy", "status": "filed", "github_issue_url": "", "captured_at": "2026-08-01T00:00:00Z"}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  map[string]any{"store_id": "store-1", "reports": reports},
+			"error": nil,
+		})
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB)
+
+	if requests != 1 {
+		t.Fatalf("requests made = %d, want exactly 1 (no total field must not be mistaken for \"there may be more\")", requests)
+	}
+	sent, err := repo.ListSent(ctx, 10)
+	if err != nil || len(sent) != 1 || sent[0].Status != "filed" {
+		t.Fatalf("rep-legacy must still be applied from the single page: %v %+v", err, sent)
+	}
+}
+
+// TestPullIssueReportStatusesOversizedResponseFailsCleanly: a response body
+// larger than pullStatusMaxBytes must not be buffered whole or panic — the
+// decode fails cleanly, exactly like today's plain "not valid JSON" path,
+// and local rows are left untouched.
+func TestPullIssueReportStatusesOversizedResponseFailsCleanly(t *testing.T) {
+	d := openMigratedDB(t, "issue_reports_pull_oversized.db")
+	repo := data.NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	if err := repo.SaveSent(ctx, data.SentReport{
+		ID:         "rep-1",
+		CapturedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("SaveSent: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A FULLY well-formed response well over pullStatusMaxBytes (4MB):
+		// unbounded, this would decode fine and apply rep-1's new status.
+		// Bounded, the byte cap truncates it mid-stream, so the decode must
+		// fail cleanly instead — no panic, no partial apply.
+		reports := []map[string]any{
+			{"id": "rep-1", "status": "filed", "github_issue_url": "", "captured_at": "2026-08-01T00:00:00Z"},
+		}
+		filler := strings.Repeat("x", 1<<20) // 1MB per entry
+		for i := 0; i < 6; i++ {
+			reports = append(reports, map[string]any{"id": fmt.Sprintf("filler-%d", i), "note": filler})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  map[string]any{"store_id": "store-1", "reports": reports},
+			"error": nil,
+		})
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB)
+
+	sent, err := repo.ListSent(ctx, 10)
+	if err != nil || len(sent) != 1 || sent[0].Status != "sent" {
+		t.Fatalf("local row must be untouched — a response over the byte cap must fail to decode, not partially apply: %v %+v", err, sent)
+	}
+}
+
+// TestPullIssueReportStatusesSafetyCapStopsAfter10Pages: 11 consecutive
+// full pages must stop paging after the 10th (never make an 11th request)
+// and log a warning that the refresh was incomplete this tick.
+func TestPullIssueReportStatusesSafetyCapStopsAfter10Pages(t *testing.T) {
+	d := openMigratedDB(t, "issue_reports_pull_cap.db")
+	logging.ResetRecent()
+	start := time.Now()
+
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		offset := r.URL.Query().Get("offset")
+		reports := make([]map[string]any, 200) // always a full page — there's always "more"
+		for i := range reports {
+			reports[i] = map[string]any{
+				"id": fmt.Sprintf("filler-%s-%d", offset, i), "status": "filed", "github_issue_url": "", "captured_at": "2026-08-01T00:00:00Z",
+			}
+		}
+		// A total far beyond what 10 pages could ever cover — offset+fetched
+		// never reaches it, so only the safety cap (not the total-reached
+		// terminator) can stop this loop. That's the scenario this test
+		// exists to prove.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  map[string]any{"store_id": "store-1", "reports": reports, "total": 1000000},
+			"error": nil,
+		})
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB)
+
+	if got := atomic.LoadInt32(&requests); got != 10 {
+		t.Fatalf("requests made = %d, want exactly 10 (the safety cap)", got)
+	}
+
+	found := false
+	for _, p := range logging.Recent() {
+		if p.Level == "WARN" && p.At.After(start.Add(-time.Second)) &&
+			strings.Contains(p.Msg, "issue-report status pull") && strings.Contains(p.Msg, "10") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected a warning about hitting the page-count safety cap")
+	}
+}
+
 func TestAttachFileMultipartFormWritesRealBytes(t *testing.T) {
 	withTempPendingDir(t)
 	if _, err := issuereport.Save("note", "", []byte("hello-bytes"), nil, nil); err != nil {

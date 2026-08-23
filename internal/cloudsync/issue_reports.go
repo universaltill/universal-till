@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -26,6 +27,28 @@ import (
 // every other failure reliably, via errors.Is, rather than string-matching
 // an error message that's free to change wording later.
 var errNotRegistered = errors.New("not registered")
+
+// pullStatusMaxBytes bounds a single status-pull response page (ut-docs#445)
+// — the decoder must not buffer an unbounded body just because a
+// misbehaving or compromised endpoint sent one. 4MB comfortably covers a
+// full page (pullStatusPageLimit rows of id/status/url/timestamp strings)
+// with headroom.
+const pullStatusMaxBytes = 4 << 20
+
+// pullStatusPageLimit / pullStatusMaxPages bound pullIssueReportStatuses'
+// page loop (ut-docs#445): the cloud's own GET /v1/stores/issue-reports now
+// caps a single response (ut-cloud's issueReportsDefaultLimit), so a store
+// with more pending statuses than one page needs more than one round trip
+// to stay fresh. pullStatusPageLimit matches that cloud-side default so a
+// single round trip suffices for realistic single-store volume.
+// pullStatusMaxPages bounds the worst case per tick — this whole function
+// is best-effort and retried every cloudsync tick, so a store that needs
+// more than pullStatusMaxPages pages simply catches up over a few ticks
+// rather than this one tick doing unbounded work.
+const (
+	pullStatusPageLimit = 200
+	pullStatusMaxPages  = 10
+)
 
 // uploadPendingIssueReports pushes any locally-saved, not-yet-uploaded
 // bug-report bundles (ADR-0022) to the cloud. Best-effort: a bundle that
@@ -144,22 +167,69 @@ func pullIssueReportStatuses(ctx context.Context, cfg *config.Config, db *sql.DB
 		return // not registered — nothing to pull
 	}
 
-	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/issue-reports?store_id=" + m.StoreID
+	// The cloud endpoint now caps a single response and reports the store's
+	// true total row count alongside it (ut-docs#445), so a store with more
+	// pending statuses than one page needs more than one round trip to stay
+	// fully fresh. Page while offset+fetched hasn't yet covered total — the
+	// precise "is there more" signal, not just "did the last page come back
+	// full" (which mis-loops against a pre-#445 cloud that ignores
+	// limit/offset and returns everything unbounded: that cloud never sends
+	// total, so it decodes to its zero value, offset+fetched > 0 = total
+	// immediately, and this stops after one page — correct, since that one
+	// page already contained every row) — up to the safety cap; a store that
+	// needs more pages than that catches up over the next few ticks (this
+	// whole function is best-effort/retried already).
+	offset := 0
+	for page := 0; page < pullStatusMaxPages; page++ {
+		fetched, total, err := pullIssueReportStatusesPage(ctx, cfg, db, pullStatusPageLimit, offset)
+		if err != nil {
+			return // already logged inside pullIssueReportStatusesPage
+		}
+		offset += fetched
+		if offset >= total {
+			return // covered every row the cloud reported — no more pages
+		}
+		if page == pullStatusMaxPages-1 {
+			logging.L().Warnf("cloudsync: issue-report status pull hit the %d-page safety cap (%d/%d reports applied this tick) — status refresh incomplete, will continue next tick", pullStatusMaxPages, offset, total)
+		}
+	}
+}
+
+// pullIssueReportStatusesPage fetches and applies ONE page of the cloud's
+// per-report statuses (GET /v1/stores/issue-reports?store_id=...&limit=...
+// &offset=...), returning how many report rows this page contained and the
+// store's true total row count (ut-docs#445's "total" field) so the caller
+// can tell precisely whether there may be more. A cloud predating ut-docs#445
+// sends no "total" field, which decodes to 0 — see pullIssueReportStatuses's
+// own comment for why that's the correct degradation, not a bug. Best-effort
+// like the rest of this file: any failure logs a warning and returns a
+// non-nil error so the caller stops paging for this tick — /my-reports
+// simply keeps showing the last-known statuses (offline-first — the page
+// itself never touches the network).
+func pullIssueReportStatusesPage(ctx context.Context, cfg *config.Config, db *sql.DB, limit, offset int) (fetched, total int, err error) {
+	eff := enroll.Effective(cfg)
+	m := eff.Marketplace
+	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+		return 0, 0, errNotRegistered
+	}
+
+	url := fmt.Sprintf("%s/v1/stores/issue-reports?store_id=%s&limit=%d&offset=%d",
+		strings.TrimRight(m.EndpointURL, "/"), m.StoreID, limit, offset)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		logging.L().Warnf("cloudsync: issue-report status pull: %v", err)
-		return
+		return 0, 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+m.MerchantToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		logging.L().Warnf("cloudsync: issue-report status pull: %v", err)
-		return
+		return 0, 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		logging.L().Warnf("cloudsync: issue-report status pull returned %d", resp.StatusCode)
-		return
+		return 0, 0, fmt.Errorf("issue-report status pull returned %d", resp.StatusCode)
 	}
 	var out struct {
 		Data struct {
@@ -168,11 +238,14 @@ func pullIssueReportStatuses(ctx context.Context, cfg *config.Config, db *sql.DB
 				Status         string `json:"status"`
 				GithubIssueURL string `json:"github_issue_url"`
 			} `json:"reports"`
+			Total int `json:"total"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	// Bounded so a misbehaving/compromised endpoint can't make this decode
+	// buffer an unbounded body (ut-docs#445).
+	if err := json.NewDecoder(io.LimitReader(resp.Body, pullStatusMaxBytes)).Decode(&out); err != nil {
 		logging.L().Warnf("cloudsync: decode issue-report statuses: %v", err)
-		return
+		return 0, 0, err
 	}
 	repo := data.NewIssueReportsRepo(db)
 	for _, item := range out.Data.Reports {
@@ -184,6 +257,7 @@ func pullIssueReportStatuses(ctx context.Context, cfg *config.Config, db *sql.DB
 			logging.L().Warnf("cloudsync: issue report %s status not applied: %v", item.ID, err)
 		}
 	}
+	return len(out.Data.Reports), out.Data.Total, nil
 }
 
 func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bundle) error {

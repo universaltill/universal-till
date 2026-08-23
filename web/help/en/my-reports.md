@@ -16,6 +16,8 @@ See the problem reports this till has captured — sent, or still waiting to sen
 
 Each row is one report this till has captured — sent or not — with when it was captured, what it contained (your typed note, plus tags for a voice note, screen recording, or screenshots), and its current status. When a report has been turned into a GitHub issue, a **View on GitHub** link appears next to it.
 
+If this till has sent more than 100 reports, a line under the intro tells you how many aren't shown — they come back into view as older ones get filed or discarded.
+
 The statuses mean:
 
 - **Saved here, waiting to send** — captured on this till, not uploaded yet (normal while the shop is offline).

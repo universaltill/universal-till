@@ -15,6 +15,8 @@ Bu kasanın kaydettiği sorun raporlarını — gönderilmiş ya da gönderim be
 
 Her satır bu kasanın kaydettiği bir rapordur — gönderilmiş olsun ya da olmasın: ne zaman kaydedildiği, ne içerdiği (yazdığınız not, ayrıca sesli not, ekran kaydı veya ekran görüntüleri için etiketler) ve güncel durumu. Bir rapor GitHub'da bir kayda dönüştüğünde yanında **GitHub'da görüntüle** bağlantısı belirir.
 
+Bu kasa 100'den fazla rapor gönderdiyse, girişin altında kaç tanesinin gösterilmediğini belirten bir satır görünür — daha eski raporlar GitHub'a kaydedildikçe veya kapatıldıkça bunlar tekrar görünür hâle gelir.
+
 Durumların anlamı:
 
 - **Burada kaydedildi, gönderim bekleniyor** — bu kasada kaydedildi, henüz yüklenmedi (mağaza çevrimdışıyken normaldir).
