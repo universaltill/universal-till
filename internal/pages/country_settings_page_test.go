@@ -30,10 +30,46 @@ func newCountrySettingsTestMux(t *testing.T) (*http.ServeMux, *data.CountrySetti
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { dbase.Close() })
-	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}}
+	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase.DB)}
 	mux := http.NewServeMux()
 	registerCountrySettings(mux, d)
 	return mux, data.NewCountrySettingsRepo(dbase.DB)
+}
+
+// ut-docs#902: GET /country-settings must be reachable under UT_AUTH=off
+// with no session, matching every other admin page's canPerform(...,
+// "settings") escape hatch (ut-docs#901's precedent). Before this fix,
+// requireManager read auth.FromContext directly and failed closed
+// permanently under UT_AUTH=off, since no session is ever set in that mode.
+func TestCountrySettingsPage_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newCountrySettingsTestMux(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/country-settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /country-settings under UT_AUTH=off = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Mutating handlers, not just the GET page, must also pick up canPerform's
+// UT_AUTH=off bypass — independent review finding on ut-docs#901, applied
+// here too (the GET-only regression test above only pins the read path).
+func TestCountrySettingsPageCreate_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newCountrySettingsTestMux(t)
+
+	rec := postForm(mux, "/api/country-settings", url.Values{
+		"code":             {"ZZ"},
+		"currency":         {"GBP"},
+		"currency_symbol":  {"£"},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/country-settings" {
+		t.Fatalf("create under UT_AUTH=off: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
 }
 
 func TestCountrySettingsPagePermissions(t *testing.T) {
