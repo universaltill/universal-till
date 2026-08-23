@@ -32,10 +32,39 @@ func newKitchenStationsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	if _, err := dbase.DB.Exec(`INSERT INTO items (id, sku, name, base_price, category_id, is_active) VALUES ('itm-pie','PIE','Pork Pie',450,'cat-food',1)`); err != nil {
 		t.Fatal(err)
 	}
-	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}}
+	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase.DB)}
 	mux := http.NewServeMux()
 	registerKitchenStations(mux, d)
 	return mux, d
+}
+
+// ut-docs#902: GET /kitchen-stations must be reachable under UT_AUTH=off
+// with no session — same fix and rationale as
+// country_settings_page_test.go's TestCountrySettingsPage_ReachableUnderAuthOff
+// (ut-docs#901's precedent).
+func TestKitchenStationsPage_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newKitchenStationsTestMux(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/kitchen-stations", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /kitchen-stations under UT_AUTH=off = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Mutating handlers, not just the GET page, must also pick up canPerform's
+// UT_AUTH=off bypass — independent review finding on ut-docs#901, applied
+// here too.
+func TestKitchenStationsPageCreate_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newKitchenStationsTestMux(t)
+
+	rec := postForm(mux, "/api/kitchen-stations", url.Values{"name": {"Auth-Off Grill"}, "printer_address": {"tcp://127.0.0.1:9100"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/kitchen-stations" {
+		t.Fatalf("create under UT_AUTH=off: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
 }
 
 func TestKitchenStationsPagePermissions(t *testing.T) {

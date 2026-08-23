@@ -31,10 +31,39 @@ func newTablesTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { dbase.Close() })
-	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}}
+	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase.DB)}
 	mux := http.NewServeMux()
 	registerTables(mux, d)
 	return mux, d
+}
+
+// ut-docs#902: GET /tables must be reachable under UT_AUTH=off with no
+// session — same fix and rationale as
+// country_settings_page_test.go's TestCountrySettingsPage_ReachableUnderAuthOff
+// (ut-docs#901's precedent).
+func TestTablesPage_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newTablesTestMux(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/tables", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /tables under UT_AUTH=off = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Mutating handlers, not just the GET page, must also pick up canPerform's
+// UT_AUTH=off bypass — independent review finding on ut-docs#901, applied
+// here too.
+func TestTablesPageCreate_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newTablesTestMux(t)
+
+	rec := postForm(mux, "/api/tables", url.Values{"label": {"Auth-Off Table"}, "shape": {"rect"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/tables" {
+		t.Fatalf("create under UT_AUTH=off: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
 }
 
 func TestTablesPagePermissions(t *testing.T) {
