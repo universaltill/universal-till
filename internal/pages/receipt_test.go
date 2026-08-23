@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -415,5 +416,44 @@ func TestRenderReceipt_UnsignedCannotSignLine(t *testing.T) {
 	}
 	if strings.Contains(html, "receipt.fiscal.unsigned_cannot_sign") {
 		t.Fatalf("no cannot-sign line expected for a signed sale, got: %s", html)
+	}
+}
+
+// ut-docs#906: receiptTSEView.QRDataURI is a data:image/png;base64 URI
+// interpolated into an <img src="..."> attribute via html/template. A
+// plain Go string in that position goes through html/template's URL
+// sanitizer, which strips data: URIs and substitutes the safe placeholder
+// "#ZgotmplZ" — so the TSE fiscal-evidence QR (compliance-critical on the
+// Germany pilot's receipt) silently rendered as a broken image on every
+// signed sale. Must render the real data: URI, never the placeholder.
+func TestRenderReceipt_TSEQRDataURIRendersNotZgotmplZ(t *testing.T) {
+	chdirRoot(t)
+	funcs := map[string]any{
+		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"barcodesvg": httpx.BarcodeSVG,
+		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":          func(key string) string { return key },
+	}
+	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
+	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
+	sig := &data.FiscalTSESignature{
+		TransactionNumber:  4711,
+		SignatureCounter:   12345,
+		SerialNumber:       "TSE-TEST-SERIAL-1",
+		StartTime:          "2026-08-15T10:31:00Z",
+		LogTime:            "2026-08-15T10:31:02Z",
+		Signature:          "TESTSIGBASE64==",
+		SignatureAlgorithm: "ecdsa-plain-SHA256",
+	}
+
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, sig, "My Store", receiptDesign{ShowTax: true}, "")
+	if err != nil {
+		t.Fatalf("renderReceipt: %v", err)
+	}
+	if strings.Contains(html, "#ZgotmplZ") {
+		t.Fatalf("TSE QR data: URI was stripped to the html/template safe placeholder instead of rendering — got: %s", html)
+	}
+	if !strings.Contains(html, `src="data:image/png;base64,`) {
+		t.Fatalf("expected the real TSE QR data: URI in an <img src>, got: %s", html)
 	}
 }
