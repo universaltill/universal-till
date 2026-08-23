@@ -1,0 +1,19 @@
+{{/* Status block for the anonymous customer tracking page (ut-docs#527) —
+     rendered inside /o/{token} and swapped by GET /o/{token}/status. The
+     root re-arms the 15s poll on every swap (same pattern as
+     orders_list.html: the outerHTML swap replaces the element carrying the
+     trigger, so the trigger must travel with the fragment); once the order
+     is terminal — or the link has expired — it renders WITHOUT the trigger
+     so polling stops (pairing_wait.html's conditional arming). Status-only
+     by design: never render who changed the status here. */}}
+{{ define "order_tracking_status" }}
+<div id="tracking-status"
+     {{ if .Poll }}hx-get="/o/{{ .Token }}/status" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
+{{ if .Expired }}
+  <p class="muted">{{ T "tracking.not_found" }}</p>
+{{ else }}
+  <p class="tracking-state"><span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span></p>
+  {{ if .UpdatedAt }}<p class="muted">{{ T "tracking.updated" }}: {{ .UpdatedAt }}</p>{{ end }}
+{{ end }}
+</div>
+{{ end }}
