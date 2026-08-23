@@ -24,12 +24,12 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 		repo := data.NewPairingRepo(d.Db)
 		list, err := repo.ListPending(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairings", err)
 			return
 		}
 		primaryTillID, err := discovery.TillID(r.Context(), data.NewSettingsRepo(d.Db))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairings", err)
 			return
 		}
 		type row struct {

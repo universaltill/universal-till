@@ -300,8 +300,9 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			name, strings.TrimSpace(r.Form.Get("customer_address")),
 			strings.TrimSpace(r.Form.Get("customer_vat_no")), getSessionUserID(r))
 		if err != nil {
+			logging.L().Errorf("[invoice] issue: %v", err)
 			w.WriteHeader(http.StatusConflict)
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, htmlEscape(err.Error()))
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "invoice.error.issue_failed"))
 			return
 		}
 		// Best-effort thermal print, same posture as receipts. Tracked on
@@ -335,7 +336,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		to := strings.TrimSpace(r.URL.Query().Get("to"))
 		list, err := invRepo.List(r.Context(), from, to)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
 			return
 		}
 		var net, tax, gross int64
@@ -371,7 +372,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		to := strings.TrimSpace(r.URL.Query().Get("to"))
 		list, err := invRepo.List(r.Context(), from, to)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
 			return
 		}
 		decimals := httpx.ActiveCurrency().Decimals
@@ -417,7 +418,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		sale, _, err := posRepo.GetSaleDetailByID(r.Context(), inv.SaleID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
 			return
 		}
 		var seller invoiceSeller

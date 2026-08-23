@@ -161,7 +161,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		}
 		file, _, err := r.FormFile("logo")
 		if err != nil {
-			http.Error(w, "logo file required", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "designer.receipt.logo_required")
 			return
 		}
 		defer file.Close()
@@ -176,11 +176,11 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		// their own target dir) -- without this the FIRST logo upload
 		// ever attempted on a new till fails with ENOENT.
 		if err := os.MkdirAll(filepath.Dir(receiptLogoPath()), 0o755); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "designer.receipt.save_failed", "designer", err)
 			return
 		}
 		if err := os.WriteFile(receiptLogoPath(), raw, 0o644); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "designer.receipt.save_failed", "designer", err)
 			return
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "settings", "receipt", "receipt_logo_uploaded",

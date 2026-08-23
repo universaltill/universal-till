@@ -27,7 +27,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/journal/{receipt}", func(w http.ResponseWriter, r *http.Request) {
 		sale, found, err := data.NewPOSRepo(d.Db).GetSaleDetail(r.Context(), r.PathValue("receipt"))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "journal.error.server", "journal", err)
 			return
 		}
 		if !found {
@@ -133,7 +133,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 
 		entries, truncated, err := repo.ListSalesJournal(r.Context(), f)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "journal.error.server", "journal", err)
 			return
 		}
 
@@ -149,7 +149,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		journalView, err := ui.NewJournalView(funcs)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "journal.error.server", "journal", err)
 			return
 		}
 		_ = journalView.Render(w, ui.JournalViewData{

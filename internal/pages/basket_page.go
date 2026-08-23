@@ -13,7 +13,7 @@ func registerBasket(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, err := ui.NewBasketView(funcs)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "basket.error.server", "basket", err)
 			return
 		}
 		b, _ := d.Engine.Scan("")

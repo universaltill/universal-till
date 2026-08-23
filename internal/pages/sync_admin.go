@@ -58,7 +58,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 		}
 		bundle, err := adminRepo.DumpAdmin(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", err)
 			return
 		}
 		resp := adminBundleResponse{Version: bundle.Fingerprint()}
@@ -83,7 +83,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 		}
 		bundle, err := stockRepo.DumpStock(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", err)
 			return
 		}
 		resp := stockBundleResponse{Version: bundle.Fingerprint()}
@@ -110,7 +110,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 		}
 		bundle, err := pluginsRepo.DumpActivePlugins(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", err)
 			return
 		}
 		resp := pluginsBundleResponse{Version: bundle.Fingerprint()}

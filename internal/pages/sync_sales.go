@@ -268,7 +268,7 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 		}
 		var batch []journalSale
 		if err := json.NewDecoder(r.Body).Decode(&batch); err != nil || len(batch) > 100 {
-			http.Error(w, "bad journal batch", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "sync.error.bad_batch")
 			return
 		}
 		applied, skipped := 0, 0
@@ -276,7 +276,7 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 			ok, err := applyJournal(r.Context(), d, till.ID, j)
 			if err != nil {
 				logging.L().Errorf("sync apply %s from %s: %v", j.Sale.ReceiptNo, till.Name, err)
-				http.Error(w, "apply failed at "+j.Sale.ReceiptNo+": "+err.Error(), http.StatusUnprocessableEntity)
+				common.LocalizedError(w, r, http.StatusUnprocessableEntity, "sync.error.apply_failed")
 				return
 			}
 			if ok {
