@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -152,6 +153,59 @@ func TestRegistersPageCreateRenameDeactivate(t *testing.T) {
 	var active int
 	if err := d.Db.QueryRow(`SELECT is_active FROM registers WHERE id = ?`, newID).Scan(&active); err != nil || active != 0 {
 		t.Fatalf("not deactivated: active=%d err=%v", active, err)
+	}
+}
+
+// ut-docs#895: a register's stock location was previously fixed at creation
+// time -- a mis-assignment had no fix short of recreating the register.
+func TestRegistersPage_ChangeLocationAfterCreation(t *testing.T) {
+	mux, d := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postForm(mux, "/api/registers", url.Values{"name": {"Front Till"}, "location_id": {"loc_main"}}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: code=%d", rec.Code)
+	}
+	var id string
+	if err := d.Db.QueryRow(`SELECT id FROM registers WHERE name = 'Front Till'`).Scan(&id); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc_back','Back Room')`); err != nil {
+		t.Fatalf("seed second location: %v", err)
+	}
+
+	// Move it to a different location.
+	rec = postForm(mux, "/api/registers/"+id, url.Values{"name": {"Front Till"}, "location_id": {"loc_back"}}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/registers" {
+		t.Fatalf("change location: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var gotLocationID string
+	if err := d.Db.QueryRow(`SELECT location_id FROM registers WHERE id = ?`, id).Scan(&gotLocationID); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if gotLocationID != "loc_back" {
+		t.Fatalf("location_id = %q, want loc_back", gotLocationID)
+	}
+
+	// Clear it back to unassigned ("None").
+	rec = postForm(mux, "/api/registers/"+id, url.Values{"name": {"Front Till"}, "location_id": {""}}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("clear location: code=%d", rec.Code)
+	}
+	var nullable sql.NullString
+	if err := d.Db.QueryRow(`SELECT location_id FROM registers WHERE id = ?`, id).Scan(&nullable); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if nullable.Valid {
+		t.Fatalf("location_id = %q, want NULL", nullable.String)
+	}
+
+	// Existing shift/sale history tied to the register is unaffected by a
+	// location change: the register row itself (id, name) is untouched
+	// beyond location_id.
+	var name string
+	if err := d.Db.QueryRow(`SELECT name FROM registers WHERE id = ?`, id).Scan(&name); err != nil || name != "Front Till" {
+		t.Fatalf("register identity changed unexpectedly: name=%q err=%v", name, err)
 	}
 }
 

@@ -7,6 +7,7 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -151,6 +152,65 @@ func TestSetRegisterActive(t *testing.T) {
 
 	if err := repo.SetRegisterActive(ctx, "ghost", false); err == nil {
 		t.Fatal("SetRegisterActive(unknown) must error")
+	}
+}
+
+// ut-docs#895: a register's stock location was previously fixed at creation
+// time -- there was no fix short of recreating the register.
+func TestSetRegisterLocation(t *testing.T) {
+	d, repo := openRegTestDB(t)
+	ctx := context.Background()
+
+	backID, err := repo.CreateStockLocation(ctx, "Back Room")
+	if err != nil {
+		t.Fatalf("create stock location: %v", err)
+	}
+	id, err := repo.CreateRegister(ctx, "Kiosk Till", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Assign it.
+	if err := repo.SetRegisterLocation(ctx, id, &backID); err != nil {
+		t.Fatalf("set location: %v", err)
+	}
+	var gotLocationID string
+	if err := d.DB.QueryRow(`SELECT location_id FROM registers WHERE id = ?`, id).Scan(&gotLocationID); err != nil {
+		t.Fatal(err)
+	}
+	if gotLocationID != backID {
+		t.Fatalf("location_id = %q, want %q", gotLocationID, backID)
+	}
+
+	// Move it.
+	frontID, err := repo.CreateStockLocation(ctx, "Front Yard")
+	if err != nil {
+		t.Fatalf("create second stock location: %v", err)
+	}
+	if err := repo.SetRegisterLocation(ctx, id, &frontID); err != nil {
+		t.Fatalf("re-set location: %v", err)
+	}
+	if err := d.DB.QueryRow(`SELECT location_id FROM registers WHERE id = ?`, id).Scan(&gotLocationID); err != nil {
+		t.Fatal(err)
+	}
+	if gotLocationID != frontID {
+		t.Fatalf("location_id = %q, want %q", gotLocationID, frontID)
+	}
+
+	// Clear it back to unassigned.
+	if err := repo.SetRegisterLocation(ctx, id, nil); err != nil {
+		t.Fatalf("clear location: %v", err)
+	}
+	var nullable sql.NullString
+	if err := d.DB.QueryRow(`SELECT location_id FROM registers WHERE id = ?`, id).Scan(&nullable); err != nil {
+		t.Fatal(err)
+	}
+	if nullable.Valid {
+		t.Fatalf("location_id = %q, want NULL", nullable.String)
+	}
+
+	if err := repo.SetRegisterLocation(ctx, "ghost", nil); err == nil {
+		t.Fatal("SetRegisterLocation(unknown) must error")
 	}
 }
 

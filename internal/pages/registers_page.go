@@ -13,10 +13,17 @@ import (
 
 // registerView adds the resolved location display name to data.RegisterAdmin
 // for the template -- LocationID alone is a raw UUID (or nil), neither of
-// which is fit to render directly.
+// which is fit to render directly. LocationOptions is this row's own
+// edit-picker choices: every active location, plus (ut-docs#895) the
+// register's current location even if it has since been deactivated, so
+// editing never silently drops the row's existing assignment from the list.
 type registerView struct {
 	data.RegisterAdmin
-	LocationName string
+	LocationName    string
+	LocationOptions []data.StockLocation
+	// LocationValue is LocationID dereferenced to "" when unset, since Go
+	// templates can't usefully compare a *string against a string.
+	LocationValue string
 }
 
 // registerRegisters wires the registers admin page (universaltill/ut-docs#651).
@@ -60,18 +67,28 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		for _, l := range allLocs {
 			locNames[l.ID] = l.Name
 		}
-		views := make([]registerView, 0, len(regs))
-		for _, reg := range regs {
-			v := registerView{RegisterAdmin: reg}
-			if reg.LocationID != nil {
-				v.LocationName = locNames[*reg.LocationID]
-			}
-			views = append(views, v)
-		}
 		locs, err := posRepo.ListActiveStockLocations(r.Context())
 		if err != nil {
 			http.Error(w, "failed to load stock locations", http.StatusInternalServerError)
 			return
+		}
+		activeLoc := make(map[string]bool, len(locs))
+		for _, l := range locs {
+			activeLoc[l.ID] = true
+		}
+		views := make([]registerView, 0, len(regs))
+		for _, reg := range regs {
+			v := registerView{RegisterAdmin: reg, LocationOptions: locs}
+			if reg.LocationID != nil {
+				v.LocationName = locNames[*reg.LocationID]
+				v.LocationValue = *reg.LocationID
+				if !activeLoc[*reg.LocationID] {
+					opts := make([]data.StockLocation, len(locs), len(locs)+1)
+					copy(opts, locs)
+					v.LocationOptions = append(opts, data.StockLocation{ID: *reg.LocationID, Name: v.LocationName})
+				}
+			}
+			views = append(views, v)
 		}
 		httpx.Render("ui/pages/registers.html", map[string]any{
 			"title":          "Registers",
@@ -130,7 +147,22 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/registers?err=registers.error.rename", http.StatusSeeOther)
 			return
 		}
-		audit(r, actor.ID, id, "register_rename")
+		// ut-docs#895: the same form also carries the register's stock
+		// location, so a manager can fix a mis-assignment without
+		// recreating the register. Empty selection clears it back to
+		// unassigned, same convention as create's location_id.
+		var locationID *string
+		if loc := strings.TrimSpace(r.PostFormValue("location_id")); loc != "" {
+			locationID = &loc
+		}
+		if err := posRepo.SetRegisterLocation(r.Context(), id, locationID); err != nil {
+			http.Redirect(w, r, "/registers?err=registers.error.update", http.StatusSeeOther)
+			return
+		}
+		// ut-docs#895 review: this endpoint always updates both name and
+		// location together now, so "register_rename" would mislabel a
+		// location-only edit in the audit trail.
+		audit(r, actor.ID, id, "register_update")
 		http.Redirect(w, r, "/registers", http.StatusSeeOther)
 	})
 

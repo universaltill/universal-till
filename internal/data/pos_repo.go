@@ -2200,6 +2200,22 @@ func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error 
 	return nil
 }
 
+// SetRegisterLocation changes a register's assigned stock location (nil
+// clears it back to unassigned) -- ut-docs#895: a register's location was
+// previously fixed at creation time, so a mis-assignment had no fix short of
+// recreating the register. Existing shift/sale history stays keyed by the
+// register's id and is unaffected by a location change.
+func (r *POSRepo) SetRegisterLocation(ctx context.Context, id string, locationID *string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE registers SET location_id = ? WHERE id = ?`, locationID, id)
+	if err != nil {
+		return fmt.Errorf("set register location: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("set register location: %s not found", id)
+	}
+	return nil
+}
+
 // SetRegisterActive soft-disables/re-enables a register, mirroring
 // SetStockLocationActive's pattern. Unlike a stock location, a register
 // with shift/sale history is still allowed to be deactivated (retiring a

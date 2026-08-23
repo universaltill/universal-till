@@ -27,6 +27,13 @@
           <td class="users-actions">
             <form method="post" action="/api/registers/{{ .ID }}" class="users-inline">
               <input type="text" name="name" value="{{ .Name }}" required />
+              <select name="location_id" aria-label="{{ T "registers.new.location_label" }}">
+                <option value="" {{ if eq .LocationValue "" }}selected{{ end }}>{{ T "registers.new.location_none" }}</option>
+                {{ $current := .LocationValue }}
+                {{ range .LocationOptions }}
+                <option value="{{ .ID }}" {{ if eq .ID $current }}selected{{ end }}>{{ .Name }}</option>
+                {{ end }}
+              </select>
               <button type="submit" class="btn secondary">{{ T "registers.rename" }}</button>
             </form>
             <form method="post" action="/api/registers/{{ .ID }}/active" class="users-inline">
