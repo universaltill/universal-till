@@ -565,9 +565,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// what actually flips unitill-kiosk.service; if it fails (e.g. a
 		// pre-#883 Pi upgraded without the sudoers grant), the operator sees
 		// a clear error and the stored preference never lies about what the
-		// OS actually did. WindowCtl is set in pages.Init (NoopWindowController
-		// on every platform except the Pi kiosk path); nil-checked here so
-		// bare-Deps tests/helpers that predate ut-docs#608 stay valid, same
+		// OS actually did. That guarantee is real for KioskSystemdWindowController
+		// (a synchronous systemctl call that genuinely fails or succeeds) but
+		// only best-effort for common.HTTPWindowController (ut-docs#882's
+		// desktop-shell path): ApplyMode there always returns nil — the native
+		// call is dispatched fire-and-forget onto the shell's UI thread with
+		// no completion signal — so persistence still proceeds even though
+		// "applied" wasn't actually confirmed. WindowCtl is set in pages.Init
+		// (NoopWindowController on a plain browser session); nil-checked here
+		// so bare-Deps tests/helpers that predate ut-docs#608 stay valid, same
 		// convention as the exit-to-os handler below.
 		wc := d.WindowCtl
 		if wc == nil {
@@ -677,6 +683,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			wc = common.NoopWindowController{}
 		}
 		if err := wc.ExitToOS(); err != nil {
+			logging.L().Errorf("exit to OS: %v", err)
 			http.Error(w, "could not exit to OS", http.StatusInternalServerError)
 			return
 		}

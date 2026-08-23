@@ -194,9 +194,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// (no UT_DESKTOP_CONTROL_ADDR, no UT_KIOSK) keeps NoopWindowController.
 	// Live apply on the desktop shell is real end-to-end on Linux (#882);
 	// on macOS/Windows the shell's control listener runs but has no native
-	// handler wired yet (#609/#610's own scope), so a call there degrades
-	// to a clear error rather than a silent no-op — see
-	// common.HTTPWindowController's own doc comment.
+	// handler wired yet (#609/#610's own scope), so a call there is
+	// accepted (204) and simply has no visible effect until next launch —
+	// deliberately NOT a 503/500, which would regress a working
+	// persist-only flow into one that looks broken (see
+	// settings_page.go's window-mode handler comment and
+	// webkit_darwin.go's own showWindow doc comment).
 	//
 	// Detection is UT_KIOSK=1 OR the kiosk unit file already being present
 	// (independent review, ut-docs#883): unitill-kiosk-setup.sh's own
