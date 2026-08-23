@@ -62,6 +62,31 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
     assertClean();
   });
 
+  test('a search matching nothing in the active tab shows a no-matches message, not a blank panel (ut-docs#422)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+
+    const tabBar = page.locator('.products .tab-bar');
+    await expect(tabBar).toBeVisible();
+    const drinksTab = tabBar.getByRole('tab', { name: 'Drinks' });
+    const noMatches = page.locator('.products-tab-panel:visible .empty', { hasText: 'No matching products.' });
+
+    await drinksTab.click();
+    await expect(drinksTab).toHaveClass(/active/);
+    await expect(noMatches).toBeHidden();
+
+    const search = page.locator('#products-search');
+    await search.fill('this matches absolutely nothing on the till');
+    await expect(noMatches).toBeVisible();
+    await expect(page.locator('.btn-tile', { hasText: 'Coca-Cola 330ml' })).toBeHidden();
+
+    await search.fill('');
+    await expect(noMatches).toBeHidden();
+    await expect(page.locator('.btn-tile', { hasText: 'Coca-Cola 330ml' })).toBeVisible();
+
+    assertClean();
+  });
+
   test('Farsi locale renders the tab bar + search RTL and a tile is still clickable', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/?lang=fa');

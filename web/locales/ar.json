@@ -505,6 +505,7 @@
   "plugins.type.theme": "سمة",
   "plugins.type_label": "النوع:",
   "products.empty": "لا توجد منتجات بعد. أضِف بعضها في المصمّم.",
+  "products.no_matches": "لا توجد منتجات مطابقة.",
   "products.search_ph": "ابحث عن المنتجات…",
   "products.title": "المنتجات",
   "products.uncategorized": "بدون تصنيف",

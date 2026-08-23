@@ -297,8 +297,12 @@ func TestButtonsHTTPList_RendersTabBarAndSearchWithMultipleCategories(t *testing
 	}
 	// Exactly one tab starts active — the first group's ID drives the
 	// shared x-data seed, so its own tab panel (and only its own) shows
-	// x-show="tab === 'drinks'" wired to that same value.
-	if !strings.Contains(body, `x-data="{ tab: 'drinks', q: '' }"`) {
+	// x-show="tab === 'drinks'" wired to that same value. Checked as a
+	// substring, not the full x-data literal (ut-docs#422 added the
+	// matches/sectionHasMatch methods alongside tab/q, reformatting it
+	// onto multiple lines — the seeded initial tab is what this test
+	// actually pins, not the surrounding object's exact layout).
+	if !strings.Contains(body, `tab: 'drinks'`) {
 		t.Fatalf("expected the first root category to seed the initial active tab, got: %s", body)
 	}
 }

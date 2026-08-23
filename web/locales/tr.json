@@ -505,6 +505,7 @@
   "plugins.type.theme": "Tema",
   "plugins.type_label": "Tür:",
   "products.empty": "Henüz ürün yok. Tasarımcı'dan bazıları ekleyin.",
+  "products.no_matches": "Eşleşen ürün yok.",
   "products.search_ph": "Ürünlerde ara…",
   "products.title": "Ürünler",
   "products.uncategorized": "Kategorisiz",
