@@ -75,6 +75,54 @@ func TestAuditPage_ManagerOnlyAndRendersRealData(t *testing.T) {
 	}
 }
 
+// A repo failure on GET /audit must never leak the raw Go/SQL error to the
+// operator (ut-docs#893, the wider sweep #316 deferred) — it goes through
+// common.LogAndLocalizedError like catalog/handlers.go's sites already do.
+func TestAuditPage_RepoErrorNeverLeaksRawErrorToBody(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	seedForPages(t, db)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
+	mux := http.NewServeMux()
+	registerAuditPage(mux, dp)
+
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role, created_at) VALUES ('mgr-1','manager1','Manager One','x','manager','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed manager user: %v", err)
+	}
+	// Force ListAudit specifically to fail with a raw driver error, without
+	// breaking canPerform's own DB-backed permission check (a different
+	// table) — proves the repo-error path, not the auth gate, is what's
+	// under test here.
+	if _, err := db.Exec(`DROP TABLE audit_log`); err != nil {
+		t.Fatalf("drop audit_log: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/audit", nil), auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "no such table") || strings.Contains(body, "audit_log") {
+		t.Fatalf("response leaked the raw driver error: %q", body)
+	}
+	if want := httpx.T("en", "audit.error.server"); strings.TrimSpace(body) != want {
+		t.Fatalf("expected the translated message %q, got %q", want, body)
+	}
+}
+
 // super_admin is #554/#555's noted broadening vs. the old isManagerOrAuthOff
 // gate (which only recognized manager/admin) — accepted and inert since
 // nothing in the codebase creates a super_admin-role user today. Pin it
