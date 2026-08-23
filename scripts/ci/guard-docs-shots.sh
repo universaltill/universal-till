@@ -58,10 +58,20 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 MANIFEST="web/help/img/manifest.json"
-[ -f "$MANIFEST" ] || {
-  echo "guard-docs-shots: $MANIFEST missing — run \`make docs-shots\` and commit the result" >&2
-  exit 1
-}
+# GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY (ut-docs#370): when set, the python
+# block below prints just its independently-computed surface_sha256 to
+# stdout and exits, skipping the manifest comparison — used by
+# guard-docs-shots-cross-check_test.sh to get this implementation's hash
+# without duplicating the algorithm in a second copy (which would defeat the
+# point of a cross-check meant to catch the two implementations drifting).
+# Checked here, before the manifest-existence gate, since print-only mode has
+# no reason to require one either.
+if [ -z "${GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY:-}" ]; then
+  [ -f "$MANIFEST" ] || {
+    echo "guard-docs-shots: $MANIFEST missing — run \`make docs-shots\` and commit the result" >&2
+    exit 1
+  }
+fi
 
 python3 - <<'PY'
 import glob, hashlib, json, os, re, sys
@@ -154,13 +164,21 @@ def topic_hash(locale, tid):
         p = f"web/help/en/{tid}.md"
     return sha256_file(p)
 
-manifest = json.load(open("web/help/img/manifest.json", encoding="utf-8"))
 topic_routes = routed_topics_with_routes()
 topics = [tid for tid, _ in topic_routes]
 screenshotted_routes = {route for _, route in topic_routes}
+cur_surface = surface_hash(screenshotted_routes)
+
+# See the GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY comment above the bash
+# manifest-existence gate: print this implementation's independently-computed
+# hash and stop — no manifest.json needed, nothing else in this script runs.
+if os.environ.get("GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY"):
+    print(cur_surface)
+    sys.exit(0)
+
+manifest = json.load(open("web/help/img/manifest.json", encoding="utf-8"))
 stale, missing_png = [], []
 
-cur_surface = surface_hash(screenshotted_routes)
 surface_stale = manifest.get("surface_sha256") != cur_surface
 
 recorded = manifest.get("topics", {})
