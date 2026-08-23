@@ -411,21 +411,51 @@ document.addEventListener('click', function(e){
     alertBox.hidden = false;
     alertBox.querySelector('.notice-text').textContent = msg || '';
   }
-  // A 400 from a sale-screen endpoint whose body is a rendered basket
-  // fragment carries its own .pos-notice (e.g. modifier validation): swap
-  // it in and clear the error flag so the specific message shows instead
-  // of the generic alert. Path-scoped like self-order's equivalent
-  // handler. (htmx never swaps 4xx by default — before ut-docs#213 these
-  // rendered error toasts were silently dropped on the sale screen.)
+  // htmx never swaps a non-2xx response into its target by default — it
+  // fires htmx:responseError instead and discards the body. That's fine on
+  // the sale screen, which has the generic #pos-alert fallback below, but
+  // several admin-page handlers that fail (print/labels, print/test, invoice
+  // issue, backup now/restore, sync join/promote, …) still render a real,
+  // translated `.muted` fragment straight into their own hx-target — and on
+  // those pages there is no #pos-alert equivalent, so the rendered error
+  // was silently discarded and the operator saw nothing at all (ut-docs#916).
+  //
+  // NOT every non-2xx response is safe to force-swap, though (review finding
+  // on the first version of this fix): a plain `http.Error(...)` body is
+  // `text/plain` and htmx's fragment parser yields zero nodes for it against
+  // an outerHTML/innerHTML target — swapping it in wipes the target instead
+  // of showing anything (`#catalog-variants`, the 15s-polled `#orders-list`,
+  // …). And forcing `isError = false` on one of those unconditionally also
+  // defeats every page's own already-working `htmx:responseError` handler
+  // (refund.html, catalog.html's item form) and flips `detail.successful` to
+  // true in `hx-on::after-request` branches that key off it (settings.html's
+  // save handlers reload the page as if a rejected save had succeeded).
+  //
+  // The discriminator: every handler ut-docs#916 actually targets sets
+  // `Content-Type: text/html` before writing its fragment — `http.Error`
+  // always answers `text/plain`. So only force the swap for a real,
+  // non-empty HTML body; everything else (plaintext, JSON, empty) falls
+  // through to htmx:responseError/showAlert exactly as before this fix.
   document.body.addEventListener('htmx:beforeSwap', function(ev){
     var d = ev.detail;
-    if (!d || !d.xhr || d.xhr.status !== 400) return;
+    if (!d || !d.xhr || d.xhr.status < 400) return;
     var path = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
-    if (path.indexOf('/api/pos/') !== 0) return;
-    if (typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
-      d.shouldSwap = true;
-      d.isError = false;
+    if (path.indexOf('/api/pos/') === 0) {
+      // Sale-screen carve-out (ut-docs#213): only a 400 whose body is a
+      // rendered basket fragment (e.g. modifier validation) swaps in place
+      // of the generic alert — anything else on this path falls through to
+      // the #pos-alert banner via htmx:responseError below.
+      if (d.xhr.status === 400 && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
+        d.shouldSwap = true;
+        d.isError = false;
+      }
+      return;
     }
+    var contentType = (d.xhr.getResponseHeader && d.xhr.getResponseHeader('Content-Type')) || '';
+    if (contentType.indexOf('text/html') === -1) return;
+    if (typeof d.serverResponse !== 'string' || d.serverResponse.trim() === '') return;
+    d.shouldSwap = true;
+    d.isError = false;
   });
   document.body.addEventListener('htmx:responseError', function(){ showAlert('server'); });
   document.body.addEventListener('htmx:sendError', function(){ showAlert('network'); });
