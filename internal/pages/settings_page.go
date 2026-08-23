@@ -651,10 +651,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// The whole point of this endpoint is the live-PIN gate itself (there's
 	// no "positive amount, no PIN needed" case here to bypass toward), and
 	// the product owner's requirement was for a PIN check that can't be
-	// switched off. Cost today is zero (the hook is a no-op stub), but this
-	// means the action can't be exercised under this repo's UT_AUTH=off
-	// dev/e2e convention until a real manager PIN is seeded — expected, not
-	// a bug. A blank manager_pin is rejected BEFORE calling AuthorizeManager,
+	// switched off. The hook has real effect on Linux since ut-docs#882 (was
+	// a no-op stub before that), but this means the action can't be
+	// exercised under this repo's UT_AUTH=off dev/e2e convention until a
+	// real manager PIN is seeded — expected, not a bug. A blank manager_pin
+	// is rejected BEFORE calling AuthorizeManager,
 	// which would otherwise burn a failed-attempt count shared device-wide
 	// with keypad login (5 failures = 30s lockout) — the exact blank-PIN
 	// lockout burn bug fixed there (see
@@ -666,7 +667,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager PIN required", http.StatusForbidden)
 			return
 		}
-		if _, err := d.AuthSvc.AuthorizeManager(r.Context(), pin); err != nil {
+		approver, err := d.AuthSvc.AuthorizeManager(r.Context(), pin)
+		if err != nil {
 			status := http.StatusForbidden
 			if errors.Is(err, auth.ErrLockedOut) {
 				status = http.StatusTooManyRequests
@@ -686,6 +688,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			logging.L().Errorf("exit to OS: %v", err)
 			http.Error(w, "could not exit to OS", http.StatusInternalServerError)
 			return
+		}
+		// ut-docs#616: record who authorized breaking kiosk lockdown, now that
+		// #611/#882 give this a real effect on Linux (harmless no-op prior to
+		// that, but no accountability trail once it actually does something).
+		// Only on success — a failed/blank/wrong PIN attempt above already
+		// returned before reaching here, mirroring how other manager-gated
+		// actions in this codebase don't audit-log the failure itself. Best-
+		// effort like settingsAudit's own posture: the OS-exit already
+		// happened, so a failed audit insert must not fail this response, but
+		// it is logged rather than silently swallowed.
+		if err := posRepo.InsertAudit(r.Context(), nil, approver.ID, "settings", "-", "exit_to_os", nil, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			logging.L().Errorf("exit-to-os audit: %v", err)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
