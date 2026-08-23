@@ -185,14 +185,21 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		log.Infof("AI env override present (UT_AI_*) — plugin settings take precedence when the AI plugin is active")
 	}
 
-	// WindowCtl (ut-docs#608/#883): the Pi headless kiosk appliance is the
-	// only platform whose window-mode toggle is wired to a real OS effect
-	// today — GOOS gated (not just the env check) so a manually-set
-	// UT_KIOSK=1 on macOS/Windows (touch-UI styling only, see httpx.InitKiosk
-	// above) never shells out to a `sudo systemctl` that doesn't exist there.
-	// The desktop shell (#609/#610/#611) and a plain browser session keep
-	// NoopWindowController — #611 applies its mode at its own next launch;
-	// a live cross-process channel for it is ut-docs#882, not this field.
+	// WindowCtl (ut-docs#608/#611/#882/#883): the Pi headless kiosk appliance
+	// and the desktop shell (macOS/Windows/Linux) are the two platforms
+	// wired to a real OS effect today — GOOS gated for the kiosk case (not
+	// just the env check) so a manually-set UT_KIOSK=1 on macOS/Windows
+	// (touch-UI styling only, see httpx.InitKiosk above) never shells out to
+	// a `sudo systemctl` that doesn't exist there. A plain browser session
+	// (no UT_DESKTOP_CONTROL_ADDR, no UT_KIOSK) keeps NoopWindowController.
+	// Live apply on the desktop shell is real end-to-end on Linux (#882);
+	// on macOS/Windows the shell's control listener runs but has no native
+	// handler wired yet (#609/#610's own scope), so a call there is
+	// accepted (204) and simply has no visible effect until next launch —
+	// deliberately NOT a 503/500, which would regress a working
+	// persist-only flow into one that looks broken (see
+	// settings_page.go's window-mode handler comment and
+	// webkit_darwin.go's own showWindow doc comment).
 	//
 	// Detection is UT_KIOSK=1 OR the kiosk unit file already being present
 	// (independent review, ut-docs#883): unitill-kiosk-setup.sh's own
@@ -204,6 +211,15 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// call and surface a clear "missing sudoers grant" error, which is the
 	// acceptance criteria's own named scenario.
 	windowCtl := common.WindowController(common.NoopWindowController{})
+	// ut-docs#882: unitill-desktop (the macOS/Windows/Linux desktop shell)
+	// sets UT_DESKTOP_CONTROL_ADDR on us when it spawns this process — the
+	// live, no-relaunch counterpart to #611's next-launch-only apply.
+	// Never set on the Pi kiosk path below (no shell process exists there),
+	// so the ordering here doesn't matter in practice; the kiosk check is
+	// still last so it wins if that ever changes.
+	if hc, ok := common.NewHTTPWindowControllerFromEnv(); ok {
+		windowCtl = hc
+	}
 	if runtime.GOOS == "linux" && (os.Getenv("UT_KIOSK") == "1" || piKioskServiceInstalled()) {
 		windowCtl = common.NewKioskSystemdWindowController()
 	}
