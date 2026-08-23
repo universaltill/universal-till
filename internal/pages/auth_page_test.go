@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
 func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) {
@@ -33,6 +34,14 @@ func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) 
 		 entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL, blocked_actor_id TEXT)`,
 		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, location_id TEXT,
 		 is_active INTEGER NOT NULL DEFAULT 1)`,
+		// ut-docs#672: registerSetup's language-detection branch writes
+		// "setup.detected_lang_unavailable" via d.Settings.Set (setup_page.go)
+		// when the OS-detected language isn't shipped — a nil Settings here
+		// (this fixture's previous state) panics the whole test binary the
+		// moment any /setup-touching test reaches that branch, mocked or via
+		// a real unavailable CI locale. Same settings-table shape as
+		// newFullAuthDeps (setup_page_test.go).
+		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`,
 		// roles/permission_actions/role_permissions (039): registerUsers'
 		// requireManager gates on canPerform(d, r, "user_management")
 		// (ut-docs#556), not the old IsManager() bit, so this fixture needs
@@ -66,7 +75,8 @@ func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) 
 	// this reads the real migration file rather than hand-rolling the DDL.
 	seedCountrySettingsTable(t, db)
 	svc := auth.NewService(db)
-	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: svc}
+	store := settings.NewStore(db)
+	d := &common.Deps{Db: db, Settings: store, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: svc}
 	mux := http.NewServeMux()
 	registerAuth(mux, d, svc)
 	registerUsers(mux, d, svc)
@@ -83,6 +93,31 @@ func postForm(mux *http.ServeMux, path string, form url.Values, user *auth.User)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
+}
+
+// ut-docs#672: GET /setup's "language detected but unavailable" branch
+// (setup_page.go's d.Settings.Set("setup.detected_lang_unavailable", ...))
+// was only exercised, in this package, via newFullAuthDeps (a real
+// Settings store). newAuthTestMux's minimal fixture leaves Settings nil,
+// so a request that reaches this branch through THIS fixture panics the
+// whole test binary — a real risk once ut-docs#662's OS-locale CI step
+// (currently only en_GB.UTF-8, always "available") is broadened to include
+// an unavailable-language locale, since any /setup-touching test here that
+// doesn't explicitly mock detection via withOSLocale would then pick up
+// the real CI env and hit this path for the first time.
+func TestFirstBootSetupUnavailableLanguageDoesNotPanic(t *testing.T) {
+	withOSLocale(t, "de_DE.UTF-8", "Europe/Berlin") // "de" isn't shipped (web/locales has ar/en/fa/tr only)
+	mux, _, d := newAuthTestMux(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/setup", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup (de_DE, unavailable): code=%d, want 200 (no available-language redirect)", rec.Code)
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), "setup.detected_lang_unavailable"); !ok || v != "de" {
+		t.Errorf("setup.detected_lang_unavailable = %q ok=%v, want \"de\"", v, ok)
+	}
 }
 
 func TestFirstBootSetupThenLogin(t *testing.T) {

@@ -161,6 +161,23 @@ jobs:
           LANG: en_GB.UTF-8
           LC_ALL: en_GB.UTF-8
         run: go test ./internal/pages/...
+      - name: Test (with unavailable-language OS locale set — ut-docs#672)
+        # The en_GB run above only ever detects an AVAILABLE language ("en"
+        # is always in httpx.AvailableLocales()), so /setup's other
+        # detection outcome — language detected but not shipped
+        # (setup_page.go's "setup.detected_lang_unavailable" branch) — has
+        # never actually run against a real OS-locale env var in CI, only
+        # against tests that mock detection via withOSLocale. de_DE.UTF-8
+        # exercises that branch for real: German isn't one of web/locales'
+        # shipped locales (ar/en/fa/tr) today. Same scoping rationale as the
+        # en_GB step above (internal/pages/... only, not the whole tree —
+        # see ut-docs#674's comment there).
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          LANG: de_DE.UTF-8
+          LC_ALL: de_DE.UTF-8
+        run: go test ./internal/pages/...
 
   e2e:
     runs-on: ubuntu-latest
