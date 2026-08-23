@@ -17,6 +17,9 @@ import (
 // edit-picker choices: every active location, plus (ut-docs#895) the
 // register's current location even if it has since been deactivated, so
 // editing never silently drops the row's existing assignment from the list.
+// InUse surfaces RegisterInUse (ut-docs#897) as an informational hint only
+// -- see the POST .../active handler below for why it must never gate
+// deactivation itself.
 type registerView struct {
 	data.RegisterAdmin
 	LocationName    string
@@ -24,6 +27,7 @@ type registerView struct {
 	// LocationValue is LocationID dereferenced to "" when unset, since Go
 	// templates can't usefully compare a *string against a string.
 	LocationValue string
+	InUse         bool
 }
 
 // registerRegisters wires the registers admin page (universaltill/ut-docs#651).
@@ -88,6 +92,12 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 					v.LocationOptions = append(opts, data.StockLocation{ID: *reg.LocationID, Name: v.LocationName})
 				}
 			}
+			inUse, err := posRepo.RegisterInUse(r.Context(), reg.ID)
+			if err != nil {
+				http.Error(w, "failed to load registers", http.StatusInternalServerError)
+				return
+			}
+			v.InUse = inUse
 			views = append(views, v)
 		}
 		httpx.Render("ui/pages/registers.html", map[string]any{
