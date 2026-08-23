@@ -1,9 +1,11 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -71,6 +73,45 @@ func TestExternalProxy_UnknownAndEmptyPlugin(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("GET %s: code %d, want 404", path, rec.Code)
 		}
+	}
+}
+
+// TestExternalProxy_UpstreamHangRespectsRequestContext proves the proxy
+// doesn't pin its goroutine on a hung upstream (ut-docs#912): a request
+// carrying a short deadline must come back promptly once that deadline
+// fires, rather than blocking for as long as the upstream stays open.
+func TestExternalProxy_UpstreamHangRespectsRequestContext(t *testing.T) {
+	block := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block // never responds until the test unblocks it
+	}))
+	// Deferred LIFO: unblock the handler before asking the server to Close,
+	// which otherwise waits for the in-flight (blocked) handler forever.
+	defer upstream.Close()
+	defer close(block)
+
+	dp := newExternalProxyDeps(t, upstream.URL)
+	mux := http.NewServeMux()
+	registerExternalProxy(mux, dp)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/ext/good", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		mux.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("GET /ext/good with hung upstream + expired context: code %d, want 502", rec.Code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("registerExternalProxy did not respect the request's context deadline — goroutine pinned on hung upstream")
 	}
 }
 
