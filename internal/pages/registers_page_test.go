@@ -57,8 +57,14 @@ func TestRegistersPage_ShowsStrandWarning(t *testing.T) {
 	if !strings.Contains(body, "register assignment unclear") {
 		t.Fatalf("registers page missing the strand warning, got: %s", body)
 	}
-	if !strings.Contains(body, `data-testid="help-hint"`) {
-		t.Fatalf("registers page missing the multitill help link, got: %s", body)
+	// nav.html's own automatic "?" already points every page at a topic via
+	// manual.HelpHref, so a bare data-testid="help-hint" check passes
+	// regardless of this change. Assert on the explicit multitill link this
+	// page's own h1 now carries: two occurrences of the topic's href -- the
+	// nav's auto link plus the one added here -- proves the new helpLink is
+	// actually present, not just the pre-existing nav one.
+	if n := strings.Count(body, `href="/help/multitill"`); n != 2 {
+		t.Fatalf("registers page: want 2 links to the multitill help topic (nav auto-link + explicit helpLink), got %d in: %s", n, body)
 	}
 }
 
