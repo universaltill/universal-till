@@ -674,6 +674,7 @@
   "settings.data.archives_purge_not_found": "reset archive batch not found",
   "settings.data.archives_purge_purging": "deleting…",
   "settings.data.archives_purge_retained_until": "This archive holds real trading history and is protected by your country's retention rules until %s — it cannot be deleted before then.",
+  "settings.data.archives_retained_until_row": "Retained until %s — protected by your country's retention rules",
   "settings.data.archives_restore_btn": "Restore",
   "settings.data.archives_restore_confirm_dialog": "Restore this archived batch? All of its sales, shifts and invoices are moved back into the working till. This only works while the till has no new transactions.",
   "settings.data.archives_restore_confirm_ph": "type RESTORE",

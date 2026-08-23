@@ -674,6 +674,7 @@
   "settings.data.archives_purge_not_found": "دستهٔ بایگانی یافت نشد",
   "settings.data.archives_purge_purging": "در حال حذف…",
   "settings.data.archives_purge_retained_until": "این دسته دارای سابقهٔ تراکنش واقعی است و طبق قوانین نگهداری کشور شما تا %s محافظت می‌شود — پیش از آن قابل حذف نیست.",
+  "settings.data.archives_retained_until_row": "تا %s نگهداری می‌شود — طبق قوانین نگهداری کشور شما محافظت می‌شود",
   "settings.data.archives_restore_btn": "بازیابی",
   "settings.data.archives_restore_confirm_dialog": "این دستهٔ بایگانی‌شده بازیابی شود؟ همهٔ فروش‌ها، شیفت‌ها و فاکتورهای آن به صندوق بازگردانده می‌شوند. این کار فقط تا وقتی ممکن است که صندوق تراکنش جدیدی نداشته باشد.",
   "settings.data.archives_restore_confirm_ph": "بنویسید RESTORE",

@@ -674,6 +674,7 @@
   "settings.data.archives_purge_not_found": "arşiv grubu bulunamadı",
   "settings.data.archives_purge_purging": "siliniyor…",
   "settings.data.archives_purge_retained_until": "Bu grup gerçek satış geçmişi içeriyor ve ülkenizin saklama kurallarına göre %s tarihine kadar korunuyor — bu tarihten önce silinemez.",
+  "settings.data.archives_retained_until_row": "%s tarihine kadar saklanıyor — ülkenizin saklama kurallarına göre korunuyor",
   "settings.data.archives_restore_btn": "Geri yükle",
   "settings.data.archives_restore_confirm_dialog": "Bu arşivlenmiş grup geri yüklensin mi? Tüm satışları, vardiyaları ve faturaları kasaya geri taşınır. Bu yalnızca kasada yeni işlem yokken mümkündür.",
   "settings.data.archives_restore_confirm_ph": "RESTORE yazın",

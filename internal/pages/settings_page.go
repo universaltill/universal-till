@@ -229,10 +229,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		// Same human-friendly date format the backups table already uses
 		// (backup_api.go's listBackupsForUI) rather than a raw RFC3339 string.
+		// Purgeable/RetainedUntilDisplay (ut-docs#698) let the template show
+		// per-row purge eligibility instead of every row offering a
+		// Delete-permanently control that a gated batch will just refuse.
 		type resetBatchView struct {
-			ID         string
-			CreatedAt  string
-			SalesCount int64
+			ID                   string
+			CreatedAt            string
+			SalesCount           int64
+			Purgeable            bool
+			RetainedUntilDisplay string
 		}
 		resetBatches := make([]resetBatchView, 0, len(resetBatchesRaw))
 		for _, b := range resetBatchesRaw {
@@ -240,7 +245,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if t, err := time.Parse(time.RFC3339, b.CreatedAt); err == nil {
 				display = t.Format("2006-01-02 15:04")
 			}
-			resetBatches = append(resetBatches, resetBatchView{ID: b.ID, CreatedAt: display, SalesCount: b.SalesCount})
+			view := resetBatchView{ID: b.ID, CreatedAt: display, SalesCount: b.SalesCount, Purgeable: b.Purgeable}
+			if !b.RetainedUntil.IsZero() {
+				view.RetainedUntilDisplay = b.RetainedUntil.Format("2006-01-02")
+			}
+			resetBatches = append(resetBatches, view)
 		}
 		// This till's register identity for the Tills card's picker
 		// (ut-docs#268). Ambiguous is a normal state here — a
