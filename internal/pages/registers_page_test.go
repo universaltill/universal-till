@@ -19,10 +19,38 @@ func newRegistersTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
-	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}}
+	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerRegisters(mux, d)
 	return mux, d
+}
+
+// ut-docs#901: GET /registers must be reachable under UT_AUTH=off with no
+// session — same fix and rationale as locations_page_test.go's
+// TestLocationsPage_ReachableUnderAuthOff.
+func TestRegistersPage_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newRegistersTestMux(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/registers", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /registers under UT_AUTH=off = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Mutating handlers, not just the GET page, must also pick up canPerform's
+// UT_AUTH=off bypass -- independent review finding, ut-docs#901 (the
+// original regression test above only pinned the read path).
+func TestRegistersPageCreate_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newRegistersTestMux(t)
+
+	rec := postForm(mux, "/api/registers", url.Values{"name": {"Auth-Off Till"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/registers" {
+		t.Fatalf("create under UT_AUTH=off: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
 }
 
 func TestRegistersPagePermissions(t *testing.T) {

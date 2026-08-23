@@ -18,7 +18,7 @@ func newLocationsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
-	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}}
+	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerLocations(mux, d)
 	return mux, d
@@ -37,6 +37,36 @@ func TestLocationsPagePermissions(t *testing.T) {
 
 	if rec := postForm(mux, "/api/locations", url.Values{"name": {"Cellar"}}, &cashier); rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier create = %d, want 403", rec.Code)
+	}
+}
+
+// ut-docs#901: GET /locations must be reachable under UT_AUTH=off with no
+// session, matching every other admin page's canPerform(..., "settings")
+// escape hatch (and matching /users, already migrated). Before this fix,
+// requireManager read auth.FromContext directly and failed closed
+// permanently under UT_AUTH=off, since no session is ever set in that mode.
+func TestLocationsPage_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newLocationsTestMux(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/locations", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /locations under UT_AUTH=off = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Mutating handlers, not just the GET page, must also pick up canPerform's
+// UT_AUTH=off bypass -- independent review finding, ut-docs#901 (the
+// original regression test above only pinned the read path).
+func TestLocationsPageCreate_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newLocationsTestMux(t)
+
+	rec := postForm(mux, "/api/locations", url.Values{"name": {"Auth-Off Room"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/locations" {
+		t.Fatalf("create under UT_AUTH=off: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
 	}
 }
 
