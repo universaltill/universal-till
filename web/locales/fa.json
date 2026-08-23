@@ -505,6 +505,7 @@
   "plugins.type.theme": "پوسته",
   "plugins.type_label": "نوع:",
   "products.empty": "هنوز محصولی نیست. از صفحه طراح اضافه کنید.",
+  "products.no_matches": "محصولی مطابق یافت نشد.",
   "products.search_ph": "جستجوی محصولات…",
   "products.title": "محصولات",
   "products.uncategorized": "دسته‌بندی‌نشده",
