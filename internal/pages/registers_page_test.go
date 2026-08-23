@@ -40,6 +40,28 @@ func TestRegistersPagePermissions(t *testing.T) {
 	}
 }
 
+// ut-docs#896: the page must warn a manager in-page that creating a second
+// register, or deactivating one another till might be bound to, can strand
+// that till's register binding -- and point them at the fix.
+func TestRegistersPage_ShowsStrandWarning(t *testing.T) {
+	mux, _ := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /registers = %d", rec.Code)
+	}
+	if !strings.Contains(body, "register assignment unclear") {
+		t.Fatalf("registers page missing the strand warning, got: %s", body)
+	}
+	if !strings.Contains(body, `data-testid="help-hint"`) {
+		t.Fatalf("registers page missing the multitill help link, got: %s", body)
+	}
+}
+
 func TestRegistersPageCreate_WhitespaceOnlyNameRejected(t *testing.T) {
 	mux, _ := newRegistersTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}

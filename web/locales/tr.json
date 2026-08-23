@@ -1112,6 +1112,7 @@
   "registers.error.rename": "Kasa yeniden adlandırılamadı (ad zaten kullanılıyor mu?)",
   "registers.error.update": "Kasa güncellenemedi",
   "registers.error.last_active": "Son aktif kasa devre dışı bırakılamaz",
+  "registers.strand_warning": "İkinci bir kasa oluşturmak veya başka bir kasanın kullanıyor olabileceği bir kasayı devre dışı bırakmak, o kasanın kasa atamasını belirsiz bırakabilir. Sonrasında her kasanın Ayarlar → Kasalar → \"Bu cihazın kasası\" ayarını kontrol edin.",
   "promotions.title": "Promosyonlar",
   "promotions.col.code": "Kod",
   "promotions.col.type": "Tür",
