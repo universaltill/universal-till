@@ -1523,5 +1523,8 @@
   "elevation.summary.enrol_claim_code": "Yeni bir mağaza talep kodu ve QR bağlantısı oluştur.",
   "elevation.summary.enrol_now": "Bu kasayı pazar yerine şimdi kaydetmeyi dene.",
   "pairings.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
-  "ext.error.unreachable": "Bu eklenti sayfasına şu anda ulaşılamıyor."
+  "ext.error.unreachable": "Bu eklenti sayfasına şu anda ulaşılamıyor.",
+  "catalog.item_form.saving": "Kaydediliyor…",
+  "catalog.item_form.saved": "Kaydedildi",
+  "catalog.keypad.failed_generic": "Eşleme başarısız"
 }

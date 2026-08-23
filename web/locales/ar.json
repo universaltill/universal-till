@@ -1523,5 +1523,8 @@
   "elevation.summary.enrol_claim_code": "إنشاء رمز مطالبة جديد للمتجر ورابط رمز الاستجابة السريعة.",
   "elevation.summary.enrol_now": "محاولة تسجيل هذا الجهاز في السوق الآن.",
   "pairings.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
-  "ext.error.unreachable": "صفحة الإضافة هذه غير متاحة الآن."
+  "ext.error.unreachable": "صفحة الإضافة هذه غير متاحة الآن.",
+  "catalog.item_form.saving": "جارٍ الحفظ…",
+  "catalog.item_form.saved": "تم الحفظ",
+  "catalog.keypad.failed_generic": "فشل الربط"
 }
