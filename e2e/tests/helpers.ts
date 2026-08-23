@@ -104,11 +104,23 @@ export function expectStacked(fields: FieldGeometry[], where: string) {
 // doesn't expose which resource 404'd, so this can't be scoped tighter than
 // the message text itself; it still fails on every other console error,
 // including real image-decode failures, which log a distinct message.
-export function watchConsole(page: Page): () => void {
+//
+// `extraExempt` (ut-docs#916): an additional per-test exemption, for a spec
+// that deliberately drives a handler into a real non-2xx response (e.g. the
+// print/test 502 a disabled printer always returns) — Chromium logs its own
+// "Failed to load resource: …" console error for every non-2xx XHR/fetch
+// regardless of how the page's own JS handles it, so a test proving the
+// rendered error DOES surface in the DOM would otherwise fail on this
+// unrelated, expected browser-level log line. Scoped to just that test, not
+// a blanket exemption — every other console error still fails it.
+export function watchConsole(page: Page, extraExempt?: RegExp): () => void {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => {
-    if (m.type() === 'error' && !/^Failed to load resource:.*404/.test(m.text())) errors.push(m.text());
+    if (m.type() !== 'error') return;
+    if (/^Failed to load resource:.*404/.test(m.text())) return;
+    if (extraExempt && extraExempt.test(m.text())) return;
+    errors.push(m.text());
   });
   return () => expect(errors, 'page produced console errors').toEqual([]);
 }
