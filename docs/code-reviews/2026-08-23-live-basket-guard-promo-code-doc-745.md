@@ -38,6 +38,22 @@ future change back at this function.
 - No real client/shop name; no secret-shaped literal (only the existing
   public demo promo codes and an issue number are referenced).
 
+## CI finding, fixed after the independent review
+
+CI's `guard-docs-shots.sh` failed on the first push. `settings_page.go`
+registers a screenshotted route, so the guard hashes it as a whole file
+(documented, accepted over-inclusion — a comment-only edit to a
+route-owning file still trips it, per the guard's own header, ut-docs#620).
+Ran `make docs-shots`; the manifest's surface hash refreshed and 4
+alerts/4 designer screenshots picked up dozens-of-bytes pixel diffs
+unrelated to this change — this session's pre-installed Chromium
+(141.0.7390.37) doesn't match the pinned Playwright version
+(149.0.7827.55, ut-docs#622), so anti-aliasing differs slightly from the
+last regen; the tool prints this as an explicit, non-fatal warning. No
+settings-page screenshot changed, consistent with the actual diff being
+comment-only. Re-ran `bash scripts/ci/guard-docs-shots.sh` locally to
+confirm green before re-pushing.
+
 ## Independent review (Sonnet, fresh context, isolated worktree) — 0 blockers, 1 non-blocking nitpick
 
 Re-derived the diff itself (`git diff origin/main..HEAD`) rather than
