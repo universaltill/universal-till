@@ -327,7 +327,7 @@
      elevation-wired sub-features actually has something to show". -->
 {{ if or .isManager (gt .sampleCount 0) .pendingBasePlugins .restorePromptDeferred }}
 <div class="card">
-  <h2>🧹 {{ T "settings.data.title" }}</h2>
+  <h2>🧹 {{ T "settings.data.title" }} {{ helpLink "display" }}</h2>
   <!-- ut-docs#867: only the three elevation-wired actions in this card
        (remove-demo-catalogue, dismiss-restore-prompt,
        dismiss-pending-base-plugin) render unconditionally, each behind its
