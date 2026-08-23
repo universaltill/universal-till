@@ -48,9 +48,10 @@ func TestImportExportEndpoints_RealSessionGatesByRole(t *testing.T) {
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 			// This endpoint never sets a non-200 status (see its own source) —
-			// the forbidden-vs-allowed distinction lives in the response body.
-			if strings.Contains(rec.Body.String(), `class="error"`) {
-				t.Fatalf("%s got the forbidden error span, want past the auth gate: %s", role, rec.Body.String())
+			// the forbidden-vs-allowed distinction lives in the response body
+			// (ut-docs#238: a pos-notice error, not the old ad-hoc error span).
+			if strings.Contains(rec.Body.String(), `pos-notice error`) {
+				t.Fatalf("%s got the forbidden error notice, want past the auth gate: %s", role, rec.Body.String())
 			}
 		})
 		t.Run("POST /api/import "+role, func(t *testing.T) {
@@ -99,8 +100,8 @@ func TestImportExportEndpoints_RealSessionGatesByRole(t *testing.T) {
 		req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/catalog/export-save", nil), cashier)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
-		if !strings.Contains(rec.Body.String(), `class="error"`) {
-			t.Fatalf("cashier export-save: expected the forbidden error span, got: %s", rec.Body.String())
+		if !strings.Contains(rec.Body.String(), `pos-notice error`) {
+			t.Fatalf("cashier export-save: expected the forbidden error notice, got: %s", rec.Body.String())
 		}
 	})
 	t.Run("POST /api/data/import/cashier_denied", func(t *testing.T) {

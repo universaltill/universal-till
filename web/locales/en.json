@@ -1524,5 +1524,8 @@
   "elevation.summary.enrol_claim_code": "Generate a new store-claim code and QR link.",
   "elevation.summary.enrol_now": "Attempt to register this till with the marketplace now.",
   "pairings.error.server": "Something went wrong. Please try again.",
-  "ext.error.unreachable": "That plugin page is unreachable right now."
+  "ext.error.unreachable": "That plugin page is unreachable right now.",
+  "catalog.item_form.saving": "Saving…",
+  "catalog.item_form.saved": "Saved",
+  "catalog.keypad.failed_generic": "Mapping failed"
 }

@@ -358,19 +358,29 @@ window.utCurrency = (function(){
 // Sale-screen notification surface (ut-docs#213,
 // docs/sale-screen-notifications.md): info/success notices
 // auto-expire; error notices persist until the operator dismisses them.
+//
+// ut-docs#238 generalizes this from the single hardcoded #toast-message id
+// to every .pos-notice currently in the document — the pattern now also
+// covers non-sale-screen spots (catalog's export-save/labels-print
+// handlers, and its own client-JS notices). Each element tracks its own
+// dismissed state via its own dataset (was a single module-level flag,
+// which could only ever track one notice at a time) — #toast-message's own
+// timing/behaviour is unchanged by this, it's simply one of however many
+// .pos-notice elements this now iterates.
 function scheduleToastDismiss(){
-  var toast = document.getElementById('toast-message');
-  if (!toast || toast.dataset.dismissed === '1') return;
-  if (toast.classList.contains('error')) return; // errors persist until dismissed
-  toast.dataset.dismissed = '1';
-  setTimeout(function(){
-    toast.classList.add('hide');
+  document.querySelectorAll('.pos-notice').forEach(function(toast){
+    if (toast.dataset.dismissed === '1') return;
+    if (toast.classList.contains('error')) return; // errors persist until dismissed
+    toast.dataset.dismissed = '1';
     setTimeout(function(){
-      if (toast && toast.parentNode) {
-        toast.parentNode.removeChild(toast);
-      }
-    }, 250);
-  }, 2500);
+      toast.classList.add('hide');
+      setTimeout(function(){
+        if (toast && toast.parentNode) {
+          toast.parentNode.removeChild(toast);
+        }
+      }, 250);
+    }, 2500);
+  });
 }
 
 document.addEventListener('DOMContentLoaded', scheduleToastDismiss);
