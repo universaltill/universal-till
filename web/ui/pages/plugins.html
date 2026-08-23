@@ -28,18 +28,26 @@
         </div>
         <p class="muted" x-text="p.id" style="font-size:.8rem; word-break:break-all"></p>
         <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem; flex-wrap:wrap">
-          <span class="tag" x-show="p.enabled" style="background:rgba(34,197,94,.2); color:#15803d">{{ T "plugins.manage.enabled" }}</span>
-          <span class="tag" x-show="!p.enabled" style="background:rgba(148,163,184,.3); color:#475569">{{ T "plugins.manage.disabled" }}</span>
+          {{/* ut-docs#628 follow-up: reuse the same token-based tag pattern
+               shifts.html/inventory.html already use (rgba tint matching
+               var(--success)/var(--danger) at low opacity) instead of the
+               one-off literals this chip row used to hardcode, so a theme
+               retuning those tokens re-skins this page too. The disabled
+               chip needs no override at all — .tag's own default styling
+               (var(--surface-2)/var(--muted)/var(--border)) already IS the
+               neutral look it was reinventing. */}}
+          <span class="tag" x-show="p.enabled" style="background:rgba(22,163,74,.12); color:var(--success)">{{ T "plugins.manage.enabled" }}</span>
+          <span class="tag" x-show="!p.enabled">{{ T "plugins.manage.disabled" }}</span>
           {{/* ut-docs#368: install_state='broken' — registered but its binary
                failed to load (e.g. a join snapshot's row with no files). Same
                ⚠-suffix warning shape as the sync chip; the tooltip explains
                how each kind of plugin recovers (store installs re-fetch
                automatically; file imports need a manual re-import). */}}
           <span class="tag" x-show="p.state === 'broken'"
-                style="background:rgba(239,68,68,.2); color:#b91c1c"
+                style="background:rgba(220,38,38,.12); color:var(--danger)"
                 title="{{ T "plugins.status.broken_binary" }}">{{ T "plugins.manage.broken" }} ⚠</span>
           <span class="tag" x-text="p.trust"></span>
-          <span class="tag" x-show="p.hasUpdate" style="background:rgba(251,146,60,.25); color:#c2410c" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
+          <span class="tag warn" x-show="p.hasUpdate" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
         </div>
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">
           <a class="btn secondary" x-show="p.enabled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
