@@ -6,7 +6,7 @@
 # help topic and records content hashes in web/help/img/manifest.json; this
 # guard recomputes the same hashes from the working tree and fails when they
 # have drifted — i.e. when a topic's markdown, or any file of the app surface
-# that could change what is on screen (web/ui/**, non-test
+# that could change what is on screen (web/ui/**, web/public/**, non-test
 # internal/pages/**.go), changed after the screenshots were last taken.
 #
 # HASH ALGORITHM — must stay in lockstep with e2e/tests-docs/lib.js (the
@@ -179,8 +179,9 @@ orphans = sorted(set(recorded) - set(topics))
 fail = False
 if surface_stale:
     fail = True
-    print("guard-docs-shots: the app surface (web/ui/** or internal/pages/**.go) "
-          "changed since the manual's screenshots were last taken")
+    print("guard-docs-shots: the app surface (web/ui/**, web/public/**, or "
+          "internal/pages/**.go) changed since the manual's screenshots were "
+          "last taken")
 if stale:
     fail = True
     print("guard-docs-shots: topic markdown changed since its screenshot was taken (locale/topic):")
