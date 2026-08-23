@@ -1113,6 +1113,7 @@
   "registers.error.update": "تعذر تحديث الصندوق",
   "registers.error.last_active": "لا يمكن إلغاء تفعيل آخر صندوق نشط",
   "registers.strand_warning": "إنشاء صندوق ثانٍ، أو إلغاء تفعيل صندوق قد يستخدمه جهاز آخر، قد يترك تعيين الصندوق لذلك الجهاز غير واضح. بعد ذلك، تحقق من الإعدادات ← الصناديق ← \"صندوق هذا الجهاز\" لكل جهاز.",
+  "registers.in_use_hint": "لديه سجل ورديات أو مبيعات",
   "promotions.title": "العروض الترويجية",
   "promotions.col.code": "الكود",
   "promotions.col.type": "النوع",

@@ -244,6 +244,66 @@ func TestRegistersPage_DeactivateWithHistoryIsAllowed(t *testing.T) {
 	}
 }
 
+// ut-docs#897: RegisterInUse (added alongside #651) is informational only --
+// it must never block deactivation (covered above) -- but it should still
+// be surfaced to the manager as a hint before they act.
+func TestRegistersPage_ShowsInUseHintForRegisterWithHistory(t *testing.T) {
+	mux, d := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postForm(mux, "/api/registers", url.Values{"name": {"Busy Till"}}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create busy: code=%d", rec.Code)
+	}
+	rec = postForm(mux, "/api/registers", url.Values{"name": {"Idle Till"}}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create idle: code=%d", rec.Code)
+	}
+	var busyID string
+	if err := d.Db.QueryRow(`SELECT id FROM registers WHERE name = 'Busy Till'`).Scan(&busyID); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+
+	if _, err := d.Db.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at)
+		VALUES ('sale-897', 'R-897', 'completed', 'sale', 'GBP', 0, 0, 0, 0, ?, datetime('now'))`, busyID); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /registers = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Split the body around each register's own row so the hint's presence
+	// is checked per-row, not just "somewhere in the page" -- otherwise a
+	// hint rendered for the wrong register would still pass a bare
+	// strings.Contains(body, hint) check.
+	busyIdx := strings.Index(body, "Busy Till")
+	idleIdx := strings.Index(body, "Idle Till")
+	if busyIdx == -1 || idleIdx == -1 {
+		t.Fatalf("both registers must be listed, got: %s", body)
+	}
+	const hint = "Has shift/sale history"
+	rowFor := func(nameIdx int) string {
+		// A table row is short; 400 chars comfortably spans one row's
+		// cells without reaching into the next register's row.
+		end := nameIdx + 400
+		if end > len(body) {
+			end = len(body)
+		}
+		return body[nameIdx:end]
+	}
+	if !strings.Contains(rowFor(busyIdx), hint) {
+		t.Fatalf("Busy Till (has a sale) must show the in-use hint, row: %s", rowFor(busyIdx))
+	}
+	if strings.Contains(rowFor(idleIdx), hint) {
+		t.Fatalf("Idle Till (no history) must NOT show the in-use hint, row: %s", rowFor(idleIdx))
+	}
+}
+
 // A shop must always have at least one active register to open a shift or
 // take a sale on -- mirrors the last-active-location guard on stock
 // locations.
