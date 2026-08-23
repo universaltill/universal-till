@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -691,6 +692,53 @@ func TestSettingsPage_TillRegisterPickerRendersAndSelects(t *testing.T) {
 	}
 	if body := get(); !strings.Contains(body, `/api/settings/till-register`) {
 		t.Fatalf("replica: expected the till-register picker to still render, got:\n%s", body)
+	}
+}
+
+// ut-docs#698: a batch still inside its retention window must show the
+// retained-until date and NOT offer the Delete-permanently confirm flow, so
+// an operator never types PURGE and confirms only to be refused; a batch
+// outside the window (or with no sales at all) must offer the control
+// exactly as before.
+func TestSettingsPage_ResetArchivesShowsPurgeEligibility(t *testing.T) {
+	// newFullAuthDeps' hand-built fixture schema has no reset_batches table
+	// (it's not a real migrated DB) -- newRealDBDeps (demo_seed_opt_in_test.go)
+	// is, and already registers registerSettings.
+	mux, d := newRealDBDeps(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	// Purgeable: no trading history at all -- DeleteResetBatch's own
+	// no-sales carve-out, mirrored here.
+	if _, err := d.Db.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('b-purgeable', ?, 0)`, now); err != nil {
+		t.Fatal(err)
+	}
+	// Not purgeable: real sales, archived "now" -- well inside any real
+	// country's retention window (or the global floor with none configured).
+	if _, err := d.Db.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('b-gated', ?, 3)`, now); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `data-purge-batch="b-purgeable"`) {
+		t.Fatalf("a batch with no trading history must still offer Delete-permanently, got:\n%s", body)
+	}
+	if strings.Contains(body, `data-purge-batch="b-gated"`) {
+		t.Fatalf("a batch within its retention window must not offer the Delete-permanently control, got:\n%s", body)
+	}
+	// Both rows keep their (unrelated) restore controls -- restore is
+	// out of scope for this card.
+	if !strings.Contains(body, `data-restore-batch="b-purgeable"`) || !strings.Contains(body, `data-restore-batch="b-gated"`) {
+		t.Fatalf("restore controls must stay untouched on every row, got:\n%s", body)
+	}
+	if !strings.Contains(body, "Retained until") {
+		t.Fatalf("gated row must show a retained-until message, got:\n%s", body)
 	}
 }
 

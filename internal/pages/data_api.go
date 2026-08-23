@@ -172,14 +172,23 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		type batchJSON struct {
-			ID         string `json:"id"`
-			CreatedAt  string `json:"created_at"`
-			ActorID    string `json:"actor_id"`
-			SalesCount int64  `json:"sales_count"`
+			ID            string `json:"id"`
+			CreatedAt     string `json:"created_at"`
+			ActorID       string `json:"actor_id"`
+			SalesCount    int64  `json:"sales_count"`
+			Purgeable     bool   `json:"purgeable"`
+			RetainedUntil string `json:"retained_until,omitempty"`
 		}
 		batches := make([]batchJSON, 0, len(list))
 		for _, b := range list {
-			batches = append(batches, batchJSON{ID: b.ID, CreatedAt: b.CreatedAt, ActorID: b.ActorID, SalesCount: b.SalesCount})
+			bj := batchJSON{ID: b.ID, CreatedAt: b.CreatedAt, ActorID: b.ActorID, SalesCount: b.SalesCount, Purgeable: b.Purgeable}
+			// ut-docs#698: RetainedUntil is the zero time.Time whenever no
+			// retention gate applied at all (SalesCount == 0) -- omit
+			// rather than render a meaningless "retained until 0001-01-01".
+			if !b.RetainedUntil.IsZero() {
+				bj.RetainedUntil = b.RetainedUntil.Format("2006-01-02")
+			}
+			batches = append(batches, bj)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"batches": batches}, "error": nil})

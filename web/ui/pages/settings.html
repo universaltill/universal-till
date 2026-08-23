@@ -356,11 +356,19 @@
         <tr>
           <td>{{ .CreatedAt }}</td>
           <td>{{ .SalesCount }}</td>
-          <td style="display:flex; gap:.3rem; flex-wrap:wrap">
+          <td style="display:flex; gap:.3rem; flex-wrap:wrap; align-items:center">
             <input type="text" class="restore-confirm" placeholder="{{ T "settings.data.archives_restore_confirm_ph" }}" style="width:9rem">
             <button class="btn secondary" data-restore-batch="{{ .ID }}" data-testid="archive-restore">{{ T "settings.data.archives_restore_btn" }}</button>
+            {{ if .Purgeable }}
             <input type="text" class="purge-confirm" placeholder="{{ T "settings.data.archives_purge_confirm_ph" }}" style="width:9rem">
             <button class="btn secondary" data-purge-batch="{{ .ID }}" data-testid="archive-purge">{{ T "settings.data.archives_purge_btn" }}</button>
+            {{ else }}
+            <!-- ut-docs#698: still inside its retention window -- the
+                 confirm flow is hidden rather than merely disabled, so an
+                 operator can't type PURGE, confirm the "cannot be undone"
+                 dialog, and only then get refused. -->
+            <span class="muted" data-testid="archive-purge-retained">{{ printf (T "settings.data.archives_retained_until_row") .RetainedUntilDisplay }}</span>
+            {{ end }}
           </td>
         </tr>
         {{ end }}
