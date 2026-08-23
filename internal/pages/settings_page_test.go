@@ -298,12 +298,27 @@ func TestExitToOSEndpoint(t *testing.T) {
 		t.Fatal("wrong PIN must not call the hook")
 	}
 
+	// ut-docs#616: neither rejected attempt above should have left an
+	// audit-log entry — a failed/blank PIN authorizes nothing to record.
+	if n := auditCount(t, d.Db, "exit_to_os"); n != 0 {
+		t.Fatalf("audit_log has %d exit_to_os entries before any successful attempt, want 0", n)
+	}
+
 	// Correct manager PIN: 204, hook called.
 	if rec := makeReq(url.Values{"manager_pin": {"482913"}}); rec.Code != http.StatusNoContent {
 		t.Fatalf("correct manager PIN = %d, want 204: %s", rec.Code, rec.Body.String())
 	}
 	if !wc.called {
 		t.Fatal("correct manager PIN must call the hook")
+	}
+
+	// ut-docs#616: a successful exit-to-os records who authorized it.
+	var actorID string
+	if err := d.Db.QueryRow(`SELECT actor_id FROM audit_log WHERE action='exit_to_os'`).Scan(&actorID); err != nil {
+		t.Fatalf("exit_to_os audit entry not found: %v", err)
+	}
+	if actorID != "mgr1" {
+		t.Fatalf("exit_to_os audit actor_id = %q, want %q (the authorizing manager)", actorID, "mgr1")
 	}
 }
 
