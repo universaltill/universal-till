@@ -5,6 +5,8 @@ section: Connecting & extending
 order: 310
 summary: "Run several tills on the same shop network: one is the main till, the others join it and share the catalog, prices, settings and stock automatically."
 routes: [/tills, /ui/tills/pending-pairings, /registers]
+# /registers is never screenshotted (docs-shots only captures routes[0]) —
+# accepted gap, see e2e/tests-docs/lib.js's routedTopics() comment (ut-docs#900).
 keywords: [second till, pairing, sync, lan, primary, register]
 ---
 
