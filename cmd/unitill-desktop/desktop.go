@@ -9,6 +9,12 @@
 // WKWebView shell with clipboard, file pickers, camera permission and popups
 // (webkit_darwin.go); other platforms use webview_go (webview_fallback.go).
 //
+// Before spawning that child, this process also starts a loopback-only
+// control listener (control.go, ut-docs#882) and hands its address to the
+// child via UT_DESKTOP_CONTROL_ADDR — the live, no-relaunch channel a
+// PIN-gated exit-to-os/apply-mode request from unitill-pos uses to reach
+// the native window this process owns.
+//
 // Build (macOS/Windows/Linux, needs CGO + the system WebView):
 //
 //	go build -tags desktop -o unitill-desktop ./cmd/unitill-desktop
@@ -44,7 +50,21 @@ func main() {
 	// just open the window on it (also makes a second app launch join the
 	// running till instead of starting another).
 	if tillAlreadyRunning("127.0.0.1:8080") {
-		showWindow("http://127.0.0.1:8080", "Universal Till", -1)
+		// No child to hand UT_DESKTOP_CONTROL_ADDR to here — that server
+		// process was started independently (typically the .deb's systemd
+		// service) and never got one, so exit-to-os/apply-mode fall back to
+		// NoopWindowController on it regardless of what this process does.
+		// Still starts its own listener rather than special-casing this
+		// path with a nil controlServer: cheap, and keeps showWindow's
+		// contract (a non-nil *controlServer whenever a window exists)
+		// uniform across both branches.
+		ctl, err := newControlServer()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "control channel unavailable:", err)
+		} else {
+			defer ctl.Close()
+		}
+		showWindow("http://127.0.0.1:8080", "Universal Till", -1, ctl)
 		return
 	}
 
@@ -80,10 +100,27 @@ func main() {
 		}
 	}
 
+	// Loopback-only control listener (ut-docs#882): started before the
+	// child so its address can be handed over via env, mirroring how the
+	// child hands *this* process nothing back — the channel is one-way,
+	// unitill-pos calling into unitill-desktop, never the reverse. A bind
+	// failure is logged and otherwise ignored: the till must still open
+	// with exit-to-os/apply-mode simply falling back to NoopWindowController,
+	// same as it always has.
+	ctl, ctlErr := newControlServer()
+	if ctlErr != nil {
+		fmt.Fprintln(os.Stderr, "control channel unavailable:", ctlErr)
+	} else {
+		defer ctl.Close()
+	}
+
 	cmd := exec.Command(posBin)
 	cmd.Dir = workDir // so web/ resolves; data/ defaults to the per-user dir
 	// We supply the window ourselves, so tell the server not to also pop a browser.
 	cmd.Env = append(os.Environ(), "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR="+addr)
+	if ctl != nil {
+		cmd.Env = append(cmd.Env, envDesktopControlAddr+"="+ctl.Addr())
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	configureChild(cmd) // Windows: keep the server's console window hidden
 	if err := cmd.Start(); err != nil {
@@ -104,7 +141,7 @@ func main() {
 	// Blocks until the window closes. On macOS closing the window terminates the
 	// process (skipping the deferred Kill), so showWindow is told the server PID
 	// to stop it first.
-	showWindow("http://"+addr, "Universal Till", cmd.Process.Pid)
+	showWindow("http://"+addr, "Universal Till", cmd.Process.Pid, ctl)
 }
 
 // tillAlreadyRunning reports whether a Universal Till server answers on addr

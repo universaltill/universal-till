@@ -32,10 +32,11 @@ import "C"
 import webview "github.com/webview/webview_go"
 
 // applyWindowMode turns the persisted display.window_mode preference into
-// real GTK calls on the shell's own toplevel window (ut-docs#611). Applied
-// once at launch (before w.Run()) — a live, no-relaunch toggle needs a
-// cross-process control channel between this shell and the unitill-pos
-// server it spawns, split off as ut-docs#882.
+// real GTK calls on the shell's own toplevel window (ut-docs#611). Called
+// once at launch (before w.Run()) with whatever's persisted right now, and
+// again — dispatched onto the UI thread — whenever a live Settings toggle
+// arrives over the shell's own cross-process control channel (ut-docs#882,
+// webview_fallback.go).
 func applyWindowMode(w webview.WebView, mode string) {
 	flags := flagsForWindowMode(mode)
 	var fullscreen, decorated, maximize C.int
