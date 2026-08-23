@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -1041,7 +1041,18 @@ type receiptTSEView struct {
 	// QRDataURI is a data:image/png;base64 URI of the evidence QR code
 	// (same inline-embed pattern as settings_page.go's claim QR); empty if
 	// encoding failed, in which case only the text lines render.
-	QRDataURI string
+	//
+	// ut-docs#906: must be template.URL, not string. receipt.html renders
+	// this via html/template (this file switched from text/template to
+	// html/template in the same fix — text/template applied NO escaping
+	// at all to any receipt field, not just this one). html/template's
+	// contextual auto-escaper treats a plain string in an <img src="…">
+	// position as an untrusted URL and strips any non-http(s)/mailto
+	// scheme — including data: — down to the safe placeholder
+	// "#ZgotmplZ". template.URL is the package's own signal that this
+	// value was constructed here, not from user input, and is safe to
+	// emit as-is.
+	QRDataURI template.URL
 }
 
 // buildTSEQRPayload assembles the QR payload from the recorded evidence.
@@ -1198,7 +1209,7 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 			SignatureAlgorithm: tseSignature.SignatureAlgorithm,
 		}
 		if png, err := qrcode.Encode(buildTSEQRPayload(tseSignature), qrcode.Medium, 140); err == nil {
-			tseView.QRDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+			tseView.QRDataURI = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
 		}
 	}
 	data := map[string]any{
