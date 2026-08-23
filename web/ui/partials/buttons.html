@@ -29,7 +29,21 @@
          cat_* seed literals — never caller-supplied text. If a category
          ID ever becomes user-editable, this needs SearchResult.AddVals()
          's treatment (marshal server-side), not raw interpolation. */}}
-    <div class="products-finder" x-data="{ tab: '{{ if $hasTabs }}{{ (index .Groups 0).ID }}{{ end }}', q: '' }">
+    {{/* matches: the same per-tile "!q or data-name substring" check
+         product-tile already applied inline, now shared. sectionHasMatch:
+         does ANY .btn-tile anywhere under el (a category-group section, or
+         a whole tab panel) currently match — used both to hide a
+         subcategory's header once search empties it (ut-docs#422's
+         stranded-header gap) and to show a per-panel "no matches" message
+         when nothing in the active tab matches at all. Re-queries the DOM
+         on every keystroke rather than tracking a reactive count — fine at
+         the tile counts a category screen actually has. */}}
+    <div class="products-finder" x-data="{
+      tab: '{{ if $hasTabs }}{{ (index .Groups 0).ID }}{{ end }}',
+      q: '',
+      matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
+      sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); }
+    }">
       <input type="search" id="products-search" x-model="q"
              placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
              autocomplete="off">
@@ -64,13 +78,26 @@
              tabs make (only "split", never "pay", is cloaked). */}}
         <div class="products-tab-panel" x-show="tab === '{{ $g.ID }}'"{{ if ne $i 0 }} x-cloak{{ end }}>
           {{ template "category-group-body" $g }}
+          <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         </div>
         {{ end }}
         {{ else }}
         {{/* Exactly one real category, nothing uncategorized: no tab bar
              (nothing to switch between), but its name/color still show
-             via the normal headed group template. */}}
+             via the normal headed group template. This branch reuses
+             "category-group" too, so it inherits that template's
+             x-show="sectionHasMatch($el)" (ut-docs#422) the same as any
+             tabbed subcategory — a search matching nothing here now hides
+             the section same as it would under a tab, and without this
+             message that would leave a fully blank panel with less
+             feedback than even the pre-#422 behavior (which at least kept
+             the header visible). $el.parentElement here is #buttons-grid
+             itself (this branch's only content, per the if/else-if/else
+             above), the same "the whole current panel" pattern the tabbed
+             branch's own message uses one level up against
+             .products-tab-panel. */}}
         {{ range .Groups }}{{ template "category-group" . }}{{ end }}
+        <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ end }}
       </div>
     </div>
@@ -101,7 +128,7 @@
      synthetic "uncategorized" bucket has an empty .ID, so it's labeled via
      i18n rather than the (absent) category name. */}}
 {{ define "category-group" }}
-<section class="category-group" style="--cat-color: {{ .Color }}">
+<section class="category-group" style="--cat-color: {{ .Color }}" x-show="sectionHasMatch($el)">
   <h3 class="category-header">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
   {{ if .Buttons }}
   <div class="grid">
@@ -117,7 +144,7 @@
   <button
     class="btn-tile"
     data-name="{{ .Label }}"
-    x-show="!q || $el.dataset.name.toLowerCase().includes(q.toLowerCase())"
+    x-show="matches($el)"
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
     hx-trigger="click"
     hx-target="#modifier-modal"
@@ -131,7 +158,7 @@
   <button
     class="btn-tile"
     data-name="{{ .Label }}"
-    x-show="!q || $el.dataset.name.toLowerCase().includes(q.toLowerCase())"
+    x-show="matches($el)"
     hx-post="/api/pos/scan"
     hx-vals='{{ jsonVals "code" .Code }}'
     hx-trigger="click"
