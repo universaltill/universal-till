@@ -61,7 +61,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/orders", func(w http.ResponseWriter, r *http.Request) {
 		entries, err := data.NewPOSRepo(d.Db).ListRecentOrders(r.Context(), 50)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "orders.err.server", "orders", err)
 			return
 		}
 		type orderRow struct {
@@ -118,7 +118,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 		applied, found, err := repo.ApplyOrderStatus(r.Context(), receiptNo, next, actorID, now,
 			func(current string) bool { return pos.OrderStatusAllowed(current, next) })
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "orders.err.server", "orders", err)
 			return
 		}
 		if !found {
@@ -139,7 +139,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 		// who/when.
 		ev, ok, err := repo.LatestOrderStatus(r.Context(), receiptNo)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "orders.err.server", "orders", err)
 			return
 		}
 		if !ok {

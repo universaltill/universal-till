@@ -42,7 +42,7 @@ func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 
 		entries, err := repo.ListAudit(r.Context(), filters)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "audit.error.server", "audit", err)
 			return
 		}
 		entityTypes, _ := repo.DistinctAuditEntityTypes(r.Context())
@@ -86,7 +86,7 @@ func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 
 		entries, truncated, err := repo.ListAuditForExport(r.Context(), filters)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "audit.error.server", "audit", err)
 			return
 		}
 

@@ -95,18 +95,40 @@ for path in sorted(glob.glob("web/locales/*.json")):
 #    on the same line.
 #
 #    On the http.Error exemption specifically -- why it's still open, not
-#    narrowed (ut-docs#316): the two most-repeated http.Error literals
-#    ("manager or admin required"/"invalid upload" and their variants,
-#    ~40 sites) and 22 of catalog/handlers.go's 26 err.Error()-to-the-
-#    operator sites now go through common.LocalizedError/
-#    LogAndLocalizedError (translated, never raw Go/SQL text or an
-#    internal ID) -- the remaining 4 in that file are deliberately
-#    untouched, clean hand-written validation errors, not this defect
-#    class. But the ~86 more raw err.Error() sites and the long tail of
-#    one-off literals scattered across the REST of internal/pages are NOT
-#    yet swept -- narrowing this exemption today would fail CI on all of
-#    them at once, well past what one card's diff should carry. Tracked
-#    as ut-docs#893 rather than left implicit.
+#    narrowed (ut-docs#316, continued by ut-docs#893): the two most-repeated
+#    http.Error literals ("manager or admin required"/"invalid upload" and
+#    their variants, ~40 sites), 22 of catalog/handlers.go's 26
+#    err.Error()-to-the-operator sites, and (ut-docs#893's first batch) all
+#    26 remaining http.Error sites in audit_page.go, basket_page.go,
+#    external_api.go, invoice_page.go (25 http.Error sites plus one
+#    fmt.Fprintf-rendered err.Error() leak at /api/invoices/issue's 409
+#    branch), journal_page.go, order_status.go, pending_pairings.go,
+#    receipt_designer.go, sync_admin.go and sync_assets.go/sync_sales.go
+#    now go through common.LocalizedError/LogAndLocalizedError (translated,
+#    never raw Go/SQL text or an internal ID) -- the remaining 4 sites in
+#    catalog/handlers.go are deliberately untouched, clean hand-written
+#    validation errors, not this defect class. But ~294 more sites are NOT
+#    yet swept, in two classes (2026-08-23 review of #893's first batch
+#    found the original estimate here under-counted the second class by
+#    ~101 sites -- corrected):
+#    - ~63 more raw err.Error()-to-the-operator leaks, in backup_api.go,
+#      buttons_api.go, eod_api.go, import_page.go, issue_report_page.go,
+#      pairing_api.go, plugin_api.go, plugin_settings_page.go, pos_api.go,
+#      refund_page.go, settings_page.go, sync_api.go and tax_codes_page.go
+#      (same 13 files as before -- this class is fully scoped to them).
+#    - ~231 one-off hardcoded-literal http.Error sites: ~130 more spread
+#      across those same 13 files, plus ~101 in ~23 further files this
+#      sweep hasn't touched at all (users_page.go, self_order_shop.go,
+#      permission_settings_page.go, setup_page.go, auth_page.go,
+#      registers_page.go, kitchen_stations_page.go, update_api.go,
+#      translations_page.go, tables_page.go, pos_modifiers_api.go,
+#      locations_page.go, plugin_page.go, order_tracking.go, help_page.go,
+#      ask_api.go, promotions_page.go, print_api.go, plugins_store_page.go,
+#      plugins_page.go, my_reports_page.go, discovery_api.go,
+#      country_settings_page.go).
+#    Narrowing this exemption today would fail CI on all of them at once,
+#    well past what one card's diff should carry. The remaining sweep
+#    stays tracked as ut-docs#893 rather than left implicit.
 call_re = re.compile(
     r'(?:w\.Write\(\[\]byte\(|fmt\.Fprintf\(\s*w,\s*|fmt\.Fprint(?:ln)?\(\s*w,\s*)"((?:[^"\\]|\\.)*)"'
 )
