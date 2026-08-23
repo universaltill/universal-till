@@ -62,6 +62,27 @@ function sha256Hex(buf) {
 // returns only the topics that declare a routes: field, each with its FIRST
 // route (the screenshot target). Route-less topics get no screenshot (a
 // follow-up backlog card covers them).
+//
+// A topic can declare MORE than one route (e.g. one topic covering a
+// closely related cluster of pages), but only routes[0] is ever
+// screenshotted — internal/manual.go injects at most one generated image
+// (web/help/img/<locale>/<id>.png) per topic, keyed by topic id, right
+// after the topic's <h1>. There is no per-route screenshot slot. A topic
+// whose secondary routes (routes[1:]) show meaningfully different screens
+// from routes[0] will simply never get those screens captured for the
+// manual — confirmed, accepted gap for "inventory" (routes[0] /inventory;
+// /locations never shown) and "multitill" (routes[0] /tills; /registers
+// never shown), ut-docs#900. Their prose already documents the /locations
+// and /registers screens well enough without a dedicated screenshot,
+// consistent with option (b) in ut-docs#900's own acceptance criteria. A
+// real fix needs either splitting a secondary route out into its own
+// topic (its own id, its own routes: entry — the exclusive-route-
+// ownership check in internal/manual.go and guard-help-topics.sh already
+// allow this) or extending this harness (plus write-manifest.js and
+// scripts/ci/guard-docs-shots.sh, which must stay in lockstep with this
+// file's hash algorithm) to support more than one screenshot per topic —
+// neither is done here; left as a future backlog card if it's ever worth
+// the cost for a specific topic.
 function routedTopics() {
   const dir = path.join(repoRoot, 'web', 'help', 'en');
   const out = [];

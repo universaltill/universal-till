@@ -5,6 +5,8 @@ section: Setting up your shop
 order: 120
 summary: Tracks on-hand quantities per item and variant.
 routes: [/inventory, /locations, /ui/inventory/stock-table]
+# /locations is never screenshotted (docs-shots only captures routes[0]) —
+# accepted gap, see e2e/tests-docs/lib.js's routedTopics() comment (ut-docs#900).
 keywords: [stock, goods, receipt, locations, count]
 ---
 
