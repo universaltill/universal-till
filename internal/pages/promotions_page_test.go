@@ -20,10 +20,41 @@ func newPromotionsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
-	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}}
+	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
 	registerPromotions(mux, d)
 	return mux, d
+}
+
+// ut-docs#902: GET /promotions must be reachable under UT_AUTH=off with no
+// session — same fix and rationale as
+// country_settings_page_test.go's TestCountrySettingsPage_ReachableUnderAuthOff
+// (ut-docs#901's precedent).
+func TestPromotionsPage_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newPromotionsTestMux(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/promotions", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /promotions under UT_AUTH=off = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Mutating handlers, not just the GET page, must also pick up canPerform's
+// UT_AUTH=off bypass — independent review finding on ut-docs#901, applied
+// here too.
+func TestPromotionsPageCreate_ReachableUnderAuthOff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newPromotionsTestMux(t)
+
+	rec := postForm(mux, "/api/promotions", url.Values{
+		"code": {"AUTHOFF"}, "type": {"amount"}, "value_amount": {"5.00"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/promotions" {
+		t.Fatalf("create under UT_AUTH=off: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
 }
 
 func TestPromotionsPagePermissions(t *testing.T) {
