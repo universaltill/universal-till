@@ -1,7 +1,9 @@
 {{ define "content" }}
 <div class="page-head">
-  <h1>{{ T "registers.title" }}</h1>
+  <h1>{{ T "registers.title" }} {{ helpLink "multitill" }}</h1>
 </div>
+
+<p class="muted">{{ T "registers.strand_warning" }}</p>
 
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
 

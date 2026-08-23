@@ -40,6 +40,34 @@ func TestRegistersPagePermissions(t *testing.T) {
 	}
 }
 
+// ut-docs#896: the page must warn a manager in-page that creating a second
+// register, or deactivating one another till might be bound to, can strand
+// that till's register binding -- and point them at the fix.
+func TestRegistersPage_ShowsStrandWarning(t *testing.T) {
+	mux, _ := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /registers = %d", rec.Code)
+	}
+	if !strings.Contains(body, "register assignment unclear") {
+		t.Fatalf("registers page missing the strand warning, got: %s", body)
+	}
+	// nav.html's own automatic "?" already points every page at a topic via
+	// manual.HelpHref, so a bare data-testid="help-hint" check passes
+	// regardless of this change. Assert on the explicit multitill link this
+	// page's own h1 now carries: two occurrences of the topic's href -- the
+	// nav's auto link plus the one added here -- proves the new helpLink is
+	// actually present, not just the pre-existing nav one.
+	if n := strings.Count(body, `href="/help/multitill"`); n != 2 {
+		t.Fatalf("registers page: want 2 links to the multitill help topic (nav auto-link + explicit helpLink), got %d in: %s", n, body)
+	}
+}
+
 func TestRegistersPageCreate_WhitespaceOnlyNameRejected(t *testing.T) {
 	mux, _ := newRegistersTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
