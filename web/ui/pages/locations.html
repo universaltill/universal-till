@@ -22,7 +22,7 @@
           <td>{{ if .IsActive }}{{ T "locations.active" }}{{ else }}<span class="muted">{{ T "locations.inactive" }}</span>{{ end }}</td>
           <td class="users-actions">
             <form method="post" action="/api/locations/{{ .ID }}" class="users-inline">
-              <input type="text" name="name" value="{{ .Name }}" required />
+              <input type="text" name="name" value="{{ .Name }}" required class="rename-input" />
               <button type="submit" class="btn secondary">{{ T "locations.rename" }}</button>
             </form>
             <form method="post" action="/api/locations/{{ .ID }}/active" class="users-inline">
