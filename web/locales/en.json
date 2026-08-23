@@ -1405,6 +1405,7 @@
   "issuereport.my_reports.attached_video": "Screen recording",
   "issuereport.my_reports.attached_images": "screenshot(s)",
   "issuereport.my_reports.view_on_github": "View on GitHub",
+  "issuereport.my_reports.more_not_shown": "%d more report(s) not shown — check back once older ones are filed or discarded.",
   "issuereport.status.sent": "Sent, awaiting review",
   "issuereport.status.received": "Received",
   "issuereport.status.transcribing": "Transcribing",

@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -235,5 +236,53 @@ func TestIssueReportsUpdateStatusUnknownIdIsNoop(t *testing.T) {
 	repo := NewIssueReportsRepo(d.DB)
 	if err := repo.UpdateStatus(context.Background(), "never-seen", "filed", ""); err != nil {
 		t.Fatalf("UpdateStatus on an unknown id must be a silent no-op, got: %v", err)
+	}
+}
+
+// CountSent backs the /my-reports "N more not shown" notice (ut-docs#445) —
+// it must reflect the TRUE row count, not whatever a capped ListSent
+// happens to return.
+func TestIssueReportsCountSentEmpty(t *testing.T) {
+	d := openIssueReportsTestDB(t)
+	repo := NewIssueReportsRepo(d.DB)
+	got, err := repo.CountSent(context.Background())
+	if err != nil {
+		t.Fatalf("CountSent: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("CountSent on an empty table = %d, want 0", got)
+	}
+}
+
+func TestIssueReportsCountSentMatchesRowCount(t *testing.T) {
+	d := openIssueReportsTestDB(t)
+	repo := NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	const n = 5
+	for i := 0; i < n; i++ {
+		if err := repo.SaveSent(ctx, SentReport{
+			ID:         fmt.Sprintf("rep-%d", i),
+			CapturedAt: time.Date(2026, 8, 1+i, 0, 0, 0, 0, time.UTC),
+			Status:     "sent",
+		}); err != nil {
+			t.Fatalf("SaveSent %d: %v", i, err)
+		}
+	}
+
+	got, err := repo.CountSent(ctx)
+	if err != nil {
+		t.Fatalf("CountSent: %v", err)
+	}
+	if got != n {
+		t.Fatalf("CountSent = %d, want %d", got, n)
+	}
+
+	// When N is within ListSent's own row limit, the two must agree exactly.
+	listed, err := repo.ListSent(ctx, n+5)
+	if err != nil {
+		t.Fatalf("ListSent: %v", err)
+	}
+	if len(listed) != got {
+		t.Fatalf("len(ListSent) = %d, CountSent = %d — must match when rowLimit >= N", len(listed), got)
 	}
 }

@@ -389,3 +389,60 @@ func TestMyReportsPage_FailingRowSurvivesCapOverOldestSentRow(t *testing.T) {
 		t.Fatalf("expected the newest sent row to still render: %s", body)
 	}
 }
+
+// ut-docs#445: a store with more sent reports than rowLimit gets a notice
+// naming exactly how many more exist beyond what's shown — a purely local
+// SQLite count (CountSent), no network involved.
+func TestMyReportsPage_MoreNotShownNoticeWhenOverLimit(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, db := newMyReportsTestMux(t)
+
+	const rowLimit = 100
+	const extra = 7
+	for i := 0; i < rowLimit+extra; i++ {
+		capturedAt := fmt.Sprintf("2027-06-01T%02d:%02d:00Z", i/60, i%60)
+		if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status) VALUES (?, ?, ?, 'sent')`,
+			fmt.Sprintf("rep-sent-%03d", i), "n", capturedAt); err != nil {
+			t.Fatalf("seed sent row %d: %v", i, err)
+		}
+	}
+
+	rec := getMyReports(t, mux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// A tight combo (count immediately followed by "more report") so this
+	// can't accidentally match a seeded row id like "rep-sent-007" — every
+	// id string in this test happens to contain the digit '7' too.
+	if !strings.Contains(body, fmt.Sprintf("%d more report", extra)) {
+		t.Fatalf("expected the notice to name the %d not-shown reports, got: %s", extra, body)
+	}
+	if strings.Contains(body, "issuereport.my_reports.more_not_shown") {
+		t.Fatalf("notice rendered as a raw key: %s", body)
+	}
+}
+
+// At or below rowLimit, every sent row is already shown — no notice.
+func TestMyReportsPage_NoMoreNotShownNoticeAtOrBelowLimit(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, db := newMyReportsTestMux(t)
+
+	const rowLimit = 100
+	for i := 0; i < rowLimit; i++ {
+		capturedAt := fmt.Sprintf("2027-06-01T%02d:%02d:00Z", i/60, i%60)
+		if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status) VALUES (?, ?, ?, 'sent')`,
+			fmt.Sprintf("rep-sent-%03d", i), "n", capturedAt); err != nil {
+			t.Fatalf("seed sent row %d: %v", i, err)
+		}
+	}
+
+	rec := getMyReports(t, mux)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "not shown") {
+		t.Fatalf("expected no more-not-shown notice at exactly rowLimit rows, got: %s", body)
+	}
+}
