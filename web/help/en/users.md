@@ -21,7 +21,28 @@ Separate cashier and manager accounts with PIN login, and shift tracking so you 
 5. The wizard also asks what kind of shop this is (café, retail, service trade, hospitality, market stall or other) and whether to load sample data — a small starter catalogue, 3 sample customers, and 3 sample promo codes (including a 10%-off code) — so you can try the till out. Both are optional: it's the same generic set whichever shop type you pick, the catalogue items are marked with a SAMPLE badge, and you can remove all of it any time from Settings → Data.
 6. The wizard's language and country steps start pre-filled from this device's own system language and timezone — no internet lookup, so it works before the till is even online — and both stay freely changeable with one tap. If the detected language isn't available yet, the wizard says so and shows English plus whatever languages are ready today.
 7. The wizard also asks whether you're moving from another till system. Say no to start fresh, or choose CSV/Excel to go straight into the catalog importer. Not ready yet? Pick "Ask me later" and an "Import from another POS" prompt appears under Settings → Data until you use it or dismiss it.
-8. Creating a user, setting someone's PIN, or activating/deactivating an account needs a manager's or admin's role. Signed in as a cashier and try one of these anyway? The screen doesn't just refuse — it opens an in-place PIN prompt a manager or admin can approve right there, the same as [other manager-approval prompts](/help/elevation) elsewhere in the till.
+8. The setup wizard signs you in as this till's first admin — it doesn't connect the till to YOUR account online. For the online back-office (My stores, fleet view) and paid features, see [Store registration & claiming](/help/claim).
+9. Creating a user, setting someone's PIN, or activating/deactivating an account needs a manager's or admin's role. Signed in as a cashier and try one of these anyway? The screen doesn't just refuse — it opens an in-place PIN prompt a manager or admin can approve right there, the same as [other manager-approval prompts](/help/elevation) elsewhere in the till.
+10. Your own name in the top bar (👤) opens Change PIN; the Lock button next to it signs you straight out to the PIN pad.
+
+## Changing your own PIN
+
+Anyone can change their own PIN, no manager needed — a manager is only required to set or reset *someone else's* PIN from Users.
+
+1. Tap your name (👤) in the top bar to open Change PIN.
+2. Enter your current PIN, then your new PIN twice.
+3. Submit: you're signed out and land back on the PIN pad — sign in again with the new PIN.
+
+A wrong current PIN counts as a failed sign-in attempt on this till, the same as a wrong PIN at the login screen — enough wrong attempts locks the pad for everyone for a short time, so don't guess repeatedly. A new PIN already in use by someone else on this till is rejected; pick a different one.
+
+## Idle auto-lock
+
+An unattended, signed-in till is a real risk — anyone walking past can sell, refund or open settings as whoever last signed in. The till locks itself back to the PIN pad after it sits untouched for a while, no action or transaction lost: whatever was in the basket is exactly as you left it once you (or anyone else allowed to) sign back in.
+
+1. Set the timeout from Settings → Auto-lock: off, or 2/5/10/15/30/60 minutes — 10 minutes to start with, until someone changes it.
+2. Any tap, key press or scan on the till resets the countdown — it only fires after genuinely sitting idle.
+3. Changing this setting needs a manager's or admin's role, the same [manager-approval prompt](/help/elevation) as other settings changes.
+4. Don't want to wait for the timeout? Use the Lock button next to your name in the top bar to lock it yourself, any time.
 
 ## Permissions matrix
 
