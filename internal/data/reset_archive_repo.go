@@ -94,11 +94,20 @@ func isForeignKeyViolation(err error) bool {
 
 // ResetBatch is one reset event's archive header, for the Settings → Data
 // list (newest first).
+//
+// Purgeable/RetainedUntil (ut-docs#698) are the same purge eligibility
+// DeleteResetBatch itself gates on, computed read-only so the UI can show it
+// BEFORE an operator goes through the confirm-and-fail motion. RetainedUntil
+// is the zero time.Time whenever there was no gate to compute at all
+// (SalesCount == 0, mirrors DeleteResetBatch's own no-trading-history
+// carve-out) — never a meaningless "purgeable since the epoch" date.
 type ResetBatch struct {
-	ID         string
-	CreatedAt  string
-	ActorID    string
-	SalesCount int64
+	ID            string
+	CreatedAt     string
+	ActorID       string
+	SalesCount    int64
+	Purgeable     bool
+	RetainedUntil time.Time
 }
 
 // resetArchiveTable pairs a live table with the explicit column list shared
@@ -215,6 +224,13 @@ VALUES (?, ?, ?, ?)`, batchID, now, nullIfEmpty(actorID), count); err != nil {
 
 // ListResetBatches lists every archived reset event, newest first, for the
 // Settings → Data "Reset archives" list and GET /api/data/reset-archives.
+//
+// Purgeable/RetainedUntil (ut-docs#698) are computed here read-only, using
+// the exact same resolveArchiveMinDays + computeRetainedUntil math
+// DeleteResetBatch itself gates on -- so the UI can show a batch's
+// eligibility before an operator ever attempts (and gets refused) a purge.
+// The country lookup is resolved ONCE for the whole list (it depends on the
+// shop's configured country, not on any individual batch), not per row.
 func (r *POSRepo) ListResetBatches(ctx context.Context) ([]ResetBatch, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, created_at, COALESCE(actor_id, ''), sales_count
@@ -224,15 +240,58 @@ ORDER BY created_at DESC, id DESC LIMIT 200`)
 		return nil, fmt.Errorf("list reset batches: %w", err)
 	}
 	defer rows.Close()
-	var out []ResetBatch
+	type rawBatch struct {
+		ID, CreatedAt, ActorID string
+		SalesCount             int64
+	}
+	var raw []rawBatch
 	for rows.Next() {
-		var b ResetBatch
+		var b rawBatch
 		if err := rows.Scan(&b.ID, &b.CreatedAt, &b.ActorID, &b.SalesCount); err != nil {
 			return nil, fmt.Errorf("scan reset batch: %w", err)
 		}
-		out = append(out, b)
+		raw = append(raw, b)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Resolved once, outside the row loop -- see the doc comment above.
+	// minDaysErr != nil is fail-safe, not fatal to the listing itself
+	// (ut-docs#698): every gated (SalesCount > 0) row falls back to
+	// Purgeable=false rather than either failing the whole list or, worse,
+	// wrongly showing a row as purgeable when the gate couldn't actually be
+	// evaluated.
+	minDays, minDaysErr := r.resolveArchiveMinDays(ctx, r.db)
+
+	out := make([]ResetBatch, 0, len(raw))
+	for _, b := range raw {
+		batch := ResetBatch{ID: b.ID, CreatedAt: b.CreatedAt, ActorID: b.ActorID, SalesCount: b.SalesCount}
+		switch {
+		case b.SalesCount == 0:
+			// Mirrors DeleteResetBatch's own no-trading-history carve-out:
+			// no gate applies at all, so RetainedUntil stays the zero
+			// time.Time (never a meaningless "purgeable since the epoch").
+			batch.Purgeable = true
+		case minDaysErr != nil:
+			batch.Purgeable = false
+		default:
+			archivedAt, parseErr := time.Parse(time.RFC3339, b.CreatedAt)
+			if parseErr != nil {
+				// Defensive only -- created_at is always written by
+				// ResetTransactionHistory as time.Now().UTC().Format(RFC3339),
+				// so this should never actually trigger. Fail safe exactly
+				// like the minDaysErr case above: never wrongly show a row
+				// as purgeable when its eligibility couldn't be computed.
+				batch.Purgeable = false
+			} else {
+				batch.RetainedUntil = computeRetainedUntil(archivedAt, minDays)
+				batch.Purgeable = !time.Now().UTC().Before(batch.RetainedUntil)
+			}
+		}
+		out = append(out, batch)
+	}
+	return out, nil
 }
 
 // RestoreResetBatch moves every archived row of one reset batch back into
@@ -345,11 +404,13 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID string
 // common.LoadState's own "GB" default for an unconfigured shop, whose
 // seeded country_settings row sits exactly at this floor today.
 //
-// Runs inside the caller's transaction so the read is consistent with the
-// batch lookup it gates.
-func (r *POSRepo) resolveArchiveMinDays(ctx context.Context, tx *sql.Tx) (int64, error) {
+// q accepts either r.db or a caller's *sql.Tx (both satisfy queryRower,
+// defined in demo_seed_repo.go) -- DeleteResetBatch passes its own tx so
+// the read stays consistent with the batch lookup it gates; ListResetBatches
+// (ut-docs#698) has no transaction of its own and passes r.db directly.
+func (r *POSRepo) resolveArchiveMinDays(ctx context.Context, q queryRower) (int64, error) {
 	var countryCode string
-	err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, StoreCountrySettingsKey).Scan(&countryCode)
+	err := q.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, StoreCountrySettingsKey).Scan(&countryCode)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, fmt.Errorf("resolve archive retention: read shop country: %w", err)
 	}
@@ -359,7 +420,7 @@ func (r *POSRepo) resolveArchiveMinDays(ctx context.Context, tx *sql.Tx) (int64,
 	}
 
 	var days int64
-	err = tx.QueryRowContext(ctx, `SELECT archive_min_days FROM country_settings WHERE code = ?`, countryCode).Scan(&days)
+	err = q.QueryRowContext(ctx, `SELECT archive_min_days FROM country_settings WHERE code = ?`, countryCode).Scan(&days)
 	if err == sql.ErrNoRows {
 		return GlobalArchiveMinDays, nil
 	}
@@ -367,6 +428,21 @@ func (r *POSRepo) resolveArchiveMinDays(ctx context.Context, tx *sql.Tx) (int64,
 		return 0, fmt.Errorf("resolve archive retention: read country setting %s: %w", countryCode, err)
 	}
 	return days, nil
+}
+
+// computeRetainedUntil implements ADR-0040's retention math: an archived
+// batch becomes purgeable minDays after the shop's own UTC midnight
+// following archival, not after the exact time-of-day it was archived
+// (ut-docs#699) -- both DeleteResetBatch's refusal message and the API/UI's
+// display of RetainedUntil are date-only, so the date named must actually
+// become purgeable from its own midnight, or a batch archived at 14:30
+// would silently stay refused until 14:30 on the displayed date. Extracted
+// (ut-docs#698) so the read-only ListResetBatches path and the enforcing
+// DeleteResetBatch path can never compute two different answers for the
+// same batch.
+func computeRetainedUntil(archivedAt time.Time, minDays int64) time.Time {
+	archivedDate := time.Date(archivedAt.Year(), archivedAt.Month(), archivedAt.Day(), 0, 0, 0, 0, time.UTC)
+	return archivedDate.AddDate(0, 0, int(minDays))
 }
 
 // DeleteResetBatch permanently purges one archived reset-transactions
@@ -417,15 +493,7 @@ func (r *POSRepo) DeleteResetBatch(ctx context.Context, batchID, actorID string)
 		if err != nil {
 			return fmt.Errorf("delete: parse batch created_at %q: %w", createdAt, err)
 		}
-		// Truncate to the archive date's own midnight before adding the
-		// window (ut-docs#699): RetainedUntil is displayed date-only
-		// ("2006-01-02" in both the error and the API response), so the
-		// named date must actually become purgeable from its own midnight,
-		// not from the original archive's time-of-day. Without this, a
-		// batch archived at 14:30 stays refused until 14:30 on the named
-		// date, silently contradicting the date-only refusal message.
-		archivedDate := time.Date(archivedAt.Year(), archivedAt.Month(), archivedAt.Day(), 0, 0, 0, 0, time.UTC)
-		retainedUntil := archivedDate.AddDate(0, 0, int(minDays))
+		retainedUntil := computeRetainedUntil(archivedAt, minDays)
 		if time.Now().UTC().Before(retainedUntil) {
 			return &ArchiveWithinRetentionWindowError{RetainedUntil: retainedUntil}
 		}

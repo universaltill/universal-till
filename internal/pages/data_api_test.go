@@ -213,6 +213,15 @@ func TestResetArchives_ListAndRestoreRoundTrip(t *testing.T) {
 	if created, _ := batch["created_at"].(string); created == "" || !strings.Contains(created, "T") {
 		t.Fatalf("list: created_at must be ISO-8601, got %+v", batch)
 	}
+	// ut-docs#698: a batch just archived (created "now") is fully inside
+	// its retention window -- not purgeable, and it must carry a
+	// retained-until date so the UI can show it.
+	if purgeable, _ := batch["purgeable"].(bool); purgeable {
+		t.Fatalf("list: freshly-archived batch with real sales must not be purgeable yet, got %+v", batch)
+	}
+	if ru, _ := batch["retained_until"].(string); ru == "" {
+		t.Fatalf("list: gated batch must carry a retained_until date, got %+v", batch)
+	}
 
 	// Restore requires the typed confirmation.
 	rec = postForm(mux, "/api/data/reset-archives/"+id+"/restore", url.Values{"confirm": {"restore"}}, nil)
@@ -426,6 +435,51 @@ func TestResetArchivesPurge_OutsideWindowDeletes(t *testing.T) {
 	}
 	if remaining != 0 || archived != 0 {
 		t.Fatalf("after purge: batches=%d sales_archive=%d, want 0/0", remaining, archived)
+	}
+}
+
+// ut-docs#698: GET /api/data/reset-archives must report purgeable=true (and
+// a retained_until date, since the sales-count gate still applied) for a
+// batch whose retention window has already elapsed -- the same result
+// TestResetArchivesPurge_OutsideWindowDeletes proves the POST purge itself
+// accepts, but observed read-only, before any purge is attempted.
+func TestResetArchivesList_OutsideWindowIsPurgeable(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `UPDATE reset_batches SET created_at = ? WHERE id = ?`,
+		time.Now().AddDate(0, 0, -3651).UTC().Format(time.RFC3339), id); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/data/reset-archives", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	data, _ := body["data"].(map[string]any)
+	batches, _ := data["batches"].([]any)
+	if len(batches) != 1 {
+		t.Fatalf("list: expected 1 batch, got %+v", body)
+	}
+	batch, _ := batches[0].(map[string]any)
+	if purgeable, _ := batch["purgeable"].(bool); !purgeable {
+		t.Fatalf("list: batch past its retention window must be purgeable, got %+v", batch)
+	}
+	if ru, _ := batch["retained_until"].(string); ru == "" {
+		t.Fatalf("list: a gated batch must still carry the date it became purgeable, got %+v", batch)
 	}
 }
 
