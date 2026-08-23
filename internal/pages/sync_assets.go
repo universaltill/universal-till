@@ -86,7 +86,7 @@ func registerSyncAssets(mux *http.ServeMux, d *common.Deps) {
 		}
 		list, err := listItemAssets()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_assets", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -101,7 +101,7 @@ func registerSyncAssets(mux *http.ServeMux, d *common.Deps) {
 		}
 		path, ok := safeAssetPath(r.URL.Query().Get("path"))
 		if !ok {
-			http.Error(w, "bad path", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "sync.error.bad_path")
 			return
 		}
 		http.ServeFile(w, r, path)

@@ -24,7 +24,7 @@ func registerExternalProxy(mux *http.ServeMux, d *common.Deps) {
 		}
 		resp, err := http.Get(mp.Route)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			common.LogAndLocalizedError(w, r, http.StatusBadGateway, "ext.error.unreachable", "ext_proxy", err)
 			return
 		}
 		defer resp.Body.Close()
