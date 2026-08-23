@@ -35,30 +35,65 @@ func shortDeviceID(id string) string {
 	return id
 }
 
-// demoDataInLiveBasket reports whether any currently in-progress basket —
-// cashier and/or self-order kiosk, both passed in — references a demo
-// catalogue item/variant or a demo customer. ut-docs#633: unlike a HELD
-// (parked) sale, a live basket has no held_sales row for
+// demoBasketMatch names which live basket demoDataInLiveBasket found a
+// demo item/customer in, so the caller can tell the manager specifically
+// which basket to clear (ut-docs#746 — a single combined bool left a
+// kiosk-basket match reported as a generic "current basket," which the
+// manager at the Settings screen (not the kiosk) has no way to act on).
+type demoBasketMatch string
+
+const (
+	noBasketMatch      demoBasketMatch = ""
+	cashierBasketMatch demoBasketMatch = "cashier"
+	kioskBasketMatch   demoBasketMatch = "kiosk"
+)
+
+// demoDataInLiveBasket reports which currently in-progress basket — cashier
+// and/or self-order kiosk, both passed in — references a demo catalogue
+// item/variant or a demo customer, if either does. ut-docs#633: unlike a
+// HELD (parked) sale, a live basket has no held_sales row for
 // remove_demo.sql/remove_demo_customers_promos.sql's own safety check to
 // catch, so "Remove sample data" must guard against it directly here —
 // otherwise the referenced row disappears and tender later FK-fails with
 // no clear way to recover. nil engines (KioskEngine is nil in some test
-// harnesses, per ADR-0020) are skipped, not treated as a match.
-func demoDataInLiveBasket(engines ...*pos.Service) bool {
-	for _, e := range engines {
-		if e == nil {
+// harnesses, per ADR-0020) are skipped, not treated as a match. Checked in
+// a fixed order (cashier before kiosk) so the result is deterministic even
+// if both baskets happen to match at once.
+//
+// ut-docs#746: deliberately over-blocks — this only checks list
+// membership, not the shared seeddata removal scripts' own full
+// "untouched" predicates: remove_demo.sql's item rule (PRISTINE
+// sku/name/base_price, no sale_lines/stock_movements/held_sales
+// reference, live or archived) and remove_demo_customers_promos.sql's
+// customer rule (no sales/held_sales reference or promotion targeting,
+// live or archived — a differently-shaped check, see that script's own
+// header). Reimplementing either predicate here would duplicate a
+// safety-critical rule in a second language, and the two copies drifting
+// apart is a worse failure mode than an occasional over-cautious block —
+// so a demo item/customer merely sitting in a basket blocks removal even
+// when the SQL script itself would have kept it anyway.
+func demoDataInLiveBasket(cashier, kiosk *pos.Service) demoBasketMatch {
+	baskets := []struct {
+		kind demoBasketMatch
+		e    *pos.Service
+	}{
+		{cashierBasketMatch, cashier},
+		{kioskBasketMatch, kiosk},
+	}
+	for _, b := range baskets {
+		if b.e == nil {
 			continue
 		}
-		if slices.Contains(seeddata.DemoCustomerIDs, e.CustomerID()) {
-			return true
+		if slices.Contains(seeddata.DemoCustomerIDs, b.e.CustomerID()) {
+			return b.kind
 		}
-		for _, l := range e.Lines() {
+		for _, l := range b.e.Lines() {
 			if slices.Contains(seeddata.ItemIDs, l.ItemID) || slices.Contains(seeddata.VariantIDs, l.VariantID) {
-				return true
+				return b.kind
 			}
 		}
 	}
-	return false
+	return noBasketMatch
 }
 
 // settingsAudit writes the audit entry for one settings mutation wired to
@@ -876,8 +911,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// same reasoning as payments-fee's range check: an approver
 		// shouldn't burn a live PIN entry on a request the live basket was
 		// always going to refuse.
-		if demoDataInLiveBasket(d.Engine, d.KioskEngine) {
-			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_in_basket"))
+		//
+		// ut-docs#746: this check and the DELETE below aren't atomic — a
+		// cashier could add a demo item to either basket in the gap between
+		// this read and the removal running. Accepted un-fixed: single-till,
+		// offline, low-value target (worst case is the same FK-fail this
+		// guard exists to avoid in the first place, not data loss), and the
+		// window is one HTTP request wide.
+		if match := demoDataInLiveBasket(d.Engine, d.KioskEngine); match != noBasketMatch {
+			key := "settings.data.demo_in_basket_cashier"
+			if match == kioskBasketMatch {
+				key = "settings.data.demo_in_basket_kiosk"
+			}
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, key))
 			return
 		}
 		// Mutating, IRREVERSIBLE, and audit-writing (ut-docs#796): a denied

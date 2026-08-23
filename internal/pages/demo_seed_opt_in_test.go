@@ -339,6 +339,66 @@ func TestSettingsRemoveDemoCatalogueEndpoint_BlocksWhileDemoCustomerInLiveBasket
 	}
 }
 
+// ut-docs#746: the guard checks d.KioskEngine too (ADR-0020: a separate
+// basket from the cashier's), but until now only the nil-skip path for it
+// was ever exercised — no test proved the positive case, an item actually
+// live in the self-order kiosk's basket, blocks removal. It must also
+// name the kiosk specifically, not the generic cashier message.
+func TestSettingsRemoveDemoCatalogueEndpoint_BlocksWhileDemoItemInKioskLiveBasket(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	d.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
+	d.KioskEngine.AddLineWithModifiers(pos.BasketLine{
+		SKU: "SKU-0001", Name: "Coca-Cola Can 330ml", ItemID: "itm001", PriceCents: 120,
+	}, 1, nil)
+
+	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager remove: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "kiosk") {
+		t.Fatalf("removal response %q does not name the kiosk basket specifically", body)
+	}
+	if strings.Contains(body, "current basket") {
+		t.Fatalf("removal response %q reads as the cashier message, not the kiosk-specific one", body)
+	}
+	if n, _ := repo.SampleItemCount(t.Context()); n != 50 {
+		t.Fatalf("sample items after blocked removal = %d, want 50 (removal must not have run)", n)
+	}
+}
+
+// ut-docs#746: demoDataInLiveBasket checks cashier before kiosk in a fixed
+// order specifically so a simultaneous match on both baskets resolves
+// deterministically (documented on the function) — this pins that down,
+// not just the two baskets independently.
+func TestSettingsRemoveDemoCatalogueEndpoint_BothBasketsLiveReportsCashierFirst(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	d.Engine.AddLineWithModifiers(pos.BasketLine{
+		SKU: "SKU-0001", Name: "Coca-Cola Can 330ml", ItemID: "itm001", PriceCents: 120,
+	}, 1, nil)
+	d.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
+	d.KioskEngine.AddLineWithModifiers(pos.BasketLine{
+		SKU: "SKU-0001", Name: "Coca-Cola Can 330ml", ItemID: "itm001", PriceCents: 120,
+	}, 1, nil)
+
+	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager remove: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "current basket") || strings.Contains(body, "kiosk") {
+		t.Fatalf("removal response %q does not report the cashier basket first, as documented", body)
+	}
+}
+
 // ut-docs#617: the "Restore from another POS" resume prompt only shows once
 // the wizard's "Later" choice actually deferred it — not on a fresh till,
 // and not once dismissed/resumed.
