@@ -1131,10 +1131,17 @@ ORDER BY name COLLATE NOCASE
 }
 
 func (r *PluginRepo) ListInstalledPlugins(ctx context.Context) ([]InstalledPluginRow, error) {
+	// ORDER BY id (ut-docs#628 follow-up): WasmRuntime.Sync iterates this
+	// result and processes plugins in whatever order it returns, so an
+	// unordered SELECT left "which plugin loads/generation-bumps last"
+	// dependent on SQLite's unspecified row order. Not a live bug (Sync
+	// bumps the generation after any failure regardless of order), but an
+	// explicit order removes the ambiguity for the next reader.
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, version, COALESCE(author, ''), COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active, COALESCE(install_state, '')
 FROM plugins
 WHERE is_active = 1
+ORDER BY id
 `)
 	if err != nil {
 		return nil, pluginObs.wrap("list_installed", err)
