@@ -1113,6 +1113,7 @@
   "registers.error.update": "Could not update register",
   "registers.error.last_active": "Cannot deactivate the last active register",
   "registers.strand_warning": "Creating a second register, or deactivating one another till might be using, can leave that till's register assignment unclear. Afterward, check each till's Settings → Tills → \"This till's register\".",
+  "registers.in_use_hint": "Has shift/sale history",
   "promotions.title": "Promotions",
   "promotions.col.code": "Code",
   "promotions.col.type": "Type",

@@ -23,7 +23,10 @@
         <tr>
           <td>{{ .Name }}</td>
           <td>{{ if .LocationName }}{{ .LocationName }}{{ else }}<span class="muted">{{ T "registers.new.location_none" }}</span>{{ end }}</td>
-          <td>{{ if .IsActive }}{{ T "registers.active" }}{{ else }}<span class="muted">{{ T "registers.inactive" }}</span>{{ end }}</td>
+          <td>
+            {{ if .IsActive }}{{ T "registers.active" }}{{ else }}<span class="muted">{{ T "registers.inactive" }}</span>{{ end }}
+            {{ if .InUse }}<br /><span class="muted">{{ T "registers.in_use_hint" }}</span>{{ end }}
+          </td>
           <td class="users-actions">
             <form method="post" action="/api/registers/{{ .ID }}" class="users-inline">
               <input type="text" name="name" value="{{ .Name }}" required />
