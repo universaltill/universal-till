@@ -70,17 +70,17 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if !canPerform(d, r, "import_export") {
-			fmt.Fprintf(w, `<span class="error">%s</span>`, httpx.T(locale, "settings.enrol.forbidden"))
+			httpx.RenderNotice(w, locale, "error", "settings.enrol.forbidden")
 			return
 		}
 		rows, err := repo.ExportRows(r.Context())
 		if err != nil {
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "import.export_save_failed"))
+			httpx.RenderNotice(w, locale, "error", "import.export_save_failed")
 			return
 		}
 		home, herr := os.UserHomeDir()
 		if herr != nil {
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "import.export_save_failed"))
+			httpx.RenderNotice(w, locale, "error", "import.export_save_failed")
 			return
 		}
 		dstDir := filepath.Join(home, "Downloads")
@@ -88,14 +88,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		dst := filepath.Join(dstDir, "catalog-"+time.Now().UTC().Format("2006-01-02")+".csv")
 		f, ferr := os.Create(dst)
 		if ferr != nil {
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "import.export_save_failed"))
+			httpx.RenderNotice(w, locale, "error", "import.export_save_failed")
 			return
 		}
 		writeCatalogCSV(f, rows, httpx.ActiveCurrency().Decimals)
 		_ = f.Close()
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "export",
 			map[string]any{"rows": len(rows), "dest": dst}, time.Now().UTC().Format(time.RFC3339), "")
-		fmt.Fprintf(w, `<span>✓ %s <code>%s</code></span>`, httpx.T(locale, "settings.backup.saved_to"), dst)
+		httpx.RenderNotice(w, locale, "success", "settings.backup.saved_to", "<code>"+dst+"</code>")
 	})
 
 	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {

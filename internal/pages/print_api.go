@@ -428,7 +428,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fail := func(status int, key string) {
 			w.WriteHeader(status)
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, key))
+			httpx.RenderNotice(w, locale, "error", key)
 		}
 		// A variant label carries the VARIANT's price + barcode — a shelf
 		// label for "Apples Large" must scan as the large apples.
@@ -469,7 +469,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "item", itemID, "labels_printed",
 			map[string]any{"copies": copies, "code": label.Code}, time.Now().UTC().Format(time.RFC3339), "")
-		fmt.Fprintf(w, `<span>✓ %s (%d)</span>`, httpx.T(locale, "catalog.labels.done"), copies)
+		httpx.RenderNotice(w, locale, "success", "catalog.labels.done", fmt.Sprintf("(%d)", copies))
 	})
 
 	// Reprint a receipt from the journal.
