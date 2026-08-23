@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -50,19 +51,19 @@ func main() {
 	// just open the window on it (also makes a second app launch join the
 	// running till instead of starting another).
 	if tillAlreadyRunning("127.0.0.1:8080") {
-		// No child to hand UT_DESKTOP_CONTROL_ADDR to here — that server
-		// process was started independently (typically the .deb's systemd
-		// service) and never got one, so exit-to-os/apply-mode fall back to
-		// NoopWindowController on it regardless of what this process does.
-		// Still starts its own listener rather than special-casing this
-		// path with a nil controlServer: cheap, and keeps showWindow's
-		// contract (a non-nil *controlServer whenever a window exists)
-		// uniform across both branches.
+		// No child to hand UT_DESKTOP_CONTROL_ADDR/_TOKEN to here — that
+		// server process was started independently (typically the .deb's
+		// systemd service) and never got them, so exit-to-os/apply-mode
+		// fall back to NoopWindowController on it regardless of what this
+		// process does. Still starts its own listener rather than
+		// special-casing this path with a nil controlServer: cheap, and
+		// keeps showWindow's contract (a non-nil *controlServer whenever a
+		// window exists) uniform across both branches. showWindow itself
+		// owns Close()'ing it (ordered ahead of destroying the native
+		// window — ut-docs#882 review m1), not this caller.
 		ctl, err := newControlServer()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "control channel unavailable:", err)
-		} else {
-			defer ctl.Close()
 		}
 		showWindow("http://127.0.0.1:8080", "Universal Till", -1, ctl)
 		return
@@ -101,26 +102,35 @@ func main() {
 	}
 
 	// Loopback-only control listener (ut-docs#882): started before the
-	// child so its address can be handed over via env, mirroring how the
-	// child hands *this* process nothing back — the channel is one-way,
-	// unitill-pos calling into unitill-desktop, never the reverse. A bind
-	// failure is logged and otherwise ignored: the till must still open
-	// with exit-to-os/apply-mode simply falling back to NoopWindowController,
-	// same as it always has.
+	// child so its address+token can be handed over via env, mirroring how
+	// the child hands *this* process nothing back — the channel is
+	// one-way, unitill-pos calling into unitill-desktop, never the
+	// reverse. A bind failure is logged and otherwise ignored: the till
+	// must still open with exit-to-os/apply-mode simply falling back to
+	// NoopWindowController, same as it always has. showWindow itself owns
+	// Close()'ing it (ordered ahead of destroying the native window —
+	// ut-docs#882 review m1), not this caller.
 	ctl, ctlErr := newControlServer()
 	if ctlErr != nil {
 		fmt.Fprintln(os.Stderr, "control channel unavailable:", ctlErr)
-	} else {
-		defer ctl.Close()
 	}
 
 	cmd := exec.Command(posBin)
 	cmd.Dir = workDir // so web/ resolves; data/ defaults to the per-user dir
-	// We supply the window ourselves, so tell the server not to also pop a browser.
-	cmd.Env = append(os.Environ(), "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR="+addr)
+	// We supply the window ourselves, so tell the server not to also pop a
+	// browser. Strip any inherited control env first (ut-docs#882 review
+	// n2) — os.Environ() reflects THIS process's own environment, which on
+	// a relaunch (or a parent shell that set these for its own reasons)
+	// could already carry a stale UT_DESKTOP_CONTROL_ADDR/_TOKEN; appending
+	// a fresh pair on top only shadows the stale one when ctl != nil; if
+	// the bind just failed, the child must inherit neither, not a value
+	// pointing at some other process's now-unrelated listener.
+	env := filterEnv(os.Environ(), envDesktopControlAddr, envDesktopControlToken)
+	env = append(env, "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR="+addr)
 	if ctl != nil {
-		cmd.Env = append(cmd.Env, envDesktopControlAddr+"="+ctl.Addr())
+		env = append(env, envDesktopControlAddr+"="+ctl.Addr(), envDesktopControlToken+"="+ctl.Token())
 	}
+	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	configureChild(cmd) // Windows: keep the server's console window hidden
 	if err := cmd.Start(); err != nil {
@@ -182,4 +192,26 @@ func freePort(preferred string) string {
 func dirHasWeb(dir string) bool {
 	info, err := os.Stat(filepath.Join(dir, "web"))
 	return err == nil && info.IsDir()
+}
+
+// filterEnv returns env with any entry whose key (the part before "=")
+// matches one of names removed — used to strip a possibly-stale inherited
+// UT_DESKTOP_CONTROL_ADDR/_TOKEN before deciding whether to set a fresh
+// pair (ut-docs#882 review n2).
+func filterEnv(env []string, names ...string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		drop := false
+		for _, n := range names {
+			if key == n {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

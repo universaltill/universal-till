@@ -266,6 +266,7 @@ import "unsafe"
 // degradation this platform already had before this card).
 func showWindow(url, title string, childPid int, ctl *controlServer) {
 	if ctl != nil {
+		defer ctl.Close()
 		ctl.SetOps(&windowOps{
 			ExitToOS:  func() error { return nil },
 			ApplyMode: func(string) error { return nil },
