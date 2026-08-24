@@ -275,8 +275,12 @@ func DeviceIDFromConfig(cfg *config.MarketplaceConfig) string {
 
 // ListPluginsRequest matches the proto contract.
 type ListPluginsRequest struct {
-	Locale     string   `json:"locale,omitempty"`
-	DeviceArch string   `json:"device_arch,omitempty"`
+	Locale     string `json:"locale,omitempty"`
+	DeviceArch string `json:"device_arch,omitempty"`
+	// Capability filters by canonical plugin_type (ADR-0002 taxonomy,
+	// e.g. "payment", "inventory") — NOT a device/runtime capability
+	// filter. That's a distinct concept, see PluginSummary.Capabilities
+	// below (sourced from the manifest's required_capabilities).
 	Capability []string `json:"capability,omitempty"`
 	PageToken  string   `json:"page_token,omitempty"`
 }
