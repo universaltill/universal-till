@@ -342,3 +342,56 @@ func createRealSnapshot(t *testing.T, dbPath string) string {
 	}
 	return after[0].Name
 }
+
+// ut-docs#924: GET /api/backup/download/{name} used to leak the raw
+// filesystem error via http.Error(w, err.Error(), ...) when BackupDir
+// couldn't create the backups directory. Force a real failure (a regular
+// file sitting where the "backups" directory needs to be created) and
+// assert the localized fallback shows, never the raw error text.
+func TestDownloadBackup_BackupDirErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, dbPath := newBackupTestDeps(t)
+
+	blockedDir := filepath.Join(filepath.Dir(dbPath), "backups")
+	if err := os.WriteFile(blockedDir, []byte("x"), 0o644); err != nil {
+		t.Fatalf("create blocking file: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/backup/download/unitill-pos-99999999-999999.db", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("download with blocked backups dir = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not download the backup") {
+		t.Fatalf("download error body = %q, want the localized download-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "not a directory") {
+		t.Fatalf("download error body leaked raw filesystem error text: %q", rec.Body.String())
+	}
+}
+
+// ut-docs#924: POST /api/backup/restore used to leak the raw "backup not
+// found" error via http.Error(w, err.Error(), ...) when StageRestore
+// couldn't find the named snapshot. Assert the localized fallback shows.
+func TestRestoreBackup_MissingSnapshotIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, _ := newBackupTestDeps(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore",
+		strings.NewReader("name=unitill-pos-99999999-999999.db&confirm=RESTORE"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("restore of a missing snapshot = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not prepare the restore") {
+		t.Fatalf("restore error body = %q, want the localized stage-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "backup not found") {
+		t.Fatalf("restore error body leaked raw error text: %q", rec.Body.String())
+	}
+}

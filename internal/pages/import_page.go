@@ -51,7 +51,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		}
 		rows, err := repo.ExportRows(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "import.export_save_failed", "import_export", err)
 			return
 		}
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
