@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
@@ -296,12 +297,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		// Auto-fill flow: attach the looked-up barcode so the new item is
 		// instantly scannable, and save the source image as the tile thumb.
-		if barcode := strings.TrimSpace(r.Form.Get("barcode")); barcode != "" {
-			in := pos.BarcodeInput{Barcode: barcode, ItemID: itemID, IsPrimary: true}
+		if code := strings.TrimSpace(r.Form.Get("barcode")); code != "" {
+			in := pos.BarcodeInput{Barcode: code, ItemID: itemID, IsPrimary: true}
 			// See the matching comment at /api/catalog/barcode (ut-docs#948 F1).
-			if forcePlainBarcode(r) {
-				in.BarcodeType = "EAN13"
-			}
+			in.BarcodeType = plainBarcodeTypeFor(r, code)
 			if err := pos.AddBarcode(r.Context(), d.Db, in); err != nil {
 				locale := httpx.ResolveLocale(w, r)
 				if errors.Is(err, data.ErrInvalidEAN13) {
@@ -656,7 +655,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		_ = r.ParseForm()
-		barcode := strings.TrimSpace(r.Form.Get("barcode"))
+		code := strings.TrimSpace(r.Form.Get("barcode"))
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 		variantID := strings.TrimSpace(r.Form.Get("variantId"))
 		// The form carries both (item picked from a row + optional variant). A
@@ -665,12 +664,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			itemID = ""
 		}
 		isPrimary := r.Form.Get("isPrimary") == "1" || strings.ToLower(r.Form.Get("isPrimary")) == "on"
-		if barcode == "" {
+		if code == "" {
 			http.Error(w, "barcode required", http.StatusBadRequest)
 			return
 		}
 		in := pos.BarcodeInput{
-			Barcode:   barcode,
+			Barcode:   code,
 			ItemID:    itemID,
 			VariantID: variantID,
 			IsPrimary: isPrimary,
@@ -682,10 +681,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// first — even a genuine plain retail product that happens to
 		// share the prefix. Checking "plain code" here passes an explicit
 		// BarcodeType, which takes AddBarcode's existing
-		// explicit-type-bypasses-inference path (ADR-0059 §3) instead.
-		if forcePlainBarcode(r) {
-			in.BarcodeType = "EAN13"
-		}
+		// explicit-type-bypasses-inference path (ADR-0059 §3) instead —
+		// but only for a genuine EAN-13 (see plainBarcodeTypeFor / F-2).
+		in.BarcodeType = plainBarcodeTypeFor(r, code)
 		if err := pos.AddBarcode(r.Context(), d.Db, in); err != nil {
 			locale := httpx.ResolveLocale(w, r)
 			if errors.Is(err, data.ErrInvalidEAN13) {
@@ -789,12 +787,27 @@ func formCheckboxActive(r *http.Request) bool {
 	return false
 }
 
-// forcePlainBarcode reports whether the operator checked the "plain code"
-// escape hatch (ut-docs#948 F1) on a barcode-attach form — same
-// "1"/"on" convention as the isPrimary checkbox in the same forms.
-func forcePlainBarcode(r *http.Request) bool {
+// plainBarcodeTypeFor returns "EAN13" when the operator checked the "plain
+// code" escape hatch (ut-docs#948 F1) AND code is actually a valid EAN-13,
+// else "" (leave AddBarcode's untyped inference to run).
+//
+// The EAN-13 guard is the F-2 review fix: forcing BarcodeType:"EAN13"
+// makes AddBarcode assert a valid EAN-13 check digit, so blindly forcing
+// it would reject an operator who ticks the box on a perfectly valid EAN-8
+// / UPC-A / GTIN-14 / CODE128 / internal-PLU code. That rejection would
+// also be gratuitous: the only symbologies the escape hatch exists to
+// override — EAN13_WEIGHT_PREFIX2X / EAN13_PRICE_PREFIX02 — both require a
+// valid EAN-13 check digit to match at all (ADR-0059 §1), so a non-EAN-13
+// code can never be mis-inferred as embedded-data in the first place and
+// needs no escaping. Ticking the box on such a code is therefore a no-op:
+// untyped inference already picks a plain symbology for it.
+func plainBarcodeTypeFor(r *http.Request, code string) string {
 	v := r.Form.Get("forcePlainBarcode")
-	return v == "1" || strings.ToLower(v) == "on"
+	checked := v == "1" || strings.ToLower(v) == "on"
+	if checked && barcode.ValidEAN13Checksum(code) {
+		return "EAN13"
+	}
+	return ""
 }
 
 func parseItemInput(r *http.Request) (pos.ItemInput, error) {
