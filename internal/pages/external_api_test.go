@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,5 +129,31 @@ func TestExternalProxy_UpstreamDownIsBadGateway(t *testing.T) {
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("GET /ext/good with dead upstream: code %d, want 502", rec.Code)
+	}
+}
+
+// ut-docs#924: a malformed plugin Route used to leak the raw url.Parse error
+// via http.Error(w, err.Error(), ...) when http.NewRequestWithContext
+// rejected it. Assert the localized fallback shows instead, never the raw
+// Go error text.
+func TestExternalProxy_MalformedRouteIsLocalized(t *testing.T) {
+	// A NUL byte makes url.Parse (and so http.NewRequestWithContext) fail
+	// with "net/url: invalid control character in URL".
+	dp := newExternalProxyDeps(t, "http://example.invalid/\x00")
+	mux := http.NewServeMux()
+	registerExternalProxy(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/ext/good", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("malformed route = %d, want 502: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "unreachable") {
+		t.Fatalf("malformed route error body = %q, want the localized unreachable message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "control character") {
+		t.Fatalf("malformed route error body leaked raw url.Parse error text: %q", rec.Body.String())
 	}
 }

@@ -1445,3 +1445,32 @@ BEGIN SELECT RAISE(ABORT, 'simulated inventory update failure'); END;`); err != 
 		t.Fatalf("stock_movements must not retain an orphaned row when the update after it failed, got %d rows", movementCount)
 	}
 }
+
+// ut-docs#924: GET /api/catalog/export used to leak the raw repo error via
+// http.Error(w, err.Error(), ...) if ExportRows failed. Force a real query
+// error (drop the underlying table) and assert the localized fallback shows,
+// never the raw SQL text.
+func TestExport_RepoErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	if _, err := dp.Db.Exec(`DROP TABLE items`); err != nil {
+		t.Fatalf("drop items table: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/catalog/export", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("export with broken items table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not save the CSV") {
+		t.Fatalf("export error body = %q, want the localized export-save-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("export error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
