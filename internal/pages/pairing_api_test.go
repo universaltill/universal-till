@@ -531,7 +531,7 @@ func TestPairingFlow_AgainstRealMigratedSchema(t *testing.T) {
 // --- ut-docs#946 (924 increment 4): raw err.Error() leaks now route through
 // common.LogAndLocalizedError. Each test below forces a REAL failure (a
 // dropped table or a read-only connection, never a mock/stub repo) at one
-// specific call site and asserts the localized "pairing.error.server" copy
+// specific call site and asserts the localized "pairings.error.server" copy
 // appears while the raw SQL/Go error text does not.
 
 func TestPairRequest_CreateFailureIsLocalized(t *testing.T) {
@@ -546,7 +546,7 @@ func TestPairRequest_CreateFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pairing.error.server")
+	want := httpx.T("en", "pairings.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -569,7 +569,7 @@ func TestListPairRequests_ListFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pairing.error.server")
+	want := httpx.T("en", "pairings.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -597,7 +597,7 @@ func TestListPairRequests_TillIDFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pairing.error.server")
+	want := httpx.T("en", "pairings.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -631,7 +631,7 @@ func TestApprovePairRequest_GetByIDFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pairing.error.server")
+	want := httpx.T("en", "pairings.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -669,7 +669,7 @@ func TestApprovePairRequest_ApproveWriteFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pairing.error.server")
+	want := httpx.T("en", "pairings.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -703,7 +703,7 @@ func TestDenyPairRequest_FailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pairing.error.server")
+	want := httpx.T("en", "pairings.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -744,7 +744,7 @@ func TestRetrievePairRequest_GetByIDFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pairing.error.server")
+	want := httpx.T("en", "pairings.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}

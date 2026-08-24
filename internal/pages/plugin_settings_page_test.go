@@ -658,7 +658,7 @@ func TestPluginSettingsPage_GET_UnparseableStoredValueFallsBackToRawInput(t *tes
 // --- ut-docs#946 (924 increment 4): raw err.Error() leaks now route through
 // common.LogAndLocalizedError. Each test below forces a REAL failure (a
 // dropped table or a read-only connection, never a mock/stub repo) at one
-// specific call site and asserts the localized "pluginsettings.error.server"
+// specific call site and asserts the localized "plugins.error.server"
 // copy appears while the raw SQL/Go error text does not.
 //
 // Line 308's fallback (a non-httpStatusError from parseTaxOverrides) is not
@@ -668,7 +668,7 @@ func TestPluginSettingsPage_GET_UnparseableStoredValueFallsBackToRawInput(t *tes
 // justified-skip reasoning increment 2's review accepted for
 // buttons_api.go's four unreachable ui.NewRenderer sites. The call site is
 // still fixed (routed through common.LogAndLocalizedError with the same
-// pluginsettings.error.server key) so it stays defensively correct if
+// plugins.error.server key) so it stays defensively correct if
 // parseTaxOverrides is ever changed to return a different error type.
 
 func TestPluginSettingsPage_GET_ListFailureIsLocalized(t *testing.T) {
@@ -685,7 +685,7 @@ func TestPluginSettingsPage_GET_ListFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pluginsettings.error.server")
+	want := httpx.T("en", "plugins.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -713,7 +713,7 @@ func TestPluginSettingsPage_GET_TaxCodesFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pluginsettings.error.server")
+	want := httpx.T("en", "plugins.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -737,7 +737,7 @@ func TestPluginSettingsAPI_POST_ListFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pluginsettings.error.server")
+	want := httpx.T("en", "plugins.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -766,7 +766,7 @@ func TestPluginSettingsAPI_POST_TaxCodesFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pluginsettings.error.server")
+	want := httpx.T("en", "plugins.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -799,7 +799,7 @@ func TestPluginSettingsAPI_POST_TypedWriteFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pluginsettings.error.server")
+	want := httpx.T("en", "plugins.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}
@@ -831,7 +831,7 @@ func TestPluginSettingsAPI_POST_PlainWriteFailureIsLocalized(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	want := httpx.T("en", "pluginsettings.error.server")
+	want := httpx.T("en", "plugins.error.server")
 	if !strings.Contains(body, want) {
 		t.Fatalf("expected the localized message %q, got %q", want, body)
 	}

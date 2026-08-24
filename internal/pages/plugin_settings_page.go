@@ -231,7 +231,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		pluginID := r.PathValue("id")
 		rows, err := repo.ListPluginSettings(r.Context(), pluginID)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pluginsettings.error.server", "plugin_settings", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 			return
 		}
 		var views []settingView
@@ -248,7 +248,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			if isTaxRateOverridesKey(row.Key) {
 				taxCodes, err := catalogRepo.ListTaxCodes(r.Context())
 				if err != nil {
-					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pluginsettings.error.server", "plugin_settings", err)
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 					return
 				}
 				if taxRows, ok := buildTaxOverrideRows(v, taxCodes); ok {
@@ -276,7 +276,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		rows, err := repo.ListPluginSettings(r.Context(), pluginID)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pluginsettings.error.server", "plugin_settings", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 			return
 		}
 		changed := 0
@@ -294,7 +294,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 				}
 				taxCodes, err := catalogRepo.ListTaxCodes(r.Context())
 				if err != nil {
-					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pluginsettings.error.server", "plugin_settings", err)
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 					return
 				}
 				current := map[string]int{}
@@ -309,7 +309,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 					// the httpStatusError branch above — this exists so a future
 					// change to that function fails safely (localized, not raw)
 					// rather than silently regressing to a leak.
-					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pluginsettings.error.server", "plugin_settings", err)
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 					return
 				}
 				typedOverrides[row.Key] = parsed
@@ -319,7 +319,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			if parsed, ok := typedOverrides[row.Key]; ok {
 				n, err := writeTaxOverrides(r.Context(), repo, pluginID, row, parsed)
 				if err != nil {
-					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pluginsettings.error.server", "plugin_settings", err)
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 					return
 				}
 				changed += n
@@ -347,7 +347,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			// Write back into the row's own scope: a register-scoped setting
 			// (per-till, e.g. a card reader id) must not become shop-wide.
 			if err := repo.UpsertPluginSettingScoped(r.Context(), pluginID, row.Key, string(raw), row.Scope); err != nil {
-				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pluginsettings.error.server", "plugin_settings", err)
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 				return
 			}
 			changed++
