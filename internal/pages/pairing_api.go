@@ -152,7 +152,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		id, err := repo.CreatePendingRequest(r.Context(), in.DeviceName, in.Commitment, pairingRequestTTL)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairing.error.server", "pairing_api", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -169,12 +169,12 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		list, err := repo.ListPending(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairing.error.server", "pairing_api", err)
 			return
 		}
 		primaryTillID, err := discovery.TillID(r.Context(), data.NewSettingsRepo(d.Db))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairing.error.server", "pairing_api", err)
 			return
 		}
 		type pendingOut struct {
@@ -214,7 +214,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		id := r.PathValue("id")
 		if _, exists, err := repo.GetByID(r.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairing.error.server", "pairing_api", err)
 			return
 		} else if !exists {
 			http.Error(w, "pending pairing not found", http.StatusNotFound)
@@ -227,7 +227,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 				http.Error(w, "pending pairing already resolved", http.StatusConflict)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairing.error.server", "pairing_api", err)
 			return
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_approved",
@@ -251,7 +251,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		id := r.PathValue("id")
 		if err := repo.Deny(r.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairing.error.server", "pairing_api", err)
 			return
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_denied",
@@ -281,7 +281,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		secret := r.URL.Query().Get("request_secret")
 		row, ok, err := repo.GetByID(r.Context(), r.PathValue("id"))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairing.error.server", "pairing_api", err)
 			return
 		}
 		if !ok || row.Status != "approved" || secret == "" || !commitmentMatches(secret, row.Commitment) {
