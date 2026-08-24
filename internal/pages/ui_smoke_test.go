@@ -480,7 +480,8 @@ func seedForPages(t *testing.T, db *sql.DB) {
 	// catalog action, cashier gets none) + 042's reports/audit additions +
 	// 043's plugin_management addition (#706) + 044's data_management/
 	// sync_management additions (#707) + 045's import_export/issue_reporting
-	// additions (#713) — keep this list in sync with every migration that
+	// additions (#713) + 059's stock_location_management addition (#903) —
+	// keep this list in sync with every migration that
 	// adds a new action, so canPerform()-gated page tests exercise the real
 	// seed shape.
 	for _, role := range []string{"cashier", "manager", "admin", "super_admin"} {
@@ -488,7 +489,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 			t.Fatalf("seed role %s: %v", role, err)
 		}
 	}
-	catalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "reports", "audit", "plugin_management", "data_management", "sync_management", "import_export", "issue_reporting", "tax_code_management"}
+	catalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "reports", "audit", "plugin_management", "data_management", "sync_management", "import_export", "issue_reporting", "tax_code_management", "stock_location_management"}
 	for _, action := range catalog {
 		if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES (?)`, action); err != nil {
 			t.Fatalf("seed permission_action %s: %v", action, err)
