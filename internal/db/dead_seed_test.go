@@ -152,6 +152,8 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	rewindTables054(t, d)
 	rewindTracking058(t, d)
 	rewindFiscalRegisterDE059(t, d)
+	rewindTipRecipient061(t, d)
+	rewindServiceChargeTaxBasis062(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +244,36 @@ func rewindFiscalRegisterDE059(t *testing.T, d *DB) {
 	} {
 		if _, err := d.DB.Exec(q); err != nil {
 			t.Fatalf("rewind 059 (%s): %v", q, err)
+		}
+	}
+}
+
+// rewindTipRecipient061 undoes migration 061's non-idempotent DDL (the
+// payments/payments_archive tip_recipient columns, ADR-0060) — same replay
+// problem as the rewind helpers above.
+func rewindTipRecipient061(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`ALTER TABLE payments DROP COLUMN tip_recipient`,
+		`ALTER TABLE payments_archive DROP COLUMN tip_recipient`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 061 (%s): %v", q, err)
+		}
+	}
+}
+
+// rewindServiceChargeTaxBasis062 undoes migration 062's non-idempotent DDL
+// (the sales/sales_archive service_charge_tax_basis_bp columns, ADR-0060
+// Decision 4) — same replay problem as the rewind helpers above.
+func rewindServiceChargeTaxBasis062(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`ALTER TABLE sales DROP COLUMN service_charge_tax_basis_bp`,
+		`ALTER TABLE sales_archive DROP COLUMN service_charge_tax_basis_bp`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 062 (%s): %v", q, err)
 		}
 	}
 }

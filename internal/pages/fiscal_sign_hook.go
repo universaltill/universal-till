@@ -75,16 +75,19 @@ type fiscalSignAskPayload struct {
 	// removes the inference.
 	TaxInclusive bool `json:"tax_inclusive"`
 	// SaleDiscount / ServiceCharge are the sale-level (not per-line)
-	// amounts already folded into Total but NOT reflected anywhere in
-	// VATBreakdown (ut-docs#834) — mirrors pos.SaleInput.SaleDiscount /
-	// .ServiceCharge verbatim (minor units, money.Money wire form).
-	// VATBreakdown's own net/tax per rate is aggregated purely from lines
-	// (after line-level discounts, per the existing doc note), so for a
-	// sale carrying either of these, sum(gross per rate) will NOT equal
-	// Total unless the signer apportions these two amounts across rates
-	// itself — see the contract for the recommended method. Omitted when
-	// zero (the common case) so an existing signer that never reads them
-	// sees no shape change.
+	// amounts already folded into Total — mirrors pos.SaleInput.SaleDiscount
+	// / .ServiceCharge verbatim (minor units, money.Money wire form).
+	// SaleDiscount is still NOT reflected anywhere in VATBreakdown
+	// (ut-docs#834): a signer apportions it across rates itself, per the
+	// contract's recommended method. ServiceCharge, since contract 1.5.0
+	// (ADR-0060 Decision 5), IS apportioned into VATBreakdown by core — its
+	// net and tax are folded into the existing per-rate lines via the same
+	// shared pos.ApportionServiceChargeTax the tender path's
+	// computeSaleTotals uses, so the two can never drift. The flat field is
+	// RETAINED for display/reconciliation only; a signer must no longer
+	// apportion it itself (doing both double-counts — see the contract's
+	// 1.5.0 changelog). Both omitted when zero (the common case) so an
+	// existing signer that never reads them sees no shape change.
 	SaleDiscount  int64 `json:"sale_discount,omitempty"`
 	ServiceCharge int64 `json:"service_charge,omitempty"`
 }
@@ -357,9 +360,28 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		agg.Net += lineNet.Minor()
 		agg.Tax += lineTax.Minor()
 	}
+	// ADR-0060 Decision 2 / contract 1.5.0: fold the service charge's
+	// apportioned net/tax into the per-rate lines via the SAME shared
+	// function computeSaleTotals taxes it with — never a local re-derivation,
+	// so the signed breakdown and the persisted totals cannot drift. The
+	// flat ServiceCharge field below stays display/reconciliation-only.
+	var chargeTax money.Money
+	for _, b := range pos.ApportionServiceChargeTax(in.ServiceCharge, pos.ChargeTaxLinesFromSale(in.Lines), in.TaxInclusive, in.ServiceChargeTaxBasisBP) {
+		agg, ok := perRate[b.RateBP]
+		if !ok {
+			agg = &fiscalSignAskVATLine{RateBP: b.RateBP}
+			perRate[b.RateBP] = agg
+		}
+		agg.Net += b.Amount.Minor()
+		agg.Tax += b.Tax.Minor()
+		chargeTax = chargeTax.Add(b.Tax)
+	}
 	total := subtotal.Sub(in.SaleDiscount).Add(in.ServiceCharge)
 	if !in.TaxInclusive {
-		total = total.Add(taxTotal)
+		// Mirrors computeSaleTotals: the charge's tax rides on top exactly
+		// like each line's own (inclusive already carries it inside the
+		// charge amount).
+		total = total.Add(taxTotal).Add(chargeTax)
 	}
 	if total.IsNegative() {
 		total = money.Zero

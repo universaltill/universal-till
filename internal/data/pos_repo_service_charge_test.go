@@ -34,7 +34,7 @@ func TestPOSRepo_ServiceCharge_RoundTrips(t *testing.T) {
 
 	// subtotal 1000, 10% service charge -> total 1100.
 	if err := repo.InsertSale(ctx, nil, "sale-sc", "R-SC-1", "sale", "", "", "", "GBP",
-		1000, 0, 0, 1100, 100, "", "2026-08-01T10:00:00Z", "card", "", "", false, "synced", 0, "", ""); err != nil {
+		1000, 0, 0, 1100, 100, 700, "", "2026-08-01T10:00:00Z", "card", "", "", false, "synced", 0, "", ""); err != nil {
 		t.Fatalf("insert sale: %v", err)
 	}
 
@@ -50,6 +50,12 @@ func TestPOSRepo_ServiceCharge_RoundTrips(t *testing.T) {
 	}
 	if detail.Total != 1100 {
 		t.Fatalf("want Total 1100 (service charge already included), got %d", detail.Total)
+	}
+	// ADR-0060 Decision 4 / migration 062: the flat basis the charge's tax
+	// was computed at round-trips, so a replay (which rebuilds SaleInput
+	// from this detail) re-derives the SAME tax the originating till did.
+	if detail.ServiceChargeTaxBasisBP != 700 {
+		t.Fatalf("want ServiceChargeTaxBasisBP 700, got %d", detail.ServiceChargeTaxBasisBP)
 	}
 }
 
@@ -72,7 +78,7 @@ func TestPOSRepo_ServiceCharge_DefaultsToZero(t *testing.T) {
 	repo := NewPOSRepo(d.DB)
 
 	if err := repo.InsertSale(ctx, nil, "sale-nosc", "R-NOSC-1", "sale", "", "", "", "GBP",
-		250, 0, 0, 250, 0, "", "2026-08-01T10:00:00Z", "cash", "", "", false, "synced", 0, "", ""); err != nil {
+		250, 0, 0, 250, 0, 0, "", "2026-08-01T10:00:00Z", "cash", "", "", false, "synced", 0, "", ""); err != nil {
 		t.Fatalf("insert sale: %v", err)
 	}
 

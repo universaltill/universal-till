@@ -133,6 +133,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// so sharing is safe and reuses the cache.
 	taxAsker := &pluginTaxRateAsker{db: db}
 	engine.SetTaxRateAsker(taxAsker)
+	// Service-charge/tip country policy (ADR-0060): same plugin seam, same
+	// one-shared-instance reasoning — the answer is store-level (the payload
+	// carries nothing basket-specific), so both engines share one asker and
+	// its per-generation cache.
+	chargeAsker := &pluginChargePolicyAsker{db: db}
+	engine.SetChargePolicyAsker(chargeAsker)
 	// The self-order kiosk gets its OWN engine (ut-docs#449) — see
 	// common.Deps.KioskEngine for why this must never be the same instance
 	// the cashier's handlers use. The resolver is a stateless read-only
@@ -143,6 +149,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(state),
 	}, resolver)
 	kioskEngine.SetTaxRateAsker(taxAsker)
+	kioskEngine.SetChargePolicyAsker(chargeAsker)
 
 	// Labels are locale keys; the nav renders them through T (unknown keys —
 	// e.g. plugin menu labels from manifests — pass through unchanged).

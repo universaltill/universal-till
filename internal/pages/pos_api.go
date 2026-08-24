@@ -147,6 +147,23 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			payments[i].TipAmount = money.FromMinor(tip)
 		}
 	}
+	// Tip recipient default (ADR-0060 Decision 3), decided HERE — the one
+	// choke point every tender surface (cashier and kiosk) goes through,
+	// right where a plugin-reported tip also lands: an installed country
+	// plugin's charge.policy.ask answer supplies the market default
+	// (tip_default_recipient); with no answer, "employee" — the one default
+	// every researched market agrees on. Only fills payments that carry no
+	// explicit recipient; pos.CompleteSale re-validates and re-defaults at
+	// persistence as the backstop.
+	tipRecipient := pos.TipRecipientEmployee
+	if policy, ok := engine.ChargePolicy(); ok && policy.TipDefaultRecipient == pos.TipRecipientBusiness {
+		tipRecipient = pos.TipRecipientBusiness
+	}
+	for i := range payments {
+		if payments[i].TipRecipient == "" {
+			payments[i].TipRecipient = tipRecipient
+		}
+	}
 	// Both call sites happen to pass a `payments` slice that shares
 	// `saleInput.Payments`'s backing array, so the mutation above already
 	// reaches CompleteSale by aliasing — but relying on that silently is
@@ -769,9 +786,31 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// CompleteSale enforces all agree. The AMOUNT (not the rate) is
 		// what flows into SaleInput, same shape as SaleDiscount.
 		serviceCharge, _ := pos.ComputeTaxBasisPoints(subtotal.Sub(discount), common.EffectiveServiceChargeRateBP(d.CurrentState()), false)
+		// ADR-0060: an installed country plugin's charge.policy.ask answer
+		// can forbid the charge outright or fix a flat tax basis for it; no
+		// answer (the normal no-plugin case) leaves the fail-closed default —
+		// the charge stays permitted and its tax is apportioned at the
+		// sale's own per-line rates. Same consult the basket preview makes
+		// (Service.recomputeTotals), so screen and demand agree. Runs AFTER
+		// the ut-docs#962 Turkey backstop above, which may have already
+		// zeroed serviceCharge to 0 — ServiceChargeTax(0, ...) is a no-op,
+		// so the two mechanisms compose without either needing to know
+		// about the other.
+		chargeTaxBasisBP := 0
+		if policy, ok := d.Engine.ChargePolicy(); ok {
+			if !policy.ServiceChargePermitted {
+				serviceCharge = 0
+			}
+			chargeTaxBasisBP = policy.ServiceChargeTaxBasisBP
+		}
+		chargeTax := pos.ServiceChargeTax(serviceCharge, pos.ChargeTaxLinesFromSale(saleLines), d.CurrentState().TaxInclusive, chargeTaxBasisBP)
 		total := subtotal.Sub(discount).Add(serviceCharge)
 		if !d.CurrentState().TaxInclusive {
-			total = total.Add(taxTotal)
+			// Exclusive pricing: the charge's tax rides on top exactly like
+			// each line's own (inclusive carries it inside the amount) —
+			// mirrors pos.computeSaleTotals, which is what CompleteSale's
+			// payment-sufficiency check will enforce below.
+			total = total.Add(taxTotal).Add(chargeTax)
 		}
 		if total.IsNegative() {
 			total = 0
@@ -851,22 +890,26 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		saleInput := pos.SaleInput{
-			SaleType:               "sale",
-			Currency:               d.CurrentState().Currency,
-			TaxInclusive:           d.CurrentState().TaxInclusive,
-			SaleDiscount:           discount,
-			ServiceCharge:          serviceCharge,
-			OrderType:              d.Engine.OrderType(),
-			TableID:                d.Engine.TableID(),
-			Lines:                  saleLines,
-			Payments:               payments,
-			Note:                   in.Note,
-			RegisterID:             registerID,
-			CashierID:              cashierID,
-			CustomerID:             customerID,
-			AllowNegativeInventory: allowNegative,
-			ActorID:                cashierID,
-			Offline:                offline,
+			SaleType:      "sale",
+			Currency:      d.CurrentState().Currency,
+			TaxInclusive:  d.CurrentState().TaxInclusive,
+			SaleDiscount:  discount,
+			ServiceCharge: serviceCharge,
+			// The plugin-answered flat basis (0 = per-line apportionment)
+			// travels with the sale so computeSaleTotals and the
+			// fiscal.sign.ask payload tax the charge identically (ADR-0060).
+			ServiceChargeTaxBasisBP: chargeTaxBasisBP,
+			OrderType:               d.Engine.OrderType(),
+			TableID:                 d.Engine.TableID(),
+			Lines:                   saleLines,
+			Payments:                payments,
+			Note:                    in.Note,
+			RegisterID:              registerID,
+			CashierID:               cashierID,
+			CustomerID:              customerID,
+			AllowNegativeInventory:  allowNegative,
+			ActorID:                 cashierID,
+			Offline:                 offline,
 		}
 		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r))
 		if err != nil {
