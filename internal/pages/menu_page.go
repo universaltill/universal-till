@@ -3,6 +3,7 @@ package pages
 import (
 	"net/http"
 
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -36,6 +37,7 @@ var iconFor = map[string]string{
 	"/translations":     "🌐",
 	"/tills":            "🖥️",
 	"/report-issue":     "🐞",
+	"/fiscal-register":  "📋",
 }
 
 func registerMenu(mux *http.ServeMux, d *common.Deps) {
@@ -72,6 +74,14 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 			add("/country-settings", "countrysettings.title")
 			add("/translations", "translations.title")
 			add("/report-issue", "issuereport.title")
+			// §146a Abs. 4 AO fiscal register (ut-docs#665): the page route
+			// itself has no country gate (a manager navigating directly
+			// still reaches it), but the nav TILE is Germany-only -- no
+			// other market has this obligation, so surfacing it elsewhere
+			// would just be clutter.
+			if fiscal.RequiresHardGate(d.CurrentState().Country) {
+				add("/fiscal-register", "fiscalregister.title")
+			}
 		}
 		httpx.Render("ui/pages/menu.html", map[string]any{
 			"title": "Menu",
