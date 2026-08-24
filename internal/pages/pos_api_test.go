@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -794,6 +795,69 @@ func TestTenderHandler_DeclinedPaymentShowsLocalizedMessageNotRawError(t *testin
 	}
 	if count != 0 {
 		t.Fatalf("expected no sale to be recorded on a declined payment, got %d", count)
+	}
+}
+
+// ut-docs#923: EnsurePaymentMethod's failure path -- reached before
+// completeTender/CompleteSale is ever called, so it's a different code path
+// from the #921 fixes above -- used to leak raw Go error text
+// (err.Error(), e.g. "no such table: payment_methods") via
+// http.Error(w, err.Error(), ...) regardless of locale. Provoked here by
+// dropping payment_methods out from under a live request: EnsureStockLocation
+// (called earlier in the handler, over the untouched stock_locations table)
+// still succeeds, so the failure is deterministically isolated to
+// EnsurePaymentMethod's own SELECT/INSERT.
+func TestTenderHandler_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if _, err := dp.Db.Exec(`DROP TABLE payment_methods`); err != nil {
+		t.Fatalf("drop payment_methods: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on an EnsurePaymentMethod DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "payment_methods") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "could not be completed") {
+		t.Fatalf("expected the localized pos.toast.tender_failed copy, got: %s", rec.Body.String())
+	}
+}
+
+// Same fix, form-encoded fallback branch (quick-tender buttons that send
+// hx-vals rather than a JSON body) -- the ticket's own second call site.
+func TestTenderHandler_FormFallbackEnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if _, err := dp.Db.Exec(`DROP TABLE payment_methods`); err != nil {
+		t.Fatalf("drop payment_methods: %v", err)
+	}
+
+	form := url.Values{"method": {"cash"}, "amount": {"120"}, "offline": {"true"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on an EnsurePaymentMethod DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "payment_methods") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "could not be completed") {
+		t.Fatalf("expected the localized pos.toast.tender_failed copy, got: %s", rec.Body.String())
 	}
 }
 
