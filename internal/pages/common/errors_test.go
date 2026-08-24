@@ -1,9 +1,7 @@
 package common
 
 import (
-	"bytes"
 	"errors"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // realI18n loads the actual web/locales checkout — the same production
@@ -115,15 +114,20 @@ func TestLogAndLocalizedErrorNeverLeaksRawErrorToBody(t *testing.T) {
 // TestLogAndLocalizedErrorLogsTheRealError proves the raw error still
 // reaches the server log — the whole point of this helper over plain
 // LocalizedError is that the detail isn't lost, just kept off the
-// operator's screen. Deleting the log.Printf call would still pass every
-// other test in this file, so this closes that gap explicitly.
+// operator's screen. Deleting the logging.L().Errorf call would still pass
+// every other test in this file, so this closes that gap explicitly.
+//
+// Asserts via logging.Recent() (the app's own leveled logger, ut-docs#947)
+// rather than capturing stdlib log's writer — LogAndLocalizedError no
+// longer goes through stdlib log at all, and Recent() is the sanctioned
+// way to observe what the leveled logger recorded (see its own doc
+// comment). This also proves the ADR-0018 Problems-feed side effect: a
+// LogAndLocalizedError call is now visible to logging.Recent() the same
+// way any other app Error-level log line is.
 func TestLogAndLocalizedErrorLogsTheRealError(t *testing.T) {
 	httpx.InitI18n(nil, "en")
-
-	var buf bytes.Buffer
-	orig := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(orig) })
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -131,11 +135,18 @@ func TestLogAndLocalizedErrorLogsTheRealError(t *testing.T) {
 
 	LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", raw)
 
-	logged := buf.String()
-	if !strings.Contains(logged, "internal-uuid-1234") || !strings.Contains(logged, "UNIQUE constraint") {
-		t.Fatalf("log output = %q; want it to contain the real error detail", logged)
+	recent := logging.Recent()
+	if len(recent) == 0 {
+		t.Fatalf("logging.Recent() is empty; want the real error recorded")
 	}
-	if !strings.Contains(logged, "[catalog]") {
-		t.Fatalf("log output = %q; want the logTag prefix", logged)
+	got := recent[0] // newest-first
+	if got.Level != "ERROR" {
+		t.Fatalf("logged level = %q; want ERROR", got.Level)
+	}
+	if !strings.Contains(got.Msg, "internal-uuid-1234") || !strings.Contains(got.Msg, "UNIQUE constraint") {
+		t.Fatalf("logged message = %q; want it to contain the real error detail", got.Msg)
+	}
+	if !strings.Contains(got.Msg, "[catalog]") {
+		t.Fatalf("logged message = %q; want the logTag prefix", got.Msg)
 	}
 }
