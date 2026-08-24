@@ -257,7 +257,15 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			"original_sale_id": detail.ID,
 			"original_receipt": detail.ReceiptNo,
 		}); blocked != nil {
-			http.Error(w, "provider refund failed for "+method+": "+blocked.Error(), http.StatusPaymentRequired)
+			// ut-docs#950: `blocked` is a plugin-originated error -- whatever
+			// text a third-party payment plugin's payment.<key>.refund hook
+			// returned -- so it must never reach the operator verbatim, same
+			// policy ut-docs#921 (F2) already established for the sibling
+			// payment.<key>.authorize gate in pos_api.go's completeTender
+			// (paymentDeclinedError / pos.toast.payment_declined): log the
+			// real detail server-side, show a generic localized decline
+			// message instead.
+			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.provider_declined", "refund", blocked)
 			return
 		}
 		saleInput := pos.SaleInput{

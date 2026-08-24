@@ -164,7 +164,15 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 	renderTaxCodesTable := func(w http.ResponseWriter, r *http.Request) {
 		views, err := repo.ListAllTaxCodes(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Same repo call and locale key as the GET /catalog/tax-codes
+			// handler below, but a distinct call site: this one runs only
+			// AFTER a Create/Update write to the same table has already
+			// succeeded in this same request, so a schema-level failure can
+			// never reach it (the write would have failed first). It is
+			// still independently reachable, and covered, via a row the
+			// write leaves untouched but the re-read cannot scan --
+			// TestTaxCodesAPI_Create_TableRenderErrorIsLocalized (ut-docs#945).
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "taxcodes.err.list_failed", "taxcodes_list_render", err)
 			return
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -180,7 +188,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 		}
 		views, err := repo.ListAllTaxCodes(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "taxcodes.err.list_failed", "taxcodes_list_page", err)
 			return
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -211,7 +219,14 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, se.msg, se.status)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			// Genuinely unreachable via any real request: parseTaxCodeForm
+			// (above) always returns either a nil error or one already wrapped
+			// as httpStatusError (the branch above) -- there is no code path in
+			// its current contract that returns a bare, unwrapped error. Still
+			// routed through the localized helper for defensive consistency
+			// (never a raw err.Error() on the wire) -- ut-docs#945 review: no
+			// dedicated regression test since no real request can reach this.
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "taxcodes.err.invalid_form", "taxcodes_create_form", err)
 			return
 		}
 		if _, err := repo.CreateTaxCode(r.Context(), name, rateBP, takeawayBP); err != nil {
@@ -219,7 +234,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, httpx.T(locale, "taxcodes.err.duplicate_name"), http.StatusBadRequest)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "taxcodes.err.save_failed", "taxcodes_create_save", err)
 			return
 		}
 		renderTaxCodesTable(w, r)
@@ -243,7 +258,11 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, se.msg, se.status)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			// Genuinely unreachable -- see the identical comment on the create
+			// handler above; parseTaxCodeForm never returns a bare error here
+			// either. Routed through the localized helper defensively, with no
+			// dedicated regression test for the same reason (ut-docs#945).
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "taxcodes.err.invalid_form", "taxcodes_update_form", err)
 			return
 		}
 		active := taxCodeFormActive(r)
@@ -254,7 +273,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 			case errors.Is(err, data.ErrTaxCodeNotFound):
 				http.Error(w, httpx.T(locale, "taxcodes.err.not_found"), http.StatusNotFound)
 			default:
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "taxcodes.err.save_failed", "taxcodes_update_save", err)
 			}
 			return
 		}
