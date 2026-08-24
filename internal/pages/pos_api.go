@@ -283,6 +283,29 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	return saleID, nil
 }
 
+// classifyTenderError maps a completeTender/CompleteSale failure (declined
+// payment and the fiscal hard gate are handled separately as typed errors
+// before this is ever consulted — see completeTender's callers) to the
+// locale key for its cashier-facing toast. Everything CompleteSale can
+// still fail with is a plain error, not a typed one (insufficient stock,
+// an underpayment, a lines/DB failure), so this matches on the message
+// text the same way the pre-#921 insufficient-stock branch already did.
+// Anything the switch doesn't specifically recognize gets the generic
+// fallback key — mirroring the self-order kiosk tender handler's own
+// default (self_order_shop.go's "selforder.checkout.failed") — so a
+// failure mode nobody has named yet still renders as a localized message,
+// never raw Go error text (ut-docs#921).
+func classifyTenderError(err error) string {
+	switch {
+	case strings.Contains(err.Error(), "insufficient stock"):
+		return "pos.toast.insufficient_stock"
+	case strings.Contains(err.Error(), "do not cover total"):
+		return "pos.toast.payment_insufficient"
+	default:
+		return "pos.toast.tender_failed"
+	}
+}
+
 // pluginReportedTipAmount extracts an optional `tip_amount` (integer minor
 // units, same convention as pos_api's own `tip` tender field) from a
 // payment.<key>.authorize plugin's response — e.g. a card-terminal plugin
@@ -823,7 +846,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			var declined *paymentDeclinedError
 			if errors.As(err, &declined) {
-				http.Error(w, err.Error(), http.StatusPaymentRequired)
+				// ut-docs#921 review finding (F2): the same raw-English leak
+				// applied here too -- err.Error() ("payment declined: card")
+				// went straight to the operator regardless of locale. The
+				// 402 status is deliberate (its own type comment: lets a
+				// caller distinguish a decline from a generic 400) and
+				// stays; only the body swaps from raw Go error text to a
+				// localized, method-agnostic message, mirroring the
+				// self-order kiosk's own "selforder.checkout.declined" copy.
+				log.Printf("tender rejected: %v", err)
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.payment_declined"), http.StatusPaymentRequired)
 				return
 			}
 			// German TSE hard gate (ADR-0048): same in-place, localized
@@ -851,24 +883,27 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				_ = basketView.Render(w, b)
 				return
 			}
-			if strings.Contains(err.Error(), "insufficient stock") {
-				locale := httpx.ResolveLocale(w, r)
-				funcs := httpx.FuncsFor(locale)
-				b := d.Engine.Basket()
-				// Localized, generic message on the persistent notice — the raw
-				// engine error carries internal item/location IDs and English
-				// prose that must not sit on a cashier-facing surface. The
-				// detail stays available server-side via the log below.
-				log.Printf("tender rejected: %v", err)
-				b.ToastMessage = httpx.T(locale, "pos.toast.insufficient_stock")
-				b.ToastLevel = "error"
-				basketView, _ := ui.NewBasketView(funcs)
-				w.Header().Set("Content-Type", "text/html")
-				w.WriteHeader(http.StatusOK)
-				_ = basketView.Render(w, b)
-				return
-			}
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			// Any other completeTender/CompleteSale failure — insufficient
+			// stock, an underpayment, or anything not specifically
+			// classified — never leaks the raw engine error text to the
+			// operator (it used to, via http.Error(w, err.Error(), ...):
+			// verbatim English regardless of locale, ut-docs#921). Same
+			// in-place, localized notice surface as the fiscal-gate
+			// rejection above; the raw detail stays available server-side
+			// via the log below. classifyTenderError's default branch
+			// mirrors the self-order kiosk handler's own fallback
+			// ("selforder.checkout.failed") so nothing falls through to
+			// raw English again, known cause or not.
+			locale := httpx.ResolveLocale(w, r)
+			funcs := httpx.FuncsFor(locale)
+			b := d.Engine.Basket()
+			log.Printf("tender rejected: %v", err)
+			b.ToastMessage = httpx.T(locale, classifyTenderError(err))
+			b.ToastLevel = "error"
+			basketView, _ := ui.NewBasketView(funcs)
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			_ = basketView.Render(w, b)
 			return
 		}
 
