@@ -147,3 +147,52 @@ func TestCatalogItemCreateForcePlain_EscapesEmbeddedInference(t *testing.T) {
 		t.Fatalf("barcode_type = %q, want EAN13", storedType)
 	}
 }
+
+// TestCatalogBarcodeForcePlain_NonEAN13CodesStillAccepted is the ut-docs#948
+// F-2 review regression: ticking "plain code" must NOT reject a perfectly
+// valid non-EAN-13 barcode. Forcing BarcodeType:"EAN13" unconditionally
+// would make AddBarcode assert an EAN-13 check digit and 400 an EAN-8 /
+// UPC-A / internal-PLU code. plainBarcodeTypeFor only forces the type for a
+// genuine EAN-13, so these fall through to untyped inference and attach.
+func TestCatalogBarcodeForcePlain_NonEAN13CodesStillAccepted(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	seedSettingsTable(t, db)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
+	// Default enabled set (no explicit SetEnabledBarcodeSymbologies) — the
+	// permissive catch-alls accept any shape, same as a real fresh shop.
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	cases := []struct {
+		name     string
+		code     string
+		wantType string
+	}{
+		{"EAN-8", "96385074", "EAN8"},             // valid EAN-8 check digit
+		{"UPC-A", "036000291452", "UPCA"},         // valid 12-digit UPC-A check digit
+		{"internal-PLU", "PLU-BANANA", "CODE128"}, // non-numeric → not EAN-13, catch-all
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := strings.NewReader("itemId=itm1&barcode=" + tc.code + "&forcePlainBarcode=on")
+			req := httptest.NewRequest(http.MethodPost, "/api/catalog/barcode", form)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s with forcePlainBarcode: want 200, got %d: %s", tc.name, rec.Code, rec.Body.String())
+			}
+			var storedType string
+			if err := db.QueryRow(`SELECT barcode_type FROM item_barcodes WHERE barcode = ?`, tc.code).Scan(&storedType); err != nil {
+				t.Fatalf("%s: expected the code stored, got: %v", tc.name, err)
+			}
+			if storedType != tc.wantType {
+				t.Fatalf("%s: barcode_type = %q, want %q (untyped inference, not forced EAN13)", tc.name, storedType, tc.wantType)
+			}
+		})
+	}
+}
