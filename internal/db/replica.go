@@ -31,6 +31,10 @@ type ReplicaIdentity struct {
 	// store identity (id/token/key) but gives each till its OWN device — so the
 	// store's fleet lists distinct devices (ADR-0013 two-tier enrolment).
 	DeviceID string `json:"device_id"`
+	// RegisterID is the register the primary auto-provisioned for this till
+	// during enrolment (ut-docs#894). Empty when joining an older primary
+	// that doesn't auto-provision.
+	RegisterID string `json:"register_id"`
 }
 
 // ReplicaIdentityPath locates the identity file for a DB path.
@@ -114,17 +118,26 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	}
 	// The snapshot carried the primary's own register identity
 	// (sync.till_register_id, ut-docs#268) baked into its settings row —
-	// clear it so this replica re-resolves its OWN register (via
-	// pos.ResolveTillRegisterID) rather than starting life already
-	// believing it's the primary's register, which would misroute this
-	// replica's first Pfandrückgabe payout onto the wrong drawer before a
-	// manager ever gets a chance to set it explicitly (independent review
-	// finding, ut-docs#268 round 2). The key already carries the "sync."
-	// prefix that keeps ordinary admin-sync pulls from re-clobbering it
-	// (PerTillSettingPrefixes) — this join-time clear is the other half:
-	// the ONE path that legitimately inherits a whole settings row via
-	// snapshot restore rather than an admin-bundle apply.
-	if _, err := sqlDB.Exec(`DELETE FROM settings WHERE key = 'sync.till_register_id'`); err != nil {
+	// this replica must NOT start life believing it's the primary's
+	// register, which would misroute its first Pfandrückgabe payout onto
+	// the wrong drawer before a manager ever gets a chance to set it
+	// explicitly (independent review finding, ut-docs#268 round 2). The key
+	// already carries the "sync." prefix that keeps ordinary admin-sync
+	// pulls from re-clobbering it (PerTillSettingPrefixes) — this join-time
+	// rewrite is the other half: the ONE path that legitimately inherits a
+	// whole settings row via snapshot restore rather than an admin-bundle
+	// apply. Two cases (ut-docs#894):
+	//   - The primary auto-provisioned a register for this till during
+	//     enrolment and sent its id: pin the setting to it, so this till
+	//     resolves to its OWN register instead of tripping
+	//     pos.ErrRegisterIdentityAmbiguous now that 2+ registers exist.
+	//   - Older primary, no id sent: clear the setting so this replica
+	//     re-resolves via pos.ResolveTillRegisterID (pre-#894 behaviour).
+	if id.RegisterID != "" {
+		if err := set("sync.till_register_id", id.RegisterID); err != nil {
+			return false, fmt.Errorf("apply till register identity: %w", err)
+		}
+	} else if _, err := sqlDB.Exec(`DELETE FROM settings WHERE key = 'sync.till_register_id'`); err != nil {
 		return false, fmt.Errorf("clear till register identity: %w", err)
 	}
 	// The snapshot brought the primary's sessions; they mean nothing here.
