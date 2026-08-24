@@ -59,6 +59,30 @@ func TestPermissionSettingsPage_GET_RequiresSuperAdmin(t *testing.T) {
 	})
 }
 
+// ut-docs#942: migration 057 added the tax_code_management action to the
+// catalog with no matching web/locales/*.json key, so httpx.T's raw-key
+// fallback rendered the literal action name on the matrix instead of a
+// translated label. Assert the real label shows and the raw key never leaks
+// into the response — a regression here means a locale file has drifted out
+// of sync with the DB-seeded action catalog again.
+func TestPermissionSettingsPage_GET_TaxCodeManagementHasTranslatedLabel(t *testing.T) {
+	mux, _ := newPermissionSettingsTestDeps(t)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/users/permissions", nil), auth.User{ID: "sa-1", Role: "super_admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Tax codes") {
+		t.Fatalf("expected the translated \"Tax codes\" label for the tax_code_management action, got: %s", body)
+	}
+	if strings.Contains(body, ">tax_code_management<") {
+		t.Fatalf("raw action key leaked into the response instead of a translated label: %s", body)
+	}
+}
+
 // The rendered grid must actually reflect grant state — a version of this
 // page that dropped Granted/Locked handling entirely, or rendered every
 // cell the same way, would still pass a test that only checks for the
