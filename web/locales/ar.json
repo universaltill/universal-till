@@ -822,6 +822,8 @@
   "settings.retention.mode_label": "احتفظ بالتقارير في",
   "settings.retention.mode_till": "هذا الجهاز فقط",
   "settings.retention.title": "الاحتفاظ بالتقارير",
+  "settings.service_charge.invalid_rate": "أدخل رسوم الخدمة كنسبة مئوية تساوي صفرًا أو أكثر، مثل 12.5.",
+  "settings.service_charge.tr_forbidden": "يحظر القانون التركي فرض رسوم الخدمة أو رسوم الطاولة أو الكوفير على الفاتورة (لائحة بطاقة الأسعار، سارية منذ 30 يناير 2026). أضف هذا المبلغ إلى أسعار قائمة الطعام بدلاً من ذلك.",
   "settings.shop_type.help": "نوع النشاط التجاري الذي تخدمه هذه النقطة — يُختار عند الإعداد ويمكن تغييره هنا.",
   "settings.shop_type.title": "نوع المتجر",
   "settings.telemetry.enable": "إرسال بيانات تتبع الإضافات إلى المتجر",

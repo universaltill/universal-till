@@ -1338,7 +1338,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		newCfg := pos.Config{
 			TaxInclusive:                 st.TaxInclusive,
 			TaxRateBasisPoints:           st.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
+			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
 		}
 		d.Engine.SetConfig(newCfg)
 		if d.KioskEngine != nil {
@@ -1368,8 +1368,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// reflection below), so the DB and the live state disagreed with no
 		// operator feedback at all.
 		if key == common.KeyServiceChargeRate {
-			if _, ok := common.ParseServiceChargeRateBasisPoints(value); !ok {
-				http.Error(w, "invalid service charge rate", http.StatusBadRequest)
+			bp, ok := common.ParseServiceChargeRateBasisPoints(value)
+			if !ok {
+				// Localized since ut-docs#962: this body is now actually
+				// RENDERED to the operator (settings.html's All-settings
+				// card surfaces a refused upsert), so an English-only
+				// literal would show through in every locale.
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "settings.service_charge.invalid_rate"), http.StatusBadRequest)
+				return
+			}
+			// ut-docs#962: a service-charge/cover line on a bill has been
+			// illegal in Turkey since the 2026-01-30 Fiyat Etiketi
+			// Yönetmeliği amendment (₺3,973 per receipt under Law 6502
+			// art. 77) — the setting is not the merchant's to enable, so
+			// this is refused here rather than silently accepted and
+			// zeroed out later at the tender path (common.
+			// EffectiveServiceChargeRateBP is the fail-closed backstop for
+			// whatever reaches there regardless, e.g. a rate saved before
+			// the shop's country was set to TR).
+			if bp > 0 && common.ServiceChargeForbidden(d.CurrentState().Country) {
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "settings.service_charge.tr_forbidden"), http.StatusBadRequest)
 				return
 			}
 		}
@@ -1518,13 +1536,22 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		switch key {
 		case common.KeyCurrency:
 			httpx.InitCurrency(st.Currency)
-		case common.KeyTaxInclusive, common.KeyServiceChargeRate:
+		case common.KeyTaxInclusive, common.KeyServiceChargeRate, common.KeyCountry:
 			// In place: replacing the engine would empty a basket in progress.
 			// Both engines — see the currency-card handler above (ut-docs#449).
+			//
+			// KeyCountry is in this list because the effective service-charge
+			// rate is country-derived (ut-docs#962): a shop that switches to
+			// TR with a rate still configured would otherwise keep quoting an
+			// illegal service-charge line on the basket and the customer
+			// display until the process restarted — while the tender path
+			// already recomputes it as 0, so the screen and the recorded sale
+			// would disagree as well. Leaving TR restores the still-stored
+			// rate by the same path (the suppression never erases it).
 			newCfg := pos.Config{
 				TaxInclusive:                 st.TaxInclusive,
 				TaxRateBasisPoints:           st.TaxRatePct * 100,
-				ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
+				ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
 			}
 			d.Engine.SetConfig(newCfg)
 			if d.KioskEngine != nil {

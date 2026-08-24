@@ -822,6 +822,8 @@
   "settings.retention.mode_label": "Raporları şurada tut",
   "settings.retention.mode_till": "Yalnızca bu kasa",
   "settings.retention.title": "Rapor saklama",
+  "settings.service_charge.invalid_rate": "Servis ücretini sıfır veya daha büyük bir yüzde olarak girin, örneğin 12,5.",
+  "settings.service_charge.tr_forbidden": "Türk hukuku, adisyonda servis ücreti, masa ücreti veya kuver alınmasını yasaklar (Fiyat Etiketi Yönetmeliği, 30 Ocak 2026'dan beri yürürlükte). Bunun yerine bu tutarı menü fiyatlarına dahil edin.",
   "settings.shop_type.help": "Bu kasanın hizmet ettiği işletme türü — kurulumda seçilir, buradan değiştirilebilir.",
   "settings.shop_type.title": "İşletme türü",
   "settings.telemetry.enable": "Eklenti telemetrisini pazaryerine gönder",
