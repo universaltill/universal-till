@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -113,7 +114,7 @@ func newSyncAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 
 func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newSyncAPITestDeps(t)
+	mux, dp := newSyncAPITestDeps(t)
 
 	// Issue an enrolment token (manager action on the primary).
 	rec := httptest.NewRecorder()
@@ -159,9 +160,10 @@ func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 	}
 	var enrollResp struct {
 		Data struct {
-			TillID string `json:"till_id"`
-			Bearer string `json:"bearer"`
-			TillNo int    `json:"till_no"`
+			TillID     string `json:"till_id"`
+			Bearer     string `json:"bearer"`
+			TillNo     int    `json:"till_no"`
+			RegisterID string `json:"register_id"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &enrollResp); err != nil {
@@ -172,6 +174,26 @@ func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 	}
 	if enrollResp.Data.TillNo != 2 {
 		t.Fatalf("expected the first enrolled replica to be till_no 2 (primary is 1), got %d", enrollResp.Data.TillNo)
+	}
+
+	// ut-docs#894: enrolment auto-provisions a register for the joining till,
+	// server-side, so it's part of the snapshot the till downloads next.
+	if enrollResp.Data.RegisterID == "" {
+		t.Fatalf("expected register_id in the enroll response, got %+v", enrollResp.Data)
+	}
+	regs, err := data.NewPOSRepo(dp.Db).ListRegisters(req.Context())
+	if err != nil {
+		t.Fatalf("ListRegisters: %v", err)
+	}
+	foundReg := false
+	for _, reg := range regs {
+		if reg.ID == enrollResp.Data.RegisterID && reg.Name == "Till 2" {
+			foundReg = true
+		}
+	}
+	if !foundReg {
+		t.Fatalf("expected an auto-provisioned register %q named after the till, got %+v",
+			enrollResp.Data.RegisterID, regs)
 	}
 
 	// The SAME token cannot be reused (one-time).
@@ -214,6 +236,152 @@ func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 pinging with a revoked bearer, got %d", rec.Code)
+	}
+}
+
+// ut-docs#894, independent review finding: auto-provisioning a register for
+// the joining till gives the PRIMARY a second active register. A fresh shop
+// reaches enrolment with exactly one register and NO persisted
+// sync.till_register_id (setup calls EnsureRegister only; the pairing QR
+// lives on /tills, which never resolves), so without pinning the primary's
+// own identity first, the enrolment leaves the primary itself resolving to
+// pos.ErrRegisterIdentityAmbiguous — breaking its Pfandrückgabe payout path
+// (shifts_api.go), the exact failure this card exists to remove.
+func TestSyncEnroll_PinsPrimaryOwnRegisterBeforeProvisioning(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := t.Context()
+
+	// A fresh shop as setup leaves it: one register, nothing persisted.
+	if _, err := dp.Db.ExecContext(ctx,
+		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`); err != nil {
+		t.Fatalf("seed register: %v", err)
+	}
+	if _, err := dp.Db.ExecContext(ctx,
+		`DELETE FROM settings WHERE key='sync.till_register_id'`); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token",
+		strings.NewReader("url=http://192.168.1.10:8080"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	marker := `<code style="user-select:all">`
+	start := strings.Index(body, marker)
+	if start == -1 {
+		t.Fatalf("expected an enrolment code, got %s", body)
+	}
+	start += len(marker)
+	code := body[start : start+strings.Index(body[start:], "</code>")]
+	_, token, err := decodeEnrollCode(code)
+	if err != nil {
+		t.Fatalf("decode enrolment code: %v", err)
+	}
+
+	enrollBody, _ := json.Marshal(map[string]string{"token": token, "name": "Till 2"})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(enrollBody)))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 enrolling, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Two active registers now exist on the primary — but its OWN identity
+	// was pinned to the pre-existing one before the second appeared.
+	resolved, err := pos.ResolveTillRegisterID(ctx, dp.Db, dp.Settings)
+	if err != nil {
+		t.Fatalf("primary must still resolve its own register after an enrolment, got %v", err)
+	}
+	if resolved != "regA" {
+		t.Fatalf("primary resolved to %q, want its pre-existing regA", resolved)
+	}
+}
+
+// ut-docs#894, independent review finding: by the time register
+// auto-provisioning runs, InsertTill already committed and the one-time
+// enrolment token is already burned — so a provisioning failure must fail
+// OPEN (join succeeds with an empty register_id, same as an older primary)
+// rather than 500 the whole enrolment over what may be a transient error,
+// forcing the manager to mint a fresh pairing code and orphaning the till row.
+func TestSyncEnroll_RegisterProvisioningFailureDoesNotFailEnrolment(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := t.Context()
+
+	// Exhaust every name CreateRegisterForEnrolment would try for "Till 2":
+	// the base name plus every numbered suffix up to its bound.
+	posRepo := data.NewPOSRepo(dp.Db)
+	if _, err := posRepo.CreateRegister(ctx, "Till 2", nil); err != nil {
+		t.Fatalf("seed base name: %v", err)
+	}
+	for i := 2; i <= 50; i++ {
+		if _, err := posRepo.CreateRegister(ctx, fmt.Sprintf("Till 2 (%d)", i), nil); err != nil {
+			t.Fatalf("seed suffix %d: %v", i, err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token",
+		strings.NewReader("url=http://192.168.1.10:8080"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	marker := `<code style="user-select:all">`
+	start := strings.Index(body, marker)
+	if start == -1 {
+		t.Fatalf("expected an enrolment code, got %s", body)
+	}
+	start += len(marker)
+	code := body[start : start+strings.Index(body[start:], "</code>")]
+	_, token, err := decodeEnrollCode(code)
+	if err != nil {
+		t.Fatalf("decode enrolment code: %v", err)
+	}
+
+	enrollBody, _ := json.Marshal(map[string]string{"token": token, "name": "Till 2"})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(enrollBody)))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected enrolment to still succeed (fail open) when register "+
+			"provisioning can't find a free name, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var enrollResp struct {
+		Data struct {
+			TillID     string `json:"till_id"`
+			Bearer     string `json:"bearer"`
+			RegisterID string `json:"register_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &enrollResp); err != nil {
+		t.Fatal(err)
+	}
+	if enrollResp.Data.TillID == "" || enrollResp.Data.Bearer == "" {
+		t.Fatalf("till must still be enrolled despite the provisioning failure, got %+v", enrollResp.Data)
+	}
+	if enrollResp.Data.RegisterID != "" {
+		t.Fatalf("expected an empty register_id on a provisioning failure, got %q", enrollResp.Data.RegisterID)
+	}
+
+	// The one-time token was consumed either way — the manager does not get
+	// a free retry, but they also aren't forced to mint a fresh code: the
+	// till already joined and just needs a register assigned manually.
+	tills, err := data.NewTillsRepo(dp.Db).ListTills(ctx)
+	if err != nil {
+		t.Fatalf("ListTills: %v", err)
+	}
+	found := false
+	for _, till := range tills {
+		if till.ID == enrollResp.Data.TillID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the till to still be enrolled, got %+v", tills)
 	}
 }
 
