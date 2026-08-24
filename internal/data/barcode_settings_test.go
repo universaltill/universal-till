@@ -93,6 +93,45 @@ func TestEnabledBarcodeSymbologies_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestEnabledBarcodeSymbologies_NullOrEmptyRowFallsBackToDefaults: a stored
+// "null" or "[]" unmarshals with NO error (unlike a genuinely corrupt row),
+// so it needs its own fallback path — an all-disabling enabled set has no
+// legitimate use and would silently break every scan and every untyped
+// AddBarcode call (ut-docs#955). Unlike the corrupt-row case, this is not
+// an error: the caller gets the default set back with err == nil.
+func TestEnabledBarcodeSymbologies_NullOrEmptyRowFallsBackToDefaults(t *testing.T) {
+	for _, stored := range []string{"null", "[]"} {
+		t.Run(stored, func(t *testing.T) {
+			db := testsupport.NewCatalogTestDB(t)
+			seedSettingsTable(t, db)
+			defer db.Close()
+			repo := data.NewSettingsRepo(db)
+			ctx := context.Background()
+
+			if err := repo.Set(ctx, data.BarcodeEnabledSymbologiesKey, stored); err != nil {
+				t.Fatal(err)
+			}
+			ids, err := repo.EnabledBarcodeSymbologies(ctx)
+			if err != nil {
+				t.Fatalf("stored %q: unexpected error %v", stored, err)
+			}
+			want := data.DefaultEnabledBarcodeSymbologyIDs()
+			if len(ids) != len(want) {
+				t.Fatalf("stored %q fallback = %v, want the default set %v", stored, ids, want)
+			}
+
+			// The default set must still resolve a real scan/AddBarcode
+			// match — not just be the right length. EAN13 is always in the
+			// default set (only the two embedded-data ids default off).
+			reg := barcode.Default()
+			match, ok := reg.Match(ids, "4006381333931") // valid EAN-13 checksum
+			if !ok || match.SymbologyID != "EAN13" {
+				t.Fatalf("stored %q: default set %v must still resolve an EAN-13 scan, got match=%v ok=%v", stored, ids, match, ok)
+			}
+		})
+	}
+}
+
 // TestEnabledBarcodeSymbologies_CorruptRowFallsBackToDefaults: a corrupt
 // value must not brick scanning — the accessor reports the error but STILL
 // hands back the default set so scan-path callers can proceed.
