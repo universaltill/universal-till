@@ -60,10 +60,23 @@ It is the pattern for any admin page's message spot from here on — see
    is appended raw as markup (`<code>/path</code>`, `(3)`) — a caller that
    interpolates anything user-controlled there must escape it itself.
 
-A page that builds a notice in its own JS (catalog's `renderNotice`)
-builds it with `document.createElement` + `textContent`, never an
-innerHTML string: the text is routinely a scanned barcode, an item name,
-or a raw `xhr.responseText`.
+4. **Client-JS-built** (ut-docs#238, extracted to a shared helper by
+   ut-docs#918): a page's own inline `<script>` calls `renderNotice(el,
+   level, text)` — `web/public/app.js` (shared, since #918; catalog.html
+   still carries its own pre-#918 local copy, functionally identical, not
+   yet consolidated) — instead of assigning `.textContent`/`.innerHTML`
+   directly. `text` comes from a page-local `T`-lookup object populated by
+   `{{ T "..." }}` at template render time (app.js is a static,
+   non-templated asset, so it can't call `{{ T }}` itself). The dismiss
+   button's aria-label reads `<body data-notice-dismiss>` (set by
+   `base.html`), the same data-attribute convention `data-currency-*`/
+   `data-conn-online`/`data-conn-offline` already use for the same reason.
+
+A page that builds a notice in its own JS (the shared `renderNotice` in
+`app.js`, or catalog.html's own pre-#918 local copy) builds it with
+`document.createElement` + `textContent`, never an innerHTML string: the
+text is routinely a scanned barcode, an item name, or a raw
+`xhr.responseText`.
 
 A 400 response whose body is a rendered basket fragment (contains
 `id="basket"`) is swapped in and NOT treated as an htmx error — the
@@ -76,11 +89,21 @@ Still on their own pattern, all of it tracked under ut-docs#238 — don't
 migrate one without taking that card:
 
 - Self-order screens use the legacy `.toast` overlay CSS (kept in
-  `app.css` under "Toasts (legacy overlay)").
-- Admin pages other than catalog still have per-feature `aria-live`
-  spans, and catalog's own `#image-msg` was left behind with the rest
-  (its strings are hardcoded under the ut-docs#205 inline-JS i18n
-  follow-up).
+  `app.css` under "Toasts (legacy overlay)"; tracked as ut-docs#920).
+- settings.html's ~9 ad-hoc client-JS `.textContent` message spans are
+  migrated (ut-docs#918); its ~11 elevation-dialog-retry `hx-target`s
+  (`retention-msg`, `printer-settings-msg`, `till-name-msg`, etc.) were
+  never ad-hoc notices to begin with — nothing to migrate there — and its
+  server-rendered ad-hoc `fmt.Fprintf` fragments (`backup_api.go`,
+  `update_api.go`, the enrol flow in `settings_page.go`) are split out to
+  ut-docs#956. The other ~14 admin pages (import.html,
+  journal_detail.html, permissions.html, plugins*.html,
+  receipt_designer.html, refund.html, reports.html, setup.html,
+  shifts.html, tax_codes.html, tills.html, users.html,
+  bugreport_panel.html, reports_tab_eod.html) still have per-feature
+  `aria-live` spans (ut-docs#919), and catalog's own `#image-msg` was
+  left behind with the rest (its strings are hardcoded under the
+  ut-docs#205 inline-JS i18n follow-up).
 - Two sale-screen widgets keep their own scoped inline status lines
   (`#split-tender-status`, `#ai-identify-status`).
 

@@ -194,14 +194,23 @@ if hxvals_hits:
 #    '<p class="muted">No matches.</p>') still correctly flags on "No
 #    matches." A reviewed exception (existing debt not in a given card's
 #    migration scope) is the same same-line `i18n:ignore` used above.
+#    ut-docs#918 review finding 3: renderNotice(el, level, text) (app.js,
+#    ut-docs#213/#238/#918) is a second way a literal can reach the same
+#    .pos-notice surface without ever touching .textContent/.innerHTML
+#    directly -- the jsassign_re above is blind to it, which would have let
+#    the two pre-existing i18n:ignore literals on settings.html:666/668
+#    silently stop being enforced the moment #918 moved them behind
+#    renderNotice(). Same prose heuristic, applied to renderNotice's 3rd
+#    (text) argument.
 jsassign_re = re.compile(r'''\.(?:textContent|innerHTML)\s*=\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
+rendernotice_re = re.compile(r'''renderNotice\([^,]+,\s*['"][a-z]+['"]\s*,\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
 tag_re = re.compile(r'<[^>]*>')
 jsassign_hits = []
 for f in sorted(glob.glob("web/ui/**/*.html", recursive=True)):
     for i, line in enumerate(open(f, encoding="utf-8").read().splitlines(), 1):
         if "i18n:ignore" in line:
             continue
-        for m in jsassign_re.finditer(line):
+        for m in list(jsassign_re.finditer(line)) + list(rendernotice_re.finditer(line)):
             literal = m.group(2)
             stripped = tag_re.sub(' ', literal)
             if prose_re.search(stripped):
