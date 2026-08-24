@@ -161,11 +161,14 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		locID, err := repo.EnsureStockLocation(r.Context())
 		if err != nil {
-			// Same repo method, same generic internal-failure semantics as
-			// pos_api.go's tender handler (ut-docs#929) -- reuse its key
-			// rather than inventing a refund-specific one for an identical
-			// underlying failure.
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pos.toast.tender_failed", "refund", err)
+			// Same generic internal-DB-failure class as the ReturnedQuantities
+			// call above, so it gets the same refund-flow key. Deliberately
+			// NOT pos_api.go's pos.toast.tender_failed ("SALE could not be
+			// completed..."): the identical repo method is being called, but
+			// the operator here pressed Refund, not Tender -- "sale" is the
+			// wrong noun for what they did, and it would contradict the
+			// neutral copy this same handler shows two calls earlier.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
 
@@ -229,9 +232,10 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			method = "cash"
 		}
 		if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
-			// Same repo method, same generic internal-failure semantics as
-			// pos_api.go's tender handler (ut-docs#923) -- reuse its key.
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pos.toast.tender_failed", "refund", err)
+			// Same reasoning as EnsureStockLocation above: generic internal DB
+			// failure on the refund path, so the refund-flow key, not
+			// pos_api.go's sale-worded pos.toast.tender_failed.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
 
