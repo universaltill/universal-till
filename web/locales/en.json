@@ -525,6 +525,7 @@
   "refund.col.refund_qty": "Refund qty",
   "refund.col.remaining": "Refundable",
   "refund.col.sold": "Sold",
+  "refund.error.provider_declined": "The payment provider declined this refund — try again or choose another method",
   "refund.error.server": "Something went wrong. Please try again.",
   "refund.fully_refunded": "fully refunded",
   "refund.help": "Pick how much of each item to take back. Stock is returned to the shop, and the refund receipt references this sale. A manager PIN confirms the refund.",
