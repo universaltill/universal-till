@@ -17,6 +17,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -281,6 +282,32 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if registersErr != nil {
 			logging.L().Errorf("list registers: %v", registersErr)
 		}
+		// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935):
+		// every internal/barcode registry entry, plus whether this shop
+		// currently has it enabled. Best-effort like the other reads on
+		// this page — EnabledBarcodeSymbologies already falls back to the
+		// compatibility-preserving default set on error, so the checklist
+		// still renders (with the pre-ADR-0059 defaults) rather than the
+		// whole page failing.
+		type symbologyRow struct {
+			ID      string
+			NameKey string
+			Enabled bool
+		}
+		barcodeReg := barcode.Default()
+		enabledSymbologies, enabledErr := data.NewSettingsRepo(d.Db).EnabledBarcodeSymbologies(r.Context())
+		if enabledErr != nil {
+			logging.L().Errorf("enabled barcode symbologies: %v", enabledErr)
+		}
+		enabledSymbologySet := make(map[string]bool, len(enabledSymbologies))
+		for _, id := range enabledSymbologies {
+			enabledSymbologySet[id] = true
+		}
+		barcodeSymbologies := make([]symbologyRow, 0, len(barcodeReg.IDs()))
+		for _, id := range barcodeReg.IDs() {
+			sym, _ := barcodeReg.Lookup(id)
+			barcodeSymbologies = append(barcodeSymbologies, symbologyRow{ID: sym.ID, NameKey: sym.NameKey, Enabled: enabledSymbologySet[id]})
+		}
 		data := map[string]any{
 			"title":                 "Settings",
 			"theme":                 st.Theme,
@@ -312,6 +339,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
 			"launchOnStartup":       st.LaunchOnStartup,
+			"barcodeSymbologies":    barcodeSymbologies,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -696,6 +724,66 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		d.SetState(st)
 		settingsAudit(r, posRepo, elev, "settings", common.KeyLaunchOnStartup, "launch_on_startup_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
+	// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935): one
+	// checkbox per internal/barcode registry entry, persisted immediately
+	// via SettingsRepo.SetEnabledBarcodeSymbologies — same manager-gated,
+	// audit-writing, elevation-wired shape as launch-on-startup above.
+	mux.HandleFunc("POST /api/settings/barcode-symbology", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		sym, ok := barcode.Default().Lookup(id)
+		if !ok {
+			http.Error(w, "unknown barcode symbology", http.StatusBadRequest)
+			return
+		}
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			// The elevation summary names the symbology by its localized
+			// display name (via the registry's own NameKey, ut-docs#935
+			// review finding MINOR 5 — not a hand-rebuilt "barcode.symbology."+id
+			// string, which would silently diverge if a future entry's
+			// NameKey ever doesn't follow that convention) — the raw id
+			// (e.g. "EAN13_WEIGHT_PREFIX2X") is meaningless to an approving
+			// manager, the display name is exactly what the checklist
+			// itself shows them.
+			summaryKey := "elevation.summary.barcode_symbology_off"
+			if b {
+				summaryKey = "elevation.summary.barcode_symbology_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/barcode-symbology", "#barcode-symbologies-msg",
+				fmt.Sprintf(httpx.T(locale, summaryKey), httpx.T(locale, sym.NameKey)),
+				[]elevationHiddenField{
+					{Name: "id", Value: id},
+					{Name: "enabled", Value: r.Form.Get("enabled")},
+				}, elev)
+			return
+		}
+		settingsRepo := data.NewSettingsRepo(d.Db)
+		if _, err := settingsRepo.SetBarcodeSymbologyEnabled(r.Context(), id, b); err != nil {
+			if errors.Is(err, data.ErrEmptyBarcodeSymbologySet) {
+				// ut-docs#935 review finding MAJOR 3: unticking the last
+				// enabled symbology would leave every scan and every
+				// untyped AddBarcode call matching nothing — refused
+				// server-side, the only place that can actually guarantee
+				// it (the client can't be the gate: the ten checkboxes are
+				// independent, so no client-side "last one" check can see
+				// concurrent state from another tab/till reliably).
+				http.Error(w, "at least one barcode type must stay enabled", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", data.BarcodeEnabledSymbologiesKey, "barcode_symbology_changed", map[string]any{"id": id, "enabled": b})
 		settingsRespondSaved(w, r, elev)
 	})
 
