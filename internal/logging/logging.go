@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/clock"
 )
 
 // Level represents the log level.
@@ -143,7 +145,10 @@ func remember(level Level, msg string) {
 	}
 	recentMu.Lock()
 	defer recentMu.Unlock()
-	recentBuf = append(recentBuf, Problem{At: time.Now().UTC(), Level: level.String(), Msg: msg})
+	// clock.Now (not time.Now) so the back-office "recent problems" panel's
+	// rendered timestamps are byte-stable under `make docs-shots` (ut-docs#930).
+	// Outside the docs-shots harness clock.Now IS time.Now — real log time.
+	recentBuf = append(recentBuf, Problem{At: clock.Now().UTC(), Level: level.String(), Msg: msg})
 	if len(recentBuf) > recentCap {
 		recentBuf = recentBuf[len(recentBuf)-recentCap:]
 	}

@@ -1,5 +1,13 @@
 import { defineConfig } from '@playwright/test';
 
+// A fixed instant (RFC3339, UTC) passed to both throwaway tills as
+// UT_DOCS_SHOTS_NOW so internal/clock.Now pins "now" for the run — the one
+// knob that makes the receipt-designer and back-office-problems screenshots
+// byte-stable (ut-docs#930). The exact value is arbitrary; it only has to be
+// constant, and UTC so the rendered date can't drift with the runner's
+// timezone.
+const DOCS_SHOTS_NOW = '2026-01-02T15:04:05Z';
+
 // The manual's screenshot harness (`make docs-shots`) — captures every routed
 // help topic at 1024×600 in every shipped locale into web/help/img/.
 //
@@ -34,12 +42,20 @@ export default defineConfig({
       // screenshots. make docs-shots is a deliberate, occasional run, not
       // the tight edit/test loop reuseExistingServer optimizes for.
       reuseExistingServer: false,
+      // Pin "now" so any screen that legitimately renders the current time
+      // captures byte-identically run-to-run (ut-docs#930): the receipt
+      // designer's sample ticket date, and the back-office "recent problems"
+      // panel's timestamps. Read by internal/clock.Now; set ONLY here (NOT in
+      // the shared run-till.sh, which the real e2e suite also boots and which
+      // must keep the live clock). Passed on top of the inherited env.
+      env: { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW },
     },
     {
       command: 'bash ./run-till-auth.sh',
       url: 'http://127.0.0.1:8092/healthz',
       timeout: 120_000,
       reuseExistingServer: false,
+      env: { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW },
     },
   ],
   projects: [
