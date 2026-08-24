@@ -217,6 +217,46 @@ func FormatServiceChargeRatePercent(bp int) string {
 	return strconv.FormatFloat(float64(bp)/100, 'f', -1, 64)
 }
 
+// ServiceChargeForbidden reports whether the shop's country bans a
+// service-charge/cover line on the bill outright (ut-docs#962 — Turkey,
+// since the 2026-01-30 Fiyat Etiketi Yönetmeliği amendment). One predicate,
+// so the settings-upsert refusal and the engine-config backstop can never
+// disagree about which shops are covered.
+//
+// The match is deliberately lenient (trimmed, case-insensitive) where
+// fiscal.RequiresHardGate's "DE" match is deliberately strict: there, a
+// loose match would BLOCK a sale, so a mis-cased code must not widen the
+// gate; here, a loose match can only omit a line that is illegal to print,
+// so leniency is the fail-closed direction. The setup wizard persists
+// uppercase, but /api/settings/upsert, a restored backup and a hand-edited
+// settings row can all carry any casing.
+func ServiceChargeForbidden(country string) bool {
+	return strings.EqualFold(strings.TrimSpace(country), "TR")
+}
+
+// EffectiveServiceChargeRateBP is the service-charge rate actually applied
+// by an engine — st.ServiceChargeRateBasisPoints, EXCEPT for Turkey, where
+// a service-charge/cover line on a bill has been illegal since the
+// 2026-01-30 Fiyat Etiketi Yönetmeliği amendment (ut-docs#962): every
+// pos.Config{ServiceChargeRateBasisPoints: ...} construction site in
+// internal/pages uses this instead of the raw field, so a stale or
+// misconfigured nonzero rate can never reach a Turkish till's basket
+// preview or tender path — the line becomes structurally unreachable, not
+// a rejected sale. Rejecting the whole sale over an illegal-to-charge
+// component the till can simply omit would trade a compliance risk for an
+// availability one, which offline-first (ADR-0003) rules out. The
+// settings-upsert handler (settings_page.go) is the primary defense that
+// refuses to let a TR shop save a nonzero rate in the first place; this is
+// the fail-closed backstop for whatever reaches here regardless (a rate
+// saved before the shop's country was set to TR, a directly-edited DB,
+// etc.).
+func EffectiveServiceChargeRateBP(st RuntimeState) int {
+	if ServiceChargeForbidden(st.Country) {
+		return 0
+	}
+	return st.ServiceChargeRateBasisPoints
+}
+
 // SaveState writes every field in one transaction (store.SetMany), so a
 // mid-way failure (disk full, SQLITE_BUSY) never leaves a partial mix of
 // old and new settings behind — matching Store.SaveRuntimeConfig's guarantee.

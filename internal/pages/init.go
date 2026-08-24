@@ -123,7 +123,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	engine := pos.NewServiceWithResolver(pos.Config{
 		TaxInclusive:                 state.TaxInclusive,
 		TaxRateBasisPoints:           state.TaxRatePct * 100,
-		ServiceChargeRateBasisPoints: state.ServiceChargeRateBasisPoints,
+		ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(state),
 	}, resolver)
 	// Country-specific tax rules (e.g. Germany's dine-in/takeaway VAT
 	// switch) are entirely a plugin's call — core has no built-in opinion,
@@ -140,7 +140,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	kioskEngine := pos.NewServiceWithResolver(pos.Config{
 		TaxInclusive:                 state.TaxInclusive,
 		TaxRateBasisPoints:           state.TaxRatePct * 100,
-		ServiceChargeRateBasisPoints: state.ServiceChargeRateBasisPoints,
+		ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(state),
 	}, resolver)
 	kioskEngine.SetTaxRateAsker(taxAsker)
 
@@ -300,7 +300,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		if newCfg := (pos.Config{
 			TaxInclusive:                 applied.TaxInclusive,
 			TaxRateBasisPoints:           applied.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: applied.ServiceChargeRateBasisPoints,
+			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(applied),
 		}); dp.Engine.Config() != newCfg {
 			dp.Engine.SetConfig(newCfg)
 			dp.KioskEngine.SetConfig(newCfg)

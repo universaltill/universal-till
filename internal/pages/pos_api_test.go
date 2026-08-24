@@ -589,6 +589,44 @@ func TestTenderHandler_QuickTenderCoversFractionalServiceCharge(t *testing.T) {
 	}
 }
 
+// ut-docs#962: Turkey's 2026-01-30 Fiyat Etiketi Yönetmeliği amendment
+// makes a service-charge/cover line illegal on any bill. The settings-
+// upsert handler is the primary defense (refuses to save a nonzero rate
+// for a TR shop in the first place) — this proves the fail-closed
+// backstop for whatever reaches the tender path regardless (here, a rate
+// set directly on the live state, standing in for e.g. a rate saved
+// before the shop's country was changed to TR): the sale must still
+// complete (never blocked, per offline-first), but with the service
+// charge line unreachable, not merely rejected.
+func TestTenderHandler_TurkeyNeverAppliesServiceCharge(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) {
+		s.Country = "TR"
+		s.ServiceChargeRateBasisPoints = 1250
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	rec := posPostForm(mux, "/api/pos/tender", "method=cash&amount=0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (a TR sale must still complete, never blocked), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// ABC: price 100, 20% tax = 20, service charge must be 0 despite the
+	// configured 12.5% rate -> total 120, not 133.
+	var total, serviceCharge int64
+	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales`).Scan(&total, &serviceCharge); err != nil {
+		t.Fatalf("query sale: %v", err)
+	}
+	if serviceCharge != 0 {
+		t.Fatalf("expected service_charge_amount 0 for a TR shop despite a configured 12.5%% rate, got %d", serviceCharge)
+	}
+	if total != 120 {
+		t.Fatalf("expected total 120 (100 + 20 tax, no service charge), got %d", total)
+	}
+}
+
 func TestTenderHandler_EmptyBasketRejected(t *testing.T) {
 	mux, _ := newPOSTestDeps(t)
 	rec := posPostForm(mux, "/api/pos/tender", "method=cash&amount=100")

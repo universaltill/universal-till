@@ -822,6 +822,8 @@
   "settings.retention.mode_label": "Keep reports on",
   "settings.retention.mode_till": "This till only",
   "settings.retention.title": "Report retention",
+  "settings.service_charge.invalid_rate": "Enter the service charge as a percentage of zero or more, for example 12.5.",
+  "settings.service_charge.tr_forbidden": "Turkish law bans a service charge, table fee or cover on the bill (Fiyat Etiketi Yönetmeliği, in force since 30 Jan 2026). Price it into your menu items instead.",
   "settings.shop_type.help": "The kind of business this till serves — chosen at setup, changeable here.",
   "settings.shop_type.title": "Shop type",
   "settings.telemetry.enable": "Send plugin telemetry to the marketplace",
