@@ -228,6 +228,17 @@ func TestButtonsReorderEdgeCases(t *testing.T) {
 	}
 }
 
+// ut-docs#944 (ut-docs#924 increment 2 of 4): both UpdateOrder and
+// SearchItems failures used to leak raw Go/SQL error text (err.Error()) via
+// http.Error(w, err.Error(), 500) regardless of locale. These are the only
+// two of this file's six raw-leak sites reachable by a real, non-mocked
+// failure from an HTTP request -- the other four (ui.NewRenderer parse
+// failures in the /ui/buttons, /api/buttons/add, /api/buttons/remove and
+// /api/buttons/search handlers) parse an embed.FS baked in at compile time,
+// so there is no live input that can make them fail; they get the identical
+// fix for consistency/defense-in-depth but no forced-failure test, since
+// fabricating one wouldn't exercise the real code path (see this file's
+// package comment near buttonsErrorKey's definition in buttons_api.go).
 func TestButtonsStoreErrorsSurfaceAs500(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	// Break the storage underneath the handlers.
@@ -238,10 +249,25 @@ func TestButtonsStoreErrorsSurfaceAs500(t *testing.T) {
 		t.Fatalf("drop items: %v", err)
 	}
 
-	if rec := postForm(mux, "/api/buttons/reorder", url.Values{"codes": {"b1"}}, nil); rec.Code != http.StatusInternalServerError {
+	rec := postForm(mux, "/api/buttons/reorder", url.Values{"codes": {"b1"}}, nil)
+	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("reorder with broken store = %d, want 500", rec.Code)
 	}
-	if rec := postForm(mux, "/api/buttons/search", url.Values{"q": {"Appl"}}, nil); rec.Code != http.StatusInternalServerError {
+	if strings.Contains(rec.Body.String(), "shortcut_buttons") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized designer.error.server copy, got: %s", rec.Body.String())
+	}
+
+	rec = postForm(mux, "/api/buttons/search", url.Values{"q": {"Appl"}}, nil)
+	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("search with broken store = %d, want 500", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized designer.error.server copy, got: %s", rec.Body.String())
 	}
 }
