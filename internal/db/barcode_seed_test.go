@@ -273,6 +273,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	// non-idempotent replay problem (ut-docs#814).
 	rewindTables054(t, d)
 	rewindTracking058(t, d)
+	rewindFiscalRegisterDE059(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -383,6 +384,7 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	// non-idempotent replay problem (ut-docs#814).
 	rewindTables054(t, d)
 	rewindTracking058(t, d)
+	rewindFiscalRegisterDE059(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
