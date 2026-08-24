@@ -83,6 +83,8 @@
   "catalog.autofill_placeholder": "بارکد را اسکن یا وارد کنید",
   "catalog.autofill_searching": "در حال جستجوی بارکد…",
   "catalog.barcode": "بارکد",
+  "catalog.barcode.force_plain": "کد ساده (نادیده گرفتن وزن/قیمت)",
+  "catalog.barcode.force_plain_hint": "این کد را به‌عنوان بارکد ساده محصول در نظر بگیر، حتی اگر بارکدهای دارای وزن/قیمت جاسازی‌شده برای این فروشگاه فعال باشند.",
   "catalog.barcode.remove_confirm": "این بارکد حذف شود؟",
   "catalog.barcodes": "بارکدها",
   "catalog.brand": "برند",

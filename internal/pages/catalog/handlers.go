@@ -297,9 +297,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// Auto-fill flow: attach the looked-up barcode so the new item is
 		// instantly scannable, and save the source image as the tile thumb.
 		if barcode := strings.TrimSpace(r.Form.Get("barcode")); barcode != "" {
-			if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
-				Barcode: barcode, ItemID: itemID, IsPrimary: true,
-			}); err != nil {
+			in := pos.BarcodeInput{Barcode: barcode, ItemID: itemID, IsPrimary: true}
+			// See the matching comment at /api/catalog/barcode (ut-docs#948 F1).
+			if forcePlainBarcode(r) {
+				in.BarcodeType = "EAN13"
+			}
+			if err := pos.AddBarcode(r.Context(), d.Db, in); err != nil {
 				locale := httpx.ResolveLocale(w, r)
 				if errors.Is(err, data.ErrInvalidEAN13) {
 					http.Error(w, httpx.T(locale, "catalog.error.item_created_invalid_ean13"), http.StatusBadRequest)
@@ -666,12 +669,24 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "barcode required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
+		in := pos.BarcodeInput{
 			Barcode:   barcode,
 			ItemID:    itemID,
 			VariantID: variantID,
 			IsPrimary: isPrimary,
-		}); err != nil {
+		}
+		// ut-docs#948 F1: once a shop enables an embedded symbology
+		// (EAN13_WEIGHT_PREFIX2X/EAN13_PRICE_PREFIX02, ADR-0059), the
+		// untyped-inference path in AddBarcode would classify ANY
+		// check-digit-valid EAN-13 in that prefix range as embedded-data
+		// first — even a genuine plain retail product that happens to
+		// share the prefix. Checking "plain code" here passes an explicit
+		// BarcodeType, which takes AddBarcode's existing
+		// explicit-type-bypasses-inference path (ADR-0059 §3) instead.
+		if forcePlainBarcode(r) {
+			in.BarcodeType = "EAN13"
+		}
+		if err := pos.AddBarcode(r.Context(), d.Db, in); err != nil {
 			locale := httpx.ResolveLocale(w, r)
 			if errors.Is(err, data.ErrInvalidEAN13) {
 				http.Error(w, httpx.T(locale, "catalog.error.invalid_ean13"), http.StatusBadRequest)
@@ -772,6 +787,14 @@ func formCheckboxActive(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+// forcePlainBarcode reports whether the operator checked the "plain code"
+// escape hatch (ut-docs#948 F1) on a barcode-attach form — same
+// "1"/"on" convention as the isPrimary checkbox in the same forms.
+func forcePlainBarcode(r *http.Request) bool {
+	v := r.Form.Get("forcePlainBarcode")
+	return v == "1" || strings.ToLower(v) == "on"
 }
 
 func parseItemInput(r *http.Request) (pos.ItemInput, error) {

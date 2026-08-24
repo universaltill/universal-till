@@ -28,6 +28,7 @@
         <input type="hidden" name="itemId" value="{{ .ItemID }}">
         <input type="text" name="barcode" required inputmode="numeric" placeholder="{{ T "catalog.barcode" }}">
         <label class="chip-add-primary"><input type="checkbox" name="isPrimary" value="1"> {{ T "catalog.primary" }}</label>
+        <label class="chip-add-primary" title="{{ T "catalog.barcode.force_plain_hint" }}"><input type="checkbox" name="forcePlainBarcode" value="1"> {{ T "catalog.barcode.force_plain" }}</label>
         <button class="btn secondary" type="submit">{{ T "catalog.attach_barcode" }}</button>
       </form>
       <div class="muted catalog-detail-label">{{ T "catalog.cost_price" }}</div>
@@ -119,6 +120,7 @@
               <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
               <input type="hidden" name="variantId" value="{{ .ID }}">
               <input type="text" name="barcode" required inputmode="numeric" placeholder="{{ T "catalog.barcode" }}">
+              <label class="chip-add-primary" title="{{ T "catalog.barcode.force_plain_hint" }}"><input type="checkbox" name="forcePlainBarcode" value="1"> {{ T "catalog.barcode.force_plain" }}</label>
               <button class="btn secondary" type="submit" title="{{ T "catalog.attach_barcode" }}">＋</button>
             </form>
           </div>
