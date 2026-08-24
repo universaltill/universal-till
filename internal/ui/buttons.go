@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -489,7 +490,7 @@ func (a PriceResolverAdapter) resolveTextSearch(ctx context.Context, code string
 }
 
 func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.BasketLine, bool) {
-	row, ok := a.Store.posRepo.ResolveShortcutLine(ctx, code)
+	row, dec, ok := a.Store.posRepo.ResolveShortcutLineDecoded(ctx, code)
 	if !ok {
 		return pos.BasketLine{}, false
 	}
@@ -506,6 +507,38 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.Bas
 	}
 	if row.ImageURL != "" {
 		line.ImageURL = row.ImageURL
+	}
+	// Embedded-data decode (ADR-0059 §3, ut-docs#934). A weight-embedded
+	// scale label carries the quantity in the code itself: Qty is the
+	// decoded weight (kilograms — matching the weighed-item convention the
+	// qty box already uses) and PriceCents stays the item's per-unit rate,
+	// so the existing AmountForQuantity math prices the line with no new
+	// mechanism. A ZERO decoded weight is kept as scanned (a visible,
+	// voidable zero-amount line), never treated as a parse failure — see
+	// barcode.Decoded's doc.
+	if dec.HasEmbeddedWeight {
+		if w, err := strconv.ParseFloat(dec.EmbeddedWeight, 64); err == nil {
+			line.Qty = w
+			line.QtyFromCode = true
+		} else {
+			// internal/barcode always formats EmbeddedWeight as "%d.%03d"
+			// (registry.go), so this should be unreachable — but if it ever
+			// isn't, fail safe: keep the caller-supplied qty (QtyFromCode
+			// stays false) rather than silently losing the decoded weight
+			// with no trace.
+			logging.L().Warnf("ui: embedded weight %q unparseable for code %q: %v", dec.EmbeddedWeight, code, err)
+		}
+	}
+	// A price-embedded label states an ABSOLUTE price for that one unit:
+	// Qty is fixed at 1 and the line must never merge into (or be merged
+	// from) another line — mergeResolved's combine step overwrites
+	// PriceCents, which would silently drop one label's price. A zero
+	// decoded price likewise stays a visible zero-priced line.
+	if dec.HasEmbeddedPrice {
+		line.PriceCents = dec.EmbeddedPrice
+		line.Qty = 1
+		line.QtyFromCode = true
+		line.NoMerge = true
 	}
 	return line, true
 }
