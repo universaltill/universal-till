@@ -10,9 +10,19 @@
 // Used by resolve-chromium.sh (ut-docs#622) to report — loudly, not
 // silently — when a reused pre-installed Chromium's actual version diverges
 // from this.
+//
+// Takes an optional argv[2] naming which browsers.json entry to read —
+// "chromium" (default, full Chrome build) or "chromium-headless-shell"
+// (ut-docs#632: the variant a normal *headless* launch with no explicit
+// executablePath override actually uses). The two entries pin independent
+// revisions and aren't guaranteed to share a browserVersion, so a caller
+// resolving a headless-shell candidate must compare it against its own
+// entry, not "chromium"'s.
 'use strict';
 const fs = require('fs');
 const path = require('path');
+
+const browserName = process.argv[2] || 'chromium';
 
 // playwright-core's package.json "exports" map doesn't expose
 // "playwright-core/browsers.json" as an importable subpath (confirmed:
@@ -22,9 +32,9 @@ const path = require('path');
 const pkgJsonPath = require.resolve('playwright-core/package.json');
 const browsersJsonPath = path.join(path.dirname(pkgJsonPath), 'browsers.json');
 const data = JSON.parse(fs.readFileSync(browsersJsonPath, 'utf8'));
-const entry = data.browsers.find((b) => b.name === 'chromium');
+const entry = data.browsers.find((b) => b.name === browserName);
 if (!entry) {
-  console.error(`expected-chromium-version: no "chromium" entry in ${browsersJsonPath}`);
+  console.error(`expected-chromium-version: no "${browserName}" entry in ${browsersJsonPath}`);
   process.exit(1);
 }
 console.log(entry.browserVersion);
