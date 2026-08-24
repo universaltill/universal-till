@@ -97,10 +97,13 @@ func TestEnabledBarcodeSymbologies_RoundTrip(t *testing.T) {
 // "null" or "[]" unmarshals with NO error (unlike a genuinely corrupt row),
 // so it needs its own fallback path — an all-disabling enabled set has no
 // legitimate use and would silently break every scan and every untyped
-// AddBarcode call (ut-docs#955). Unlike the corrupt-row case, this is not
-// an error: the caller gets the default set back with err == nil.
+// AddBarcode call (ut-docs#955). [""]/[" "] (ut-docs#959 review finding: a
+// blank-string entry survives a bare length check, len==1, and would
+// otherwise resolve zero real scans while reporting no error) must hit the
+// same fallback. Unlike the corrupt-row case, none of these are errors: the
+// caller gets the default set back with err == nil.
 func TestEnabledBarcodeSymbologies_NullOrEmptyRowFallsBackToDefaults(t *testing.T) {
-	for _, stored := range []string{"null", "[]"} {
+	for _, stored := range []string{"null", "[]", `[""]`, `[" "]`} {
 		t.Run(stored, func(t *testing.T) {
 			db := testsupport.NewCatalogTestDB(t)
 			seedSettingsTable(t, db)
@@ -127,6 +130,54 @@ func TestEnabledBarcodeSymbologies_NullOrEmptyRowFallsBackToDefaults(t *testing.
 			match, ok := reg.Match(ids, "4006381333931") // valid EAN-13 checksum
 			if !ok || match.SymbologyID != "EAN13" {
 				t.Fatalf("stored %q: default set %v must still resolve an EAN-13 scan, got match=%v ok=%v", stored, ids, match, ok)
+			}
+		})
+	}
+}
+
+// TestSetBarcodeSymbologyEnabled_NullRowFallsBackToDefaults is the
+// ut-docs#959 regression: SetBarcodeSymbologyEnabled has its own local
+// corrupt/null-row recovery (separate from EnabledBarcodeSymbologies
+// above), and a stored "null"/"[]" row unmarshals with NO error — it must
+// not silently overwrite the "ids := defaults" starting point with a
+// nil/empty slice. Toggling one symbology on starting from such a row must
+// produce defaults ∪ {id}, not a single-entry [id] set.
+func TestSetBarcodeSymbologyEnabled_NullRowFallsBackToDefaults(t *testing.T) {
+	for _, stored := range []string{"null", "[]", `[""]`, `[" "]`} {
+		t.Run(stored, func(t *testing.T) {
+			db := testsupport.NewCatalogTestDB(t)
+			seedSettingsTable(t, db)
+			defer db.Close()
+			repo := data.NewSettingsRepo(db)
+			ctx := context.Background()
+
+			if err := repo.Set(ctx, data.BarcodeEnabledSymbologiesKey, stored); err != nil {
+				t.Fatal(err)
+			}
+
+			// EAN13_WEIGHT_PREFIX2X is one of the two embedded-data ids that
+			// default OFF (ADR-0059 §2), so toggling it on is a genuine
+			// change — unlike an id already in the default set, where a
+			// no-op toggle would pass even with the bug (the pre-fix
+			// [id]-only result and the correct defaults ∪ {id} result
+			// would coincide).
+			got, err := repo.SetBarcodeSymbologyEnabled(ctx, "EAN13_WEIGHT_PREFIX2X", true)
+			if err != nil {
+				t.Fatalf("stored %q: unexpected error %v", stored, err)
+			}
+
+			want := append(data.DefaultEnabledBarcodeSymbologyIDs(), "EAN13_WEIGHT_PREFIX2X")
+			if len(got) != len(want) {
+				t.Fatalf("stored %q: toggled result = %v, want defaults ∪ {EAN13_WEIGHT_PREFIX2X} (%d ids, got %d)", stored, got, len(want), len(got))
+			}
+			gotSet := map[string]bool{}
+			for _, id := range got {
+				gotSet[id] = true
+			}
+			for _, id := range want {
+				if !gotSet[id] {
+					t.Fatalf("stored %q: toggled result %v missing expected id %q", stored, got, id)
+				}
 			}
 		})
 	}
