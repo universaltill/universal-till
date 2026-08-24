@@ -2,8 +2,11 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/barcode"
 )
@@ -18,6 +21,15 @@ import (
 // a shop that never opens the (ut-docs#935) settings checklist has no row
 // and behaves exactly as before ADR-0059.
 const BarcodeEnabledSymbologiesKey = "barcode_enabled_symbologies"
+
+// ErrEmptyBarcodeSymbologySet is returned by SetBarcodeSymbologyEnabled when
+// disabling the given id would leave the shop with zero enabled
+// symbologies — every scan and every untyped AddBarcode call would then
+// fail to match anything, silently and with no indication why (ut-docs#935
+// review finding MAJOR 3: nothing previously stopped a manager unticking
+// every box mid-shift). The caller must recover from this — reject the
+// change with a message, never let it through.
+var ErrEmptyBarcodeSymbologySet = errors.New("at least one barcode symbology must stay enabled")
 
 // DefaultEnabledBarcodeSymbologyIDs returns ADR-0059 §2's default-enabled
 // set: every registry entry EXCEPT the two embedded-data ones
@@ -76,11 +88,105 @@ func (r *SettingsRepo) EnabledBarcodeSymbologies(ctx context.Context) ([]string,
 }
 
 // SetEnabledBarcodeSymbologies persists the shop's enabled symbology ids
-// (the ut-docs#935 settings checklist writes through this).
+// verbatim (a full-list replace). Kept for callers that already hold a
+// complete, validated list to write; the ut-docs#935 settings checklist
+// itself goes through SetBarcodeSymbologyEnabled below instead, which
+// read-modify-writes a single id atomically rather than racing a
+// stale full-list write against a concurrent toggle.
 func (r *SettingsRepo) SetEnabledBarcodeSymbologies(ctx context.Context, ids []string) error {
 	b, err := json.Marshal(ids)
 	if err != nil {
 		return fmt.Errorf("marshal enabled symbologies: %w", err)
 	}
 	return r.Set(ctx, BarcodeEnabledSymbologiesKey, string(b))
+}
+
+// SetBarcodeSymbologyEnabled adds or removes id from the shop's enabled
+// symbology set, reading the current set and writing the updated one back
+// inside a single transaction (ut-docs#935 review finding MAJOR 4: the
+// settings checklist has ten independent checkboxes with no hx-sync
+// between them, so two toggles issued close together — plausible with a
+// ten-item list inviting rapid multi-clicking — must not silently drop one
+// another via a read-modify-write race that spans two separate calls).
+// Returns the resulting set on success. Returns ErrEmptyBarcodeSymbologySet
+// (writing nothing) if this toggle would leave the set empty — never
+// silently allowed, since an empty set makes every scan and every untyped
+// AddBarcode call fail to match anything.
+func (r *SettingsRepo) SetBarcodeSymbologyEnabled(ctx context.Context, id string, enabled bool) ([]string, error) {
+	var err error
+	done := settingsObs.trace("set_barcode_symbology_enabled")
+	defer func() { done(err) }()
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("set barcode symbology %s: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	defaults := DefaultEnabledBarcodeSymbologyIDs()
+	ids := defaults
+	var val string
+	scanErr := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, BarcodeEnabledSymbologiesKey).Scan(&val)
+	switch {
+	case errors.Is(scanErr, sql.ErrNoRows):
+		// No row yet: this toggle is the shop's first-ever change, applied
+		// on top of the ADR-0059 §2 defaults — same starting point
+		// EnabledBarcodeSymbologies would return.
+	case scanErr != nil:
+		err = fmt.Errorf("set barcode symbology %s: %w", id, scanErr)
+		return nil, err
+	default:
+		// A corrupt row must not brick this write: fall back to the
+		// defaults, same posture as EnabledBarcodeSymbologies.
+		_ = json.Unmarshal([]byte(val), &ids)
+	}
+
+	newIDs := toggleSymbologyID(ids, id, enabled)
+	if len(newIDs) == 0 {
+		return nil, ErrEmptyBarcodeSymbologySet
+	}
+
+	b, marshalErr := json.Marshal(newIDs)
+	if marshalErr != nil {
+		err = fmt.Errorf("marshal enabled symbologies: %w", marshalErr)
+		return nil, err
+	}
+	if _, execErr := tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	value = excluded.value,
+	updated_at = excluded.updated_at
+`, BarcodeEnabledSymbologiesKey, string(b), time.Now().UTC()); execErr != nil {
+		err = fmt.Errorf("set barcode symbology %s: %w", id, execErr)
+		return nil, err
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("set barcode symbology %s: %w", id, commitErr)
+		return nil, err
+	}
+	return newIDs, nil
+}
+
+// toggleSymbologyID returns ids with id added (enabled=true) or removed
+// (enabled=false). Does NOT deduplicate pre-existing duplicates in ids —
+// only relevant if ids already contained id more than once, which nothing
+// in this package's write path can produce (SetBarcodeSymbologyEnabled is
+// the only mutator, and it always starts from a list built the same way).
+func toggleSymbologyID(ids []string, id string, enabled bool) []string {
+	out := make([]string, 0, len(ids)+1)
+	seen := false
+	for _, existing := range ids {
+		if existing == id {
+			seen = true
+			if !enabled {
+				continue
+			}
+		}
+		out = append(out, existing)
+	}
+	if enabled && !seen {
+		out = append(out, id)
+	}
+	return out
 }

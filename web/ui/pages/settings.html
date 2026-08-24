@@ -279,6 +279,62 @@
   {{ end }}
 </div>
 {{ end }}
+<div class="card">
+  <!-- ADR-0059 Decision §2, ut-docs#935: shop-selectable barcode symbology
+       checklist. One checkbox per internal/barcode registry entry, saved
+       immediately on change (same per-checkbox hx-post/revert-on-failure
+       pattern as launch-on-startup above) — no separate Save button. -->
+  <h2>{{ T "settings.barcode.symbologies_title" }} {{ helpLink "catalog" }}</h2>
+  <p class="muted">{{ T "settings.barcode.symbologies_help" }}</p>
+  {{ range .barcodeSymbologies }}
+  <!-- ut-docs#935 review: NOT class="set-row" (a flex row) — a couple of
+       these labels are long enough to wrap onto a second line (e.g. the
+       two embedded-data entries, and several locales' translations of the
+       shorter ones), and flex-wrap treats the checkbox and its text as
+       separate wrapping items, visually detaching the checkbox from its
+       own label (caught by actually screenshotting this section — see
+       settings.printer.auto/settings.telemetry.enable for the same
+       plain-<label> precedent this follows instead). -->
+  <label style="display:block; margin:.35rem 0">
+    <!-- ut-docs#935 review BLOCKER 1: a `js:` hx-vals expression is
+         evaluated as a bare `Function(...)()` call (see htmx's own
+         source) — it has no `this` binding, so `this` inside it is
+         `window`, not the checkbox, and `window.getAttribute` throws
+         (uncaught, so the POST never fires at all). The same trap
+         ut-docs#865 review finding F3 already fixed on the
+         launch-on-startup checkbox just above (see its own comment) —
+         read the id and checked state via document.getElementById with a
+         real, stable per-checkbox id instead. Registry ids are fixed
+         [A-Z0-9_] literals (internal/barcode/registry.go), so
+         interpolating one into this JS string is safe. -->
+    <input type="checkbox" id="bcsym-{{ .ID }}"
+           hx-post="/api/settings/barcode-symbology" hx-trigger="change" hx-swap="none"
+           hx-vals="js:{id: '{{ .ID }}', enabled: document.getElementById('bcsym-{{ .ID }}').checked}"
+           hx-on::before-request="document.getElementById('barcode-symbologies-msg').textContent=''"
+           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           {{ if .Enabled }}checked{{ end }}>
+    {{ T .NameKey }}
+  </label>
+  {{ end }}
+  <div id="barcode-symbologies-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+</div>
+<script>
+(function () {
+  // ut-docs#935: same Content-Type-guarded "saved" notice as the
+  // launch-on-startup checkbox above — one listener on the whole card
+  // (event delegation) since there are ten checkboxes, not one.
+  var msg = document.getElementById('barcode-symbologies-msg');
+  if (!msg) return;
+  var card = msg.closest('.card');
+  if (!card) return;
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  card.addEventListener('htmx:afterRequest', function (ev) {
+    if (!ev.target.matches('input[type="checkbox"][id^="bcsym-"]')) return;
+    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
+  });
+})();
+</script>
 <div class="card settings-wide">
   <h2>{{ T "settings.backup.title" }} {{ helpLink "backups" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>
