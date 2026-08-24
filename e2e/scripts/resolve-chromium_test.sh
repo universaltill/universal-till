@@ -157,12 +157,29 @@ fi
 # the browsers.json entry matching the resolved variant, not always
 # "chromium" — proves the script accepts and honors the entry-name arg
 # rather than silently ignoring it and always reading "chromium".
+#
+# Asserting both known entries print a non-empty version would NOT catch a
+# regression that silently drops the argv[2] plumbing (hardcodes "chromium"
+# regardless of the arg): playwright-core's browsers.json currently pins the
+# identical browserVersion for both "chromium" and "chromium-headless-shell"
+# in this environment, so an implementation that ignores its arg entirely
+# would still pass that assertion (found in independent review, ut-docs#632).
+# Instead, prove the arg is genuinely used to select the entry: a bogus
+# entry name that doesn't exist in browsers.json must fail — an
+# implementation that ignores argv[2] would keep resolving "chromium"
+# regardless and succeed anyway.
 chromium_version="$(node scripts/expected-chromium-version.js chromium 2>/dev/null || true)"
 hs_version="$(node scripts/expected-chromium-version.js chromium-headless-shell 2>/dev/null || true)"
 if [ -n "${chromium_version}" ] && [ -n "${hs_version}" ]; then
   ok "expected-chromium-version.js reports a version for both the chromium and chromium-headless-shell entries"
 else
   fail "expected non-empty versions for both entries, got chromium=[${chromium_version}] chromium-headless-shell=[${hs_version}]"
+fi
+
+if bogus_out="$(node scripts/expected-chromium-version.js this-entry-does-not-exist-632 2>/dev/null)"; then
+  fail "expected a bogus browsers.json entry name to fail, but it printed [${bogus_out}] (argv[2] may be silently ignored)"
+else
+  ok "expected-chromium-version.js genuinely uses argv[2] to select the entry (a bogus name fails, not silently defaults to chromium)"
 fi
 
 if [ "${FAIL_COUNT}" -gt 0 ]; then
