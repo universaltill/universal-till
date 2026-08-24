@@ -71,7 +71,26 @@ func NewCatalogRepo(db *sql.DB) *CatalogRepo {
 
 // BarcodeExists reports whether a barcode is already attached to any item
 // or variant (import dedupe).
+//
+// Tries the code exactly as given first, then — only on a miss — its
+// canonical form (ADR-0059's zeroed embedded-data key, ut-docs#948 F6).
+// Exact-first matters: a row added via AddBarcode's explicit-BarcodeType
+// escape hatch (ut-docs#948 F1) is stored under the RAW code even when
+// that code would otherwise infer to an embedded symbology, so
+// canonicalising first would redirect the check to a key nothing was ever
+// written under and miss the row that's actually there.
 func (r *CatalogRepo) BarcodeExists(ctx context.Context, barcode string) (bool, error) {
+	exists, err := r.barcodeExistsExact(ctx, barcode)
+	if err != nil || exists {
+		return exists, err
+	}
+	if canonical := r.canonicalBarcodeKey(ctx, barcode); canonical != barcode {
+		return r.barcodeExistsExact(ctx, canonical)
+	}
+	return false, nil
+}
+
+func (r *CatalogRepo) barcodeExistsExact(ctx context.Context, barcode string) (bool, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx, `
 SELECT (SELECT COUNT(*) FROM item_barcodes WHERE barcode = ?)
@@ -81,6 +100,43 @@ SELECT (SELECT COUNT(*) FROM item_barcodes WHERE barcode = ?)
 		return false, fmt.Errorf("barcode exists: %w", err)
 	}
 	return n > 0, nil
+}
+
+// matchBarcode resolves code against the shop's currently-enabled
+// symbologies (ADR-0059 §2/§3) via the shared registry matcher — the same
+// function the scan path uses, so AddBarcode and scanning can never
+// disagree on what a code means. Never bricks barcode entry on a settings
+// read failure: EnabledBarcodeSymbologies already returns the
+// compatibility-preserving default set alongside the error, so callers
+// degrade gracefully rather than erroring out.
+//
+// This is the single place computing a barcode match — AddBarcode's
+// untyped-inference path and canonicalBarcodeKey (ut-docs#948 F6) both
+// call this rather than each running their own copy of the enabledIDs
+// read + Match call, per the #948 review's F-3 finding (an earlier draft
+// of this method had a doc comment claiming that de-duplication while
+// AddBarcode still inlined its own copy).
+func (r *CatalogRepo) matchBarcode(ctx context.Context, code string) (dec barcode.Decoded, enabledIDs []string, ok bool) {
+	enabledIDs, err := r.settings.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		logging.L().Warnf("catalog: match barcode: enabled symbologies unavailable, using defaults: %v", err)
+	}
+	dec, ok = barcode.Default().Match(enabledIDs, code)
+	return dec, enabledIDs, ok
+}
+
+// canonicalBarcodeKey returns the key AddBarcode's untyped-inference path
+// would store for code under the shop's currently-enabled symbologies —
+// the zeroed template for an embedded-data match, or code unchanged when
+// nothing matches (same graceful fallback as a settings-read failure: see
+// matchBarcode). Used by the BarcodeExists/DeleteBarcode pre-checks
+// (ut-docs#948 F6).
+func (r *CatalogRepo) canonicalBarcodeKey(ctx context.Context, code string) string {
+	dec, _, ok := r.matchBarcode(ctx, code)
+	if !ok {
+		return code
+	}
+	return dec.LookupKey
 }
 
 // SKUExists reports whether an item SKU is taken (import dedupe).
@@ -360,12 +416,58 @@ ORDER BY is_primary DESC, barcode`, itemID)
 
 // DeleteBarcode detaches a barcode wherever it is attached (item or variant).
 // Fixing a mis-scanned or reassigned code is a normal back-office task.
+//
+// Same exact-first-then-canonical strategy as BarcodeExists (ut-docs#948
+// F6), and for the same reason: deleting by the code exactly as given must
+// not be shadowed by a canonicalisation that would target a different
+// (embedded-data) key an explicit-type escape-hatch row was never stored
+// under.
+//
+// Known asymmetry with the scan path (ut-docs#948 review F-9): the scan
+// path resolves canonical-first with a raw fallback (ut-docs#934 F2),
+// whereas this deletes exact-first with a canonical fallback. For the
+// rare collision where a plain escape-hatch code and a different item's
+// genuine scale label share the same zeroed template key, scanning the
+// escape-hatch code resolves to the scale-label row while deleting it
+// removes the escape-hatch row. Each ordering is locally correct (delete
+// by exact code must remove that row; scan by specificity must prefer the
+// embedded match), but the pair is not coherent end-to-end — the
+// underlying ADR-level question ("what should a plain code that collides
+// with an enabled embedded key's zeroed template scan to?") is tracked as
+// a Backlog follow-up (ut-docs#958), not resolved here.
 func (r *CatalogRepo) DeleteBarcode(ctx context.Context, barcode string) error {
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM item_barcodes WHERE barcode = ?`, barcode); err != nil {
+	deleted, err := r.deleteBarcodeExact(ctx, barcode)
+	if err != nil || deleted {
 		return err
 	}
-	_, err := r.db.ExecContext(ctx, `DELETE FROM variant_barcodes WHERE barcode = ?`, barcode)
-	return err
+	if canonical := r.canonicalBarcodeKey(ctx, barcode); canonical != barcode {
+		_, err := r.deleteBarcodeExact(ctx, canonical)
+		return err
+	}
+	return nil
+}
+
+// deleteBarcodeExact deletes barcode exactly as given and reports whether
+// any row was actually removed, so DeleteBarcode knows whether to fall back
+// to the canonical key.
+func (r *CatalogRepo) deleteBarcodeExact(ctx context.Context, barcode string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM item_barcodes WHERE barcode = ?`, barcode)
+	if err != nil {
+		return false, err
+	}
+	itemRows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	res, err = r.db.ExecContext(ctx, `DELETE FROM variant_barcodes WHERE barcode = ?`, barcode)
+	if err != nil {
+		return false, err
+	}
+	variantRows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return itemRows+variantRows > 0, nil
 }
 
 // FindOrCreateTaxCode returns the id of a tax_codes row matching the given
@@ -1095,37 +1197,32 @@ func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInp
 	in.BarcodeType = strings.TrimSpace(in.BarcodeType)
 	if in.BarcodeType == "" {
 		// Untyped inference (ADR-0059 Decision §3): match against the shop's
-		// enabled symbologies via the shared registry matcher — the same
-		// function the scan path uses, so AddBarcode and scanning can never
-		// disagree on what a code means. Under the DEFAULT enabled set,
-		// every code that resolved before this card still resolves — the
-		// recorded barcode_type is just more specific now for shapes that
-		// used to fall through to CODE128 (e.g. an 8-digit code is now
-		// EAN8, a 14-digit GTIN is now GTIN14). barcode_type is write-only
-		// (never read to drive scan behaviour, ADR-0059 §3), so this drift
-		// has no resolution-behaviour impact — LookupKey still equals the
-		// typed code for every one of these plain shapes.
+		// enabled symbologies via matchBarcode — the same helper the scan
+		// path and canonicalBarcodeKey use, so AddBarcode, scanning and the
+		// BarcodeExists/DeleteBarcode pre-checks can never disagree on what
+		// a code means. Under the DEFAULT enabled set, every code that
+		// resolved before this card still resolves — the recorded
+		// barcode_type is just more specific now for shapes that used to
+		// fall through to CODE128 (e.g. an 8-digit code is now EAN8, a
+		// 14-digit GTIN is now GTIN14). barcode_type is write-only (never
+		// read to drive scan behaviour, ADR-0059 §3), so this drift has no
+		// resolution-behaviour impact — LookupKey still equals the typed
+		// code for every one of these plain shapes.
 		//
-		// ut-docs#934 review finding F1 (must be resolved before/alongside
-		// #935 ships): once a shop enables EAN13_WEIGHT_PREFIX2X (prefix
-		// 20-29) or EAN13_PRICE_PREFIX02 (prefix 02), this untyped path
-		// will classify ANY check-digit-valid EAN-13 in that prefix range
-		// as embedded-data first (specificity order, ADR-0059 §3) — even a
-		// genuine plain retail product whose EAN-13 happens to start with
-		// 20-29/02 — and store the zeroed LookupKey instead of the code as
-		// typed, with no UI caller ever passing an explicit BarcodeType to
-		// escape it (verified: no production caller sets BarcodeType
-		// today). #935 (or a fast-follow) must give the operator a way to
-		// force the plain interpretation before shops can actually reach
-		// this state — SetEnabledBarcodeSymbologies has no non-production
-		// caller yet, so nothing ships this risk today.
-		enabledIDs, err := r.settings.EnabledBarcodeSymbologies(ctx)
-		if err != nil {
-			// Never brick barcode entry on a settings read: the accessor
-			// already returned the compatibility-preserving default set.
-			logging.L().Warnf("catalog: add barcode: enabled symbologies unavailable, using defaults: %v", err)
-		}
-		dec, ok := barcode.Default().Match(enabledIDs, in.Barcode)
+		// ut-docs#934 review finding F1: once a shop enables
+		// EAN13_WEIGHT_PREFIX2X (prefix 20-29) or EAN13_PRICE_PREFIX02
+		// (prefix 02), this untyped path classifies ANY check-digit-valid
+		// EAN-13 in that prefix range as embedded-data first (specificity
+		// order, ADR-0059 §3) — even a genuine plain retail product whose
+		// EAN-13 happens to start with 20-29/02 — storing the zeroed
+		// LookupKey instead of the code as typed. ut-docs#948 (the
+		// forcePlainBarcode escape hatch on the catalog barcode-entry
+		// forms, internal/pages/catalog/handlers.go) is that fast-follow —
+		// an operator can now pass an explicit BarcodeType to take the
+		// `else if EAN13` branch below instead of this one, before shops
+		// can actually reach this state (SetEnabledBarcodeSymbologies
+		// still has no non-production caller as of #948 — see #935).
+		dec, enabledIDs, ok := r.matchBarcode(ctx, in.Barcode)
 		if !ok {
 			// Named rejection (ADR-0059 §3): say what was scanned and what is
 			// enabled; write nothing. Only reachable once the shop disabled
@@ -1134,10 +1231,11 @@ func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInp
 				ErrBarcodeNoSymbologyMatch, in.Barcode, strings.Join(enabledIDs, ", "))
 		}
 		in.BarcodeType = strings.ToUpper(dec.SymbologyID)
-		// Store the decoded LookupKey, not the raw scan. For a plain
-		// symbology LookupKey == the typed code, so this is a no-op; for the
-		// two embedded-data symbologies it is the zeroed template (prefix +
-		// item code, weight/price and check digits zeroed) — storing the raw
+		// Store the decoded LookupKey (same value canonicalBarcodeKey would
+		// compute for this code), not the raw scan. For a plain symbology
+		// LookupKey == the typed code, so this is a no-op; for the two
+		// embedded-data symbologies it is the zeroed template (prefix + item
+		// code, weight/price and check digits zeroed) — storing the raw
 		// label would pin the row to ONE specific label's weight/price and no
 		// other label of the same item could ever resolve (ADR-0059 §3).
 		in.Barcode = dec.LookupKey

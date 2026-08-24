@@ -48,8 +48,20 @@ func TestAddBarcode_EmbeddedSymbologyStoresZeroedLookupKey(t *testing.T) {
 	if storedType != "EAN13_WEIGHT_PREFIX2X" {
 		t.Fatalf("barcode_type = %q, want EAN13_WEIGHT_PREFIX2X", storedType)
 	}
-	if exists, _ := repo.BarcodeExists(ctx, weightLabel); exists {
-		t.Fatal("the raw label must not be stored as its own row")
+	var rawRowCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE barcode = ?`, weightLabel).Scan(&rawRowCount); err != nil {
+		t.Fatal(err)
+	}
+	if rawRowCount != 0 {
+		t.Fatal("the raw label must not be stored as its own row — only the zeroed template")
+	}
+	// BarcodeExists is a semantic check ("does this code resolve to a
+	// stored barcode"), not a literal row-lookup — since ut-docs#948 F6 it
+	// canonicalises on a miss, so it correctly reports true here even
+	// though no row is keyed by the raw label itself (see the assertion
+	// above for that).
+	if exists, err := repo.BarcodeExists(ctx, weightLabel); err != nil || !exists {
+		t.Fatalf("BarcodeExists(rawLabel) = %v/%v, want true/nil (ut-docs#948 F6: must agree with what AddBarcode stored)", exists, err)
 	}
 
 	// Price label €3.50 for item code 54321, prefix 02.
