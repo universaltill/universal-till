@@ -1413,6 +1413,7 @@
   "catalog.error.barcode_conflict": "Barcode already in use by %s",
   "catalog.error.barcode_conflict_unknown": "Barcode already in use elsewhere",
   "catalog.error.barcode_attach_failed": "barcode attach failed",
+  "catalog.error.barcode_no_symbology_match": "This barcode doesn't match any barcode type currently enabled for this shop.",
   "catalog.error.item_created_barcode_failed": "item created, but %s",
   "common.error.manager_or_admin_required": "Manager or admin required",
   "common.error.invalid_upload": "Invalid upload",

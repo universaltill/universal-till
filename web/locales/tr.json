@@ -1413,6 +1413,7 @@
   "catalog.error.barcode_conflict": "Barkod zaten %s tarafından kullanılıyor",
   "catalog.error.barcode_conflict_unknown": "Barkod zaten başka bir yerde kullanılıyor",
   "catalog.error.barcode_attach_failed": "barkod eklenemedi",
+  "catalog.error.barcode_no_symbology_match": "Bu barkod, bu mağaza için etkinleştirilmiş herhangi bir barkod türüyle eşleşmiyor.",
   "catalog.error.item_created_barcode_failed": "ürün oluşturuldu, ancak %s",
   "common.error.manager_or_admin_required": "Yönetici veya admin gerekli",
   "common.error.invalid_upload": "Geçersiz yükleme",
