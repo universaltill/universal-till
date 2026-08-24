@@ -480,7 +480,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 	// catalog action, cashier gets none) + 042's reports/audit additions +
 	// 043's plugin_management addition (#706) + 044's data_management/
 	// sync_management additions (#707) + 045's import_export/issue_reporting
-	// additions (#713) + 059's stock_location_management addition (#903) —
+	// additions (#713) + 060's stock_location_management addition (#903) —
 	// keep this list in sync with every migration that
 	// adds a new action, so canPerform()-gated page tests exercise the real
 	// seed shape.

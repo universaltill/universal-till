@@ -21,7 +21,7 @@ no way to grant or withhold it independently — something the old raw
 
 ## What shipped
 
-- `internal/db/migrations/059_stock_location_register_management_permission.sql`
+- `internal/db/migrations/060_stock_location_register_management_permission.sql`
   — one combined action, `stock_location_management` (covering both
   locations and registers, not two separate actions — the original card
   explicitly allowed either shape, and this codebase already treats the

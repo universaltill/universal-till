@@ -73,7 +73,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		}
 		// ut-docs#903: locations_page.go/registers_page.go moved off the
 		// generic "settings" action onto their own dedicated
-		// "stock_location_management" (migration 059) -- reusing "settings"
+		// "stock_location_management" (migration 060) -- reusing "settings"
 		// meant a super_admin editing that one row in role_permissions
 		// (runtime-editable, permission_settings_page.go) moved stock-
 		// location/register administration in lockstep with every other
