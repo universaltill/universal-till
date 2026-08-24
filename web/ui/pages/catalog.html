@@ -40,6 +40,8 @@
         <label>{{ T "catalog.barcode" }} <input type="text" name="barcode" id="item-barcode" inputmode="numeric" placeholder="{{ T "catalog.autofill_placeholder" }}"></label>
         <button class="btn secondary" type="button" id="autofill-btn" style="align-self:end">{{ T "catalog.autofill" }}</button>
       </div>
+      <label class="field-checks"><input type="checkbox" name="forcePlainBarcode" value="1"> {{ T "catalog.barcode.force_plain" }}</label>
+      <div class="muted" style="margin-block-start:.15rem">{{ T "catalog.barcode.force_plain_hint" }}</div>
       <div id="autofill-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
       <label>{{ T "catalog.col.name" }} <input type="text" name="name" id="item-name" required></label>
       <div class="field-pair">
