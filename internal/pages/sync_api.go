@@ -20,7 +20,9 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // Multi-till sync, increment D1: QR enrolment (docs: adr/0011 +
@@ -317,8 +319,42 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// ut-docs#894: pin THIS (primary) till's own register identity BEFORE
+		// adding a second register below. Independent review finding: a fresh
+		// shop finishes setup with exactly one register and no persisted
+		// sync.till_register_id (setup_page.go calls EnsureRegister only, and
+		// the pairing QR lives on /tills, which never resolves), so the moment
+		// enrolment adds register #2 the PRIMARY itself starts returning
+		// pos.ErrRegisterIdentityAmbiguous — the very failure this card
+		// removes for the joining till, transplanted onto the primary's own
+		// Pfandrückgabe/cash-drawer payout path (shifts_api.go). Resolving
+		// here, while exactly one register still exists, is unambiguous by
+		// construction and persists the answer. Best-effort: a shop that was
+		// ALREADY ambiguous (2+ registers, nothing picked) stays a manager's
+		// call in Settings → Tills and must not fail the enrolment.
+		if _, resolveErr := pos.ResolveTillRegisterID(r.Context(), d.Db, d.Settings); resolveErr != nil &&
+			!errors.Is(resolveErr, pos.ErrRegisterIdentityAmbiguous) {
+			logging.L().Errorf("pin primary register identity before enrolment: %v", resolveErr)
+		}
+		// Auto-provision a register for the joining till, named after it, so
+		// the register is part of the snapshot the till downloads next — no
+		// manual Settings → Registers step needed after the join. Fail OPEN
+		// on this specific step (independent review finding): by this point
+		// InsertTill has already committed and the one-time enrolment token
+		// is already burned (tokens.consume, above), so a hard 500 here would
+		// force the manager to mint a fresh pairing code over what may be a
+		// transient DB error, and leaves an orphan till row behind. An empty
+		// register_id degrades gracefully to exactly the pre-#894 behaviour —
+		// completeJoin/ApplyReplicaIdentity already treat "" as "older
+		// primary, no register sent" and fall back to manual assignment.
+		registerID, registerName, err := posRepo.CreateRegisterForEnrolment(r.Context(), name)
+		if err != nil {
+			logging.L().Errorf("auto-provision register for enrolling till %s: %v", tillID, err)
+			registerID, registerName = "", ""
+		}
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_enrolled",
-			map[string]any{"name": name}, time.Now().UTC().Format(time.RFC3339), "")
+			map[string]any{"name": name, "register_id": registerID, "register_name": registerName},
+			time.Now().UTC().Format(time.RFC3339), "")
 		// The primary is till 1; replicas number from 2 (receipt prefixes).
 		tillNo := 2
 		if list, err := repo.ListTills(r.Context()); err == nil {
@@ -327,10 +363,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
-				"till_id":   tillID,
-				"bearer":    bearer,
-				"shop_name": storeNameOrDefault(r.Context(), d),
-				"till_no":   tillNo,
+				"till_id":     tillID,
+				"bearer":      bearer,
+				"shop_name":   storeNameOrDefault(r.Context(), d),
+				"till_no":     tillNo,
+				"register_id": registerID,
 			},
 			"error": nil,
 		})
@@ -618,6 +655,9 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 			Bearer   string `json:"bearer"`
 			ShopName string `json:"shop_name"`
 			TillNo   int    `json:"till_no"`
+			// The register the primary auto-provisioned for this till
+			// (ut-docs#894); empty from an older primary.
+			RegisterID string `json:"register_id"`
 		} `json:"data"`
 	}
 	if resp.StatusCode == http.StatusNotFound {
@@ -657,6 +697,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		ReceiptPrefix: fmt.Sprintf("T%d-", out.Data.TillNo),
 		TillName:      name,
 		DeviceID:      "till-" + hex.EncodeToString(draw),
+		RegisterID:    out.Data.RegisterID,
 	}); err != nil {
 		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
 	}

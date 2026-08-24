@@ -2187,6 +2187,33 @@ func (r *POSRepo) CreateRegister(ctx context.Context, name string, locationID *s
 	return id, nil
 }
 
+// CreateRegisterForEnrolment auto-provisions a register for a joining till
+// (ut-docs#894): the primary's /api/sync/enroll handler calls this so the new
+// register is already part of the snapshot the joining till downloads, instead
+// of a manual Settings → Registers step after the join. registers.name is
+// UNIQUE, and the till's name is chosen by whoever enrols it — a collision
+// (e.g. two tills both named "till") must NOT fail the enrolment, so on a
+// UNIQUE violation this retries with "<baseName> (2)", "<baseName> (3)", …
+// up to a bounded number of attempts. Returns the id and the (possibly
+// suffixed) name actually used.
+func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName string) (string, string, error) {
+	const maxAttempts = 50
+	name := baseName
+	for i := 1; i <= maxAttempts; i++ {
+		if i > 1 {
+			name = fmt.Sprintf("%s (%d)", baseName, i)
+		}
+		id, err := r.CreateRegister(ctx, name, nil)
+		if err == nil {
+			return id, name, nil
+		}
+		if !isUniqueViolation(err) {
+			return "", "", err
+		}
+	}
+	return "", "", fmt.Errorf("create register for enrolment: %d name candidates for %q all taken", maxAttempts, baseName)
+}
+
 // RenameRegister changes a register's display name; the id (and every
 // shift/sale row keyed by it) is unaffected.
 func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error {
