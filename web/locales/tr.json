@@ -1524,6 +1524,7 @@
   "permissions.action.issue_reporting": "Sorun bildirimi",
   "permissions.action.fiscal_tse_override": "Mali TSE geçersiz kılma",
   "permissions.action.permission_management": "İzinler",
+  "permissions.action.stock_location_management": "Konumlar ve kasalar",
   "elevation.prompt_title": "Yönetici onayı gerekli",
   "elevation.prompt_help": "Devam etmek için bir onaylayanın PIN'ini girin.",
   "elevation.pin_label": "Yönetici PIN",

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // Positive counterpart to TestImport_ManagerGate and
@@ -168,5 +169,56 @@ func TestMenuPage_ManagerOnlyTilesRealSessionGatedByRole(t *testing.T) {
 		if !strings.Contains(body, `href="/users"`) || !strings.Contains(body, `href="/report-issue"`) {
 			t.Fatalf("%s should see the manager-only tiles, got: %s", role, body)
 		}
+	}
+}
+
+// ut-docs#903: locations_page.go/registers_page.go (and this tile gate)
+// moved off the generic "settings" action onto their own dedicated
+// "stock_location_management" action specifically so the two could be
+// granted/withheld independently -- pin that independence in both
+// directions, not just that the seeded default (both granted to
+// manager/admin/super_admin) still shows both. A role with "settings" but
+// NOT "stock_location_management" must see /users but not /locations or
+// /registers; a role with "stock_location_management" but NOT "settings"
+// must see the reverse. Before #903 these two were the same action, so
+// this scenario couldn't even be expressed -- the seeded-default case
+// alone (TestMenuPage_ManagerOnlyTilesRealSessionGatedByRole) would not
+// have caught a regression back to one shared action.
+func TestMenuPage_LocationsRegistersTileIndependentOfSettings(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, nil)
+	dp.AuthSvc = auth.NewService(dp.Db)
+	authRepo := data.NewAuthRepo(dp.Db)
+	ctx := t.Context()
+
+	get := func(u auth.User) *httptest.ResponseRecorder {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/menu", nil), u)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// manager starts with both granted (seedForPages default) -- revoke
+	// only stock_location_management.
+	if err := authRepo.SetRolePermission(ctx, nil, "manager", "stock_location_management", false); err != nil {
+		t.Fatal(err)
+	}
+	body := get(auth.User{ID: "m1", Role: "manager"}).Body.String()
+	if !strings.Contains(body, `href="/users"`) {
+		t.Fatalf("manager still has settings, should see /users tile, got: %s", body)
+	}
+	if strings.Contains(body, `href="/locations"`) || strings.Contains(body, `href="/registers"`) {
+		t.Fatalf("manager without stock_location_management must not see /locations or /registers, got: %s", body)
+	}
+
+	// cashier starts with neither -- grant only stock_location_management.
+	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "stock_location_management", true); err != nil {
+		t.Fatal(err)
+	}
+	body = get(auth.User{ID: "c1", Role: "cashier"}).Body.String()
+	if strings.Contains(body, `href="/users"`) {
+		t.Fatalf("cashier still lacks settings, must not see /users tile, got: %s", body)
+	}
+	if !strings.Contains(body, `href="/locations"`) || !strings.Contains(body, `href="/registers"`) {
+		t.Fatalf("cashier granted stock_location_management should see /locations and /registers tiles, got: %s", body)
 	}
 }

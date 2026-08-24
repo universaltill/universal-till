@@ -39,14 +39,14 @@ type registerView struct {
 func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
-	// requireManager gates on the "settings" action (039's catalog) via
-	// canPerform — see locations_page.go's identical requireManager for
-	// why (ut-docs#901): the old raw IsManager() check never saw
-	// canPerform's UT_AUTH=off escape hatch, so this page 403'd
-	// permanently under the dev/CI auth-bypass. No change to gated
-	// (UT_AUTH on) behavior.
+	// requireManager gates on the "stock_location_management" action
+	// (ut-docs#903, migration 060) via canPerform — see locations_page.go's
+	// identical requireManager for the full history (ut-docs#901's
+	// UT_AUTH=off fix, then #903's move off the generic "settings" action).
+	// Seeded identically to "settings" so no existing till's access
+	// changes.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
-		if !canPerform(d, r, "settings") {
+		if !canPerform(d, r, "stock_location_management") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return auth.User{}, false
 		}

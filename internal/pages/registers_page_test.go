@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -355,5 +356,26 @@ func TestRegistersPage_CannotDeactivateLastActiveRegister(t *testing.T) {
 	var active int
 	if err := d.Db.QueryRow(`SELECT is_active FROM registers WHERE id = ?`, onlyID).Scan(&active); err != nil || active != 1 {
 		t.Fatalf("must remain active: active=%d err=%v", active, err)
+	}
+}
+
+// ut-docs#903: a manager granted "settings" but NOT the new dedicated
+// "stock_location_management" action must be denied here -- see
+// locations_page_test.go's identical test for the full rationale.
+func TestRegistersPage_DeniedWithSettingsButNotStockLocationManagement(t *testing.T) {
+	mux, d := newRegistersTestMux(t)
+	authRepo := data.NewAuthRepo(d.Db)
+	ctx := t.Context()
+
+	if err := authRepo.SetRolePermission(ctx, nil, "manager", "stock_location_management", false); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("manager with settings but not stock_location_management: GET /registers = %d, want 403", rec.Code)
 	}
 }
