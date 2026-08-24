@@ -406,18 +406,25 @@ VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
 // TaxCodeView is one active tax code as listed for a plugin settings editor
 // (ut-docs#190's takeaway-rate-overrides UI): the dine-in rate to show
 // alongside an override input, and any pinned takeaway rate to suggest as a
-// placeholder.
+// placeholder. JSON tags (ut-docs#655) follow this payload's existing
+// basis-point naming -- takeaway_rate_bp matches data.ExportRow's field of
+// the same name; rate_bp (the dine-in rate) matches the sibling
+// data.ExportSaleTaxLine.RateBP already in the same export payload -- now
+// that ListAllTaxCodes' rows are ALSO marshaled as the wire payload for a
+// dispatched export-type plugin (internal/pages/data_api.go). This type was
+// never JSON-marshaled before #655, so adding tags changes no existing wire
+// format.
 type TaxCodeView struct {
-	ID             string
-	Name           string
-	RateBP         int64
-	TakeawayRateBP *int64
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	RateBP         int64  `json:"rate_bp"`
+	TakeawayRateBP *int64 `json:"takeaway_rate_bp"`
 	// IsActive is set by GetTaxCode/ListAllTaxCodes (ut-docs#259's tax-code
 	// management UI, which needs to show and reactivate retired codes).
 	// ListTaxCodes/FindOrCreateTaxCode leave it at its zero value (false) --
 	// neither of their callers reads it, since ListTaxCodes only ever
 	// returns already-active rows.
-	IsActive bool
+	IsActive bool `json:"is_active"`
 }
 
 // ListTaxCodes returns every active tax code, highest dine-in rate first
@@ -531,7 +538,12 @@ ORDER BY rate_basis_points DESC, name`)
 		return nil, fmt.Errorf("list all tax codes: %w", err)
 	}
 	defer rows.Close()
-	var out []TaxCodeView
+	// Non-nil (ut-docs#655 review, mirroring #600 review finding F4 on
+	// ExportRows): a nil slice marshals as JSON null, indistinguishable
+	// from the export payload's "not declared"/"not granted" omission —
+	// plugin-manifest.md promises []/empty (never null) for the
+	// declared+granted-but-empty case.
+	out := make([]TaxCodeView, 0)
 	for rows.Next() {
 		var v TaxCodeView
 		var takeaway sql.NullInt64
