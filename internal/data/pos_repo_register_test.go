@@ -8,6 +8,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -82,6 +83,83 @@ func TestCreateRegister_DuplicateNameRejected(t *testing.T) {
 	}
 	if _, err := repo.CreateRegister(ctx, "Front Till", nil); err == nil {
 		t.Fatal("duplicate name must error (registers.name is UNIQUE)")
+	}
+}
+
+// ut-docs#894: enrolment auto-provisions a register named after the joining
+// till. A name collision (a register with the till's name already exists)
+// must NOT fail the enrolment — it retries with a numeric suffix instead.
+func TestCreateRegisterForEnrolment_FreshName(t *testing.T) {
+	_, repo := openRegTestDB(t)
+	ctx := context.Background()
+
+	id, name, err := repo.CreateRegisterForEnrolment(ctx, "Till 2")
+	if err != nil {
+		t.Fatalf("CreateRegisterForEnrolment: %v", err)
+	}
+	if id == "" {
+		t.Fatal("returned empty id")
+	}
+	if name != "Till 2" {
+		t.Fatalf("fresh name must be used verbatim, got %q", name)
+	}
+	regs, err := repo.ListRegisters(ctx)
+	if err != nil {
+		t.Fatalf("ListRegisters: %v", err)
+	}
+	found := false
+	for _, reg := range regs {
+		if reg.ID == id && reg.Name == "Till 2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("auto-provisioned register not in ListRegisters: %+v", regs)
+	}
+}
+
+func TestCreateRegisterForEnrolment_CollidingNameSuffixed(t *testing.T) {
+	_, repo := openRegTestDB(t)
+	ctx := context.Background()
+
+	if _, err := repo.CreateRegister(ctx, "till", nil); err != nil {
+		t.Fatalf("seed colliding register: %v", err)
+	}
+	id, name, err := repo.CreateRegisterForEnrolment(ctx, "till")
+	if err != nil {
+		t.Fatalf("CreateRegisterForEnrolment: %v", err)
+	}
+	if name != "till (2)" {
+		t.Fatalf("colliding name must be suffixed, got %q", name)
+	}
+	if id == "" {
+		t.Fatal("returned empty id")
+	}
+	// And the next collision walks on to (3).
+	_, name3, err := repo.CreateRegisterForEnrolment(ctx, "till")
+	if err != nil {
+		t.Fatalf("second CreateRegisterForEnrolment: %v", err)
+	}
+	if name3 != "till (3)" {
+		t.Fatalf("second collision must take the next suffix, got %q", name3)
+	}
+}
+
+func TestCreateRegisterForEnrolment_ExhaustedBoundErrors(t *testing.T) {
+	_, repo := openRegTestDB(t)
+	ctx := context.Background()
+
+	// Occupy the base name and every suffix the bound allows.
+	if _, err := repo.CreateRegister(ctx, "till", nil); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	for i := 2; i <= 50; i++ {
+		if _, err := repo.CreateRegister(ctx, fmt.Sprintf("till (%d)", i), nil); err != nil {
+			t.Fatalf("seed suffix %d: %v", i, err)
+		}
+	}
+	if _, _, err := repo.CreateRegisterForEnrolment(ctx, "till"); err == nil {
+		t.Fatal("expected an error once every candidate name is taken")
 	}
 }
 
