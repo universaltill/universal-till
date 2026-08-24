@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -656,6 +658,142 @@ func TestTenderHandler_InsufficientStockShowsToastAndKeepsBasket(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected no sale to be recorded when stock was insufficient, got %d", count)
+	}
+}
+
+// ut-docs#921: before this fix, completeTender's fallback branch rendered
+// the raw Go error text (e.g. "payments (100) do not cover total (120)")
+// straight into the operator-facing toast via http.Error(w, err.Error(),
+// ...) -- verbatim English regardless of locale, and never went through
+// httpx.T at all. Underpayment is a real, reachable cashier scenario (the
+// #72 regression test above already documents its own historical brush
+// with this exact message), so it gets the same in-place localized toast
+// treatment as the insufficient-stock/fiscal-gate rejections, not a raw
+// 400.
+func TestTenderHandler_UnderpaymentShowsLocalizedToastNotRawError(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	// ABC: price 100, 20% tax = 20 -> total 120. Tender 50, well short.
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":50}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (in-place toast, not an error status), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "pos-notice error") {
+		t.Fatalf("expected an error-level pos-notice, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "do not cover total") {
+		t.Fatalf("raw engine error text leaked into the operator-facing toast: %s", rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) == 0 {
+		t.Fatalf("expected basket to survive an underpayment rejection")
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no sale to be recorded on an underpayment, got %d", count)
+	}
+}
+
+// classifyTenderError is the pure classifier behind the toast above --
+// unit-tested directly for its default branch since a genuinely
+// unclassified CompleteSale failure (a DB-layer error, say) isn't
+// practical to provoke through the full HTTP path without a contrived
+// fault injection. Any error the switch doesn't specifically recognize
+// must fall back to the generic key, mirroring the self-order kiosk
+// handler's own default (self_order_shop.go's "selforder.checkout.failed"),
+// so nothing falls through to raw English again.
+func TestClassifyTenderError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"insufficient stock", fmt.Errorf("insufficient stock for item itm1 at location loc_main (have 5.00, need 10.00)"), "pos.toast.insufficient_stock"},
+		{"underpayment", fmt.Errorf("payments (50) do not cover total (120)"), "pos.toast.payment_insufficient"},
+		{"unclassified", fmt.Errorf("database is locked"), "pos.toast.tender_failed"},
+	}
+	for _, c := range cases {
+		if got := classifyTenderError(c.err); got != c.want {
+			t.Errorf("classifyTenderError(%q) = %q, want %q", c.err, got, c.want)
+		}
+	}
+}
+
+// ut-docs#921 review finding (F2): the declined-payment branch had the same
+// raw-English leak as the underpayment fallback -- err.Error() ("payment
+// declined: demopay") went straight to the operator regardless of locale.
+// The 402 status is unchanged (its own type's doc comment: deliberately
+// distinct from the generic 400, so a caller can tell a decline apart) --
+// only the body must stop being raw Go error text.
+func TestTenderHandler_DeclinedPaymentShowsLocalizedMessageNotRawError(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers() // process-global singleton; isolate from other tests using the same plugin id/event
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return nil, errors.New("demopay: card declined")
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"demopay","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("want 402 on a declined plugin gate, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "payment declined:") {
+		t.Fatalf("raw engine error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Payment declined") {
+		t.Fatalf("expected the localized pos.toast.payment_declined copy, got: %s", rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) == 0 {
+		t.Fatalf("expected basket to survive a declined payment")
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no sale to be recorded on a declined payment, got %d", count)
 	}
 }
 
