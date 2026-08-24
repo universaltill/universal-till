@@ -12,7 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
-// ADR-0060 Decision 2 end-to-end on the cashier tender path: with NO plugin
+// ADR-0061 Decision 2 end-to-end on the cashier tender path: with NO plugin
 // installed the service charge is still taxed at the sale's blended
 // per-line rates — the quick-tender's server-filled amount, the persisted
 // total and tax_total all carry the charge's tax, proving the fail-closed
@@ -53,7 +53,7 @@ func TestTenderHandler_ServiceChargeTaxedAtBlendedRates(t *testing.T) {
 	}
 }
 
-// ADR-0060 Decision 3 on the tender path: a payment's tip recipient
+// ADR-0061 Decision 3 on the tender path: a payment's tip recipient
 // defaults from charge.policy.ask's tip_default_recipient when a country
 // plugin answers, and to "employee" when nothing does — decided in
 // completeTender (shared by cashier and kiosk), right where the
@@ -163,7 +163,7 @@ func TestTenderHandler_ChargePolicyNotPermittedSuppressesCharge(t *testing.T) {
 	}
 }
 
-// The ut-docs#962 Turkey backstop and ADR-0060's charge policy are two
+// The ut-docs#962 Turkey backstop and ADR-0061's charge policy are two
 // INDEPENDENT mechanisms that meet on the same tender path, and neither
 // knows about the other: EffectiveServiceChargeRateBP zeroes the charge for
 // a TR shop BEFORE the policy consult, and the policy consult then hands a

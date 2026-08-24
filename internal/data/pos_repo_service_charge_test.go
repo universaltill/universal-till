@@ -51,7 +51,7 @@ func TestPOSRepo_ServiceCharge_RoundTrips(t *testing.T) {
 	if detail.Total != 1100 {
 		t.Fatalf("want Total 1100 (service charge already included), got %d", detail.Total)
 	}
-	// ADR-0060 Decision 4 / migration 062: the flat basis the charge's tax
+	// ADR-0061 Decision 4 / migration 062: the flat basis the charge's tax
 	// was computed at round-trips, so a replay (which rebuilds SaleInput
 	// from this detail) re-derives the SAME tax the originating till did.
 	if detail.ServiceChargeTaxBasisBP != 700 {

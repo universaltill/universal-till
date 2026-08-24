@@ -11,7 +11,7 @@ import (
 )
 
 // InsertPayment/GetSaleDetail must round-trip tip_recipient end to end
-// (ADR-0060 Decision 3): whose money a tip is for tax purposes is recorded
+// (ADR-0061 Decision 3): whose money a tip is for tax purposes is recorded
 // per payment at capture time, so a later report (ut-docs#964) reads what
 // was actually decided then, never a recomputation against today's policy.
 func TestPOSRepo_TipRecipient_RoundTrips(t *testing.T) {

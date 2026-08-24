@@ -80,7 +80,7 @@ type fiscalSignAskPayload struct {
 	// SaleDiscount is still NOT reflected anywhere in VATBreakdown
 	// (ut-docs#834): a signer apportions it across rates itself, per the
 	// contract's recommended method. ServiceCharge, since contract 1.5.0
-	// (ADR-0060 Decision 5), IS apportioned into VATBreakdown by core — its
+	// (ADR-0061 Decision 5), IS apportioned into VATBreakdown by core — its
 	// net and tax are folded into the existing per-rate lines via the same
 	// shared pos.ApportionServiceChargeTax the tender path's
 	// computeSaleTotals uses, so the two can never drift. The flat field is
@@ -360,7 +360,7 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		agg.Net += lineNet.Minor()
 		agg.Tax += lineTax.Minor()
 	}
-	// ADR-0060 Decision 2 / contract 1.5.0: fold the service charge's
+	// ADR-0061 Decision 2 / contract 1.5.0: fold the service charge's
 	// apportioned net/tax into the per-rate lines via the SAME shared
 	// function computeSaleTotals taxes it with — never a local re-derivation,
 	// so the signed breakdown and the persisted totals cannot drift. The

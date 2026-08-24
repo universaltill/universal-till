@@ -38,7 +38,7 @@ func newPOSTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		"VAR": {SKU: "VAR", Name: "Apple - Large", Qty: 1, PriceCents: 150, ItemID: "itm1", VariantID: "var1", TaxRateBP: 2000},
 	}
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
-	// Same charge-policy seam init.go wires in production (ADR-0060) — the
+	// Same charge-policy seam init.go wires in production (ADR-0061) — the
 	// tender handler consults d.Engine.ChargePolicy(), which answers only
 	// through this asker.
 	engine.SetChargePolicyAsker(&pluginChargePolicyAsker{db: db})
@@ -545,7 +545,7 @@ func TestTenderHandler_QuickTenderCoversServiceCharge(t *testing.T) {
 
 	// ABC: price 100, 20% tax = 20, 10% service charge on the 100
 	// subtotal = 10, itself taxed at the sale's blended 20% rate = 2
-	// (ADR-0060 — the charge is never untaxed) -> total 132.
+	// (ADR-0061 — the charge is never untaxed) -> total 132.
 	var total, serviceCharge int64
 	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales`).Scan(&total, &serviceCharge); err != nil {
 		t.Fatalf("query sale: %v", err)
@@ -582,7 +582,7 @@ func TestTenderHandler_QuickTenderCoversFractionalServiceCharge(t *testing.T) {
 
 	// ABC: price 100, 20% tax = 20, 12.5% service charge on the 100
 	// subtotal = 12.5 -> rounds to 13 (half-up); the charge is itself taxed
-	// at the sale's blended 20% rate = 3 (ADR-0060) -> total 136.
+	// at the sale's blended 20% rate = 3 (ADR-0061) -> total 136.
 	var total, serviceCharge int64
 	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales`).Scan(&total, &serviceCharge); err != nil {
 		t.Fatalf("query sale: %v", err)

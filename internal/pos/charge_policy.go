@@ -1,6 +1,6 @@
 package pos
 
-// Tip recipient values (ADR-0060 Decision 3): whose money a tip is for tax
+// Tip recipient values (ADR-0061 Decision 3): whose money a tip is for tax
 // purposes, persisted per payment at capture time. "employee" is the one
 // default every researched market agrees on (including the UK, where the
 // Allocation of Tips Act 2023 makes it matter most), so it is what applies
@@ -11,7 +11,7 @@ const (
 )
 
 // ChargePolicy is an installed country-tax plugin's answer to the
-// charge.policy.ask hook (ADR-0060 Decision 1) — the country-law dimensions
+// charge.policy.ask hook (ADR-0061 Decision 1) — the country-law dimensions
 // of a service charge and a tip that core deliberately has no built-in
 // opinion on, mirroring TaxRateAsker's split of responsibilities.
 type ChargePolicy struct {
@@ -29,7 +29,7 @@ type ChargePolicy struct {
 	// ServiceChargeTaxBasisBP, when > 0, taxes the whole service charge at
 	// this one flat rate. 0 means "use the sale's own per-line rates,
 	// apportioned by net line value" — the fail-closed default
-	// (ADR-0060 Decision 2, ApportionServiceChargeTax).
+	// (ADR-0061 Decision 2, ApportionServiceChargeTax).
 	ServiceChargeTaxBasisBP int
 	// TipDefaultRecipient is TipRecipientEmployee or TipRecipientBusiness —
 	// the market's default for whose money a captured tip is. Empty means
@@ -42,14 +42,14 @@ type ChargePolicy struct {
 }
 
 // ChargePolicyAsker lets an installed country-tax plugin declare its
-// market's service-charge/tip policy (ADR-0060). ok=false means nothing
+// market's service-charge/tip policy (ADR-0061). ok=false means nothing
 // answered — a NORMAL case (no plugin installed, or none with an opinion),
 // never an error and never a blocked sale: the caller applies core's
 // fail-closed default (charge permitted, taxed at the sale's own per-line
 // rates, tip to the employee). Deliberately unlike TaxRateAsker's blocked
 // signal — this hook has no "authority present but broken" state to
 // represent, because the safe default is always available and always
-// correct to apply (ADR-0060 Decision 1). Wired from internal/pages via
+// correct to apply (ADR-0061 Decision 1). Wired from internal/pages via
 // Service.SetChargePolicyAsker, calling into the plugin event bus —
 // internal/pos itself never talks to the plugin subsystem.
 type ChargePolicyAsker interface {

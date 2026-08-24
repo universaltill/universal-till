@@ -147,7 +147,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			payments[i].TipAmount = money.FromMinor(tip)
 		}
 	}
-	// Tip recipient default (ADR-0060 Decision 3), decided HERE — the one
+	// Tip recipient default (ADR-0061 Decision 3), decided HERE — the one
 	// choke point every tender surface (cashier and kiosk) goes through,
 	// right where a plugin-reported tip also lands: an installed country
 	// plugin's charge.policy.ask answer supplies the market default
@@ -786,7 +786,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// CompleteSale enforces all agree. The AMOUNT (not the rate) is
 		// what flows into SaleInput, same shape as SaleDiscount.
 		serviceCharge, _ := pos.ComputeTaxBasisPoints(subtotal.Sub(discount), common.EffectiveServiceChargeRateBP(d.CurrentState()), false)
-		// ADR-0060: an installed country plugin's charge.policy.ask answer
+		// ADR-0061: an installed country plugin's charge.policy.ask answer
 		// can forbid the charge outright or fix a flat tax basis for it; no
 		// answer (the normal no-plugin case) leaves the fail-closed default —
 		// the charge stays permitted and its tax is apportioned at the
@@ -897,7 +897,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			ServiceCharge: serviceCharge,
 			// The plugin-answered flat basis (0 = per-line apportionment)
 			// travels with the sale so computeSaleTotals and the
-			// fiscal.sign.ask payload tax the charge identically (ADR-0060).
+			// fiscal.sign.ask payload tax the charge identically (ADR-0061).
 			ServiceChargeTaxBasisBP: chargeTaxBasisBP,
 			OrderType:               d.Engine.OrderType(),
 			TableID:                 d.Engine.TableID(),

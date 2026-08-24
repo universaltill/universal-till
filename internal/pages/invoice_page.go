@@ -62,7 +62,7 @@ type vatBand struct {
 // the sale's own tax signature, never today's settings. A whole-sale
 // discount (sale_discounts, not folded into any line) is prorated across
 // the bands so the invoice total equals what the customer actually paid,
-// and a service charge — which since ADR-0060 carries its own VAT — is
+// and a service charge — which since ADR-0061 carries its own VAT — is
 // apportioned into the bands through pos.ApportionServiceChargeTax, the
 // SAME shared function the tender path and fiscal.sign.ask use, so the
 // invoice can never declare a different VAT on the charge than the sale
@@ -111,7 +111,7 @@ func vatBreakdown(sale data.SaleDetail) []vatBand {
 			}
 		}
 	}
-	// ADR-0060 Decision 2: the service charge carries VAT of its own,
+	// ADR-0061 Decision 2: the service charge carries VAT of its own,
 	// apportioned across the sale's own rate bands (or taxed at the flat
 	// basis the originating till's country plugin fixed, which rides the
 	// sale row so a re-issued invoice matches the original). Folded in
@@ -171,10 +171,10 @@ func issueInvoice(ctx context.Context, d *common.Deps, sale data.SaleDetail, kin
 	for _, b := range bands {
 		net, tax = net+b.Net, tax+b.Tax
 	}
-	// ut-docs#72 / ADR-0060: GrossTotal must match the receipt/sale total or
+	// ut-docs#72 / ADR-0061: GrossTotal must match the receipt/sale total or
 	// the issued invoice understates what was charged. The service charge
 	// used to be added here as an untaxed lump because vatBreakdown had no
-	// band for it; since ADR-0060 it IS apportioned into the bands (with its
+	// band for it; since ADR-0061 it IS apportioned into the bands (with its
 	// own VAT), so it is already inside net+tax -- adding it again here
 	// would double-count it.
 	gross := net + tax

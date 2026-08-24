@@ -11,7 +11,7 @@ import (
 )
 
 // chargePolicyAskEvent is the "declare your market's service-charge/tip
-// policy" hook (ADR-0060 Decision 1; EventBus.Ask, non-exclusive,
+// policy" hook (ADR-0061 Decision 1; EventBus.Ask, non-exclusive,
 // best-effort — same registration shape as tax.rate.ask, and like that hook
 // it is governed by its ADR rather than a reference/contracts doc). Any
 // installed country-tax plugin may subscribe. The ".ask" suffix is what
@@ -23,7 +23,7 @@ import (
 // default is always available and always correct to apply (the charge stays
 // permitted and is taxed at the sale's own per-line rates,
 // pos.ApportionServiceChargeTax). Taxing-by-default can never
-// under-declare, so nothing here may ever block a sale (ADR-0060 D1/D2).
+// under-declare, so nothing here may ever block a sale (ADR-0061 D1/D2).
 const chargePolicyAskEvent = "charge.policy.ask"
 
 // chargePolicyAskPayload is the event payload a subscribing plugin receives
@@ -58,7 +58,7 @@ type chargePolicyAnswer struct {
 // pluginChargePolicyAsker implements pos.ChargePolicyAsker by asking
 // installed plugins via the event bus — internal/pos itself never depends
 // on the plugin subsystem; this is the seam where "does any plugin have an
-// opinion on this market's charge/tip policy" is answered (ADR-0060,
+// opinion on this market's charge/tip policy" is answered (ADR-0061,
 // mirroring pluginTaxRateAsker's shape).
 //
 // The answer is memoized (one entry — the payload carries no inputs) for as
@@ -77,7 +77,7 @@ type pluginChargePolicyAsker struct {
 
 // AskChargePolicy answers (policy, ok) for the store. ok=false — no
 // subscriber, a clean decline, or a transient failure — always means "apply
-// core's fail-closed default", never an error surface (ADR-0060 D1).
+// core's fail-closed default", never an error surface (ADR-0061 D1).
 func (a *pluginChargePolicyAsker) AskChargePolicy() (pos.ChargePolicy, bool) {
 	bus := plugins.SharedBus(a.db)
 	if !bus.HasSubscribers(chargePolicyAskEvent) {

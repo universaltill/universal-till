@@ -249,7 +249,7 @@ func rewindFiscalRegisterDE059(t *testing.T, d *DB) {
 }
 
 // rewindTipRecipient061 undoes migration 061's non-idempotent DDL (the
-// payments/payments_archive tip_recipient columns, ADR-0060) — same replay
+// payments/payments_archive tip_recipient columns, ADR-0061) — same replay
 // problem as the rewind helpers above.
 func rewindTipRecipient061(t *testing.T, d *DB) {
 	t.Helper()
@@ -264,7 +264,7 @@ func rewindTipRecipient061(t *testing.T, d *DB) {
 }
 
 // rewindServiceChargeTaxBasis062 undoes migration 062's non-idempotent DDL
-// (the sales/sales_archive service_charge_tax_basis_bp columns, ADR-0060
+// (the sales/sales_archive service_charge_tax_basis_bp columns, ADR-0061
 // Decision 4) — same replay problem as the rewind helpers above.
 func rewindServiceChargeTaxBasis062(t *testing.T, d *DB) {
 	t.Helper()
