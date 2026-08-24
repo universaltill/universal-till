@@ -2482,7 +2482,7 @@ WHERE location_id = ?
 // till-set service-charge amount for this sale (distinct from a payment's
 // tip_amount) -- it already participates in total, so it is stored
 // separately only so it can be broken out on the receipt/journal.
-// serviceChargeTaxBasisBP (ADR-0060 Decision 4) is the flat rate the charge's
+// serviceChargeTaxBasisBP (ADR-0061 Decision 4) is the flat rate the charge's
 // tax was computed at, or 0 for the apportioned fail-closed default. It is
 // persisted rather than recomputed so a replayed/synced sale rebuilds the
 // SAME totals CompleteSale originally stored -- see migration 062.
@@ -2542,7 +2542,7 @@ type CardPresentFields struct {
 // (docs/germany-pos-parity-backlog.md tip-flow gap) -- it rides alongside
 // amount but is never subtracted/added when deriving what the payment
 // applies toward the sale total; see pos.PaymentInput.TipAmount.
-// tipRecipient (ADR-0060 Decision 3) records whose money the tip is
+// tipRecipient (ADR-0061 Decision 3) records whose money the tip is
 // ("employee"/"business") as decided at capture time -- the caller
 // (pos.CompleteSale) validates and defaults it, this layer stores it as-is.
 func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, tipRecipient string, paidAt string, cardPresent CardPresentFields) error {
@@ -3712,12 +3712,12 @@ type SaleDetail struct {
 	TaxTotal      int64  `json:"tax_total"`
 	Total         int64  `json:"total"`
 	ServiceCharge int64  `json:"service_charge"`
-	// ServiceChargeTaxBasisBP (ADR-0060 Decision 4) is the flat rate the
+	// ServiceChargeTaxBasisBP (ADR-0061 Decision 4) is the flat rate the
 	// service charge's tax was computed at when the sale was tendered, or 0
 	// for the apportioned fail-closed default. It rides the LAN-sync journal
 	// so a replay reproduces the ORIGINAL totals rather than re-deriving them
 	// against the primary's own policy; omitempty keeps the wire additive --
-	// a pre-ADR-0060 peer simply lacks the key, which reads as 0, exactly the
+	// a pre-ADR-0061 peer simply lacks the key, which reads as 0, exactly the
 	// behaviour that peer had.
 	ServiceChargeTaxBasisBP int                 `json:"service_charge_tax_basis_bp,omitempty"`
 	CreatedAt               string              `json:"created_at"`
@@ -3745,9 +3745,9 @@ type SaleDetailPayment struct {
 	Amount      int64  `json:"amount"`
 	ChangeGiven int64  `json:"change_given"`
 	TipAmount   int64  `json:"tip_amount"`
-	// TipRecipient (ADR-0060 Decision 3): "employee" or "business" -- whose
+	// TipRecipient (ADR-0061 Decision 3): "employee" or "business" -- whose
 	// money the tip was recorded as at capture time. omitempty keeps the
-	// journal wire additive: a pre-ADR-0060 peer's payload simply lacks the
+	// journal wire additive: a pre-ADR-0061 peer's payload simply lacks the
 	// key and pos.CompleteSale re-defaults it to employee on replay.
 	TipRecipient string `json:"tip_recipient,omitempty"`
 	Reference    string `json:"reference"`

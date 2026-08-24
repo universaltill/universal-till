@@ -54,7 +54,7 @@ type Service struct {
 	// each line's own configured rate, unaffected by order type.
 	taxAsker TaxRateAsker
 	// chargeAsker, when set, supplies the market's service-charge/tip
-	// policy (ADR-0060) — see ChargePolicyAsker (charge_policy.go). nil, or
+	// policy (ADR-0061) — see ChargePolicyAsker (charge_policy.go). nil, or
 	// an asker with no answer, means core's fail-closed default: charge
 	// permitted, taxed at the sale's own per-line rates.
 	chargeAsker ChargePolicyAsker
@@ -531,7 +531,7 @@ func (s *Service) recomputeTotals() {
 	// -- the pre-tax net subtotal, after discount -- so what's shown here,
 	// before tender, matches what CompleteSale will actually demand.
 	serviceCharge, _ := ComputeTaxBasisPoints(sub.Sub(discount), s.cfg.ServiceChargeRateBasisPoints, false)
-	// ADR-0060: an installed country plugin's charge.policy.ask answer can
+	// ADR-0061: an installed country plugin's charge.policy.ask answer can
 	// forbid the charge outright or fix a flat tax basis for it; with no
 	// answer (the normal no-plugin case) the fail-closed default taxes it
 	// at the sale's own per-line rates. Mirrors the tender handler

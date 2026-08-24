@@ -27,7 +27,7 @@ func TestVATBreakdownGroupsByRecordedRate(t *testing.T) {
 	}
 }
 
-// ADR-0060 (reviewer finding, 2026-08-24): once core taxes the service
+// ADR-0061 (reviewer finding, 2026-08-24): once core taxes the service
 // charge, an invoice whose VAT table is built from lines alone declares
 // LESS VAT than the sale collected, and its gross stops matching the sale
 // total. The charge's apportioned net/tax must land in the bands — via the

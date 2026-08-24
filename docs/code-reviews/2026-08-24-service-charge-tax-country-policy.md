@@ -3,7 +3,7 @@
 **Date:** 2026-08-24 · **Branch:** `feat/961-service-charge-tax-country-policy` ·
 **Card:** [universaltill/ut-docs#961](https://github.com/universaltill/ut-docs/issues/961)
 (complexity:hard) · **Base:** `b22e4b7` (already contains ut-docs#962) ·
-**Design:** [ADR-0060](https://github.com/universaltill/ut-docs/blob/main/adr/0060-service-charge-tax-and-tip-recipient-country-policy.md)
+**Design:** [ADR-0061](https://github.com/universaltill/ut-docs/blob/main/adr/0061-service-charge-tax-and-tip-recipient-country-policy.md)
 
 **Verdict: safe to merge**, with one **blocking cross-repo action** the reviewer
 could not perform from an isolated worktree — see *Required before merge* below.
@@ -28,7 +28,7 @@ charge, so the old behaviour under-declared tax in every one of them.
 - **`charge.policy.ask`** (`internal/pages/charge_hook.go`) — a new
   non-exclusive, best-effort `EventBus.Ask` hook, registered exactly like
   `tax.rate.ask` and governed by its ADR rather than a `reference/contracts/`
-  doc (ADR-0035's precedent, which ADR-0060 Decision 1 explicitly follows).
+  doc (ADR-0035's precedent, which ADR-0061 Decision 1 explicitly follows).
   Empty payload; a plugin may answer `service_charge_permitted`,
   `service_charge_default_rate_bp`, `service_charge_tax_basis_bp`,
   `tip_default_recipient`, `fiscal_business_case`. Answers are validated at
@@ -41,7 +41,7 @@ charge, so the old behaviour under-declared tax in every one of them.
   dependency on the plugin subsystem. One shared asker instance serves both the
   cashier and kiosk engines (the answer is store-level), matching `taxAsker`.
 - **`internal/pos/service_charge_tax.go`** — `ApportionServiceChargeTax`, the
-  single shared apportionment ADR-0060 Decision 2 requires, plus the
+  single shared apportionment ADR-0061 Decision 2 requires, plus the
   `ServiceChargeTax` sum and `ChargeTaxLinesFromSale` conversion.
 - **Tip recipient** — `PaymentInput.TipRecipient`, migration 061
   (`payments.tip_recipient`, `NOT NULL DEFAULT 'employee'`, mirrored onto
@@ -136,10 +136,10 @@ replica's cursor stalls on it as a poison entry. Latent only because no shipped
 plugin answers the hook yet, but this PR is what makes the hook answerable, by
 any plugin, including third-party ones.
 
-Fixed by making the basis travel with the sale, which is the letter of ADR-0060
+Fixed by making the basis travel with the sale, which is the letter of ADR-0061
 Decision 4 ("replay is exact"): migration 062 persists it on `sales` (+ archive
 mirror), `GetSaleDetail` reads it, `buildJournal` carries it, `applyJournal`
-threads it back. Additive and degrading: absent/0 *is* what a pre-ADR-0060 peer
+threads it back. Additive and degrading: absent/0 *is* what a pre-ADR-0061 peer
 computed. Pinned by `TestApplyJournal_ServiceChargeFlatBasisReplaysExactly` and
 `TestBuildJournal_CarriesServiceChargeTaxBasis`.
 
@@ -169,7 +169,7 @@ Pre-existing since ut-docs#72, but load-bearing for this PR.
 `saleIsTaxInclusive` inferred the mode as `Total == Subtotal − DiscountTotal`,
 which a service charge (added to the total in *both* modes) breaks. Probed and
 confirmed: an inclusive sale with a charge returned `false`. It feeds the
-invoice VAT breakdown, the refund math, and — since ADR-0060 taxes the charge
+invoice VAT breakdown, the refund math, and — since ADR-0061 taxes the charge
 *by pricing mode* — a journal replay's recomputed totals, so it now corrupts
 money in a new way. Fixed as a one-liner that adds `+ d.ServiceCharge` to the
 comparison; it reduces to the original expression exactly when there is no
@@ -202,7 +202,7 @@ nothing would be worse than the unreachable branch.
 
 No caller-side deadline, so a hanging handler would in principle sit on the
 tender path — an offline-first concern. Checked before flagging: it mirrors
-`pluginTaxRateAsker` exactly (the precedent ADR-0060 Decision 1 mandates), and
+`pluginTaxRateAsker` exactly (the precedent ADR-0061 Decision 1 mandates), and
 `wasm_runtime.go` applies its own per-event-class deadline, so a wasm plugin
 cannot hang a checkout. Not a regression and not this PR's to change; diverging
 from `tax.rate.ask` here would be the actual defect.
@@ -259,7 +259,7 @@ Each fix was reverted individually and the test re-run; all three failed on a
 isolated `universal-till` worktree and cannot edit the `ut-docs` checkout. Add
 to that contract's sale-field list, inside the same unreleased 1.2.0:
 
-> - `service_charge_tax_basis_bp` (int, optional, 1.2.0, ADR-0060 Decision 4) —
+> - `service_charge_tax_basis_bp` (int, optional, 1.2.0, ADR-0061 Decision 4) —
 >   the flat rate the ORIGINATING till taxed its service charge at, when an
 >   installed country plugin's `charge.policy.ask` answer fixed one. `0` or
 >   absent means the default: the charge's tax is apportioned across the sale's
@@ -281,7 +281,7 @@ there.
 ## Suggested follow-up cards (not blocking, not built here)
 
 1. `ut-plugin-tax-de` / `ut-plugin-tax-uk` answering `charge.policy.ask` with
-   the ut-docs#961 table's defaults — ADR-0060 names these as follow-ups but
+   the ut-docs#961 table's defaults — ADR-0061 names these as follow-ups but
    they do not appear to be filed yet. Worth filing now that the hook is real.
 2. `InsertSale`'s positional signature is now 25 arguments and grows with every
    sale column. Not this PR's to fix, but it is one transposed pair away from a

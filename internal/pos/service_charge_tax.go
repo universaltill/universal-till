@@ -39,7 +39,7 @@ func ChargeTaxLinesFromSale(lines []SaleLineInput) []ChargeTaxLine {
 	return out
 }
 
-// ApportionServiceChargeTax is ADR-0060 Decision 2's single shared,
+// ApportionServiceChargeTax is ADR-0061 Decision 2's single shared,
 // pure apportionment: it splits a service charge across the sale's existing
 // per-line tax rate bands BY NET LINE VALUE (not gross — deliberately
 // different from invoice_page.go's vatBreakdown, which prorates a *discount*

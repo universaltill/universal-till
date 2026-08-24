@@ -1,4 +1,4 @@
--- 061: tip_recipient on payments (ADR-0060 Decision 3, ut-docs#961). Whose
+-- 061: tip_recipient on payments (ADR-0061 Decision 3, ut-docs#961). Whose
 -- money a tip is for tax purposes is country law, not merchant preference:
 -- Germany's DSFinV-K export needs TrinkgeldAN vs TrinkgeldAG, the UK's
 -- Allocation of Tips Act 2023 needs it for allocation records (ut-docs#964,

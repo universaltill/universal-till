@@ -9,7 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
-// ADR-0060 Decision 4: a replayed/synced sale reproduces its ORIGINAL
+// ADR-0061 Decision 4: a replayed/synced sale reproduces its ORIGINAL
 // persisted amounts exactly — replay never re-asks charge.policy.ask and
 // never recomputes a different total than what was originally stored,
 // regardless of what a plugin installed on the primary would answer today.
@@ -41,7 +41,7 @@ func TestApplyJournal_ServiceChargeReplayNeverReAsksChargePolicy(t *testing.T) {
 
 	// The original sale, as the replica tendered it: 100 @20% exclusive,
 	// service charge 10, taxed at the sale's own blended rate (20% -> 2)
-	// per ADR-0060's fail-closed default: tax 22, total 132. The journal
+	// per ADR-0061's fail-closed default: tax 22, total 132. The journal
 	// carries these ORIGINAL persisted amounts.
 	j := seedJournalSale("remote-sale-sc", "T2-R777-SC", "sale", "", "itm1", 1, 100)
 	j.Sale.Lines[0].TaxRateBP = 2000
@@ -62,7 +62,7 @@ func TestApplyJournal_ServiceChargeReplayNeverReAsksChargePolicy(t *testing.T) {
 	}
 
 	if asks != 0 {
-		t.Fatalf("replay must NEVER re-ask charge.policy.ask (ADR-0060 Decision 4), but the plugin was asked %d time(s)", asks)
+		t.Fatalf("replay must NEVER re-ask charge.policy.ask (ADR-0061 Decision 4), but the plugin was asked %d time(s)", asks)
 	}
 
 	var total, taxTotal, serviceCharge int64
@@ -79,7 +79,7 @@ func TestApplyJournal_ServiceChargeReplayNeverReAsksChargePolicy(t *testing.T) {
 	}
 
 	// The tip recipient recorded at capture time survives the replay too
-	// (ADR-0060 Decision 3) — never re-derived from the primary's policy.
+	// (ADR-0061 Decision 3) — never re-derived from the primary's policy.
 	var recipient string
 	if err := dp.Db.QueryRowContext(ctx,
 		`SELECT tip_recipient FROM payments WHERE sale_id = 'remote-sale-sc'`).Scan(&recipient); err != nil {
@@ -90,7 +90,7 @@ func TestApplyJournal_ServiceChargeReplayNeverReAsksChargePolicy(t *testing.T) {
 	}
 }
 
-// A pre-ADR-0060 peer's journal has no tip_recipient key at all — the
+// A pre-ADR-0061 peer's journal has no tip_recipient key at all — the
 // replay must default it to 'employee', not fail or store empty.
 func TestApplyJournal_MissingTipRecipientDefaultsToEmployee(t *testing.T) {
 	_, dp := newSyncSalesTestDeps(t)
@@ -112,7 +112,7 @@ func TestApplyJournal_MissingTipRecipientDefaultsToEmployee(t *testing.T) {
 	}
 }
 
-// ADR-0060 Decision 4, the non-default half (reviewer finding, 2026-08-24):
+// ADR-0061 Decision 4, the non-default half (reviewer finding, 2026-08-24):
 // a sale tendered while a country plugin answered a FLAT
 // service_charge_tax_basis_bp must replay to exactly the totals it was stored
 // with. The basis is persisted (migration 062) and rides the journal, because

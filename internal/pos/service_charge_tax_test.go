@@ -8,7 +8,7 @@ import (
 	"github.com/universaltill/universal-till/internal/money"
 )
 
-// ADR-0060 Decision 2: a service charge is taxed at the sale's own blended
+// ADR-0061 Decision 2: a service charge is taxed at the sale's own blended
 // per-line rates, apportioned across rate bands BY NET LINE VALUE (not
 // gross), each band's tax computed at that band's own rate, with the
 // largest-remainder correction landing the pennies on the last (highest)
@@ -113,7 +113,7 @@ func TestApportionServiceChargeTax_NoChargeNoBands(t *testing.T) {
 
 // All-zero-value lines leave nothing to weight by; the whole charge lands on
 // the highest rate present — the conservative direction that can never
-// under-declare (ADR-0060's fail-closed reasoning).
+// under-declare (ADR-0061's fail-closed reasoning).
 func TestApportionServiceChargeTax_ZeroWeightsFallToHighestBand(t *testing.T) {
 	lines := []ChargeTaxLine{
 		{RateBP: 700, Net: 0},
@@ -130,7 +130,7 @@ func TestApportionServiceChargeTax_ZeroWeightsFallToHighestBand(t *testing.T) {
 
 // --- CompleteSale: the untaxed service charge path is UNREACHABLE ----------
 
-// ADR-0060 Decision 2's required proof: with NO plugin installed (internal/pos
+// ADR-0061 Decision 2's required proof: with NO plugin installed (internal/pos
 // has no plugin subsystem at all — nothing here can answer charge.policy.ask),
 // the service charge is STILL taxed at the sale's blended per-line rates. The
 // old untaxed total (1300) must no longer even satisfy payment coverage, and
@@ -156,7 +156,7 @@ func TestCompleteSale_ServiceChargeTaxedByDefault_UntaxedPathUnreachable(t *test
 		},
 	}
 
-	// Pre-ADR-0060 total was 1000 + 100 + 200 = 1300 (charge untaxed). That
+	// Pre-ADR-0061 total was 1000 + 100 + 200 = 1300 (charge untaxed). That
 	// amount must now be an underpayment: the charge's 20% tax (20) is due.
 	underpaid := baseIn
 	underpaid.Payments = []PaymentInput{{MethodID: "cash", Amount: 1300}}
@@ -350,7 +350,7 @@ func TestService_ChargePolicyAnswerDrivesPreview(t *testing.T) {
 	}
 }
 
-// --- Tip recipient (ADR-0060 Decision 3) -----------------------------------
+// --- Tip recipient (ADR-0061 Decision 3) -----------------------------------
 
 func TestCompleteSale_TipRecipientDefaultsToEmployee(t *testing.T) {
 	ctx := context.Background()

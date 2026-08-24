@@ -35,7 +35,7 @@ func seedChargePolicyPlugin(t *testing.T, db *sql.DB) {
 }
 
 // With no plugin subscribed, the asker declines cleanly — a NORMAL case
-// (ADR-0060 Decision 1): not an error, never a blocked sale; the caller
+// (ADR-0061 Decision 1): not an error, never a blocked sale; the caller
 // applies core's fail-closed taxed default.
 func TestAskChargePolicy_NoSubscribers(t *testing.T) {
 	db := openPagesTestDB(t)

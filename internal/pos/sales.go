@@ -38,7 +38,7 @@ type SaleInput struct {
 	// service charge is revenue the customer owes and DOES participate in
 	// netPayments' payment-sufficiency check.
 	ServiceCharge money.Money
-	// ServiceChargeTaxBasisBP (ADR-0060) is the flat tax rate for the
+	// ServiceChargeTaxBasisBP (ADR-0061) is the flat tax rate for the
 	// service charge, threaded through by the tender handler from an
 	// installed country plugin's charge.policy.ask answer
 	// (service_charge_tax_basis_bp). 0 — the value on every sale until a
@@ -47,7 +47,7 @@ type SaleInput struct {
 	// per-line rates, apportioned by net line value
 	// (ApportionServiceChargeTax). Deterministic either way, so a replayed
 	// sale's computeSaleTotals reproduces the original totals exactly
-	// without ever re-asking the policy hook (ADR-0060 Decision 4). NOTE:
+	// without ever re-asking the policy hook (ADR-0061 Decision 4). NOTE:
 	// the LAN-sync journal does not carry this field yet — that lands with
 	// the follow-up card that makes ut-plugin-tax-{de,uk} actually answer
 	// the hook, before any plugin can set it non-zero in production.
@@ -131,7 +131,7 @@ type PaymentInput struct {
 	// the sale total, and does not affect netPayments/CompleteSale's
 	// payment-sufficiency check. Zero for tenders with no tip (e.g. cash).
 	TipAmount money.Money `json:"tip_amount"`
-	// TipRecipient (ADR-0060 Decision 3) is whose money the tip is for tax
+	// TipRecipient (ADR-0061 Decision 3) is whose money the tip is for tax
 	// purposes: TipRecipientEmployee or TipRecipientBusiness. Persisted per
 	// payment so a report built later (ut-docs#964) reads the recipient as
 	// it actually was at capture time, never recomputed from a policy that
@@ -217,7 +217,7 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, total m
 		return 0, 0, 0, 0, fmt.Errorf("service charge must be >= 0")
 	}
 	serviceCharge = in.ServiceCharge
-	// ADR-0060 Decision 2: the service charge is ALWAYS taxed — at a
+	// ADR-0061 Decision 2: the service charge is ALWAYS taxed — at a
 	// plugin-answered flat basis when one was threaded through, else
 	// apportioned across the sale's own per-line rate bands (the fail-closed
 	// default; no plugin subsystem exists in this package, so nothing here

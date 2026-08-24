@@ -707,7 +707,7 @@ func TestFiscalSignPayload_TaxInclusiveFlagMirrorsSaleInput(t *testing.T) {
 	}
 }
 
-// ut-docs#834 (contract 1.2.0) as amended by ADR-0060 (contract 1.5.0): the
+// ut-docs#834 (contract 1.2.0) as amended by ADR-0061 (contract 1.5.0): the
 // sale-level discount is folded into Total but never reflected in
 // VATBreakdown (a signer still apportions THAT itself); the service charge,
 // since 1.5.0, IS apportioned into VATBreakdown by core (its net and its
@@ -735,7 +735,7 @@ func TestFiscalSignPayload_SaleDiscountAndServiceChargeBreakout(t *testing.T) {
 	// Pin the reconciliation the contract doc promises (exclusive pricing:
 	// total = subtotal - sale_discount + service_charge + tax-on-subtotal +
 	// tax-on-service-charge): 1000 - 200 + 150 + 190 + 29 (19% of the 150
-	// charge, ADR-0060) = 1169. Catches future drift between
+	// charge, ADR-0061) = 1169. Catches future drift between
 	// buildFiscalSignPayload and pos.computeSaleTotals (ut-docs#834's
 	// review, NIT 9).
 	if payload.Total != 1169 {
@@ -793,7 +793,7 @@ func TestFiscalSignPayload_SaleDiscountAndServiceChargeBreakout(t *testing.T) {
 	}
 }
 
-// ADR-0060 Decision 2 / contract 1.5.0: the service charge's apportionment
+// ADR-0061 Decision 2 / contract 1.5.0: the service charge's apportionment
 // in the sign payload must come from the SAME shared function the tender
 // path folds into computeSaleTotals — pinned here by asserting the merged
 // per-rate lines equal the lines-only aggregate plus exactly

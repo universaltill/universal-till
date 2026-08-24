@@ -133,7 +133,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// so sharing is safe and reuses the cache.
 	taxAsker := &pluginTaxRateAsker{db: db}
 	engine.SetTaxRateAsker(taxAsker)
-	// Service-charge/tip country policy (ADR-0060): same plugin seam, same
+	// Service-charge/tip country policy (ADR-0061): same plugin seam, same
 	// one-shared-instance reasoning — the answer is store-level (the payload
 	// carries nothing basket-specific), so both engines share one asker and
 	// its per-generation cache.
