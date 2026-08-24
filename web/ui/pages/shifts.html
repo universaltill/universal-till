@@ -88,7 +88,7 @@
           hx-on::after-request="if (event.detail.successful) window.location.reload()">
       <label>{{ T "shifts.register" }}
         <select name="register_id" required>
-          {{ range .Registers }}<option value="{{ .ID }}">{{ .Name }}</option>
+          {{ range .Registers }}<option value="{{ .ID }}"{{ if eq .ID $.TillRegisterID }} selected{{ end }}>{{ .Name }}</option>
           {{ else }}<option value="reg-default">{{ T "shifts.default_register" }}</option>{{ end }}
         </select>
       </label>
