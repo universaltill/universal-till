@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -43,7 +44,9 @@ func sampleReceiptDoc(storeName string, rd receiptDesign) print.Doc {
 	doc := print.Doc{
 		StoreName: storeName,
 		Header:    rd.Header,
-		Meta:      []string{"Receipt 000000123", time.Now().Format("2006-01-02 15:04")},
+		// clock.Now (not time.Now) so this sample ticket's date is byte-stable
+		// under `make docs-shots` (ut-docs#930); real wall-clock everywhere else.
+		Meta: []string{"Receipt 000000123", clock.Now().Format("2006-01-02 15:04")},
 		Lines: []print.Line{
 			line("Apples", "SKU-001", "2", "£4.32"),
 			line("Orange Juice 1L", "SKU-002", "1", "£2.64"),

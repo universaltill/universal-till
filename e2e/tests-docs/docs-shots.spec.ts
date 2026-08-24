@@ -32,22 +32,41 @@ const pinnedQuery: Record<string, string> = {
   reports: 'days=30',
 };
 
-// KNOWN, ACCEPTED NON-DETERMINISM (not fixed here — see ut-docs#327's design
-// note on this exact class of gap): the `designer` topic's receipt preview
-// (#rd-preview, /receipt-designer) bakes the real wall-clock time into its
-// sample ticket server-side (internal/pages/receipt_designer.go
-// sampleReceiptDoc: `time.Now().Format(...)` in the Meta line, unconditional,
-// no override hook). That one line — not the rest of the receipt — legitimately
-// differs on every regeneration. Masking would have to hide the whole
-// `#rd-preview` block (there's no separate element around just the date), which
-// throws away the actual content this topic exists to show, so this is left
-// unmasked rather than over-masked. Consequence: `designer/*.png` is expected
-// to show a one-line diff on every honest re-run of `make docs-shots`, even
-// with no source changes — a real, accepted exception to this harness's
-// otherwise-byte-stable guarantee, not a bug in the harness. Fixing it for
-// real means giving the designer's preview endpoint a pinned-time override,
-// which is a product-code change outside this task's scope (see ut-docs#327
-// close-out for the follow-up-card note).
+// CLOCK-PINNED FOR DETERMINISM (ut-docs#930, was the accepted gap ut-docs#327
+// flagged): two screens legitimately render the current time server-side —
+// the `designer` topic's receipt preview (#rd-preview, /receipt-designer:
+// sampleReceiptDoc's Meta line) and the `alerts` topic's back-office "recent
+// problems" panel (/backoffice: each Problem's `.At` timestamp). Both now go
+// through internal/clock.Now, which this harness pins to a fixed instant via
+// UT_DOCS_SHOTS_NOW (set on the webServers in playwright.docs.config.ts). So
+// their dates are byte-stable here while staying the real wall clock in
+// production — no masking needed, and the topic's actual content is kept in
+// frame. This removes what ut-docs#930 observed as the CONSISTENT,
+// every-single-run churn (the 8 alerts/designer PNGs), which was pure
+// timestamp drift.
+//
+// A SMALLER, INTERMITTENT residual remains and is NOT chased to zero here: on
+// the heaviest text screens (the ~hundreds-of-rows ar/translations table,
+// occasionally invoices) a handful of anti-aliased pixels on a single glyph
+// can still toggle between two rasterizations run-to-run — measured at ~10
+// pixels, a sub-10-byte PNG delta. That is browser text-rasterization
+// nondeterminism, the same reason Playwright's own toHaveScreenshot compares
+// with a pixel TOLERANCE rather than byte-equality; it survives every
+// DOM-side settle below (htmx-idle wait, fonts.ready, rAF, animations
+// disabled). It is deliberately left as-is rather than over-engineered around
+// (ut-docs#930 close-out notes a follow-up if pixel-exactness is ever needed).
+//
+// THE MANIFEST-vs-PNG CONTRACT (ut-docs#930 AC): guard-docs-shots.sh checks
+// freshness from SOURCE-surface hashes recorded in manifest.json, and never
+// hashes the PNG bytes — precisely so this AA noise cannot fail CI. So a PR
+// that touches a screened surface must regenerate and commit manifest.json
+// (its recorded surface hash moves), but need only commit the PNGs whose
+// CONTENT actually changed; regenerated PNGs that differ only by AA noise
+// should be reverted, not committed. A manifest-only (or manifest-plus-the-
+// -real-PNGs) commit is therefore a LEGITIMATE, intended outcome — the
+// ut-docs#925 workaround was correct, just previously undocumented. The clock
+// pin above means this manual triage is now rare and tiny, not the 8-file
+// every-run event ut-docs#930 reported.
 
 // A blank white 1024×600 PNG compresses to ~2 KB — anything at or below that
 // is a broken capture (error page, unstyled shell), and must fail the run
@@ -66,9 +85,38 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   const dir = ['fa', 'ar'].includes(locale) ? 'rtl' : 'ltr';
   await expect(page.locator('html')).toHaveAttribute('dir', dir);
 
+  // Wait for any htmx request/swap/settle to be fully done before capturing.
+  // Several topics lazy-load their body after first paint (e.g.
+  // /translations' key table is an hx-trigger="load" fragment), and htmx runs
+  // a brief settle phase — marked by the .htmx-request/.htmx-swapping/
+  // .htmx-settling classes — during which the DOM is mid-transition. goto's
+  // networkidle covers the fetch but not the settle, so capturing here raced
+  // the swap: the heaviest such table (ar/translations, hundreds of
+  // Arabic-script rows) came out with a different byte hash on nearly every
+  // run (ut-docs#930). Poll until no htmx-in-flight marker remains.
+  await page
+    .waitForFunction(
+      () => !document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling'),
+      null,
+      { timeout: 10_000 },
+    )
+    .catch(() => {}); // no htmx on the page at all → nothing to wait for
+
   // Let webfonts finish before capturing, or Arabic-script shots race the
   // font swap.
   await page.evaluate(() => (document as any).fonts.ready);
+
+  // fonts.ready resolves when the font FILES have loaded, not when the
+  // browser has actually repainted the glyphs with them — a one-frame gap
+  // that intermittently captured a page mid-swap (ut-docs#930: `invoices`
+  // churning in a single locale on ~half of runs, with no source change).
+  // Wait two animation frames so a real paint has landed before the shot.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
 
   const out = path.join(imgRoot, locale, `${id}.png`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
@@ -85,6 +133,11 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // that moves it fails the freshness guard instead of silently mismatching.
   await page.screenshot({
     path: out,
+    // Finish/disable CSS transitions & animations so a mid-flight htmx fade or
+    // hover transition can't bake a half-painted frame into the shot — the
+    // other half of the ut-docs#930 stabilization, alongside the htmx-idle
+    // wait above.
+    animations: 'disabled',
     mask: [page.locator('.sb-update'), page.locator('.sb-conn')],
     maskColor: '#0f172a',
   }); // viewport-sized, per config
