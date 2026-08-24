@@ -798,6 +798,40 @@ func TestTenderHandler_DeclinedPaymentShowsLocalizedMessageNotRawError(t *testin
 	}
 }
 
+// ut-docs#929: EnsureStockLocation's failure path -- called before the
+// payment loop (and thus before EnsurePaymentMethod), so it's a different
+// code path from the #923 tests below -- used to leak raw Go error text
+// (err.Error(), e.g. "no such table: stock_locations") via
+// http.Error(w, err.Error(), ...) regardless of locale. Provoked here by
+// dropping stock_locations out from under a live request: this is the very
+// first DB call the handler makes after the basket check, so the failure is
+// deterministically isolated to EnsureStockLocation itself.
+func TestTenderHandler_EnsureStockLocationFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if _, err := dp.Db.Exec(`DROP TABLE stock_locations`); err != nil {
+		t.Fatalf("drop stock_locations: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on an EnsureStockLocation DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "stock_locations") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "could not be completed") {
+		t.Fatalf("expected the localized pos.toast.tender_failed copy, got: %s", rec.Body.String())
+	}
+}
+
 // ut-docs#923: EnsurePaymentMethod's failure path -- reached before
 // completeTender/CompleteSale is ever called, so it's a different code path
 // from the #921 fixes above -- used to leak raw Go error text
