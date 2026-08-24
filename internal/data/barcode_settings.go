@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/barcode"
@@ -84,6 +85,12 @@ func (r *SettingsRepo) EnabledBarcodeSymbologies(ctx context.Context) ([]string,
 		// the defaults, surfacing the parse failure to callers that care.
 		return defaults, fmt.Errorf("parse setting %s: %w", BarcodeEnabledSymbologiesKey, err)
 	}
+	// A stored [""] (one blank-string element) is functionally just as
+	// all-disabling as null/[] — an empty/whitespace-only id can never
+	// match a real registry id (ut-docs#959's "related" note) — but has
+	// len(ids) == 1, so it would slip past a bare length check below.
+	// Filter first so this hits the same fallback as null/[].
+	ids = nonBlankSymbologyIDs(ids)
 	if len(ids) == 0 {
 		// A stored "null" or "[]" unmarshals cleanly to an empty/nil slice
 		// with no error, but an all-disabling enabled set has no legitimate
@@ -149,8 +156,20 @@ func (r *SettingsRepo) SetBarcodeSymbologyEnabled(ctx context.Context, id string
 		return nil, err
 	default:
 		// A corrupt row must not brick this write: fall back to the
-		// defaults, same posture as EnabledBarcodeSymbologies.
-		_ = json.Unmarshal([]byte(val), &ids)
+		// defaults, same posture as EnabledBarcodeSymbologies. Unmarshal
+		// into a fresh variable rather than &ids directly — a stored
+		// "null"/"[]" parses with NO error and would silently overwrite
+		// the "ids := defaults" starting point above with a nil/empty
+		// slice (ut-docs#959), contradicting this comment's own stated
+		// intent. Only adopt the parsed value when it actually contains
+		// at least one non-blank id; otherwise ids keeps the defaults.
+		var parsed []string
+		if json.Unmarshal([]byte(val), &parsed) == nil {
+			parsed = nonBlankSymbologyIDs(parsed)
+			if len(parsed) > 0 {
+				ids = parsed
+			}
+		}
 	}
 
 	newIDs := toggleSymbologyID(ids, id, enabled)
@@ -178,6 +197,27 @@ ON CONFLICT(key) DO UPDATE SET
 		return nil, err
 	}
 	return newIDs, nil
+}
+
+// nonBlankSymbologyIDs filters out empty/whitespace-only entries from a
+// parsed id list. A stored `[""]` is functionally just as all-disabling as
+// `null`/`[]` — an empty string can never match a real registry id
+// (ut-docs#959's "related" note) — so it must route through the same
+// defaults fallback as those in both EnabledBarcodeSymbologies (where it
+// would otherwise survive length checks and silently break every scan and
+// every untyped AddBarcode call on the offline-first checkout hot path)
+// and SetBarcodeSymbologyEnabled (where it would otherwise survive as a
+// spurious "one enabled symbology" that passes the len(newIDs) > 0
+// empty-set guard undetected).
+func nonBlankSymbologyIDs(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // toggleSymbologyID returns ids with id added (enabled=true) or removed
