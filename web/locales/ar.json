@@ -83,6 +83,8 @@
   "catalog.autofill_placeholder": "امسح أو اكتب باركود",
   "catalog.autofill_searching": "جارٍ البحث عن الباركود…",
   "catalog.barcode": "الباركود",
+  "catalog.barcode.force_plain": "رمز عادي (تجاهل الوزن/السعر)",
+  "catalog.barcode.force_plain_hint": "التعامل مع هذا الرمز كباركود منتج عادي، حتى لو كانت الباركودات المضمّنة بالوزن أو السعر مفعّلة لهذا المتجر.",
   "catalog.barcode.remove_confirm": "هل تريد إزالة هذا الرمز الشريطي؟",
   "catalog.barcodes": "الباركودات",
   "catalog.brand": "العلامة التجارية",

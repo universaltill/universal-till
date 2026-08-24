@@ -83,6 +83,8 @@
   "catalog.autofill_placeholder": "Bir barkod tarayın veya yazın",
   "catalog.autofill_searching": "Barkod aranıyor…",
   "catalog.barcode": "Barkod",
+  "catalog.barcode.force_plain": "Düz kod (ağırlık/fiyatı yok say)",
+  "catalog.barcode.force_plain_hint": "Bu mağaza için ağırlık/fiyat gömülü barkodlar etkin olsa bile, bu kodu düz bir ürün barkodu olarak işle.",
   "catalog.barcode.remove_confirm": "Bu barkod kaldırılsın mı?",
   "catalog.barcodes": "Barkodlar",
   "catalog.brand": "Marka",

@@ -71,7 +71,26 @@ func NewCatalogRepo(db *sql.DB) *CatalogRepo {
 
 // BarcodeExists reports whether a barcode is already attached to any item
 // or variant (import dedupe).
+//
+// Tries the code exactly as given first, then — only on a miss — its
+// canonical form (ADR-0059's zeroed embedded-data key, ut-docs#948 F6).
+// Exact-first matters: a row added via AddBarcode's explicit-BarcodeType
+// escape hatch (ut-docs#948 F1) is stored under the RAW code even when
+// that code would otherwise infer to an embedded symbology, so
+// canonicalising first would redirect the check to a key nothing was ever
+// written under and miss the row that's actually there.
 func (r *CatalogRepo) BarcodeExists(ctx context.Context, barcode string) (bool, error) {
+	exists, err := r.barcodeExistsExact(ctx, barcode)
+	if err != nil || exists {
+		return exists, err
+	}
+	if canonical := r.CanonicalBarcodeKey(ctx, barcode); canonical != barcode {
+		return r.barcodeExistsExact(ctx, canonical)
+	}
+	return false, nil
+}
+
+func (r *CatalogRepo) barcodeExistsExact(ctx context.Context, barcode string) (bool, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx, `
 SELECT (SELECT COUNT(*) FROM item_barcodes WHERE barcode = ?)
@@ -81,6 +100,25 @@ SELECT (SELECT COUNT(*) FROM item_barcodes WHERE barcode = ?)
 		return false, fmt.Errorf("barcode exists: %w", err)
 	}
 	return n > 0, nil
+}
+
+// CanonicalBarcodeKey returns the key AddBarcode's untyped-inference path
+// would store for code under the shop's currently-enabled symbologies —
+// the zeroed template for an embedded-data match, or code unchanged when
+// nothing matches (same graceful fallback as a settings-read failure: see
+// AddBarcode). Shared by AddBarcode's own inference path and the
+// BarcodeExists/DeleteBarcode pre-checks (ut-docs#948 F6) so there is
+// exactly one place computing this.
+func (r *CatalogRepo) CanonicalBarcodeKey(ctx context.Context, code string) string {
+	enabledIDs, err := r.settings.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		logging.L().Warnf("catalog: canonical barcode key: enabled symbologies unavailable, using defaults: %v", err)
+	}
+	dec, ok := barcode.Default().Match(enabledIDs, code)
+	if !ok {
+		return code
+	}
+	return dec.LookupKey
 }
 
 // SKUExists reports whether an item SKU is taken (import dedupe).
@@ -360,12 +398,45 @@ ORDER BY is_primary DESC, barcode`, itemID)
 
 // DeleteBarcode detaches a barcode wherever it is attached (item or variant).
 // Fixing a mis-scanned or reassigned code is a normal back-office task.
+//
+// Same exact-first-then-canonical strategy as BarcodeExists (ut-docs#948
+// F6), and for the same reason: deleting by the code exactly as given must
+// not be shadowed by a canonicalisation that would target a different
+// (embedded-data) key an explicit-type escape-hatch row was never stored
+// under.
 func (r *CatalogRepo) DeleteBarcode(ctx context.Context, barcode string) error {
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM item_barcodes WHERE barcode = ?`, barcode); err != nil {
+	deleted, err := r.deleteBarcodeExact(ctx, barcode)
+	if err != nil || deleted {
 		return err
 	}
-	_, err := r.db.ExecContext(ctx, `DELETE FROM variant_barcodes WHERE barcode = ?`, barcode)
-	return err
+	if canonical := r.CanonicalBarcodeKey(ctx, barcode); canonical != barcode {
+		_, err := r.deleteBarcodeExact(ctx, canonical)
+		return err
+	}
+	return nil
+}
+
+// deleteBarcodeExact deletes barcode exactly as given and reports whether
+// any row was actually removed, so DeleteBarcode knows whether to fall back
+// to the canonical key.
+func (r *CatalogRepo) deleteBarcodeExact(ctx context.Context, barcode string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM item_barcodes WHERE barcode = ?`, barcode)
+	if err != nil {
+		return false, err
+	}
+	itemRows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	res, err = r.db.ExecContext(ctx, `DELETE FROM variant_barcodes WHERE barcode = ?`, barcode)
+	if err != nil {
+		return false, err
+	}
+	variantRows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return itemRows+variantRows > 0, nil
 }
 
 // FindOrCreateTaxCode returns the id of a tax_codes row matching the given
@@ -1134,10 +1205,11 @@ func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInp
 				ErrBarcodeNoSymbologyMatch, in.Barcode, strings.Join(enabledIDs, ", "))
 		}
 		in.BarcodeType = strings.ToUpper(dec.SymbologyID)
-		// Store the decoded LookupKey, not the raw scan. For a plain
-		// symbology LookupKey == the typed code, so this is a no-op; for the
-		// two embedded-data symbologies it is the zeroed template (prefix +
-		// item code, weight/price and check digits zeroed) — storing the raw
+		// Store the decoded LookupKey (same value CanonicalBarcodeKey would
+		// compute for this code), not the raw scan. For a plain symbology
+		// LookupKey == the typed code, so this is a no-op; for the two
+		// embedded-data symbologies it is the zeroed template (prefix + item
+		// code, weight/price and check digits zeroed) — storing the raw
 		// label would pin the row to ONE specific label's weight/price and no
 		// other label of the same item could ever resolve (ADR-0059 §3).
 		in.Barcode = dec.LookupKey
