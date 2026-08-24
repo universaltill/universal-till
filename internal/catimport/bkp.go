@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,7 +175,8 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 		return Result{}, fmt.Errorf("open backup.db entry: %w", err)
 	}
 	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(rc, bkpMaxDBSize+1))
+	crcHasher := crc32.NewIEEE()
+	written, copyErr := io.Copy(io.MultiWriter(tmp, hasher, crcHasher), io.LimitReader(rc, bkpMaxDBSize+1))
 	rcCloseErr := rc.Close()
 	closeErr := tmp.Close()
 	if copyErr != nil {
@@ -195,7 +198,10 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 		return Result{}, ErrBkpTooLarge
 	}
 
-	if err := validateBkpMeta(metaBytes, hex.EncodeToString(hasher.Sum(nil))); err != nil {
+	if err := validateBkpMeta(metaBytes, bkpDigests{
+		sha256Hex: hex.EncodeToString(hasher.Sum(nil)),
+		crc32Hex:  fmt.Sprintf("%08x", crcHasher.Sum32()),
+	}); err != nil {
 		return Result{}, err
 	}
 
@@ -338,15 +344,50 @@ type bkpChecksumEntry struct {
 var bkpChecksumNameKeys = []string{"name", "file", "path"}
 var bkpChecksumHashKeys = []string{"sha256", "checksum", "hash"}
 
+// bkpDigests carries the digests computed over backup.db's ACTUAL bytes while
+// they stream to disk, so meta.inf's declared value can be checked against
+// whichever algorithm it happens to have used.
+//
+// Neither of these is a security control. archive/zip already verifies its
+// own per-entry CRC32 on every read, and a checksum an attacker can recompute
+// proves nothing about provenance; this exists to catch a truncated or
+// corrupted transfer, which is what the vendor's own field is for.
+type bkpDigests struct {
+	sha256Hex string
+	crc32Hex  string
+}
+
+// forHexWidth maps a declared checksum's hex width to the digest we computed,
+// reporting false for any width we cannot verify. Widths deliberately not
+// guessed at: 32 (MD5) and 40 (SHA-1) are unverifiable here rather than
+// wrong — see validateBkpMeta's contract below for why that matters.
+func (d bkpDigests) forHexWidth(n int) (string, bool) {
+	switch n {
+	case 8:
+		return d.crc32Hex, true
+	case 64:
+		return d.sha256Hex, true
+	default:
+		return "", false
+	}
+}
+
 // validateBkpMeta is ut-docs#511's meta.inf validator.
 //
-// ASSUMPTION, NOT VERIFIED — flag for a human with the real file: the
-// ticket describes meta.inf only in prose ("JSON with app version, device,
-// licence key and per-file checksums"); nobody on this project has actually
-// seen the real bytes — the real customer's .bkp is explicitly not
-// committable anywhere (see ut-docs#511's own instruction). This function
-// is therefore deliberately defensive rather than strict about the
-// checksum shape:
+// VERIFIED against a real file, 2026-08-25 (ut-docs#968). ut-docs#511 had to
+// guess this schema from prose and guessed SHA-256; a real speedy kasse PRO
+// 4.4.08 backup from the pilot site shows the per-file field is an 8-character
+// **CRC32**:
+//
+//	{"meta":{"files":[{"name":"backup.db","size":270630912,"checksum":"887be5e7"},…]},
+//	 "checksum":"<128 hex, over the meta object, not over backup.db>"}
+//
+// The CRC32 matched the archive's real bytes exactly. Comparing it against a
+// 64-character SHA-256 could never match, so before this fix EVERY genuine
+// backup was rejected as corrupt — the German migration path failed at its
+// first step, and the failure said the customer's file was damaged when it
+// was not. The note that follows is kept because its reasoning is what makes
+// the fix safe, not merely because it was here first:
 //
 //   - It hard-fails if meta.inf isn't valid JSON at all (ErrBkpInvalidMeta).
 //   - It recursively looks anywhere in the parsed JSON (top-level array,
@@ -355,19 +396,21 @@ var bkpChecksumHashKeys = []string{"sha256", "checksum", "hash"}
 //     — name-ish being one of name/file/path, hash-ish one of
 //     sha256/checksum/hash. If it finds one naming "backup.db" (matched by
 //     base filename, so a path-qualified name still matches), it verifies
-//     that hash against dbSHA256Hex (the SHA-256 of the actual extracted
-//     bytes, computed by the caller while streaming — see ParseBkp) and
-//     hard-fails on a mismatch (ErrBkpChecksumMismatch).
+//     that value against the digest of the same width computed over the
+//     actual extracted bytes (see bkpDigests) and hard-fails on a mismatch
+//     (ErrBkpChecksumMismatch).
+//   - If the declared value's width matches no digest we compute, it is
+//     SKIPPED, not failed. This is the lesson of the bug above: a width we
+//     cannot verify tells us nothing about the file, and turning "we don't
+//     recognise this" into "your backup is corrupt" is exactly the failure
+//     that blocked every real import. archive/zip's own per-entry CRC32
+//     remains the baseline guarantee in that case.
 //   - If NOTHING checksum-shaped is found anywhere, it does NOT hard-fail
 //     the whole import over a schema guess nobody has confirmed — the
 //     baseline integrity guarantee in that case is archive/zip's own CRC32
 //     check, which both backup.db's streamed copy and readZipEntry (for
 //     meta.inf) exercise, independent of this function.
-//
-// A human with a real customer's .bkp file should confirm meta.inf's
-// actual shape and tighten (or loosen) this once it's known — this is a
-// best-effort guess, not a verified contract.
-func validateBkpMeta(metaBytes []byte, dbSHA256Hex string) error {
+func validateBkpMeta(metaBytes []byte, digests bkpDigests) error {
 	var parsed any
 	if err := json.Unmarshal(metaBytes, &parsed); err != nil {
 		return fmt.Errorf("%w: %v", ErrBkpInvalidMeta, err)
@@ -387,7 +430,14 @@ func validateBkpMeta(metaBytes []byte, dbSHA256Hex string) error {
 	}
 
 	for _, e := range backupDBEntries {
-		if !strings.EqualFold(strings.TrimSpace(e.hash), dbSHA256Hex) {
+		declared := strings.TrimSpace(e.hash)
+		want, verifiable := digests.forHexWidth(len(declared))
+		if !verifiable {
+			// Unknown algorithm — see the contract above: skip, never fail.
+			log.Printf("[import] meta.inf declares a %d-character checksum for backup.db, which matches no digest we compute; skipping that check", len(declared))
+			continue
+		}
+		if !strings.EqualFold(declared, want) {
 			return ErrBkpChecksumMismatch
 		}
 	}
