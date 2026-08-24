@@ -1218,6 +1218,12 @@ body.login-screen {
 .users-form form { display: flex; flex-direction: column; gap: .7rem; }
 @media (max-width: 900px) { .users-layout { grid-template-columns: 1fr; } }
 
+/* Fiscal register (ut-docs#665) -- one block per business location inside
+   .users-list; without this, consecutive locations' tables run straight
+   into each other with no visual break. */
+.fiscal-register-group { margin-block-end: 1.5rem; }
+.fiscal-register-group:last-child { margin-block-end: 0; }
+
 /* Camera identify overlay (opened on demand from the scan row) */
 .ai-identify-overlay {
   position: fixed;
