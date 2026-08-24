@@ -839,7 +839,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Total:    total.Minor(),
 				Currency: d.CurrentState().Currency,
 			}); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				// ut-docs#944 (ut-docs#924 increment 2 of 4): the audit-record
+				// write for a simulated payment failure is an internal/DB-layer
+				// failure, not a reachable business rejection -- same defect
+				// class as #921/#923/#929 above, just a different call site.
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pos.error.server", "pos-api", err)
 				return
 			}
 			http.Error(w, "payment failed; retry required", http.StatusBadGateway)
@@ -1043,11 +1047,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, getSessionUserID(r), in.Reason); err != nil {
-			code := http.StatusBadRequest
+			// ut-docs#944: raw Go error text (a wrapped SQL/engine error, or
+			// ErrSaleNotFound's own "sale not found: <id>") used to reach the
+			// operator verbatim regardless of locale. Not-found gets its own
+			// key -- distinct status, distinct meaning -- everything else
+			// (bad status value, DB failure) shares the generic fallback.
 			if errors.Is(err, data.ErrSaleNotFound) {
-				code = http.StatusNotFound
+				common.LogAndLocalizedError(w, r, http.StatusNotFound, "pos.error.sale_not_found", "pos-api", err)
+				return
 			}
-			http.Error(w, err.Error(), code)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "pos.error.server", "pos-api", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

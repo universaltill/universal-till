@@ -106,7 +106,10 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		returned, err := repo.ReturnedQuantities(r.Context(), detail.ID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// ut-docs#944 (ut-docs#924 increment 2 of 4): a genuine DB-layer
+			// failure, not a reachable business rejection -- same defect class
+			// as #921/#923/#929/#316 elsewhere in this package.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
 		methods := []string{"cash"}
@@ -152,12 +155,17 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 
 		returned, err := repo.ReturnedQuantities(r.Context(), detail.ID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Same underlying call and failure class as the GET handler above.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
 		locID, err := repo.EnsureStockLocation(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Same repo method, same generic internal-failure semantics as
+			// pos_api.go's tender handler (ut-docs#929) -- reuse its key
+			// rather than inventing a refund-specific one for an identical
+			// underlying failure.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pos.toast.tender_failed", "refund", err)
 			return
 		}
 
@@ -221,7 +229,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			method = "cash"
 		}
 		if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Same repo method, same generic internal-failure semantics as
+			// pos_api.go's tender handler (ut-docs#923) -- reuse its key.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pos.toast.tender_failed", "refund", err)
 			return
 		}
 
@@ -261,7 +271,12 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, saleInput)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			// Same underlying call pos_api.go's completeTender wraps --
+			// classifyTenderError already maps its failure modes (insufficient
+			// stock, underpayment, generic) to a localized key; reuse it
+			// rather than reinventing the classification for a refund-created
+			// "return" sale going through the identical CompleteSale path.
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, classifyTenderError(err), "refund", err)
 			return
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
