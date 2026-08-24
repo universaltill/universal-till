@@ -40,7 +40,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	// requireManager gates on the "stock_location_management" action
-	// (ut-docs#903, migration 059) via canPerform — see locations_page.go's
+	// (ut-docs#903, migration 060) via canPerform — see locations_page.go's
 	// identical requireManager for the full history (ut-docs#901's
 	// UT_AUTH=off fix, then #903's move off the generic "settings" action).
 	// Seeded identically to "settings" so no existing till's access

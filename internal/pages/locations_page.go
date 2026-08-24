@@ -18,7 +18,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	// requireManager gates on the "stock_location_management" action
-	// (ut-docs#903, migration 059) via canPerform, not a raw IsManager()
+	// (ut-docs#903, migration 060) via canPerform, not a raw IsManager()
 	// check on the session — matching every other admin page (#555's five
 	// successor cards; see authz.go's own doc comment). Previously reused
 	// the generic "settings" action (see ut-docs#901's fix, which migrated

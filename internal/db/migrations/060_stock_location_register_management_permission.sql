@@ -1,4 +1,4 @@
--- 059: extend the #554 action catalog with `stock_location_management`
+-- 060: extend the #554 action catalog with `stock_location_management`
 -- (ut-docs#903, follow-up from #901's independent review). locations_page.go
 -- and registers_page.go both gated on the generic `settings` action --
 -- correct at the time (#901 just needed the raw IsManager() check migrated
