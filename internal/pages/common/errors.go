@@ -28,14 +28,27 @@ func LocalizedError(w http.ResponseWriter, r *http.Request, status int, key stri
 // translated key.
 //
 // Logging goes through the app's own leveled logger (internal/logging),
-// not stdlib log, so every call site (101 across internal/pages) gets the
-// same structured [LEVEL] formatting as the rest of the app's logging, and
-// — since this logs at Error level — also flows into logging.Recent(),
-// the in-memory Problems ring the cloud-sync heartbeat reports (ADR-0018).
-// Before this, an error routed through this helper was invisible to that
-// feed even though it's exactly the kind of server-side problem it exists
-// to surface (ut-docs#947).
+// not stdlib log, so every call site (101+ across internal/pages) gets the
+// same structured [LEVEL] formatting as the rest of the app's logging.
+// The level is derived from status: a 5xx logs at Error and flows into
+// logging.Recent(), the in-memory Problems ring the cloud-sync heartbeat
+// reports (ADR-0018) — the behavior #947 shipped. A 4xx logs at Info
+// instead — still logged and grepable server-side via logTag, but kept
+// out of Recent() entirely, since it's routinely operator-triggerable (a
+// malformed form, a declined tender) rather than a real server problem.
+// At the default UT_LOG_LEVEL (info) this still lands on stdout,
+// grepable by logTag; a shop that raises UT_LOG_LEVEL to warn/error will
+// no longer see 4xx lines at all — the same filtering that already
+// applies to any other Info-level line, not special-cased here.
+// Before this, every call landed at Error regardless of status, so a
+// cashier fat-fingering a form repeatedly could evict a genuine warning
+// from the ring's/digest's limited, uncapped-by-priority slots
+// (ut-docs#954, follow-up to #947).
 func LogAndLocalizedError(w http.ResponseWriter, r *http.Request, status int, key string, logTag string, err error) {
-	logging.L().Errorf("[%s] %v", logTag, err)
+	if status >= http.StatusInternalServerError {
+		logging.L().Errorf("[%s] %v", logTag, err)
+	} else {
+		logging.L().Infof("[%s] %v", logTag, err)
+	}
 	LocalizedError(w, r, status, key)
 }
