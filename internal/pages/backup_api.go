@@ -143,7 +143,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		dir, err := db.BackupDir(dbPath)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.backup.download_failed", "backup_download", err)
 			return
 		}
 		full := filepath.Join(dir, name)
@@ -204,7 +204,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		if err := db.StageRestore(dbPath, name); err != nil {
 			audit(r, "restore_stage_failed", map[string]any{"file": name, "error": err.Error()})
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "settings.backup.stage_failed", "backup_restore", err)
 			return
 		}
 		audit(r, "restore_staged", map[string]any{"file": name})

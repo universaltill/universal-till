@@ -784,7 +784,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := d.Settings.Set(r.Context(), "marketplace.telemetry_opt_in", optIn); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_telemetry", err)
 			return
 		}
 		settingsAudit(r, posRepo, elev, "settings", "marketplace.telemetry_opt_in", "telemetry_opt_in_changed", map[string]any{"opt_in": optIn})
@@ -1369,7 +1369,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			prevFiscalValue, _, _ = d.Settings.Get(r.Context(), key)
 		}
 		if err := d.Settings.Set(r.Context(), key, value); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_fiscal", err)
 			return
 		}
 		// Every write to the fiscal posture toggles is itself audit-logged

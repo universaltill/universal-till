@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -558,5 +559,39 @@ func TestIssueReportAPI_OversizedImageRejectsAndSavesNothing(t *testing.T) {
 	}
 	if len(bundles) != 0 {
 		t.Fatalf("expected 0 saved bundles after a rejected oversized image, got %d", len(bundles))
+	}
+}
+
+// ut-docs#924: POST /api/issue-reports used to leak the raw filesystem error
+// via http.Error(w, err.Error(), ...) if issuereport.Save failed. Force a
+// real Save failure (PendingDir pointed at a regular file, so its MkdirAll
+// can't create a bundle directory under it) and assert the localized
+// fallback shows, never the raw error text.
+func TestIssueReportAPI_SaveErrorIsLocalized(t *testing.T) {
+	mux := newIssueReportTestMux(t)
+
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatalf("create blocking file: %v", err)
+	}
+	orig := issuereport.PendingDir
+	issuereport.PendingDir = blocker
+	t.Cleanup(func() { issuereport.PendingDir = orig })
+
+	body, ctype := multipartIssueReport(t, "printer jammed", false, false)
+	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("save with blocked PendingDir = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Couldn't save the report") {
+		t.Fatalf("save error body = %q, want the localized save_error message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "not-a-dir") || strings.Contains(rec.Body.String(), "issuereport:") {
+		t.Fatalf("save error body leaked raw filesystem error text: %q", rec.Body.String())
 	}
 }
