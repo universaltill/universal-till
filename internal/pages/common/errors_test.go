@@ -150,3 +150,61 @@ func TestLogAndLocalizedErrorLogsTheRealError(t *testing.T) {
 		t.Fatalf("logged message = %q; want the logTag prefix", got.Msg)
 	}
 }
+
+// TestLogAndLocalizedError4xxDoesNotPolluteRecent proves a 4xx-status call
+// (a routinely operator-triggerable mistake — a malformed form, a declined
+// tender) no longer competes with real 5xx problems for the Problems
+// ring's limited slots (ut-docs#954, follow-up to #947). Before this fix,
+// every LogAndLocalizedError call landed at Error level regardless of
+// status, so a cashier fat-fingering a form repeatedly could evict a
+// genuine server problem from both logging.Recent() (cap 50) and the
+// cloud-sync heartbeat digest (cap 20, ADR-0018).
+func TestLogAndLocalizedError4xxDoesNotPolluteRecent(t *testing.T) {
+	httpx.InitI18n(nil, "en")
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	raw := errors.New("malformed form: missing field sku")
+
+	LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", raw)
+
+	// Existing behavior (translated key to the operator, real error
+	// server-side) must stay unchanged.
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want %d", w.Code, http.StatusBadRequest)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "catalog.error.invalid_request" {
+		t.Fatalf("body = %q; want the locale key (no translator wired)", got)
+	}
+
+	if n := len(logging.Recent()); n != 0 {
+		t.Fatalf("logging.Recent() = %d entries; want 0 — a 4xx call must not reach the Problems ring", n)
+	}
+}
+
+// TestLogAndLocalizedError5xxStillReachesRecentAmid4xxNoise proves the
+// derived-level fix doesn't quietly suppress real problems too: a mix of
+// 4xx and 5xx calls still surfaces the 5xx one at Error in Recent(), with
+// no regression from #947's shipped behavior.
+func TestLogAndLocalizedError5xxStillReachesRecentAmid4xxNoise(t *testing.T) {
+	httpx.InitI18n(nil, "en")
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", errors.New("bad form"))
+	LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", errors.New("db write failed"))
+	LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.provider_declined", "refund", errors.New("card declined"))
+
+	recent := logging.Recent()
+	if len(recent) != 1 {
+		t.Fatalf("logging.Recent() = %d entries; want exactly 1 (only the 5xx call)", len(recent))
+	}
+	if recent[0].Level != "ERROR" || !strings.Contains(recent[0].Msg, "db write failed") {
+		t.Fatalf("recent[0] = %+v; want the 5xx error at ERROR level", recent[0])
+	}
+}
