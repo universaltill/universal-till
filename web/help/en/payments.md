@@ -23,7 +23,7 @@ Cash is built in; card and other payment methods come as plugins from the store 
 The quick Cash button has no way to record change, because it always tenders the exact total. To hand change back, switch to the **Split** tab instead, even for an otherwise ordinary single-method cash sale:
 
 1. Choose **Cash** (or whichever method the customer handed over) and type the amount they actually gave you — in normal currency amounts, e.g. `5.00`, not the smallest unit.
-2. Type how much change to give back in the **Change** box, then **Add Payment**. A pending-payment card appears showing what the sale actually collects (amount minus change) and, underneath, a note of the change given.
+2. Type how much change to give back in the **Change** box, then **Add Payment**. A pending-payment card appears showing what the sale actually collects (amount minus change), with a note of the change given right alongside it.
 3. **Complete Sale**. The receipt records both the amount tendered and the change given back on that payment.
 
 What can go wrong: a change amount bigger than what was tendered is refused before it's added — fix the amount or the change and try again. Leaving Change at `0` (or blank) is just a normal exact cash payment.
@@ -38,4 +38,9 @@ Use this when one sale is paid for with more than one method — part card, part
 4. Once the pending payments cover the total, **Complete Sale**. (If you only ever need one payment, typing it into the form and pressing Complete Sale straight away works too — it's added for you first.)
 5. **Clear** empties the whole pending list and starts over.
 
-What can go wrong: **Complete Sale** with nothing entered and nothing pending is refused with a prompt to add a payment first. The Amount and Change boxes here take a normal currency amount (e.g. `2.50`) — unlike the small per-line discount box on the basket itself, which takes the smallest currency unit (see **Selling & checkout**'s Discounts section) — so don't carry that habit over between the two.
+What can go wrong:
+
+- **Complete Sale** with nothing entered and nothing pending is refused with a prompt to add a payment first.
+- **Complete Sale** with the pending payments still short of the total is refused with a message that the amount received doesn't cover the sale total — add the rest (or use **Fill Remaining**) before trying again.
+- **Fill Remaining** itself is refused if the pending payments already cover the total (there's nothing left to fill), or if the basket isn't in a state to accept a payment right now.
+- The Amount and Change boxes here take a normal currency amount (e.g. `2.50`) — unlike the small per-line discount box on the basket itself, which takes the smallest currency unit (see **Selling & checkout**'s Discounts section) — so don't carry that habit over between the two.
