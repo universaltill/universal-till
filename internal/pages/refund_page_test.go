@@ -298,9 +298,10 @@ func TestPostRefund_ReturnedQuantitiesFailureShowsLocalizedMessageNotRawError(t 
 	}
 }
 
-// ut-docs#944: same repo method, same generic internal-failure semantics as
-// pos_api.go's tender handler (ut-docs#929) -- this call site reuses that
-// key rather than a refund-specific one.
+// ut-docs#944: a generic internal DB failure on the refund path, so it shows
+// the refund-flow key (refund.error.server) -- deliberately not pos_api.go's
+// sale-worded pos.toast.tender_failed, even though the same repo method is
+// being called.
 func TestPostRefund_EnsureStockLocationFailureShowsLocalizedMessageNotRawError(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
@@ -320,13 +321,16 @@ func TestPostRefund_EnsureStockLocationFailureShowsLocalizedMessageNotRawError(t
 	if strings.Contains(rec.Body.String(), "stock_locations") || strings.Contains(rec.Body.String(), "no such table") {
 		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "could not be completed") {
-		t.Fatalf("expected the localized pos.toast.tender_failed copy, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized refund.error.server copy, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Sale could not be completed") {
+		t.Fatalf("refund flow showed the sale-worded pos.toast.tender_failed copy: %s", rec.Body.String())
 	}
 }
 
-// ut-docs#944: same repo method, same generic internal-failure semantics as
-// pos_api.go's tender handler (ut-docs#923) -- reuses that key too.
+// ut-docs#944: same reasoning as the EnsureStockLocation test above --
+// refund-flow key, not the sale-worded tender one.
 func TestPostRefund_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
@@ -346,8 +350,11 @@ func TestPostRefund_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t
 	if strings.Contains(rec.Body.String(), "payment_methods") || strings.Contains(rec.Body.String(), "no such table") {
 		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "could not be completed") {
-		t.Fatalf("expected the localized pos.toast.tender_failed copy, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized refund.error.server copy, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Sale could not be completed") {
+		t.Fatalf("refund flow showed the sale-worded pos.toast.tender_failed copy: %s", rec.Body.String())
 	}
 }
 
