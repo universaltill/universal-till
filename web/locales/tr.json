@@ -525,6 +525,7 @@
   "refund.col.refund_qty": "İade adedi",
   "refund.col.remaining": "İade edilebilir",
   "refund.col.sold": "Satılan",
+  "refund.error.provider_declined": "Ödeme sağlayıcısı bu iadeyi reddetti — tekrar deneyin veya başka bir yöntem seçin",
   "refund.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "refund.fully_refunded": "tamamen iade edildi",
   "refund.help": "Her üründen ne kadarını geri alacağınızı seçin. Stok mağazaya iade edilir ve iade fişi bu satışa atıfta bulunur. İadeyi bir yönetici PIN'i onaylar.",

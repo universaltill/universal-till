@@ -2,6 +2,8 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -355,6 +357,68 @@ func TestPostRefund_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t
 	}
 	if strings.Contains(rec.Body.String(), "Sale could not be completed") {
 		t.Fatalf("refund flow showed the sale-worded pos.toast.tender_failed copy: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#950 (flagged by the ut-docs#944 review as a separate follow-up,
+// ut-docs#924 increment 2): the payment-provider refund gate
+// (payment.<key>.refund) leaked a raw PLUGIN-originated error string,
+// untranslated -- http.Error(w, "provider refund failed for "+method+": "+
+// blocked.Error(), 402). `blocked` comes from a third-party plugin's own
+// response, so it must never reach the operator verbatim, same policy
+// ut-docs#921 (F2) already established for the sibling payment.<key>.authorize
+// gate in pos_api.go's completeTender (mirrors
+// TestTenderHandler_DeclinedPaymentShowsLocalizedMessageNotRawError).
+func TestPostRefund_ProviderRefundDeclinedShowsLocalizedMessageNotRawError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.refund', 'handle_refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers() // process-global singleton; isolate from other tests using the same plugin id/event
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.refund", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return nil, errors.New("demopay: refund window expired, contact the customer's bank")
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&method=demopay"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("want 402 on a declined provider refund, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "refund window expired") || strings.Contains(rec.Body.String(), "provider refund failed") {
+		t.Fatalf("raw plugin-originated error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "The payment provider declined this refund") {
+		t.Fatalf("expected the localized refund.error.provider_declined copy, got: %s", rec.Body.String())
 	}
 }
 
