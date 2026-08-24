@@ -188,6 +188,13 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .kpi { text-align: center; padding: 1rem; }
 .kpi-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 .kpi-value { font-size: 1.6rem; font-weight: 700; color: var(--brand); margin-top: .15rem; }
+/* ut-docs#421: which report tab is open had no visual cue at all. Repeats
+   the :hover pairing (not just .active alone) because .btn.secondary:hover
+   below shares this rule's specificity and comes later in the cascade —
+   without it, hovering the active tab (a real mouse, not just a touch/kiosk
+   tap) would silently fall back to the plain unselected-hover gray. */
+.report-tabs .btn.active,
+.report-tabs .btn.active:hover { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
 
 /* ---------- Back-office pages (catalog / inventory) ---------- */
 .page-head { display: flex; align-items: center; justify-content: space-between;

@@ -39,3 +39,38 @@ test('a reports tab runs its report only when clicked', async ({ page }) => {
 
   assertClean();
 });
+
+// ut-docs#421: the tab buttons had no active/selected indication at all —
+// no ARIA, no visual state — so once a tab's content loaded, the operator
+// (or a screen reader) had no cue which tab was open.
+test('the open reports tab shows an active/selected state', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await page.goto('/reports');
+
+  const tablist = page.locator('.report-tabs');
+  await expect(tablist).toHaveAttribute('role', 'tablist');
+
+  const panel = page.locator('#report-tab-panel');
+  await expect(panel).toHaveAttribute('role', 'tabpanel');
+
+  const itemsTab = tablist.locator('button', { hasText: 'Items' });
+  const taxTab = tablist.locator('button', { hasText: 'Tax' });
+  await expect(itemsTab).toHaveAttribute('role', 'tab');
+  await expect(itemsTab).toHaveAttribute('aria-selected', 'false');
+  await expect(itemsTab).toHaveAttribute('aria-controls', 'report-tab-panel');
+
+  await itemsTab.click();
+  await expect(itemsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(itemsTab).toHaveClass(/active/);
+  await expect(panel).toHaveAttribute('aria-labelledby', await itemsTab.getAttribute('id'));
+
+  // Switching tabs moves the active state — it doesn't accumulate.
+  await taxTab.click();
+  await expect(taxTab).toHaveAttribute('aria-selected', 'true');
+  await expect(taxTab).toHaveClass(/active/);
+  await expect(itemsTab).toHaveAttribute('aria-selected', 'false');
+  await expect(itemsTab).not.toHaveClass(/active/);
+  await expect(panel).toHaveAttribute('aria-labelledby', await taxTab.getAttribute('id'));
+
+  assertClean();
+});
