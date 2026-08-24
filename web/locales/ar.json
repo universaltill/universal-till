@@ -1524,6 +1524,7 @@
   "permissions.action.issue_reporting": "الإبلاغ عن مشكلة",
   "permissions.action.fiscal_tse_override": "تجاوز جهاز الأمان المالي (TSE)",
   "permissions.action.permission_management": "الصلاحيات",
+  "permissions.action.stock_location_management": "المواقع والصناديق",
   "elevation.prompt_title": "مطلوب موافقة المدير",
   "elevation.prompt_help": "أدخل الرمز السري لأحد المعتمدين للمتابعة.",
   "elevation.pin_label": "الرمز السري للمدير",

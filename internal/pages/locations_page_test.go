@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -208,5 +209,29 @@ func TestLocationsPage_DeactivatedLocationHiddenFromInventoryPicker(t *testing.T
 
 	if strings.Contains(getInventoryPage(), "Pop-up Stall") {
 		t.Fatal("deactivated location must no longer appear in the inventory picker")
+	}
+}
+
+// ut-docs#903: a manager granted "settings" but NOT the new dedicated
+// "stock_location_management" action must be denied here -- pins that the
+// two actions are genuinely independent now, not just that the seeded
+// default (both granted together) still works. Before #903 this scenario
+// was unrepresentable: reusing "settings" meant granting it always granted
+// this page too.
+func TestLocationsPage_DeniedWithSettingsButNotStockLocationManagement(t *testing.T) {
+	mux, d := newLocationsTestMux(t)
+	authRepo := data.NewAuthRepo(d.Db)
+	ctx := t.Context()
+
+	if err := authRepo.SetRolePermission(ctx, nil, "manager", "stock_location_management", false); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/locations", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("manager with settings but not stock_location_management: GET /locations = %d, want 403", rec.Code)
 	}
 }
