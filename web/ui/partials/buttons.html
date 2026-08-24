@@ -67,9 +67,15 @@
       {{ end }}
       <div id="buttons-grid" class="category-groups">
         {{ if $flat }}
+        {{/* No category-group wrapper here to inherit #422's
+             sectionHasMatch($el) wiring from, so the no-matches message
+             is wired the same way the no-tab-bar branch's is: against
+             $el.parentElement, which resolves to #buttons-grid itself
+             (this branch's only content). */}}
         <div class="grid">
           {{ range (index .Groups 0).Buttons }}{{ template "product-tile" . }}{{ end }}
         </div>
+        <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ else if $hasTabs }}
         {{ range $i, $g := .Groups }}
         {{/* x-cloak only the non-default panels — cloaking the initially-
