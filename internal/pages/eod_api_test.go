@@ -1020,3 +1020,143 @@ func TestPostReportArchiveExport_EmptyRangeStillDownloadsEmptyFile(t *testing.T)
 		t.Fatalf("expected zero rows for an unmatched range, got %+v", rows)
 	}
 }
+
+// --- ut-docs#945: raw err.Error() leaks routed through common.LogAndLocalizedError ---
+
+// POST /api/reports/eod/print/{period} used to leak the raw SQL error via
+// http.Error(w, err.Error(), ...) when repo.HasArchivedReport failed. Force
+// a real failure (drop report_archive) and assert the localized fallback
+// shows, never the raw "no such table" text.
+func TestPostEODPrint_HasArchivedReportErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+	if _, err := dp.Db.Exec(`DROP TABLE report_archive`); err != nil {
+		t.Fatalf("drop report_archive table: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/2026-01-01", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("print with broken report_archive table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not check for the archived report") {
+		t.Fatalf("print error body = %q, want the localized check-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("print error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// The same endpoint's SECOND repo call, ListArchivedReports, used to leak
+// its raw error too. Unlike HasArchivedReport (a bare COUNT(*), no column
+// list) ListArchivedReports selects content_json -- dropping just that
+// column (not the whole table) lets HasArchivedReport keep succeeding
+// (period genuinely exists) while isolating THIS call's own real failure,
+// rather than re-proving the same "table's gone" symptom the sibling test
+// above already covers.
+func TestPostEODPrint_ListArchivedReportsErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+
+	if _, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", ""); err != nil {
+		t.Fatalf("setup: generateEOD: %v", err)
+	}
+	if _, err := dp.Db.Exec(`ALTER TABLE report_archive DROP COLUMN content_json`); err != nil {
+		t.Fatalf("drop content_json column: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/2026-01-01", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("print with broken report_archive.content_json = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not load the archived reports") {
+		t.Fatalf("print error body = %q, want the localized list-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such column") {
+		t.Fatalf("print error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// POST /api/reports/eod/range used to leak repo.EndOfDayRange's raw error.
+// Force a real failure (drop the sales table its aggregation query reads)
+// and assert the localized fallback shows.
+func TestPostEODRange_EndOfDayRangeErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+	if _, err := dp.Db.Exec(`DROP TABLE sales`); err != nil {
+		t.Fatalf("drop sales table: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/range", strings.NewReader("from=2026-01-01&to=2026-01-31"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("range with broken sales table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not generate the report for that date range") {
+		t.Fatalf("range error body = %q, want the localized range-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("range error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// POST /api/settings/report-retention used to leak d.Settings.Set's raw
+// error. Force a real failure (drop the settings table) and assert the
+// localized fallback shows, same technique as
+// TestSettingsEndpoints_RepoErrorIsLocalized in settings_page_test.go.
+func TestPostSettingsReportRetention_SettingsSetErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+	if _, err := dp.Db.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings table: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode=till"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("report-retention with broken settings table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not save the report retention setting") {
+		t.Fatalf("report-retention error body = %q, want the localized save-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("report-retention error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// POST /api/reports/archive/export used to leak repo.ArchivedReportsInRange's
+// raw error. Force a real failure (drop report_archive) and assert the
+// localized fallback shows.
+func TestPostReportArchiveExport_ArchivedReportsInRangeErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+	if _, err := dp.Db.Exec(`DROP TABLE report_archive`); err != nil {
+		t.Fatalf("drop report_archive table: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from=2026-01-01&to=2026-01-31&format=json"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("archive export with broken report_archive table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not export the report archive") {
+		t.Fatalf("archive export error body = %q, want the localized export-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("archive export error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
