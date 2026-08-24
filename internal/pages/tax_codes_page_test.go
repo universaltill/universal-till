@@ -335,6 +335,146 @@ func TestTaxCodesAPI_Update_NotFound(t *testing.T) {
 	}
 }
 
+// --- ut-docs#945: raw err.Error() leaks routed through common.LogAndLocalizedError ---
+
+// GET /catalog/tax-codes used to leak repo.ListAllTaxCodes' raw SQL error
+// via http.Error(w, err.Error(), ...). Force a real failure (drop the
+// tax_codes table) and assert the localized fallback shows, never the raw
+// "no such table" text.
+func TestTaxCodesPage_GET_ListAllTaxCodesErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newTaxCodesTestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
+		t.Fatalf("drop tax_codes table: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/catalog/tax-codes", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET with broken tax_codes table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not load the tax codes") {
+		t.Fatalf("GET error body = %q, want the localized list-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("GET error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// POST /api/catalog/tax-codes used to leak repo.CreateTaxCode's raw error
+// for any failure OTHER than the duplicate-name case (which already had its
+// own localized branch). Force a real, non-duplicate failure (drop the
+// tax_codes table) and assert the localized fallback shows.
+func TestTaxCodesAPI_Create_RepoErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newTaxCodesTestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
+		t.Fatalf("drop tax_codes table: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes", strings.NewReader("name=Broken+Table+Code&rate=10"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("create with broken tax_codes table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not save the tax code") {
+		t.Fatalf("create error body = %q, want the localized save-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("create error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// POST /api/catalog/tax-codes/update used to leak repo.UpdateTaxCode's raw
+// error for any failure OTHER than the duplicate-name/not-found cases
+// (which already had their own localized branches). Force a real, neither-
+// of-those failure (drop the tax_codes table so the UPDATE itself errors,
+// rather than merely affecting zero rows) and assert the localized fallback
+// shows.
+func TestTaxCodesAPI_Update_RepoErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newTaxCodesTestDeps(t)
+	// seedForPages seeds tax_std, so the id below addresses a row that
+	// really existed before the table was dropped -- the UPDATE therefore
+	// fails on the missing table, not on a not-found id (which has its own
+	// localized branch and would prove nothing about this one).
+	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
+		t.Fatalf("drop tax_codes table: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes/update", strings.NewReader("id=tax_std&name=Standard&rate=20&isActive=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("update with broken tax_codes table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not save the tax code") {
+		t.Fatalf("update error body = %q, want the localized save-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("update error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// renderTaxCodesTable (the shared table re-render both write handlers end
+// with) has its OWN ListAllTaxCodes call, and it used to leak that call's
+// raw error too. It is reached only AFTER a write to the same tax_codes
+// table has already succeeded, so the sibling tests' "drop the table"
+// technique cannot exercise it -- the write would fail first and land in
+// the write handler's own branch.
+//
+// Poisoning one existing ROW separates the two: `rate_basis_points` is
+// INTEGER, but SQLite's dynamic typing keeps a non-numeric TEXT value as
+// text (typeof() = 'text'), and INTEGER affinity does not coerce it. The
+// table itself stays intact, so CreateTaxCode's INSERT succeeds; the
+// follow-up SELECT then fails in ListAllTaxCodes' rows.Scan on the
+// poisoned row. Asserting on the list-failed message (not save-failed) is
+// what pins this to renderTaxCodesTable's branch specifically -- the two
+// handlers use different keys, so the body identifies which one ran.
+// ut-docs#945 review finding: this site was originally shipped without a
+// forced-failure test on the belief that no such technique existed.
+func TestTaxCodesAPI_Create_TableRenderErrorIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newTaxCodesTestDeps(t)
+
+	if _, err := dp.Db.Exec(
+		`INSERT INTO tax_codes(id, name, rate_basis_points, is_active)
+		 VALUES ('tax_poison','Poisoned Row','not-a-number',1)`); err != nil {
+		t.Fatalf("insert unscannable tax_codes row: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes", strings.NewReader("name=Fresh+Code&rate=7"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("create with an unscannable sibling row = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	// The write itself must have gone through -- otherwise this test would
+	// be re-proving TestTaxCodesAPI_Create_RepoErrorIsLocalized's branch.
+	var written int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM tax_codes WHERE name = 'Fresh Code'`).Scan(&written); err != nil {
+		t.Fatalf("count written rows: %v", err)
+	}
+	if written != 1 {
+		t.Fatalf("CreateTaxCode wrote %d rows, want 1 — the failure came from the write, not the re-render", written)
+	}
+	if !strings.Contains(rec.Body.String(), "Could not load the tax codes") {
+		t.Fatalf("create re-render error body = %q, want the localized list-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "scan tax code") || strings.Contains(rec.Body.String(), "not-a-number") {
+		t.Fatalf("create re-render error body leaked raw scan error text: %q", rec.Body.String())
+	}
+}
+
 func TestTaxCodesAPI_Update_MalformedRateRejected(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newTaxCodesTestDeps(t)
