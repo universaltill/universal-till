@@ -1525,6 +1525,7 @@
   "permissions.action.fiscal_tse_override": "لغو موقت الزام دستگاه امنیت مالیاتی (TSE)",
   "permissions.action.permission_management": "دسترسی‌ها",
   "permissions.action.stock_location_management": "مکان‌ها و صندوق‌ها",
+  "permissions.action.tax_code_management": "کدهای مالیاتی",
   "elevation.prompt_title": "تأیید مدیر لازم است",
   "elevation.prompt_help": "برای ادامه، پین یک تأییدکننده را وارد کنید.",
   "elevation.pin_label": "پین مدیر",
