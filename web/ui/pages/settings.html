@@ -134,7 +134,7 @@
         <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
       </label>
       <p class="muted">{{ T "settings.display.window_mode_pending_note" }}</p>
-      <span id="window-mode-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
+      <div id="window-mode-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
     </form>
 
     <div class="set-gap">
@@ -166,7 +166,7 @@
         {{ T "settings.display.launch_on_startup_label" }}
       </label>
       <p class="muted">{{ T "settings.display.launch_on_startup_pending_note" }}</p>
-      <span id="launch-on-startup-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
+      <div id="launch-on-startup-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
     </div>
 
     {{ if .isManager }}
@@ -178,7 +178,7 @@
           <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
         </label>
         <button class="btn secondary" type="submit" id="exit-to-os-btn">{{ T "settings.display.exit_to_os_btn" }}</button>
-        <span id="exit-to-os-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></span>
+        <div id="exit-to-os-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
       </form>
     </div>
     {{ end }}
@@ -196,7 +196,7 @@
   // wrongly flash "✓ Saved" over the just-opened PIN dialog.
   form.addEventListener('htmx:afterRequest', function (ev) {
     var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
-    if (ev.detail.successful && ct.indexOf('text/html') === -1) { msg.textContent = '✓ ' + T.saved; }
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
   });
 })();
 (function () {
@@ -211,7 +211,7 @@
   var T = { saved: "{{ T "settings.display.change_saved" }}" };
   cb.addEventListener('htmx:afterRequest', function (ev) {
     var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
-    if (ev.detail.successful && ct.indexOf('text/html') === -1) { msg.textContent = '✓ ' + T.saved; }
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
   });
 })();
 (function () {
@@ -234,12 +234,12 @@
     }).then(function (r) {
       btn.disabled = false;
       if (r.ok) {
-        msg.textContent = '✓ ' + T.success;
+        renderNotice(msg, 'success', T.success);
         form.querySelector('[name="manager_pin"]').value = '';
       } else {
-        msg.textContent = '✗ ' + T.error;
+        renderNotice(msg, 'error', T.error);
       }
-    }).catch(function () { btn.disabled = false; msg.textContent = '✗ ' + T.error; });
+    }).catch(function () { btn.disabled = false; renderNotice(msg, 'error', T.error); });
   });
 })();
 </script>
@@ -341,7 +341,7 @@
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
     <input type="text" id="data-reset-confirm" placeholder="{{ T "settings.data.confirm_ph" }}" style="width:9rem">
     <button class="btn secondary" id="data-reset-btn" data-testid="data-reset">{{ T "settings.data.reset_btn" }}</button>
-    <span id="data-reset-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+    <div id="data-reset-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
 
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
@@ -378,7 +378,7 @@
     <p class="muted">{{ T "settings.data.archives_empty" }}</p>
     {{ end }}
   </div>
-  <span id="archives-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+  <div id="archives-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
 
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.gdpr_title" }}</h3>
@@ -386,7 +386,7 @@
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
     <input type="text" id="cust-q" placeholder="{{ T "settings.data.customer_search_ph" }}" style="width:14rem">
     <button class="btn secondary" id="cust-search-btn">{{ T "settings.data.search_btn" }}</button>
-    <span id="cust-msg" class="muted" aria-live="polite"></span>
+    <div id="cust-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
   <div id="cust-results" class="set-gap-s"></div>
 
@@ -397,7 +397,7 @@
     <button class="btn secondary" id="cat-preview-btn">{{ T "settings.data.catalog_preview_btn" }}</button>
     <input type="text" id="cat-confirm" placeholder="{{ T "settings.data.catalog_confirm_ph" }}" style="width:9rem">
     <button class="btn secondary" id="cat-cleanup-btn" data-testid="data-cleanup" disabled>{{ T "settings.data.catalog_cleanup_btn" }}</button>
-    <span id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+    <div id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
   <div id="cat-results" class="set-gap-s"></div>
   {{ end }}
@@ -493,7 +493,7 @@
     <input type="hidden" id="export-entry-key" value="{{ (index .exportEntries 0).Key }}">
     {{ end }}
     <button class="btn secondary" id="export-run-btn" data-testid="data-export">{{ T "settings.data.export.run_btn" }}</button>
-    <span id="export-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+    <div id="export-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
   {{ else }}
   <p class="muted">{{ T "settings.data.export.none_installed" }}</p>
@@ -519,18 +519,22 @@
     confirmDialog: "{{ T "settings.data.reset_confirm_dialog" }}"
   };
   btn.addEventListener('click', function () {
-    if (inp.value.trim() !== 'RESET') { msg.textContent = '✗ ' + T.confirmRequired; return; }
+    if (inp.value.trim() !== 'RESET') { renderNotice(msg, 'error', T.confirmRequired); return; }
     if (!confirm(T.confirmDialog)) return;
-    btn.disabled = true; msg.textContent = '⏳ ' + T.clearing;
+    // Not renderNotice: a .pos-notice auto-expires after 2.5s
+    // (scheduleToastDismiss) even for a slow operation still in flight —
+    // ut-docs#918 review finding 2. Plain text persists until the
+    // renderNotice() success/error call below replaces it.
+    btn.disabled = true; msg.textContent = T.clearing;
     fetch('/api/data/reset-transactions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
     }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
       btn.disabled = false;
-      msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+      renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       if (r.ok) inp.value = '';
-    }); }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+    }); }).catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
 (function () {
@@ -563,29 +567,31 @@
     if (restoreBtn) {
       var row = restoreBtn.closest('tr');
       var inp = row.querySelector('input.restore-confirm');
-      if (inp.value.trim() !== 'RESTORE') { msg.textContent = '✗ ' + T.confirmRequired; return; }
+      if (inp.value.trim() !== 'RESTORE') { renderNotice(msg, 'error', T.confirmRequired); return; }
       if (!confirm(T.confirmDialog)) return;
-      restoreBtn.disabled = true; msg.textContent = '⏳ ' + T.restoring;
+      // Not renderNotice — see the data-reset progress comment above.
+      restoreBtn.disabled = true; msg.textContent = T.restoring;
       fetch('/api/data/reset-archives/' + encodeURIComponent(restoreBtn.getAttribute('data-restore-batch')) + '/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
       }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
         restoreBtn.disabled = false;
-        if (r.status === 409) { msg.textContent = '✗ ' + T.conflict; return; }
-        if (r.status === 422) { msg.textContent = '✗ ' + T.referencesRemoved; return; }
-        msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        if (r.status === 409) { renderNotice(msg, 'error', T.conflict); return; }
+        if (r.status === 422) { renderNotice(msg, 'error', T.referencesRemoved); return; }
+        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
         if (r.ok) removeRowIfEmpty(row);
-      }); }).catch(function (e) { restoreBtn.disabled = false; msg.textContent = '✗ ' + e; });
+      }); }).catch(function (e) { restoreBtn.disabled = false; renderNotice(msg, 'error', e); });
       return;
     }
     var purgeBtn = ev.target.closest('[data-purge-batch]');
     if (purgeBtn) {
       var prow = purgeBtn.closest('tr');
       var pinp = prow.querySelector('input.purge-confirm');
-      if (pinp.value.trim() !== 'PURGE') { msg.textContent = '✗ ' + T.purgeConfirmRequired; return; }
+      if (pinp.value.trim() !== 'PURGE') { renderNotice(msg, 'error', T.purgeConfirmRequired); return; }
       if (!confirm(T.purgeConfirmDialog)) return;
-      purgeBtn.disabled = true; msg.textContent = '⏳ ' + T.purging;
+      // Not renderNotice — see the data-reset progress comment above.
+      purgeBtn.disabled = true; msg.textContent = T.purging;
       fetch('/api/data/reset-archives/' + encodeURIComponent(purgeBtn.getAttribute('data-purge-batch')) + '/purge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -595,9 +601,9 @@
         // 409 here means "still within the retention window" -- the
         // server's own message (data.error) already names the date, so
         // show it directly rather than a fixed string that can't.
-        msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
         if (r.ok) removeRowIfEmpty(prow);
-      }); }).catch(function (e) { purgeBtn.disabled = false; msg.textContent = '✗ ' + e; });
+      }); }).catch(function (e) { purgeBtn.disabled = false; renderNotice(msg, 'error', e); });
     }
   });
 })();
@@ -609,7 +615,7 @@
   var msg = document.getElementById('cust-msg');
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
   function search() {
-    msg.textContent = '…';
+    msg.textContent = '…'; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
     fetch('/api/data/customers?q=' + encodeURIComponent(q.value.trim()))
       .then(function (r) { return r.json(); })
       .then(function (j) {
@@ -621,7 +627,7 @@
             + '<span>' + esc(c.Name) + (c.Phone ? ' · ' + esc(c.Phone) : '') + (c.Email ? ' · ' + esc(c.Email) : '') + '</span>'
             + '<button class="btn secondary" data-erase="' + esc(c.ID) + '">Erase</button></div>';
         }).join('');
-      }).catch(function (e) { msg.textContent = '✗ ' + e; });
+      }).catch(function (e) { renderNotice(msg, 'error', e); });
   }
   sb.addEventListener('click', search);
   q.addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });
@@ -634,9 +640,9 @@
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ id: b.getAttribute('data-erase') }).toString()
     }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-      msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+      renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       if (r.ok) { b.closest('div').remove(); } else { b.disabled = false; }
-    }); }).catch(function (e) { b.disabled = false; msg.textContent = '✗ ' + e; });
+    }); }).catch(function (e) { b.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
 (function () {
@@ -648,7 +654,7 @@
   var msg = document.getElementById('cat-msg');
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
   pv.addEventListener('click', function () {
-    msg.textContent = '…';
+    msg.textContent = '…'; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
     fetch('/api/data/obsolete-items')
       .then(function (r) { return r.json(); })
       .then(function (j) {
@@ -660,20 +666,20 @@
           + list.map(function (it) {
               return '<div style="margin:.15rem 0">' + esc(it.Name) + (it.SKU ? ' · ' + esc(it.SKU) : '') + '</div>';
             }).join('');
-      }).catch(function (e) { msg.textContent = '✗ ' + e; });
+      }).catch(function (e) { renderNotice(msg, 'error', e); });
   });
   run.addEventListener('click', function () {
-    if (conf.value.trim() !== 'CLEANUP') { msg.textContent = '✗ type CLEANUP to confirm'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+    if (conf.value.trim() !== 'CLEANUP') { renderNotice(msg, 'error', 'type CLEANUP to confirm'); return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
     if (!confirm('Permanently delete these inactive, never-sold products? This cannot be undone.')) return;
-    run.disabled = true; msg.textContent = '⏳ removing…';
+    run.disabled = true; msg.textContent = 'removing…'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205); not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
     fetch('/api/data/cleanup-catalog', {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ confirm: conf.value.trim() }).toString()
     }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-      msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+      renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       if (r.ok) { conf.value = ''; out.innerHTML = ''; run.disabled = true; }
       else { run.disabled = false; }
-    }); }).catch(function (e) { run.disabled = false; msg.textContent = '✗ ' + e; });
+    }); }).catch(function (e) { run.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
 (function () {
@@ -688,8 +694,8 @@
     downloaded: "{{ T "settings.data.export.downloaded" }}"
   };
   btn.addEventListener('click', function () {
-    if (!from.value || !to.value) { msg.textContent = '✗ ' + T.pickDatesRequired; return; }
-    btn.disabled = true; msg.textContent = '⏳ …';
+    if (!from.value || !to.value) { renderNotice(msg, 'error', T.pickDatesRequired); return; }
+    btn.disabled = true; msg.textContent = '…'; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
     var body = { from: from.value, to: to.value };
     if (entryKey && entryKey.value) { body.entry_key = entryKey.value; }
     fetch('/api/data/export', {
@@ -708,7 +714,7 @@
         var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
         var filename = m ? m[1] : 'export.bin';
         return r.blob().then(function (blob) {
-          btn.disabled = false; msg.textContent = '✓ ' + T.downloaded + ' ' + filename;
+          btn.disabled = false; renderNotice(msg, 'success', T.downloaded + ' ' + filename);
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
           a.href = url; a.download = filename;
@@ -718,9 +724,9 @@
       }
       return r.json().catch(function () { return {}; }).then(function (j) {
         btn.disabled = false;
-        msg.textContent = (r.ok ? '✓ ' : '✗ ') + ((r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
       });
-    }).catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+    }).catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
 </script>
@@ -787,7 +793,7 @@
       </select>
     </label>
     <button class="btn secondary" id="retention-export-run-btn" data-testid="retention-export">{{ T "settings.retention.export_run_btn" }}</button>
-    <span id="retention-export-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
+    <div id="retention-export-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
   {{ end }}
 </div>
@@ -807,8 +813,8 @@
     downloaded: "{{ T "settings.retention.export_downloaded" }}"
   };
   btn.addEventListener('click', function () {
-    if (!from.value || !to.value) { msg.textContent = '✗ ' + T.pickDatesRequired; return; }
-    btn.disabled = true; msg.textContent = '⏳ …';
+    if (!from.value || !to.value) { renderNotice(msg, 'error', T.pickDatesRequired); return; }
+    btn.disabled = true; msg.textContent = '…'; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
     // ut-docs#794: this endpoint triggers a file download (Content-Disposition),
     // which htmx can't drive — utPostWithElevation (app.js) is the raw-fetch
     // equivalent of checkOrElevate's shared elevation dialog for exactly
@@ -829,7 +835,7 @@
           var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/.exec(cd);
           var filename = m ? m[1] : 'report-archive.bin';
           return r.blob().then(function (blob) {
-            btn.disabled = false; msg.textContent = '✓ ' + T.downloaded + ' ' + filename;
+            btn.disabled = false; renderNotice(msg, 'success', T.downloaded + ' ' + filename);
             var url = URL.createObjectURL(blob);
             var a = document.createElement('a');
             a.href = url; a.download = filename;
@@ -839,10 +845,10 @@
         }
         return r.text().then(function (t) {
           btn.disabled = false;
-          msg.textContent = '✗ ' + (t || ('HTTP ' + r.status));
+          renderNotice(msg, 'error', t || ('HTTP ' + r.status));
         });
       }, function () { btn.disabled = false; msg.textContent = ''; })
-      .catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
 </script>
