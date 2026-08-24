@@ -625,6 +625,85 @@ func TestTenderHandler_SimulatedFailureRecordsAuditAndReturns502(t *testing.T) {
 	}
 }
 
+// ut-docs#944 (ut-docs#924 increment 2 of 4): the SimFail branch's own
+// audit-record write used to leak raw Go/SQL error text (err.Error()) via
+// http.Error(w, err.Error(), 500) regardless of locale -- same defect class
+// as #921/#923/#929 above, just a different call site reached only when the
+// audit_log INSERT itself fails.
+func TestTenderHandler_SimulatedFailureAuditWriteFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if _, err := dp.Db.Exec(`DROP TABLE audit_log`); err != nil {
+		t.Fatalf("drop audit_log: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"simulateFailure":true,"failureReason":"card reader offline"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on a RecordPaymentFailure DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "audit_log") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized pos.error.server copy, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#944: /api/pos/sale/status's UpdateSaleStatus failure used to leak
+// raw Go/SQL error text regardless of locale. Two distinct branches: a
+// genuine DB-layer failure (generic key, 400) and ErrSaleNotFound (its own
+// key, 404) -- exercised separately since they're reached by different
+// preconditions (a broken table vs. a saleID nothing matches).
+func TestSaleStatusHandler_DBFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE sales`); err != nil {
+		t.Fatalf("drop sales: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/sale/status",
+		strings.NewReader(`{"saleId":"whatever","status":"voided"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 on an UpdateSaleStatus DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") || strings.Contains(rec.Body.String(), "update sale status") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized pos.error.server copy, got: %s", rec.Body.String())
+	}
+}
+
+func TestSaleStatusHandler_UnknownSaleIDShowsLocalizedNotFoundNotRawError(t *testing.T) {
+	mux, _ := newPOSTestDeps(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/sale/status",
+		strings.NewReader(`{"saleId":"no-such-sale","status":"voided"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404 for an unknown saleId, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no-such-sale") || strings.Contains(rec.Body.String(), "sale not found:") {
+		t.Fatalf("raw engine error text (including the sale id) leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Sale not found") {
+		t.Fatalf("expected the localized pos.error.sale_not_found copy, got: %s", rec.Body.String())
+	}
+}
+
 func TestTenderHandler_InsufficientStockShowsToastAndKeepsBasket(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	// itm1 has 50 units at loc_main (seedForPages); scan far more than
