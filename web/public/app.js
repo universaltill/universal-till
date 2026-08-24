@@ -306,13 +306,33 @@ window.utCurrency = (function(){
           body: JSON.stringify({ payments: payments, offline: offlineOverrideEnabled() || !navigator.onLine })
         });
         var text = await response.text();
+        var genericFailure = 'Payment failed. Please retry.';
         if (!response.ok) {
-          setStatus(text || 'Payment failed. Please retry.', 'error');
+          setStatus(text || genericFailure, 'error');
           return;
         }
         var basket = document.getElementById('basket');
         if (basket) {
           basket.outerHTML = text;
+        }
+        // ut-docs#921 review finding: a rejected tender (underpayment,
+        // insufficient stock, the fiscal hard gate, ...) renders as a 200
+        // with an in-basket error toast, not a 4xx -- same htmx-partial
+        // contract every other tender control on this page already uses
+        // (the pos_api.go handler never blockingly errors on a rejection,
+        // it re-renders the basket in place so the operator's items
+        // survive). Checking response.ok alone read that as success here,
+        // wiping the operator's pending split payments and declaring "Sale
+        // completed." on a sale that did not happen. #toast-message only
+        // exists in the swapped markup at all when the server actually set
+        // a ToastMessage, and only carries the "error" class when
+        // ToastLevel is "error" (web/ui/partials/basket.html) -- re-query
+        // the DOM the swap just wrote, don't trust the HTTP status alone.
+        var rejection = document.getElementById('toast-message');
+        if (rejection && rejection.classList.contains('error')) {
+          var rejectionText = (rejection.querySelector('.notice-text') || rejection).textContent.trim();
+          setStatus(rejectionText || genericFailure, 'error');
+          return;
         }
         payments = [];
         renderPayments();
