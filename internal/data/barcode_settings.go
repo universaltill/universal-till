@@ -84,6 +84,18 @@ func (r *SettingsRepo) EnabledBarcodeSymbologies(ctx context.Context) ([]string,
 		// the defaults, surfacing the parse failure to callers that care.
 		return defaults, fmt.Errorf("parse setting %s: %w", BarcodeEnabledSymbologiesKey, err)
 	}
+	if len(ids) == 0 {
+		// A stored "null" or "[]" unmarshals cleanly to an empty/nil slice
+		// with no error, but an all-disabling enabled set has no legitimate
+		// use (SetBarcodeSymbologyEnabled itself refuses to ever write one,
+		// per ErrEmptyBarcodeSymbologySet) and is indistinguishable from
+		// corruption — nothing writes this value directly today, but once
+		// any API can persist the setting, a bad write must not silently
+		// break every scan and every untyped AddBarcode call on the
+		// offline-first checkout hot path (ut-docs#955). Treat it exactly
+		// like the parse-error case: fall back to the default set.
+		return defaults, nil
+	}
 	return ids, nil
 }
 
