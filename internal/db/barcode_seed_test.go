@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	barcodepkg "github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 )
 
@@ -273,6 +274,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	// non-idempotent replay problem (ut-docs#814).
 	rewindTables054(t, d)
 	rewindTracking058(t, d)
+	rewindFiscalRegisterDE059(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -383,6 +385,7 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	// non-idempotent replay problem (ut-docs#814).
 	rewindTables054(t, d)
 	rewindTracking058(t, d)
+	rewindFiscalRegisterDE059(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -402,30 +405,11 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	}
 }
 
-// isValidEAN13 reports whether barcode is 13 digits and its final digit is
-// the correct mod-10 weighted check digit (odd positions from the left, 1-
-// indexed, weight 1; even positions weight 3).
+// isValidEAN13 reports whether barcode is 13 digits with a valid check
+// digit. Delegates to the shared internal/barcode checksum (ADR-0059
+// Decision §1 — "reuse/extract ... rather than duplicating it") instead of
+// keeping its own third copy of the algorithm (ut-docs#933 review finding
+// F5 — this file and internal/data/catalog_repo.go had each grown one).
 func isValidEAN13(barcode string) bool {
-	if len(barcode) != 13 {
-		return false
-	}
-	digits := make([]int, 13)
-	for i, r := range barcode {
-		if r < '0' || r > '9' {
-			return false
-		}
-		digits[i] = int(r - '0')
-	}
-
-	sum := 0
-	for i := 0; i < 12; i++ {
-		weight := 1
-		if i%2 == 1 {
-			weight = 3
-		}
-		sum += digits[i] * weight
-	}
-	check := (10 - (sum % 10)) % 10
-
-	return check == digits[12]
+	return barcodepkg.ValidEAN13Checksum(barcode)
 }

@@ -376,7 +376,17 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, rate_basis_points INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, takeaway_rate_basis_points INTEGER);`,
 		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1);`,
+		// address_street/address_postcode/address_city: column-identical to
+		// internal/db/migrations/059_fiscal_register_de.sql's ALTERs
+		// (ut-docs#665) -- SetStockLocationAddressDE and the fiscal register
+		// page's join both hit these columns directly, same drift rule as
+		// the comments elsewhere in this fixture.
+		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1, address_street TEXT, address_postcode TEXT, address_city TEXT);`,
+		// fiscal_register_de: column-identical to
+		// internal/db/migrations/059_fiscal_register_de.sql (ut-docs#665) --
+		// the fiscal register admin page's create/list/decommission handlers
+		// hit it directly via the repo methods in internal/data/fiscal_repo.go.
+		`CREATE TABLE fiscal_register_de (id TEXT PRIMARY KEY, register_id TEXT NOT NULL REFERENCES registers(id), eas_type TEXT NOT NULL, eas_software TEXT NOT NULL, eas_serial TEXT NOT NULL, tse_serial TEXT NOT NULL, tse_certification_id TEXT NOT NULL, tse_type TEXT NOT NULL, acquired_on TEXT NOT NULL, commissioned_on TEXT, decommissioned_on TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
 		// name UNIQUE: column-identical to 001_init.sql (universaltill/ut-docs#651)
 		// -- a drifted fixture missing that constraint would pass the
 		// registers admin page's duplicate-name test against a schema that
