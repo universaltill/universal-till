@@ -106,4 +106,44 @@ reported.
 
 ## What the independent review found
 
-_(Opus fresh-context subagent — findings triaged below.)_
+Spawned a fresh-context Opus subagent with the full diff, told to be
+adversarial and verify claims itself (import cycles, production inertness,
+timezone determinism, `sync.Once` safety, the guard's source-hash claim),
+not just read the diff. It independently re-ran `go build`/`go vet`/
+`gofmt -l`/tests/`guard-docs-shots.sh` and confirmed each pass.
+
+**Verdict: APPROVE-WITH-NITS — no blocking issues.** No correctness bug,
+regression, or repo-rule violation found. It confirmed: `internal/clock` is a
+true stdlib-only leaf (no import cycle); the pin is provably inert in
+production/e2e (`run-till.sh`/`run-till-auth.sh` never set
+`UT_DOCS_SHOTS_NOW`); `sync.Once` gives correct happens-before with no
+data race or deadlock risk against `remember()`'s mutex; the designer's Meta
+line renders deterministically regardless of the runner's `TZ` (the pinned
+value's own UTC `Location()` carries through `Format`, unaffected by the
+runner's local zone); and the guard's source-hash (not PNG-byte) design is
+real and correctly tolerates the acknowledged residual AA noise.
+
+Three nits, all optional hardening, triaged:
+
+- **`clock_test.go`'s `sync.Once` depends on running first in the package.**
+  Latent, not a bug today (only one test calls `Now()` unpinned-first). Left
+  as-is — the file's own header comment already documents the constraint;
+  adding a `resetPinnedForTest()` seam is more machinery than a
+  medium-complexity test-support fix warrants.
+- **Suggested adding `.UTC()` to the designer's `clock.Now()` call for
+  symmetry with `logging.go`'s.** Deliberately **not applied**: that call
+  also runs on every live `POST /api/receipt-designer/preview` request in
+  production (unchanged since before this fix) — adding `.UTC()` would
+  change the sample receipt's preview date from the shop's local time to UTC
+  for every real shop, a live user-facing regression traded for docs-harness
+  symmetry. Left as local time, matching prior behavior exactly; the
+  determinism proof already confirms the rendered date is stable under the
+  current (UTC, `…Z`) pin regardless of the runner's `TZ` — the offset-pin
+  edge case the nit raised doesn't arise with the value actually configured.
+- **The htmx-idle wait's `.catch(()=>{})` could in principle mask a
+  genuinely stuck page.** Confirmed pre-existing risk class (no wait existed
+  before this change), not worsened by it — no action needed.
+
+Per the pipeline's model-routing rule, a second review round is earned only
+by a blocker-class finding (money/tax, data loss, security); none surfaced,
+so this stays a single round.
