@@ -133,3 +133,55 @@ func TestButtonsHTTPList_SingleCategoryNoTabsAlsoCarriesNoMatchesMessage(t *test
 		t.Fatalf("expected a no-matches message in the no-tab-bar branch too, got: %s", body)
 	}
 }
+
+// TestButtonsHTTPList_FlatCatalogAlsoCarriesNoMatchesMessage (ut-docs#914,
+// ut-docs#422 follow-up): a till where no category has ever been assigned
+// to anything renders via the $flat branch — a bare .grid with no
+// category-group wrapper, so it never inherited the sectionHasMatch
+// wiring #422 added to the tabbed and single-real-category branches. A
+// search matching nothing there left a blank grid with zero feedback.
+// This is the last of the three render branches to gain the same
+// no-matches message; the other two are covered by the tests above.
+func TestButtonsHTTPList_FlatCatalogAlsoCarriesNoMatchesMessage(t *testing.T) {
+	db := setupFullTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	store := NewButtonStore(db)
+	renderer, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "index.html"),
+		filepath.Join("web", "ui", "partials", "buttons.html"),
+		httpx.FuncsFor("en"),
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	h := &ButtonsHTTP{Store: *store, View: renderer}
+
+	// No categories inserted at all -> BuildCategoryGroups's only group is
+	// the synthetic uncategorized bucket (ID == "") -> $flat is true.
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES
+		('i1', 'S1', 'Cola', 120, 1)`)
+	if err := store.Add(Button{Label: "Cola", Code: "C1", ItemID: "i1"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, `class="tab-bar"`) {
+		t.Fatalf("fixture should have no tab bar (flat catalog), got: %s", body)
+	}
+	if strings.Contains(body, `class="category-group"`) {
+		t.Fatalf("fixture should render the bare $flat grid, not a category-group section, got: %s", body)
+	}
+	if !strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) {
+		t.Fatalf("expected a no-matches message in the $flat branch too, got: %s", body)
+	}
+	if !strings.Contains(body, "products.no_matches") {
+		t.Fatalf("expected the products.no_matches key to render in the $flat branch, got: %s", body)
+	}
+}
