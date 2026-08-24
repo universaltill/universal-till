@@ -12,6 +12,16 @@ import (
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
+// ut-docs#944 (ut-docs#924 increment 2 of 4): every raw-error http.Error in
+// this file below routes through common.LogAndLocalizedError with this one
+// key -- all six sites are generic internal/DB/template failures with no
+// business-specific meaning to distinguish (unlike pos_api.go/refund_page.go,
+// nothing here has an existing sibling key from a related file to reuse), so
+// one new key follows the file's existing "designer." locale namespace
+// (designer.add_button, designer.search_type_hint, ...) rather than adding
+// six near-identical ones.
+const buttonsErrorKey = "designer.error.server"
+
 func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// UI fragment
 	mux.HandleFunc("/ui/buttons", func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +33,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			funcs,
 		)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
@@ -51,7 +61,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			codes[i] = strings.TrimSpace(codes[i])
 		}
 		if err := d.BtnStore.UpdateOrder(r.Context(), codes); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -67,7 +77,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			funcs,
 		)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
@@ -83,7 +93,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			funcs,
 		)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
@@ -110,7 +120,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		results, err := d.BtnStore.SearchItems(r.Context(), q, offset, 10)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -121,7 +131,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			funcs,
 		)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
 		_ = renderer.Render(w, "buttons_search_results", map[string]any{"Results": results})

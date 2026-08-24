@@ -22,6 +22,13 @@ type SnapshotLine struct {
 	TaxRateBP    int                     `json:"tax_rate_bp,omitempty"`
 	IsWeighed    bool                    `json:"is_weighed,omitempty"`
 	Modifiers    []data.SelectedModifier `json:"modifiers,omitempty"` // ADR-0020: a held sale must not silently drop customizations on recall
+	// QtyFromCode/NoMerge (ADR-0059 §3, ut-docs#934) must survive a
+	// hold/resume cycle for the same reason as the fields above: dropping
+	// NoMerge would let a later plain scan of the same item merge INTO a
+	// restored price-embedded line, overwriting its absolute label price —
+	// exactly the money bug the flag exists to prevent.
+	QtyFromCode bool `json:"qty_from_code,omitempty"`
+	NoMerge     bool `json:"no_merge,omitempty"`
 }
 
 // BasketSnapshot captures the full in-progress sale state for hold/resume.
@@ -68,7 +75,8 @@ func (s *Service) Snapshot() BasketSnapshot {
 			PriceCents: l.PriceCents, LineDiscount: l.LineDiscount,
 			ImageURL: l.ImageURL, ItemID: l.ItemID, VariantID: l.VariantID,
 			TaxRateBP: l.TaxRateBP, IsWeighed: l.IsWeighed,
-			Modifiers: l.Modifiers,
+			Modifiers:   l.Modifiers,
+			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
 		})
 	}
 	return snap
@@ -95,7 +103,8 @@ func (s *Service) Restore(snap BasketSnapshot) {
 			PriceCents: l.PriceCents, LineDiscount: l.LineDiscount,
 			ImageURL: l.ImageURL, ItemID: l.ItemID, VariantID: l.VariantID,
 			TaxRateBP: l.TaxRateBP, IsWeighed: l.IsWeighed,
-			Modifiers: l.Modifiers,
+			Modifiers:   l.Modifiers,
+			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
 		})
 	}
 	s.discountType = snap.DiscountType
