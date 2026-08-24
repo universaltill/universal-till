@@ -1295,3 +1295,200 @@ func TestSyncPromote_ValidatesBeforeElevating(t *testing.T) {
 		t.Fatalf("expected NO elevation prompt for a request that fails input validation, got: %s", rec.Body.String())
 	}
 }
+
+// --- ut-docs#946 (924 increment 4): raw err.Error() leaks now route through
+// common.LogAndLocalizedError. Each test below forces a REAL failure (a
+// dropped table, a read-only connection, a file blocking a directory
+// MkdirAll needs, or oversized real input, never a mock/stub repo) at one
+// specific call site and asserts the localized message appears while the
+// raw SQL/Go error text does not.
+//
+// Line 261 (advertisableHost's lanIPv4 failure inside POST
+// /api/sync/enroll-token) is not covered by a forced-failure test here:
+// reaching it requires a machine with NO non-loopback network interface at
+// all, which this sandbox (and any normal CI runner with a Docker bridge or
+// similar) does not have and cannot be made to have from within a Go unit
+// test without mocking net.Interfaces() — the exact kind of fake this
+// sweep's TDD bar rules out. Same justified-skip class as increment 2's
+// four unreachable buttons_api.go ui.NewRenderer sites. The call site is
+// still fixed (routed through common.LogAndLocalizedError with the new
+// sync.error.no_lan_address key, preserving its 409 status).
+
+func TestTillsPage_ListFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE tills`); err != nil {
+		t.Fatalf("drop tills: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "sync.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// qrcode.Encode genuinely fails ("content too long to encode") when the
+// encoded QR payload exceeds its capacity — a real, operator-reachable
+// failure via an oversized "url" override, not a mock.
+func TestSyncEnrollToken_QRTooLargeFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newSyncAPITestDeps(t)
+
+	hugeURL := "http://" + strings.Repeat("x", 5000) + ".example:8080"
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token",
+		strings.NewReader("url="+url.QueryEscape(hugeURL)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "sync.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "content too long to encode") {
+		t.Fatalf("raw QR-encode error leaked into the response: %q", body)
+	}
+}
+
+func TestSyncEnroll_InsertTillFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+
+	token := issueEnrolCode(t, mux, "http://192.168.1.10:8080")
+	_, tok, err := decodeEnrollCode(token)
+	if err != nil {
+		t.Fatalf("decode enrol code: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`DROP TABLE tills`); err != nil {
+		t.Fatalf("drop tills: %v", err)
+	}
+
+	enrollBody, _ := json.Marshal(map[string]string{"token": tok, "name": "Till 2"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(enrollBody)))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "sync.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// db.RedactedJoinSnapshot -> Snapshot -> BackupDir's os.MkdirAll fails when
+// a regular FILE already occupies the backups directory's path — same real
+// filesystem-collision technique increment 1's backup_api.go tests used.
+func TestSyncSnapshot_BackupDirFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp, dbPath := newSyncDepsWithPath(t, "primary.db")
+	mux := http.NewServeMux()
+	registerSyncAPI(mux, dp)
+
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	bearer := "tok-snapshot-fail"
+	if _, err := tillsRepo.InsertTill(context.Background(), "Snapshot Till", hashBearer(bearer)); err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+
+	backupsPath := filepath.Join(filepath.Dir(dbPath), "backups")
+	if err := os.WriteFile(backupsPath, []byte("blocking file"), 0o644); err != nil {
+		t.Fatalf("create blocking file: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/snapshot", nil)
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "sync.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "backup dir") || strings.Contains(body, "not a directory") {
+		t.Fatalf("raw filesystem error leaked into the response: %q", body)
+	}
+}
+
+func TestRevokeTill_DeleteFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	id, err := tillsRepo.InsertTill(context.Background(), "Revoke Fail Till", hashBearer("tok-revoke-fail"))
+	if err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`DROP TABLE tills`); err != nil {
+		t.Fatalf("drop tills: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "sync.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// ClearReplicaIdentity's DELETE fails on a read-only connection while the
+// earlier sync.primary_url SELECT (both the input-validation check and
+// SyncPrimaryURL itself) still succeeds.
+func TestSyncPromote_ClearIdentityFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	if err := dp.Settings.Set(context.Background(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed replica identity: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`PRAGMA query_only = ON`); err != nil {
+		t.Fatalf("set query_only: %v", err)
+	}
+	t.Cleanup(func() { _, _ = dp.Db.Exec(`PRAGMA query_only = OFF`) })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/promote", strings.NewReader("confirm=PROMOTE"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "sync.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "readonly database") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}

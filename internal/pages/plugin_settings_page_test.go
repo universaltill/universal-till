@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -651,5 +652,190 @@ func TestPluginSettingsPage_GET_UnparseableStoredValueFallsBackToRawInput(t *tes
 	}
 	if !strings.Contains(body, `name="setting_takeaway_rate_overrides"`) {
 		t.Fatalf("expected the raw text input rendering the stored value, body:\n%s", body)
+	}
+}
+
+// --- ut-docs#946 (924 increment 4): raw err.Error() leaks now route through
+// common.LogAndLocalizedError. Each test below forces a REAL failure (a
+// dropped table or a read-only connection, never a mock/stub repo) at one
+// specific call site and asserts the localized "plugins.error.server"
+// copy appears while the raw SQL/Go error text does not.
+//
+// Line 308's fallback (a non-httpStatusError from parseTaxOverrides) is not
+// covered by a forced-failure test: parseTaxOverrides' only non-nil error
+// return is the httpStatusError value at its "invalid" branch, so that
+// fallback is unreachable through this handler as coded today — same
+// justified-skip reasoning increment 2's review accepted for
+// buttons_api.go's four unreachable ui.NewRenderer sites. The call site is
+// still fixed (routed through common.LogAndLocalizedError with the same
+// plugins.error.server key) so it stays defensively correct if
+// parseTaxOverrides is ever changed to return a different error type.
+
+func TestPluginSettingsPage_GET_ListFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE plugin_settings`); err != nil {
+		t.Fatalf("drop plugin_settings: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "plugins.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// catalogRepo.ListTaxCodes fails AFTER repo.ListPluginSettings has already
+// succeeded and found a takeaway_rate_overrides row — dropping only
+// tax_codes (leaving plugin_settings intact) isolates this call site
+// (line 251) from the ListPluginSettings one (line 234) above.
+func TestPluginSettingsPage_GET_TaxCodesFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
+		t.Fatalf("drop tax_codes: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "plugins.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+func TestPluginSettingsAPI_POST_ListFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE plugin_settings`); err != nil {
+		t.Fatalf("drop plugin_settings: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader("setting_x=y"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "plugins.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// Same isolation approach as the GET test above, but on the POST path's
+// own ListTaxCodes call (line 297), reached only when
+// setting_takeaway_typed=1 is submitted.
+func TestPluginSettingsAPI_POST_TaxCodesFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
+		t.Fatalf("drop tax_codes: %v", err)
+	}
+
+	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "plugins.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// writeTaxOverrides' repo.UpsertPluginSettingScoped fails on a read-only
+// connection while the earlier ListPluginSettings/ListTaxCodes SELECTs and
+// parseTaxOverrides validation all still succeed — isolates line 318.
+func TestPluginSettingsAPI_POST_TypedWriteFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+
+	if _, err := dp.Db.ExecContext(ctx, `PRAGMA query_only = ON`); err != nil {
+		t.Fatalf("set query_only: %v", err)
+	}
+	t.Cleanup(func() { _, _ = dp.Db.Exec(`PRAGMA query_only = OFF`) })
+
+	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "plugins.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "readonly database") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// The plain (non-typed) settings write at line 346 fails on a read-only
+// connection while ListPluginSettings still succeeds — a different branch
+// of the same POST handler's write loop from the typed-overrides case
+// above, exercised with no setting_takeaway_typed field at all.
+func TestPluginSettingsAPI_POST_PlainWriteFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedPluginSetting(t, dp, "p1", "endpoint_url", "https://old.example", "global")
+
+	if _, err := dp.Db.Exec(`PRAGMA query_only = ON`); err != nil {
+		t.Fatalf("set query_only: %v", err)
+	}
+	t.Cleanup(func() { _, _ = dp.Db.Exec(`PRAGMA query_only = OFF`) })
+
+	form := "setting_endpoint_url=https%3A%2F%2Fnew.example"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "plugins.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "readonly database") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
 	}
 }
