@@ -285,7 +285,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		newCfg := pos.Config{
 			TaxInclusive:                 st.TaxInclusive,
 			TaxRateBasisPoints:           st.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: st.ServiceChargeRateBasisPoints,
+			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
 		}
 		d.Engine.SetConfig(newCfg)
 		if d.KioskEngine != nil {

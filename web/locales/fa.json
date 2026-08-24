@@ -822,6 +822,8 @@
   "settings.retention.mode_label": "گزارش‌ها را نگه دار در",
   "settings.retention.mode_till": "فقط همین صندوق",
   "settings.retention.title": "نگه‌داری گزارش",
+  "settings.service_charge.invalid_rate": "هزینه سرویس را به صورت درصدی صفر یا بیشتر وارد کنید، برای مثال ۱۲٫۵.",
+  "settings.service_charge.tr_forbidden": "قانون ترکیه افزودن هزینه سرویس، هزینه میز یا کاور به صورت‌حساب را ممنوع کرده است (آیین‌نامه برچسب قیمت، از ۳۰ ژانویه ۲۰۲۶ لازم‌الاجرا). به‌جای آن این مبلغ را در قیمت منو لحاظ کنید.",
   "settings.shop_type.help": "نوع کسب‌وکاری که این صندوق به آن خدمت می‌دهد — در راه‌اندازی انتخاب شده و اینجا قابل تغییر است.",
   "settings.shop_type.title": "نوع فروشگاه",
   "settings.telemetry.enable": "ارسال تله‌متری افزونه‌ها به فروشگاه",
