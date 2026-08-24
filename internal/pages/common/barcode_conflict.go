@@ -20,6 +20,15 @@ import (
 // error (with the internal ID, if any) is always logged, so the detail
 // isn't lost — just kept off the operator's screen.
 func FriendlyBarcodeConflict(ctx context.Context, repo *data.CatalogRepo, locale string, err error) string {
+	if errors.Is(err, data.ErrBarcodeNoSymbologyMatch) {
+		// ADR-0059 §3's named rejection: the shop has disabled the default
+		// catch-alls and this code matches none of what's left enabled. The
+		// full detail (which code, which ids) is in the wrapped error, kept
+		// on the log line rather than the operator's screen (same split as
+		// the conflict-unknown case below).
+		log.Printf("[catalog] barcode attach failed: %v", err)
+		return httpx.T(locale, "catalog.error.barcode_no_symbology_match")
+	}
 	var conflict *data.BarcodeConflictError
 	if !errors.As(err, &conflict) {
 		log.Printf("[catalog] barcode attach failed: %v", err)

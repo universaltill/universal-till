@@ -1413,6 +1413,7 @@
   "catalog.error.barcode_conflict": "الباركود مستخدم بالفعل من قبل %s",
   "catalog.error.barcode_conflict_unknown": "الباركود مستخدم بالفعل في مكان آخر",
   "catalog.error.barcode_attach_failed": "فشل إرفاق الباركود",
+  "catalog.error.barcode_no_symbology_match": "هذا الباركود لا يطابق أي نوع باركود مُفعّل حاليًا لهذا المتجر.",
   "catalog.error.item_created_barcode_failed": "تم إنشاء الصنف، لكن %s",
   "common.error.manager_or_admin_required": "مطلوب صلاحية مدير أو مسؤول",
   "common.error.invalid_upload": "رفع غير صالح",

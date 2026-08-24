@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -20,12 +21,16 @@ import (
 // POSRepo centralizes DB access for POS handlers.
 type POSRepo struct {
 	db *sql.DB
+	// settings reads the shop's enabled barcode symbologies (ADR-0059 §2)
+	// for the scan-path lookup — same accessor CatalogRepo's AddBarcode
+	// inference and the ut-docs#935 settings checklist share.
+	settings *SettingsRepo
 }
 
 var posObs = newRepoObservability("pos")
 
 func NewPOSRepo(db *sql.DB) *POSRepo {
-	return &POSRepo{db: db}
+	return &POSRepo{db: db, settings: NewSettingsRepo(db)}
 }
 
 // ShortcutSearchResult is used for shortcut item selection.
@@ -4106,18 +4111,87 @@ LIMIT ? OFFSET ?
 
 // ResolveShortcutLine returns a priced line for a barcode/lookup used by shortcuts/buttons.
 func (r *POSRepo) ResolveShortcutLine(ctx context.Context, code string) (ShortcutLine, bool) {
+	line, _, ok := r.ResolveShortcutLineDecoded(ctx, code)
+	return line, ok
+}
+
+// enabledBarcodeSymbologies loads the shop's enabled symbology ids for the
+// scan path. A scan must never fail on a settings read (ADR-0003
+// offline-first) — the accessor already returns the ADR-0059 §2 default set
+// alongside any error, which reproduces pre-registry behaviour exactly, so
+// the error is deliberately swallowed here.
+func (r *POSRepo) enabledBarcodeSymbologies(ctx context.Context) []string {
+	ids, _ := r.settings.EnabledBarcodeSymbologies(ctx)
+	return ids
+}
+
+// ResolveScanLine is the ADR-0059 §3 scan-resolution entry point: it
+// matches code against the shop-enabled symbologies via the shared registry
+// matcher (the same one AddBarcode's inference uses — the specificity
+// ordering is defined once), then looks up the decoded LookupKey — NOT the
+// raw scan — through the variant-barcode -> item-barcode chain. LookupKey ==
+// code for plain symbologies, so those resolve exactly as before; for the
+// two embedded-data symbologies it is the zeroed template AddBarcode stores,
+// which is what lets EVERY label of a scale item hit the same catalog row.
+// The returned Decoded tells the caller whether the code carried an embedded
+// weight/price. ok is false when no enabled symbology matches (an unmatched
+// code is a named non-match, mirroring AddBarcode — only reachable once the
+// shop disabled the default catch-alls) or when nothing in the catalog owns
+// the LookupKey.
+func (r *POSRepo) ResolveScanLine(ctx context.Context, code string, enabledIDs []string) (ShortcutLine, barcode.Decoded, bool) {
+	dec, ok := barcode.Default().Match(enabledIDs, code)
+	if !ok {
+		return ShortcutLine{}, barcode.Decoded{}, false
+	}
 	// variant barcode
-	if row, ok := r.resolveVariant(ctx, code); ok {
+	if row, ok := r.resolveVariant(ctx, dec.LookupKey); ok {
 		price := r.resolvePrice(ctx, "", row.VariantID, row.Price)
 		if row.Variant != "" {
 			row.ItemName = row.ItemName + " - " + row.Variant
 		}
-		return r.toShortcutLine(code, price, row), true
+		return r.toShortcutLine(code, price, row), dec, true
 	}
 	// item barcode
-	if row, ok := r.resolveItem(ctx, code); ok {
+	if row, ok := r.resolveItem(ctx, dec.LookupKey); ok {
 		price := r.resolvePrice(ctx, row.ItemID, "", row.Price)
-		return r.toShortcutLine(code, price, row), true
+		return r.toShortcutLine(code, price, row), dec, true
+	}
+	// Raw-code fallback (ut-docs#934 review finding F2): for an
+	// embedded-data match, dec.LookupKey (the zeroed template) differs
+	// from the raw scanned code. A shop that enables a scale symbology
+	// after already cataloguing plain, full-digit EAN-13 barcodes in that
+	// prefix range (2x/02) — never re-entered using the zeroed
+	// convention — must keep resolving those existing rows; the
+	// zeroed-key tier above still gets first refusal, so this fallback
+	// never shadows a genuine scale-label row (that already matched
+	// above and returned).
+	if dec.LookupKey != code {
+		if row, ok := r.resolveVariant(ctx, code); ok {
+			price := r.resolvePrice(ctx, "", row.VariantID, row.Price)
+			if row.Variant != "" {
+				row.ItemName = row.ItemName + " - " + row.Variant
+			}
+			return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
+		}
+		if row, ok := r.resolveItem(ctx, code); ok {
+			price := r.resolvePrice(ctx, row.ItemID, "", row.Price)
+			return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
+		}
+	}
+	return ShortcutLine{}, dec, false
+}
+
+// ResolveShortcutLineDecoded is ResolveShortcutLine plus the barcode decode
+// (ut-docs#934): the variant/item tiers go through ResolveScanLine against
+// the shop's enabled symbologies; the shortcut-button, exact-SKU and
+// name-LIKE tiers stay on the raw code, unchanged (shortcut_buttons lookup
+// is out of ADR-0059's scope per its Non-goals, and SKU/name search is not
+// a barcode symbology). dec is only meaningful when the match came from the
+// barcode tiers — it is zero-valued for shortcut/SKU/name matches.
+func (r *POSRepo) ResolveShortcutLineDecoded(ctx context.Context, code string) (ShortcutLine, barcode.Decoded, bool) {
+	// variant barcode -> item barcode, via the symbology registry
+	if line, dec, ok := r.ResolveScanLine(ctx, code, r.enabledBarcodeSymbologies(ctx)); ok {
+		return line, dec, true
 	}
 	// shortcut barcode
 	if row, ok := r.resolveShortcut(ctx, code); ok {
@@ -4125,12 +4199,12 @@ func (r *POSRepo) ResolveShortcutLine(ctx context.Context, code string) (Shortcu
 		if row.Label.Valid && row.Label.String != "" {
 			row.ItemName = row.Label.String
 		}
-		return r.toShortcutLine(code, price, row), true
+		return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
 	}
 
 	q := strings.TrimSpace(code)
 	if q == "" {
-		return ShortcutLine{}, false
+		return ShortcutLine{}, barcode.Decoded{}, false
 	}
 	// SKU exact
 	if row, ok := r.resolveSKU(ctx, q); ok {
@@ -4138,7 +4212,7 @@ func (r *POSRepo) ResolveShortcutLine(ctx context.Context, code string) (Shortcu
 		if row.Variant != "" {
 			row.ItemName = row.ItemName + " - " + row.Variant
 		}
-		return r.toShortcutLine(row.SKU, price, row), true
+		return r.toShortcutLine(row.SKU, price, row), barcode.Decoded{}, true
 	}
 	// Name like
 	if row, ok := r.resolveNameLike(ctx, "%"+q+"%"); ok {
@@ -4148,9 +4222,9 @@ func (r *POSRepo) ResolveShortcutLine(ctx context.Context, code string) (Shortcu
 		} else if row.ItemName == "" {
 			row.ItemName = q
 		}
-		return r.toShortcutLine(q, price, row), true
+		return r.toShortcutLine(q, price, row), barcode.Decoded{}, true
 	}
-	return ShortcutLine{}, false
+	return ShortcutLine{}, barcode.Decoded{}, false
 }
 
 // resolveRowPrice prices a resolved item/variant row. ResolveCurrentPrice
