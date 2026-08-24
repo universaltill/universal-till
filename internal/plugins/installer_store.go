@@ -10,8 +10,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
+
+// storeDownloadTTL bounds how long a staged-but-never-installed download may
+// sit under {pluginBaseDir}/downloads/ before sweepStoreDownloads reclaims
+// it (ut-docs#749). Not config-surfaced — a fixed safety-net default, not a
+// feature: a manager who repeatedly downloads-without-installing, or an
+// install that fails after staging, would otherwise accumulate unbounded
+// disk usage with no automatic recovery.
+const storeDownloadTTL = 48 * time.Hour
 
 // StoreDownload records a marketplace bundle downloaded to the till but not
 // (yet) installed — the "downloaded" stage of the store lifecycle. The bundle
@@ -36,6 +45,43 @@ func (i *MarketplaceInstaller) storeDownloadPaths(listingID string) (bundle, met
 	return filepath.Join(dir, name+".tar.gz"), filepath.Join(dir, name+".json")
 }
 
+// sweepStoreDownloads removes any file directly under the store-downloads
+// dir whose mtime is older than storeDownloadTTL. This is deliberately a
+// single age-based pass with no separate orphan-detection branch: a bundle
+// or metadata file left behind by a partial/failed write ages out on the
+// same pass, since it has a real mtime too. Synchronous and called from the
+// hot paths below rather than a background goroutine, so it's self-healing
+// on next real use and stays simple to test (no timers/daemons).
+func (i *MarketplaceInstaller) sweepStoreDownloads() {
+	dir := i.storeDownloadsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-storeDownloadTTL)
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			p := filepath.Join(dir, e.Name())
+			if err := os.Remove(p); err != nil {
+				logging.L().Warnf("[MarketplaceInstaller] sweep stale store download %s: %v", p, err)
+				continue
+			}
+			removed++
+		}
+	}
+	if removed > 0 {
+		logging.L().Infof("[MarketplaceInstaller] swept %d stale store download file(s) past %s", removed, storeDownloadTTL)
+	}
+}
+
 // DownloadToStore fetches a listing's signed bundle (download token +
 // checksum-verified download) and keeps it on disk for a later install —
 // without installing anything.
@@ -49,6 +95,10 @@ func (i *MarketplaceInstaller) DownloadToStore(ctx context.Context, req Marketpl
 	if strings.TrimSpace(req.DeviceArch) == "" {
 		req.DeviceArch = runtime.GOOS + "/" + runtime.GOARCH
 	}
+
+	// Reclaim space from stale/abandoned stages before doing new network
+	// work (ut-docs#749) — cheap local disk housekeeping, self-healing.
+	i.sweepStoreDownloads()
 
 	tokenResp, err := i.client.IssueDownloadToken(ctx, &marketplace.IssueDownloadTokenRequest{
 		PluginID:   req.ListingID,
@@ -101,9 +151,18 @@ func (i *MarketplaceInstaller) DownloadToStore(ctx context.Context, req Marketpl
 	}
 	raw, err := json.MarshalIndent(sd, "", "  ")
 	if err != nil {
+		// Bundle is already promoted to disk — don't leave it (or any
+		// stale metadata from a prior stage of this same listing) as an
+		// immediate orphan waiting on the next TTL sweep.
+		if delErr := i.DeleteStoreDownload(req.ListingID); delErr != nil {
+			logging.L().Warnf("[MarketplaceInstaller] cleanup after metadata encode failure for %s: %v", req.ListingID, delErr)
+		}
 		return nil, fmt.Errorf("encode download metadata: %w", err)
 	}
 	if err := os.WriteFile(metaPath, raw, 0o644); err != nil {
+		if delErr := i.DeleteStoreDownload(req.ListingID); delErr != nil {
+			logging.L().Warnf("[MarketplaceInstaller] cleanup after metadata write failure for %s: %v", req.ListingID, delErr)
+		}
 		return nil, fmt.Errorf("write download metadata: %w", err)
 	}
 	return sd, nil
@@ -173,6 +232,11 @@ func (i *MarketplaceInstaller) DeleteStoreDownload(listingID string) error {
 
 // ListStoreDownloads returns all staged downloads keyed by listing ID.
 func (i *MarketplaceInstaller) ListStoreDownloads() map[string]StoreDownload {
+	// Reap stale/abandoned stages on the read path too (ut-docs#749) — a
+	// manager opening the plugin-store page hits this far more often than
+	// a new download, so it's the main place unbounded growth self-heals.
+	i.sweepStoreDownloads()
+
 	out := map[string]StoreDownload{}
 	entries, err := os.ReadDir(i.storeDownloadsDir())
 	if err != nil {
