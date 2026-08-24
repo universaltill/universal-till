@@ -243,9 +243,33 @@ func TestLegacyPermissions_GrantRevoke(t *testing.T) {
 
 	// Granting a permission the plugin never declared must fail — the domain
 	// layer only flips pre-declared permission rows, it never invents one.
+	// ut-docs#945: this used to leak the raw "permission pos.read not found
+	// for plugin com.test.perms" Go error via http.Error(w, err.Error(),
+	// ...) instead of a translated message — assert both that the localized
+	// fallback shows AND that the raw text is gone.
 	undeclared := url.Values{"plugin_id": {"com.test.perms"}, "permission": {"pos.read"}}
-	if rec := postForm(mux, "/api/plugins/permissions/grant", undeclared, nil); rec.Code != http.StatusInternalServerError {
+	rec = postForm(mux, "/api/plugins/permissions/grant", undeclared, nil)
+	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("grant of undeclared permission = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Could not grant the permission") {
+		t.Fatalf("grant error body = %q, want the localized grant-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "not found for plugin") {
+		t.Fatalf("grant error body leaked raw error text: %q", rec.Body.String())
+	}
+
+	// Same class of failure on the revoke side (ut-docs#945).
+	revokeUndeclared := url.Values{"plugin_id": {"com.test.perms"}, "permission": {"pos.write"}}
+	rec = postForm(mux, "/api/plugins/permissions/revoke", revokeUndeclared, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("revoke of undeclared permission = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Could not revoke the permission") {
+		t.Fatalf("revoke error body = %q, want the localized revoke-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "not found for plugin") {
+		t.Fatalf("revoke error body leaked raw error text: %q", rec.Body.String())
 	}
 
 	// Declare the permission (as a manifest install would), then grant.
@@ -293,8 +317,19 @@ func TestLegacyTrustLevel_UpdateAndValidation(t *testing.T) {
 		t.Fatalf("trust without level = %d, want 400", rec.Code)
 	}
 	// An out-of-vocabulary trust level is rejected by the domain layer.
-	if rec := postForm(mux, "/api/plugins/trust", url.Values{"plugin_id": {"com.test.trust"}, "trust_level": {"royal"}}, nil); rec.Code != http.StatusInternalServerError {
+	// ut-docs#945: this used to leak the raw "invalid trust level: royal
+	// (must be untrusted, verified, trusted, or revoked)" Go error via
+	// http.Error(w, err.Error(), ...) — assert the localized fallback shows
+	// and the raw text is gone.
+	rec = postForm(mux, "/api/plugins/trust", url.Values{"plugin_id": {"com.test.trust"}, "trust_level": {"royal"}}, nil)
+	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("invalid trust level = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Could not update the trust level") {
+		t.Fatalf("invalid trust level error body = %q, want the localized trust-update-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "invalid trust level") {
+		t.Fatalf("invalid trust level error body leaked raw error text: %q", rec.Body.String())
 	}
 
 	if rec := postForm(mux, "/api/plugins/trust", url.Values{"plugin_id": {"com.test.trust"}, "trust_level": {"trusted"}}, nil); rec.Code != http.StatusOK {
@@ -306,5 +341,43 @@ func TestLegacyTrustLevel_UpdateAndValidation(t *testing.T) {
 	}
 	if trust != "trusted" {
 		t.Fatalf("trust_level = %q, want trusted", trust)
+	}
+}
+
+// ut-docs#945: the grant/revoke/trust handlers' own r.ParseForm() call used
+// to leak the raw Go error via http.Error(w, err.Error(), ...) when the
+// request body was genuinely unparseable. "%zz" is invalid percent-encoding
+// -- the same technique TestCreateStockReceipt_MalformedFormBody
+// (inventory_api_test.go) uses to force a real url.ParseQuery failure.
+func TestLegacyPermissionsAndTrust_MalformedFormBodyIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	srv, _ := legacyMarketplaceStub(t, nil, nil)
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"grant", "/api/plugins/permissions/grant"},
+		{"revoke", "/api/plugins/permissions/revoke"},
+		{"trust", "/api/plugins/trust"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mux, _ := newLegacyMux(t, srv.URL)
+			req := httptest.NewRequest(http.MethodPost, c.path, strings.NewReader("%zz"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s with an unparseable form body = %d, want 400: %s", c.name, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "The request could not be read") {
+				t.Fatalf("%s malformed-form error body = %q, want the localized malformed-form message", c.name, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "invalid URL escape") {
+				t.Fatalf("%s malformed-form error body leaked raw error text: %q", c.name, rec.Body.String())
+			}
+		})
 	}
 }

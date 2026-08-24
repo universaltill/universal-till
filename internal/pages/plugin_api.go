@@ -89,7 +89,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.malformed_form", "plugin_grant_parseform", err)
 			return
 		}
 
@@ -102,7 +102,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if err := plugins.GrantPermission(r.Context(), d.Db, pluginID, permission); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.grant_failed", "plugin_grant", err)
 			return
 		}
 		// A fresh grant can change what a subscribed plugin answers (e.g.
@@ -126,7 +126,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.malformed_form", "plugin_revoke_parseform", err)
 			return
 		}
 
@@ -139,7 +139,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if err := plugins.RevokePermission(r.Context(), d.Db, pluginID, permission); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.revoke_failed", "plugin_revoke", err)
 			return
 		}
 		// Revoking must take effect on the NEXT recompute, as it did
@@ -164,7 +164,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.malformed_form", "plugin_trust_parseform", err)
 			return
 		}
 
@@ -177,7 +177,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if err := plugins.UpdatePluginTrustLevel(r.Context(), d.Db, pluginID, trustLevel); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.trust_update_failed", "plugin_trust_update", err)
 			return
 		}
 
