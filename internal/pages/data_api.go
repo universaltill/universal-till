@@ -63,6 +63,19 @@ type exportRequestPayload struct {
 	// explicit entity declaration too, mirroring how import entries have
 	// declared their handled entities since ut-docs#599.
 	Items []data.ExportRow `json:"items"`
+	// TaxCodes mirrors Items' entity+permission gating (ut-docs#655): the
+	// resolved entry must declare "tax_codes" in its Entities AND hold
+	// tax_codes:read, reusing data.CatalogRepo.ListAllTaxCodes (already
+	// backing the tax-code management UI, ut-docs#259) rather than adding
+	// a new listing method. ut-docs#655's own ticket text said
+	// "catalog:read", but seedExportPluginWithEntities' doc comment
+	// records #600 review finding F2: an earlier draft used exactly that
+	// name and it was rejected for breaking the established
+	// <entity>:<verb> permission convention (items:read, sales:read, ...)
+	// AND colliding with an unrelated "catalog:read" already defined in
+	// ut-cloud for marketplace-catalog access. tax_codes:read follows the
+	// same convention items:read does.
+	TaxCodes []data.TaxCodeView `json:"tax_codes"`
 }
 
 // exportResponse is the JSON a plugin writes to stdout to answer
@@ -498,11 +511,41 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
+		// TaxCodes (ut-docs#655) mirrors Items' shape exactly: gated on the
+		// entry DECLARING "tax_codes" in its Entities in addition to the
+		// tax_codes:read permission grant (see exportRequestPayload's field
+		// comment above for why tax_codes:read, not the ticket's original
+		// catalog:read), so an entry installed before #655 (no "tax_codes"
+		// declared) keeps getting exactly today's payload regardless of
+		// what permissions it happens to hold.
+		wantsTaxCodes := false
+		for _, e := range entry.Entities {
+			if e == "tax_codes" {
+				wantsTaxCodes = true
+				break
+			}
+		}
+		var taxCodes []data.TaxCodeView
+		if wantsTaxCodes {
+			hasTaxCodesRead, cerr := plugins.CheckPermissionGranted(r.Context(), d.Db, entry.PluginID, "tax_codes:read")
+			if cerr != nil {
+				respond(w, http.StatusInternalServerError, false, cerr.Error())
+				return
+			}
+			if hasTaxCodesRead {
+				taxCodes, err = data.NewCatalogRepo(d.Db).ListAllTaxCodes(r.Context())
+				if err != nil {
+					respond(w, http.StatusInternalServerError, false, err.Error())
+					return
+				}
+			}
+		}
+
 		// AskPlugin, not Ask: entry was resolved to a specific owning
 		// plugin above, and must not silently accept another installed
 		// plugin's answer to the same event type (ut-docs#189 review).
 		resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(r.Context(), entry.PluginID, "export.requested.ask", exportRequestPayload{
-			From: from, To: to, EntryKey: entry.Key, Sales: sales, Stock: stock, Items: items,
+			From: from, To: to, EntryKey: entry.Key, Sales: sales, Stock: stock, Items: items, TaxCodes: taxCodes,
 		})
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())

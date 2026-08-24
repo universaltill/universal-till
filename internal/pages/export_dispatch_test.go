@@ -81,6 +81,23 @@ func seedExportPluginWithEntities(t *testing.T, db *sql.DB, pluginID, key, label
 	}
 }
 
+// grantExportPluginPermission grants an already-seeded export test plugin an
+// additional permission beyond what seedExportPluginWithEntities itself
+// grants (events:receive always, items:read optionally) -- kept as its own
+// helper rather than widening that function's signature again, since the
+// tax_codes tests (ut-docs#655) need tax_codes:read independently of
+// items:read. INSERT OR IGNORE (ut-docs#655 review) since plugin_permissions
+// has a UNIQUE(plugin_id, permission) constraint -- a future test granting a
+// permission already covered by seedExportPluginWithEntities' own flags
+// would otherwise fail on the duplicate insert instead of being a no-op.
+func grantExportPluginPermission(t *testing.T, db *sql.DB, pluginID, permission string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT OR IGNORE INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, ?, 1)`,
+		pluginID+"-p-"+permission, pluginID, permission); err != nil {
+		t.Fatalf("grant %s: %v", permission, err)
+	}
+}
+
 // exportErrorEnvelope decodes /api/data/export's failure envelope --
 // { "data": null, "error": "…" } (universal-till/CLAUDE.md, ut-docs#387) --
 // and returns the error string, failing the test if data isn't null.
@@ -846,6 +863,204 @@ func TestExportDispatch_OmitsItemsWhenOnlyOtherEntityDeclared(t *testing.T) {
 	}
 	if payload.Items != nil && string(payload.Items) != "null" {
 		t.Fatalf("expected items omitted (null) when only a different entity is declared, got %s", payload.Items)
+	}
+}
+
+// TestExportDispatch_PayloadIncludesTaxCodesData is ut-docs#655's parity
+// test for TestExportDispatch_PayloadIncludesItemsData: an entry that
+// declares "tax_codes" and holds tax_codes:read gets the full tax-code
+// listing (data.CatalogRepo.ListAllTaxCodes) in the dispatched payload.
+func TestExportDispatch_PayloadIncludesTaxCodesData(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp7", "catalog_csv", "Catalog Export", []string{"tax_codes"}, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp7", "tax_codes:read")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO tax_codes(id, name, rate_basis_points, takeaway_rate_basis_points, is_active) VALUES('tc-exp','Standard VAT',2000,500,1)`)
+	// A retired code (ut-docs#655 review finding 3): pins ListAllTaxCodes
+	// over the active-only ListTaxCodes -- a full export must carry
+	// retired codes so a plugin can resolve historical sales that
+	// reference them. Without this row, swapping in ListTaxCodes would
+	// pass every test in this file.
+	mustExec(`INSERT INTO tax_codes(id, name, rate_basis_points, is_active) VALUES('tc-exp-retired','Old Rate',1900,0)`)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp7", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	type taxCodeRow struct {
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		RateBP         int64  `json:"rate_bp"`
+		TakeawayRateBP *int64 `json:"takeaway_rate_bp"`
+		IsActive       bool   `json:"is_active"`
+	}
+	var payload struct {
+		TaxCodes []taxCodeRow `json:"tax_codes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	byID := map[string]*taxCodeRow{}
+	for i := range payload.TaxCodes {
+		byID[payload.TaxCodes[i].ID] = &payload.TaxCodes[i]
+	}
+
+	active := byID["tc-exp"]
+	if active == nil {
+		t.Fatalf("expected tc-exp in tax_codes payload, got %+v", payload.TaxCodes)
+	}
+	if active.Name != "Standard VAT" || active.RateBP != 2000 || !active.IsActive {
+		t.Fatalf("unexpected active tax code row: %+v", active)
+	}
+	if active.TakeawayRateBP == nil || *active.TakeawayRateBP != 500 {
+		t.Fatalf("expected takeaway_rate_bp 500, got %+v", active.TakeawayRateBP)
+	}
+
+	retired := byID["tc-exp-retired"]
+	if retired == nil {
+		t.Fatalf("expected retired tc-exp-retired in tax_codes payload (ListAllTaxCodes must include inactive codes), got %+v", payload.TaxCodes)
+	}
+	if retired.IsActive {
+		t.Fatalf("expected tc-exp-retired to carry is_active:false, got %+v", retired)
+	}
+	if retired.TakeawayRateBP != nil {
+		t.Fatalf("expected nil takeaway_rate_bp for a code with none set, got %+v", retired.TakeawayRateBP)
+	}
+}
+
+// TestExportDispatch_OmitsTaxCodesWithoutTaxCodesReadPermission mirrors
+// TestExportDispatch_OmitsItemsWithoutItemsReadPermission: an entry that
+// declares "tax_codes" but was NOT granted tax_codes:read must not receive
+// the tax-code listing.
+func TestExportDispatch_OmitsTaxCodesWithoutTaxCodesReadPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp8", "catalog_csv", "Catalog Export", []string{"tax_codes"}, false)
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp8", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (missing tax_codes:read must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		TaxCodes json.RawMessage `json:"tax_codes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.TaxCodes != nil && string(payload.TaxCodes) != "null" {
+		t.Fatalf("expected tax_codes omitted (null) without tax_codes:read, got %s", payload.TaxCodes)
+	}
+}
+
+// TestExportDispatch_OmitsTaxCodesWhenEntityNotDeclared mirrors
+// TestExportDispatch_OmitsItemsWhenEntityNotDeclared: a plugin granted
+// tax_codes:read but whose entry does NOT declare "tax_codes" in its
+// Entities must still not receive the listing.
+func TestExportDispatch_OmitsTaxCodesWhenEntityNotDeclared(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp9", "catalog_csv", "Catalog Export", nil, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp9", "tax_codes:read")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp9", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		TaxCodes json.RawMessage `json:"tax_codes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.TaxCodes != nil && string(payload.TaxCodes) != "null" {
+		t.Fatalf("expected tax_codes omitted (null) without a declared \"tax_codes\" entity, got %s", payload.TaxCodes)
+	}
+}
+
+// TestExportDispatch_OmitsTaxCodesWhenOnlyOtherEntityDeclared mirrors
+// TestExportDispatch_OmitsItemsWhenOnlyOtherEntityDeclared: a non-nil
+// Entities that simply doesn't mention "tax_codes" must also omit.
+func TestExportDispatch_OmitsTaxCodesWhenOnlyOtherEntityDeclared(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp10", "catalog_csv", "Catalog Export", []string{"items"}, true)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp10", "tax_codes:read")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp10", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		TaxCodes json.RawMessage `json:"tax_codes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.TaxCodes != nil && string(payload.TaxCodes) != "null" {
+		t.Fatalf("expected tax_codes omitted (null) when only a different entity is declared, got %s", payload.TaxCodes)
 	}
 }
 
