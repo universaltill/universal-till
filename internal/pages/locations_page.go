@@ -17,18 +17,21 @@ import (
 func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
-	// requireManager gates on the "settings" action (039's catalog) via
-	// canPerform, not a raw IsManager() check on the session — matching
-	// every other admin page (#555's five successor cards; see authz.go's
-	// own doc comment). This page and registers_page.go were missed by
-	// that migration (ut-docs#901): with the old raw check, canPerform's
-	// UT_AUTH=off escape hatch never applied here, so both pages 403'd
-	// permanently under the dev/CI auth-bypass — canPerform's
-	// auth.Disabled(...) branch fixes that, with no change to gated
-	// (UT_AUTH on) behavior: "settings" is granted to exactly
-	// manager/admin/super_admin, the same set IsManager() recognized.
+	// requireManager gates on the "stock_location_management" action
+	// (ut-docs#903, migration 059) via canPerform, not a raw IsManager()
+	// check on the session — matching every other admin page (#555's five
+	// successor cards; see authz.go's own doc comment). Previously reused
+	// the generic "settings" action (see ut-docs#901's fix, which migrated
+	// this page's gate off a raw IsManager() check onto canPerform in the
+	// first place); #903 gave stock-location/register administration its
+	// own dedicated action instead, so a super_admin editing "settings" in
+	// role_permissions (runtime-editable, permission_settings_page.go) no
+	// longer moves this page's access in lockstep with every other
+	// settings-gated surface. Seeded identically to "settings"
+	// (manager/admin/super_admin granted) so no existing till's access
+	// changes.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
-		if !canPerform(d, r, "settings") {
+		if !canPerform(d, r, "stock_location_management") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return auth.User{}, false
 		}

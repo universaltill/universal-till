@@ -65,13 +65,24 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		// link, deliberately not solved here too.
 		if canPerform(d, r, "settings") {
 			add("/users", "users.title")
-			add("/locations", "locations.title")
-			add("/registers", "registers.title")
 			add("/kitchen-stations", "kitchenstations.title")
 			add("/tables", "tables.title")
 			add("/country-settings", "countrysettings.title")
 			add("/translations", "translations.title")
 			add("/report-issue", "issuereport.title")
+		}
+		// ut-docs#903: locations_page.go/registers_page.go moved off the
+		// generic "settings" action onto their own dedicated
+		// "stock_location_management" (migration 059) -- reusing "settings"
+		// meant a super_admin editing that one row in role_permissions
+		// (runtime-editable, permission_settings_page.go) moved stock-
+		// location/register administration in lockstep with every other
+		// settings-gated admin surface, with no way to grant or withhold it
+		// independently. This tile gate must track that same action or the
+		// tile/page desync ut-docs#901 fixed once already reappears.
+		if canPerform(d, r, "stock_location_management") {
+			add("/locations", "locations.title")
+			add("/registers", "registers.title")
 		}
 		httpx.Render("ui/pages/menu.html", map[string]any{
 			"title": "Menu",

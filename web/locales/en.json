@@ -1492,6 +1492,7 @@
   "permissions.action.issue_reporting": "Report an issue",
   "permissions.action.fiscal_tse_override": "Fiscal TSE override",
   "permissions.action.permission_management": "Permissions",
+  "permissions.action.stock_location_management": "Locations & registers",
   "elevation.prompt_title": "Manager approval required",
   "elevation.prompt_help": "Enter an approver's PIN to continue this action.",
   "elevation.pin_label": "Manager PIN",
