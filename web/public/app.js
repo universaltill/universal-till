@@ -411,6 +411,51 @@ window.utCurrency = (function(){
 // which could only ever track one notice at a time) — #toast-message's own
 // timing/behaviour is unchanged by this, it's simply one of however many
 // .pos-notice elements this now iterates.
+
+// Shared client-JS .pos-notice builder (ut-docs#918) — extracted from the
+// page-local copy ut-docs#238 first wrote inline in catalog.html, which
+// only had 5 call sites; settings.html's ~9 ad-hoc-textContent spots made a
+// 6th copy-paste not worth it. catalog.html keeps its own local copy for
+// now (out of scope for #918 — no functional difference, just unmerged
+// duplication tracked for a later cleanup pass) rather than risk touching
+// its already-shipped behaviour in this change.
+//
+// level: "error" | "success" | "info" — error gets role="alert" and
+// persists until dismissed; anything else gets role="status" and
+// auto-expires (scheduleToastDismiss below).
+//
+// Built with DOM calls, never an innerHTML string: `text` is routinely NOT
+// ours to trust (a server error message, user input echoed back), so it
+// goes in via textContent, which cannot produce markup at all — see
+// catalog.html's identical comment for the innerHTML/String.replace pitfall
+// this avoids.
+//
+// The dismiss button's aria-label comes from <body data-notice-dismiss>
+// (set by base.html via {{ T "notice.dismiss" }}) rather than a parameter —
+// app.js is a static, non-templated asset, so it can't call {{ T }} itself;
+// this is the same data-attribute convention utCurrency (top of this file)
+// and base.html's data-conn-online/offline already use for the same reason.
+function renderNotice(el, level, text){
+  if (!el) return;
+  el.textContent = '';
+  if (!text) return;
+  var notice = document.createElement('div');
+  notice.className = 'pos-notice ' + level;
+  notice.setAttribute('role', level === 'error' ? 'alert' : 'status');
+  var body = document.createElement('span');
+  body.className = 'notice-text';
+  body.textContent = text;
+  var dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.className = 'notice-dismiss';
+  dismiss.setAttribute('aria-label', (document.body && document.body.dataset.noticeDismiss) || '✕');
+  dismiss.textContent = '✕';
+  notice.appendChild(body);
+  notice.appendChild(dismiss);
+  el.appendChild(notice);
+  if (typeof scheduleToastDismiss === 'function') scheduleToastDismiss();
+}
+
 function scheduleToastDismiss(){
   document.querySelectorAll('.pos-notice').forEach(function(toast){
     if (toast.dataset.dismissed === '1') return;
