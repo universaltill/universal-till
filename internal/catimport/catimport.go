@@ -19,6 +19,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/universaltill/universal-till/internal/barcode"
 )
 
 // ErrNoNameColumn is Parse's own reason code (ut-docs#303) for the single
@@ -47,9 +49,15 @@ const (
 	IssueNotSellable        = "not_sellable"          // an order-type toggle (e.g. "⚠️ToGo⚠️"), ProductType = 4
 	IssueDuplicateSKUInFile = "duplicate_sku_in_file" // ProductNumber repeats within THIS file — distinct from import.status.sku_already_in_catalog, which is a DB-level check
 
-	BarcodeIssueUnsupportedFormat = "unsupported_format"
-	BarcodeIssueTooShort          = "too_short"
-	BarcodeIssueTooLong           = "too_long"
+	// BarcodeIssueNoSymbologyMatch: the CSV carried a non-empty barcode
+	// value that matched none of the shop's enabled internal/barcode
+	// registry entries (ADR-0059 Decision §3) — the same named-rejection
+	// shape as CatalogRepo.AddBarcode's ErrBarcodeNoSymbologyMatch, just a
+	// reason code here instead of an error (catimport has no locale, see
+	// above). Only reachable once a shop has disabled the default
+	// permissive catch-alls (CODE128/INTERNAL_PLU) — under the default
+	// enabled set, Match never rejects a non-empty code (ADR-0059 §2).
+	BarcodeIssueNoSymbologyMatch = "no_symbology_match"
 
 	// TaxIssueUnparseable: a tax/takeaway-tax cell was present but didn't
 	// read as a percentage. Non-blocking, like BarcodeIssue — but unlike
@@ -72,15 +80,27 @@ type ImportItem struct {
 	HasStock    bool    // the file carried a parseable stock value
 	Issue       string  // one of the Issue* consts, non-empty = row cannot be imported
 	IssueDetail string  // the row's dynamic value for reason codes that need one (e.g. the raw price string for IssueBadPrice)
+	// BarcodeType is the internal/barcode registry id that Barcode matched
+	// (ADR-0059, ut-docs#936), e.g. "EAN13" / "CODE128" / "INTERNAL_PLU".
+	// Empty when Barcode is empty. The pages layer passes this to
+	// CatalogRepo.AddBarcode as an explicit BarcodeType so AddBarcode's
+	// inference path does NOT re-run the registry match on a Barcode this
+	// package has already decoded — Barcode already holds the decoded
+	// LookupKey, and re-matching that key (rather than the raw code) can
+	// classify it as a different, wrong symbology (e.g. an embedded-data
+	// LookupKey re-decodes to CODE128, or — under a narrowed enabled set —
+	// fails the second match entirely). Decode once, here.
+	BarcodeType string
 	// BarcodeIssue is non-empty when the CSV carried a non-empty barcode
-	// value that normalizeBarcode discarded (unsupported shape — e.g. a
-	// 4-digit produce PLU or an alphanumeric internal code). Unlike Issue,
-	// this never blocks the row: the item still imports, but the caller
-	// (pages) should surface this as a per-row warning so the operator
-	// knows the barcode was silently dropped, not just missing (ut-docs#293,
-	// same defect class as the AddBarcode fix — the symbology itself is
-	// ut-docs#295's job, not this field's). One of the BarcodeIssue* consts;
-	// BarcodeIssueRaw is the raw value the reason applies to.
+	// value that matched none of the shop's enabled symbologies (ADR-0059
+	// Decision §3, ut-docs#936) — reachable only once a shop narrows its
+	// enabled set away from the default permissive catch-alls
+	// (CODE128/INTERNAL_PLU). Unlike Issue, this never blocks the row: the
+	// item still imports, but the caller (pages) should surface this as a
+	// per-row warning so the operator knows the barcode was dropped, not
+	// just missing (ut-docs#293, same defect class as the AddBarcode fix).
+	// One of the BarcodeIssue* consts; BarcodeIssueRaw is the raw value the
+	// reason applies to.
 	BarcodeIssue    string
 	BarcodeIssueRaw string
 	// Tax rates, in basis points (1900 = 19%), from optional tax columns —
@@ -322,7 +342,13 @@ func stripCSVDefuse(field string) string {
 
 // Parse reads a CSV export into neutral items. currencyDecimals drives
 // price parsing (e.g. 2 for GBP: "1.40" → 140; 0 for IRT: "12000" → 12000).
-func Parse(r io.Reader, currencyDecimals int) (Result, error) {
+// enabledSymbologyIDs is the shop's enabled internal/barcode registry ids
+// (data.SettingsRepo.EnabledBarcodeSymbologies) — the caller reads this
+// from the data layer (this package touches no DB, see the package doc)
+// and passes it through so a CSV barcode is judged by the same shared
+// registry matcher as AddBarcode and the scan path (ut-docs#936,
+// ADR-0059 Decision §3's "call the same function, don't reimplement it").
+func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string) (Result, error) {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = -1 // exports are ragged in the wild
 	headers, err := cr.Read()
@@ -356,17 +382,19 @@ func Parse(r io.Reader, currencyDecimals int) (Result, error) {
 			return res, fmt.Errorf("row %d: %w", len(res.Items)+2, err)
 		}
 		rawBarcode := stripCSVDefuse(get(rec, "barcode"))
+		dec, barcodeMatched := normalizeBarcode(rawBarcode, enabledSymbologyIDs)
 		item := ImportItem{
 			Name:        stripCSVDefuse(get(rec, "name")),
 			SKU:         stripCSVDefuse(get(rec, "sku")),
-			Barcode:     normalizeBarcode(rawBarcode),
+			Barcode:     dec.LookupKey,
+			BarcodeType: dec.SymbologyID,
 			Category:    stripCSVDefuse(get(rec, "category")),
 			Department:  get(rec, "department"),
 			Description: stripCSVDefuse(get(rec, "description")),
 			IsWeighed:   isTruthy(get(rec, "weighed")),
 		}
-		if rawBarcode != "" && item.Barcode == "" {
-			item.BarcodeIssue = barcodeIssueReason(rawBarcode)
+		if rawBarcode != "" && !barcodeMatched {
+			item.BarcodeIssue = BarcodeIssueNoSymbologyMatch
 			item.BarcodeIssueRaw = rawBarcode
 		}
 		// Square: variation name qualifies the item name ("Coffee — Large").
@@ -583,37 +611,44 @@ func ParseTaxRateBP(s string) (int, error) {
 	return int(math.Round(f * 100)), nil
 }
 
-func normalizeBarcode(s string) string {
-	// Sheets export barcodes as floats ("5000000000011.0") or scientific
-	// notation; keep plain digit strings only, drop the rest.
-	s = strings.TrimSuffix(s, ".0")
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return ""
-		}
+// normalizeBarcode matches a raw CSV barcode cell against enabledIDs via
+// the shared internal/barcode registry (ADR-0059 Decision §3) — the same
+// Match function AddBarcode and the scan-path lookup call, so import and
+// scan can never disagree about what a code means (ut-docs#936). Returns
+// the barcode.Decoded (SymbologyID + LookupKey, plus any embedded data)
+// and ok=true on a match; a zero Decoded and ok=false (raw non-empty, no
+// enabled symbology matched) is what BarcodeIssueNoSymbologyMatch reports.
+func normalizeBarcode(s string, enabledIDs []string) (barcode.Decoded, bool) {
+	// Sheets export barcodes as floats ("5000000000011.0"); strip a
+	// trailing ".0" spreadsheet artifact — but ONLY when what remains is
+	// all digits (ut-docs#936 review finding F2). A genuine EAN/UPC/GTIN
+	// is all-digit, so this recovers the real code; an alphanumeric
+	// supplier code that legitimately ends ".0" ("ABC.0") must NOT be
+	// truncated, or the catalog would silently store a different string
+	// than the CSV said and a later scan of the literal code would never
+	// resolve it. Scientific-notation mangling ("5.449E+12") is still not
+	// un-mangled here (never was this function's job): it fails every
+	// registry entry under a narrowed set, and under the DEFAULT set
+	// CODE128's structural catch-all stores it verbatim — the deliberate
+	// ADR-0059 §2 trade-off for the permissive catch-alls, escaped by
+	// narrowing the enabled set, same as any other AddBarcode caller.
+	if trimmed := strings.TrimSuffix(s, ".0"); trimmed != s && allDigits(trimmed) {
+		s = trimmed
 	}
-	if len(s) < 6 || len(s) > 14 {
-		return ""
-	}
-	return s
+	return barcode.Default().Match(enabledIDs, s)
 }
 
-// barcodeIssueReason explains WHY normalizeBarcode discarded a non-empty
-// raw barcode value, mirroring its checks exactly (never changes what
-// shapes are accepted — that's ut-docs#295's call). Called only when the
-// raw value was non-empty and normalizeBarcode returned "". Returns a
-// reason code (see the BarcodeIssue* consts), not prose — ut-docs#303.
-func barcodeIssueReason(raw string) string {
-	s := strings.TrimSuffix(raw, ".0")
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return BarcodeIssueUnsupportedFormat
+// allDigits reports whether s is non-empty and every byte is '0'-'9'.
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
 		}
 	}
-	if len(s) < 6 {
-		return BarcodeIssueTooShort
-	}
-	return BarcodeIssueTooLong
+	return true
 }
 
 func isTruthy(s string) bool {

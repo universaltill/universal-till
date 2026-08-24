@@ -4,14 +4,24 @@ import { watchConsole } from './helpers';
 // ut-docs#303: catalog import used to show the operator raw Go errors with
 // internal UUIDs ("barcode already assigned to item e5454794-…") and the
 // whole import status vocabulary was untranslated English literals. This
-// drives a REAL browser through a commit that hits both a barcode conflict
-// and the (unrelated) unsupported-barcode-shape warning, in a non-English
-// locale (Turkish — ?lang=tr), and asserts on the rendered page rather than
-// the JSON: the conflicting item is named, no raw UUID ever reaches the
-// screen, the status text is genuinely translated (not English), and the
-// warned row carries a real, geometrically-distinct visual treatment (not
-// just a class name — same standard as sale-screen-213.spec.ts) rather than
-// blending in with the clean rows around it.
+// drives a REAL browser through a commit that hits a barcode conflict, in a
+// non-English locale (Turkish — ?lang=tr), and asserts on the rendered page
+// rather than the JSON: the conflicting item is named, no raw UUID ever
+// reaches the screen, the status text is genuinely translated (not
+// English), and the warned row carries a real, geometrically-distinct
+// visual treatment (not just a class name — same standard as
+// sale-screen-213.spec.ts) rather than blending in with the clean rows
+// around it.
+//
+// A short PLU-style barcode (4011) is included as a clean row: under the
+// default enabled symbology set it now imports with its barcode attached
+// (ADR-0059 / ut-docs#936) — it used to be rejected by catimport's old
+// ad hoc digit-length rule with an "unsupported shape" warning, which this
+// test previously asserted. The "no enabled symbology matches" warning is
+// now only reachable once a shop narrows its enabled set away from the
+// default catch-alls, which this default-config e2e run can't set; that
+// translated-reason path is covered at the handler level by
+// TestImport_NoSymbologyMatchWarnsButStillImports.
 const ITEM_NAMES = ['Import Widget One', 'Import Widget Two', 'Import Widget Three', 'Import Widget Four'];
 
 test.describe('catalog import: friendly errors + translated statuses (ut-docs#303)', () => {
@@ -38,11 +48,10 @@ test.describe('catalog import: friendly errors + translated statuses (ut-docs#30
     await expect(page.locator('input[type=file]')).toBeVisible();
 
     // Two rows sharing a barcode: the second one's attach fails against
-    // the first, which actually holds it. A third row's barcode is an
-    // unsupported shape (never blocks the import, just warns — also
-    // exercises the row-warn treatment). A fourth, clean row is the
-    // baseline the geometric assertion below compares against — NOT
-    // "Widget Three", which is itself warned.
+    // the first, which actually holds it. A third row carries a short PLU
+    // barcode (4011) that now imports cleanly under the default enabled
+    // set (ut-docs#936). A fourth, clean row is the baseline the geometric
+    // assertion below compares against.
     const csv =
       'Name,SKU,Barcode,Price,Category,In stock\n' +
       'Import Widget One,IW303A,5019283746102,1.50,Snacks,7\n' +
@@ -88,11 +97,14 @@ test.describe('catalog import: friendly errors + translated statuses (ut-docs#30
     ]);
     expect(warnedBg).not.toBe(cleanBg);
 
-    // The unsupported-shape warning (unrelated to the conflict) is ALSO
-    // translated, proving the whole vocabulary moved, not just the one
-    // barcode-conflict message.
+    // The short PLU barcode (4011) now imports cleanly under the default
+    // enabled set (ut-docs#936) — its row is present and is NOT a warned
+    // row (no "not imported"/attach warning against it).
     await expect(result).toContainText('4011');
-    expect(html).toContain('içe aktarılmadı'); // "not imported"
+    const pluRow = page.locator('tr', { hasText: 'Import Widget Three' });
+    await expect(pluRow).toBeVisible();
+    await expect(pluRow).not.toHaveClass(/row-warn/);
+    expect(html).not.toContain('içe aktarılmadı'); // never "not imported"
 
     assertClean();
   });
