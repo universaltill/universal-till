@@ -370,7 +370,7 @@ func TestCatalogExport_RoundTripsTaxColumns(t *testing.T) {
 		t.Fatalf("export: code %d body %s", rec.Code, rec.Body.String())
 	}
 
-	res, err := catimport.Parse(strings.NewReader(rec.Body.String()), 2)
+	res, err := catimport.Parse(strings.NewReader(rec.Body.String()), 2, data.DefaultEnabledBarcodeSymbologyIDs())
 	if err != nil {
 		t.Fatalf("re-parse of our own export failed: %v", err)
 	}
@@ -1251,23 +1251,24 @@ BEGIN SELECT RAISE(ABORT, 'simulated stock movement failure'); END;`); err != ni
 	}
 }
 
-// TestImport_UnsupportedBarcodeShapeWarnsButStillImports covers item 3: a
-// legitimate 4-digit produce PLU (or any alphanumeric internal code) is
-// discarded by catimport's normalizeBarcode, but the row must still import
-// and warn that its barcode was dropped, rather than silently importing
-// with an empty barcode.
-//
-// If the BarcodeIssue plumbing (catimport recording why, or import_page.go
-// surfacing it) were removed, this test would fail: the item would import
-// with an empty barcode and no warning at all.
-func TestImport_UnsupportedBarcodeShapeWarnsButStillImports(t *testing.T) {
+// TestImport_ShortPLUBarcodeImportsAttached is ut-docs#936's own acceptance
+// criteria run through the full HTTP import path: under the shop's DEFAULT
+// enabled symbologies (every permissive catch-all on, ADR-0059 §2), a
+// legitimate 4-digit produce PLU now matches CODE128's structural catch-all
+// via the shared internal/barcode registry and imports WITH its barcode
+// attached — superseding this test's own pre-#936 shape (formerly
+// TestImport_UnsupportedBarcodeShapeWarnsButStillImports), which asserted
+// the OLD ad hoc 6-14-digit rule's rejection of this exact code. See
+// TestImport_NoSymbologyMatchWarnsButStillImports below for the
+// still-real "never silently drop" case, now correctly triggered by a
+// narrowed enabled set rather than by code length.
+func TestImport_ShortPLUBarcodeImportsAttached(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	dp := newImportTestDeps(t)
 	mux := http.NewServeMux()
 	registerImport(mux, dp)
 
-	// 4011 is a canonical PLU-format produce code — too short for
-	// normalizeBarcode's 6-14 digit window, discarded today with no trace.
+	// 4011 is a canonical PLU-format produce code.
 	csv := "Name,SKU,Barcode,Price,Category,In stock\n" +
 		"Bananas,PLU4011,4011,0.59,Produce,0\n"
 	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
@@ -1282,17 +1283,155 @@ func TestImport_UnsupportedBarcodeShapeWarnsButStillImports(t *testing.T) {
 
 	var itemID string
 	if err := dp.Db.QueryRow(`SELECT id FROM items WHERE sku = 'PLU4011'`).Scan(&itemID); err != nil {
-		t.Fatalf("item should still be created despite the unsupported barcode shape: %v", err)
+		t.Fatalf("item should be created: %v", err)
+	}
+	var storedBarcode string
+	if err := dp.Db.QueryRow(`SELECT barcode FROM item_barcodes WHERE item_id = ?`, itemID).Scan(&storedBarcode); err != nil {
+		t.Fatalf("4-digit PLU must attach as a barcode under the default enabled set (ut-docs#936): %v", err)
+	}
+	if storedBarcode != "4011" {
+		t.Errorf("attached barcode = %q, want %q", storedBarcode, "4011")
+	}
+	if strings.Contains(resp, "not imported") {
+		t.Fatalf("row must not warn a dropped barcode when it was actually attached, got: %s", resp)
+	}
+
+	// Round-trip coverage per ADR-0059/ut-docs#936's own acceptance
+	// criteria: scan the same code on the sale screen and resolve the
+	// right item, not just check the stored row.
+	posRepo := data.NewPOSRepo(dp.Db)
+	enabledIDs, err := data.NewSettingsRepo(dp.Db).EnabledBarcodeSymbologies(t.Context())
+	if err != nil {
+		t.Fatalf("enabled symbologies: %v", err)
+	}
+	line, _, ok := posRepo.ResolveScanLine(t.Context(), "4011", enabledIDs)
+	if !ok {
+		t.Fatal("scanning the imported PLU's own code must resolve, got no match")
+	}
+	if line.Name != "Bananas" {
+		t.Errorf("resolved item name = %q, want %q", line.Name, "Bananas")
+	}
+}
+
+// TestImport_NoSymbologyMatchWarnsButStillImports covers the still-real
+// "never silently drop a barcode" case (ut-docs#293's original defect
+// class) — now only reachable once a shop has narrowed its enabled
+// symbology set away from the default catch-alls (ADR-0059 §2), rather
+// than by any code shorter than 6 digits.
+//
+// If the BarcodeIssue plumbing (catimport recording why, or import_page.go
+// surfacing it) were removed, this test would fail: the item would import
+// with an empty barcode and no warning at all.
+func TestImport_NoSymbologyMatchWarnsButStillImports(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	// Narrow the shop's enabled set to checksum-validated plain symbologies
+	// only, disabling the permissive catch-alls (CODE128/CODE39/
+	// INTERNAL_PLU) — the only way ADR-0059's registry-based matching ever
+	// rejects a non-empty code.
+	if err := data.NewSettingsRepo(dp.Db).SetEnabledBarcodeSymbologies(t.Context(),
+		[]string{"EAN13", "EAN8", "UPCA", "UPCE", "GTIN14"}); err != nil {
+		t.Fatalf("set enabled symbologies: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// 4011: 4 digits, matches none of EAN13/EAN8/UPCA/UPCE/GTIN14's fixed
+	// lengths.
+	csv := "Name,SKU,Barcode,Price,Category,In stock\n" +
+		"Bananas,PLU4011,4011,0.59,Produce,0\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	var itemID string
+	if err := dp.Db.QueryRow(`SELECT id FROM items WHERE sku = 'PLU4011'`).Scan(&itemID); err != nil {
+		t.Fatalf("item should still be created despite the unmatched barcode shape: %v", err)
 	}
 	var barcodeCount int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE item_id = ?`, itemID).Scan(&barcodeCount); err != nil {
 		t.Fatalf("count barcodes: %v", err)
 	}
 	if barcodeCount != 0 {
-		t.Fatalf("normalizeBarcode's accepted shapes must not be loosened by this fix, got %d barcodes attached", barcodeCount)
+		t.Fatalf("a barcode matching no enabled symbology must not be attached, got %d barcodes attached", barcodeCount)
 	}
 	if !strings.Contains(resp, "4011") || !strings.Contains(resp, "not imported") {
 		t.Fatalf("row should warn that the 4011 barcode was not imported, got: %s", resp)
+	}
+}
+
+// TestImport_EmbeddedSymbologyImportDecodesOnce guards ut-docs#936 review
+// finding F1: catimport stores the decoded LookupKey (not the raw code) in
+// it.Barcode, so import_page.go must pass the decoded symbology as an
+// explicit BarcodeType to AddBarcode — otherwise AddBarcode re-runs
+// registry inference on the already-zeroed LookupKey and mis-types it
+// (a weight-embedded key re-decodes to CODE128) or, under a narrowed
+// enabled set, fails the second match entirely and drops the barcode.
+//
+// If import_page.go stopped passing it.BarcodeType, this test fails: the
+// stored barcode_type would be CODE128, not EAN13_WEIGHT_PREFIX2X.
+func TestImport_EmbeddedSymbologyImportDecodesOnce(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	// Enable a weight-embedded symbology alongside plain EAN13 — the exact
+	// #935 shop configuration under which F1's double-decode would bite.
+	if err := data.NewSettingsRepo(dp.Db).SetEnabledBarcodeSymbologies(t.Context(),
+		[]string{"EAN13", "EAN13_WEIGHT_PREFIX2X"}); err != nil {
+		t.Fatalf("set enabled symbologies: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// 2012345067899: prefix 20 (weight-embedded), item code 12345, weight
+	// 06789, valid EAN-13 check digit. Its zeroed LookupKey is 2012345000000.
+	csv := "Name,SKU,Barcode,Price,Category,In stock\n" +
+		"Loose Apples,PLU-APPLE,2012345067899,0.00,Produce,0\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var itemID string
+	if err := dp.Db.QueryRow(`SELECT id FROM items WHERE sku = 'PLU-APPLE'`).Scan(&itemID); err != nil {
+		t.Fatalf("item should be created: %v", err)
+	}
+	var storedBarcode, storedType string
+	if err := dp.Db.QueryRow(`SELECT barcode, barcode_type FROM item_barcodes WHERE item_id = ?`, itemID).
+		Scan(&storedBarcode, &storedType); err != nil {
+		t.Fatalf("weight-embedded barcode must be attached (decode-once, F1): %v", err)
+	}
+	if storedBarcode != "2012345000000" {
+		t.Errorf("stored barcode (LookupKey) = %q, want %q", storedBarcode, "2012345000000")
+	}
+	if storedType != "EAN13_WEIGHT_PREFIX2X" {
+		t.Errorf("stored barcode_type = %q, want EAN13_WEIGHT_PREFIX2X (a second decode would mis-type it CODE128)", storedType)
+	}
+
+	// Round-trip: scanning the actual weight label resolves the item.
+	posRepo := data.NewPOSRepo(dp.Db)
+	enabledIDs, err := data.NewSettingsRepo(dp.Db).EnabledBarcodeSymbologies(t.Context())
+	if err != nil {
+		t.Fatalf("enabled symbologies: %v", err)
+	}
+	line, dec, ok := posRepo.ResolveScanLine(t.Context(), "2012345067899", enabledIDs)
+	if !ok {
+		t.Fatal("scanning the weight-embedded label must resolve the imported item")
+	}
+	if line.Name != "Loose Apples" {
+		t.Errorf("resolved item name = %q, want %q", line.Name, "Loose Apples")
+	}
+	if !dec.HasEmbeddedWeight {
+		t.Errorf("scan decode should carry the embedded weight, got %+v", dec)
 	}
 }
 
