@@ -171,7 +171,28 @@
         document.addEventListener('DOMContentLoaded', refresh);
       })();
     </script>
-    <div class="tab-panel" x-show="tab === 'split'" x-cloak id="split-tender-card">
+    <!-- ut-docs#925: the split-tender panel's own status/validation copy is
+         rendered by web/public/app.js, a shipped static file with no template
+         rendering — so its strings ride on data-msg-* here (the same bridge
+         #barcode-scan-overlay below already uses) and app.js stays locale-free.
+         `%s` placeholders match the Go-side locale-string convention. -->
+    <div class="tab-panel" x-show="tab === 'split'" x-cloak id="split-tender-card"
+         data-msg-no-pending="{{ T "tender.no_pending" }}"
+         data-msg-change-note="{{ T "tender.status.change_note" }}"
+         data-msg-select-method="{{ T "tender.status.select_method" }}"
+         data-msg-amount-positive="{{ T "tender.status.amount_positive" }}"
+         data-msg-change-exceeds="{{ T "tender.status.change_exceeds" }}"
+         data-msg-added="{{ T "tender.status.added" }}"
+         data-msg-basket-unavailable="{{ T "tender.status.basket_unavailable" }}"
+         data-msg-already-covered="{{ T "tender.status.already_covered" }}"
+         data-msg-filled="{{ T "tender.status.filled" }}"
+         data-msg-need-payment="{{ T "tender.status.need_payment" }}"
+         data-msg-submitting="{{ T "tender.status.submitting" }}"
+         data-msg-payment-failed="{{ T "tender.status.payment_failed" }}"
+         data-msg-sale-completed="{{ T "tender.status.sale_completed" }}"
+         data-msg-network-error="{{ T "tender.status.network_error" }}"
+         data-msg-cleared="{{ T "tender.status.cleared" }}"
+         data-msg-removed="{{ T "tender.status.removed" }}">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
         <div class="split-grid">
