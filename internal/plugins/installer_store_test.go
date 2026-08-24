@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 )
@@ -285,5 +286,227 @@ func TestDeleteStoreDownload(t *testing.T) {
 	b2, _ := installer.storeDownloadPaths("evil/../../listing")
 	if !strings.HasPrefix(b2, installer.storeDownloadsDir()) {
 		t.Fatalf("sanitized path escapes downloads dir: %s", b2)
+	}
+}
+
+// TestSweepStoreDownloadsRemovesStaleFiles covers ut-docs#749: staged
+// downloads accumulate unbounded disk usage with no automatic recovery. A
+// stale pair (past storeDownloadTTL) must be swept; a fresh pair must not.
+func TestSweepStoreDownloadsRemovesStaleFiles(t *testing.T) {
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+
+	dir := installer.storeDownloadsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	staleBundle, staleMeta := installer.storeDownloadPaths("stale-listing")
+	freshBundle, freshMeta := installer.storeDownloadPaths("fresh-listing")
+	for _, p := range []string{staleBundle, staleMeta, freshBundle, freshMeta} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	old := time.Now().Add(-(storeDownloadTTL + time.Hour))
+	if err := os.Chtimes(staleBundle, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	if err := os.Chtimes(staleMeta, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	installer.sweepStoreDownloads()
+
+	for _, p := range []string{staleBundle, staleMeta} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("stale file %s not swept", p)
+		}
+	}
+	for _, p := range []string{freshBundle, freshMeta} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("fresh file %s wrongly swept: %v", p, err)
+		}
+	}
+}
+
+// TestSweepStoreDownloadsRemovesStaleOrphan covers a bundle left behind with
+// no matching metadata (e.g. a crash between PromoteToPermanent and the
+// metadata write) — it must still age out, not accumulate forever.
+func TestSweepStoreDownloadsRemovesStaleOrphan(t *testing.T) {
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+
+	dir := installer.storeDownloadsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	orphanBundle, _ := installer.storeDownloadPaths("orphan-listing")
+	if err := os.WriteFile(orphanBundle, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	old := time.Now().Add(-(storeDownloadTTL + time.Hour))
+	if err := os.Chtimes(orphanBundle, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	installer.sweepStoreDownloads()
+
+	if _, err := os.Stat(orphanBundle); !os.IsNotExist(err) {
+		t.Fatalf("stale orphan bundle not swept")
+	}
+}
+
+// TestSweepStoreDownloadsIgnoresMissingDir mirrors ListStoreDownloads' own
+// tolerance of a downloads dir that doesn't exist yet (fresh install).
+func TestSweepStoreDownloadsIgnoresMissingDir(t *testing.T) {
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+
+	// No MkdirAll here — the dir genuinely doesn't exist.
+	installer.sweepStoreDownloads() // must not panic or error
+}
+
+// TestListStoreDownloadsSweepsStaleEntries: a manager who just opens the
+// plugin store page (no new download) still reaps abandoned stale stages,
+// since ListStoreDownloads is on the read path hit far more often than a
+// new download.
+func TestListStoreDownloadsSweepsStaleEntries(t *testing.T) {
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+
+	dir := installer.storeDownloadsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	bundle, meta := installer.storeDownloadPaths("stale-listing")
+	for _, p := range []string{bundle, meta} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	old := time.Now().Add(-(storeDownloadTTL + time.Hour))
+	if err := os.Chtimes(bundle, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	if err := os.Chtimes(meta, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	if got := installer.ListStoreDownloads(); len(got) != 0 {
+		t.Fatalf("expected stale entry swept before listing, got %+v", got)
+	}
+	if _, err := os.Stat(bundle); !os.IsNotExist(err) {
+		t.Fatalf("stale bundle not removed by ListStoreDownloads sweep")
+	}
+}
+
+// TestDownloadToStoreSweepsBeforeDownloading confirms DownloadToStore reaps
+// stale staged downloads from OTHER listings before doing its own network
+// work, so repeated download-without-install activity across many listings
+// doesn't grow disk usage unbounded.
+func TestDownloadToStoreSweepsBeforeDownloading(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	artifact, manifest, checksum := signedMarketplaceArtifact(t, privateKey)
+	server := marketplaceInstallTestServer(t, artifact, map[string]any{
+		"data": map[string]any{
+			"token":           "tok-1",
+			"bundle_url":      "",
+			"version":         manifest.Version,
+			"checksum_sha256": checksum,
+			"signature":       manifest.Signature,
+			"expires_at":      "2026-03-16T16:00:00Z",
+		},
+		"error": nil,
+	})
+	defer server.Close()
+
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+	installer := newTestMarketplaceInstaller(t, storeTestConfig(server.URL, hex.EncodeToString(publicKey)), db)
+
+	dir := installer.storeDownloadsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	staleBundle, staleMeta := installer.storeDownloadPaths("abandoned-listing")
+	for _, p := range []string{staleBundle, staleMeta} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	old := time.Now().Add(-(storeDownloadTTL + time.Hour))
+	if err := os.Chtimes(staleBundle, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	if err := os.Chtimes(staleMeta, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	if _, err := installer.DownloadToStore(context.Background(), MarketplaceInstallRequest{
+		ListingID: "listing-1", MerchantID: "m", StoreID: "s", DeviceID: "d",
+	}); err != nil {
+		t.Fatalf("DownloadToStore: %v", err)
+	}
+
+	for _, p := range []string{staleBundle, staleMeta} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("stale unrelated listing %s not swept by DownloadToStore", p)
+		}
+	}
+}
+
+// TestDownloadToStoreCleansUpOrphanBundleOnMetadataWriteFailure covers the
+// failure path BA/Architect flagged: PromoteToPermanent moves the bundle
+// into place before the metadata write. If the metadata write fails, the
+// just-promoted bundle must not be left behind as an immediate orphan.
+func TestDownloadToStoreCleansUpOrphanBundleOnMetadataWriteFailure(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	artifact, manifest, checksum := signedMarketplaceArtifact(t, privateKey)
+	server := marketplaceInstallTestServer(t, artifact, map[string]any{
+		"data": map[string]any{
+			"token":           "tok-1",
+			"bundle_url":      "",
+			"version":         manifest.Version,
+			"checksum_sha256": checksum,
+			"signature":       manifest.Signature,
+			"expires_at":      "2026-03-16T16:00:00Z",
+		},
+		"error": nil,
+	})
+	defer server.Close()
+
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+	installer := newTestMarketplaceInstaller(t, storeTestConfig(server.URL, hex.EncodeToString(publicKey)), db)
+
+	// Make the metadata write fail: pre-create the metadata path as a
+	// directory, so os.WriteFile(metaPath, ...) errors.
+	_, metaPath := installer.storeDownloadPaths("listing-1")
+	if err := os.MkdirAll(metaPath, 0o755); err != nil {
+		t.Fatalf("mkdir metaPath as dir: %v", err)
+	}
+
+	_, err = installer.DownloadToStore(context.Background(), MarketplaceInstallRequest{
+		ListingID: "listing-1", MerchantID: "m", StoreID: "s", DeviceID: "d",
+	})
+	if err == nil {
+		t.Fatalf("expected metadata write failure")
+	}
+
+	bundlePath, _ := installer.storeDownloadPaths("listing-1")
+	if _, statErr := os.Stat(bundlePath); !os.IsNotExist(statErr) {
+		t.Fatalf("orphaned bundle left behind after metadata write failure")
 	}
 }
