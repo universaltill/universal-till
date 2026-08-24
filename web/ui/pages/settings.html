@@ -1164,6 +1164,35 @@
        this card (the per-row inputs/buttons and #new-setting are all
        hx-swap="none", so nothing else ever lands here). -->
   <span id="settings-upsert-msg" aria-live="polite"></span>
+  <script>
+  (function () {
+    // ut-docs#962: every upsert trigger in this card is hx-swap="none", and
+    // htmx discards a non-2xx body regardless — so a REFUSED save left the
+    // operator with no feedback at all. app.js's force-swap only rescues a
+    // text/html body, and its htmx:responseError fallback writes into
+    // #pos-alert, which exists on the sale screen but not here. That was
+    // survivable while the only refusal was a malformed value the operator
+    // could see for themselves; it is not survivable for the Turkey
+    // service-charge refusal, whose whole point is to EXPLAIN why the
+    // setting is not the merchant's to enable and what to do instead.
+    //
+    // The body is http.Error's text/plain, already localized server-side
+    // (httpx.T) — it is rendered verbatim, so no user-facing string is
+    // hardcoded here. The elevation prompt is a 200 text/html OOB response
+    // and is doubly excluded (status < 400, and the text/html guard).
+    var msg = document.getElementById('settings-upsert-msg');
+    if (!msg) return;
+    var card = msg.closest('.card');
+    if (!card) return;
+    card.addEventListener('htmx:afterRequest', function (ev) {
+      var xhr = ev.detail && ev.detail.xhr;
+      if (!xhr || xhr.status < 400) return;
+      var ct = xhr.getResponseHeader('Content-Type') || '';
+      if (ct.indexOf('text/html') !== -1) return;
+      renderNotice(msg, 'error', (xhr.responseText || '').trim());
+    });
+  })();
+  </script>
 </div>
 {{ end }}
 </div>

@@ -321,6 +321,45 @@ func TestLoadState_ServiceChargeRateInvalidFallsBackToDefault(t *testing.T) {
 	}
 }
 
+// EffectiveServiceChargeRateBP is the fail-closed backstop (ut-docs#962):
+// Turkey's 2026-01-30 Fiyat Etiketi Yönetmeliği amendment makes a
+// service-charge/cover line illegal on any bill, so the configured rate
+// must be structurally unreachable for a TR-configured shop regardless of
+// how it got set (settings-upsert validation is the primary defense, but
+// this is the backstop for a rate saved before the shop's country was TR,
+// a directly-edited DB row, or any other path that bypasses that
+// validation).
+func TestEffectiveServiceChargeRateBP(t *testing.T) {
+	cases := []struct {
+		name    string
+		country string
+		rateBP  int
+		want    int
+	}{
+		{"non-TR keeps configured rate", "GB", 1250, 1250},
+		{"non-TR zero stays zero", "DE", 0, 0},
+		{"TR zeroes a configured nonzero rate", "TR", 1250, 0},
+		{"TR stays zero when already zero", "TR", 0, 0},
+		{"empty country (unset) keeps configured rate", "", 1000, 1000},
+		// Fail-closed: the wizard persists uppercase, but an upsert, a
+		// restored backup or a hand-edited row can carry any casing, and a
+		// loose match here can only omit an illegal line — never block a
+		// sale — so it is the safe direction (unlike fiscal's strict "DE").
+		{"lowercase tr still suppressed", "tr", 1250, 0},
+		{"mixed-case Tr still suppressed", "Tr", 1250, 0},
+		{"padded TR still suppressed", " TR ", 1250, 0},
+		{"TRX is not Turkey", "TRX", 1250, 1250},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := RuntimeState{Country: tc.country, ServiceChargeRateBasisPoints: tc.rateBP}
+			if got := EffectiveServiceChargeRateBP(st); got != tc.want {
+				t.Errorf("EffectiveServiceChargeRateBP(country=%q, rateBP=%d) = %d, want %d", tc.country, tc.rateBP, got, tc.want)
+			}
+		})
+	}
+}
+
 // SaveState persists basis points back as the same decimal-percent string
 // format LoadState reads (round-trips exactly, and a whole-percent value
 // keeps rendering without a spurious ".0").

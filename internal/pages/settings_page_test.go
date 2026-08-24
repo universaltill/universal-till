@@ -535,6 +535,93 @@ func TestServiceChargeRateUpsertEndpoint(t *testing.T) {
 	}
 }
 
+// ut-docs#962: Turkey's 2026-01-30 Fiyat Etiketi Yönetmeliği amendment
+// makes a service-charge/cover line illegal on any bill, so a TR-configured
+// shop must not be able to save a nonzero rate at all — refused with a 400
+// and a localized explanation, not silently accepted. A zero rate (turning
+// the setting back off) must still be allowed for a TR shop.
+func TestServiceChargeRateUpsertEndpoint_TurkeyForbidsNonzeroRate(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	d.UpdateState(func(s *common.RuntimeState) { s.Country = "TR" })
+
+	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.service_charge_rate_pct"}, "value": {"12.5"}}, &mgrUser)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("nonzero rate for TR = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if got := d.CurrentState().ServiceChargeRateBasisPoints; got != 0 {
+		t.Fatalf("ServiceChargeRateBasisPoints after rejected TR upsert = %d, want unchanged 0", got)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "store.service_charge_rate_pct"); v != "" {
+		t.Fatalf("stored service charge rate after rejected TR upsert = %q, want unset", v)
+	}
+
+	// Explicitly zeroing it back out stays allowed.
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.service_charge_rate_pct"}, "value": {"0"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("zero rate for TR = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#962: switching the shop's country TO Turkey must drop the live
+// engines' service-charge rate immediately, not only after a restart.
+// /api/settings/upsert reflects store.country into the runtime state but
+// used to re-push pos.Config only for the currency/tax-inclusive/rate keys,
+// so a GB shop with 12.5% configured that became a TR shop kept quoting an
+// illegal service-charge line on the basket (and the customer-facing
+// display) until the process restarted — while the tender path already
+// recomputed it as 0, so the screen and the recorded sale disagreed too.
+// Both engines, because the kiosk basket is a separate instance (ADR-0020).
+func TestCountryUpsertToTurkeyClearsLiveServiceChargeRate(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.service_charge_rate_pct"}, "value": {"12.5"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("seed rate = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if got := d.Engine.Config().ServiceChargeRateBasisPoints; got != 1250 {
+		t.Fatalf("engine rate before country change = %d, want 1250", got)
+	}
+
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {"TR"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("country upsert = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if got := d.Engine.Config().ServiceChargeRateBasisPoints; got != 0 {
+		t.Fatalf("cashier engine rate after switching to TR = %d, want 0", got)
+	}
+	if d.KioskEngine != nil {
+		if got := d.KioskEngine.Config().ServiceChargeRateBasisPoints; got != 0 {
+			t.Fatalf("kiosk engine rate after switching to TR = %d, want 0", got)
+		}
+	}
+
+	// And back out again: leaving TR restores the still-stored rate, so the
+	// zeroing is a country-scoped suppression, not a destructive erase.
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {"GB"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("country upsert back to GB = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if got := d.Engine.Config().ServiceChargeRateBasisPoints; got != 1250 {
+		t.Fatalf("engine rate after leaving TR = %d, want the still-configured 1250", got)
+	}
+}
+
+// ut-docs#962: the TR suppression is a fail-closed compliance backstop, so
+// it must not hinge on the exact casing of store.country. The wizard
+// persists uppercase, but /api/settings/upsert, a restored backup or a
+// hand-edited DB row can all carry "tr" — and unlike internal/fiscal's
+// deliberately strict "DE" match (where a loose match would BLOCK a sale),
+// a loose match here can only remove a line that is illegal to print, so
+// leniency is the safe direction.
+func TestServiceChargeRateUpsertEndpoint_TurkeyMatchIsCaseInsensitive(t *testing.T) {
+	for _, code := range []string{"tr", "Tr", " TR "} {
+		t.Run(code, func(t *testing.T) {
+			mux, _, d := newFullAuthDeps(t)
+			d.UpdateState(func(s *common.RuntimeState) { s.Country = code })
+			rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.service_charge_rate_pct"}, "value": {"12.5"}}, &mgrUser)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("nonzero rate for country %q = %d, want 400: %s", code, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // The Settings page's dedicated till-name field (ut-docs#396) persists under
 // till.name — distinct from a replica's own sync.till_name — and is
 // manager-gated the same way as /api/settings/display-mode.
