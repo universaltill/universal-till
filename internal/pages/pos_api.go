@@ -618,7 +618,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		locID, err := repo.EnsureStockLocation(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// ut-docs#929: same defect class as ut-docs#921/#923 in this same
+			// handler -- a genuine internal/DB-layer failure (the
+			// stock_locations upsert itself), not a reachable business
+			// rejection, so the 500 status is right but the body must not be
+			// raw Go error text. Reuses the same generic "ask an
+			// administrator" copy for the same reason #923's fix does.
+			log.Printf("tender rejected: ensure stock location: %v", err)
+			http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
 			return
 		}
 
