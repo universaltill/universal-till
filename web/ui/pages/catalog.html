@@ -306,8 +306,35 @@
     var editing = document.getElementById('item-id').value !== '';
     var url = editing ? '/api/catalog/item/update' : '/api/catalog/item';
     renderNotice(msg, 'info', NOTICE_MSG.itemFormSaving);
+    // ut-docs#917: htmx.ajax()'s returned promise resolves on ANY completed
+    // HTTP response, error statuses included — htmx's xhr.onload always
+    // calls the resolver; only a network-level failure (onerror/onabort/
+    // ontimeout) rejects it. So `.then()` runs on a 400 (duplicate SKU,
+    // bad category/brand/tax, invalid autofill barcode — all real,
+    // reachable responses from /api/catalog/item) exactly as it does on a
+    // 2xx. `failed` is set synchronously by the existing htmx:responseError
+    // listener below, which fires (and renders the real error into `msg`)
+    // before this promise settles — catch that here and skip the success
+    // branch entirely, so a failed save can never clear the form or paint
+    // a false "Saved" over the real error.
+    var failed = false;
+    function markFailed() { failed = true; }
+    document.body.addEventListener('htmx:responseError', markFailed, { once: true });
     htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'outerHTML' })
-      .then(function () { renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved); if (!editing) clearForm(); filterRows(); });
+      .then(function () {
+        document.body.removeEventListener('htmx:responseError', markFailed);
+        if (failed) return;
+        // clearForm() BEFORE the success notice, never after — clearForm()
+        // unconditionally blanks `msg` (that's what the "＋ New" reset
+        // button wants), so on the new-item path calling it after the
+        // notice used to wipe the just-rendered "Saved" notice
+        // synchronously, before the browser ever painted it. Editing an
+        // existing item never hit it, because clearForm() is skipped when
+        // `editing`.
+        if (!editing) clearForm();
+        renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved);
+        filterRows();
+      });
   });
   document.body.addEventListener('htmx:responseError', function (ev) {
     renderNotice(msg, 'error', (ev.detail.xhr.responseText || '').trim() || NOTICE_MSG.itemFormErrorGeneric);
