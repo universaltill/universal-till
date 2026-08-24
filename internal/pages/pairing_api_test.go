@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -524,5 +525,230 @@ func TestPairingFlow_AgainstRealMigratedSchema(t *testing.T) {
 	}
 	if out.Data.Token == "" {
 		t.Fatal("expected a non-empty token from the real-schema flow")
+	}
+}
+
+// --- ut-docs#946 (924 increment 4): raw err.Error() leaks now route through
+// common.LogAndLocalizedError. Each test below forces a REAL failure (a
+// dropped table or a read-only connection, never a mock/stub repo) at one
+// specific call site and asserts the localized "pairings.error.server" copy
+// appears while the raw SQL/Go error text does not.
+
+func TestPairRequest_CreateFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE pending_pairings`); err != nil {
+		t.Fatalf("drop pending_pairings: %v", err)
+	}
+
+	rec := postPairRequest(t, mux, "Kitchen Till", commitOf("create-fail"), "10.0.0.30:1234")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "pairings.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") || strings.Contains(body, "create pending pairing") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+func TestListPairRequests_ListFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE pending_pairings`); err != nil {
+		t.Fatalf("drop pending_pairings: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "pairings.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") || strings.Contains(body, "expire pending pairings") ||
+		strings.Contains(body, "list pending pairings") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// discovery.TillID reads/creates the sync.till_id setting AFTER
+// repo.ListPending has already succeeded — dropping only the settings
+// table (leaving pending_pairings intact) isolates this specific call site
+// (line 177) from ListPending's own (line 172).
+func TestListPairRequests_TillIDFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "pairings.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") || strings.Contains(body, "get setting") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+func TestApprovePairRequest_GetByIDFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+
+	rec := postPairRequest(t, mux, "Kitchen Till", commitOf("approve-getbyid-fail"), "10.0.0.31:1234")
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := dp.Db.Exec(`DROP TABLE pending_pairings`); err != nil {
+		t.Fatalf("drop pending_pairings: %v", err)
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/pair-requests/"+created.Data.ID+"/approve", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "pairings.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") || strings.Contains(body, "pending pairing by id") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// repo.Approve's UPDATE fails on a read-only connection while the earlier
+// repo.GetByID SELECT (line 216) still succeeds — isolates the Approve call
+// site (line 230) from the GetByID one (line 217) covered above.
+func TestApprovePairRequest_ApproveWriteFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+
+	rec := postPairRequest(t, mux, "Kitchen Till", commitOf("approve-write-fail"), "10.0.0.32:1234")
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := dp.Db.Exec(`PRAGMA query_only = ON`); err != nil {
+		t.Fatalf("set query_only: %v", err)
+	}
+	t.Cleanup(func() { _, _ = dp.Db.Exec(`PRAGMA query_only = OFF`) })
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/pair-requests/"+created.Data.ID+"/approve", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "pairings.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "readonly database") || strings.Contains(body, "approve pending pairing") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+func TestDenyPairRequest_FailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+
+	rec := postPairRequest(t, mux, "Kitchen Till", commitOf("deny-fail"), "10.0.0.33:1234")
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := dp.Db.Exec(`DROP TABLE pending_pairings`); err != nil {
+		t.Fatalf("drop pending_pairings: %v", err)
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/pair-requests/"+created.Data.ID+"/deny", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "pairings.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") || strings.Contains(body, "deny pending pairing") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+func TestRetrievePairRequest_GetByIDFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+
+	secret := "retrieve-fail-secret"
+	rec := postPairRequest(t, mux, "Kitchen Till", commitOf(secret), "10.0.0.34:1234")
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/pair-requests/"+created.Data.ID+"/approve", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 approving, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := dp.Db.Exec(`DROP TABLE pending_pairings`); err != nil {
+		t.Fatalf("drop pending_pairings: %v", err)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests/"+created.Data.ID+"?request_secret="+secret, nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "pairings.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "no such table") || strings.Contains(body, "pending pairing by id") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
 	}
 }

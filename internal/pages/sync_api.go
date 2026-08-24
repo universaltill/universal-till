@@ -192,7 +192,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		list, err := repo.ListTills(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
 		// The primary's own name (ut-docs#396's till.name setting): shown
@@ -258,7 +258,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			// NOT r.Host directly — see advertisableHost (ut-docs#362).
 			advHost, err := advertisableHost(r.Host)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusConflict)
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "sync.error.no_lan_address", "sync_api", err)
 				return
 			}
 			primaryURL = scheme + "://" + advHost
@@ -266,7 +266,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		code := encodeEnrollCode(primaryURL, tok)
 		png, err := qrcode.Encode(code, qrcode.Medium, 220)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
 		locale := httpx.ResolveLocale(w, r)
@@ -316,7 +316,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		bearer := hex.EncodeToString(raw)
 		tillID, err := repo.InsertTill(r.Context(), name, hashBearer(bearer))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
 		// ut-docs#894: pin THIS (primary) till's own register identity BEFORE
@@ -388,7 +388,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		path, cleanup, err := db.RedactedJoinSnapshot(d.Db, d.Cfg.DBPath)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
 		defer cleanup()
@@ -434,7 +434,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		id := r.PathValue("id")
 		if err := repo.DeleteTill(r.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", id, "till_revoked",
@@ -484,7 +484,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 
 		if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(r.Context()); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
