@@ -53,6 +53,11 @@ type Service struct {
 	// order type — see TaxRateAsker. nil (the default) means core just uses
 	// each line's own configured rate, unaffected by order type.
 	taxAsker TaxRateAsker
+	// chargeAsker, when set, supplies the market's service-charge/tip
+	// policy (ADR-0060) — see ChargePolicyAsker (charge_policy.go). nil, or
+	// an asker with no answer, means core's fail-closed default: charge
+	// permitted, taxed at the sale's own per-line rates.
+	chargeAsker ChargePolicyAsker
 }
 
 type Config struct {
@@ -513,20 +518,42 @@ func (s *Service) recomputeTotals() {
 	// tax codes, and the order-type dine-in/takeaway switch (§12 UStG) only
 	// changes SOME lines' rate — a flat sub-wide engine can't represent that.
 	var tax, total money.Money
+	chargeTaxLines := make([]ChargeTaxLine, 0, len(s.lines))
 	for i := range s.lines {
 		l := &s.lines[i]
 		rateBP, _ := s.effectiveTaxRateBP(*l)
 		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, s.cfg.TaxInclusive)
 		tax = tax.Add(lineTax)
 		total = total.Add(lineTotal)
+		chargeTaxLines = append(chargeTaxLines, ChargeTaxLine{RateBP: rateBP, Net: l.LineTotal})
 	}
-	s.basket.Tax = tax
 	// Service charge (ut-docs#72): same base as CompleteSale/pos_api.go use
 	// -- the pre-tax net subtotal, after discount -- so what's shown here,
 	// before tender, matches what CompleteSale will actually demand.
 	serviceCharge, _ := ComputeTaxBasisPoints(sub.Sub(discount), s.cfg.ServiceChargeRateBasisPoints, false)
+	// ADR-0060: an installed country plugin's charge.policy.ask answer can
+	// forbid the charge outright or fix a flat tax basis for it; with no
+	// answer (the normal no-plugin case) the fail-closed default taxes it
+	// at the sale's own per-line rates. Mirrors the tender handler
+	// (pos_api.go) exactly, so the on-screen total IS the demanded total.
+	chargeTaxBasisBP := 0
+	if s.chargeAsker != nil {
+		if policy, ok := s.chargeAsker.AskChargePolicy(); ok {
+			if !policy.ServiceChargePermitted {
+				serviceCharge = 0
+			}
+			chargeTaxBasisBP = policy.ServiceChargeTaxBasisBP
+		}
+	}
+	chargeTax := ServiceChargeTax(serviceCharge, chargeTaxLines, s.cfg.TaxInclusive, chargeTaxBasisBP)
+	s.basket.Tax = tax.Add(chargeTax)
 	s.basket.ServiceCharge = serviceCharge
 	total = total.Sub(discount).Add(serviceCharge)
+	if !s.cfg.TaxInclusive {
+		// Exclusive pricing: the charge's tax goes on top, same as each
+		// line's own; inclusive already carries it inside serviceCharge.
+		total = total.Add(chargeTax)
+	}
 	if total.IsNegative() {
 		total = 0
 	}

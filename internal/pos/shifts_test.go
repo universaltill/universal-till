@@ -413,6 +413,7 @@ CREATE TABLE payments (
   reference TEXT,
   change_given INTEGER NOT NULL DEFAULT 0,
   tip_amount INTEGER NOT NULL DEFAULT 0,
+  tip_recipient TEXT NOT NULL DEFAULT 'employee',
   masked_pan TEXT,
   auth_code TEXT,
   terminal_id TEXT,

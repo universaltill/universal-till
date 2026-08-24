@@ -2482,15 +2482,19 @@ WHERE location_id = ?
 // till-set service-charge amount for this sale (distinct from a payment's
 // tip_amount) -- it already participates in total, so it is stored
 // separately only so it can be broken out on the receipt/journal.
-func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total, serviceCharge int64, note, createdAt, tenderType, orderType, tableID string, offline bool, syncStatus string, syncAttempts int, syncNextAttemptAt, syncLastError string) error {
+// serviceChargeTaxBasisBP (ADR-0060 Decision 4) is the flat rate the charge's
+// tax was computed at, or 0 for the apportioned fail-closed default. It is
+// persisted rather than recomputed so a replayed/synced sale rebuilds the
+// SAME totals CompleteSale originally stored -- see migration 062.
+func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total, serviceCharge int64, serviceChargeTaxBasisBP int, note, createdAt, tenderType, orderType, tableID string, offline bool, syncStatus string, syncAttempts int, syncNextAttemptAt, syncLastError string) error {
 	offlineVal := 0
 	if offline {
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, rounding, note, created_at, completed_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, saleID, receiptNo, saleType, tenderType, orderType, nullIfEmpty(tableID), offlineVal, syncStatus, syncAttempts, nullIfEmpty(syncNextAttemptAt), nullIfEmpty(syncLastError), nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, serviceCharge, nullIfEmpty(note), createdAt, createdAt)
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, rounding, note, created_at, completed_at)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+`, saleID, receiptNo, saleType, tenderType, orderType, nullIfEmpty(tableID), offlineVal, syncStatus, syncAttempts, nullIfEmpty(syncNextAttemptAt), nullIfEmpty(syncLastError), nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, serviceCharge, serviceChargeTaxBasisBP, nullIfEmpty(note), createdAt, createdAt)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
@@ -2538,11 +2542,14 @@ type CardPresentFields struct {
 // (docs/germany-pos-parity-backlog.md tip-flow gap) -- it rides alongside
 // amount but is never subtracted/added when deriving what the payment
 // applies toward the sale total; see pos.PaymentInput.TipAmount.
-func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, paidAt string, cardPresent CardPresentFields) error {
+// tipRecipient (ADR-0060 Decision 3) records whose money the tip is
+// ("employee"/"business") as decided at capture time -- the caller
+// (pos.CompleteSale) validates and defaults it, this layer stores it as-is.
+func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, tipRecipient string, paidAt string, cardPresent CardPresentFields) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, masked_pan, auth_code, terminal_id, trace_id, paid_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount,
+INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id, paid_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount, tipRecipient,
 		nullIfEmpty(cardPresent.MaskedPAN), nullIfEmpty(cardPresent.AuthCode), nullIfEmpty(cardPresent.TerminalID), nullIfEmpty(cardPresent.TraceID), paidAt)
 	if err != nil {
 		return fmt.Errorf("insert payment: %w", err)
@@ -3695,20 +3702,28 @@ type SaleDetail struct {
 	// live" trade-off order_type's own plain string avoids by not needing
 	// one -- a renamed table changes how past receipts display it, which
 	// is an acceptable, deliberately simple choice for a v1.
-	TableID       string              `json:"table_id,omitempty"`
-	TableLabel    string              `json:"table_label,omitempty"`
-	Offline       bool                `json:"offline"`
-	SyncStatus    string              `json:"sync_status"`
-	Currency      string              `json:"currency"`
-	Subtotal      int64               `json:"subtotal"`
-	DiscountTotal int64               `json:"discount_total"`
-	TaxTotal      int64               `json:"tax_total"`
-	Total         int64               `json:"total"`
-	ServiceCharge int64               `json:"service_charge"`
-	CreatedAt     string              `json:"created_at"`
-	CashierID     string              `json:"cashier_id"`
-	Lines         []SaleDetailLine    `json:"lines"`
-	Payments      []SaleDetailPayment `json:"payments"`
+	TableID       string `json:"table_id,omitempty"`
+	TableLabel    string `json:"table_label,omitempty"`
+	Offline       bool   `json:"offline"`
+	SyncStatus    string `json:"sync_status"`
+	Currency      string `json:"currency"`
+	Subtotal      int64  `json:"subtotal"`
+	DiscountTotal int64  `json:"discount_total"`
+	TaxTotal      int64  `json:"tax_total"`
+	Total         int64  `json:"total"`
+	ServiceCharge int64  `json:"service_charge"`
+	// ServiceChargeTaxBasisBP (ADR-0060 Decision 4) is the flat rate the
+	// service charge's tax was computed at when the sale was tendered, or 0
+	// for the apportioned fail-closed default. It rides the LAN-sync journal
+	// so a replay reproduces the ORIGINAL totals rather than re-deriving them
+	// against the primary's own policy; omitempty keeps the wire additive --
+	// a pre-ADR-0060 peer simply lacks the key, which reads as 0, exactly the
+	// behaviour that peer had.
+	ServiceChargeTaxBasisBP int                 `json:"service_charge_tax_basis_bp,omitempty"`
+	CreatedAt               string              `json:"created_at"`
+	CashierID               string              `json:"cashier_id"`
+	Lines                   []SaleDetailLine    `json:"lines"`
+	Payments                []SaleDetailPayment `json:"payments"`
 }
 
 type SaleDetailLine struct {
@@ -3730,7 +3745,12 @@ type SaleDetailPayment struct {
 	Amount      int64  `json:"amount"`
 	ChangeGiven int64  `json:"change_given"`
 	TipAmount   int64  `json:"tip_amount"`
-	Reference   string `json:"reference"`
+	// TipRecipient (ADR-0060 Decision 3): "employee" or "business" -- whose
+	// money the tip was recorded as at capture time. omitempty keeps the
+	// journal wire additive: a pre-ADR-0060 peer's payload simply lacks the
+	// key and pos.CompleteSale re-defaults it to employee on replay.
+	TipRecipient string `json:"tip_recipient,omitempty"`
+	Reference    string `json:"reference"`
 	// Card-present reconciliation fields (ut-docs#543) -- empty for every
 	// payment method that doesn't supply them. See CardPresentFields.
 	MaskedPAN  string `json:"masked_pan,omitempty"`
@@ -3760,13 +3780,14 @@ func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDeta
 	var d SaleDetail
 	err := r.db.QueryRowContext(ctx, `
 SELECT s.id, s.receipt_no, s.status, s.sale_type, s.tender_type, s.order_type, s.offline, s.sync_status,
-       s.currency, s.subtotal, s.discount_total, s.tax_total, s.total, s.service_charge_amount, s.created_at,
+       s.currency, s.subtotal, s.discount_total, s.tax_total, s.total, s.service_charge_amount,
+       s.service_charge_tax_basis_bp, s.created_at,
        COALESCE(s.cashier_id, ''), COALESCE(s.table_id, ''), COALESCE(t.label, '')
 FROM sales s LEFT JOIN tables t ON t.id = s.table_id
 WHERE s.receipt_no = ?`, receiptNo).Scan(
 		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.OrderType, &d.Offline,
 		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
-		&d.Total, &d.ServiceCharge, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel)
+		&d.Total, &d.ServiceCharge, &d.ServiceChargeTaxBasisBP, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel)
 	if err == sql.ErrNoRows {
 		return SaleDetail{}, false, nil
 	}
@@ -3829,7 +3850,7 @@ ORDER BY sl.line_no, slm.rowid`, d.ID)
 	}
 
 	payRows, err := r.db.QueryContext(ctx, `
-SELECT method_id, amount, change_given, tip_amount, COALESCE(reference, ''),
+SELECT method_id, amount, change_given, tip_amount, COALESCE(tip_recipient, 'employee'), COALESCE(reference, ''),
        COALESCE(masked_pan, ''), COALESCE(auth_code, ''), COALESCE(terminal_id, ''), COALESCE(trace_id, ''),
        paid_at
 FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
@@ -3839,7 +3860,7 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	defer payRows.Close()
 	for payRows.Next() {
 		var p SaleDetailPayment
-		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.Reference,
+		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.TipRecipient, &p.Reference,
 			&p.MaskedPAN, &p.AuthCode, &p.TerminalID, &p.TraceID, &p.PaidAt); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale payment: %w", err)
 		}

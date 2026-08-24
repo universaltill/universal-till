@@ -707,12 +707,14 @@ func TestFiscalSignPayload_TaxInclusiveFlagMirrorsSaleInput(t *testing.T) {
 	}
 }
 
-// ut-docs#834 (contract 1.2.0): sale-level discount/service charge are
-// folded into Total but never reflected in VATBreakdown (which is aggregated
-// purely from lines) — a signer needs the raw amounts to apportion them
-// across rates itself. Zero amounts stay omitted (omitempty) so an existing
-// signer that never reads these two fields sees no shape change on the
-// common no-sale-level-adjustment sale.
+// ut-docs#834 (contract 1.2.0) as amended by ADR-0060 (contract 1.5.0): the
+// sale-level discount is folded into Total but never reflected in
+// VATBreakdown (a signer still apportions THAT itself); the service charge,
+// since 1.5.0, IS apportioned into VATBreakdown by core (its net and its
+// tax folded into the existing per-rate lines) — the flat service_charge
+// field stays on the wire for display/reconciliation only. Zero amounts
+// stay omitted (omitempty) so an existing signer that never reads these two
+// fields sees no shape change on the common no-sale-level-adjustment sale.
 func TestFiscalSignPayload_SaleDiscountAndServiceChargeBreakout(t *testing.T) {
 	in := &pos.SaleInput{
 		SaleID:        "sale-discount-service",
@@ -728,15 +730,24 @@ func TestFiscalSignPayload_SaleDiscountAndServiceChargeBreakout(t *testing.T) {
 		t.Fatalf("payload.SaleDiscount = %d, want 200", payload.SaleDiscount)
 	}
 	if payload.ServiceCharge != 150 {
-		t.Fatalf("payload.ServiceCharge = %d, want 150", payload.ServiceCharge)
+		t.Fatalf("payload.ServiceCharge = %d, want 150 (retained, display-only since 1.5.0)", payload.ServiceCharge)
 	}
 	// Pin the reconciliation the contract doc promises (exclusive pricing:
-	// total = subtotal - sale_discount + service_charge + tax-on-subtotal):
-	// 1000 - 200 + 150 + 190 (19% of the undiscounted 1000 line net) = 1140.
-	// Catches future drift between buildFiscalSignPayload and
-	// pos.computeSaleTotals (ut-docs#834's review, NIT 9).
-	if payload.Total != 1140 {
-		t.Fatalf("payload.Total = %d, want 1140", payload.Total)
+	// total = subtotal - sale_discount + service_charge + tax-on-subtotal +
+	// tax-on-service-charge): 1000 - 200 + 150 + 190 + 29 (19% of the 150
+	// charge, ADR-0060) = 1169. Catches future drift between
+	// buildFiscalSignPayload and pos.computeSaleTotals (ut-docs#834's
+	// review, NIT 9).
+	if payload.Total != 1169 {
+		t.Fatalf("payload.Total = %d, want 1169", payload.Total)
+	}
+	// 1.5.0: the charge's apportioned net/tax are folded into the existing
+	// per-rate line, not sent as a separate band or left to the signer.
+	if len(payload.VATBreakdown) != 1 {
+		t.Fatalf("want 1 vat band, got %+v", payload.VATBreakdown)
+	}
+	if b := payload.VATBreakdown[0]; b.RateBP != 1900 || b.Net != 1150 || b.Tax != 219 {
+		t.Fatalf("1900bp band must fold in the charge (net 1000+150, tax 190+29), got %+v", b)
 	}
 	// The non-zero amounts must actually reach the wire under their
 	// contract-documented snake_case keys, not just the Go struct fields —
@@ -779,6 +790,78 @@ func TestFiscalSignPayload_SaleDiscountAndServiceChargeBreakout(t *testing.T) {
 	}
 	if _, ok := wire["service_charge"]; ok {
 		t.Fatalf("expected service_charge omitted on the wire when zero, got %v", wire["service_charge"])
+	}
+}
+
+// ADR-0060 Decision 2 / contract 1.5.0: the service charge's apportionment
+// in the sign payload must come from the SAME shared function the tender
+// path folds into computeSaleTotals — pinned here by asserting the merged
+// per-rate lines equal the lines-only aggregate plus exactly
+// pos.ApportionServiceChargeTax's bands, across both pricing modes and
+// multiple rate bands (net-value weighting, largest remainder on the
+// highest band).
+func TestFiscalSignPayload_ServiceChargeApportionedIntoVATBreakdown(t *testing.T) {
+	lines := []pos.SaleLineInput{
+		{Name: "Food", Qty: 1, UnitPrice: money.FromMinor(1000), TaxRateBasisPoints: 1900},
+		{Name: "Paper", Qty: 1, UnitPrice: money.FromMinor(500), TaxRateBasisPoints: 700},
+	}
+	for _, tc := range []struct {
+		name         string
+		taxInclusive bool
+	}{
+		{"exclusive", false},
+		{"inclusive", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := &pos.SaleInput{
+				SaleID:        "sale-charge-bands-" + tc.name,
+				Currency:      "EUR",
+				TaxInclusive:  tc.taxInclusive,
+				ServiceCharge: money.FromMinor(300),
+				Lines:         lines,
+			}
+			payload := buildFiscalSignPayload(in, time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC))
+
+			// Expected: per-line aggregate + the shared function's bands.
+			wantBands := map[int]fiscalSignAskVATLine{}
+			var lineTax, chargeTax money.Money
+			for _, l := range lines {
+				net := pos.AmountForQuantity(l.UnitPrice, l.Qty)
+				tax, _ := pos.ComputeTaxBasisPoints(net, l.TaxRateBasisPoints, tc.taxInclusive)
+				agg := wantBands[l.TaxRateBasisPoints]
+				agg.RateBP = l.TaxRateBasisPoints
+				agg.Net += net.Minor()
+				agg.Tax += tax.Minor()
+				wantBands[l.TaxRateBasisPoints] = agg
+				lineTax = lineTax.Add(tax)
+			}
+			for _, b := range pos.ApportionServiceChargeTax(money.FromMinor(300), pos.ChargeTaxLinesFromSale(lines), tc.taxInclusive, 0) {
+				agg := wantBands[b.RateBP]
+				agg.RateBP = b.RateBP
+				agg.Net += b.Amount.Minor()
+				agg.Tax += b.Tax.Minor()
+				wantBands[b.RateBP] = agg
+				chargeTax = chargeTax.Add(b.Tax)
+			}
+			if len(payload.VATBreakdown) != len(wantBands) {
+				t.Fatalf("want %d bands, got %+v", len(wantBands), payload.VATBreakdown)
+			}
+			for _, got := range payload.VATBreakdown {
+				if want := wantBands[got.RateBP]; got != want {
+					t.Fatalf("band %d: got %+v, want %+v (charge must merge via the shared apportionment)", got.RateBP, got, want)
+				}
+			}
+
+			// Total mirrors computeSaleTotals: inclusive is gross-in
+			// gross-out; exclusive adds line AND charge tax on top.
+			want := money.FromMinor(1500 + 300)
+			if !tc.taxInclusive {
+				want = want.Add(lineTax).Add(chargeTax)
+			}
+			if payload.Total != want.Minor() {
+				t.Fatalf("payload.Total = %d, want %d", payload.Total, want.Minor())
+			}
+		})
 	}
 }
 
