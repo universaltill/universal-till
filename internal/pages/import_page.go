@@ -31,6 +31,7 @@ import (
 func registerImport(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewCatalogRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
+	settingsRepo := data.NewSettingsRepo(d.Db)
 
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
@@ -138,7 +139,16 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		if isBkp {
 			res, err = catimport.ParseBkp(file, header.Size, httpx.ActiveCurrency().Decimals)
 		} else {
-			res, err = catimport.Parse(file, httpx.ActiveCurrency().Decimals)
+			// Same shared registry matcher AddBarcode/the scan path use
+			// (ADR-0059 Decision §3, ut-docs#936) — never brick a CSV
+			// upload on a settings read failure, same rule as AddBarcode:
+			// EnabledBarcodeSymbologies already returns the compatibility-
+			// preserving default set alongside any error.
+			enabledIDs, symErr := settingsRepo.EnabledBarcodeSymbologies(r.Context())
+			if symErr != nil {
+				log.Printf("[import] enabled symbologies unavailable, using defaults: %v", symErr)
+			}
+			res, err = catimport.Parse(file, httpx.ActiveCurrency().Decimals, enabledIDs)
 		}
 		if err != nil {
 			switch {
@@ -404,19 +414,28 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// message.
 				var warnings []string
 				if it.Barcode != "" {
+					// Pass the symbology catimport already decoded as an
+					// explicit BarcodeType so AddBarcode does NOT re-run
+					// registry inference on it.Barcode (which is the decoded
+					// LookupKey, not the raw code — re-matching it can pick a
+					// different, wrong symbology, or fail under a narrowed
+					// enabled set) — decode once, in catimport (ut-docs#936
+					// review finding F1).
 					if err := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
-						Barcode: it.Barcode, ItemID: itemID, IsPrimary: true,
+						Barcode: it.Barcode, BarcodeType: it.BarcodeType, ItemID: itemID, IsPrimary: true,
 					}); err != nil {
 						// Names the conflicting item/variant instead of its
 						// raw ID; logs the ID either way (ut-docs#303).
 						warnings = append(warnings, common.FriendlyBarcodeConflict(r.Context(), repo, locale, err))
 					}
 				} else if it.BarcodeIssue != "" {
-					// The CSV carried a barcode value, but the importer's
-					// normalizeBarcode discarded it (unsupported shape, e.g.
-					// a 4-digit PLU) — the item still imports, but silently
-					// dropping the barcode with no trace is the same defect
-					// class this card exists to fix (ut-docs#293).
+					// The CSV carried a barcode value, but it matched none
+					// of the shop's enabled symbologies (ADR-0059 Decision
+					// §3, ut-docs#936) — only reachable once a shop has
+					// disabled the default permissive catch-alls
+					// (CODE128/INTERNAL_PLU). The item still imports, but
+					// silently dropping the barcode with no trace is the
+					// same defect class this card exists to fix (ut-docs#293).
 					warnings = append(warnings, translateBarcodeIssue(T, it))
 				}
 				// A present-but-unparseable tax cell imported the row at the
@@ -702,12 +721,8 @@ func translateImportIssue(T func(string) string, it catimport.ImportItem) string
 // (non-blocking) BarcodeIssue reason code.
 func translateBarcodeIssue(T func(string) string, it catimport.ImportItem) string {
 	switch it.BarcodeIssue {
-	case catimport.BarcodeIssueUnsupportedFormat:
-		return fmt.Sprintf(T("import.status.barcode_unsupported_format"), it.BarcodeIssueRaw)
-	case catimport.BarcodeIssueTooShort:
-		return fmt.Sprintf(T("import.status.barcode_too_short"), it.BarcodeIssueRaw)
-	case catimport.BarcodeIssueTooLong:
-		return fmt.Sprintf(T("import.status.barcode_too_long"), it.BarcodeIssueRaw)
+	case catimport.BarcodeIssueNoSymbologyMatch:
+		return fmt.Sprintf(T("import.status.barcode_no_symbology_match"), it.BarcodeIssueRaw)
 	default:
 		log.Printf("[import] unrecognised BarcodeIssue reason code %q", it.BarcodeIssue)
 		return T("import.status.unknown_issue")
