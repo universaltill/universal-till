@@ -151,6 +151,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	// non-idempotent replay problem (ut-docs#814).
 	rewindTables054(t, d)
 	rewindTracking058(t, d)
+	rewindFiscalRegisterDE059(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -221,6 +222,26 @@ func rewindTracking058(t *testing.T, d *DB) {
 	} {
 		if _, err := d.DB.Exec(q); err != nil {
 			t.Fatalf("rewind 058 (%s): %v", q, err)
+		}
+	}
+}
+
+// rewindFiscalRegisterDE059 undoes migration 059's non-idempotent DDL (the
+// three stock_locations address columns + the fiscal_register_de table and
+// its index, ut-docs#665) — same replay problem as rewindTables054/
+// rewindTracking058 above; the index goes first, then the table, then the
+// address columns (no ordering constraint between the two beyond that).
+func rewindFiscalRegisterDE059(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`DROP INDEX idx_fiscal_register_de_register`,
+		`DROP TABLE fiscal_register_de`,
+		`ALTER TABLE stock_locations DROP COLUMN address_street`,
+		`ALTER TABLE stock_locations DROP COLUMN address_postcode`,
+		`ALTER TABLE stock_locations DROP COLUMN address_city`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 059 (%s): %v", q, err)
 		}
 	}
 }

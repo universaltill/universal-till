@@ -65,6 +65,7 @@ func TestMigration052DedupesGlobalPluginSettings(t *testing.T) {
 	// `tables` table and held_sales.table_id — undo that DDL first.
 	rewindTables054(t, d)
 	rewindTracking058(t, d)
+	rewindFiscalRegisterDE059(t, d)
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
@@ -159,6 +160,7 @@ func TestMigration052IsIdempotentOnCleanData(t *testing.T) {
 	// replays too, so its DDL is undone first).
 	rewindTables054(t, d)
 	rewindTracking058(t, d)
+	rewindFiscalRegisterDE059(t, d)
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}

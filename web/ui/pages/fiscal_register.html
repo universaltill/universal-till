@@ -1,0 +1,107 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "fiscalregister.title" }} {{ helpLink "fiscal-register" }}</h1>
+</div>
+
+<p class="muted">{{ T "fiscalregister.intro" }}</p>
+
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+<div class="users-layout">
+  <div class="card users-list">
+    {{ if not .groups }}<p class="empty">{{ T "fiscalregister.empty" }}</p>{{ end }}
+    {{ range .groups }}
+    <div class="fiscal-register-group">
+      {{ if .HasLocation }}
+      <h3>{{ .LocationName }}{{ if or .LocationStreet .LocationPostcode .LocationCity }} — {{ .LocationStreet }} {{ .LocationPostcode }} {{ .LocationCity }}{{ end }}</h3>
+      <form method="post" action="/api/fiscal-register/locations/{{ .LocationID }}/address" class="users-inline">
+        <label>{{ T "fiscalregister.address.street" }} <input type="text" name="street" value="{{ .LocationStreet }}" /></label>
+        <label>{{ T "fiscalregister.address.postcode" }} <input type="text" name="postcode" value="{{ .LocationPostcode }}" /></label>
+        <label>{{ T "fiscalregister.address.city" }} <input type="text" name="city" value="{{ .LocationCity }}" /></label>
+        <button type="submit" class="btn secondary">{{ T "fiscalregister.address.submit" }}</button>
+      </form>
+      {{ else }}
+      <h3>{{ T "fiscalregister.no_location" }}</h3>
+      {{ end }}
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>{{ T "fiscalregister.col.register" }}</th>
+            <th>{{ T "fiscalregister.col.eas_type" }}</th>
+            <th>{{ T "fiscalregister.col.eas_software" }}</th>
+            <th>{{ T "fiscalregister.col.eas_serial" }}</th>
+            <th>{{ T "fiscalregister.col.tse_serial" }}</th>
+            <th>{{ T "fiscalregister.col.tse_cert_id" }}</th>
+            <th>{{ T "fiscalregister.col.tse_type" }}</th>
+            <th>{{ T "fiscalregister.col.acquired" }}</th>
+            <th>{{ T "fiscalregister.col.commissioned" }}</th>
+            <th>{{ T "fiscalregister.col.decommissioned" }}</th>
+            <th>{{ T "fiscalregister.col.status" }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .Entries }}
+          <tr>
+            <td>{{ .RegisterName }}</td>
+            <td>{{ .EasType }}</td>
+            <td>{{ .EasSoftware }}</td>
+            <td>{{ .EasSerial }}</td>
+            <td>{{ .TSESerial }}</td>
+            <td>{{ .TSECertificationID }}</td>
+            <td>{{ .TSEType }}</td>
+            <td>{{ .AcquiredOn }}</td>
+            <td>{{ if .CommissionedOn }}{{ .CommissionedOn }}{{ end }}</td>
+            <td>{{ if .DecommissionedOn }}{{ .DecommissionedOn }}{{ end }}</td>
+            <td>
+              {{ if .DecommissionedOn }}<span class="muted">{{ T "fiscalregister.status.decommissioned" }}</span>{{ else }}{{ T "fiscalregister.status.active" }}{{ end }}
+              {{ if .DueSoon }}
+              <div class="pos-notice info" role="status">
+                <span class="notice-text">{{ T "fiscalregister.banner.due" }}</span>
+              </div>
+              {{ end }}
+              {{ if .DecommissionDueSoon }}
+              <div class="pos-notice info" role="status">
+                <span class="notice-text">{{ T "fiscalregister.banner.due_decommission" }}</span>
+              </div>
+              {{ end }}
+            </td>
+            <td class="users-actions">
+              {{ if not .DecommissionedOn }}
+              <form method="post" action="/api/fiscal-register/{{ .ID }}/decommission" class="users-inline">
+                <button type="submit" class="btn secondary" aria-label="{{ T "fiscalregister.decommission.confirm_label" }}">{{ T "fiscalregister.decommission" }}</button>
+              </form>
+              {{ end }}
+            </td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+    {{ end }}
+  </div>
+
+  <div class="card users-form">
+    <h3>{{ T "fiscalregister.new.title" }}</h3>
+    <form method="post" action="/api/fiscal-register" autocomplete="off">
+      <label>{{ T "fiscalregister.col.register" }}
+        <select name="register_id" required>
+          {{ range .registers }}
+          <option value="{{ .ID }}">{{ .Name }}</option>
+          {{ end }}
+        </select>
+      </label>
+      <label>{{ T "fiscalregister.col.eas_type" }} <input type="text" name="eas_type" value="Tablet-/App-Kassen-Systeme" required /></label>
+      <label>{{ T "fiscalregister.col.eas_software" }} <input type="text" name="eas_software" required /></label>
+      <label>{{ T "fiscalregister.col.eas_serial" }} <input type="text" name="eas_serial" required /></label>
+      <label>{{ T "fiscalregister.col.tse_serial" }} <input type="text" name="tse_serial" required /></label>
+      <label>{{ T "fiscalregister.col.tse_cert_id" }} <input type="text" name="tse_certification_id" required /></label>
+      <label>{{ T "fiscalregister.col.tse_type" }} <input type="text" name="tse_type" required /></label>
+      <label>{{ T "fiscalregister.col.acquired" }} <input type="date" name="acquired_on" required /></label>
+      <label>{{ T "fiscalregister.col.commissioned" }} <input type="date" name="commissioned_on" /></label>
+      <button type="submit" class="btn primary" style="width:100%">{{ T "fiscalregister.new.submit" }}</button>
+    </form>
+  </div>
+</div>
+{{ end }}
