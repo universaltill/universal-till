@@ -1411,3 +1411,37 @@ func TestSettingsPage_PrinterCardHidesTestPrintAndDesignerLinkFromCashier(t *tes
 		t.Error("manager render is missing the Test print button or receipt-designer link")
 	}
 }
+
+// ut-docs#924: a Settings.Set failure on the telemetry/generic-upsert
+// endpoints used to leak the raw Go/SQL error text via http.Error(w,
+// err.Error(), ...) instead of a translated message. Force a real repo
+// error (drop the underlying table) and assert the response carries the
+// localized fallback, never the raw error string.
+func TestSettingsEndpoints_RepoErrorIsLocalized(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	if _, err := d.Db.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings table: %v", err)
+	}
+
+	rec := postForm(mux, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, &mgrUser)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("telemetry with broken settings table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not save") {
+		t.Fatalf("telemetry error body = %q, want the localized save-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("telemetry error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+
+	rec = postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.tax_inclusive"}, "value": {"true"}}, &mgrUser)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("upsert with broken settings table = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Could not save") {
+		t.Fatalf("upsert error body = %q, want the localized save-failed message", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("upsert error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}

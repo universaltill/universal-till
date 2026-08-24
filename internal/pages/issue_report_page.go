@@ -173,7 +173,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 
 		id, err := issuereport.Save(note, locale, audio, video, images)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "issuereport.save_error", "issuereport", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
