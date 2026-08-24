@@ -3,7 +3,17 @@ package catimport
 import (
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/barcode"
 )
+
+// testEnabledIDs is the full internal/barcode default registry, used as
+// every test's enabledSymbologyIDs unless a test specifically exercises a
+// narrower shop-enabled set (ADR-0059 Decision §3, ut-docs#936) — none of
+// this file's fixture barcodes fall in the two embedded-data prefixes
+// (20-29 weight, 02 price), so including them here doesn't change any
+// existing test's expected outcome.
+var testEnabledIDs = barcode.Default().IDs()
 
 const loyverseCSV = `Handle,SKU,Name,Category,Sold by weight,Price,Cost,Barcode,In stock
 coke,10001,Coca-Cola 330ml,Drinks,N,1.40,0.80,5449000000996,24
@@ -29,7 +39,7 @@ Loose Screws,SKU-300,,0.05,Hardware,,1000,N
 `
 
 func TestParseLoyverse(t *testing.T) {
-	res, err := Parse(strings.NewReader(loyverseCSV), 2)
+	res, err := Parse(strings.NewReader(loyverseCSV), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -53,7 +63,7 @@ func TestParseLoyverse(t *testing.T) {
 }
 
 func TestParseSquare(t *testing.T) {
-	res, err := Parse(strings.NewReader(squareCSV), 2)
+	res, err := Parse(strings.NewReader(squareCSV), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -84,7 +94,7 @@ Milchkaffee to go,,,,3.50,1.20,19.00,Y,3.50,7.00,pcs,SU-003,4006381333931,Kaltge
 `
 
 func TestParseSumUp(t *testing.T) {
-	res, err := Parse(strings.NewReader(sumupCSV), 2)
+	res, err := Parse(strings.NewReader(sumupCSV), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -190,7 +200,7 @@ func TestDetectFormatParenSuffixDepartmentWinsOverSumUpFallback(t *testing.T) {
 }
 
 func TestParseGenericAndZeroDecimals(t *testing.T) {
-	res, err := Parse(strings.NewReader(genericCSV), 0)
+	res, err := Parse(strings.NewReader(genericCSV), 0, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -207,7 +217,7 @@ func TestParseGenericAndZeroDecimals(t *testing.T) {
 }
 
 func TestParseGenericERPStockAndDepartment(t *testing.T) {
-	res, err := Parse(strings.NewReader(erpCSV), 2)
+	res, err := Parse(strings.NewReader(erpCSV), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -259,7 +269,7 @@ func TestHeaderMatchingParenthesisedSuffix(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			csv := "Name,Price," + c.header + "\nEspresso,2.00,19\n"
-			res, err := Parse(strings.NewReader(csv), 2)
+			res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -277,7 +287,7 @@ func TestHeaderMatchingParenthesisedSuffix(t *testing.T) {
 // The fix must be general (every columnSynonyms field), not a tax-only
 // patch — prove it against an unrelated field.
 func TestHeaderMatchingParenthesisedSuffixNonTaxField(t *testing.T) {
-	res, err := Parse(strings.NewReader("Name,Price(GBP)\nWidget,4.50\n"), 2)
+	res, err := Parse(strings.NewReader("Name,Price(GBP)\nWidget,4.50\n"), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -299,7 +309,7 @@ func TestHeaderMatchingParenthesisedSuffixNonTaxField(t *testing.T) {
 // dine-in rate — the exact silent-money/compliance-corruption class this
 // package's other guardrails (ut-docs#512, #586) exist to prevent.
 func TestHeaderMatchingParenSuffixNeverShadowsAnExactMatch(t *testing.T) {
-	res, err := Parse(strings.NewReader("Name,Price (cost),Price\nWidget,1.10,4.50\n"), 2)
+	res, err := Parse(strings.NewReader("Name,Price (cost),Price\nWidget,1.10,4.50\n"), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -310,7 +320,7 @@ func TestHeaderMatchingParenSuffixNeverShadowsAnExactMatch(t *testing.T) {
 		t.Errorf("exact \"Price\" column shadowed by the earlier lenient \"Price (cost)\" match: got %d, want 450 (the real retail price, not the 110 cost price)", got)
 	}
 
-	res, err = Parse(strings.NewReader("Name,Price,VAT (takeaway),VAT rate\nEspresso,2.00,7,19\n"), 2)
+	res, err = Parse(strings.NewReader("Name,Price,VAT (takeaway),VAT rate\nEspresso,2.00,7,19\n"), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -338,7 +348,7 @@ Bad Takeaway,2.50,19,wat
 `
 
 func TestParseTaxColumns(t *testing.T) {
-	res, err := Parse(strings.NewReader(taxCSV), 2)
+	res, err := Parse(strings.NewReader(taxCSV), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -392,7 +402,7 @@ func TestParseTaxColumns(t *testing.T) {
 // A file with no tax column at all (every pre-existing fixture) must leave
 // the tax fields untouched — existing Loyverse/Square imports unchanged.
 func TestParseNoTaxColumnLeavesTaxUnset(t *testing.T) {
-	res, err := Parse(strings.NewReader(loyverseCSV), 2)
+	res, err := Parse(strings.NewReader(loyverseCSV), 2, testEnabledIDs)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -570,22 +580,115 @@ func TestNormalizeDecimalComma(t *testing.T) {
 }
 
 func TestParseRejectsHeaderlessGarbage(t *testing.T) {
-	if _, err := Parse(strings.NewReader("a,b,c\n1,2,3\n"), 2); err == nil {
+	if _, err := Parse(strings.NewReader("a,b,c\n1,2,3\n"), 2, testEnabledIDs); err == nil {
 		t.Fatal("no name column must be an error")
 	}
 }
 
 func TestNormalizeBarcode(t *testing.T) {
-	cases := map[string]string{
-		"5449000000996.0": "5449000000996",
-		"5.449E+12":       "",
-		"12345":           "", // too short
-		"abc":             "",
+	// Under the DEFAULT enabled set (every permissive catch-all on),
+	// Match never rejects a non-empty code (ADR-0059 §2) — this is the
+	// ut-docs#936 acceptance criteria directly: a short numeric PLU and an
+	// alphanumeric supplier code both now match (via CODE128's structural
+	// catch-all), where the old ad hoc 6-14-digit-only rule discarded
+	// both. Rejection is only reachable once a shop has narrowed its
+	// enabled set away from the catch-alls (last case).
+	cases := []struct {
+		name       string
+		in         string
+		enabledIDs []string
+		wantKey    string
+		wantType   string
+		wantOK     bool
+	}{
+		{"trailing .0 spreadsheet artifact stripped (all-digit remainder), then EAN13-matched", "5449000000996.0", testEnabledIDs, "5449000000996", "EAN13", true},
+		{"4-digit produce PLU matches a default catch-all", "4011", testEnabledIDs, "4011", "CODE128", true},
+		{"alphanumeric internal/supplier code matches a default catch-all", "SKU-ABC123", testEnabledIDs, "SKU-ABC123", "CODE128", true},
+		// F2: an alphanumeric code that legitimately ends ".0" must NOT be
+		// truncated — the remainder ("ABC") is not all-digit, so the ".0"
+		// stays and the literal code is what gets stored and later scanned.
+		{"non-numeric code ending .0 is not truncated", "ABC.0", testEnabledIDs, "ABC.0", "CODE128", true},
+		// F4: spreadsheet scientific-notation mangling is not un-mangled;
+		// under the default set CODE128's structural catch-all stores it
+		// verbatim (the old ad hoc rule discarded it — deliberate ADR-0059
+		// §2 trade-off, documented on normalizeBarcode).
+		{"scientific-notation mangling stored verbatim under the default set", "5.449E+12", testEnabledIDs, "5.449E+12", "CODE128", true},
+		{"empty raw value never matches anything, any enabled set", "", testEnabledIDs, "", "", false},
+		{
+			"narrowed enabled set (no catch-alls) rejects a shape matching nothing left",
+			"12345", // 5 digits: not EAN13/EAN8/UPCA/UPCE/GTIN14-shaped
+			[]string{"EAN13", "EAN8", "UPCA", "UPCE", "GTIN14"},
+			"", "", false,
+		},
 	}
-	for in, want := range cases {
-		if got := normalizeBarcode(in); got != want {
-			t.Errorf("normalizeBarcode(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		dec, gotOK := normalizeBarcode(c.in, c.enabledIDs)
+		if dec.LookupKey != c.wantKey || dec.SymbologyID != c.wantType || gotOK != c.wantOK {
+			t.Errorf("%s: normalizeBarcode(%q) = (key=%q, type=%q, %v), want (key=%q, type=%q, %v)",
+				c.name, c.in, dec.LookupKey, dec.SymbologyID, gotOK, c.wantKey, c.wantType, c.wantOK)
 		}
+	}
+}
+
+// TestParseImportsShortAndAlphanumericBarcodes is the ut-docs#936
+// acceptance criteria run through the full Parse row loop (not just
+// normalizeBarcode directly): a 4-digit produce PLU and an alphanumeric
+// supplier code both import end-to-end via internal/catimport with the
+// barcode attached, once the shop's enabled set allows them — the old ad
+// hoc 6-14-digit rule discarded both silently.
+func TestParseImportsShortAndAlphanumericBarcodes(t *testing.T) {
+	csv := `Name,Price,Barcode
+Loose Tomatoes,1.50,4011
+Supplier Widget,2.00,SKU-ABC123
+`
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(res.Items))
+	}
+	if got := res.Items[0].Barcode; got != "4011" {
+		t.Errorf("4-digit PLU barcode = %q, want %q", got, "4011")
+	}
+	if res.Items[0].BarcodeIssue != "" {
+		t.Errorf("4-digit PLU must not carry a BarcodeIssue, got %q", res.Items[0].BarcodeIssue)
+	}
+	if got := res.Items[1].Barcode; got != "SKU-ABC123" {
+		t.Errorf("alphanumeric barcode = %q, want %q", got, "SKU-ABC123")
+	}
+	if res.Items[1].BarcodeIssue != "" {
+		t.Errorf("alphanumeric barcode must not carry a BarcodeIssue, got %q", res.Items[1].BarcodeIssue)
+	}
+}
+
+// TestParseReportsNoSymbologyMatchReason confirms the row-level warning
+// path (ut-docs#936's own acceptance criteria: "import row status reports
+// the reason when a barcode is rejected by the shop's enabled set,
+// consistent with #293's existing reason-reporting fix") — reachable only
+// once a shop has narrowed its enabled set away from the default
+// catch-alls, per ADR-0059 §2.
+func TestParseReportsNoSymbologyMatchReason(t *testing.T) {
+	narrowIDs := []string{"EAN13", "EAN8", "UPCA", "UPCE", "GTIN14"}
+	csv := `Name,Price,Barcode
+Mystery Item,1.00,12345
+`
+	res, err := Parse(strings.NewReader(csv), 2, narrowIDs)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Barcode != "" {
+		t.Errorf("unmatched barcode must not be stored, got %q", it.Barcode)
+	}
+	if it.BarcodeIssue != BarcodeIssueNoSymbologyMatch {
+		t.Errorf("BarcodeIssue = %q, want %q", it.BarcodeIssue, BarcodeIssueNoSymbologyMatch)
+	}
+	if it.BarcodeIssueRaw != "12345" {
+		t.Errorf("BarcodeIssueRaw = %q, want %q", it.BarcodeIssueRaw, "12345")
 	}
 }
 
