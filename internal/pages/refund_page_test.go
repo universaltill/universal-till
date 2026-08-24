@@ -245,6 +245,152 @@ func TestRefundPage_ShowsRefundableLines(t *testing.T) {
 	}
 }
 
+// ut-docs#944 (ut-docs#924 increment 2 of 4): a genuine DB-layer failure in
+// ReturnedQuantities used to leak raw Go/SQL error text (err.Error()) via
+// http.Error(w, err.Error(), 500) regardless of locale -- same defect class
+// as #921/#923/#929/#316 elsewhere in this package, reached on the page-load
+// GET, before any refund is even attempted.
+func TestRefundPage_ReturnedQuantitiesFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+	if _, err := dp.Db.Exec(`DROP TABLE sale_links`); err != nil {
+		t.Fatalf("drop sale_links: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/refund/"+receiptNo, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on a ReturnedQuantities DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sale_links") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized refund.error.server copy, got: %s", rec.Body.String())
+	}
+}
+
+// Same underlying call as the GET handler above, reached from the POST
+// handler's own copy of the ReturnedQuantities call instead.
+func TestPostRefund_ReturnedQuantitiesFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+	if _, err := dp.Db.Exec(`DROP TABLE sale_links`); err != nil {
+		t.Fatalf("drop sale_links: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on a ReturnedQuantities DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sale_links") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized refund.error.server copy, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#944: a generic internal DB failure on the refund path, so it shows
+// the refund-flow key (refund.error.server) -- deliberately not pos_api.go's
+// sale-worded pos.toast.tender_failed, even though the same repo method is
+// being called.
+func TestPostRefund_EnsureStockLocationFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+	if _, err := dp.Db.Exec(`DROP TABLE stock_locations`); err != nil {
+		t.Fatalf("drop stock_locations: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on an EnsureStockLocation DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "stock_locations") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized refund.error.server copy, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Sale could not be completed") {
+		t.Fatalf("refund flow showed the sale-worded pos.toast.tender_failed copy: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#944: same reasoning as the EnsureStockLocation test above --
+// refund-flow key, not the sale-worded tender one.
+func TestPostRefund_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+	if _, err := dp.Db.Exec(`DROP TABLE payment_methods`); err != nil {
+		t.Fatalf("drop payment_methods: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on an EnsurePaymentMethod DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "payment_methods") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Something went wrong") {
+		t.Fatalf("expected the localized refund.error.server copy, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Sale could not be completed") {
+		t.Fatalf("refund flow showed the sale-worded pos.toast.tender_failed copy: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#944: CompleteSale's own failure used to leak raw Go/SQL error text
+// via http.Error(w, err.Error(), 400). Forced here by dropping
+// stock_movements -- a table CompleteSale's own transaction writes to
+// (RecordStockMovement, per line) but nothing earlier in the handler
+// (GetSaleDetail/ReturnedQuantities/EnsureStockLocation/EnsurePaymentMethod)
+// touches, so every upstream step succeeds and only CompleteSale itself
+// fails. classifyTenderError has no specific match for this message, so it
+// falls through to its generic default -- the same key pos_api.go's own
+// tender handler renders for an unclassified CompleteSale failure.
+func TestPostRefund_CompleteSaleFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+	if _, err := dp.Db.Exec(`DROP TABLE stock_movements`); err != nil {
+		t.Fatalf("drop stock_movements: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 on a CompleteSale DB failure, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "stock_movements") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw engine/SQL error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "could not be completed") {
+		t.Fatalf("expected the localized pos.toast.tender_failed fallback copy, got: %s", rec.Body.String())
+	}
+}
+
 func TestPostRefund_SaleNotFound(t *testing.T) {
 	mux, _, _ := newRefundTestDeps(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt=NO-SUCH-RECEIPT"))

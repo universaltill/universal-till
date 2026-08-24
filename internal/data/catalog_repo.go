@@ -16,9 +16,21 @@ import (
 
 type CatalogRepo struct {
 	db *sql.DB
+	// settings reads the shop's enabled barcode symbologies (ADR-0059 §2)
+	// for AddBarcode's untyped-inference path — same accessor the scan path
+	// (POSRepo) and the ut-docs#935 settings checklist share.
+	settings *SettingsRepo
 }
 
 var ErrInvalidEAN13 = errors.New("invalid EAN-13 barcode")
+
+// ErrBarcodeNoSymbologyMatch reports that an untyped AddBarcode value
+// matched none of the shop's enabled symbologies (ADR-0059 Decision §3's
+// named rejection: no row is written, barcode_type is not set). Only
+// reachable once a shop has narrowed its enabled set away from the
+// CODE128/INTERNAL_PLU catch-alls — the default set accepts everything, by
+// design (ADR-0059 Decision §2).
+var ErrBarcodeNoSymbologyMatch = errors.New("barcode matches no enabled symbology")
 
 // BarcodeConflictError reports that a barcode is already assigned to a
 // different item/variant. It carries the conflicting target as structured
@@ -54,7 +66,7 @@ var ErrTaxCodeNotFound = errors.New("tax code not found")
 var ErrSKUExists = errors.New("SKU already in use")
 
 func NewCatalogRepo(db *sql.DB) *CatalogRepo {
-	return &CatalogRepo{db: db}
+	return &CatalogRepo{db: db, settings: NewSettingsRepo(db)}
 }
 
 // BarcodeExists reports whether a barcode is already attached to any item
@@ -1082,19 +1094,53 @@ func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInp
 	}
 	in.BarcodeType = strings.TrimSpace(in.BarcodeType)
 	if in.BarcodeType == "" {
-		// The catalog accepts arbitrary scanner and internal/PLU values with
-		// no assumption about the code's format or source (ADR-0021) — a
-		// 13-digit value here is just as likely a legitimate internal/PLU
-		// code as a retail EAN-13, so inference must never reject it. Only
-		// label it EAN13 when it also carries a valid EAN-13 check digit;
-		// otherwise it falls back to CODE128, the permissive default for
-		// every other shape. An explicit BarcodeType is the only path that
-		// validates (below) — inference never does.
-		if len(in.Barcode) == 13 && validEAN13(in.Barcode) {
-			in.BarcodeType = "EAN13"
-		} else {
-			in.BarcodeType = "CODE128"
+		// Untyped inference (ADR-0059 Decision §3): match against the shop's
+		// enabled symbologies via the shared registry matcher — the same
+		// function the scan path uses, so AddBarcode and scanning can never
+		// disagree on what a code means. Under the DEFAULT enabled set,
+		// every code that resolved before this card still resolves — the
+		// recorded barcode_type is just more specific now for shapes that
+		// used to fall through to CODE128 (e.g. an 8-digit code is now
+		// EAN8, a 14-digit GTIN is now GTIN14). barcode_type is write-only
+		// (never read to drive scan behaviour, ADR-0059 §3), so this drift
+		// has no resolution-behaviour impact — LookupKey still equals the
+		// typed code for every one of these plain shapes.
+		//
+		// ut-docs#934 review finding F1 (must be resolved before/alongside
+		// #935 ships): once a shop enables EAN13_WEIGHT_PREFIX2X (prefix
+		// 20-29) or EAN13_PRICE_PREFIX02 (prefix 02), this untyped path
+		// will classify ANY check-digit-valid EAN-13 in that prefix range
+		// as embedded-data first (specificity order, ADR-0059 §3) — even a
+		// genuine plain retail product whose EAN-13 happens to start with
+		// 20-29/02 — and store the zeroed LookupKey instead of the code as
+		// typed, with no UI caller ever passing an explicit BarcodeType to
+		// escape it (verified: no production caller sets BarcodeType
+		// today). #935 (or a fast-follow) must give the operator a way to
+		// force the plain interpretation before shops can actually reach
+		// this state — SetEnabledBarcodeSymbologies has no non-production
+		// caller yet, so nothing ships this risk today.
+		enabledIDs, err := r.settings.EnabledBarcodeSymbologies(ctx)
+		if err != nil {
+			// Never brick barcode entry on a settings read: the accessor
+			// already returned the compatibility-preserving default set.
+			logging.L().Warnf("catalog: add barcode: enabled symbologies unavailable, using defaults: %v", err)
 		}
+		dec, ok := barcode.Default().Match(enabledIDs, in.Barcode)
+		if !ok {
+			// Named rejection (ADR-0059 §3): say what was scanned and what is
+			// enabled; write nothing. Only reachable once the shop disabled
+			// the default catch-alls.
+			return fmt.Errorf("%w: %q (enabled: %s)",
+				ErrBarcodeNoSymbologyMatch, in.Barcode, strings.Join(enabledIDs, ", "))
+		}
+		in.BarcodeType = strings.ToUpper(dec.SymbologyID)
+		// Store the decoded LookupKey, not the raw scan. For a plain
+		// symbology LookupKey == the typed code, so this is a no-op; for the
+		// two embedded-data symbologies it is the zeroed template (prefix +
+		// item code, weight/price and check digits zeroed) — storing the raw
+		// label would pin the row to ONE specific label's weight/price and no
+		// other label of the same item could ever resolve (ADR-0059 §3).
+		in.Barcode = dec.LookupKey
 	} else if strings.EqualFold(in.BarcodeType, "EAN13") {
 		in.BarcodeType = "EAN13"
 		if !validEAN13(in.Barcode) {

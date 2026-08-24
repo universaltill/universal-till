@@ -169,6 +169,19 @@ type BasketLine struct {
 	TaxCodeID string                  `json:"-"`
 	IsWeighed bool                    `json:"-"`
 	Modifiers []data.SelectedModifier `json:"modifiers,omitempty"` // ADR-0020: chosen customizations, already folded into PriceCents
+	// QtyFromCode (ADR-0059 §3, ut-docs#934): the scanned code itself fixed
+	// this line's Qty — a weight-embedded scale label decoded its weight
+	// into Qty, or a price-embedded label fixed Qty at 1. scanQty must keep
+	// the resolver-set Qty instead of overwriting it with the caller/client
+	// supplied quantity (the label, not the keypad, is the authority).
+	QtyFromCode bool `json:"-"`
+	// NoMerge (ADR-0059 §3): never merge this line into an existing same-SKU
+	// line. Set for price-embedded labels: each label states an absolute
+	// price for one specific unit, and mergeResolved's combine step
+	// overwrites PriceCents — merging two differently-priced labels would
+	// silently drop money. A double scan of the same label yields two
+	// visible lines the operator can void (accepted ADR trade-off).
+	NoMerge bool `json:"-"`
 }
 
 // ModifierSignature is a stable key for two lines' modifier selections —
@@ -292,7 +305,12 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 
 	if code != "" {
 		if cached, found := s.scanCache[code]; found {
-			cached.Qty = qty
+			// A code-embedded quantity (weight/price label) is authoritative
+			// over the caller-supplied qty — the cached line already carries
+			// the decoded value (ADR-0059 §3).
+			if !cached.QtyFromCode {
+				cached.Qty = qty
+			}
 			s.mergeResolved(cached)
 			return &s.basket, true
 		}
@@ -302,14 +320,20 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 		resolved, ok = s.resolver.Resolve(code)
 	}
 	if ok {
-		resolved.Qty = qty
+		if !resolved.QtyFromCode {
+			resolved.Qty = qty
+		}
 		s.mergeResolved(resolved)
 		s.cacheScan(code, resolved)
 		return &s.basket, true
 	}
 
 	if code != "" {
-		if idx := s.findLineIndex(code); idx >= 0 {
+		// Last-resort fallback when the resolver no longer answers for a
+		// code already in the basket. Never bump a NoMerge (price-embedded)
+		// line this way: its Qty is fixed at 1 for one specific label, and
+		// qty+1 would double an absolute price (ADR-0059 §3).
+		if idx := s.findLineIndex(code); idx >= 0 && !s.lines[idx].NoMerge {
 			s.lines[idx].Qty += qty
 			s.recomputeTotals()
 			return &s.basket, true
@@ -333,7 +357,11 @@ func (s *Service) AddLineWithModifiers(base BasketLine, qty float64, mods []data
 		qty = 1
 	}
 	line := base
-	line.Qty = qty
+	if !base.QtyFromCode {
+		line.Qty = qty
+	}
+	// else: a code-embedded quantity (weight/price label, ADR-0059 §3) is
+	// the label's, not the picker's — line already carries base.Qty.
 	line.Modifiers = append([]data.SelectedModifier{}, mods...)
 	for _, m := range mods {
 		line.PriceCents = line.PriceCents.Add(money.FromMinor(m.PriceDeltaMinor))
@@ -378,8 +406,27 @@ func (s *Service) cacheScan(code string, line BasketLine) {
 }
 
 func (s *Service) mergeResolved(line BasketLine) {
+	if line.NoMerge {
+		// Price-embedded lines (ADR-0059 §3) always append as a new,
+		// distinct line: the combine loop below sums Qty but OVERWRITES
+		// PriceCents, which for two differently-priced labels of the same
+		// item would silently replace one label's price with the other's —
+		// a real money bug (e.g. €3.50 + €7.20 merging to qty 2 × €7.20).
+		if line.LineKey == "" {
+			line.LineKey = uuid.NewString()
+		}
+		s.lines = append(s.lines, line)
+		s.recomputeTotals()
+		return
+	}
 	sig := line.ModifierSignature()
 	for i := range s.lines {
+		if s.lines[i].NoMerge {
+			// An existing price-embedded line must never be merged INTO
+			// either: a later plain scan of the same item would sum Qty and
+			// overwrite the label's absolute price with the per-unit rate.
+			continue
+		}
 		if s.lines[i].ModifierSignature() != sig {
 			// Same item/SKU but a different customization (e.g. "extra
 			// shot" vs. plain) prices and prints differently — must stay a
@@ -395,6 +442,11 @@ func (s *Service) mergeResolved(line BasketLine) {
 			s.lines[i].VariantID = line.VariantID
 			s.lines[i].IsWeighed = line.IsWeighed
 			s.lines[i].Modifiers = line.Modifiers
+			// ut-docs#934 review finding F7: keep the surviving line's
+			// QtyFromCode in sync with the incoming scan — a second
+			// weight-embedded label merging into an existing line is still
+			// a code-derived quantity, not an operator-typed one.
+			s.lines[i].QtyFromCode = line.QtyFromCode
 			if line.ImageURL != "" {
 				s.lines[i].ImageURL = line.ImageURL
 			}
