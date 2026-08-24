@@ -347,7 +347,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		// lockout slot on a request that's refused either way."
 		has, err := repo.HasArchivedReport(r.Context(), "eod", period)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.check_failed", "eod_print_check", err)
 			return
 		}
 		if !has {
@@ -371,7 +371,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		reports, err := repo.ListArchivedReports(r.Context(), 100)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.list_failed", "eod_print_list", err)
 			return
 		}
 		locale := httpx.ResolveLocale(w, r)
@@ -444,12 +444,23 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		rep, err := repo.EndOfDayRange(r.Context(), from, to)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.range_failed", "eod_range_query", err)
 			return
 		}
 		raw, err := json.Marshal(rep)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Not provably unreachable, so it is handled rather than ignored:
+			// EODReport (pos_repo.go) carries no chan/func/cyclic pointer, but
+			// DeptSales.Qty IS a float64 (SUM over sale_lines.quantity, a REAL
+			// column), and json.Marshal rejects a non-finite float outright
+			// ("json: unsupported value: +Inf"). Departments is populated
+			// whenever from == to, which a single-day range export does.
+			// Reaching this therefore needs a non-finite quantity to already be
+			// persisted; nothing on the write path currently rejects one (see
+			// the follow-up card from the ut-docs#945 review), so there is no
+			// forced-failure test here yet -- the guard exists precisely so
+			// that day surfaces a translated message, not a raw encoder error.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.range_failed", "eod_range_encode", err)
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -591,7 +602,7 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 			actorID = elev.ApproverID
 		}
 		if err := d.Settings.Set(r.Context(), common.KeyReportRetentionMode, mode); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.retention_save_failed", "eod_retention_save", err)
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -670,7 +681,7 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 
 		rows, err := repo.ArchivedReportsInRange(r.Context(), from, to)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.archive_export_failed", "eod_archive_export", err)
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
