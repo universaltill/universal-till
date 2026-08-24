@@ -1,10 +1,10 @@
 package common
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // LocalizedError writes an http.Error response translated for the request's
@@ -26,7 +26,16 @@ func LocalizedError(w http.ResponseWriter, r *http.Request, status int, key stri
 // via FriendlyBarcodeConflict below). It logs the real error server-side,
 // prefixed with logTag for grepability, and shows the operator only the
 // translated key.
+//
+// Logging goes through the app's own leveled logger (internal/logging),
+// not stdlib log, so every call site (101 across internal/pages) gets the
+// same structured [LEVEL] formatting as the rest of the app's logging, and
+// — since this logs at Error level — also flows into logging.Recent(),
+// the in-memory Problems ring the cloud-sync heartbeat reports (ADR-0018).
+// Before this, an error routed through this helper was invisible to that
+// feed even though it's exactly the kind of server-side problem it exists
+// to surface (ut-docs#947).
 func LogAndLocalizedError(w http.ResponseWriter, r *http.Request, status int, key string, logTag string, err error) {
-	log.Printf("[%s] %v", logTag, err)
+	logging.L().Errorf("[%s] %v", logTag, err)
 	LocalizedError(w, r, status, key)
 }
