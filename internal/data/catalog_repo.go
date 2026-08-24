@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/taxrate"
@@ -1197,27 +1198,11 @@ WHERE item_barcodes.item_id = excluded.item_id
 	return nil
 }
 
-func validEAN13(barcode string) bool {
-	if len(barcode) != 13 {
-		return false
-	}
-	sum := 0
-	for i := 0; i < 12; i++ {
-		digit := barcode[i] - '0'
-		if digit > 9 {
-			return false
-		}
-		if i%2 == 0 {
-			sum += int(digit)
-		} else {
-			sum += 3 * int(digit)
-		}
-	}
-	checkDigit := barcode[12] - '0'
-	if checkDigit > 9 {
-		return false
-	}
-	return int(checkDigit) == (10-sum%10)%10
+// validEAN13 delegates to the shared internal/barcode checksum (ADR-0059
+// Decision §1 — "reuse/extract ... rather than duplicating it") instead of
+// keeping its own copy of the GS1 check-digit algorithm.
+func validEAN13(code string) bool {
+	return barcode.ValidEAN13Checksum(code)
 }
 
 func nullable(s *string) any {
