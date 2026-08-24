@@ -120,6 +120,11 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
+			// Raw err.Error() here is intentional, not a leak (ut-docs#947
+			// Problem 1): the audit log is a manager/admin diagnostic
+			// surface, not the operator-facing screen LogAndLocalizedError
+			// exists to protect — an admin reviewing a failed backup needs
+			// the real error, not a translated summary.
 			auditNow("backup_failed", map[string]any{"error": err.Error()})
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.backup.failed"))
@@ -203,6 +208,8 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := db.StageRestore(dbPath, name); err != nil {
+			// Raw err.Error() here is intentional, not a leak (ut-docs#947
+			// Problem 1 — see the same note on "backup_failed" above).
 			audit(r, "restore_stage_failed", map[string]any{"file": name, "error": err.Error()})
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "settings.backup.stage_failed", "backup_restore", err)
 			return
