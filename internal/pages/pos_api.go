@@ -692,7 +692,18 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				continue
 			}
 			if err := repo.EnsurePaymentMethod(r.Context(), p.Method); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				// ut-docs#923: a genuine internal/setup failure (the FK-upsert
+				// itself hit a DB-layer error), not a reachable business
+				// rejection -- the 500 status is right, but the body must not
+				// be raw Go error text either (ut-docs#921's fix for the
+				// business-rejection branches below). No dedicated classifier:
+				// this call has exactly one failure mode worth naming (the
+				// underlying DB op failed), so it reuses the same generic
+				// "ask an administrator" copy classifyTenderError's own
+				// default branch renders, mirroring pos.toast.payment_declined's
+				// http.Error(w, httpx.T(...), status) shape above.
+				log.Printf("tender rejected: ensure payment method %q: %v", p.Method, err)
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
 				return
 			}
 			payments = append(payments, pos.PaymentInput{
@@ -715,7 +726,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				}
 				if method != "" {
 					if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
+						// Same ut-docs#923 fix as the JSON-payments branch above --
+						// form-encoded quick-tender buttons hit this identical
+						// FK-upsert failure path and used to leak the same raw text.
+						log.Printf("tender rejected: ensure payment method %q: %v", method, err)
+						http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
 						return
 					}
 					payments = append(payments, pos.PaymentInput{
