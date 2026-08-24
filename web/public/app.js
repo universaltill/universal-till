@@ -153,6 +153,26 @@ window.utCurrency = (function(){
       return;
     }
 
+    // ut-docs#925: this panel's own status/validation copy is user-facing and
+    // must localize, but app.js is a shipped static file with no template
+    // rendering, so it can't use CLAUDE.md's inline-<script> `var T = {...}`
+    // pattern. It rides on data-msg-* attributes instead — the same bridge
+    // #barcode-scan-overlay already uses in this template, keeping app.js
+    // locale-free. Placeholders are `%s`, matching the Go-side locale strings
+    // -- but ONLY the plain `%s` verb: this is not a Sprintf, so `%d` and
+    // indexed `%[1]s` (both legal in Go-rendered keys) would pass through
+    // literally. TestSplitTenderKeysUseOnlyPlainStringVerb pins these keys to
+    // that subset so a translator reordering a sentence can't quietly ship a
+    // literal `%[2]s` to an operator.
+    var msg = card.dataset;
+    function fmt(template){
+      var args = Array.prototype.slice.call(arguments, 1);
+      var i = 0;
+      return String(template || '').replace(/%s/g, function(){
+        return i < args.length ? args[i++] : '';
+      });
+    }
+
     var payments = [];
     function formatMoney(units){
       return window.utCurrency.format(units);
@@ -186,7 +206,7 @@ window.utCurrency = (function(){
     function renderPayments(){
       if (!payments.length) {
         paymentsList.classList.add('empty');
-        paymentsList.innerHTML = '<p>No pending payments yet.</p>';
+        paymentsList.innerHTML = '<p>' + escapeHtml(msg.msgNoPending) + '</p>';
         return;
       }
       paymentsList.classList.remove('empty');
@@ -194,7 +214,7 @@ window.utCurrency = (function(){
         var net = payment.amount - (payment.change || 0);
         var details = formatMoney(net);
         if (payment.change) {
-          details += ' (change ' + formatMoney(payment.change) + ')';
+          details += ' ' + escapeHtml(fmt(msg.msgChangeNote, formatMoney(payment.change)));
         }
         if (payment.reference) {
           details += '<br><small>' + escapeHtml(payment.reference) + '</small>';
@@ -229,18 +249,18 @@ window.utCurrency = (function(){
       var data = new FormData(form);
       var method = (data.get('method') || '').trim();
       if (!method) {
-        setStatus('Select a payment method.', 'error');
+        setStatus(msg.msgSelectMethod, 'error');
         return false;
       }
       var amountMinor = toMinor(data.get('amount'));
       if (amountMinor <= 0) {
-        setStatus('Amount must be greater than zero.', 'error');
+        setStatus(msg.msgAmountPositive, 'error');
         return false;
       }
       var changeMinor = toMinor(data.get('change'));
       if (changeMinor < 0) changeMinor = 0;
       if (changeMinor > amountMinor) {
-        setStatus('Change cannot exceed amount.', 'error');
+        setStatus(msg.msgChangeExceeds, 'error');
         return false;
       }
       var payment = { method: method, amount: amountMinor };
@@ -254,19 +274,19 @@ window.utCurrency = (function(){
       payments.push(payment);
       renderPayments();
       clearForm();
-      setStatus('Added ' + method + ' payment for ' + formatMoney(payment.amount - (payment.change || 0)) + '.', 'success');
+      setStatus(fmt(msg.msgAdded, method, formatMoney(payment.amount - (payment.change || 0))), 'success');
       return true;
     }
 
     function fillRemaining(){
       var total = basketTotal();
       if (!total) {
-        setStatus('Basket total unavailable. Scan an item first.', 'error');
+        setStatus(msg.msgBasketUnavailable, 'error');
         return;
       }
       var remaining = total - netPayments();
       if (remaining <= 0) {
-        setStatus('Pending payments already cover the basket total.', 'info');
+        setStatus(msg.msgAlreadyCovered, 'info');
         return;
       }
       var amountInput = form.querySelector('input[name="amount"]');
@@ -278,7 +298,7 @@ window.utCurrency = (function(){
       if (changeInput) {
         changeInput.value = window.utCurrency.toMajor(0);
       }
-      setStatus('Filled with remaining balance (' + formatMoney(remaining) + ').', 'info');
+      setStatus(fmt(msg.msgFilled, formatMoney(remaining)), 'info');
     }
 
     async function submitPayments(){
@@ -289,13 +309,13 @@ window.utCurrency = (function(){
           autoAdded = addPayment();
         }
         if (!autoAdded) {
-          setStatus('Add at least one payment before completing the sale.', 'error');
+          setStatus(msg.msgNeedPayment, 'error');
           return;
         }
       }
 
       submitBtn.disabled = true;
-      setStatus('Submitting payments...', 'info');
+      setStatus(msg.msgSubmitting, 'info');
       try {
         var response = await fetch('/api/pos/tender', {
           method: 'POST',
@@ -306,7 +326,7 @@ window.utCurrency = (function(){
           body: JSON.stringify({ payments: payments, offline: offlineOverrideEnabled() || !navigator.onLine })
         });
         var text = await response.text();
-        var genericFailure = 'Payment failed. Please retry.';
+        var genericFailure = msg.msgPaymentFailed;
         if (!response.ok) {
           setStatus(text || genericFailure, 'error');
           return;
@@ -337,10 +357,14 @@ window.utCurrency = (function(){
         payments = [];
         renderPayments();
         clearForm();
-        setStatus('Sale completed.', 'success');
+        setStatus(msg.msgSaleCompleted, 'success');
       } catch (err) {
-        var msg = err && err.message ? err.message : 'Network error';
-        setStatus(msg, 'error');
+        // ut-docs#925: err.message is raw, always-English browser text
+        // ("Failed to fetch", ...) — the same leak class this card is about,
+        // so it stays out of the operator-facing status and goes to the
+        // console for diagnostics instead.
+        console.error('split tender submit failed:', err);
+        setStatus(msg.msgNetworkError, 'error');
       } finally {
         submitBtn.disabled = false;
       }
@@ -351,7 +375,7 @@ window.utCurrency = (function(){
       payments = [];
       renderPayments();
       clearForm();
-      setStatus('Cleared pending payments.', 'info');
+      setStatus(msg.msgCleared, 'info');
     });
     if (fillBtn) {
       fillBtn.addEventListener('click', fillRemaining);
@@ -364,7 +388,7 @@ window.utCurrency = (function(){
       if (Number.isNaN(idx)) return;
       payments.splice(idx, 1);
       renderPayments();
-      setStatus('Removed payment.', 'info');
+      setStatus(msg.msgRemoved, 'info');
     });
 
     renderPayments();
