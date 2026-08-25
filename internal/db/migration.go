@@ -3,6 +3,7 @@ package db
 import (
 	"embed"
 	"fmt"
+	"io/fs"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,7 +19,17 @@ type migration struct {
 }
 
 func loadMigrations() ([]migration, error) {
-	entries, err := migrationsFS.ReadDir("migrations")
+	return loadMigrationsFromFS(migrationsFS, "migrations")
+}
+
+// loadMigrationsFromFS does the real work of loadMigrations against an
+// injected fs.FS, so tests can exercise the full load→dedup→sort path
+// (including checkNoDuplicateVersions actually being wired in) against a
+// fixture directory without touching the real embedded migrations — a
+// fake collision can't be added to migrationsFS itself since //go:embed
+// only ever sees the real on-disk files.
+func loadMigrationsFromFS(fsys fs.FS, dir string) ([]migration, error) {
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return nil, fmt.Errorf("read migrations dir: %w", err)
 	}
@@ -41,7 +52,7 @@ func loadMigrations() ([]migration, error) {
 			return nil, fmt.Errorf("invalid migration version %s: %w", name, err)
 		}
 
-		b, err := migrationsFS.ReadFile("migrations/" + name)
+		b, err := fs.ReadFile(fsys, dir+"/"+name)
 		if err != nil {
 			return nil, fmt.Errorf("read migration %s: %w", name, err)
 		}
