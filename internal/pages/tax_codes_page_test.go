@@ -260,6 +260,28 @@ func TestTaxCodesAPI_Create_AcceptsExactly100(t *testing.T) {
 	if rateBP != 10000 || takeawayBP != 5000 {
 		t.Fatalf("expected 10000bp/5000bp persisted, got %d/%d", rateBP, takeawayBP)
 	}
+
+	// The 100 boundary is shared parsing code (parsePercentToBP) for both
+	// fields -- cover it on takeawayRate too, with rate deliberately != 100
+	// this time so the pair stays a genuine override, not another
+	// equal-pair case.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes",
+		strings.NewReader("name=Full+Takeaway+Rate&rate=50&takeawayRate=100"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("takeawayRate=100: expected 200, got %d body %s", rec2.Code, rec2.Body.String())
+	}
+	var rateBP2, takeawayBP2 int
+	if err := dp.Db.QueryRow(
+		`SELECT rate_basis_points, takeaway_rate_basis_points FROM tax_codes WHERE name = 'Full Takeaway Rate'`,
+	).Scan(&rateBP2, &takeawayBP2); err != nil {
+		t.Fatal(err)
+	}
+	if rateBP2 != 5000 || takeawayBP2 != 10000 {
+		t.Fatalf("expected 5000bp/10000bp persisted, got %d/%d", rateBP2, takeawayBP2)
+	}
 }
 
 // TestTaxCodesAPI_Create_EqualPairCanonicalizesToNoOverride is ut-docs#1013's
