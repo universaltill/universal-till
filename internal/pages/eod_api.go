@@ -71,6 +71,24 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 		label := strings.ToUpper(m.Method[:1]) + m.Method[1:]
 		doc.Payments = append(doc.Payments, print.KV{Label: label, Amount: money(m.In - m.Out)})
 	}
+	// Tips by payment method (ut-docs#1007), as footer lines rather than
+	// folded into doc.Payments above -- the reference day-close reports
+	// tips held OUT of revenue, never mixed into the payment-method
+	// takings those KV rows represent, and this section only appears at
+	// all once there's at least one tipped payment for the period (an
+	// empty rep.Tips -- e.g. a terminal with tipping disabled and zero
+	// cash tips -- prints nothing, same convention Departments/Tills
+	// below already follow).
+	if len(rep.Tips) > 0 {
+		doc.Footer = append(doc.Footer, "", "TIPS (held out of revenue)")
+		var tipTotal int64
+		for _, tp := range rep.Tips {
+			label := strings.ToUpper(tp.Method[:1]) + tp.Method[1:]
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("%dx %s", tp.Count, label), money(tp.Amount)))
+			tipTotal += tp.Amount
+		}
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", "TOTAL", money(tipTotal)))
+	}
 	// Department breakdown (E1b) + per-register breakdown, as footer lines so
 	// they print on the Z-report without depending on new Doc fields.
 	if len(rep.Departments) > 0 {
