@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +12,35 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// seedActiveTaxDePlugin inserts a minimal com.universaltill.tax-de row
+// into the plain `plugins` table this file's own seedForPages fixture
+// defines (used by menu_page_test.go's tile-gate tests, ut-docs#1084).
+// Deliberately NOT import_page_test.go's installTaxDePlugin: that targets
+// the real migrated schema (plugin_catalog has min_pos_version/
+// api_version/etc., FK'd from plugins) via appdb.Open, which this file's
+// openPagesTestDB + seedForPages fixture does not reproduce -- a
+// pre-existing fixture/schema gap (ut-docs#1084 found it, out of this
+// card's scope to fix generally). The fixture's `plugins` table has no FK
+// to plugin_catalog, so a direct insert is sufficient and accurate for
+// what PluginActive actually checks (`is_active = 1` on this one table).
+func seedActiveTaxDePlugin(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 1)`); err != nil {
+		t.Fatalf("seed active tax-de plugin: %v", err)
+	}
+}
+
+// seedDisabledTaxDePlugin is seedActiveTaxDePlugin's installed-but-disabled
+// counterpart (ut-docs#531's precedent, import_page_test.go's
+// installTaxDePluginDisabled) -- used by menu_page_test.go to prove the
+// tile gate actually checks is_active, not merely row existence.
+func seedDisabledTaxDePlugin(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 0)`); err != nil {
+		t.Fatalf("seed disabled tax-de plugin: %v", err)
+	}
+}
 
 // §146a Abs. 4 AO fiscal register page (ut-docs#665). Data capture only —
 // no export, no XML, no filing (that's ut-docs#937). Structural mirror of
