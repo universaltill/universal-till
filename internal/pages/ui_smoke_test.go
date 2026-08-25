@@ -471,7 +471,13 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		// render paths' GetFiscalTSESignature hit it directly, same drift
 		// rule as the comments above.
 		`CREATE TABLE fiscal_tse_signatures (sale_id TEXT PRIMARY KEY, transaction_number INTEGER NOT NULL DEFAULT 0, signature_counter INTEGER NOT NULL DEFAULT 0, serial_number TEXT NOT NULL DEFAULT '', start_time TEXT NOT NULL DEFAULT '', log_time TEXT NOT NULL DEFAULT '', signature TEXT NOT NULL, signature_algorithm TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
-		`CREATE TABLE report_archive (id TEXT PRIMARY KEY, kind TEXT NOT NULL, period TEXT NOT NULL, content_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (kind, period));`,
+		// report_archive: column-identical to 013_report_archive.sql plus
+		// 070_report_archive_zreport_numbering.sql's Z-number/receipt-range
+		// columns and partial unique index (ut-docs#1080) — same drift rule
+		// as the comments above. (037's cloud_acked_at is not read on any
+		// path these tests exercise.)
+		`CREATE TABLE report_archive (id TEXT PRIMARY KEY, kind TEXT NOT NULL, period TEXT NOT NULL, content_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), z_number INTEGER, prev_z_number INTEGER, prev_closed_at TEXT, first_receipt TEXT, last_receipt TEXT, UNIQUE (kind, period));`,
+		`CREATE UNIQUE INDEX ux_report_archive_kind_znumber ON report_archive (kind, z_number) WHERE z_number IS NOT NULL;`,
 		// table_id: column-identical to internal/db/migrations/054_tables.sql's
 		// ALTER (ut-docs#814/ADR-0054) and 055_held_sales_archive_table_id.sql's
 		// matching ALTER on the archive twin below — same drift rule as the

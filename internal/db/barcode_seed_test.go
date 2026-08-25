@@ -279,6 +279,7 @@ func TestSeedBarcodeChecksumsFixedOnUpgrade(t *testing.T) {
 	rewindServiceChargeTaxBasis062(t, d)
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
+	rewindZReportNumbering070(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -394,6 +395,7 @@ func TestSeedShortcutButtonChecksumFixedOnUpgrade(t *testing.T) {
 	rewindServiceChargeTaxBasis062(t, d)
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
+	rewindZReportNumbering070(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

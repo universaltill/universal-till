@@ -144,3 +144,72 @@ func TestMenuPage_ManagerOnlyTilesGatedByRole(t *testing.T) {
 		t.Fatalf("expected no /locations tile for a non-manager request, got: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#1084: the fiscal-register tile requires BOTH country=DE and the
+// German tax plugin installed+active -- country alone (ut-docs#1026's
+// objection) must no longer be sufficient.
+func TestMenuPage_FiscalRegisterTileRequiresPluginNotJustCountry(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, nil)
+	t.Setenv("UT_AUTH", "off")
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `href="/fiscal-register"`) {
+		t.Fatalf("expected no fiscal-register tile for DE with no plugin installed, got: %s", rec.Body.String())
+	}
+
+	seedActiveTaxDePlugin(t, dp.Db)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	body := rec2.Body.String()
+	if !strings.Contains(body, `href="/fiscal-register"`) || !strings.Contains(body, "📋") {
+		t.Fatalf("expected the fiscal-register tile once DE + plugin active, got: %s", body)
+	}
+}
+
+// The gate checks is_active, not merely row existence -- a plugin that's
+// installed but disabled (ut-docs#531's precedent: a merchant who imports
+// before enabling it) must be treated the same as not installed at all.
+func TestMenuPage_FiscalRegisterTileHiddenWhenPluginDisabled(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, nil)
+	t.Setenv("UT_AUTH", "off")
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	seedDisabledTaxDePlugin(t, dp.Db)
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `href="/fiscal-register"`) {
+		t.Fatalf("expected no fiscal-register tile for DE with the plugin installed but disabled, got: %s", rec.Body.String())
+	}
+}
+
+// A non-DE shop must never see the tile even with the plugin installed --
+// country stays a necessary pre-filter, it just isn't sufficient alone
+// any more.
+func TestMenuPage_FiscalRegisterTileHiddenOutsideGermanyEvenWithPlugin(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, nil)
+	t.Setenv("UT_AUTH", "off")
+	seedActiveTaxDePlugin(t, dp.Db)
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `href="/fiscal-register"`) {
+		t.Fatalf("expected no fiscal-register tile outside Germany even with the plugin active, got: %s", rec.Body.String())
+	}
+}
