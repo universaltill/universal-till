@@ -5,7 +5,7 @@ section: Everyday selling
 order: 10
 summary: "The main register screen: scan or pick items, take payment, print or skip the receipt."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
-keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables]
+keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip]
 ---
 
 # Selling & checkout
@@ -20,6 +20,66 @@ The main register screen: scan or pick items, take payment, print or skip the re
 4. Hold a basket to serve the next customer and recall it later; refunds are under the sale history.
 5. If you've set up tables (see **Tables & floor plan**), assign the current basket to one from the table picker under the order-type toggle — pick "No table" to clear it. A held order keeps its table, shown as a chip on the held-orders strip; tap **Move table** on the strip to move a held order onto a different free table without losing it or resuming it.
 6. To refund a completed sale, open it from Journal → sale history: pick which lines and how much of each to return (already-refunded quantity is tracked, so you can't return more than was sold), then choose cash or the original payment method to refund into.
+
+## Item customization
+
+Some items are set up in the catalog with customization groups — a coffee's size, a sandwich's bread, a burger's extras — each with its own price. See **Catalog, variants & barcodes** for setting those groups up; this section is about ringing one up.
+
+Tap a customized item's tile and a picker opens instead of the item going straight into the basket. Pick an option in each group — a group that only allows one choice shows round buttons, a group that allows more than one shows checkboxes — then choose **Add to cart**. Options that cost extra show their added price right next to the choice; the basket line then shows every option you picked underneath the item's name, with the total already folded into the line price.
+
+A group can be required (marked with a **\***) or optional, and can have its own minimum and maximum number of choices — most items just need one pick per group, but nothing stops a shop setting up a group that wants two of four. If you pick too few or too many for a group, **Add to cart** doesn't go through: a message names the group and how many choices it needs. **Cancel** closes the picker without adding anything.
+
+Once a customized line is in the basket, its options are locked in for that sale — there's no way to edit them in place. To change a customer's mind, remove the line (✕) and tap the item again to reopen the picker.
+
+## Discounts
+
+There are two separate kinds of discount, and they don't stack the same way — a per-line discount only affects that one basket line, a sale-level discount affects the whole basket total.
+
+**A per-line discount** comes off one basket line. Each line has a small discount box next to its quantity — type the amount to take off in your currency's smallest unit (e.g. type `30` to take 30p, or 30 cents, off that line) and move off the box; the basket updates immediately, the line's price drops, and the box then re-displays the amount the normal way (e.g. `0.30`). Clear the box back to `0` to remove the discount. It can't go negative, and it only ever reduces that one line.
+
+**A sale-level discount** — a coupon or promotion code set up under **Promotions & promo codes** — applies to the whole sale at once. Scan the code, or type it into the barcode box and choose **Add**, exactly like ringing up an item: the till recognizes it isn't an item barcode, checks it's an active promotion, and applies it across the whole basket instead of one line. A success message names the code, and a new **Discount** line appears in the basket's totals (a percentage code shows the percentage next to it, e.g. "Discount (10.00%)"). See **Promotions & promo codes** for creating and managing codes, including codes tied to one specific customer.
+
+What can go wrong: the scan box doesn't tell a bad promo code apart from an unrecognized item barcode — an inactive, expired, or unknown code is refused with the same "Item not found" message a mystery barcode gets, so a code that never scanned probably means it isn't active (or the shop's clock has moved past its end date) rather than a scanner problem. A code restricted to a specific customer only applies once that customer is linked to the sale (see below) — scanned before that, it's refused the same way.
+
+A per-line discount that's bigger than the line itself is accepted while you're building the basket, but the sale is refused when you try to take payment, with a generic "couldn't be completed" message that doesn't say why — if a payment is unexpectedly refused, check that every line's discount is smaller than that line's own price. Also, changing a line's quantity after setting its discount clears the discount back to `0` — set the quantity first, discount last.
+
+## Dine-in or takeaway
+
+A toggle above the basket switches the current sale between **Dine in** and **Takeaway** — the active choice is highlighted, the other one sits in its normal, unselected style (still fully tappable, not disabled). This matters for tax: some items' tax rate can differ between eating in and taking away, and the shown total updates immediately when you switch, using whichever is selected at that moment. It resets to Dine in (the default) any time the basket is reset for the next customer.
+
+## Linking a customer to a sale
+
+If you keep a customer list, scanning or typing their code into the barcode box links them to the current sale instead of adding an item — the same box you scan products into. This only recognizes a **customer code** in the shape the till expects (starting `CUST` or `LOY`) — a phone number or any other loyalty number typed in on its own isn't recognized as a customer lookup and is refused as "Item not found" like an unmatched product barcode; issue customers a code in the recognized shape (see **Users, PINs & shifts** or your customer-management plugin's own setup) if you want to look them up this way. A recognized-but-unknown code gets its own message instead ("Customer not found"). Once linked, a success message names the customer and their name shows above the basket totals for the rest of the sale.
+
+Linking a customer is what lets a customer-specific promotion code (see **Discounts** above) be recognized — scan the customer first, then their code.
+
+## "Customers also buy" suggestions
+
+A row of suggestion chips can appear under the basket totals, based on what tends to sell alongside what's already in the basket — worked out entirely from this shop's own past sales, with nothing sent over the network. Tap a chip to add that item straight to the basket. Unlike tapping the item's own tile, this always adds it directly — for an item that's normally customized (see **Item customization** above), the chip skips the customization picker rather than opening it, so double-check a customized item added this way.
+
+The strip shows nothing at all — not even an empty box — whenever there's nothing to suggest: an empty basket, a basket of items with no strong sales pattern together, or if the lookup itself fails for any reason. It never blocks or interrupts a sale; treat it as a hint, not a step you need to act on.
+
+## Status chips in the top bar
+
+Several small chips in the nav bar tell you, at a glance, what's going on with the till — none of them block the sale screen:
+
+- Your own name (👤) is who's currently signed in; tapping it opens Change PIN, and the **Lock** button next to it signs out to the PIN pad. See **Users, PINs & shifts** for that and for the manager-only shortcuts that show up next to it (Users, Promotions, Translations).
+- If this till syncs with others, a chip shows this till's name and its sync state (caught up, or behind/offline with a queued count) — see **Multiple tills (one shop)** for exactly what it shows. A single till with nothing joined shows no sync chip at all.
+- If your shop has a TSE configured, a fiscal signing chip shows its health — see **German shops: TSE and real sales** below.
+- A bug-report chip is also there if that feature is enabled — see **Reporting a bug**.
+
+## Selling with no network connection
+
+The till is built to keep selling when the internet, the shop's own network, or another till it syncs with is unreachable — a network outage never blocks checkout. What actually changes on screen:
+
+- **Nothing about ringing up items, customizing them, applying discounts, or holding a basket needs the network** — all of that runs against this till's own local data.
+- If a request genuinely can't reach the till's own server (the browser tab itself lost connectivity), a banner reading "Connection problem — the till keeps working offline." appears at the top of the sale screen; it clears itself the next time a request succeeds, so it never has to be dismissed by hand.
+- If this till syncs with others (see **Multiple tills (one shop)**), the sync status chip in the top bar turns amber and marks itself offline/queued rather than disappearing — sales keep recording locally and catch the other tills up once the connection returns.
+- Payment still works the same way: cash and any offline-capable payment method complete normally. A payment method that itself needs the network (a card reader calling out to its processor, for instance) is a property of that specific method, not of the till. There's an offline checkbox next to the Pay buttons for marking a sale offline up front — note that it's a standing setting, not a one-off: once ticked it stays on (even after closing the till) until you untick it again, so switch it back off once the outage is over.
+- Printing a receipt is a local connection to the printer (USB, LAN, or Bluetooth), not an internet one, so it's unaffected by an internet outage on its own; a genuinely unreachable printer is reported separately (see **Receipts & printing**).
+- A held basket, once resumed, completes exactly the same way — nothing about holding or recalling a sale depends on connectivity either.
+
+What can go wrong: none of this pauses or blocks a sale by itself. The one thing that *can* pause selling is the separate Germany TSE fiscal-signing check described below — and that check explicitly does not treat being offline as a fault.
 
 ## German shops: TSE and real sales
 
