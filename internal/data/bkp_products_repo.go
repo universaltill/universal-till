@@ -112,7 +112,16 @@ func buildBkpProductsQuery(productCols, groupCols map[string]bool) string {
 	switch {
 	case productCols["productgrouptext"]:
 		category = "p.ProductGroupText"
-	case productCols["productgroupid"] && (groupCols["productgrouptext"] || groupCols["productgroupname"]):
+	// The join KEY is introspected on both sides, not just the display
+	// column (independent review, ut-docs#968): emitting
+	// "g.ProductGroupID" because Products happens to have that column,
+	// without confirming ProductGroups has it too, re-creates this card's
+	// own bug one table over — the query fails with "no such column:
+	// g.ProductGroupID" and the entire import dies rather than degrading
+	// to an empty category, which is exactly the outcome the introspection
+	// above exists to prevent.
+	case productCols["productgroupid"] && groupCols["productgroupid"] &&
+		(groupCols["productgrouptext"] || groupCols["productgroupname"]):
 		switch {
 		case groupCols["productgrouptext"] && groupCols["productgroupname"]:
 			// ProductGroupText is the display name; fall back to
