@@ -21,8 +21,12 @@ type WindowController interface {
 	ApplyMode(mode string) error
 }
 
-// NoopWindowController is the default WindowController until a real
-// platform implementation is wired in (see #609/#610/#883).
+// NoopWindowController is a do-nothing WindowController kept for bare-Deps
+// tests and the handlers' nil-WindowCtl fallback. It is deliberately NO
+// LONGER the production default (ADR-0064, ut-docs#1039): pages.Init wires
+// ShellPollWindowController instead, because a silent no-op behind the
+// PIN-gated exit-to-os is exactly what let a .deb install engage kiosk
+// mode while telling the operator "Exited to OS." over a dead channel.
 type NoopWindowController struct{}
 
 func (NoopWindowController) ExitToOS() error             { return nil }

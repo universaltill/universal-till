@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -102,6 +103,48 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	applyWindowMode(w, prefs.WindowMode)
 	if err := reconcileAutostart(prefs.LaunchOnStartup); err != nil {
 		fmt.Fprintln(os.Stderr, "reconcile autostart entry:", err)
+	}
+
+	// Polled window-control channel (ADR-0064, ut-docs#1039): long-poll the
+	// server's live window mode and apply every change — including the
+	// exit-to-os path, which is just "the live mode became normal". All
+	// traffic is shell → server, so this works identically in attach mode
+	// (.deb: the server is a systemd service this process never spawned —
+	// the topology where ut-docs#882's env handoff could not exist) and in
+	// spawn mode; showWindow is shared by both branches of main, which is
+	// what makes that automatic. Gated on shellAppliesWindowMode (real GTK
+	// apply on Linux only — Windows reaches this file too but its
+	// applyWindowMode is still ut-docs#610's empty stub, and it must not
+	// claim control=live and be served a kiosk mode it can't leave).
+	//
+	// The deferred cancel-and-JOIN is registered after defer w.Destroy()
+	// and defer ctl.Close() above, so LIFO runs it FIRST when showWindow
+	// returns: the watcher goroutine is fully stopped — cancel aborts its
+	// in-flight poll, and the join waits for the loop to exit — before the
+	// window it Dispatches onto is destroyed. Same use-after-free reasoning
+	// as ctl.Close's ordering (ut-docs#882 review m1).
+	if shellAppliesWindowMode {
+		pollCtx, cancelPoll := context.WithCancel(context.Background())
+		pollDone := make(chan struct{})
+		defer func() {
+			cancelPoll()
+			<-pollDone
+		}()
+		go func() {
+			defer close(pollDone)
+			// done() fires INSIDE the dispatched closure, after
+			// applyWindowMode returned on the UI thread — so applied=
+			// acknowledges a window that really changed, not a closure
+			// merely queued onto a possibly-wedged GTK loop (review of
+			// ut-docs#1039, finding 4). Dispatch executes closures in
+			// order, so acks cannot arrive out of order either.
+			watchShellMode(pollCtx, newShellPollClient(), url, prefs.WindowMode, prefs.Rev, func(mode string, done func()) {
+				w.Dispatch(func() {
+					applyWindowMode(w, mode)
+					done()
+				})
+			})
+		}()
 	}
 
 	w.Navigate(url)
