@@ -166,6 +166,41 @@ specs).
   was self-caught, not review-caught — the independent review ran on the
   version *after* this bug had already been fixed and never saw it.
 
+## CI found a second real regression, after review and merge-conflict resolution
+
+After merging `main` (see below) and pushing, the PR's `e2e` check
+(`tests/e2e/` — a smaller, separate legacy Playwright suite from the
+`e2e/` one this PR's own regression coverage lives in, run by a different
+CI job) failed:
+`pos_ui_mvp.spec.ts`'s "accessibility baseline for primary actions" test
+located the tender's Split tab via `getByRole('button', { name: 'Split' })`.
+Giving that button `role="tab"` (this PR's whole point, per the WAI-ARIA
+tabs pattern) overrides its native `<button>` element's implicit
+`role="button"`, so the old locator stopped matching — correctly, by
+design, not a bug in the shipped change. Fixed by updating the test to
+`getByRole('tab', ...)`, verified locally by booting a server the same way
+this CI job does (`scripts/e2e_seed` + `UT_AUTH=off UT_DEV_MODE=true go run .`)
+and running the full legacy suite (21 passed, 4 skipped for the missing
+`DOCS_READ_TOKEN` secret locally — same as CI without it).
+
+Worth naming explicitly: this is the second distinct e2e test surface this
+change touched (`e2e/` and `tests/e2e/` are two separate suites, run by two
+separate CI jobs), and this session's own pre-push verification only ever
+exercised the first — the second was found by CI, not by review. No
+pre-existing single command runs both from this repo; noting it here as a
+gap in this session's own verification discipline, not just the ticket's.
+
+## Merge conflict with `main`
+
+Between opening this PR and its own CI running, PR #515 (import problem
+grid) merged to `main` first, landing a conflict — solely in the generated
+`web/help/img/manifest.json` (both PRs touched `web/ui/**`, triggering
+docs-shots regeneration). Merged `main` into the branch, regenerated the
+manifest fresh via `make docs-shots` rather than hand-resolving the
+conflict, and re-ran the full verification pass (build, guards, the new
+spec + regression specs, a full 170-spec sweep of the `e2e/` suite) against
+the merged tree before pushing.
+
 ## Deferred / follow-up
 
 - New Backlog card: kiosk-floor (1024×600) tab-bar height regression at
