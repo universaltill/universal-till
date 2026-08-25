@@ -435,7 +435,7 @@ func TestArchiveReport_IdempotentPerKindAndPeriod(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	created, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{"total":100}`))
+	created, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{"total":100}`), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +444,7 @@ func TestArchiveReport_IdempotentPerKindAndPeriod(t *testing.T) {
 	}
 
 	// Same kind+period again: no-op, reports created=false, doesn't clobber.
-	created, err = dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{"total":999}`))
+	created, err = dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{"total":999}`), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +476,7 @@ func TestPruneReportArchiveOlderThan_DeletesOnlyRowsBeforeCutoff(t *testing.T) {
 	ctx := context.Background()
 
 	for _, p := range []string{"2015-06-01", "2015-12-31", "2016-01-01", "2026-01-01"} {
-		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`)); err != nil {
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`), "", ""); err != nil {
 			t.Fatalf("seed archive %s: %v", p, err)
 		}
 	}
@@ -525,7 +525,7 @@ func TestReportArchiveCoverage_EmptyAndPopulated(t *testing.T) {
 	}
 
 	for _, p := range []string{"2024-03-01", "2025-01-15", "2023-11-30"} {
-		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`)); err != nil {
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`), "", ""); err != nil {
 			t.Fatalf("seed archive %s: %v", p, err)
 		}
 	}
@@ -544,7 +544,7 @@ func TestArchivedReportsInRange_BoundedAndOrdered(t *testing.T) {
 	ctx := context.Background()
 
 	for _, p := range []string{"2026-01-05", "2026-01-01", "2026-01-10", "2025-12-31"} {
-		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{"p":"`+p+`"}`)); err != nil {
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{"p":"`+p+`"}`), "", ""); err != nil {
 			t.Fatalf("seed archive %s: %v", p, err)
 		}
 	}
