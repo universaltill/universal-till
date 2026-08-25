@@ -50,6 +50,17 @@ var eodTimeRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 // separators.
 var eodDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// fmtRateBP renders a basis-point tax rate as a percentage label for the
+// Z-report's VAT band footer: 700 → "7%", 1900 → "19%", and a non-whole
+// rate like 1050 → "10.5%" (trailing zeros trimmed, integer arithmetic
+// only — no floats near money-adjacent figures).
+func fmtRateBP(bp int) string {
+	if bp%100 == 0 {
+		return fmt.Sprintf("%d%%", bp/100)
+	}
+	return strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0") + "%"
+}
+
 // buildEODDoc renders the Z-report for the receipt printer.
 func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 	money := func(minor int64) string { return httpx.FormatMoney(minor, "en") }
@@ -71,8 +82,17 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 		label := strings.ToUpper(m.Method[:1]) + m.Method[1:]
 		doc.Payments = append(doc.Payments, print.KV{Label: label, Amount: money(m.In - m.Out)})
 	}
-	// Department breakdown (E1b) + per-register breakdown, as footer lines so
-	// they print on the Z-report without depending on new Doc fields.
+	// Per-VAT-rate breakdown (ut-docs#1003) + department breakdown (E1b) +
+	// per-register breakdown, as footer lines so they print on the Z-report
+	// without depending on new Doc fields.
+	if len(rep.TaxBands) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY VAT RATE")
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-6s %11s %10s %11s", "", "Net", "Tax", "Gross"))
+		for _, b := range rep.TaxBands {
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-6s %11s %10s %11s",
+				fmtRateBP(b.RateBP), money(b.Net), money(b.Tax), money(b.Gross)))
+		}
+	}
 	if len(rep.Departments) > 0 {
 		doc.Footer = append(doc.Footer, "", "BY DEPARTMENT")
 		for _, d := range rep.Departments {

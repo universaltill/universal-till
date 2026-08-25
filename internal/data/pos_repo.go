@@ -1044,11 +1044,16 @@ WHERE status = 'completed' AND sale_type = 'sale'
 }
 
 // TaxBand is one tax rate's totals over the reporting window — the VAT
-// summary an owner (or their accountant) needs per return period.
+// summary an owner (or their accountant) needs per return period. JSON tags
+// are snake_case per this repo's API convention: EODReport.TaxBands
+// (ut-docs#1003) marshals these into the archived/downloaded Z-report;
+// TaxSummary's template-rendered use reads the Go fields directly and never
+// marshals, so the tags change no pre-existing wire format.
 type TaxBand struct {
-	RateBP int   // basis points (2000 = 20%)
-	Net    int64 // taxable amount before tax, minor units
-	Tax    int64 // tax collected, minor units
+	RateBP int   `json:"rate_bp"` // basis points (2000 = 20%)
+	Net    int64 `json:"net"`     // taxable amount before tax, minor units
+	Tax    int64 `json:"tax"`     // tax collected, minor units
+	Gross  int64 `json:"gross"`   // Net + Tax: tax-inclusive, minor units
 }
 
 // TaxSummary groups completed sales' lines by tax rate over [from, to).
@@ -1592,6 +1597,7 @@ type EODReport struct {
 	RefundTotal  int64       `json:"refund_total"`
 	Net          int64       `json:"net"`
 	TaxNet       int64       `json:"tax_net"`
+	TaxBands     []TaxBand   `json:"tax_bands"` // per-VAT-rate net/tax/gross (ut-docs#1003)
 	Methods      []EODMethod `json:"methods"`
 	Departments  []DeptSales `json:"departments"` // per-department sales (E1b)
 	Tills        []TillSales `json:"tills"`       // per-register sales (multi-till)
@@ -1680,6 +1686,49 @@ GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 		rep.Methods = append(rep.Methods, m)
 	}
 	if err := rows.Err(); err != nil {
+		return rep, err
+	}
+
+	// Per-VAT-rate breakdown (ut-docs#1003): net / tax / gross per
+	// sale_lines.tax_rate_bp — what a German day-close (Z-Bon, VAT return,
+	// DATEV handoff) needs per rate. Applies to ranged reports too, same as
+	// Methods above. Deliberate details:
+	//   - Same LOCAL-calendar-day convention as this function's totals query
+	//     (ut-docs#869) — NOT TaxSummary's UTC datetime window, which is a
+	//     different report on a different time convention.
+	//   - Returns subtract, mirroring TaxSummary's sign-flip convention.
+	//   - Zero-value "note" lines (total_before_tax = total_after_tax = 0,
+	//     arbitrary tax_rate_bp) are excluded so they can't invent a
+	//     spurious band; a real 0%-rate sale has nonzero money and keeps
+	//     its own band.
+	//   - ORDER BY rate ASC (0%, 7%, 19% — the card's reference layout).
+	// Every summed column is a pre-rounded integer minor-unit value, so
+	// SUM() is exact integer arithmetic: band sums reconcile exactly with
+	// rep.TaxNet / rep.Net with no re-rounding anywhere (the reference
+	// implementation's rounding bug this card exists to avoid).
+	bandRows, err := r.db.QueryContext(ctx, `
+SELECT sl.tax_rate_bp,
+  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.total_before_tax ELSE sl.total_before_tax END), 0) AS net,
+  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.tax_amount ELSE sl.tax_amount END), 0) AS tax
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed'
+  AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+  AND (sl.total_before_tax != 0 OR sl.total_after_tax != 0)
+GROUP BY sl.tax_rate_bp ORDER BY sl.tax_rate_bp ASC`, from, to)
+	if err != nil {
+		return rep, fmt.Errorf("eod tax bands: %w", err)
+	}
+	defer bandRows.Close()
+	for bandRows.Next() {
+		var b TaxBand
+		if err := bandRows.Scan(&b.RateBP, &b.Net, &b.Tax); err != nil {
+			return rep, fmt.Errorf("scan eod tax band: %w", err)
+		}
+		b.Gross = b.Net + b.Tax
+		rep.TaxBands = append(rep.TaxBands, b)
+	}
+	if err := bandRows.Err(); err != nil {
 		return rep, err
 	}
 
