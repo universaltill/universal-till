@@ -44,12 +44,17 @@ func TestBuildEODDoc(t *testing.T) {
 		SalesCount: 12, Gross: 15000, RefundCount: 1, RefundTotal: 500,
 		Net: 14500, TaxNet: 2400,
 		Methods:      []data.EODMethod{{Method: "cash", In: 9000, Out: 500}, {Method: "card", In: 6000}},
+		Tips:         []data.EODTip{{Method: "card", Count: 4, Amount: 320}},
 		FirstReceipt: "000000001", LastReceipt: "000000013",
 	}
 	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
 	for _, want := range []string{
 		"END OF DAY 2026-07-14", "Sales (12)", "Refunds (1)", "NET",
 		"£145.00", "Cash", "£85.00", // 9000 in − 500 out
+		// ut-docs#1007: tips print separately, held out of revenue —
+		// "4x Card" + total £3.20, never folded into the Cash/Card
+		// payment-method rows above.
+		"TIPS", "4x Card", "£3.20",
 		"Receipts 000000001 - 000000013",
 	} {
 		if !strings.Contains(out, want) {
@@ -147,6 +152,22 @@ func TestBuildEODDoc_CashReconciliation(t *testing.T) {
 	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
 	if strings.Contains(out, "CASH RECONCILIATION") {
 		t.Error("section must be omitted when no reconciliation exists")
+	}
+}
+
+// A day with zero tipped payments (e.g. a terminal with tipping disabled
+// and no cash tips either) must print no TIPS section at all, not an
+// empty one — ut-docs#1007.
+func TestBuildEODDoc_NoTips(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 1, Gross: 500, Net: 500,
+		Methods:      []data.EODMethod{{Method: "cash", In: 500}},
+		FirstReceipt: "000000001", LastReceipt: "000000001",
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if strings.Contains(out, "TIPS") {
+		t.Errorf("Z-report with zero tips must not print a TIPS section, got:\n%s", out)
 	}
 }
 
