@@ -156,6 +156,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	rewindServiceChargeTaxBasis062(t, d)
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
+	rewindZReportNumbering070(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -309,6 +310,28 @@ func rewindVoucherIssueTotal069(t *testing.T, d *DB) {
 	} {
 		if _, err := d.DB.Exec(q); err != nil {
 			t.Fatalf("rewind 069 (%s): %v", q, err)
+		}
+	}
+}
+
+// rewindZReportNumbering070 undoes migration 070's non-idempotent DDL (the
+// report_archive Z-number/receipt-range columns, ut-docs#1080) — same replay
+// problem as the rewind helpers above. The partial unique index must go
+// first: SQLite refuses to DROP COLUMN z_number while an index references it
+// (its own CREATE ... IF NOT EXISTS is replay-safe and needs no rewind, but
+// dropping it lets the columns go and replay recreates it anyway).
+func rewindZReportNumbering070(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`DROP INDEX IF EXISTS ux_report_archive_kind_znumber`,
+		`ALTER TABLE report_archive DROP COLUMN z_number`,
+		`ALTER TABLE report_archive DROP COLUMN prev_z_number`,
+		`ALTER TABLE report_archive DROP COLUMN prev_closed_at`,
+		`ALTER TABLE report_archive DROP COLUMN first_receipt`,
+		`ALTER TABLE report_archive DROP COLUMN last_receipt`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 070 (%s): %v", q, err)
 		}
 	}
 }

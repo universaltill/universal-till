@@ -323,7 +323,10 @@ func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID
 	if err != nil {
 		return rep, false, err
 	}
-	created, err := repo.ArchiveReport(ctx, "eod", day, raw)
+	// rep.FirstReceipt/LastReceipt (MIN/MAX receipt_no, computed in
+	// EndOfDay) ride along as queryable columns (ut-docs#1080) so a future
+	// accounting export (ut-docs#1036) needn't parse content_json.
+	created, err := repo.ArchiveReport(ctx, "eod", day, raw, rep.FirstReceipt, rep.LastReceipt)
 	if err != nil || !created {
 		return rep, created, err
 	}

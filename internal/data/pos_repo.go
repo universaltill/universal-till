@@ -2125,28 +2125,115 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
 
 // ArchiveReport stores a generated report; kind+period is unique so the
 // scheduled job is idempotent. Returns false when it already existed.
-func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, content []byte) (bool, error) {
-	res, err := r.db.ExecContext(ctx, `
-INSERT INTO report_archive (id, kind, period, content_json)
-VALUES (?, ?, ?, ?) ON CONFLICT (kind, period) DO NOTHING`,
-		uuid.NewString(), kind, period, string(content))
-	if err != nil {
-		return false, fmt.Errorf("archive report: %w", err)
+//
+// Each stored row also gets a sequential, gapless Z-number chained to its
+// predecessor (ut-docs#1080): z_number = MAX(z_number)+1 within the kind,
+// computed and inserted in ONE atomic INSERT...SELECT (same gapless-sequence
+// idiom as InvoiceRepo.Create). Aggregates without GROUP BY always yield
+// exactly one row, so on a till's very first close (zero matching rows)
+// MAX(z_number) is NULL: COALESCE gives z_number=1 and prev_z_number/
+// prev_closed_at stay NULL -- "no previous close" is stored as NULL, never a
+// fake 0. The prev_closed_at subquery filters z_number IS NOT NULL so a
+// pre-migration legacy row (never numbered) can't be picked up as the
+// "previous close" while prev_z_number stays NULL.
+//
+// "Gapless" describes allocation: no number is ever skipped or handed out
+// twice while the rows exist. Age-based retention still applies on top --
+// PruneReportArchiveOlderThan (ADR-0040 §2) deletes old rows, so the
+// surviving sequence can start above 1, and in the one pathological case
+// where it removes every numbered row of a kind (a till dormant for the
+// whole 10-year window) the next close restarts at 1.
+//
+// A duplicate (kind, period) is absorbed by DO NOTHING before any row is
+// written, so it consumes no number and reports created=false, not an
+// error. The 3-attempt retry (same shape as InvoiceRepo.Create) covers the
+// one error class worth retrying: a lost race on the
+// ux_report_archive_kind_znumber UNIQUE index, i.e. two closes that both
+// computed the same MAX(z_number)+1. That race is defence in depth, not an
+// observed failure -- ut-docs#1080's review measured it on the DSN this
+// repo actually opens (internal/db.Open: WAL, busy_timeout 5000) and got
+// zero lost races out of 60 concurrent single-attempt inserts, because an
+// autocommit INSERT...SELECT takes SQLite's write lock before it evaluates
+// the SELECT, so MAX() is read under that lock and concurrent closes
+// serialise instead of racing. The loop is kept so the invariant survives
+// a later change to that shape (an explicit deferred transaction, another
+// driver). Errors of any other class -- I/O, busy-timeout expiry, a
+// cancelled ctx, a schema mismatch -- are not masked by it: every attempt
+// fails identically and the original error is returned wrapped after the
+// third.
+func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, content []byte, firstReceipt, lastReceipt string) (bool, error) {
+	id := uuid.NewString()
+	var lastErr error
+	for range 3 {
+		res, err := r.db.ExecContext(ctx, `
+INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt)
+SELECT ?, ?, ?, ?,
+  COALESCE(MAX(z_number), 0) + 1,
+  MAX(z_number),
+  (SELECT created_at FROM report_archive
+     WHERE kind = ? AND z_number IS NOT NULL
+     ORDER BY z_number DESC LIMIT 1),
+  ?, ?
+FROM report_archive WHERE kind = ?
+ON CONFLICT (kind, period) DO NOTHING`,
+			id, kind, period, string(content), kind, firstReceipt, lastReceipt, kind)
+		if err == nil {
+			n, _ := res.RowsAffected()
+			return n > 0, nil
+		}
+		lastErr = err
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	return false, fmt.Errorf("archive report: %w", lastErr)
 }
 
 // ArchivedReportRow lists an archived report for the Reports page and the
 // retention export (ADR-0040 §7). JSON tags are snake_case per this repo's
 // API convention -- the export handler is the one consumer that actually
 // marshals this to JSON; the Reports page reads the Go fields directly.
+//
+// ZNumber is 0 for a pre-migration legacy row that never got a number (real
+// numbers start at 1, so 0 is unambiguous "no number"). PrevZNumber/
+// PrevClosedAt are pointers because NULL ("no previous close" -- legacy rows
+// and a till's first close) is a distinct fact from any real value and must
+// not be coerced to a fake zero.
 type ArchivedReportRow struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Period    string `json:"period"`
-	Content   string `json:"content_json"`
-	CreatedAt string `json:"created_at"`
+	ID           string  `json:"id"`
+	Kind         string  `json:"kind"`
+	Period       string  `json:"period"`
+	Content      string  `json:"content_json"`
+	CreatedAt    string  `json:"created_at"`
+	ZNumber      int64   `json:"z_number"`
+	PrevZNumber  *int64  `json:"prev_z_number"`
+	PrevClosedAt *string `json:"prev_closed_at"`
+	FirstReceipt string  `json:"first_receipt"`
+	LastReceipt  string  `json:"last_receipt"`
+}
+
+// scanArchivedReport scans the shared SELECT column list of
+// ListArchivedReports / ArchivedReportsInRange, mapping the nullable
+// columns to their Go representations (see ArchivedReportRow's doc).
+func scanArchivedReport(rows *sql.Rows) (ArchivedReportRow, error) {
+	var a ArchivedReportRow
+	var zNum, prevZ sql.NullInt64
+	var prevClosed, firstR, lastR sql.NullString
+	if err := rows.Scan(&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt,
+		&zNum, &prevZ, &prevClosed, &firstR, &lastR); err != nil {
+		return a, fmt.Errorf("scan report: %w", err)
+	}
+	a.CreatedAt = formatArchiveTimestamp(a.CreatedAt)
+	a.ZNumber = zNum.Int64 // NULL (legacy row) reads as 0; real numbers start at 1
+	if prevZ.Valid {
+		a.PrevZNumber = &prevZ.Int64
+	}
+	if prevClosed.Valid {
+		// Same SQLite datetime('now') format as created_at, so the same
+		// ISO-8601 normalization applies (CLAUDE.md date-format rule).
+		s := formatArchiveTimestamp(prevClosed.String)
+		a.PrevClosedAt = &s
+	}
+	a.FirstReceipt = firstR.String
+	a.LastReceipt = lastR.String
+	return a, nil
 }
 
 // formatArchiveTimestamp converts report_archive.created_at (SQLite
@@ -2165,7 +2252,8 @@ func formatArchiveTimestamp(raw string) string {
 // ListArchivedReports returns recent archived reports, newest first.
 func (r *POSRepo) ListArchivedReports(ctx context.Context, limit int) ([]ArchivedReportRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, kind, period, content_json, created_at
+SELECT id, kind, period, content_json, created_at,
+       z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt
 FROM report_archive ORDER BY period DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list reports: %w", err)
@@ -2173,11 +2261,10 @@ FROM report_archive ORDER BY period DESC LIMIT ?`, limit)
 	defer rows.Close()
 	var out []ArchivedReportRow
 	for rows.Next() {
-		var a ArchivedReportRow
-		if err := rows.Scan(&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan report: %w", err)
+		a, err := scanArchivedReport(rows)
+		if err != nil {
+			return nil, err
 		}
-		a.CreatedAt = formatArchiveTimestamp(a.CreatedAt)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -2245,7 +2332,8 @@ func (r *POSRepo) ReportArchiveCoverage(ctx context.Context) (ReportArchiveCover
 // data_api.go's export handler).
 func (r *POSRepo) ArchivedReportsInRange(ctx context.Context, from, to string) ([]ArchivedReportRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, kind, period, content_json, created_at
+SELECT id, kind, period, content_json, created_at,
+       z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt
 FROM report_archive WHERE period BETWEEN ? AND ? ORDER BY period`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("archived reports in range: %w", err)
@@ -2257,11 +2345,10 @@ FROM report_archive WHERE period BETWEEN ? AND ? ORDER BY period`, from, to)
 	// repo's review process caught before merge (ADR-0040 card 1 review).
 	out := []ArchivedReportRow{}
 	for rows.Next() {
-		var a ArchivedReportRow
-		if err := rows.Scan(&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan report: %w", err)
+		a, err := scanArchivedReport(rows)
+		if err != nil {
+			return nil, err
 		}
-		a.CreatedAt = formatArchiveTimestamp(a.CreatedAt)
 		out = append(out, a)
 	}
 	return out, rows.Err()
