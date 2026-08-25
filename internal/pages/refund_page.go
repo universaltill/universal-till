@@ -37,7 +37,15 @@ func saleIsTaxInclusive(d data.SaleDetail) bool {
 	if d.TaxTotal == 0 {
 		return false // both modes agree; exclusive math is the identity
 	}
-	return d.Total == d.Subtotal-d.DiscountTotal
+	// A service charge is added to the total in BOTH modes (inclusive keeps
+	// its tax inside the amount, exclusive adds it on top with the lines'),
+	// so it has to come off the comparison or an inclusive sale carrying one
+	// is misread as exclusive -- which then mis-derives the whole sale on
+	// every path that asks: the invoice VAT breakdown, the refund math, and
+	// (since ADR-0061 taxes the charge by pricing mode) a journal replay's
+	// recomputed totals. Reduces to the original comparison exactly when
+	// there is no charge, so no pre-service-charge sale changes reading.
+	return d.Total == d.Subtotal-d.DiscountTotal+d.ServiceCharge
 }
 
 // refundLinePool computes, per refund-line key, the TRUE quantity still

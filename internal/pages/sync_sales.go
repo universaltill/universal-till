@@ -175,13 +175,30 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		// primary happens to have configured right now (ut-docs#72) --
 		// same reasoning as SaleDiscount above.
 		in.ServiceCharge = money.FromMinor(j.Sale.ServiceCharge)
+		// ...and the ORIGINAL tax basis that amount was taxed at
+		// (ADR-0061 Decision 4). computeSaleTotals re-derives the charge's
+		// tax from this on replay, so it must be the basis the ORIGINATING
+		// till used, never the primary's own policy: replaying a
+		// plugin-answered flat basis (say 7%) under the primary's
+		// apportioned default would compute a different tax, store totals
+		// that disagree with the replica's, and -- when the re-derived
+		// total lands higher -- be rejected outright as underpayment, so
+		// the sale could never replicate. 0 (a pre-ADR-0061 peer's journal,
+		// which has no such key) IS the apportioned default, which is
+		// exactly what that peer computed, so it degrades correctly.
+		in.ServiceChargeTaxBasisBP = j.Sale.ServiceChargeTaxBasisBP
 	}
 	for _, p := range j.Sale.Payments {
 		in.Payments = append(in.Payments, pos.PaymentInput{
 			MethodID: p.Method, Amount: money.FromMinor(p.Amount),
 			ChangeGiven: money.FromMinor(p.ChangeGiven),
 			TipAmount:   money.FromMinor(p.TipAmount),
-			Currency:    j.Sale.Currency, Reference: p.Reference,
+			// The recipient recorded at capture time (ADR-0061 Decision 3)
+			// must survive a replica->primary replay verbatim -- empty (a
+			// pre-ADR-0061 peer's journal) re-defaults to employee inside
+			// CompleteSale, never re-derived from the primary's own policy.
+			TipRecipient: p.TipRecipient,
+			Currency:     j.Sale.Currency, Reference: p.Reference,
 			// Card-present reconciliation fields (ut-docs#543) must
 			// survive a replica->primary journal replay, same as every
 			// other payment field -- the primary is where cross-till

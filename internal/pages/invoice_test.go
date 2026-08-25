@@ -27,6 +27,91 @@ func TestVATBreakdownGroupsByRecordedRate(t *testing.T) {
 	}
 }
 
+// ADR-0061 (reviewer finding, 2026-08-24): once core taxes the service
+// charge, an invoice whose VAT table is built from lines alone declares
+// LESS VAT than the sale collected, and its gross stops matching the sale
+// total. The charge's apportioned net/tax must land in the bands — via the
+// same shared pos.ApportionServiceChargeTax the tender path uses — in both
+// pricing modes.
+func TestVATBreakdownApportionsServiceCharge(t *testing.T) {
+	t.Run("exclusive", func(t *testing.T) {
+		// One line: net 100 @20% (tax 20). Service charge 10, taxed at the
+		// sale's own 20% = 2. Total 100 + 10 + 22 = 132.
+		sale := data.SaleDetail{
+			Subtotal: 100, TaxTotal: 22, Total: 132, ServiceCharge: 10,
+			Lines: []data.SaleDetailLine{{TaxRateBP: 2000, LineTotal: 120, TaxAmount: 20}},
+		}
+		bands := vatBreakdown(sale)
+		if len(bands) != 1 {
+			t.Fatalf("expected 1 band, got %+v", bands)
+		}
+		if bands[0].Net != 110 || bands[0].Tax != 22 || bands[0].Gross != 132 {
+			t.Fatalf("charge not apportioned into the band: %+v (want net 110 / tax 22 / gross 132)", bands[0])
+		}
+		assertBandsMatchSale(t, bands, sale)
+	})
+
+	t.Run("inclusive", func(t *testing.T) {
+		// One line: gross 120 incl 20% (net 100, tax 20). Service charge 10,
+		// inclusive, so its own 2 of tax sits INSIDE it. Total 120 + 10 = 130.
+		sale := data.SaleDetail{
+			Subtotal: 120, TaxTotal: 22, Total: 130, ServiceCharge: 10,
+			Lines: []data.SaleDetailLine{{TaxRateBP: 2000, LineTotal: 120, TaxAmount: 20}},
+		}
+		if !saleIsTaxInclusive(sale) {
+			t.Fatal("an inclusive sale carrying a service charge must still read as inclusive")
+		}
+		bands := vatBreakdown(sale)
+		if len(bands) != 1 {
+			t.Fatalf("expected 1 band, got %+v", bands)
+		}
+		if bands[0].Net != 108 || bands[0].Tax != 22 || bands[0].Gross != 130 {
+			t.Fatalf("charge not apportioned into the band: %+v (want net 108 / tax 22 / gross 130)", bands[0])
+		}
+		assertBandsMatchSale(t, bands, sale)
+	})
+
+	t.Run("flat basis from the originating till is honoured", func(t *testing.T) {
+		// Same exclusive sale, but the till's country plugin fixed a flat 7%
+		// basis, persisted on the sale (migration 062): charge tax 1, not 2.
+		sale := data.SaleDetail{
+			Subtotal: 100, TaxTotal: 21, Total: 131, ServiceCharge: 10,
+			ServiceChargeTaxBasisBP: 700,
+			Lines:                   []data.SaleDetailLine{{TaxRateBP: 2000, LineTotal: 120, TaxAmount: 20}},
+		}
+		bands := vatBreakdown(sale)
+		var tax int64
+		for _, b := range bands {
+			tax += b.Tax
+		}
+		if tax != 21 {
+			t.Fatalf("want total band tax 21 (20 line + 1 at the flat 7%% basis), got %d", tax)
+		}
+		assertBandsMatchSale(t, bands, sale)
+	})
+}
+
+// assertBandsMatchSale pins the two invariants an invoice's VAT table must
+// always satisfy: every band adds up, and the bands together account for
+// exactly what the customer paid.
+func assertBandsMatchSale(t *testing.T, bands []vatBand, sale data.SaleDetail) {
+	t.Helper()
+	var gross, tax int64
+	for _, b := range bands {
+		if b.Net+b.Tax != b.Gross {
+			t.Fatalf("band does not add up: %+v", b)
+		}
+		gross += b.Gross
+		tax += b.Tax
+	}
+	if gross != sale.Total {
+		t.Fatalf("bands gross %d != sale total %d", gross, sale.Total)
+	}
+	if tax != sale.TaxTotal {
+		t.Fatalf("bands tax %d != sale tax_total %d", tax, sale.TaxTotal)
+	}
+}
+
 // A whole-sale discount is not folded into any line — the bands must
 // absorb it so the invoice equals what the customer paid (review find).
 func TestVATBreakdownProratesSaleDiscount(t *testing.T) {
