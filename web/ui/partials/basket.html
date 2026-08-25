@@ -69,7 +69,7 @@
                          hx-include="closest tr"
                          hx-target="#basket"
                          hx-swap="outerHTML" />
-                  <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount }}" min="0" step="1"
+                  <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount.Minor }}" min="0" step="1"
                          title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
                          hx-post="/api/pos/line"
                          hx-vals='{{ jsonVals "key" .LineKey }}'
