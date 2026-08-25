@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -19,6 +20,12 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 )
+
+// discInputValueRE extracts the per-line discount box's redisplayed value
+// from rendered basket HTML (web/ui/partials/basket.html's disc-input),
+// used by TestLineHandler_QtyChangeDoesNotClearDiscount (ut-docs#971) to
+// assert on exactly what a browser would re-submit via hx-include.
+var discInputValueRE = regexp.MustCompile(`class="disc-input"[^>]*value="([^"]*)"`)
 
 // newPOSTestDeps wires a Deps with a real scan-resolving Engine (backed by
 // the shared seedForPages fixture's itm1/ABC item), matching the
@@ -134,6 +141,52 @@ func TestLineHandler_UpdatesQtyAndDiscount(t *testing.T) {
 	line = dp.Engine.Basket().Lines[0]
 	if line.LineDiscount.Minor() != 20 {
 		t.Fatalf("expected line discount 20, got %v", line.LineDiscount.Minor())
+	}
+}
+
+// TestLineHandler_QtyChangeDoesNotClearDiscount is a regression test for
+// ut-docs#971: the disc-input box's hx-include="closest tr" (basket.html)
+// means changing a line's quantity re-submits the whole row, including
+// whatever value the discount box currently redisplays. That redisplayed
+// value must round-trip through this same handler's minor-units ParseInt,
+// or the discount silently resets to 0 with no error shown to the
+// operator.
+func TestLineHandler_QtyChangeDoesNotClearDiscount(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	rec := posPostForm(mux, "/api/pos/line", "code=ABC&qty=3&discount=20")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	line := dp.Engine.Basket().Lines[0]
+	if line.LineDiscount.Minor() != 20 {
+		t.Fatalf("expected line discount 20 after initial set, got %v", line.LineDiscount.Minor())
+	}
+
+	// Extract the disc-input's redisplayed value exactly as the browser
+	// would see it in the rendered basket HTML.
+	m := discInputValueRE.FindStringSubmatch(rec.Body.String())
+	if m == nil {
+		t.Fatalf("could not find disc-input value in rendered basket:\n%s", rec.Body.String())
+	}
+	redisplayed := m[1]
+
+	// Simulate hx-include="closest tr": the qty change re-submits the row,
+	// carrying the discount box's currently redisplayed value untouched —
+	// the operator never re-typed the discount.
+	rec = posPostForm(mux, "/api/pos/line", "code=ABC&qty=5&discount="+redisplayed)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	line = dp.Engine.Basket().Lines[0]
+	if line.Qty != 5 {
+		t.Fatalf("expected qty 5, got %v", line.Qty)
+	}
+	if line.LineDiscount.Minor() != 20 {
+		t.Fatalf("expected line discount to survive the quantity change at 20, got %v (redisplayed value was %q)", line.LineDiscount.Minor(), redisplayed)
 	}
 }
 
