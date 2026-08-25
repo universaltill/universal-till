@@ -16,7 +16,7 @@ This page only records data. It does not fill in, generate, or submit anything t
 
 ## How to use it
 
-1. Open **Fiscal register** from the menu (manager only; only shown once your shop's country is set to Germany). Entries are grouped by the business location each till belongs to.
+1. Open **Fiscal register** from the menu (manager only; only shown once your shop's country is set to Germany **and** the German tax plugin is installed and enabled). Entries are grouped by the business location each till belongs to.
 2. Use **Add entry** to record a till/TSE pairing: pick the till (register) from the list, then fill in the system type (pre-filled with the common default, but editable), the till's software name and serial number, and the TSE's serial number, certification ID, and type. **Acquired on** is required — the date the till was obtained. **Commissioned on** (when it actually went into use) is optional. A location's heading (and its address form) only appears once it has at least one entry.
 3. If a location's address isn't on file yet, fill in the small address form under that location's heading (street, postcode, city) and press **Save address**.
 4. Once you've filed the notification for a till in Mein ELSTER, there's nothing further to do here — the entry simply stays on the list as your own record.

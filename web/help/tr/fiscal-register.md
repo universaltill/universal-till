@@ -16,7 +16,7 @@ Bu sayfa yalnızca veri kaydeder. Sizin adınıza ELSTER'e hiçbir şey doldurma
 
 ## Nasıl kullanılır
 
-1. **Mali kayıt defteri**'ni menüden açın (yalnızca yönetici; yalnızca dükkanınızın ülkesi Almanya olarak ayarlandığında görünür). Kayıtlar, her kasanın ait olduğu işletme konumuna göre gruplandırılır.
+1. **Mali kayıt defteri**'ni menüden açın (yalnızca yönetici; yalnızca dükkanınızın ülkesi Almanya olarak ayarlandığında **ve** Almanya vergi eklentisi yüklü ve etkinleştirildiğinde görünür). Kayıtlar, her kasanın ait olduğu işletme konumuna göre gruplandırılır.
 2. Bir kasa/TSE eşleşmesi kaydetmek için **Kayıt ekle**'yi kullanın: listeden kasayı seçin, ardından sistem türünü (yaygın varsayılan değerle önceden doldurulmuş, ama düzenlenebilir), kasanın yazılım adını ve seri numarasını, TSE'nin seri numarasını, sertifika kimliğini ve türünü girin. **Edinme tarihi** zorunludur — kasanın edinildiği tarih. **Hizmete alma tarihi** (fiilen kullanılmaya başladığı tarih) isteğe bağlıdır. Bir konumun başlığı (ve adres formu) yalnızca en az bir kaydı olduğunda görünür.
 3. Bir konumun adresi henüz kayıtlı değilse, o konumun başlığının altındaki küçük adres formunu doldurun (cadde, posta kodu, şehir) ve **Adresi kaydet**'e basın.
 4. Bir kasanın bildirimini Mein ELSTER'de gönderdikten sonra burada yapılacak başka bir şey yoktur — kayıt yalnızca kendi kaydınız olarak listede kalır.
