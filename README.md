@@ -466,10 +466,10 @@ Paid plans buy hosted infrastructure and support, never the till itself.
 one. A till running on your own counter costs us nothing, so we don't
 charge for it. Most POS vendors charge a licence for every device;
 ready2order is €35.90 per till, per month. Where local law separately
-mandates a paid certified device (e.g. Germany's TSE), that device's real
-cost is disclosed as its own line, never folded into the plan price and
-never marked up beyond a published margin — see
-[ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).
+mandates a paid certified device (e.g. Germany's TSE), we arrange it and
+disclose its cost as its own line, never hidden inside the plan price —
+see [the note for German merchants](#-a-note-for-german-merchants--being-straight-with-you)
+below and [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).
 
 Our rule for what's free: **if a feature costs us money to run, it's in a
 subscription. If it doesn't, everyone gets it.** So everything that runs on
@@ -554,6 +554,12 @@ So:
 
 We would rather say this plainly than let "free forever" imply a total cost
 of zero in a market where it isn't.
+
+*(2026-08-25: our TSE provider bills us per till rather than a flat fee per
+shop, which affects how "included" scales for a multi-till subscription —
+see [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md)'s
+2026-08-25 amendment. The figures above are unaffected; how the multi-till
+case is priced is still being worked out.)*
 
 **What is never behind a paywall:** the **DSFinV-K** export a tax auditor
 asks for is available on every plan, including the free one, wherever a TSE
