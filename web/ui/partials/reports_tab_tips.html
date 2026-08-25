@@ -1,0 +1,119 @@
+{{ if .CanView }}
+<div class="card">
+  <p class="muted">{{ T "reports.tips.place_of_business" }}: <strong>{{ .StoreName }}</strong></p>
+</div>
+
+{{ $qs := printf "days=%d" .Days }}
+{{ if .Period }}{{ $qs = printf "period=%s&anchor=%s" .Period .Anchor }}{{ end }}
+{{/* The worker filter is only shown to a CanRecord session — its own
+     value is ignored server-side for a CanView-only session (ut-docs#964
+     review, blocker 2), so showing it there would just be a dropdown
+     that silently does nothing. */}}
+{{ if .CanRecord }}
+<div class="card" style="margin-top:1rem">
+  <form hx-get="/ui/reports/tab/tips" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-trigger="change">
+    {{ if .Period }}
+    <input type="hidden" name="period" value="{{ .Period }}">
+    <input type="hidden" name="anchor" value="{{ .Anchor }}">
+    {{ else }}
+    <input type="hidden" name="days" value="{{ .Days }}">
+    {{ end }}
+    <label>{{ T "reports.tips.filter_worker" }}
+      <select name="cashier">
+        <option value="" {{ if not .CashierFilter }}selected{{ end }}>{{ T "reports.tips.filter_all_workers" }}</option>
+        {{ $selected := .CashierFilter }}
+        {{ range .Workers }}
+        <option value="{{ .ID }}" {{ if eq .ID $selected }}selected{{ end }}>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ .Username }}{{ end }}</option>
+        {{ end }}
+      </select>
+    </label>
+  </form>
+</div>
+{{ end }}
+
+<div class="report-cards" style="margin-top:1rem">
+  <div class="card kpi">
+    <div class="kpi-label">{{ T "reports.tips.tip_received" }}</div>
+    <div class="kpi-value">{{ money .TipReceived }}</div>
+    <div class="muted" style="font-size:.8rem">{{ T "reports.tips.allocated" }}: {{ money .TipAllocated }}</div>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">{{ T "reports.tips.service_charge_received" }}</div>
+    <div class="kpi-value">{{ money .SCReceived }}</div>
+    <div class="muted" style="font-size:.8rem">{{ T "reports.tips.allocated" }}: {{ money .SCAllocated }}</div>
+  </div>
+</div>
+
+{{ if .CanRecord }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.tips.detail_title" }}</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "reports.tips.col_date" }}</th>
+        <th>{{ T "reports.tips.col_worker" }}</th>
+        <th>{{ T "reports.tips.col_type" }}</th>
+        <th>{{ T "reports.tips.col_amount" }}</th>
+        <th>{{ T "reports.tips.col_note" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Detail }}
+      <tr>
+        <td>{{ .AllocatedAt }}</td>
+        <td>{{ .Worker }}</td>
+        <td>{{ if eq .SourceType "tip" }}{{ T "reports.tips.type_tip" }}{{ else }}{{ T "reports.tips.type_service_charge" }}{{ end }}</td>
+        <td style="text-align:end">{{ money .AmountMinor }}</td>
+        <td class="muted">{{ .Note }}</td>
+      </tr>
+      {{ else }}
+      <tr><td class="empty" colspan="5">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.tips.record_title" }}</h2>
+  <form hx-post="/api/reports/worker-allocations" hx-target="#report-tab-panel" hx-swap="innerHTML">
+    {{ if .Period }}
+    <input type="hidden" name="period" value="{{ .Period }}">
+    <input type="hidden" name="anchor" value="{{ .Anchor }}">
+    {{ else }}
+    <input type="hidden" name="days" value="{{ .Days }}">
+    {{ end }}
+    {{ if .CashierFilter }}<input type="hidden" name="cashier" value="{{ .CashierFilter }}">{{ end }}
+    <label>{{ T "reports.tips.form_date" }}
+      <input type="date" name="date" value="{{ .Today }}" max="{{ .Today }}" required>
+    </label>
+    <label>{{ T "reports.tips.form_worker" }}
+      <select name="cashier_id" required>
+        <option value="" disabled selected>{{ T "reports.tips.form_worker_pick" }}</option>
+        {{ range .Workers }}
+        <option value="{{ .ID }}">{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ .Username }}{{ end }}</option>
+        {{ end }}
+      </select>
+    </label>
+    <label>{{ T "reports.tips.form_type" }}
+      <select name="source_type" required>
+        <option value="tip">{{ T "reports.tips.type_tip" }}</option>
+        <option value="service_charge">{{ T "reports.tips.type_service_charge" }}</option>
+      </select>
+    </label>
+    <input type="hidden" name="amount" id="tips-amount-minor">
+    <label>{{ T "reports.tips.form_amount" }}
+      <input type="number" id="tips-amount" step="0.01" min="0.01" required placeholder="0.00"
+             onchange="document.getElementById('tips-amount-minor').value = Math.round(parseFloat(this.value || 0) * 100)">
+    </label>
+    <label>{{ T "reports.tips.form_note" }}
+      <input type="text" name="note" placeholder="{{ T "reports.tips.form_note_hint" }}">
+    </label>
+    <button type="submit" class="btn primary">{{ T "reports.tips.form_submit" }}</button>
+  </form>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <a class="btn secondary" href="/api/reports/worker-allocations/export?from={{ .From }}&amp;to={{ .To }}{{ if .CashierFilter }}&amp;cashier={{ .CashierFilter }}{{ end }}">{{ T "reports.tips.export_btn" }}</a>
+</div>
+{{ end }}
+{{ end }}
