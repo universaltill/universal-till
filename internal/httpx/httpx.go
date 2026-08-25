@@ -225,6 +225,23 @@ func InitI18n(t *config.I18n, fallback string) {
 	defaultLocale.Store(fallback)
 }
 
+// SetDefaultLocale updates the till's configured default locale live (e.g.
+// a manager changing it in Settings, ut-docs#861) — unlike InitI18n, this
+// does NOT touch the wired translator: config.I18n already loads every
+// shipped locale's strings at boot, so switching the default is just moving
+// which one ResolveLocale()/DefaultLocale() fall back to when no
+// request-scoped ?lang=/ut_lang preference is set. Empty locale is a no-op:
+// callers are expected to validate against AvailableLocales() first (an
+// unconditional store would let an empty/invalid submission silently blank
+// the till's configured default for every background job — notification
+// email, in particular — that has no request to resolve a locale from).
+func SetDefaultLocale(locale string) {
+	if locale == "" {
+		return
+	}
+	defaultLocale.Store(locale)
+}
+
 var uiScale atomic.Value // float64
 
 // InitUIScale sets the interface scale factor for the POS screen
@@ -482,6 +499,27 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["idlelocksecs"] = func() int64 { return idleLockSecs.Load() }
 	funcs["barcodesvg"] = BarcodeSVG // scannable CODE39 for receipt numbers
 	funcs["locale"] = func() string { return locale }
+	// defaultlocale is the shop's configured DEFAULT locale (Settings'
+	// Language card, ut-docs#861) — distinct from "locale" above, which is
+	// this specific request's resolved locale (?lang=/ut_lang cookie). A
+	// manager's own browser can be on a different language than the shop's
+	// configured default without the picker showing the wrong selection.
+	// Normalized to the bare language prefix (same rule IsRTL already
+	// applies) rather than returning DefaultLocale() raw: a till that has
+	// never had its language explicitly changed carries the env-derived
+	// UT_DEFAULT_LOCALE default, which is a full BCP-47 tag like "en-US" —
+	// the picker's own options (AvailableLocales()) are always the bare
+	// shipped-locale codes ("en", "ar", ...), so an unnormalized comparison
+	// would show NO option selected on a till nobody has ever touched this
+	// setting on. httpx.DefaultLocale() itself is left raw for callers that
+	// need the real tag (e.g. alerts.go's notification push).
+	funcs["defaultlocale"] = func() string {
+		lang := strings.ToLower(DefaultLocale())
+		if i := strings.IndexAny(lang, "-_"); i > 0 {
+			lang = lang[:i]
+		}
+		return lang
+	}
 	// dir drives <html dir=…> so RTL locales lay out right-to-left.
 	funcs["dir"] = func() string {
 		if IsRTL(locale) {
