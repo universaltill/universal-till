@@ -214,6 +214,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// dismiss it — best-effort like everything else on this page, a
 		// read error just renders with nothing pending.
 		pendingBasePlugins, _ := loadPendingBasePlugins(r.Context(), d)
+		// German TSE provisioning status (ADR-0053, ut-docs#802): whatever
+		// the wizard's kickoff / the background retry / the ready-directive
+		// handler has left in flight or failed, so the merchant sees exactly
+		// where it stands (still pending vs kickoff rejected vs credential
+		// fetch failed) and can dismiss it — best-effort like everything
+		// else on this page, a read error just renders with nothing pending.
+		tseState, _ := loadTSEProvisioningState(r.Context(), d)
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -335,6 +342,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"shopTypes":             setupShopTypes,
 			"restorePromptDeferred": restorePromptStatus == common.RestorePromptStatusDeferred,
 			"pendingBasePlugins":    pendingBasePluginViews(pendingBasePlugins),
+			"tseProvisioning":       tseProvisioningViewFor(tseState),
 			"resetBatches":          resetBatches,
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
@@ -1178,6 +1186,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsAudit(r, posRepo, elev, "settings", canonicalType, "pending_base_plugin_dismissed", map[string]any{"canonical_type": canonicalType, "locale": localeVal})
 		if elev.Outcome == elevated {
 			w.Header().Set("X-UT-Response", "ok")
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	})
+
+	// Dismiss the TSE provisioning status chip (ADR-0053, ut-docs#802)
+	// without provisioning — e.g. a shop that decided against the managed
+	// service after a subscription_inactive rejection. Clears the whole
+	// lifecycle state (a later re-run of provisioning re-creates it); same
+	// hx-swap "outerHTML"/empty-200-body convention as the two dismisses
+	// above. Deliberately does NOT touch fiscal.tse_configured or any stored
+	// credential — this dismisses a status chip, not a configured TSE.
+	mux.HandleFunc("POST /api/settings/dismiss-tse-provisioning", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "settings") {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		if err := saveTSEProvisioningState(r.Context(), d, nil); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	})
