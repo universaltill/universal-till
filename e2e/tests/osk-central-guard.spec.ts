@@ -68,6 +68,12 @@ test('re-tapping a field after visiting another one does not let the native keyb
   await sku.click();
   await expect(sku).toBeFocused();
   await expect(page.locator('#osk')).toBeVisible();
+  // The actual regression: the field just left behind must KEEP its guard.
+  // The old code's restoreInputmode(current) call here removed `name`'s
+  // inputmode attribute entirely — this assertion is the one thing in this
+  // test that fails against the pre-fix osk.js; every assertion before and
+  // after it also passes on the old, buggy code.
+  await expect(name).toHaveAttribute('inputmode', 'none');
 
   await name.click();
   await expect(name).toBeFocused();
@@ -94,17 +100,76 @@ test('a field added to the page after load gets the same up-front guard (htmx sw
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
-  // Stand-in for content arriving via htmx (or a plugin partial, or Alpine)
-  // after the initial sweep already ran — the MutationObserver (and the
-  // htmx:afterSwap listener wired to the same guardSweep()) must catch it
-  // without a page-specific call site.
+  // Two shapes of "content arrives after load": the added node IS the
+  // field itself (an htmx outerHTML swap whose response root is the input,
+  // or a bare oob swap — exercises guardField(node) directly, called on
+  // every added node by the observer), and the field arrives NESTED inside
+  // a wrapper (an htmx innerHTML/beforeend swap of a fragment, by far the
+  // more common real shape — exercises the observer's guardSweep(node)
+  // branch instead). Both must be caught without a page-specific call site.
   await page.evaluate(() => {
     const input = document.createElement('input');
     input.type = 'text';
     input.id = 'osk-test-late-field';
     document.body.appendChild(input);
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = '<input type="text" id="osk-test-late-nested-field">';
+    document.body.appendChild(wrapper);
   });
   await expect(page.locator('#osk-test-late-field')).toHaveAttribute('inputmode', 'none');
+  await expect(page.locator('#osk-test-late-nested-field')).toHaveAttribute('inputmode', 'none');
+
+  assertClean();
+});
+
+test('a field added directly is NOT guarded while OSK is disabled (ut-docs#1022 review)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  // 'auto' (the default) stays disabled on this browser — no touch, per
+  // settings-osk.spec.ts's own "Auto hides it on non-touch (this browser)
+  // BY DESIGN" — so this exercises `enabled === false`.
+  await setOskMode(page, 'auto');
+
+  await page.goto('/catalog');
+  // The MutationObserver calls guardField(node) directly on every added
+  // node, bypassing guardSweep()'s own `if (!enabled) return`. Without the
+  // same gate inside guardField() itself, a field arriving as a top-level
+  // added node (not nested — see the OSK-off test above for the sweep's
+  // own gate) would get suppressed even with the OSK fully disabled.
+  await page.evaluate(() => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = 'osk-test-disabled-field';
+    document.body.appendChild(input);
+  });
+  expect(await page.locator('#osk-test-disabled-field').getAttribute('inputmode')).toBeNull();
+
+  assertClean();
+});
+
+test('a non-numeric field is left alone on a locale osk.js has no layout for; a numeric field is still guarded (ut-docs#1022 review)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'on');
+
+  // LAYOUTS covers en/tr/fa/ar only — de ships as a language plugin and is
+  // the German pilot's own locale (CLAUDE.md). ?lang= sets <html lang>
+  // directly without requiring the plugin to actually be installed.
+  await page.goto('/catalog?lang=de');
+  await expect(page.locator('body')).toHaveAttribute('data-osk', 'on');
+
+  // Suppressing the native keyboard here, with no OSK layout able to
+  // replace it, would leave the operator with NO way to type "Käse" at
+  // all — strictly worse than the pre-fix double-keyboard bug.
+  expect(await page.locator('#item-name').getAttribute('inputmode')).toBeNull();
+
+  // Numeric entry is locale-independent (the 'num' layer is just digits),
+  // so a numeric-inputmode field is still guarded and routed to it.
+  const barcode = page.locator('#item-barcode');
+  await expect(barcode).toHaveAttribute('inputmode', 'none');
+  await barcode.click();
+  await expect(page.locator('#osk')).toBeVisible();
+  const keyCount = await page.locator('#osk .osk-key').count();
+  expect(keyCount, 'the numeric layout has far fewer keys than a full qwerty layout').toBeLessThan(20);
 
   assertClean();
 });
