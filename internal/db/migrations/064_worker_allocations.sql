@@ -12,12 +12,20 @@
 -- new staff concept, per ADR-0063 Decision 1). source_id is a soft
 -- reference (payment_id, sale_id, or a pool-batch identifier for a
 -- Turkey yüzde usulü distribution with no underlying bill line) —
--- deliberately NOT a foreign key, so an allocation record outlives a
--- "Clear transaction history" reset the same way sale_charges does not
--- (ADR-0063 Decision 1 / Consequences).
+-- deliberately NOT a foreign key: a soft reference cannot break or block
+-- on a catalog/customer/sale row that a later reset archives or a later
+-- cleanup removes (ADR-0063 Decision 1 / Consequences).
+-- source_type CHECK (independent review, ut-docs#987): the write side
+-- (InsertWorkerAllocation) stores whatever string it's handed, and the
+-- read side (WorkerAllocationsSummary) rejects any source_type outside the
+-- three known values — without this constraint a caller typo would write
+-- a statutory record that silently can never be read back through the
+-- sanctioned query path. Single-table CHECKs are one of the archive-table
+-- relaxations ADR-0042 §1 keeps (only FK and PK/UNIQUE are relaxed), so
+-- worker_allocations_archive keeps this CHECK too, below.
 CREATE TABLE IF NOT EXISTS worker_allocations (
     id            TEXT    NOT NULL PRIMARY KEY,
-    source_type   TEXT    NOT NULL,             -- 'tip' | 'service_charge' | 'yuzde_usulu_pool'
+    source_type   TEXT    NOT NULL CHECK (source_type IN ('tip', 'service_charge', 'yuzde_usulu_pool')),
     source_id     TEXT    NOT NULL DEFAULT '',   -- payment_id/sale_id, or a pool-batch id; '' for none
     cashier_id    TEXT    NOT NULL,              -- worker who received this allocation
     amount_minor  INTEGER NOT NULL,              -- allocated amount, integer minor units (money.Money at the boundary)
@@ -36,7 +44,7 @@ CREATE INDEX IF NOT EXISTS idx_worker_allocations_allocated_at ON worker_allocat
 -- different batches).
 CREATE TABLE IF NOT EXISTS worker_allocations_archive (
     id            TEXT    NOT NULL,
-    source_type   TEXT    NOT NULL,
+    source_type   TEXT    NOT NULL CHECK (source_type IN ('tip', 'service_charge', 'yuzde_usulu_pool')),
     source_id     TEXT    NOT NULL DEFAULT '',
     cashier_id    TEXT    NOT NULL,
     amount_minor  INTEGER NOT NULL,

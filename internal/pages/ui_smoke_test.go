@@ -439,6 +439,15 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, method_id TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT NOT NULL, reference TEXT, change_given INTEGER NOT NULL DEFAULT 0, tip_amount INTEGER NOT NULL DEFAULT 0, tip_recipient TEXT NOT NULL DEFAULT 'employee', masked_pan TEXT, auth_code TEXT, terminal_id TEXT, trace_id TEXT, paid_at TEXT NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_links (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, original_sale_id TEXT NOT NULL, reason TEXT);`,
 		`CREATE TABLE stock_movements (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, cost_price INTEGER, created_at TEXT NOT NULL);`,
+		// worker_allocations: column-identical to
+		// internal/db/migrations/064_worker_allocations.sql (ADR-0063,
+		// ut-docs#987) -- ResetTransactionHistory's resetArchiveTables loop
+		// (internal/data/reset_archive_repo.go) archives every table in its
+		// list unconditionally, so this fixture needs both twins or the
+		// reset-transactions/reset-archives handler tests below fail against
+		// a schema this table simply isn't in, same drift rule as every
+		// other comment in this fixture.
+		`CREATE TABLE worker_allocations (id TEXT NOT NULL PRIMARY KEY, source_type TEXT NOT NULL CHECK (source_type IN ('tip', 'service_charge', 'yuzde_usulu_pool')), source_id TEXT NOT NULL DEFAULT '', cashier_id TEXT NOT NULL, amount_minor INTEGER NOT NULL, allocated_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '');`,
 		`CREATE TABLE inventory (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, quantity REAL NOT NULL, updated_at TEXT NOT NULL, UNIQUE(item_id, variant_id, location_id));`,
 		// blocked_actor_id: column-identical to migration 049 (ut-docs#557) —
 		// InsertAuditElevated's dual-attribution column; InsertAudit (and every
@@ -472,6 +481,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE held_sales_archive (id TEXT NOT NULL, label TEXT NOT NULL, total_minor INTEGER NOT NULL, line_count INTEGER NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, reset_batch_id TEXT NOT NULL REFERENCES reset_batches(id), table_id TEXT);`,
 		`CREATE TABLE shifts_archive (id TEXT NOT NULL, register_id TEXT NOT NULL, cashier_id TEXT NOT NULL, opened_at TEXT NOT NULL, closed_at TEXT, opening_cash INTEGER NOT NULL, closing_cash INTEGER, expected_cash INTEGER, note TEXT, reset_batch_id TEXT NOT NULL REFERENCES reset_batches(id));`,
 		`CREATE TABLE stock_movements_archive (id TEXT NOT NULL, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, cost_price INTEGER, created_at TEXT NOT NULL, reset_batch_id TEXT NOT NULL REFERENCES reset_batches(id));`,
+		`CREATE TABLE worker_allocations_archive (id TEXT NOT NULL, source_type TEXT NOT NULL CHECK (source_type IN ('tip', 'service_charge', 'yuzde_usulu_pool')), source_id TEXT NOT NULL DEFAULT '', cashier_id TEXT NOT NULL, amount_minor INTEGER NOT NULL, allocated_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', reset_batch_id TEXT NOT NULL REFERENCES reset_batches(id));`,
 		// roles/permission_actions/role_permissions: column-identical to
 		// internal/db/migrations/039_role_permissions.sql + 042/043/044
 		// (ut-docs#709/#706/#707) — a drifted fixture here would let a
