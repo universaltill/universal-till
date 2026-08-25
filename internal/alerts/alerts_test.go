@@ -33,12 +33,12 @@ func TestUnusualSales(t *testing.T) {
 			t.Fatalf("exec: %v", err)
 		}
 	}
-	// noon anchors seeded sales to midday UTC rather than time.Now()'s clock
-	// time — DayTotal's 'localtime' bucketing means a midnight-adjacent clock
-	// time could still land on the wrong side of a local calendar-day
-	// boundary in a DST-observing zone right after a transition; midday UTC
-	// keeps every plausible UTC offset on the same local day.
-	noon := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
+	// ref anchors both the seeded data and every unusualSales call below to
+	// ONE Go-side instant, rather than each call independently reading the
+	// real clock — see unusualSales'/DayTotal's own doc comments (ut-docs#969:
+	// two independent real-clock reads a moment apart can disagree about
+	// what day "today" is, right around a UTC day boundary).
+	ref := time.Now()
 	sale := func(id string, daysAgo, total int) {
 		// createdAt mirrors what production actually writes (real UTC, see
 		// internal/pos/sales.go's time.Now().UTC().Format(time.RFC3339)) —
@@ -46,7 +46,7 @@ func TestUnusualSales(t *testing.T) {
 		// only correct if created_at is genuine UTC. Seeding local wall-clock
 		// time here instead double-applies the conversion and silently shifts
 		// the computed date on any non-UTC machine.
-		createdAt := noon.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+		createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
 		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
 		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
 			id, "R-"+id, total, total, createdAt)
@@ -58,18 +58,67 @@ func TestUnusualSales(t *testing.T) {
 	sale("b4", 29, 1000)
 
 	// No yesterday sales → ratio 0 → unusual (a normally-selling day at zero).
-	if ratio, _, unusual := unusualSales(context.Background(), d); !unusual || ratio != 0 {
+	if ratio, _, unusual := unusualSales(context.Background(), d, ref); !unusual || ratio != 0 {
 		t.Fatalf("zero day on a selling weekday should be unusual (ratio=%v unusual=%v)", ratio, unusual)
 	}
 	// Normal yesterday (≈ baseline) → not unusual.
 	sale("y1", 1, 950)
-	if ratio, _, unusual := unusualSales(context.Background(), d); unusual {
+	if ratio, _, unusual := unusualSales(context.Background(), d, ref); unusual {
 		t.Fatalf("normal day flagged unusual (ratio=%v)", ratio)
 	}
 	// Blowout yesterday → unusual high.
 	sale("y2", 1, 1500)
-	if ratio, _, unusual := unusualSales(context.Background(), d); !unusual || ratio < 1.8 {
+	if ratio, _, unusual := unusualSales(context.Background(), d, ref); !unusual || ratio < 1.8 {
 		t.Fatalf("blowout not flagged (ratio=%v unusual=%v)", ratio, unusual)
+	}
+}
+
+// TestUnusualSales must reach the same verdict no matter which real calendar
+// day it happens to run on — the actual regression test for ut-docs#969.
+// Sweeps a full week of fixed reference instants, each just after local
+// midnight (the exact window the original bug was observed in), including
+// both a Sunday and a Monday per the card's acceptance criteria.
+func TestUnusualSales_EveryWeekdayIsDeterministic(t *testing.T) {
+	for i := 0; i < 7; i++ {
+		// 2026-08-23 is a Sunday; sweeps Sun through Sat.
+		ref := time.Date(2026, 8, 23+i, 0, 0, 30, 0, time.UTC)
+		t.Run(ref.Weekday().String(), func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "unusual_weekday.db")
+			database, err := db.Open(f)
+			if err != nil {
+				t.Fatalf("open db: %v", err)
+			}
+			defer database.Close()
+			d := database.DB
+			mustExec := func(q string, args ...any) {
+				t.Helper()
+				if _, err := d.Exec(q, args...); err != nil {
+					t.Fatalf("exec: %v", err)
+				}
+			}
+			sale := func(id string, daysAgo, total int) {
+				createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+				mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+				          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
+					id, "R-"+id, total, total, createdAt)
+			}
+			sale("b1", 8, 1000)
+			sale("b2", 15, 900)
+			sale("b3", 22, 1100)
+			sale("b4", 29, 1000)
+
+			if ratio, _, unusual := unusualSales(context.Background(), d, ref); !unusual || ratio != 0 {
+				t.Fatalf("zero day on a selling weekday should be unusual (ratio=%v unusual=%v)", ratio, unusual)
+			}
+			sale("y1", 1, 950)
+			if ratio, _, unusual := unusualSales(context.Background(), d, ref); unusual {
+				t.Fatalf("normal day flagged unusual (ratio=%v)", ratio)
+			}
+			sale("y2", 1, 1500)
+			if ratio, _, unusual := unusualSales(context.Background(), d, ref); !unusual || ratio < 1.8 {
+				t.Fatalf("blowout not flagged (ratio=%v unusual=%v)", ratio, unusual)
+			}
+		})
 	}
 }
 
@@ -426,9 +475,9 @@ func TestUnusualSales_ThinBaselineIsNotUnusual(t *testing.T) {
 			t.Fatalf("exec: %v", err)
 		}
 	}
-	noon := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
+	ref := time.Now()
 	sale := func(id string, daysAgo, total int) {
-		createdAt := noon.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+		createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
 		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
 		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
 			id, "R-"+id, total, total, createdAt)
@@ -439,7 +488,7 @@ func TestUnusualSales_ThinBaselineIsNotUnusual(t *testing.T) {
 	sale("b2", 15, 1000)
 	sale("y", 1, 5000)
 
-	if ratio, _, unusual := unusualSales(context.Background(), d); unusual {
+	if ratio, _, unusual := unusualSales(context.Background(), d, ref); unusual {
 		t.Fatalf("thin baseline (2/4 weeks) must not be flagged unusual (ratio=%v)", ratio)
 	}
 }

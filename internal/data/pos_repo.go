@@ -1123,15 +1123,26 @@ ORDER BY (revenue - cost) DESC LIMIT ?`, fromStr, toStr, limit)
 }
 
 // DayTotal returns one calendar day's completed-sale revenue (local time),
-// offset days back from today (1 = yesterday).
-func (r *POSRepo) DayTotal(ctx context.Context, daysAgo int) (int64, int, error) {
+// offset days back from ref (1 = the day before ref).
+//
+// ref is a caller-supplied instant, not SQLite's own 'now' — a caller doing
+// several DayTotal reads to compare days against each other (e.g. "yesterday"
+// against several weeks of baseline) must pass the SAME ref to every call so
+// "today" can't drift between two independent reads of the real clock a few
+// milliseconds apart. That drift is real: around a UTC day boundary, a Go
+// caller's own time.Now() and a later SQLite 'now' evaluated a moment
+// afterward can land on different calendar days, silently shifting every
+// daysAgo offset by one and misaligning "yesterday" against its own baseline
+// weekday (ut-docs#969 — reproduced this way, not as a real weekday-specific
+// detector bug).
+func (r *POSRepo) DayTotal(ctx context.Context, daysAgo int, ref time.Time) (int64, int, error) {
 	var total int64
 	var count int
 	err := r.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(total), 0), COUNT(*) FROM sales
 WHERE status = 'completed' AND sale_type = 'sale'
-  AND date(created_at, 'localtime') = date('now', 'localtime', ?)`,
-		fmt.Sprintf("-%d days", daysAgo)).Scan(&total, &count)
+  AND date(created_at, 'localtime') = date(?, 'localtime', ?)`,
+		ref.UTC().Format(time.RFC3339), fmt.Sprintf("-%d days", daysAgo)).Scan(&total, &count)
 	if err != nil {
 		return 0, 0, fmt.Errorf("day total: %w", err)
 	}
