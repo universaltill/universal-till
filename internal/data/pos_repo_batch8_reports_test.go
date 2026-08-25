@@ -435,8 +435,12 @@ func TestPOSRepo_DayTotal_LocalCalendarDays(t *testing.T) {
 	ctx := context.Background()
 	repo := NewPOSRepo(d.DB)
 
-	today := b8At(time.Now())
-	yesterday := b8At(time.Now().AddDate(0, 0, -1))
+	// One shared ref for both the seeded data and every DayTotal call below —
+	// two independent time.Now() reads a moment apart can straddle a day
+	// boundary and silently shift every daysAgo offset by one (ut-docs#969).
+	ref := time.Now()
+	today := b8At(ref)
+	yesterday := b8At(ref.AddDate(0, 0, -1))
 
 	b8Sale(t, d, "t1", today, "completed", "sale", 0, 300)
 	b8Sale(t, d, "t2", today, "completed", "sale", 0, 200)
@@ -445,14 +449,14 @@ func TestPOSRepo_DayTotal_LocalCalendarDays(t *testing.T) {
 	b8Sale(t, d, "y2", yesterday, "completed", "return", 0, 400)
 	b8Sale(t, d, "y3", yesterday, "voided", "sale", 0, 999)
 
-	total, count, err := repo.DayTotal(ctx, 0)
+	total, count, err := repo.DayTotal(ctx, 0, ref)
 	if err != nil {
 		t.Fatalf("DayTotal(0): %v", err)
 	}
 	if total != 500 || count != 2 {
 		t.Fatalf("today = (%d, %d), want (500, 2)", total, count)
 	}
-	total, count, err = repo.DayTotal(ctx, 1)
+	total, count, err = repo.DayTotal(ctx, 1, ref)
 	if err != nil {
 		t.Fatalf("DayTotal(1): %v", err)
 	}
@@ -460,9 +464,42 @@ func TestPOSRepo_DayTotal_LocalCalendarDays(t *testing.T) {
 		t.Fatalf("yesterday = (%d, %d), want (700, 1)", total, count)
 	}
 	// A day with no sales reports zeros, not an error.
-	total, count, err = repo.DayTotal(ctx, 5)
+	total, count, err = repo.DayTotal(ctx, 5, ref)
 	if err != nil || total != 0 || count != 0 {
 		t.Fatalf("empty day = (%d, %d, %v), want (0, 0, nil)", total, count, err)
+	}
+}
+
+// DayTotal must resolve the same calendar day regardless of which weekday
+// ref falls on — this is the actual regression test for ut-docs#969: the
+// old signature read SQLite's own 'now' at query time, independently of
+// whatever instant a caller (or a test) used to decide what "today" meant,
+// so two calls a moment apart could disagree about which day "today" was.
+// Sweeping every weekday here proves the fix is calendar-day-agnostic, not
+// just "happens to pass today".
+func TestPOSRepo_DayTotal_EveryWeekdayIsDeterministic(t *testing.T) {
+	d := b8OpenDB(t, "daytotal_weekdays.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	// A fixed instant per weekday (2026-08-24 is a Monday), each just after
+	// UTC midnight — the exact window ut-docs#969 was observed in.
+	for i := 0; i < 7; i++ {
+		ref := time.Date(2026, 8, 24+i, 0, 0, 30, 0, time.UTC)
+		today := b8At(ref)
+		yesterday := b8At(ref.AddDate(0, 0, -1))
+		mustExec(t, d, `DELETE FROM sales`)
+		b8Sale(t, d, "wt", today, "completed", "sale", 0, 111)
+		b8Sale(t, d, "wy", yesterday, "completed", "sale", 0, 222)
+
+		total, count, err := repo.DayTotal(ctx, 0, ref)
+		if err != nil || total != 111 || count != 1 {
+			t.Fatalf("%s: today = (%d, %d, %v), want (111, 1, nil)", ref.Weekday(), total, count, err)
+		}
+		total, count, err = repo.DayTotal(ctx, 1, ref)
+		if err != nil || total != 222 || count != 1 {
+			t.Fatalf("%s: yesterday = (%d, %d, %v), want (222, 1, nil)", ref.Weekday(), total, count, err)
+		}
 	}
 }
 
@@ -867,7 +904,7 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if rows, err := repo.MarginByItem(ctx, winFrom(7), winTo(), 5); err != nil || len(rows) != 0 {
 		t.Fatalf("MarginByItem empty = (%v, %v)", rows, err)
 	}
-	if total, count, err := repo.DayTotal(ctx, 0); err != nil || total != 0 || count != 0 {
+	if total, count, err := repo.DayTotal(ctx, 0, time.Now()); err != nil || total != 0 || count != 0 {
 		t.Fatalf("DayTotal empty = (%d, %d, %v)", total, count, err)
 	}
 	if rows, cats, err := repo.SeasonalForecast(ctx, 28, 5); err != nil || len(rows) != 0 || len(cats) != 0 {
@@ -904,7 +941,7 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if _, err := repo.MarginByItem(ctx, winFrom(7), winTo(), 5); err == nil {
 		t.Fatal("MarginByItem on a closed DB must error")
 	}
-	if _, _, err := repo.DayTotal(ctx, 0); err == nil {
+	if _, _, err := repo.DayTotal(ctx, 0, time.Now()); err == nil {
 		t.Fatal("DayTotal on a closed DB must error")
 	}
 	if _, _, err := repo.SeasonalForecast(ctx, 28, 5); err == nil {
