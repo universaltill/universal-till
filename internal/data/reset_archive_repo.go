@@ -119,12 +119,19 @@ type resetArchiveTable struct {
 }
 
 // resetArchiveTables lists every table reset touches, in CHILD-BEFORE-PARENT
-// order — the order archiving/deleting must run. Note two orderings differ
+// order — the order archiving/deleting must run. Note three orderings differ
 // from the pre-ADR-0042 DELETE loop: stock_movements and sale_line_modifiers
 // must go before sale_lines (both FK-reference it — stock_movements without
 // a cascade, so deleting sale_lines first fails outright on any real
 // checkout's data; sale_line_modifiers WITH a cascade, which would silently
-// destroy the modifier snapshots instead of archiving them).
+// destroy the modifier snapshots instead of archiving them); and
+// sale_charges (ADR-0062, ut-docs#984) must go before sales — its live FK to
+// sales has no ON DELETE CASCADE (per that ADR's archive-twin relaxations),
+// and this project runs with foreign_keys=ON (internal/db/db.go), so
+// deleting sales first fails outright (a hard FK constraint error) on any
+// sale with a sale_charges row — the same trap sale_lines/stock_movements
+// already guard against above, confirmed by TestResetTransactionHistory*
+// (internal/data/reset_test.go) which seeds exactly that row.
 // Restore runs this slice in REVERSE (parent-before-child) so FKs to live
 // catalog/user rows and intra-batch parents are satisfied on re-insert.
 var resetArchiveTables = []resetArchiveTable{
@@ -135,6 +142,7 @@ var resetArchiveTables = []resetArchiveTable{
 	{"stock_movements", "id, item_id, variant_id, location_id, sale_line_id, type, quantity, cost_price, created_at"},
 	{"sale_line_modifiers", "id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor"},
 	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax"},
+	{"sale_charges", "sale_id, seq, key, label, amount_minor, tax_basis_bp, base"},
 	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp"},
 	{"held_sales", "id, label, total_minor, line_count, payload, created_at, table_id"},
 	{"shifts", "id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note"},
