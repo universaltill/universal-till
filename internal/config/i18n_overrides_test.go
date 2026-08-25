@@ -89,6 +89,35 @@ func TestSetOverlaysReplacesAtomically(t *testing.T) {
 	}
 }
 
+// A shop can set its default locale (store.locale, ut-docs#861) to a
+// non-English locale, e.g. one supplied entirely by an overlay-provided
+// language-pack plugin. Those packs are allowed to lag behind en.json
+// (lang-pack-drift CI is advisory, not blocking, per its own design) — so a
+// key missing from that fallback locale must still resolve to the English
+// text, not the raw key (ut-docs#995).
+func TestT_MissingKeyInNonEnglishFallbackFallsBackToEnglish(t *testing.T) {
+	i := &I18n{
+		messages: map[string]map[string]string{
+			"en": {"basket.total": "Total", "only.en": "English only"},
+		},
+		overlays: map[string]map[string]string{
+			// "de" is entirely overlay-provided (a language-pack plugin) and
+			// deliberately missing "only.en" — the drift lang-pack-drift CI
+			// tolerates.
+			"de": {"basket.total": "Summe"},
+		},
+		shop:     map[string]map[string]string{},
+		fallback: "de", // shop's configured store.locale
+	}
+
+	if got := i.T("de", "basket.total"); got != "Summe" {
+		t.Fatalf("T(de, basket.total) = %q, want the de translation", got)
+	}
+	if got := i.T("de", "only.en"); got != "English only" {
+		t.Fatalf("T(de, only.en) = %q, want the English fallback, not the raw key", got)
+	}
+}
+
 // Available() had zero direct test coverage before this batch.
 func TestAvailableListsLocalesWithRealTranslations(t *testing.T) {
 	i := newTestI18n(t)
