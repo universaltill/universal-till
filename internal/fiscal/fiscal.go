@@ -5,9 +5,17 @@
 // reachability (offline-first, ADR-0003; "TSE failing" is a narrower
 // condition than "TSE unreachable", see ADR-0048 Decision 1).
 //
-// This package owns the policy only. Enforcement lives at the single shared
-// tender path (internal/pages.completeTender), and the owner override that
-// can temporarily lift a configured-but-failing block is granted via
+// This package owns the policy only. Enforcement lives behind one shared
+// helper, internal/pages.enforceFiscalGate, called by every money-moving
+// completion path: the shared cashier/kiosk tender path
+// (internal/pages.completeTender), the till's own refund screen
+// (POST /api/refund, refund_page.go) and the inventory page's return form
+// (POST /api/inventory/return, inventory_api.go) — a refund/return is
+// aufzeichnungspflichtig under KassenSichV the same as a sale
+// (ut-docs#731). A replica->primary journal replay
+// (internal/pages/sync_sales.go) is deliberately NOT gated: that sale was
+// already gated where it was rung. The owner override that can temporarily
+// lift a configured-but-failing block is granted via
 // POST /api/fiscal/tse-override (internal/pages/fiscal_api.go).
 package fiscal
 
