@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -108,13 +109,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
 		}
-		file, header, err := r.FormFile("file")
-		if err != nil {
-			http.Error(w, "csv file required", http.StatusBadRequest)
-			return
-		}
-		defer file.Close()
 		commit := r.FormValue("commit") == "1"
+		stagedID := strings.TrimSpace(r.FormValue("staged_id"))
 
 		// Resolved up front (ut-docs#303): every row status below is a
 		// locale key, not English prose, so T needs to be live before the
@@ -123,6 +119,75 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
 		T := funcs["T"].(func(string) string)
+
+		// Which bytes does this request act on? (ut-docs#601)
+		//  - Commit carrying a staged_id: the byte-identical copy staged at
+		//    preview time — never a fresh upload. The per-row override
+		//    fields refer to row indexes that are only stable against the
+		//    exact bytes the operator actually previewed.
+		//  - Everything else (preview, or a never-previewed direct commit):
+		//    the uploaded file, exactly as before this card.
+		var file multipart.File
+		var fileSize int64
+		usingStaged := false
+		// preserveStaged: set while a staged commit is inside the currency-
+		// confirm gate (ut-docs#970, below) — EVERY early return in that
+		// section (the confirm prompt, a rejected currency code, a re-parse
+		// or settings-write failure) must hand the staged copy BACK to the
+		// registry instead of consuming it, so a subsequent legitimate
+		// resubmit re-reads the same copy and the operator's problem-grid
+		// overrides still apply (ut-docs#601 review, F5: originally only the
+		// prompt's own return preserved it). Every other way a staged commit
+		// finishes — passing the gate and committing, or failing before the
+		// gate — consumes the copy; an abandoned preserved copy is reclaimed
+		// by the registry's TTL prune.
+		preserveStaged := false
+		if commit && stagedID != "" {
+			path, ok := takeStagedCatalogUpload(stagedID)
+			if !ok {
+				// Expired/unknown: refuse rather than silently falling back
+				// to the re-sent upload — that would commit WITHOUT the
+				// operator's corrections while looking like it applied them.
+				http.Error(w, T("import.error.stage_expired"), http.StatusBadRequest)
+				return
+			}
+			f, oerr := os.Open(path)
+			if oerr != nil {
+				log.Printf("[import] open staged upload: %v", oerr)
+				_ = os.Remove(path)
+				http.Error(w, T("import.error.stage_expired"), http.StatusInternalServerError)
+				return
+			}
+			// This commit consumes the staged copy — success or failure,
+			// it is removed once the request finishes (design point 4) —
+			// UNLESS it detoured to the currency-confirm prompt, in which
+			// case the copy goes back to the registry for the confirmed
+			// resubmit (preserveStaged above).
+			defer func() {
+				_ = f.Close()
+				if preserveStaged {
+					restageCatalogUpload(stagedID, path)
+				} else {
+					_ = os.Remove(path)
+				}
+			}()
+			fi, serr := f.Stat()
+			if serr != nil {
+				log.Printf("[import] stat staged upload: %v", serr)
+				http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
+				return
+			}
+			file, fileSize, usingStaged = f, fi.Size(), true
+		} else {
+			f, header, ferr := r.FormFile("file")
+			if ferr != nil {
+				http.Error(w, "csv file required", http.StatusBadRequest)
+				return
+			}
+			defer f.Close()
+			file, fileSize = f, header.Size
+		}
+		var err error
 
 		// Format auto-detection (ut-docs#511): sniff the ZIP local-file-
 		// header magic before choosing a parser — a speedy kasse / pepperm
@@ -137,7 +202,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 
 		var res catimport.Result
 		if isBkp {
-			res, err = catimport.ParseBkp(file, header.Size, httpx.ActiveCurrency().Decimals)
+			res, err = catimport.ParseBkp(file, fileSize, httpx.ActiveCurrency().Decimals)
 		} else {
 			// Same shared registry matcher AddBarcode/the scan path use
 			// (ADR-0059 Decision §3, ut-docs#936) — never brick a CSV
@@ -195,11 +260,29 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			currencyConfirmed = confirmedVal == "true"
 		}
 		if commit && !currencyConfirmed {
+			// EVERY early return inside this gated section — the confirm
+			// prompt below, an unknown confirm_currency code, a seek/re-parse
+			// failure, a settings write failure — leaves the operator with a
+			// legitimate resubmit still ahead of them, so on the staged path
+			// ALL of them must hand the staged copy back rather than destroy
+			// it with the operator's corrections inside (ut-docs#601 review
+			// F5: originally only the first return preserved it). Cleared
+			// again only when the gate is actually passed, at the end of this
+			// block: from there the commit proceeds and consumes the copy. An
+			// abandoned copy is reclaimed by the registry's TTL prune.
+			if usingStaged {
+				preserveStaged = true
+			}
 			confirmCode := strings.ToUpper(strings.TrimSpace(r.FormValue("confirm_currency")))
 			if confirmCode == "" {
 				// First attempt to commit with an unconfirmed currency:
-				// write nothing, ask instead.
-				renderImportCurrencyConfirm(w, T)
+				// write nothing, ask instead. The prompt must re-emit the
+				// staged_id and the operator's submitted override fields —
+				// the originals lived inside the #import-result div this
+				// prompt is about to replace, so without re-emission the
+				// confirmed resubmit would silently commit WITHOUT the
+				// operator's corrections (ut-docs#601 review).
+				renderImportCurrencyConfirm(w, T, stagedID, r.MultipartForm.Value)
 				return
 			}
 			// ut-docs#970 review (F1, blocker): CurrencyByCode(v).Code == v
@@ -231,7 +314,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					return
 				}
 				if isBkp {
-					res, err = catimport.ParseBkp(file, header.Size, chosen.Decimals)
+					res, err = catimport.ParseBkp(file, fileSize, chosen.Decimals)
 				} else {
 					enabledIDs, symErr := settingsRepo.EnabledBarcodeSymbologies(r.Context())
 					if symErr != nil {
@@ -273,24 +356,119 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			}
 			currencyConfirmed = true
 			justConfirmedCurrency = true
+			// Gate passed: this commit now proceeds through the override
+			// application and write loop, which consume the staged copy.
+			preserveStaged = false
+		}
+
+		// ut-docs#601: apply the operator's per-row overrides from the
+		// preview's problem grid. ONLY on the staged-commit path — a
+		// never-previewed commit must behave exactly as before this card —
+		// and ONLY for the allow-listed forceable issue types
+		// (forceableImportIssue): the integrity-sensitive skips (duplicate
+		// in file, barcode/SKU already in catalog, …) can never be forced
+		// through, no matter what the client submits — that's how silent
+		// duplicate catalog entries happen. Runs AFTER the currency-confirm
+		// block above so a corrected price parses under the decimals the
+		// rows will actually commit under. overrideNotes carries the
+		// translated reason a ticked row still stayed skipped (blank or
+		// unparseable correction) for the row's rendered status.
+		overrideNotes := map[int]string{}
+		if commit && usingStaged {
+			decimals := httpx.ActiveCurrency().Decimals
+			// In-file duplicate veto (ut-docs#601 review F1): a forceable
+			// issue (missing_name/bad_price) can mask the fact that the row's
+			// SKU/PLU also collides with ANOTHER row in this same parse — the
+			// .bkp parser's own seen-set only flags a duplicate whose clean
+			// twin came EARLIER in the file, and a flagged row never registers
+			// its PLU (deliberately, see bkp.go). Without this check, a
+			// corrected-name override made such a row importable: it raced the
+			// legitimate row to the items.sku UNIQUE constraint, and whichever
+			// lost surfaced as a baffling generic item_failed. Same guarantee
+			// as the DB-level SKUExists/BarcodeExists checks below, which
+			// every un-skipped row (forced or not) still goes through: an
+			// in-file duplicate can never be forced through, no matter what
+			// the client submits. Seeded with every cleanly-importable row's
+			// SKU; each ACCEPTED override then claims its own SKU too, so of
+			// two forced rows sharing a SKU only the first can land.
+			inFileSKU := map[string]bool{}
+			for i := range res.Items {
+				if res.Items[i].Issue == "" && res.Items[i].SKU != "" {
+					inFileSKU[res.Items[i].SKU] = true
+				}
+			}
+			for i := range res.Items {
+				if r.FormValue(fmt.Sprintf("row_include_%d", i)) != "1" {
+					continue
+				}
+				field, forceable := forceableImportIssue(res.Items[i].Issue)
+				if !forceable {
+					continue
+				}
+				if sku := res.Items[i].SKU; sku != "" && inFileSKU[sku] {
+					// Checked before the correction itself: no corrected
+					// name/price could ever make this row importable, so the
+					// status says the real, terminal reason.
+					overrideNotes[i] = T("import.status.duplicate_sku_in_file")
+					continue
+				}
+				switch field {
+				case "name":
+					name := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_name_%d", i)))
+					if name == "" {
+						overrideNotes[i] = T("import.problem_grid.name_required")
+						continue
+					}
+					res.Items[i].Name = name
+					res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
+				case "price":
+					rawPrice := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_price_%d", i)))
+					if rawPrice == "" {
+						overrideNotes[i] = T("import.problem_grid.price_required")
+						continue
+					}
+					// Same parser the file's own price cells go through —
+					// one price grammar on this page, not two.
+					minor, perr := catimport.ParsePrice(rawPrice, decimals)
+					if perr != nil {
+						overrideNotes[i] = fmt.Sprintf(T("import.problem_grid.price_invalid"), rawPrice)
+						continue
+					}
+					res.Items[i].PriceMinor = minor
+					res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
+				}
+				// Override accepted (Issue cleared): the row now claims its
+				// SKU, so a second forced row sharing it is vetoed above.
+				if res.Items[i].Issue == "" && res.Items[i].SKU != "" {
+					inFileSKU[res.Items[i].SKU] = true
+				}
+			}
 		}
 
 		// Annotate duplicates (server truth) for both preview and commit.
 		type rowView struct {
 			catimport.ImportItem
-			Status  string // translated display text
-			Skipped bool   // preview-time issue/duplicate — never entered the commit loop as importable
-			Warned  bool   // created, but with a warning
-			Failed  bool   // commit-time failure (category/department/item creation)
+			Status   string // translated display text
+			Skipped  bool   // preview-time issue/duplicate — never entered the commit loop as importable
+			Warned   bool   // created, but with a warning
+			Failed   bool   // commit-time failure (category/department/item creation)
+			Idx      int    // stable 0-based row index for this parse (ut-docs#601) — field names row_include_<Idx> etc.
+			FixField string // "name"/"price" when the row's issue is forceable with an inline correction, else ""
 		}
 		var rows []rowView
 		importable := 0
-		for _, it := range res.Items {
+		for i, it := range res.Items {
 			status := T("import.status.ok")
 			skipped := false
+			fixField := ""
 			switch {
+			case overrideNotes[i] != "":
+				// Ticked to import but the correction didn't validate —
+				// stays skipped, and the status says why.
+				status, skipped = overrideNotes[i], true
 			case it.Issue != "":
 				status, skipped = translateImportIssue(T, it), true
+				fixField, _ = forceableImportIssue(it.Issue)
 			case it.Barcode != "":
 				if exists, _ := repo.BarcodeExists(r.Context(), it.Barcode); exists {
 					status, skipped = T("import.status.barcode_already_in_catalog"), true
@@ -304,7 +482,26 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !skipped {
 				importable++
 			}
-			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped})
+			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixField: fixField})
+		}
+
+		// ut-docs#601: a preview stages the upload so the follow-up commit
+		// can re-read the byte-identical file and honour per-row overrides.
+		// A staging failure degrades gracefully: the preview still renders,
+		// just without the interactive problem grid (today's behavior).
+		stagedFormID := ""
+		if !commit {
+			if stagedID != "" {
+				// Re-preview: the previous staged copy's hidden input was
+				// still in the form when the operator clicked Preview again
+				// — supersede it instead of letting it pile up until TTL.
+				discardStagedCatalogUpload(stagedID)
+			}
+			if sid, serr := stageCatalogUpload(file); serr != nil {
+				log.Printf("[import] stage preview upload: %v", serr)
+			} else {
+				stagedFormID = sid
+			}
 		}
 
 		created, warned, failed := 0, 0, 0
@@ -644,6 +841,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		} else {
 			fmt.Fprintf(&b, `<p><strong>%s: %s · %d %s, %d %s</strong></p>`,
 				T("import.detected"), res.Format, importable, T("import.ready"), len(rows)-importable, T("import.with_issues"))
+			if stagedFormID != "" {
+				// form="import-form": this input lives in the swapped
+				// #import-result div, outside <form id="import-form">, so it
+				// must be form-associated explicitly to ride along on the
+				// Import submit (same reason the currency-confirm select
+				// carries the attribute).
+				fmt.Fprintf(&b, `<input type="hidden" name="staged_id" value="%s" form="import-form">`, stagedFormID)
+			}
 		}
 		b.WriteString(`<table class="table"><thead><tr><th>` + T("catalog.col.name") + `</th><th>` +
 			T("catalog.col.price") + `</th><th>` + T("catalog.barcode") + `</th><th>` +
@@ -662,6 +867,11 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				plainRows = append(plainRows, row)
 			}
 		}
+		// Problem-row controls render only on an interactive preview — a
+		// preview whose upload actually staged (ut-docs#601). Never on a
+		// commit response: the grid's whole point is deciding what the NEXT
+		// commit does.
+		interactive := !commit && stagedFormID != ""
 		writeRow := func(row rowView) {
 			// A warned row must be visually distinct from BOTH a clean row
 			// and a failed/skipped one — a status pill/icon, not just the
@@ -677,6 +887,33 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				statusHTML = `<span class="row-warn-icon" aria-hidden="true">⚠</span>` + statusHTML
 			case row.Skipped || row.Failed:
 				cls = ` class="muted"`
+			}
+			if interactive && row.Skipped && row.FixField != "" {
+				// Include/skip checkbox plus inline correction input — ONLY
+				// for the forceable issue types (missing_name/bad_price,
+				// forceableImportIssue). Any other skipped row keeps its
+				// passive status text with no controls at all: the server
+				// would ignore a ticked include on it anyway, and an inert
+				// checkbox with no feedback misleads the operator into
+				// thinking something can be done (ut-docs#601 review F3).
+				// Required-if-ticked is wired up by the page's own script via
+				// data-fix-target. All controls are form-associated
+				// (form="import-form") — they live outside the <form>, in the
+				// swapped #import-result div. Logical properties only
+				// (margin-block-*): fa/ar render RTL.
+				statusHTML += fmt.Sprintf(
+					`<label class="import-fix-include" style="display:block;margin-block-start:.3rem"><input type="checkbox" name="row_include_%d" value="1" form="import-form" data-fix-target="row-fix-%d"> %s</label>`,
+					row.Idx, row.Idx, htmlEscape(T("import.problem_grid.include_label")))
+				switch row.FixField {
+				case "name":
+					statusHTML += fmt.Sprintf(
+						`<input type="text" id="row-fix-%d" name="row_name_%d" form="import-form" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:14rem">`,
+						row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_name")), htmlEscape(T("import.problem_grid.corrected_name")))
+				case "price":
+					statusHTML += fmt.Sprintf(
+						`<input type="text" id="row-fix-%d" name="row_price_%d" form="import-form" inputmode="decimal" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:8rem">`,
+						row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_price")), htmlEscape(T("import.problem_grid.corrected_price")))
+				}
 			}
 			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 				cls, htmlEscape(row.Name), httpx.FormatMoney(row.PriceMinor, locale),
@@ -712,7 +949,19 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 // currency the file's prices are actually in; either way the request round-
 // trips back through POST /api/import with confirm_currency set (handled at
 // the top of that handler, above), never through a second route.
-func renderImportCurrencyConfirm(w http.ResponseWriter, T func(string) string) {
+//
+// When the gated commit was a STAGED one (ut-docs#601), stagedID is the
+// preserved staged copy's id and form is the request's parsed multipart
+// fields: this prompt fully replaces the #import-result div that held the
+// original staged_id hidden input and every problem-grid override control,
+// so both must be re-emitted here as hidden form-associated inputs (same
+// form="import-form" pattern the preview render uses) or the "Confirm &
+// Import" resubmit falls back to the non-staged path and silently discards
+// the operator's corrections. Only the allow-listed row_* field names are
+// ever reflected back (confirmCarriedOverrideField) — nothing else from the
+// request reaches the response HTML. stagedID == "" (a plain never-previewed
+// commit) emits none of this, keeping the pre-#601 flow byte-identical.
+func renderImportCurrencyConfirm(w http.ResponseWriter, T func(string) string, stagedID string, form map[string][]string) {
 	active := httpx.ActiveCurrency()
 	var b strings.Builder
 	// ut-docs#970 review (F6): a block-level class that's actually styled —
@@ -736,6 +985,21 @@ func renderImportCurrencyConfirm(w http.ResponseWriter, T func(string) string) {
 		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, htmlEscape(c.Code), selected, htmlEscape(c.Name))
 	}
 	b.WriteString(`</select></label> `)
+	if stagedID != "" {
+		// form="import-form": these live in the swapped #import-result div,
+		// outside <form id="import-form">, so they must be form-associated
+		// explicitly to ride along on the confirm resubmit — the exact
+		// pattern the preview's own staged_id hidden input uses.
+		fmt.Fprintf(&b, `<input type="hidden" name="staged_id" value="%s" form="import-form">`, htmlEscape(stagedID))
+		for name, vals := range form {
+			if !confirmCarriedOverrideField.MatchString(name) {
+				continue
+			}
+			for _, v := range vals {
+				fmt.Fprintf(&b, `<input type="hidden" name="%s" value="%s" form="import-form">`, htmlEscape(name), htmlEscape(v))
+			}
+		}
+	}
 	// hx-encoding is required here, not optional: this button lives outside
 	// <form id="import-form"> (it's rendered into the swapped #import-result
 	// div), so without an explicit multipart encoding htmx falls back to
@@ -748,6 +1012,14 @@ func renderImportCurrencyConfirm(w http.ResponseWriter, T func(string) string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
 }
+
+// confirmCarriedOverrideField matches exactly the per-row problem-grid
+// field names the commit handler reads (row_include_<i>, row_name_<i>,
+// row_price_<i>) — the only request fields renderImportCurrencyConfirm ever
+// reflects back into the prompt's HTML. An allow-list on purpose, same
+// stance as forceableImportIssue: any other submitted field name never
+// round-trips through the response.
+var confirmCarriedOverrideField = regexp.MustCompile(`^row_(include|name|price)_[0-9]+$`)
 
 // writeCatalogCSV is G22b's catalog export writer. The CSV round-trips
 // with our own importer (column names come from its synonym table), so
