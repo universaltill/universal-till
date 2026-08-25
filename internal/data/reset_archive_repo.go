@@ -128,6 +128,14 @@ type resetArchiveTable struct {
 // Restore runs this slice in REVERSE (parent-before-child) so FKs to live
 // catalog/user rows and intra-batch parents are satisfied on re-insert.
 var resetArchiveTables = []resetArchiveTable{
+	// worker_allocations (ADR-0063, ut-docs#987) has no FK to sales/payments
+	// at all — source_id is a soft, informational cross-reference so an
+	// allocation record outlives a reset the same way sale_charges does not
+	// need to — so unlike stock_movements/sale_line_modifiers above, its
+	// position in this child-before-parent ordering is not load-bearing.
+	// Listed first for that reason: nothing here can trip a cascade or FK
+	// ordering trap regardless of where it sits.
+	{"worker_allocations", "id, source_type, source_id, cashier_id, amount_minor, allocated_at, note"},
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
 	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
