@@ -90,6 +90,24 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 		label := strings.ToUpper(m.Method[:1]) + m.Method[1:]
 		doc.Payments = append(doc.Payments, print.KV{Label: label, Amount: money(m.In - m.Out)})
 	}
+	// Tips by payment method (ut-docs#1007), as footer lines rather than
+	// folded into doc.Payments above -- the reference day-close reports
+	// tips held OUT of revenue, never mixed into the payment-method
+	// takings those KV rows represent, and this section only appears at
+	// all once there's at least one tipped payment for the period (an
+	// empty rep.Tips -- e.g. a terminal with tipping disabled and zero
+	// cash tips -- prints nothing, same convention Departments/Tills
+	// below already follow).
+	if len(rep.Tips) > 0 {
+		doc.Footer = append(doc.Footer, "", "TIPS (held out of revenue)")
+		var tipTotal int64
+		for _, tp := range rep.Tips {
+			label := strings.ToUpper(tp.Method[:1]) + tp.Method[1:]
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("%dx %s", tp.Count, label), money(tp.Amount)))
+			tipTotal += tp.Amount
+		}
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", "TOTAL", money(tipTotal)))
+	}
 	// Per-VAT-rate breakdown (ut-docs#1003) + department breakdown (E1b) +
 	// per-register breakdown, as footer lines so they print on the Z-report
 	// without depending on new Doc fields.
@@ -148,6 +166,49 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 			}
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(t.Revenue)))
 		}
+	}
+	// Voucher liability flows (ut-docs#1008) — their own footer section,
+	// SEPARATE from and never summed into the article/department figures: an
+	// issue is a 0% liability (inside the day's overall total, outside
+	// Artikelumsatz and every per-rate VAT band), a redemption is a payment
+	// method. Same footer-line precedent as BY DEPARTMENT / BY TILL above;
+	// "GUTSCHEINE" matches the Germany-pilot Z-report vocabulary the card
+	// specifies. Omitted entirely on a day with no voucher activity.
+	if rep.VouchersIssuedCount > 0 || rep.VouchersRedeemedCount > 0 {
+		doc.Footer = append(doc.Footer, "", "GUTSCHEINE")
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Issued (%d)", rep.VouchersIssuedCount), money(rep.VouchersIssued)))
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Redeemed (%d)", rep.VouchersRedeemedCount), money(rep.VouchersRedeemed)))
+	}
+	// Cash-drawer reconciliation (ut-docs#1006) — printed only when at
+	// least one shift was closed that day; a day-close without one still
+	// renders a complete report. Amounts stored negative (skim, pay-outs)
+	// print sign-first ("-£411.10"), same convention as the Refunds line.
+	if rc := rep.CashReconciliation; rc != nil {
+		signed := func(minor int64) string {
+			if minor < 0 {
+				return "-" + money(-minor)
+			}
+			return money(minor)
+		}
+		line := func(label string, amount string) string {
+			return fmt.Sprintf("%-20s %s", label, amount)
+		}
+		varianceLine := line("Variance", signed(rc.Variance))
+		if rc.Variance != 0 {
+			// Flag a count discrepancy so it can't be missed on paper.
+			varianceLine += " !!"
+		}
+		doc.Footer = append(doc.Footer, "", "CASH RECONCILIATION",
+			line("Opening float", signed(rc.OpeningFloat)),
+			line("Cash sales", signed(rc.CashSales)),
+			line("Pay-ins", signed(rc.PayIns)),
+			line("Pay-outs", signed(rc.PayOuts)),
+			line("Calculated", signed(rc.Calculated)),
+			line("Counted", signed(rc.Counted)),
+			varianceLine,
+			line("Skim to safe", signed(rc.Skim)),
+			line("New float", signed(rc.NewFloat)),
+		)
 	}
 	if rep.FirstReceipt != "" {
 		doc.Footer = append(doc.Footer, "", "Receipts "+rep.FirstReceipt+" - "+rep.LastReceipt)

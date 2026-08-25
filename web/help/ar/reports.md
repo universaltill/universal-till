@@ -31,6 +31,22 @@ routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
 
 تنطبق هذه الإزاحة أيضاً على مخطط "أكثر ساعة ازدحاماً" في اتجاه المبيعات — قد تظهر عملية بيع جرت بعد منتصف الليل مباشرة تحت تسمية ساعة سابقة لمنتصف الليل (مثلاً ٢٢:٠٠) بدلاً من وقتها الفعلي، بما يتسق مع كون اليوم/الأسبوع/الشهر/السنة يعتبر بالفعل تلك العملية جزءاً من يوم العمل السابق.
 
+## قسائم الهدايا في تقرير نهاية اليوم (Z)
+
+إذا كان متجرك يبيع قسائم هدايا متعددة الأغراض أو يقبلها، يعرض تقرير نهاية
+اليوم المطبوع قسمًا منفصلًا بعنوان **GUTSCHEINE**: عدد القسائم الصادرة
+والمستخدمة في ذلك اليوم ومبالغها. يُسجَّل بيع القسيمة كمبلغ مستحق لحامل
+القسيمة المستقبلي، وليس كإيراد منتجات — لذا يظهر المبلغ في إجمالي إيرادات
+اليوم لكنه لا يدخل أبدًا في أرقام المنتجات حسب القسم أو حسب نسبة الضريبة.
+تُسجَّل ضريبة السلع عند إنفاق القسيمة لاحقًا، وبنسب تلك السلع نفسها — تمامًا
+كما لو دفع العميل نقدًا. لا يُطبع هذا القسم إلا في الأيام التي شهدت حركة
+قسائم.
+
+إذا أُلغيت عملية البيع التي بيعت فيها قسيمة، تُلغى القسيمة معها ما دامت
+غير مستخدمة بعد — فتختفي من التقرير ولا يمكن إنفاقها بعد ذلك. أما إذا
+كان أي جزء من القسيمة قد أُنفق بالفعل، فسيرفض الصندوق إلغاء تلك العملية:
+سوِّ أمر القسيمة المستحقة مع العميل أولًا.
+
 ## الاحتفاظ بالتقارير
 
 يُحتفظ بكل تقرير نهاية يوم مؤرشف لمدة **10 سنوات** — هذا سجل قانوني، وزر
@@ -85,6 +101,42 @@ JSON، مثلاً لتسليمها لمدقق حسابات.
 "Pfandrückgabe" خلال تلك الفترة — لترى رقماً مثل "إجمالي ودائع الزجاجات
 المسحوبة هذا الأسبوع" دون فتح صفحة التدقيق. يظهر هذا القسم فقط عند وجود
 تعديل واحد على الأقل خلال الفترة.
+
+## Counting the drawer at close: skim & new float
+
+The opening cash for a new shift is **carried over automatically** from
+the register's last close — whatever the previous close left in the
+drawer is pre-filled, so you confirm it rather than re-type it. You can
+still edit the figure if the drawer was corrected in between; whatever
+you submit is what's recorded.
+
+When you close a shift, count the drawer and enter the counted cash as
+before. Two optional extras join it:
+
+- **Skim to safe** — the amount you move from the drawer to the safe as
+  part of the close. The counted cash minus the skim becomes the drawer's
+  **new float**, which is what the next shift on that register opens with.
+  A skim can't exceed the counted cash, and it never changes the expected
+  figure — the variance always compares your count against takings
+  *before* the skim, so moving money to the safe can't hide a shortage.
+  An optional reason can be recorded with it.
+- **Denomination count** — an optional per-denomination count (how many
+  of each coin and note) stored with the close as a count protocol, for
+  shops that want the till count documented piece by piece. Leave it
+  empty to skip it entirely.
+
+## Cash reconciliation on the day-end report
+
+The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
+section on any day at least one shift was closed: opening float, cash
+sales, pay-ins, pay-outs, calculated (what should be in the drawers),
+counted (what was in them), variance, skim to safe, and the new float
+carried to the next day. A non-zero variance is flagged with `!!` on the
+printout, and the Day-end tab marks that day's row with a warning tag so
+a discrepancy is visible on screen without reprinting each period. A day
+with no closed shift still produces a complete report — the section is
+simply absent, and running End of day is never blocked on closing a
+shift.
 
 ## عرض مبيعات كل الصناديق (سجل المبيعات)
 
@@ -144,3 +196,11 @@ JSON، مثلاً لتسليمها لمدقق حسابات.
   التفصيلية وليس الإجماليات فقط.
 - تُحفظ سجلات الدفعات مع بقية السجلات المالية للمتجر ولا تُحذف مبكراً —
   نفس مدة الاحتفاظ بباقي هذه الصفحة (انظر الاحتفاظ بالتقارير أعلاه).
+- **في تقرير نهاية اليوم (Z) المطبوع** — لأي يوم فيه دفعة واحدة على
+  الأقل سجّلت إكرامية — غالباً دفعة استخدم فيها طلب الإكرامية الخاص بجهاز
+  الدفع — يطبع التقرير أيضاً سطراً قصيراً للإكراميات حسب طريقة الدفع
+  (مثل "4x Card £3.20"). يُحتفظ بهذا المبلغ منفصلاً عن إجماليات مبيعات
+  اليوم ولا يُحتسب كإيراد. قد يختلف هذا الرقم عن رقم "المستلم" أعلاه: سطر
+  تقرير Z يحسب كل دفعة تحمل إكرامية بصرف النظر عن صاحبها، بينما "المستلم"
+  يحسب فقط الإكراميات المسجَّلة للعامل (الافتراضي) — ومن المتوقع أن
+  يختلف الرقمان عند تسجيل إكرامية للمنشأة.

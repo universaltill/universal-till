@@ -31,6 +31,22 @@ Varsayılan olarak bir rapor "günü" gece yarısından gece yarısına kadar s�
 
 Bu kaydırma, Satış eğilimi sekmesindeki en yoğun saat grafiğine de uygulanır — gece yarısından hemen sonra yapılan bir satış, gerçek saati yerine gece yarısından önceki bir saat etiketinin altında (örneğin 22:00) görünebilir; bu, Gün/Hafta/Ay/Yıl'ın bu satışı zaten önceki işletme gününe ait saymasıyla tutarlıdır.
 
+## Gün sonu (Z) raporunda hediye çekleri
+
+Mağazanız çok amaçlı hediye çeki satıyor veya kabul ediyorsa, yazdırılan
+gün sonu raporunda ayrı bir **GUTSCHEINE** bölümü görünür: o gün kaç çekin
+satıldığı ve kullanıldığı, ve tutarları. Çek satışı, ürün geliri olarak
+değil, çekin gelecekteki sahibine borçlanılan para olarak kaydedilir — bu
+yüzden tutar günün genel hasılatında görünür ama bölüm bazlı veya vergi
+oranı bazlı ürün rakamlarına asla girmez. Malların vergisi, çek daha sonra
+harcandığında, o malların kendi oranlarıyla kaydedilir — müşteri nakit
+ödemiş gibi. Bölüm yalnızca çek hareketi olan günlerde yazdırılır.
+
+Bir çekin satıldığı satış iptal edilirse, çek henüz hiç kullanılmamışsa
+çek de onunla birlikte iptal edilir — rapordan kaybolur ve artık
+harcanamaz. Çekin herhangi bir kısmı zaten harcanmışsa kasa o satışın
+iptalini reddeder: önce bekleyen çeki müşteriyle çözüme kavuşturun.
+
 ## Rapor saklama
 
 Arşivlenen her gün sonu raporu **10 yıl** saklanır — bu yasal bir kayıttır
@@ -90,6 +106,42 @@ göre nakit düzeltmeleri" dökümü gösterir — örneğin o dönemdeki tüm
 "Pfandrückgabe" çıkışlarının toplamı — böylece Denetim sayfasını açmadan
 "bu hafta ödenen toplam depozito iadesi" gibi bir rakam görebilirsiniz. Bu
 bölüm yalnızca dönem içinde en az bir düzeltme olduğunda görünür.
+
+## Counting the drawer at close: skim & new float
+
+The opening cash for a new shift is **carried over automatically** from
+the register's last close — whatever the previous close left in the
+drawer is pre-filled, so you confirm it rather than re-type it. You can
+still edit the figure if the drawer was corrected in between; whatever
+you submit is what's recorded.
+
+When you close a shift, count the drawer and enter the counted cash as
+before. Two optional extras join it:
+
+- **Skim to safe** — the amount you move from the drawer to the safe as
+  part of the close. The counted cash minus the skim becomes the drawer's
+  **new float**, which is what the next shift on that register opens with.
+  A skim can't exceed the counted cash, and it never changes the expected
+  figure — the variance always compares your count against takings
+  *before* the skim, so moving money to the safe can't hide a shortage.
+  An optional reason can be recorded with it.
+- **Denomination count** — an optional per-denomination count (how many
+  of each coin and note) stored with the close as a count protocol, for
+  shops that want the till count documented piece by piece. Leave it
+  empty to skip it entirely.
+
+## Cash reconciliation on the day-end report
+
+The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
+section on any day at least one shift was closed: opening float, cash
+sales, pay-ins, pay-outs, calculated (what should be in the drawers),
+counted (what was in them), variance, skim to safe, and the new float
+carried to the next day. A non-zero variance is flagged with `!!` on the
+printout, and the Day-end tab marks that day's row with a warning tag so
+a discrepancy is visible on screen without reprinting each period. A day
+with no closed shift still produces a complete report — the section is
+simply absent, and running End of day is never blocked on closing a
+shift.
 
 ## Tüm kasaların satışlarını görme (İşlem geçmişi)
 
@@ -159,3 +211,12 @@ etmez veya taşımaz.
 - Ödeme kayıtları, mağazanın diğer mali kayıtlarıyla birlikte tutulur ve
   erken silinmez — bu sayfadaki diğer her şeyle aynı saklama süresi
   (yukarıdaki Rapor saklama bölümüne bakın).
+- **Yazdırılan Gün sonu (Z) raporunda** — en az bir ödemenin bahşiş
+  kaydettiği her gün için rapor, ödeme yöntemine göre kısa bir bahşiş
+  satırı da yazdırır (örn. "4x Card £3.20") — en sık, kart terminalinin
+  kendi bahşiş isteminin kullanıldığı bir ödeme. Bu, günün satış
+  toplamlarından ayrı tutulur, gelir sayılmaz. Yukarıdaki "Alınan"
+  rakamından farklı okunabilir: Z-raporu satırı, bahşişin kime ait
+  olduğuna bakmaksızın bahşişli her ödemeyi sayar; "Alınan" ise yalnızca
+  çalışana kaydedilen bahşişleri sayar (varsayılan) — bir bahşiş
+  işletmeye kaydedildiğinde ikisinin farklı çıkması beklenir.

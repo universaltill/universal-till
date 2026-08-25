@@ -38,9 +38,10 @@ type refundLineView struct {
 // The inference itself is pos.InferTaxInclusive (extracted with the shared
 // VAT banding, ut-docs#1003) so the day-close band computation — which
 // reads raw sale rows, not data.SaleDetail — can never drift from it; see
-// its doc comment for why the service charge participates.
+// its doc comment for why the service charge and the voucher issue total
+// (ut-docs#1008 review F1) participate.
 func saleIsTaxInclusive(d data.SaleDetail) bool {
-	return pos.InferTaxInclusive(d.Subtotal, d.DiscountTotal, d.TaxTotal, d.Total, d.ServiceCharge)
+	return pos.InferTaxInclusive(d.Subtotal, d.DiscountTotal, d.TaxTotal, d.Total, d.ServiceCharge, d.VoucherIssueTotal)
 }
 
 // refundLinePool computes, per refund-line key, the TRUE quantity still

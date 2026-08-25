@@ -47,6 +47,24 @@ just after midnight can show under a pre-midnight hour label (e.g. 22:00)
 rather than its real clock time, consistent with Day/Week/Month/Year
 already counting that sale as part of the previous business day.
 
+## Gift vouchers on the day-end (Z) report
+
+When your shop sells or accepts multi-purpose gift vouchers, the printed
+day-end report shows a separate **GUTSCHEINE** section: how many vouchers
+were issued and redeemed that day, and for how much. Selling a voucher is
+recorded as money owed to the voucher's future bearer, not as product
+revenue — so the amount appears in the day's overall takings but never in
+the per-department or per-tax-rate product figures. Tax on the goods is
+recorded when the voucher is later spent, at those goods' own rates, the
+same as if the customer had paid cash. The section only prints on days
+with voucher activity.
+
+Voiding the sale that sold a voucher cancels the voucher with it, as long
+as the voucher is still unused — it disappears from the report and can no
+longer be spent. If any part of the voucher has already been spent, the
+till refuses to void that sale: sort out the outstanding voucher with the
+customer first.
+
 ## Report retention
 
 Every archived end-of-day report is kept for **10 years** — this is a legal
@@ -105,6 +123,42 @@ one register it now defaults to this till's own register (set under
 Settings → Tills), so opening a shift on the till you're standing at
 normally needs no picking — you can still choose a different register
 from the list for the rare case a shift needs opening on one.
+
+## Counting the drawer at close: skim & new float
+
+The opening cash for a new shift is **carried over automatically** from
+the register's last close — whatever the previous close left in the
+drawer is pre-filled, so you confirm it rather than re-type it. You can
+still edit the figure if the drawer was corrected in between; whatever
+you submit is what's recorded.
+
+When you close a shift, count the drawer and enter the counted cash as
+before. Two optional extras join it:
+
+- **Skim to safe** — the amount you move from the drawer to the safe as
+  part of the close. The counted cash minus the skim becomes the drawer's
+  **new float**, which is what the next shift on that register opens with.
+  A skim can't exceed the counted cash, and it never changes the expected
+  figure — the variance always compares your count against takings
+  *before* the skim, so moving money to the safe can't hide a shortage.
+  An optional reason can be recorded with it.
+- **Denomination count** — an optional per-denomination count (how many
+  of each coin and note) stored with the close as a count protocol, for
+  shops that want the till count documented piece by piece. Leave it
+  empty to skip it entirely.
+
+## Cash reconciliation on the day-end report
+
+The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
+section on any day at least one shift was closed: opening float, cash
+sales, pay-ins, pay-outs, calculated (what should be in the drawers),
+counted (what was in them), variance, skim to safe, and the new float
+carried to the next day. A non-zero variance is flagged with `!!` on the
+printout, and the Day-end tab marks that day's row with a warning tag so
+a discrepancy is visible on screen without reprinting each period. A day
+with no closed shift still produces a complete report — the section is
+simply absent, and running End of day is never blocked on closing a
+shift.
 
 The Payments & channels tab on Reports shows a **Cash adjustments by
 reason** breakdown for the selected period — e.g. a total for
@@ -173,6 +227,15 @@ its own.
 - Payout records are kept alongside the shop's other financial records and
   are not deleted early — the same retention as everything else on this
   page (see Report retention above).
+- **On the printed Day-end (Z) report** — the report also prints a short
+  tips-by-payment-method line (e.g. "4x Card £3.20") for any day with at
+  least one payment that recorded a tip — most often a card payment
+  where the terminal's own tip prompt was used. This is held separately
+  from the day's sales totals, not counted as revenue. It can read
+  differently from "Received" above: the Z-report line counts every
+  tipped payment regardless of who the tip belongs to, while "Received"
+  only counts tips recorded for the employee (the default) — the two are
+  expected to differ once a tip is recorded for the business instead.
 
 ## Reconciling a card payment (receipt detail)
 
