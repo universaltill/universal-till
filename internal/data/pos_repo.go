@@ -2524,6 +2524,54 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
+// SaleCharge is one row of a sale's itemized additive statutory charge list
+// (ADR-0062, ut-docs#963) — the child rows sales.service_charge_amount /
+// service_charge_tax_basis_bp are derived FROM (sum, first-item basis) once
+// a sale has 2+ charges, never the other way around. Amount is already-
+// computed and persisted verbatim, same "never recomputed on replay"
+// reasoning as every other money field this layer stores (ADR-0061
+// Decision 4). There is no Seq field here: order is the slice's own order —
+// InsertSaleCharges numbers rows by position, GetSaleDetail reads them back
+// `ORDER BY seq`, so the Go type never needs to carry the DB's own ordering
+// column.
+type SaleCharge struct {
+	Key        string `json:"key"`
+	Label      string `json:"label,omitempty"`
+	Amount     int64  `json:"amount"`
+	TaxBasisBP int    `json:"tax_basis_bp,omitempty"`
+	Base       string `json:"base,omitempty"`
+}
+
+// InsertSaleCharges writes charges as sale_charges rows for saleID, in the
+// same transaction as InsertSale — a sibling method rather than a wider
+// InsertSale signature (ut-docs#976 flags InsertSale's existing 25
+// positional arguments as already risky; this ADR deliberately does not add
+// a 26th). Deliberately a no-op for an empty/nil list: a sale with no
+// itemized charges (nothing has adopted charge.policy.ask's new Charges
+// field yet, per step 2/3 of this ADR) simply gets no sale_charges rows,
+// same as it does today.
+func (r *POSRepo) InsertSaleCharges(ctx context.Context, tx *sql.Tx, saleID string, charges []SaleCharge) error {
+	for i, c := range charges {
+		if _, err := r.exec(tx).ExecContext(ctx, `
+INSERT INTO sale_charges (sale_id, seq, key, label, amount_minor, tax_basis_bp, base)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`, saleID, i, c.Key, c.Label, c.Amount, c.TaxBasisBP, coalesceChargeBase(c.Base)); err != nil {
+			return fmt.Errorf("insert sale charge %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// coalesceChargeBase defaults an empty Base to "net_lines" — the column's
+// own DEFAULT only applies when the value is SQL NULL, not an empty string,
+// and the Go zero value for SaleCharge.Base is "".
+func coalesceChargeBase(base string) string {
+	if base == "" {
+		return "net_lines"
+	}
+	return base
+}
+
 // InsertSaleLine writes a sale_lines row.
 func (r *POSRepo) InsertSaleLine(ctx context.Context, tx *sql.Tx, lineID, saleID string, lineNo int, itemID, variantID, name, sku, barcode string, qty float64, unitPrice, lineDiscount int64, taxRateBP int, taxAmount, totalBeforeTax, totalAfterTax int64) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
@@ -3735,6 +3783,17 @@ type SaleDetail struct {
 	CashierID               string              `json:"cashier_id"`
 	Lines                   []SaleDetailLine    `json:"lines"`
 	Payments                []SaleDetailPayment `json:"payments"`
+	// Charges (ADR-0062, ut-docs#963/#984) is the itemized additive
+	// statutory charge list read from sale_charges, in seq order. Empty for
+	// every sale until step 2/3 of that ADR starts writing sale_charges rows
+	// -- ServiceCharge/ServiceChargeTaxBasisBP above stay the source of
+	// truth for a sale with zero or one charge. omitempty + the "charges"
+	// JSON key are ADR-0062 Decision 7's LAN-sync journal shape: a
+	// pre-ADR-0062 peer's journal simply lacks the key, which applyJournal
+	// reads as "fall back to the scalar reconstruction" (step 3, ut-docs#986)
+	// -- not a new code path, today's applyJournal logic kept as that
+	// fallback branch.
+	Charges []SaleCharge `json:"charges,omitempty"`
 }
 
 type SaleDetailLine struct {
@@ -3879,6 +3938,24 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	}
 	if err := payRows.Err(); err != nil {
 		return SaleDetail{}, false, fmt.Errorf("iterate sale payments: %w", err)
+	}
+
+	chargeRows, err := r.db.QueryContext(ctx, `
+SELECT key, label, amount_minor, tax_basis_bp, base
+FROM sale_charges WHERE sale_id = ? ORDER BY seq`, d.ID)
+	if err != nil {
+		return SaleDetail{}, false, fmt.Errorf("get sale charges: %w", err)
+	}
+	defer chargeRows.Close()
+	for chargeRows.Next() {
+		var c SaleCharge
+		if err := chargeRows.Scan(&c.Key, &c.Label, &c.Amount, &c.TaxBasisBP, &c.Base); err != nil {
+			return SaleDetail{}, false, fmt.Errorf("scan sale charge: %w", err)
+		}
+		d.Charges = append(d.Charges, c)
+	}
+	if err := chargeRows.Err(); err != nil {
+		return SaleDetail{}, false, fmt.Errorf("iterate sale charges: %w", err)
 	}
 	return d, true, nil
 }

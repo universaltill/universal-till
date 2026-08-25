@@ -39,6 +39,53 @@ type ChargePolicy struct {
 	// export mapping (e.g. DSFinV-K's TrinkgeldAN/TrinkgeldAG). Core never
 	// interprets it.
 	FiscalBusinessCase string
+	// Charges is an ordered list of additional additive statutory charges
+	// (ADR-0062, ut-docs#963) beyond the one merchant-rate service charge
+	// above — e.g. a GCC market's municipality/tourism levies. Empty for
+	// every market researched except the GCC; a plugin answering only the
+	// legacy scalar fields above needs no code change (ADR-0062 Decision 3:
+	// core treats a non-empty legacy answer as a one-item Charges list
+	// whenever a plugin's own Charges is empty). Unlike
+	// ServiceChargeDefaultRateBP, each item's DefaultRateBP here IS the
+	// applied rate, taken as-is — there is no settings row for a
+	// plugin-declared levy the merchant could override.
+	Charges []ChargeItem
+}
+
+// ChargeItem is one plugin-declared additive statutory charge (ADR-0062
+// Decision 3) — the same shape as ChargeInput minus Amount, since a policy
+// answer supplies a rate the caller applies to the sale's net, not an
+// already-computed amount. ChargeInput itself lands in internal/pos/sales.go
+// at ADR-0062 step 2 (ut-docs#985), not yet present as of this step.
+type ChargeItem struct {
+	// Key is a stable id for this charge, e.g. "municipality_tax". The
+	// reserved key "service_charge" is core's own merchant-rate item above
+	// — a plugin answer that includes it here is rejected at the validation
+	// boundary (internal/pages/charge_hook.go's validateChargePolicy), not
+	// silently overwritten. Never empty — also rejected at that boundary.
+	Key string
+	// Label is the receipt/journal display text for this charge. Unlike
+	// core's own service_charge item (whose "" falls back to core's
+	// T "journal.detail.service_charge" copy — see Decision 6), a
+	// plugin-declared item can never carry Key: "service_charge" (rejected
+	// above), so "" here has no core fallback to render; step 3
+	// (ut-docs#986) must settle what an empty plugin-declared Label renders
+	// as, e.g. defaulting it to Key.
+	Label string
+	// DefaultRateBP is the rate APPLIED VERBATIM to the sale's net — unlike
+	// ServiceChargeDefaultRateBP, there is no merchant-editable settings row
+	// for anything in this list. Validated/clamped to [0, 10000] at the
+	// parse boundary; never trusted past that range.
+	DefaultRateBP int
+	// TaxBasisBP, when > 0, taxes this charge at this one flat rate; 0 means
+	// apportion at the sale's own per-line rates (mirrors
+	// ServiceChargeTaxBasisBP's semantics, per-charge instead of per-sale).
+	TaxBasisBP int
+	// Base is "net_lines" (the only value core implements; anything else
+	// clamps to it and logs — see validateChargePolicy) or
+	// "net_lines_plus_prior_charges", reserved for a future cascading levy
+	// no researched market needs yet.
+	Base string
 }
 
 // ChargePolicyAsker lets an installed country-tax plugin declare its
