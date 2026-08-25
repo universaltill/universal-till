@@ -391,6 +391,12 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				Period string
 				Net    int64
 				Sales  int
+				// HasVariance flags a non-zero cash-count variance in the
+				// archived report's cash reconciliation (ut-docs#1006), so
+				// a discrepancy is visible on screen without reprinting
+				// every period. Gated behind CanRunEOD with Net/Sales —
+				// it's derived from the same report history.
+				HasVariance bool
 			}
 			var eodRows []eodRow
 			// ut-docs#794 review finding (residual on the blocker-1 fix):
@@ -418,6 +424,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 						if json.Unmarshal([]byte(a.Content), &rep) == nil {
 							row.Net = rep.Net
 							row.Sales = rep.SalesCount
+							row.HasVariance = rep.CashReconciliation != nil && rep.CashReconciliation.Variance != 0
 						}
 					}
 					eodRows = append(eodRows, row)

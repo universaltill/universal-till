@@ -60,7 +60,7 @@ func TestShiftOpenExistsAndLoadShiftForClose(t *testing.T) {
 
 	// Close it, then LoadShiftForClose must refuse to load it again — an
 	// already-closed shift can't be closed twice.
-	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift1", 7000, 7000, "end of day", "2026-01-01T17:00:00Z"); err != nil {
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift1", 7000, 7000, 7000, "end of day", "", "2026-01-01T17:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err := dbx.repo.LoadShiftForClose(ctx, nil, "shift1"); err == nil {

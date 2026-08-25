@@ -38,7 +38,7 @@
       {{ $canRunEOD := .CanRunEOD }}
       {{ range .EODRows }}
       <tr>
-        <td>{{ .Period }}</td>
+        <td>{{ .Period }}{{ if .HasVariance }} <span class="tag stock-low" title="{{ T "reports.eod.variance_flag" }}">⚠ {{ T "reports.eod.variance_flag" }}</span>{{ end }}</td>
         {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
