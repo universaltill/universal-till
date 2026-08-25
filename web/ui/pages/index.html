@@ -100,7 +100,29 @@
 
   <!-- Tender and Scan: fixed-height panel, tabs instead of stacked cards so
        it never scrolls. Split-tender element IDs are load-bearing (app.js). -->
-  <div class="tender" x-data="{ tab: 'pay' }">
+  <div class="tender" x-data="{
+    tab: 'pay',
+    /* Roving-tabindex arrow-key nav (ut-docs#424, WAI-ARIA tabs pattern):
+       moves focus to the next/previous [role=tab] within this component
+       and activates it via its own @click handler — reuses the same
+       tab-switch logic instead of duplicating it, wrapping at either end.
+       dir is a DOM-order step (+1/-1), not a screen direction — the
+       @keydown.right/.left handlers below flip its sign under RTL, since
+       DOM-next renders to the visual LEFT there (this.$el.querySelectorAll
+       walks source order regardless of dir) and the WAI-ARIA APG expects
+       Right/Left to keep moving toward the visually next/previous tab,
+       not blindly forward/backward through the markup. Falls back to the
+       first tab when nothing is currently focused (e.g. a stray keydown
+       reaching the tablist without a tab holding focus) rather than
+       indexing off document.activeElement's -1 ('not found') result. */
+    focusTab(dir) {
+      const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
+      if (!tabs.length) return;
+      const i = Math.max(0, tabs.indexOf(document.activeElement));
+      const next = tabs[(i + dir + tabs.length) % tabs.length];
+      next.click(); next.focus();
+    }
+  }">
     <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
       <!-- inputmode="none": keep scanner focus without inviting any IME at
            load (ut-docs#155) — the OSK/toggle covers deliberate typing.
@@ -127,12 +149,12 @@
 
     <div id="held-sales" hx-get="/ui/held" hx-trigger="load" hx-swap="outerHTML"></div>
 
-    <div class="tab-bar" role="tablist">
-      <button type="button" class="tab" :class="tab === 'pay' && 'active'" @click="tab = 'pay'">{{ T "tender.tab.pay" }}</button>
-      <button type="button" class="tab" :class="tab === 'split' && 'active'" @click="tab = 'split'">{{ T "tender.tab.split" }}</button>
+    <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+      <button type="button" id="tab-pay" class="tab" role="tab" :class="tab === 'pay' && 'active'" :aria-selected="tab === 'pay'" :tabindex="tab === 'pay' ? 0 : -1" aria-controls="panel-pay" @click="tab = 'pay'">{{ T "tender.tab.pay" }}</button>
+      <button type="button" id="tab-split" class="tab" role="tab" :class="tab === 'split' && 'active'" :aria-selected="tab === 'split'" :tabindex="tab === 'split' ? 0 : -1" aria-controls="split-tender-card" @click="tab = 'split'">{{ T "tender.tab.split" }}</button>
     </div>
 
-    <div class="tab-panel" x-show="tab === 'pay'">
+    <div class="tab-panel" id="panel-pay" role="tabpanel" aria-labelledby="tab-pay" x-show="tab === 'pay'">
       <input type="hidden" id="offline-flag" name="offline" value="0">
       <div class="pay-grid">
         {{ range .payMethods }}
@@ -176,7 +198,7 @@
          rendering — so its strings ride on data-msg-* here (the same bridge
          #barcode-scan-overlay below already uses) and app.js stays locale-free.
          `%s` placeholders match the Go-side locale-string convention. -->
-    <div class="tab-panel" x-show="tab === 'split'" x-cloak id="split-tender-card"
+    <div class="tab-panel" role="tabpanel" aria-labelledby="tab-split" x-show="tab === 'split'" x-cloak id="split-tender-card"
          data-msg-no-pending="{{ T "tender.no_pending" }}"
          data-msg-change-note="{{ T "tender.status.change_note" }}"
          data-msg-select-method="{{ T "tender.status.select_method" }}"
