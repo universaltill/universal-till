@@ -68,6 +68,13 @@ type Hooks struct {
 	DeactivateItem func(ctx context.Context, itemID string) (string, error)
 	CreateItem     func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
 	AddBarcode     func(ctx context.Context, itemID, barcode string) (string, error)
+	// FiscalTSEReady handles the payload-less "fiscal_tse_ready" directive
+	// (ADR-0053, ut-docs#802): the cloud finished reseller-provisioning this
+	// shop's TSE, so the till must fetch its operational signing credential
+	// (a separate, authenticated, single-use endpoint — the credential never
+	// rides the directive itself) and store it locally. The hook only acks
+	// success once the credential is confirmed stored on disk.
+	FiscalTSEReady func(ctx context.Context) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -261,6 +268,13 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing item_id or barcode"
 		}
 		msg, err = hooks.AddBarcode(ctx, id, barcode)
+	case "fiscal_tse_ready":
+		if hooks.FiscalTSEReady == nil {
+			return "failed", "fiscal_tse_ready is not supported on this till"
+		}
+		// Deliberately payload-less (ADR-0053 Decision 1): the directive is
+		// a non-secret ready signal; no field validation applies.
+		msg, err = hooks.FiscalTSEReady(ctx)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}

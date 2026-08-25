@@ -107,6 +107,13 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
 			return cloudAdjustStock(ctx, d, itemID, delta, reason)
 		},
+		// fiscal_tse_ready (ADR-0053, ut-docs#802): the cloud finished
+		// reseller-provisioning this shop's TSE — fetch the operational
+		// credential once (single-use endpoint) and store it at rest;
+		// fiscal.tse_configured flips true only on confirmed local receipt.
+		FiscalTSEReady: func(ctx context.Context) (string, error) {
+			return applyFiscalTSEReady(ctx, d)
+		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes
 		// back as a plain `set_setting theme` directive.

@@ -4,12 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -160,6 +165,15 @@ func writeHTMLStockChanged(w http.ResponseWriter, status int, html string) {
 	writeHTML(w, status, html)
 }
 
+// errorHTML renders an error message into the `<div class='error'>…</div>`
+// fragment the respond*Error helpers' HTML branch writes, HTML-escaping the
+// message so caller-controlled input echoed back in a validation error
+// (e.g. an unrecognized line_id) can't inject markup into an authenticated
+// operator's browser via htmx's error-response DOM swap (ut-docs#1000).
+func errorHTML(message string) string {
+	return fmt.Sprintf("<div class='error'>%s</div>", html.EscapeString(message))
+}
+
 // respondError writes error response (JSON or HTML based on request). JSON
 // uses the { "data": null, "error": … } envelope universal-till/CLAUDE.md
 // mandates for every JSON API response (ut-docs#378).
@@ -167,7 +181,7 @@ func respondError(w http.ResponseWriter, r *http.Request, status int, message st
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, errorHTML(message))
 	}
 }
 
@@ -320,7 +334,7 @@ func respondOverrideError(w http.ResponseWriter, r *http.Request, status int, me
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, errorHTML(message))
 	}
 }
 
@@ -467,6 +481,39 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		// German TSE hard gate (ADR-0048, ut-docs#731): a return moves real
+		// money and is aufzeichnungspflichtig under KassenSichV the same as
+		// a sale, so it's blocked the same way completeTender blocks a
+		// sale — checked before CompleteSale runs, same as the /refund
+		// page's own return flow (refund_page.go). The refusal lands in
+		// the inventory page's own #return-result slot, inside an
+		// otherwise fully-translated screen, and this gate exists FOR the
+		// German market — so it reuses the refund flow's already-shipped
+		// copy rather than raw Go error text (ut-docs#316/#893: a
+		// sentinel's Error() string is still raw English, and a settings
+		// read failure here would put SQL text on the operator's screen).
+		gate, err := enforceFiscalGate(ctx, dp)
+		if err != nil {
+			locale := httpx.ResolveLocale(w, r)
+			var fiscalNC *fiscalNeverConfiguredError
+			var fiscalTF *fiscalTSEFailingError
+			switch {
+			case errors.As(err, &fiscalTF):
+				log.Printf("inventory return rejected: %v (ADR-0048 fiscal hard gate)", err)
+				respondReturnError(w, r, http.StatusConflict, httpx.T(locale, "refund.error.fiscal_tse_failing"))
+			case errors.As(err, &fiscalNC):
+				log.Printf("inventory return rejected: %v (ADR-0048 fiscal hard gate)", err)
+				respondReturnError(w, r, http.StatusConflict, httpx.T(locale, "refund.error.fiscal_never_configured"))
+			default:
+				// Settings-store read failure inside EvaluateGate: an
+				// internal fault, not a fiscal posture. Fails closed all
+				// the same, but as the 500 it is.
+				log.Printf("inventory return: fiscal gate evaluation failed: %v", err)
+				respondReturnError(w, r, http.StatusInternalServerError, httpx.T(locale, "refund.error.server"))
+			}
+			return
+		}
+
 		// Create return sale
 		returnInput := pos.SaleInput{
 			SaleType:               "return",
@@ -482,6 +529,22 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		if err != nil {
 			respondReturnError(w, r, http.StatusInternalServerError, err.Error())
 			return
+		}
+		// Same per-completion audit marker completeTender writes for a sale
+		// taken during an active TSE-override window (ADR-0048 Decision
+		// 3) — the journal must show exactly which money-moving
+		// completions (sale AND return alike) were taken unsigned.
+		// Best-effort after the fact, same as completeTender's own: the
+		// return is already committed, so a failed marker write is
+		// logged, never unwinds it.
+		if gate.Decision == fiscal.AllowedWithOverride {
+			if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", returnSaleID, "unsigned_override", map[string]any{
+				"override_actor":  gate.OverrideActor,
+				"override_reason": gate.OverrideReason,
+				"override_until":  gate.OverrideUntil.UTC().Format(time.RFC3339),
+			}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+				log.Printf("fiscal gate: unsigned_override audit marker for return %s failed: %v", returnSaleID, auditErr)
+			}
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(ctx, dp, returnInput)
@@ -515,7 +578,7 @@ func respondReturnError(w http.ResponseWriter, r *http.Request, status int, mess
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, errorHTML(message))
 	}
 }
 
@@ -548,7 +611,7 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 			if strings.Contains(r.Header.Get("Accept"), "application/json") {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
 			} else {
-				writeHTML(w, http.StatusInternalServerError, fmt.Sprintf("<div class='error'>%s</div>", err.Error()))
+				writeHTML(w, http.StatusInternalServerError, errorHTML(err.Error()))
 			}
 			return
 		}

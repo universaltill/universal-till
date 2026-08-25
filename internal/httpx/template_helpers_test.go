@@ -73,6 +73,54 @@ func TestDefaultLocale(t *testing.T) {
 	InitI18n(nil, "en") // restore the value other tests assume
 }
 
+// TestDefaultLocaleTemplateFuncNormalizesToLanguagePrefix (ut-docs#861, found
+// by the Tester step's own driven-run visual check, not written test-first):
+// a fresh till nobody has ever touched Settings' Language card on carries
+// the full BCP-47 UT_DEFAULT_LOCALE tag ("en-US") as its default, but the
+// picker's own options (AvailableLocales()) are always bare shipped-locale
+// codes ("en", "ar", ...). An unnormalized "defaultlocale" template func
+// would compare "en-US" against "en" and never match, so a real screenshot
+// of a never-configured till's Settings page showed NO option selected in
+// the new Language picker (looks broken, not just cosmetically off) — this
+// guards the fix (prefix-matching, same rule IsRTL already applies).
+func TestDefaultLocaleTemplateFuncNormalizesToLanguagePrefix(t *testing.T) {
+	InitI18n(nil, "en-US")
+	funcs := FuncsFor("en")
+	fn, ok := funcs["defaultlocale"].(func() string)
+	if !ok {
+		t.Fatal("FuncsFor is missing a defaultlocale template func of type func() string")
+	}
+	if got := fn(); got != "en" {
+		t.Fatalf(`defaultlocale() with DefaultLocale="en-US" = %q, want "en" (bare prefix, matches AvailableLocales())`, got)
+	}
+	InitI18n(nil, "en") // restore the value other tests assume
+}
+
+// TestSetDefaultLocale (ut-docs#861): a shop's default locale must be
+// changeable live, without a redeploy or another InitI18n call swapping the
+// translator itself — SetDefaultLocale only needs to move the atomic
+// fallback DefaultLocale()/ResolveLocale() read, since config.I18n already
+// loads every shipped locale's strings at boot.
+func TestSetDefaultLocale(t *testing.T) {
+	InitI18n(nil, "en")
+	if got := DefaultLocale(); got != "en" {
+		t.Fatalf("DefaultLocale before SetDefaultLocale = %q; want en", got)
+	}
+	SetDefaultLocale("de")
+	if got := DefaultLocale(); got != "de" {
+		t.Fatalf("DefaultLocale after SetDefaultLocale(de) = %q; want de", got)
+	}
+	// Empty value is a no-op-shaped guard, not a reset to "en" — callers
+	// (settings_page.go) are expected to skip the call entirely on an
+	// empty/invalid submission, but SetDefaultLocale itself must not let an
+	// accidental empty string silently blank the till's configured default.
+	SetDefaultLocale("")
+	if got := DefaultLocale(); got != "de" {
+		t.Fatalf("DefaultLocale after SetDefaultLocale(\"\") = %q; want unchanged de", got)
+	}
+	InitI18n(nil, "en") // restore the value other tests assume
+}
+
 func TestResolveLocaleFallsBackToEnWithEmptyDefault(t *testing.T) {
 	InitI18n(nil, "")
 	defer InitI18n(nil, "en")

@@ -27,7 +27,13 @@
          + timezone (Go side, setup_detect.go) instead of blank — still freely
          changeable via the select below, detection is a default, never a
          lock. -->
-    <main class="setup-card" x-data="{ step: {{ if .errKey }}6{{ else }}1{{ end }}, last: 7,
+    <!-- Step numbering: the Germany-only business-identity step (ADR-0053,
+         ut-docs#802) is step 3, skipped entirely for every other country —
+         step 2's Next jumps straight to 4 unless country === 'DE'. On an
+         error re-render the server picks which step to land on (errStep):
+         business-identity validation errors return to 3, everything else to
+         the PIN step. -->
+    <main class="setup-card" x-data="{ step: {{ if .errKey }}{{ .errStep }}{{ else }}1{{ end }}, last: 8,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
                                        currencyTouched: false }">
@@ -86,28 +92,63 @@
           <p class="muted" x-show="currency"><span x-text="currency"></span> · <span x-text="tax"></span>% </p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = 1">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 3">{{ T "setup.next" }}</button>
+            <button type="button" class="btn primary" @click="step = country === 'DE' ? 3 : 4">{{ T "setup.next" }}</button>
           </div>
         </section>
 
-        <!-- Step 3 · shop name -->
+        <!-- Step 3 · business identity + tax number, GERMANY ONLY (ADR-0053,
+             ut-docs#802): feeds the cloud-mediated TSE reseller-provisioning
+             kickoff. Optional — Skip leaves the shop on its own
+             fiscalisation path (ADR-0045's free tier); a partial submission
+             is rejected server-side and re-renders here with the typed
+             values preserved. NO bank-details field, ever (binding). The
+             custody note is ADR-0045 §3's at-setup disclosure: we state
+             plainly that Universal Till holds this device's admin credential
+             (PUK), assigned to this step by ut-docs#802. -->
         <section x-show="step === 3" x-cloak data-step="3">
+          <h1>{{ T "setup.tse.title" }}</h1>
+          <p class="muted">{{ T "setup.tse.hint" }}</p>
+          <label>{{ T "setup.tse.legal_name" }}
+            <input type="text" class="tse-field" name="tse_legal_name" maxlength="200" value="{{ .tseLegalName }}">
+          </label>
+          <label>{{ T "setup.tse.owner_name" }}
+            <input type="text" class="tse-field" name="tse_owner_name" maxlength="200" value="{{ .tseOwnerName }}">
+          </label>
+          <label>{{ T "setup.tse.tax_number" }}
+            <input type="text" class="tse-field" name="tse_tax_number" maxlength="200" value="{{ .tseTaxNumber }}" placeholder="{{ T "setup.tse.tax_number_hint" }}">
+          </label>
+          <label>{{ T "setup.tse.address" }}
+            <input type="text" class="tse-field" name="tse_address" maxlength="200" value="{{ .tseAddress }}">
+          </label>
+          <p class="muted">{{ T "setup.tse.custody_note" }}</p>
+          <div class="setup-nav">
+            <button type="button" class="btn secondary" @click="step = 2">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 4">{{ T "setup.next" }}</button>
+            <!-- Skip clears the fields so a half-typed form can't fail the
+                 final submit's all-or-nothing validation later. -->
+            <button type="button" class="btn secondary" style="margin-top:.4rem"
+                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = ''); step = 4">{{ T "setup.tse.skip" }}</button>
+          </div>
+        </section>
+
+        <!-- Step 4 · shop name -->
+        <section x-show="step === 4" x-cloak data-step="4">
           <h1>{{ T "setup.store.title" }}</h1>
           <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}">
           <label>{{ T "setup.till_name.title" }}
             <input type="text" name="till_name" maxlength="60" value="{{ T "setup.till_name.default" }}">
           </label>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 2">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 4">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = country === 'DE' ? 3 : 2">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 5">{{ T "setup.next" }}</button>
           </div>
         </section>
 
-        <!-- Step 4 · shop type + sample-data opt-in (ut-docs#539; taxonomy
+        <!-- Step 5 · shop type + sample-data opt-in (ut-docs#539; taxonomy
              per ADR-0026 — the same six options the marketing site's
              solutions pages use, not a new list). The starter catalogue is
              the same generic one whichever type is chosen. -->
-        <section x-show="step === 4" x-cloak data-step="4">
+        <section x-show="step === 5" x-cloak data-step="5">
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
           <select name="shop_type">
@@ -122,12 +163,12 @@
           </label>
           <p class="muted">{{ T "setup.demo_data.hint" }}</p>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 3">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 5">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 6">{{ T "setup.next" }}</button>
           </div>
         </section>
 
-        <!-- Step 5 · restore from another POS? (ut-docs#617). Purely a UI
+        <!-- Step 6 · restore from another POS? (ut-docs#617). Purely a UI
              choice — no network call, never blocks the wizard. "No" costs
              one tap; "Yes" reveals the only real option today (generic
              CSV/Excel, straight into the existing /import flow) plus an
@@ -143,18 +184,18 @@
              radio was already checked, so re-tapping it fired no
              `change`). `asking` now owns which panel is shown; `choice`
              only ever holds the answer. -->
-        <section x-show="step === 5" x-cloak data-step="5" x-data="{ asking: false, choice: '' }">
+        <section x-show="step === 6" x-cloak data-step="6" x-data="{ asking: false, choice: '' }">
           <h1>{{ T "setup.restore.title" }}</h1>
           <p class="muted">{{ T "setup.restore.hint" }}</p>
           <input type="hidden" name="restore_choice" :value="choice">
           <div x-show="!asking">
             <div class="setup-nav">
-              <button type="button" class="btn primary" @click="choice = 'no'; step = 6">{{ T "setup.restore.no" }}</button>
+              <button type="button" class="btn primary" @click="choice = 'no'; step = 7">{{ T "setup.restore.no" }}</button>
               <button type="button" class="btn secondary" @click="asking = true" style="margin-top:.4rem">{{ T "setup.restore.yes" }}</button>
-              <button type="button" class="btn secondary" @click="choice = 'later'; step = 6" style="margin-top:.4rem">{{ T "setup.restore.later" }}</button>
+              <button type="button" class="btn secondary" @click="choice = 'later'; step = 7" style="margin-top:.4rem">{{ T "setup.restore.later" }}</button>
             </div>
             <div class="setup-nav">
-              <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
+              <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
             </div>
           </div>
           <div x-show="asking">
@@ -165,13 +206,13 @@
             <p class="muted">{{ T "setup.restore.no_plugins_yet" }}</p>
             <div class="setup-nav">
               <button type="button" class="btn secondary" @click="asking = false; choice = ''">{{ T "setup.back" }}</button>
-              <button type="button" class="btn primary" :disabled="choice !== 'csv_excel'" @click="step = 6">{{ T "setup.next" }}</button>
+              <button type="button" class="btn primary" :disabled="choice !== 'csv_excel'" @click="step = 7">{{ T "setup.next" }}</button>
             </div>
           </div>
         </section>
 
-        <!-- Step 6 · admin PIN -->
-        <section x-show="step === 6" x-cloak data-step="6">
+        <!-- Step 7 · admin PIN -->
+        <section x-show="step === 7" x-cloak data-step="7">
           <h1>{{ T "auth.setup.title" }}</h1>
           <p class="muted">{{ T "auth.setup.hint" }}</p>
           <label>{{ T "auth.setup.pin" }}
@@ -181,17 +222,17 @@
             <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
           </label>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 7">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = 6">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 8">{{ T "setup.next" }}</button>
           </div>
         </section>
 
-        <!-- Step 7 · done -->
-        <section x-show="step === 7" x-cloak data-step="7">
+        <!-- Step 8 · done -->
+        <section x-show="step === 8" x-cloak data-step="8">
           <h1>{{ T "setup.done.title" }}</h1>
           <p class="muted">{{ T "setup.done.hint" }}</p>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 6">{{ T "setup.back" }}</button>
+            <button type="button" class="btn secondary" @click="step = 7">{{ T "setup.back" }}</button>
             <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>
           </div>
         </section>

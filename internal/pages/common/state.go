@@ -12,10 +12,16 @@ import (
 )
 
 const (
-	KeyTheme             = "theme"
-	KeyCurrency          = "store.currency"
-	KeyCountry           = "store.country"
-	KeyRegion            = "store.region"
+	KeyTheme    = "theme"
+	KeyCurrency = "store.currency"
+	KeyCountry  = "store.country"
+	KeyRegion   = "store.region"
+	// KeyLocale is the shop's live-switchable default locale (ut-docs#861) —
+	// same key internal/settings/runtime.go's LoadRuntimeConfig/SaveRuntimeConfig
+	// already read/wrote at boot, but until #861 nothing but that one
+	// boot-time round-trip ever touched it. Settings' Language card is the
+	// first live writer.
+	KeyLocale            = "store.locale"
 	KeyTaxInclusive      = "store.tax_inclusive"
 	KeyTaxRate           = "store.tax_rate"
 	KeyServiceChargeRate = "store.service_charge_rate_pct"
@@ -74,6 +80,16 @@ const (
 	// also drop an entry from Settings without installing it — this is a
 	// helpful default, not a lock-in.
 	KeyPendingBasePlugins = "setup.pending_base_plugins"
+	// KeyTSEProvisioningState holds the JSON lifecycle state of the German
+	// TSE reseller-provisioning flow (ADR-0053, ut-docs#802): written by the
+	// setup wizard the instant a complete business identity is submitted
+	// (BEFORE any network attempt, so an offline wizard run survives), moved
+	// through pending_kickoff → awaiting_ready by the kickoff call/retry,
+	// and cleared on confirmed local receipt of the operational credential.
+	// Empty/unset means nothing in flight. Distinct from
+	// fiscal.KeyTSEConfigured, which only ever flips true on that confirmed
+	// receipt — never optimistically.
+	KeyTSEProvisioningState = "fiscal.tse_provisioning_state"
 	// KeyPendingFiscalSignRetries used to hold the JSON list of sales
 	// queued for background re-signing under fiscal.sign.ask's old
 	// proceed-and-declare retry loop (ADR-0044 Decision 1, ut-docs#675).
@@ -147,6 +163,7 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		Currency:               get(KeyCurrency, cfg.Locales.Currency),
 		Country:                get(KeyCountry, "GB"),
 		Region:                 get(KeyRegion, ""),
+		Locale:                 get(KeyLocale, cfg.Locales.Locale),
 		TaxRatePct:             cfg.Locales.TaxRate,
 		TaxInclusive:           cfg.Locales.TaxInclusive,
 		AllowNegativeInventory: false,
@@ -279,6 +296,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyCurrency:                    st.Currency,
 		KeyCountry:                     st.Country,
 		KeyRegion:                      st.Region,
+		KeyLocale:                      st.Locale,
 		KeyTaxInclusive:                strconv.FormatBool(st.TaxInclusive),
 		KeyTaxRate:                     strconv.Itoa(st.TaxRatePct),
 		KeyServiceChargeRate:           FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),

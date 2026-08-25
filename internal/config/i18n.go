@@ -10,6 +10,11 @@ import (
 	"sync"
 )
 
+// baseLocale is T's guaranteed-complete terminal fallback (ut-docs#995) —
+// core/shipped keys always exist here (guard-i18n.sh enforces parity across
+// web/locales/*.json), though a plugin-only key can still miss it.
+const baseLocale = "en"
+
 // I18n is a tiny JSON-based translator optimized for low-memory devices.
 type I18n struct {
 	mu       sync.RWMutex
@@ -62,13 +67,22 @@ func NewI18nFS(fsys fs.FS, fallback string) (*I18n, error) {
 }
 
 // T returns the translation for key in the given locale, falling back to the
-// base language (en-US -> en), then the default locale, then its base. Locale
-// files are keyed by base language (en.json, fa.json) while configuration and
-// requests may carry full BCP 47 tags.
+// base language (en-US -> en), then the default locale, then its base, then
+// "en" itself as a guaranteed-complete terminal entry. Locale files are keyed
+// by base language (en.json, fa.json) while configuration and requests may
+// carry full BCP 47 tags.
+//
+// The trailing "en" matters when i.fallback is itself non-English — e.g. a
+// shop's configured store.locale (ut-docs#861) — and a key is missing from
+// that fallback's own translation source (shipped locales can't drift,
+// guard-i18n.sh enforces parity against en.json, but an overlay-provided
+// language-pack plugin legitimately can, per lang-pack-drift CI's own
+// advisory-then-blocking design). Without this, resolution has nothing left
+// to try and the raw key renders instead of English text (ut-docs#995).
 func (i *I18n) T(locale, key string) string {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
-	for _, loc := range []string{locale, baseLang(locale), i.fallback, baseLang(i.fallback)} {
+	for _, loc := range []string{locale, baseLang(locale), i.fallback, baseLang(i.fallback), baseLocale} {
 		// Shop overrides (manager edits) win over everything; then base files,
 		// so a plugin cannot hijack core strings; overlays add new locales
 		// (language packs) and fill missing keys.

@@ -91,11 +91,16 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	}
 
 	// i18n / currency
-	i18n, err := config.NewI18nFS(locales.FS, cfg.Locales.Locale)
+	// state.Locale (not cfg.Locales.Locale directly), same as
+	// httpx.InitCurrency(state.Currency) below: a shop that switched its
+	// default language via Settings (ut-docs#861) persists to the same
+	// "store.locale" key LoadState just resolved above, and that persisted
+	// choice must win over the env-only UT_DEFAULT_LOCALE on the next boot.
+	i18n, err := config.NewI18nFS(locales.FS, state.Locale)
 	if err != nil {
 		log.Fatalf("failed to load locales: %v", err)
 	}
-	httpx.InitI18n(i18n, cfg.Locales.Locale)
+	httpx.InitI18n(i18n, state.Locale)
 	pm.SetLocalizer(i18n) // language-pack plugins merge into the translator
 	// Shop translation overrides (manager edits) win over base + plugin
 	// strings; loaded once here, refreshed by the /translations editor.
@@ -330,6 +335,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartEODScheduler(bgCtx, dp, wg)                // background Z-report (docs: G30); joined by app.Run's drain
 	StartAutoUpdateScheduler(bgCtx, dp, wg)         // background unattended update (ut-docs#79); joined by app.Run's drain
 	StartBasePluginRetry(bgCtx, dp, wg)             // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
+	StartTSEProvisionRetry(bgCtx, dp, wg)           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
 	dropStaleFiscalSignRetryQueue(bgCtx, dp)        // one-time drop of the pre-1.4.0 re-sign queue — retry-signing removed (ADR-0056, ut-docs#839)
 	registerInvoices(mux, dp)                       // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)

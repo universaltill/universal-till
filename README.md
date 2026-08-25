@@ -90,6 +90,14 @@ subscribed or not — through this same verified install path, offline-tolerant
 (it just retries once the network's back). No marketplace hunting required;
 declining/removing it is one tap in Settings.
 
+Picking Germany also adds an optional business-details step (legal name,
+owner, tax number, address — never bank details) that kicks off managed
+receipt-signing (TSE) setup through Universal Till Cloud for subscribed
+shops, with the same offline-tolerant retry posture; progress and any
+problem surface in Settings, and the wizard states plainly that Universal
+Till holds the device's admin credential (PUK) on the merchant's behalf,
+requestable at any time (ADR-0045/ADR-0053).
+
 Categories the taxonomy supports and welcomes contributions for: more
 payment processors (Square, PayPal, regional providers), marketplaces
 (eBay, Amazon, Shopify), delivery services (Uber Eats, DoorDash,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -161,6 +163,36 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			actorID = approver.ID
 		}
 
+		// German TSE hard gate (ADR-0048, ut-docs#731): a refund moves real
+		// money and is aufzeichnungspflichtig under KassenSichV the same as
+		// a sale, so it's blocked the same way — checked before any
+		// state-changing work (including the payment-provider refund
+		// webhook below, which can itself move real money at the
+		// provider). gate.Decision is inspected again after the return
+		// completes, to write the same AllowedWithOverride audit marker
+		// completeTender writes for a sale.
+		gate, err := enforceFiscalGate(r.Context(), d)
+		if err != nil {
+			// Only the two gate sentinels are a 409 "the till refuses this
+			// refund" — enforceFiscalGate also surfaces a settings-store
+			// READ failure from EvaluateGate, which is an internal fault,
+			// not a fiscal posture. Reporting that as
+			// "no TSE is configured" would send the operator off to buy a
+			// TSE they may already have. Still fails closed (no refund),
+			// just with the honest status and copy.
+			var fiscalNC *fiscalNeverConfiguredError
+			var fiscalTF *fiscalTSEFailingError
+			switch {
+			case errors.As(err, &fiscalTF):
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.fiscal_tse_failing", "refund", err)
+			case errors.As(err, &fiscalNC):
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.fiscal_never_configured", "refund", err)
+			default:
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			}
+			return
+		}
+
 		returned, err := repo.ReturnedQuantities(r.Context(), detail.ID)
 		if err != nil {
 			// Same underlying call and failure class as the GET handler above.
@@ -298,6 +330,21 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// "return" sale going through the identical CompleteSale path.
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, classifyTenderError(err), "refund", err)
 			return
+		}
+		// Same per-completion audit marker completeTender writes for a sale
+		// taken during an active TSE-override window (ADR-0048 Decision 3)
+		// — the journal must show exactly which money-moving completions
+		// (sale AND refund alike) were taken unsigned. Best-effort after
+		// the fact, same as completeTender's own: the return is already
+		// committed, so a failed marker write is logged, never unwinds it.
+		if gate.Decision == fiscal.AllowedWithOverride {
+			if auditErr := repo.InsertAudit(r.Context(), nil, actorID, "sale", saleID, "unsigned_override", map[string]any{
+				"override_actor":  gate.OverrideActor,
+				"override_reason": gate.OverrideReason,
+				"override_until":  gate.OverrideUntil.UTC().Format(time.RFC3339),
+			}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+				log.Printf("fiscal gate: unsigned_override audit marker for refund %s failed: %v", saleID, auditErr)
+			}
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(r.Context(), d, saleInput)
