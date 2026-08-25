@@ -89,10 +89,10 @@ func TestPruneReportArchive_TillModePastCutoffDeletesOldRows(t *testing.T) {
 	dp := newEODTestDeps(t)
 	repo := data.NewPOSRepo(dp.Db)
 
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`)); err != nil {
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`), "", ""); err != nil {
 		t.Fatalf("seed old archive: %v", err)
 	}
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2026-01-01", []byte(`{}`)); err != nil {
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2026-01-01", []byte(`{}`), "", ""); err != nil {
 		t.Fatalf("seed recent archive: %v", err)
 	}
 	// Default mode is till (unset) — explicit here for clarity.
@@ -117,7 +117,7 @@ func TestPruneReportArchive_TillModePastCutoffDeletesOldRows(t *testing.T) {
 
 	// A second call the same day is a no-op (gated by lastPruneDay) — seed
 	// another old row and confirm it's NOT pruned until a new day.
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2011-01-01", []byte(`{}`)); err != nil {
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2011-01-01", []byte(`{}`), "", ""); err != nil {
 		t.Fatalf("seed another old archive: %v", err)
 	}
 	pruneReportArchive(t.Context(), dp, repo, now, &lastPruneDay)
@@ -130,7 +130,7 @@ func TestPruneReportArchive_CloudModeIsNoOpThisCard(t *testing.T) {
 	dp := newEODTestDeps(t)
 	repo := data.NewPOSRepo(dp.Db)
 
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`)); err != nil {
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`), "", ""); err != nil {
 		t.Fatalf("seed old archive: %v", err)
 	}
 	if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, "cloud"); err != nil {
@@ -263,6 +263,29 @@ func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	has, err := repo.HasArchivedReport(t.Context(), "eod", "2026-01-01")
 	if err != nil || !has {
 		t.Fatalf("expected the report archived, got has=%v err=%v", has, err)
+	}
+
+	// ut-docs#1080 AC, exercised through the REAL production call path
+	// (generateEOD -> ArchiveReport), not just a direct repo call with
+	// hand-picked args: the till's first-ever close gets z_number=1 with no
+	// predecessor. This confirms generateEOD's rep.FirstReceipt/LastReceipt
+	// wiring doesn't panic/error when the day has zero sales (dateRangeSummary
+	// COALESCEs to ""), not what those fields contain -- the receipt-range
+	// VALUE round-trip is unit-tested directly against real strings in
+	// internal/data/pos_repo_zreport_test.go, which doesn't need a full
+	// sale fixture to prove.
+	rows, err := repo.ListArchivedReports(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly 1 archived row, got %d", len(rows))
+	}
+	if rows[0].ZNumber != 1 {
+		t.Fatalf("expected the till's first-ever close to get z_number=1 via generateEOD, got %d", rows[0].ZNumber)
+	}
+	if rows[0].PrevZNumber != nil {
+		t.Fatalf("expected nil prev_z_number for the first close, got %v", *rows[0].PrevZNumber)
 	}
 }
 
