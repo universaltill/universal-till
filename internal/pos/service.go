@@ -602,6 +602,17 @@ func (s *Service) EffectiveLineTaxRateBP(l BasketLine) (rateBP int, blocked bool
 // section). Each line's own TaxRateBP/TakeawayRateBP are untouched (they
 // stay the line's dine-in/takeaway pair); only recomputeTotals' downstream
 // tax total reflects the switch.
+//
+// Gross-inclusive invariant (ut-docs#1014): when the till's catalog is
+// tax-inclusive (Config.TaxInclusive), this switch never changes what the
+// customer owes — Basket.Total is unaffected, and only Basket.Tax (and the
+// net it's split from) moves to the new rate. l.LineTotal, computed purely
+// from PriceCents/Qty/discount in recomputeTotals, never depends on the
+// order type or tax rate at all, which is what makes this true structurally
+// rather than by coincidence — see ComputeTaxBasisPoints's own doc comment
+// for the arithmetic. A tax-exclusive catalog is the deliberate mirror
+// image: there the switch DOES move Basket.Total, because it's the net
+// that's held fixed.
 func (s *Service) SetOrderType(orderType string) *Basket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
