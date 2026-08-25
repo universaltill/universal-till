@@ -400,7 +400,31 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
-			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), serviceCharge.Minor(), in.ServiceChargeTaxBasisBP, in.Note, now, tenderType, in.OrderType, in.TableID, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
+			if err := repo.InsertSale(ctx, tx, data.InsertSaleParams{
+				SaleID:                  saleID,
+				ReceiptNo:               receiptNo,
+				SaleType:                in.SaleType,
+				RegisterID:              in.RegisterID,
+				CashierID:               in.CashierID,
+				CustomerID:              in.CustomerID,
+				Currency:                in.Currency,
+				Subtotal:                subtotal.Minor(),
+				DiscountTotal:           in.SaleDiscount.Minor(),
+				TaxTotal:                taxTotal.Minor(),
+				Total:                   total.Minor(),
+				ServiceCharge:           serviceCharge.Minor(),
+				ServiceChargeTaxBasisBP: in.ServiceChargeTaxBasisBP,
+				Note:                    in.Note,
+				CreatedAt:               now,
+				TenderType:              tenderType,
+				OrderType:               in.OrderType,
+				TableID:                 in.TableID,
+				Offline:                 in.Offline,
+				SyncStatus:              syncStatus,
+				SyncAttempts:            0,
+				SyncNextAttemptAt:       syncNextAttemptAt,
+				SyncLastError:           "",
+			}); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}

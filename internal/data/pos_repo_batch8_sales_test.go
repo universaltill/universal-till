@@ -39,8 +39,12 @@ VALUES ('itm-b8', 'B8-SKU', 'Batch8 Item', 500, 1)`)
 VALUES ('cash', 'Cash', 'cash', 1)`)
 
 	// subtotal 1000, discount 100, tax 180, total 1080 — exact minor units.
-	if err := repo.InsertSale(ctx, nil, saleID, receiptNo, "sale", "", "", "", "GBP",
-		1000, 100, 180, 1080, 0, 0, "batch8 note", createdAt, "cash", "", "", true, "queued", 2, "", ""); err != nil {
+	if err := repo.InsertSale(ctx, nil, InsertSaleParams{
+		SaleID: saleID, ReceiptNo: receiptNo, SaleType: "sale", Currency: "GBP",
+		Subtotal: 1000, DiscountTotal: 100, TaxTotal: 180, Total: 1080,
+		Note: "batch8 note", CreatedAt: createdAt, TenderType: "cash",
+		Offline: true, SyncStatus: "queued", SyncAttempts: 2,
+	}); err != nil {
 		t.Fatalf("InsertSale: %v", err)
 	}
 	// Insert line 2 first: ListSaleLineSnapshots/GetSaleDetail must order by line_no,
@@ -221,8 +225,10 @@ func TestPOSRepo_InsertSale_ReadBackRoundtrip(t *testing.T) {
 
 	// Duplicate receipt_no violates the sales UNIQUE constraint — checkout
 	// relies on this to make receipt reuse impossible.
-	err = repo.InsertSale(ctx, nil, "sale-dup", "000000001", "sale", "", "", "", "GBP",
-		1, 0, 0, 1, 0, 0, "", created, "cash", "", "", false, "queued", 0, "", "")
+	err = repo.InsertSale(ctx, nil, InsertSaleParams{
+		SaleID: "sale-dup", ReceiptNo: "000000001", SaleType: "sale", Currency: "GBP",
+		Subtotal: 1, Total: 1, CreatedAt: created, TenderType: "cash", SyncStatus: "queued",
+	})
 	if err == nil {
 		t.Fatal("InsertSale with duplicate receipt_no must fail")
 	}
@@ -248,8 +254,11 @@ func TestPOSRepo_InsertSale_OrderTypeRoundtrip(t *testing.T) {
 VALUES ('itm-ot', 'OT-SKU', 'Order Type Item', 500, 1)`)
 
 	created := "2026-08-02T09:00:00Z"
-	if err := repo.InsertSale(ctx, nil, "sale-ot", "000000099", "sale", "", "", "", "GBP",
-		500, 0, 0, 500, 0, 0, "", created, "cash", "takeaway", "", false, "synced", 0, "", ""); err != nil {
+	if err := repo.InsertSale(ctx, nil, InsertSaleParams{
+		SaleID: "sale-ot", ReceiptNo: "000000099", SaleType: "sale", Currency: "GBP",
+		Subtotal: 500, Total: 500, CreatedAt: created, TenderType: "cash",
+		OrderType: "takeaway", SyncStatus: "synced",
+	}); err != nil {
 		t.Fatalf("InsertSale: %v", err)
 	}
 	if err := repo.InsertSaleLine(ctx, nil, "sale-ot-l1", "sale-ot", 1, "itm-ot", "",
@@ -293,8 +302,11 @@ VALUES ('itm-tbl', 'TBL-SKU', 'Table Item', 500, 1)`)
 	}
 
 	created := "2026-08-02T09:00:00Z"
-	if err := repo.InsertSale(ctx, nil, "sale-tbl", "000000098", "sale", "", "", "", "GBP",
-		500, 0, 0, 500, 0, 0, "", created, "cash", "", tableID, false, "synced", 0, "", ""); err != nil {
+	if err := repo.InsertSale(ctx, nil, InsertSaleParams{
+		SaleID: "sale-tbl", ReceiptNo: "000000098", SaleType: "sale", Currency: "GBP",
+		Subtotal: 500, Total: 500, CreatedAt: created, TenderType: "cash",
+		TableID: tableID, SyncStatus: "synced",
+	}); err != nil {
 		t.Fatalf("InsertSale: %v", err)
 	}
 	if err := repo.InsertSaleLine(ctx, nil, "sale-tbl-l1", "sale-tbl", 1, "itm-tbl", "",
@@ -322,8 +334,10 @@ VALUES ('itm-tbl', 'TBL-SKU', 'Table Item', 500, 1)`)
 	}
 
 	// A sale with no table assigned resolves both fields empty, not an error.
-	if err := repo.InsertSale(ctx, nil, "sale-notbl", "000000097", "sale", "", "", "", "GBP",
-		500, 0, 0, 500, 0, 0, "", created, "cash", "", "", false, "synced", 0, "", ""); err != nil {
+	if err := repo.InsertSale(ctx, nil, InsertSaleParams{
+		SaleID: "sale-notbl", ReceiptNo: "000000097", SaleType: "sale", Currency: "GBP",
+		Subtotal: 500, Total: 500, CreatedAt: created, TenderType: "cash", SyncStatus: "synced",
+	}); err != nil {
 		t.Fatalf("InsertSale (no table): %v", err)
 	}
 	if err := repo.InsertSaleLine(ctx, nil, "sale-notbl-l1", "sale-notbl", 1, "itm-tbl", "",

@@ -2489,23 +2489,62 @@ WHERE location_id = ?
 	return qty, true, nil
 }
 
-// InsertSale writes the sale header row. serviceCharge is the computed
-// till-set service-charge amount for this sale (distinct from a payment's
-// tip_amount) -- it already participates in total, so it is stored
-// separately only so it can be broken out on the receipt/journal.
-// serviceChargeTaxBasisBP (ADR-0061 Decision 4) is the flat rate the charge's
-// tax was computed at, or 0 for the apportioned fail-closed default. It is
-// persisted rather than recomputed so a replayed/synced sale rebuilds the
-// SAME totals CompleteSale originally stored -- see migration 062.
-func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, saleID, receiptNo, saleType, registerID, cashierID, customerID, currency string, subtotal, discountTotal, taxTotal, total, serviceCharge int64, serviceChargeTaxBasisBP int, note, createdAt, tenderType, orderType, tableID string, offline bool, syncStatus string, syncAttempts int, syncNextAttemptAt, syncLastError string) error {
+// InsertSaleParams is InsertSale's argument struct (ut-docs#976). InsertSale
+// had grown to ~25 positional arguments, one sale-column addition at a time;
+// at that arity two adjacent same-typed arguments (two money amounts, two
+// basis-point rates) transposed at a call site compiles cleanly and fails
+// silently -- named fields turn that into a compile-time mismatch instead.
+// Field order mirrors InsertSale's OLD positional-parameter order exactly,
+// deliberately (not pos.SaleInput's shape, which has a different field
+// order/set) -- that's what makes the positional-to-named translation at
+// each call site mechanically auditable. Pure refactor -- no field here
+// changes meaning from InsertSale's old positional parameter of the same
+// name.
+type InsertSaleParams struct {
+	SaleID        string
+	ReceiptNo     string
+	SaleType      string
+	RegisterID    string
+	CashierID     string
+	CustomerID    string
+	Currency      string
+	Subtotal      int64
+	DiscountTotal int64
+	TaxTotal      int64
+	Total         int64
+	// ServiceCharge is the computed till-set service-charge amount for this
+	// sale (distinct from a payment's tip_amount) -- it already participates
+	// in Total, so it is stored separately only so it can be broken out on
+	// the receipt/journal.
+	ServiceCharge int64
+	// ServiceChargeTaxBasisBP (ADR-0061 Decision 4) is the flat rate the
+	// charge's tax was computed at, or 0 for the apportioned fail-closed
+	// default. It is persisted rather than recomputed so a replayed/synced
+	// sale rebuilds the SAME totals CompleteSale originally stored -- see
+	// migration 062.
+	ServiceChargeTaxBasisBP int
+	Note                    string
+	CreatedAt               string
+	TenderType              string
+	OrderType               string
+	TableID                 string
+	Offline                 bool
+	SyncStatus              string
+	SyncAttempts            int
+	SyncNextAttemptAt       string
+	SyncLastError           string
+}
+
+// InsertSale writes the sale header row. See InsertSaleParams for field docs.
+func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, p InsertSaleParams) error {
 	offlineVal := 0
-	if offline {
+	if p.Offline {
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
 INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, rounding, note, created_at, completed_at)
 VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, saleID, receiptNo, saleType, tenderType, orderType, nullIfEmpty(tableID), offlineVal, syncStatus, syncAttempts, nullIfEmpty(syncNextAttemptAt), nullIfEmpty(syncLastError), nullIfEmpty(registerID), nullIfEmpty(cashierID), nullIfEmpty(customerID), currency, subtotal, discountTotal, taxTotal, total, serviceCharge, serviceChargeTaxBasisBP, nullIfEmpty(note), createdAt, createdAt)
+`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
