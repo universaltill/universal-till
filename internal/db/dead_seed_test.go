@@ -154,6 +154,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
+	rewindShiftCashRecon067(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -274,6 +275,23 @@ func rewindServiceChargeTaxBasis062(t *testing.T, d *DB) {
 	} {
 		if _, err := d.DB.Exec(q); err != nil {
 			t.Fatalf("rewind 062 (%s): %v", q, err)
+		}
+	}
+}
+
+// rewindShiftCashRecon067 undoes migration 067's non-idempotent DDL (the
+// shifts/shifts_archive new_float + count_protocol columns, ut-docs#1006) —
+// same replay problem as the rewind helpers above.
+func rewindShiftCashRecon067(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`ALTER TABLE shifts DROP COLUMN new_float`,
+		`ALTER TABLE shifts DROP COLUMN count_protocol`,
+		`ALTER TABLE shifts_archive DROP COLUMN new_float`,
+		`ALTER TABLE shifts_archive DROP COLUMN count_protocol`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 067 (%s): %v", q, err)
 		}
 	}
 }

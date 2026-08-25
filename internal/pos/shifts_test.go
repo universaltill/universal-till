@@ -321,6 +321,266 @@ func TestRecordCashAdjustment_ClosedShift(t *testing.T) {
 	}
 }
 
+// TestCloseShift_SkimComputesNewFloat covers the ut-docs#1006 close-time
+// skim-to-safe: new_float = counted closing cash minus skim, the skim lands
+// as a second cash_adjustment audit row (type "skim", negative amount), and
+// expected_cash stays untouched by the skim — variance is checked against
+// the count BEFORE the skim is applied.
+func TestCloseShift_SkimComputesNewFloat(t *testing.T) {
+	ctx := context.Background()
+	db := testShiftDB(t)
+	defer db.Close()
+
+	seedShiftData(t, db)
+
+	shiftID, err := OpenShift(ctx, db, ShiftInput{
+		RegisterID:  "reg1",
+		CashierID:   "user1",
+		OpeningCash: 10000, // £100.00 float
+	})
+	if err != nil {
+		t.Fatalf("OpenShift failed: %v", err)
+	}
+
+	// £411.10 cash takings during the shift.
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO sales (id, receipt_no, status, sale_type, register_id, cashier_id, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES ('sale1', 'RCP-001', 'completed', 'sale', 'reg1', 'user1', 'GBP', 41110, 0, 0, 41110, ?, ?)
+`, now, now); err != nil {
+		t.Fatalf("insert sale: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO payments (id, sale_id, method_id, amount, currency, change_given, paid_at)
+VALUES ('pay1', 'sale1', 'cash', 41110, 'GBP', 0, ?)
+`, now); err != nil {
+		t.Fatalf("insert payment: %v", err)
+	}
+
+	// Close counting £511.10, skimming £411.10 back to the safe.
+	err = CloseShift(ctx, db, ShiftCloseInput{
+		ShiftID:       shiftID,
+		ClosingCash:   51110,
+		Skim:          41110,
+		SkimReason:    "evening skim",
+		CountProtocol: `{"5000":10,"100":11,"10":1}`,
+	})
+	if err != nil {
+		t.Fatalf("CloseShift failed: %v", err)
+	}
+
+	var closingCash, expectedCash, newFloat int64
+	var countProtocol sql.NullString
+	if err := db.QueryRowContext(ctx, `
+SELECT closing_cash, expected_cash, new_float, count_protocol
+FROM shifts WHERE id = ?`, shiftID).Scan(&closingCash, &expectedCash, &newFloat, &countProtocol); err != nil {
+		t.Fatalf("query shift: %v", err)
+	}
+	if expectedCash != 51110 {
+		t.Errorf("expected_cash must ignore the skim: want 51110, got %d", expectedCash)
+	}
+	if newFloat != 10000 {
+		t.Errorf("new_float = closing - skim: want 10000, got %d", newFloat)
+	}
+	if countProtocol.String != `{"5000":10,"100":11,"10":1}` {
+		t.Errorf("count_protocol not persisted, got %q", countProtocol.String)
+	}
+
+	// The skim is recorded through the same cash_adjustment audit shape
+	// RecordCashAdjustment writes, so SumShiftAdjustments-style queries
+	// treat it identically.
+	var typ string
+	var amount int64
+	var reason string
+	if err := db.QueryRowContext(ctx, `
+SELECT json_extract(data_json, '$.type'),
+       CAST(json_extract(data_json, '$.amount') AS INTEGER),
+       json_extract(data_json, '$.reason')
+FROM audit_log
+WHERE entity_type = 'shift' AND entity_id = ? AND action = 'cash_adjustment'
+`, shiftID).Scan(&typ, &amount, &reason); err != nil {
+		t.Fatalf("query skim audit row: %v", err)
+	}
+	if typ != "skim" {
+		t.Errorf("audit type: want skim, got %q", typ)
+	}
+	if amount != -41110 {
+		t.Errorf("audit amount: want -41110 (cash leaving the drawer), got %d", amount)
+	}
+	if reason != "evening skim" {
+		t.Errorf("audit reason: want 'evening skim', got %q", reason)
+	}
+}
+
+// TestCloseShift_NoSkimStillRecordsNewFloat: with no skim the new float is
+// simply the counted cash, and no cash_adjustment audit row is written.
+func TestCloseShift_NoSkimStillRecordsNewFloat(t *testing.T) {
+	ctx := context.Background()
+	db := testShiftDB(t)
+	defer db.Close()
+
+	seedShiftData(t, db)
+
+	shiftID, err := OpenShift(ctx, db, ShiftInput{
+		RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000,
+	})
+	if err != nil {
+		t.Fatalf("OpenShift failed: %v", err)
+	}
+	if err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000}); err != nil {
+		t.Fatalf("CloseShift failed: %v", err)
+	}
+	var newFloat int64
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(new_float, -1) FROM shifts WHERE id = ?`, shiftID).Scan(&newFloat); err != nil {
+		t.Fatalf("query shift: %v", err)
+	}
+	if newFloat != 10000 {
+		t.Errorf("new_float without skim: want counted 10000, got %d", newFloat)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM audit_log
+WHERE entity_type = 'shift' AND entity_id = ? AND action = 'cash_adjustment'`, shiftID).Scan(&n); err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("no skim must write no cash_adjustment row, got %d", n)
+	}
+}
+
+// TestCloseShift_SkimValidation: a skim can't be negative or exceed the
+// counted drawer, and a malformed count protocol is rejected — all with no
+// partial write (the shift stays open).
+func TestCloseShift_SkimValidation(t *testing.T) {
+	ctx := context.Background()
+	db := testShiftDB(t)
+	defer db.Close()
+
+	seedShiftData(t, db)
+
+	shiftID, err := OpenShift(ctx, db, ShiftInput{
+		RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000,
+	})
+	if err != nil {
+		t.Fatalf("OpenShift failed: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		in   ShiftCloseInput
+	}{
+		{"negative skim", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000, Skim: -100}},
+		{"skim exceeds counted cash", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000, Skim: 10001}},
+		{"malformed count protocol", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000, CountProtocol: `{"100":`}},
+	}
+	for _, c := range cases {
+		if err := CloseShift(ctx, db, c.in); err == nil {
+			t.Errorf("%s: expected error, got nil", c.name)
+		}
+		var closedAt sql.NullString
+		if err := db.QueryRowContext(ctx, `SELECT closed_at FROM shifts WHERE id = ?`, shiftID).Scan(&closedAt); err != nil {
+			t.Fatalf("%s: query shift: %v", c.name, err)
+		}
+		if closedAt.Valid {
+			t.Fatalf("%s: rejected close must not close the shift", c.name)
+		}
+	}
+}
+
+// TestRecordCashAdjustment_SkimType: "skim" joins payout|adjustment as a
+// valid mid-shift adjustment type (no TSE/fiscal gate here — that is
+// ut-docs#998's open question, deliberately not decided by this change).
+func TestRecordCashAdjustment_SkimType(t *testing.T) {
+	ctx := context.Background()
+	db := testShiftDB(t)
+	defer db.Close()
+
+	seedShiftData(t, db)
+
+	shiftID, err := OpenShift(ctx, db, ShiftInput{
+		RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000,
+	})
+	if err != nil {
+		t.Fatalf("OpenShift failed: %v", err)
+	}
+	adjID, err := RecordCashAdjustment(ctx, db, CashAdjustmentInput{
+		ShiftID: shiftID,
+		Type:    "skim",
+		Amount:  -5000,
+		Reason:  "midday skim",
+		ActorID: "user1",
+	})
+	if err != nil {
+		t.Fatalf("RecordCashAdjustment(skim) failed: %v", err)
+	}
+	var typ string
+	if err := db.QueryRowContext(ctx, `
+SELECT json_extract(data_json, '$.type') FROM audit_log WHERE id = ?`, adjID).Scan(&typ); err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	if typ != "skim" {
+		t.Errorf("expected type skim, got %q", typ)
+	}
+	// Still rejects an unknown type.
+	if _, err := RecordCashAdjustment(ctx, db, CashAdjustmentInput{
+		ShiftID: shiftID, Type: "withdrawal", Amount: -100, Reason: "x", ActorID: "user1",
+	}); err == nil {
+		t.Error("expected error for unknown adjustment type")
+	}
+}
+
+// TestLastClosedShiftNewFloat covers the opening-float carry-forward
+// lookup: none without a closed shift; new_float when recorded; falling
+// back to closing_cash for a shift closed before this feature existed.
+func TestLastClosedShiftNewFloat(t *testing.T) {
+	ctx := context.Background()
+	db := testShiftDB(t)
+	defer db.Close()
+
+	seedShiftData(t, db)
+
+	// No closed shift yet.
+	if _, ok, err := LastClosedShiftNewFloat(ctx, db, "reg1"); err != nil || ok {
+		t.Fatalf("expected no carry-forward yet, got ok=%v err=%v", ok, err)
+	}
+
+	// A shift closed with a skim: carry-forward is its new_float.
+	shiftID, err := OpenShift(ctx, db, ShiftInput{RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000})
+	if err != nil {
+		t.Fatalf("OpenShift failed: %v", err)
+	}
+	if err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: shiftID, ClosingCash: 51110, Skim: 41110}); err != nil {
+		t.Fatalf("CloseShift failed: %v", err)
+	}
+	cf, ok, err := LastClosedShiftNewFloat(ctx, db, "reg1")
+	if err != nil || !ok {
+		t.Fatalf("expected carry-forward, got ok=%v err=%v", ok, err)
+	}
+	if cf.Minor() != 10000 {
+		t.Errorf("carry-forward: want 10000, got %d", cf.Minor())
+	}
+
+	// A pre-feature closed shift (new_float NULL) falls back to its
+	// closing_cash — simulate by clearing the column, and make it the most
+	// recent close.
+	if _, err := db.ExecContext(ctx, `UPDATE shifts SET new_float = NULL, closed_at = ? WHERE id = ?`,
+		time.Now().UTC().Add(time.Hour).Format(time.RFC3339), shiftID); err != nil {
+		t.Fatalf("simulate pre-feature close: %v", err)
+	}
+	cf, ok, err = LastClosedShiftNewFloat(ctx, db, "reg1")
+	if err != nil || !ok {
+		t.Fatalf("expected fallback carry-forward, got ok=%v err=%v", ok, err)
+	}
+	if cf.Minor() != 51110 {
+		t.Errorf("fallback carry-forward: want closing_cash 51110, got %d", cf.Minor())
+	}
+
+	// Another register is unaffected.
+	if _, ok, err := LastClosedShiftNewFloat(ctx, db, "reg2"); err != nil || ok {
+		t.Fatalf("expected no carry-forward for reg2, got ok=%v err=%v", ok, err)
+	}
+}
+
 // testShiftDB creates an in-memory SQLite database for shift testing
 func testShiftDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -376,6 +636,8 @@ CREATE TABLE shifts (
   closing_cash INTEGER,
   expected_cash INTEGER,
   note TEXT,
+  new_float INTEGER,
+  count_protocol TEXT,
   FOREIGN KEY (register_id) REFERENCES registers (id),
   FOREIGN KEY (cashier_id) REFERENCES users (id)
 );

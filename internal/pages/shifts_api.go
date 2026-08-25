@@ -17,11 +17,15 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
-// ShiftOpenRequest models input for opening a shift
+// ShiftOpenRequest models input for opening a shift. OpeningCash is a
+// pointer so "explicitly provided" (any value, including 0) is
+// distinguishable from "omitted": omitted defaults to the float carried
+// forward from the register's last close (ut-docs#1006), while an explicit
+// value — an operator correcting the drawer — is always respected.
 type ShiftOpenRequest struct {
 	RegisterID  string `json:"register_id"`
 	CashierID   string `json:"cashier_id"`
-	OpeningCash int64  `json:"opening_cash"` // minor units
+	OpeningCash *int64 `json:"opening_cash"` // minor units; nil = carry forward
 }
 
 // ShiftOpenResponse models response with created shift ID
@@ -52,9 +56,12 @@ func OpenShift(dp *common.Deps) http.HandlerFunc {
 			}
 			req.RegisterID = r.FormValue("register_id")
 			req.CashierID = r.FormValue("cashier_id")
+			// Only an actually-submitted value sets the pointer — an absent
+			// or empty field stays nil so the carry-forward default below
+			// applies, mirroring the JSON path's omitted-field behavior.
 			if ocStr := r.FormValue("opening_cash"); ocStr != "" {
 				if oc, err := strconv.ParseInt(ocStr, 10, 64); err == nil {
-					req.OpeningCash = oc
+					req.OpeningCash = &oc
 				}
 			}
 		}
@@ -73,7 +80,24 @@ func OpenShift(dp *common.Deps) http.HandlerFunc {
 			respondShiftError(w, r, http.StatusBadRequest, "cashier_id required")
 			return
 		}
-		if req.OpeningCash < 0 {
+		// Resolve the opening float: an omitted opening_cash carries the
+		// last close's new float forward (ut-docs#1006) — or 0 when the
+		// register has never closed a shift; a provided value (even 0) is
+		// the operator's explicit count and wins unchanged.
+		var openingCash int64
+		if req.OpeningCash != nil {
+			openingCash = *req.OpeningCash
+		} else {
+			carried, ok, err := pos.LastClosedShiftNewFloat(ctx, dp.Db, req.RegisterID)
+			if err != nil {
+				respondShiftError(w, r, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if ok {
+				openingCash = carried.Minor()
+			}
+		}
+		if openingCash < 0 {
 			respondShiftError(w, r, http.StatusBadRequest, "opening_cash must be >= 0")
 			return
 		}
@@ -82,7 +106,7 @@ func OpenShift(dp *common.Deps) http.HandlerFunc {
 		shiftID, err := pos.OpenShift(ctx, dp.Db, pos.ShiftInput{
 			RegisterID:  req.RegisterID,
 			CashierID:   req.CashierID,
-			OpeningCash: money.FromMinor(req.OpeningCash),
+			OpeningCash: money.FromMinor(openingCash),
 		})
 		if err != nil {
 			respondShiftError(w, r, http.StatusInternalServerError, err.Error())
@@ -93,11 +117,16 @@ func OpenShift(dp *common.Deps) http.HandlerFunc {
 	}
 }
 
-// ShiftCloseRequest models input for closing a shift
+// ShiftCloseRequest models input for closing a shift. Skim, SkimReason and
+// CountProtocol are the optional close-time cash reconciliation extras
+// (ut-docs#1006) — see pos.ShiftCloseInput for their semantics.
 type ShiftCloseRequest struct {
-	ShiftID     string `json:"shift_id"`
-	ClosingCash int64  `json:"closing_cash"` // minor units
-	Note        string `json:"note"`
+	ShiftID       string `json:"shift_id"`
+	ClosingCash   int64  `json:"closing_cash"` // minor units
+	Note          string `json:"note"`
+	Skim          int64  `json:"skim"` // minor units, >= 0
+	SkimReason    string `json:"skim_reason"`
+	CountProtocol string `json:"count_protocol"` // raw JSON denomination count
 }
 
 // ShiftCloseResponse models response for shift close
@@ -107,6 +136,8 @@ type ShiftCloseResponse struct {
 	ExpectedCash int64  `json:"expected_cash,omitempty"`
 	ClosingCash  int64  `json:"closing_cash,omitempty"`
 	Variance     int64  `json:"variance,omitempty"`
+	Skim         int64  `json:"skim,omitempty"`
+	NewFloat     int64  `json:"new_float,omitempty"`
 }
 
 // CloseShift handles POST /api/shifts/close
@@ -131,9 +162,16 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 			}
 			req.ShiftID = r.FormValue("shift_id")
 			req.Note = r.FormValue("note")
+			req.SkimReason = r.FormValue("skim_reason")
+			req.CountProtocol = r.FormValue("count_protocol")
 			if ccStr := r.FormValue("closing_cash"); ccStr != "" {
 				if cc, err := strconv.ParseInt(ccStr, 10, 64); err == nil {
 					req.ClosingCash = cc
+				}
+			}
+			if skStr := r.FormValue("skim"); skStr != "" {
+				if sk, err := strconv.ParseInt(skStr, 10, 64); err == nil {
+					req.Skim = sk
 				}
 			}
 		}
@@ -145,6 +183,10 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 		}
 		if req.ClosingCash < 0 {
 			respondCloseError(w, r, http.StatusBadRequest, "closing_cash must be >= 0")
+			return
+		}
+		if req.Skim < 0 {
+			respondCloseError(w, r, http.StatusBadRequest, "skim must be >= 0")
 			return
 		}
 
@@ -167,9 +209,12 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 
 		// Close shift
 		err = pos.CloseShift(ctx, dp.Db, pos.ShiftCloseInput{
-			ShiftID:     req.ShiftID,
-			ClosingCash: money.FromMinor(req.ClosingCash),
-			Note:        req.Note,
+			ShiftID:       req.ShiftID,
+			ClosingCash:   money.FromMinor(req.ClosingCash),
+			Note:          req.Note,
+			Skim:          money.FromMinor(req.Skim),
+			SkimReason:    req.SkimReason,
+			CountProtocol: req.CountProtocol,
 		})
 		if err != nil {
 			respondCloseError(w, r, http.StatusInternalServerError, err.Error())
@@ -182,6 +227,8 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 			ExpectedCash: expectedCash,
 			ClosingCash:  req.ClosingCash,
 			Variance:     variance,
+			Skim:         req.Skim,
+			NewFloat:     req.ClosingCash - req.Skim,
 		})
 	}
 }
@@ -244,8 +291,8 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 			respondAdjustmentError(w, r, http.StatusBadRequest, "shift_id required")
 			return
 		}
-		if req.Type != "payout" && req.Type != "adjustment" {
-			respondAdjustmentError(w, r, http.StatusBadRequest, "type must be 'payout' or 'adjustment'")
+		if req.Type != "payout" && req.Type != "adjustment" && req.Type != "skim" {
+			respondAdjustmentError(w, r, http.StatusBadRequest, "type must be 'payout', 'adjustment' or 'skim'")
 			return
 		}
 		if req.Amount == 0 {
@@ -265,6 +312,13 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 		// itself must stay honest about what happened.
 		if req.Type == "payout" && req.Amount > 0 {
 			respondAdjustmentError(w, r, http.StatusBadRequest, "a payout amount must be negative")
+			return
+		}
+		// Same direction-honesty rule for a skim (ut-docs#1006): skimming is,
+		// by definition, cash leaving the drawer for the safe — a positive
+		// "skim" would be an audit row lying about its own direction.
+		if req.Type == "skim" && req.Amount > 0 {
+			respondAdjustmentError(w, r, http.StatusBadRequest, "a skim amount must be negative")
 			return
 		}
 

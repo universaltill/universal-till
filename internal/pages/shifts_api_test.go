@@ -190,6 +190,168 @@ func TestCloseShift_ComputesExpectedCashAndVariance(t *testing.T) {
 	}
 }
 
+// TestOpenShift_CarryForwardDefaultsOpeningCash: when opening_cash is
+// omitted, the new shift's float defaults to what the last close on that
+// register left in the drawer (its new_float after any skim) — the operator
+// no longer re-types it. An explicitly provided value, including 0, is
+// always respected (ut-docs#1006).
+func TestOpenShift_CarryForwardDefaultsOpeningCash(t *testing.T) {
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// First shift: open with £100.00, take nothing, count £511.10 in (via a
+	// manual count) — close skimming £411.10, leaving a £100.00 new float.
+	rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":10000}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+	rec = postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":51110,"skim":41110}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close shift with skim: %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Open with opening_cash omitted (JSON): carried forward from the close.
+	rec = postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open with omitted opening_cash: %d: %s", rec.Code, rec.Body.String())
+	}
+	var openingCash int64
+	if err := dp.Db.QueryRowContext(ctx, `SELECT opening_cash FROM shifts WHERE closed_at IS NULL`).Scan(&openingCash); err != nil {
+		t.Fatal(err)
+	}
+	if openingCash != 10000 {
+		t.Fatalf("expected carried-forward opening cash 10000, got %d", openingCash)
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+	rec = postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":10000}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close second shift: %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Explicit 0 must NOT be replaced by the carried value.
+	rec = postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":0}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open with explicit 0: %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT opening_cash FROM shifts WHERE closed_at IS NULL`).Scan(&openingCash); err != nil {
+		t.Fatal(err)
+	}
+	if openingCash != 0 {
+		t.Fatalf("explicit opening_cash=0 must be respected, got %d", openingCash)
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":0}`); rec.Code != http.StatusOK {
+		t.Fatalf("close third shift: %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Form path with the field absent entirely: also carried forward
+	// (from the third close, which left 0 in the drawer... use reg1's
+	// latest close = 0). Seed a fresh register to make the carried value
+	// distinguishable from a hardcoded 0.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg2','Back Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	rec = postShiftForm(t, mux, "/api/shifts/open", "register_id=reg2&cashier_id=user1&opening_cash=2500")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open reg2: %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL AND register_id='reg2'`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+shiftID+"&closing_cash=2500"); rec.Code != http.StatusOK {
+		t.Fatalf("close reg2: %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = postShiftForm(t, mux, "/api/shifts/open", "register_id=reg2&cashier_id=user1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open reg2 with omitted opening_cash: %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT opening_cash FROM shifts WHERE closed_at IS NULL AND register_id='reg2'`).Scan(&openingCash); err != nil {
+		t.Fatal(err)
+	}
+	if openingCash != 2500 {
+		t.Fatalf("form path: expected carried-forward 2500, got %d", openingCash)
+	}
+}
+
+// TestCloseShift_SkimAndCountProtocol wires the new close-time skim /
+// count-protocol params through the handler into pos.CloseShift.
+func TestCloseShift_SkimAndCountProtocol(t *testing.T) {
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	openAndGetID := func() string {
+		rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":10000}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+		}
+		var id string
+		if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	shiftID := openAndGetID()
+	// Form path, mirroring shifts.html's minor-unit hidden fields.
+	rec := postShiftForm(t, mux, "/api/shifts/close",
+		"shift_id="+shiftID+"&closing_cash=51110&skim=41110&skim_reason=to+safe&count_protocol="+`%7B%225000%22%3A10%2C%22100%22%3A11%2C%2210%22%3A1%7D`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close with skim: %d: %s", rec.Code, rec.Body.String())
+	}
+	var newFloat int64
+	var countProtocol string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT new_float, count_protocol FROM shifts WHERE id=?`, shiftID).Scan(&newFloat, &countProtocol); err != nil {
+		t.Fatal(err)
+	}
+	if newFloat != 10000 {
+		t.Fatalf("expected new_float 10000, got %d", newFloat)
+	}
+	if countProtocol != `{"5000":10,"100":11,"10":1}` {
+		t.Fatalf("count_protocol not persisted, got %q", countProtocol)
+	}
+	var skimType string
+	var skimAmount int64
+	if err := dp.Db.QueryRowContext(ctx, `
+SELECT json_extract(data_json,'$.type'), CAST(json_extract(data_json,'$.amount') AS INTEGER)
+FROM audit_log WHERE entity_type='shift' AND entity_id=? AND action='cash_adjustment'`, shiftID).Scan(&skimType, &skimAmount); err != nil {
+		t.Fatal(err)
+	}
+	if skimType != "skim" || skimAmount != -41110 {
+		t.Fatalf("expected skim audit row (-41110), got type=%q amount=%d", skimType, skimAmount)
+	}
+
+	// A negative skim is rejected before anything is written.
+	shiftID = openAndGetID()
+	if rec := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":10000,"skim":-1}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for negative skim, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// A skim larger than the counted drawer is rejected and the shift
+	// stays open.
+	if rec := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":10000,"skim":10001}`); rec.Code == http.StatusOK {
+		t.Fatalf("expected an error for skim > counted cash, got 200: %s", rec.Body.String())
+	}
+	var stillOpen int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM shifts WHERE id=? AND closed_at IS NULL`, shiftID).Scan(&stillOpen); err != nil {
+		t.Fatal(err)
+	}
+	if stillOpen != 1 {
+		t.Fatal("rejected skim must leave the shift open")
+	}
+}
+
 func TestCloseShift_ValidationErrors(t *testing.T) {
 	mux, _ := newShiftsAPITestDeps(t)
 	if rec := postShiftForm(t, mux, "/api/shifts/close", "closing_cash=100"); rec.Code != http.StatusBadRequest {
