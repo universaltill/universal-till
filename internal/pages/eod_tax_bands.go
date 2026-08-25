@@ -36,6 +36,17 @@ func computeEODTaxBands(ctx context.Context, repo *data.POSRepo, from, to string
 	if err != nil {
 		return nil, err
 	}
+	return computeEODTaxBandsFromSales(sales), nil
+}
+
+// computeEODTaxBandsFromSales is computeEODTaxBands' pure aggregation step,
+// split out (ut-docs#1004 review finding) so attachEODBands can compute
+// TaxBands and MethodTaxBands from the SAME SalesForTaxBands read instead
+// of two independent reads a moment apart — two reads could let a sale
+// completing in between appear in one breakdown and not the other,
+// silently breaking the row-sum reconciliation identity this package's own
+// tests otherwise treat as exact "always".
+func computeEODTaxBandsFromSales(sales []data.EODTaxBandSale) []data.TaxBand {
 	agg := map[int]*data.TaxBand{}
 	for _, s := range sales {
 		lines := make([]pos.VATLine, 0, len(s.Lines))
@@ -64,9 +75,9 @@ func computeEODTaxBands(ctx context.Context, repo *data.POSRepo, from, to string
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RateBP < out[j].RateBP })
 	if len(out) == 0 {
-		return nil, nil
+		return nil
 	}
-	return out, nil
+	return out
 }
 
 // attachEODTaxBands fills rep.TaxBands for a report EndOfDay/EndOfDayRange

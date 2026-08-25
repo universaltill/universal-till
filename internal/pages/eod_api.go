@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -50,6 +51,70 @@ var eodTimeRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 // separators.
 var eodDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// rateTableRows renders a set of VAT-rate rows (rate/net/tax/gross) with
+// the adaptive-width-then-tight-collapse layout: comfortable historical
+// widths when they fit print.Width, collapsed to each column's exact
+// widest cell when they don't — the layout "BY VAT RATE" has always used,
+// proven to keep every digit printable up to ~£1M (ut-docs#1003 review
+// finding, 2026-08-25). Shared by "BY VAT RATE" and, per-method, by
+// "BY METHOD & VAT RATE" (ut-docs#1004 review finding): an earlier draft
+// of the method x rate section used its own 5-column layout, which — with
+// a 5th (Method) column eating into the same print.Width=42 budget —
+// clipped digits at perfectly ordinary amounts like £11,900, not just at
+// ~£1M extremes. Grouping by method and reusing THIS proven 4-column
+// layout under a method heading line sidesteps the problem instead of
+// inventing a new, less-tested one.
+func rateTableRows(rates []int, net, tax, gross []int64, money func(int64) string) []string {
+	n := len(rates)
+	rate, netS, taxS, grossS := make([]string, n), make([]string, n), make([]string, n), make([]string, n)
+	tw := [4]int{0, len("Net"), len("Tax"), len("Gross")} // tight: header floors
+	for i := range rates {
+		rate[i], netS[i], taxS[i], grossS[i] = fmtRateBP(rates[i]), money(net[i]), money(tax[i]), money(gross[i])
+		for j, s := range []string{rate[i], netS[i], taxS[i], grossS[i]} {
+			// Rune count, not len(): fmt's %*s pads to RUNES and the
+			// ESC/POS renderer clips footer lines at Width RUNES, so a byte
+			// count charges every £ (2 bytes, 1 column) a phantom column —
+			// enough to push a tight-collapsed £1M row to 44 visible
+			// columns and clip the gross's pence after all (ut-docs#1004
+			// review finding).
+			if r := utf8.RuneCountInString(s); r > tw[j] {
+				tw[j] = r
+			}
+		}
+	}
+	w := tw
+	for j, min := range [4]int{6, 11, 10, 11} { // historical layout when it fits
+		if w[j] < min {
+			w[j] = min
+		}
+	}
+	if w[0]+w[1]+w[2]+w[3]+3 > print.Width {
+		w = tw
+	}
+	lines := make([]string, 0, n+1)
+	lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s", w[0], "", w[1], "Net", w[2], "Tax", w[3], "Gross"))
+	for i := range rates {
+		lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s",
+			w[0], rate[i], w[1], netS[i], w[2], taxS[i], w[3], grossS[i]))
+	}
+	return lines
+}
+
+// titleFirst upper-cases a label's first character for display (payment
+// method ids are lower_snake_case, e.g. "cash", "card"). Rune-safe, unlike
+// a byte slice (s[:1] + s[1:]), which panics on an empty string and can
+// split a multi-byte first character into invalid UTF-8 (ut-docs#1004
+// review finding — this replaces three separate copies of that byte-slice
+// pattern in this file: rep.Methods, rep.Tips, and the new method x
+// VAT-rate grouping).
+func titleFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	return strings.ToUpper(string(r[0])) + string(r[1:])
+}
+
 // fmtRateBP renders a basis-point tax rate as a percentage label for the
 // Z-report's VAT band footer: 700 → "7%", 1900 → "19%", and a non-whole
 // rate like 1050 → "10.5%" (trailing zeros trimmed, integer arithmetic
@@ -87,8 +152,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 		{Label: "NET", Amount: money(rep.Net), Strong: true},
 	}
 	for _, m := range rep.Methods {
-		label := strings.ToUpper(m.Method[:1]) + m.Method[1:]
-		doc.Payments = append(doc.Payments, print.KV{Label: label, Amount: money(m.In - m.Out)})
+		doc.Payments = append(doc.Payments, print.KV{Label: titleFirst(m.Method), Amount: money(m.In - m.Out)})
 	}
 	// Tips by payment method (ut-docs#1007), as footer lines rather than
 	// folded into doc.Payments above -- the reference day-close reports
@@ -102,7 +166,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 		doc.Footer = append(doc.Footer, "", "TIPS (held out of revenue)")
 		var tipTotal int64
 		for _, tp := range rep.Tips {
-			label := strings.ToUpper(tp.Method[:1]) + tp.Method[1:]
+			label := titleFirst(tp.Method)
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("%dx %s", tp.Count, label), money(tp.Amount)))
 			tipTotal += tp.Amount
 		}
@@ -112,39 +176,48 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 	// per-register breakdown, as footer lines so they print on the Z-report
 	// without depending on new Doc fields.
 	if len(rep.TaxBands) > 0 {
-		// Column widths: start from the historical fixed layout (6/11/10/11
-		// = 41 chars incl. separators, print.Width is 42) and grow any
-		// column whose largest value doesn't fit. If the grown row would
-		// exceed print.Width — where the ESC/POS renderer hard-clips footer
-		// lines, silently amputating the gross's trailing digits on a
-		// £1,000,000.00+ day (2026-08-25 review finding) — collapse to
-		// tight widths (each column exactly its widest cell) instead, which
-		// keeps every digit printable up to ~£1M in all three money columns
-		// at once before physics wins.
-		rate, net, tax, gross := make([]string, len(rep.TaxBands)), make([]string, len(rep.TaxBands)), make([]string, len(rep.TaxBands)), make([]string, len(rep.TaxBands))
-		tw := [4]int{0, len("Net"), len("Tax"), len("Gross")} // tight: header floors
-		for i, b := range rep.TaxBands {
-			rate[i], net[i], tax[i], gross[i] = fmtRateBP(b.RateBP), money(b.Net), money(b.Tax), money(b.Gross)
-			for j, s := range []string{rate[i], net[i], tax[i], gross[i]} {
-				if len(s) > tw[j] {
-					tw[j] = len(s)
-				}
-			}
-		}
-		w := tw
-		for j, min := range [4]int{6, 11, 10, 11} { // historical layout when it fits
-			if w[j] < min {
-				w[j] = min
-			}
-		}
-		if w[0]+w[1]+w[2]+w[3]+3 > print.Width {
-			w = tw
-		}
 		doc.Footer = append(doc.Footer, "", "BY VAT RATE")
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-*s %*s %*s %*s", w[0], "", w[1], "Net", w[2], "Tax", w[3], "Gross"))
-		for i := range rep.TaxBands {
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-*s %*s %*s %*s",
-				w[0], rate[i], w[1], net[i], w[2], tax[i], w[3], gross[i]))
+		rates := make([]int, len(rep.TaxBands))
+		net := make([]int64, len(rep.TaxBands))
+		tax := make([]int64, len(rep.TaxBands))
+		gross := make([]int64, len(rep.TaxBands))
+		for i, b := range rep.TaxBands {
+			rates[i], net[i], tax[i], gross[i] = b.RateBP, b.Net, b.Tax, b.Gross
+		}
+		doc.Footer = append(doc.Footer, rateTableRows(rates, net, tax, gross, money)...)
+	}
+	// Method x VAT-rate cross-tab (ut-docs#1004) — the grid the accounting
+	// export posts from: one "BY METHOD & VAT RATE" heading, then one
+	// per-method sub-heading + the SAME 4-column rate table as "BY VAT
+	// RATE" above, rather than a single 5-column table. An earlier draft
+	// used a dedicated 5-column layout, which — with a Method column
+	// sharing the same print.Width=42 budget as the 4 money/rate columns —
+	// clipped digits at perfectly ordinary amounts (e.g. a single £11,900
+	// cell), not just at ~£1M extremes (ut-docs#1004 review finding,
+	// 2026-08-25). Grouping by method and reusing rateTableRows' proven
+	// ~£1M headroom sidesteps the problem instead of re-deriving a new,
+	// less-tested 5-column budget. rep.MethodTaxBands is already sorted
+	// Method-then-RateBP (see eod_method_tax_bands.go), so a method's rows
+	// are always contiguous — no grouping/sorting needed here.
+	if len(rep.MethodTaxBands) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY METHOD & VAT RATE")
+		i := 0
+		for i < len(rep.MethodTaxBands) {
+			j := i
+			for j < len(rep.MethodTaxBands) && rep.MethodTaxBands[j].Method == rep.MethodTaxBands[i].Method {
+				j++
+			}
+			group := rep.MethodTaxBands[i:j]
+			rates := make([]int, len(group))
+			net := make([]int64, len(group))
+			tax := make([]int64, len(group))
+			gross := make([]int64, len(group))
+			for k, b := range group {
+				rates[k], net[k], tax[k], gross[k] = b.RateBP, b.Net, b.Tax, b.Gross
+			}
+			doc.Footer = append(doc.Footer, titleFirst(group[0].Method)+":")
+			doc.Footer = append(doc.Footer, rateTableRows(rates, net, tax, gross, money)...)
+			i = j
 		}
 	}
 	if len(rep.Departments) > 0 {
@@ -234,12 +307,16 @@ func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID
 	if err != nil {
 		return rep, false, err
 	}
-	// Per-VAT-rate breakdown (ut-docs#1003) — computed here, not inside
-	// EndOfDay, because the banding math needs internal/pos (see
-	// eod_tax_bands.go). Must succeed BEFORE the report is archived: the
-	// archive is write-once per day, so a report archived without its VAT
-	// table could never be repaired.
-	if err := attachEODTaxBands(ctx, repo, &rep); err != nil {
+	// Per-VAT-rate breakdown (ut-docs#1003) + method x VAT-rate cross-tab
+	// (ut-docs#1004), computed here, not inside EndOfDay, because the
+	// banding math needs internal/pos (see eod_tax_bands.go).
+	// attachEODBands reads the sales ONCE and fills both from that single
+	// snapshot (ut-docs#1004 review finding: two independent reads a
+	// moment apart could let a sale completing in between appear in one
+	// breakdown and not the other). Must succeed BEFORE the report is
+	// archived: the archive is write-once per day, so a report archived
+	// without these tables could never be repaired.
+	if err := attachEODBands(ctx, repo, &rep); err != nil {
 		return rep, false, err
 	}
 	raw, err := json.Marshal(rep)
@@ -572,10 +649,11 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.range_failed", "eod_range_query", err)
 			return
 		}
-		// Per-VAT-rate breakdown (ut-docs#1003), same as generateEOD's
-		// single-day flow — see eod_tax_bands.go for why it's not inside
-		// EndOfDayRange itself.
-		if err := attachEODTaxBands(r.Context(), repo, &rep); err != nil {
+		// Per-VAT-rate breakdown (ut-docs#1003) + method x VAT-rate cross-tab
+		// (ut-docs#1004), same as generateEOD's single-day flow — see
+		// eod_tax_bands.go for why it's not inside EndOfDayRange itself, and
+		// attachEODBands' own doc comment for why both come from one read.
+		if err := attachEODBands(r.Context(), repo, &rep); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.range_failed", "eod_range_bands", err)
 			return
 		}
