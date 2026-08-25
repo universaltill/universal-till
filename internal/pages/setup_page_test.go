@@ -119,7 +119,18 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 		AuthSvc:  svc,
 		Cfg:      &config.Config{Theme: "default"},
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+		// Shell mirrors pages.Init's production wiring (ADR-0064): the
+		// window-state endpoint and the Display card read it. Handlers stay
+		// nil-safe for the bare-Deps helpers that predate this field.
+		Shell: common.NewShellChannel(common.DefaultWindowMode),
 	}
+	// Mirror the desktop-shell topology: in production
+	// NewShellPollWindowController marks the channel as the exit path
+	// (review of ut-docs#1039, blocker 2). WindowCtl itself stays nil here
+	// — several tests assert the handlers' nil fallback — so mark the
+	// channel directly; tests for the Pi kiosk topology build their own
+	// unmarked channel.
+	d.Shell.MarkExitPath()
 	mux := http.NewServeMux()
 	registerAuth(mux, d, svc)
 	registerSetup(mux, d, svc)

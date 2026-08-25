@@ -37,6 +37,19 @@ func flagsForWindowMode(mode string) windowModeFlags {
 	}
 }
 
+// shellAppliesWindowMode reports whether THIS build's applyWindowMode does
+// anything real. False by default; window_mode_linux.go's init() sets it
+// true — the only platform with a real implementation today (macOS never
+// wired one, ut-docs#609; Windows's is an empty stub, ut-docs#610). It
+// gates both the ?control=live advertisement on fetchShellPrefs and
+// starting watchShellMode at all (ADR-0064, ut-docs#1039): control=live is
+// a capability CLAIM — "I will really apply what you tell me, and I can
+// leave it again" — and the server serves chrome-hiding modes only to a
+// claimant. A shell claiming it falsely would be served a kiosk mode it
+// can never enter or leave, so platforms without a real applyWindowMode
+// must poll as plain clients and be served "normal" like any other.
+var shellAppliesWindowMode = false
+
 // shellPrefs is the desktop shell's own read of the till's persisted
 // display preferences (ut-docs#611) — both applied shell-side, at this
 // process's own launch, because both need something only this process
@@ -49,6 +62,13 @@ func flagsForWindowMode(mode string) windowModeFlags {
 type shellPrefs struct {
 	WindowMode      string
 	LaunchOnStartup bool
+	// Rev is the server's window-mode revision at the time of the fetch
+	// (ADR-0064) — watchShellMode starts its first long poll from it, so a
+	// Settings change landing between this fetch and that first poll can
+	// never be missed. Zero from a pre-ADR-0064 server (no rev field);
+	// since=0 makes the first poll return immediately, so that degrades
+	// safely too.
+	Rev uint64
 }
 
 // defaultShellPrefs is what a fetch failure degrades to — never blocks the
@@ -62,8 +82,22 @@ var defaultShellPrefs = shellPrefs{WindowMode: "normal", LaunchOnStartup: false}
 // mode) — a settings-fetch problem must never block the window from
 // opening or crash the shell.
 func fetchShellPrefs(baseURL string) shellPrefs {
+	return fetchShellPrefsWithControl(baseURL, shellAppliesWindowMode)
+}
+
+// fetchShellPrefsWithControl is fetchShellPrefs with the control=live
+// advertisement explicit (testable without touching the package var).
+// live=true claims the ADR-0064 apply capability, which is what entitles
+// this shell to be served the chrome-hiding modes at all — a server that
+// predates ADR-0064 simply ignores the extra query param, so this is
+// backwards-compatible in both directions.
+func fetchShellPrefsWithControl(baseURL string, live bool) shellPrefs {
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(baseURL + "/api/window-mode")
+	u := baseURL + "/api/window-mode"
+	if live {
+		u += "?control=live"
+	}
+	resp, err := client.Get(u)
 	if err != nil {
 		return defaultShellPrefs
 	}
@@ -76,6 +110,7 @@ func fetchShellPrefs(baseURL string) shellPrefs {
 		Data struct {
 			WindowMode      string `json:"window_mode"`
 			LaunchOnStartup bool   `json:"launch_on_startup"`
+			Rev             uint64 `json:"rev"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -88,5 +123,5 @@ func fetchShellPrefs(baseURL string) shellPrefs {
 	default:
 		mode = "normal"
 	}
-	return shellPrefs{WindowMode: mode, LaunchOnStartup: body.Data.LaunchOnStartup}
+	return shellPrefs{WindowMode: mode, LaunchOnStartup: body.Data.LaunchOnStartup, Rev: body.Data.Rev}
 }

@@ -53,9 +53,14 @@ func main() {
 	if tillAlreadyRunning("127.0.0.1:8080") {
 		// No child to hand UT_DESKTOP_CONTROL_ADDR/_TOKEN to here — that
 		// server process was started independently (typically the .deb's
-		// systemd service) and never got them, so exit-to-os/apply-mode
-		// fall back to NoopWindowController on it regardless of what this
-		// process does. Still starts its own listener rather than
+		// systemd service) and never got them. Window control in this
+		// branch travels the polled channel instead (ADR-0064,
+		// ut-docs#1039): showWindow long-polls the server's live window
+		// mode (shell_poll.go), shell → server only, which needs no env
+		// handoff at all — exactly because this topology is where the
+		// env-handed channel could never work (you cannot add env to a
+		// process you did not spawn, and the systemd service runs as a
+		// different OS user). Still starts its own listener rather than
 		// special-casing this path with a nil controlServer: cheap, and
 		// keeps showWindow's contract (a non-nil *controlServer whenever a
 		// window exists) uniform across both branches. showWindow itself

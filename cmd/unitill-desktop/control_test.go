@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -279,4 +280,19 @@ func TestControlServer_SetOpsConcurrentAccessIsRaceFree(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// TestShellPollContractsMatchCommonPackage pins the cross-binary numeric
+// contracts that have no compiler to enforce them (review of ut-docs#1039,
+// finding 10 — same mechanism as TestEnvVarsMatchCommonPackage above):
+// the shell's requested hold must not exceed the server's clamp, and the
+// shell-side outage watchdog must agree with the server's own
+// attached-window so both sides give up on each other on the same clock.
+func TestShellPollContractsMatchCommonPackage(t *testing.T) {
+	if d := time.Duration(shellPollWaitSeconds) * time.Second; d > common.ShellPollMaxWait {
+		t.Errorf("shellPollWaitSeconds = %ds exceeds common.ShellPollMaxWait = %s — the server would clamp every hold", shellPollWaitSeconds, common.ShellPollMaxWait)
+	}
+	if shellPollDowngradeAfter != common.ShellAttachedWindow {
+		t.Errorf("shellPollDowngradeAfter = %s, common.ShellAttachedWindow = %s — the two sides must give up on each other on the same clock", shellPollDowngradeAfter, common.ShellAttachedWindow)
+	}
 }

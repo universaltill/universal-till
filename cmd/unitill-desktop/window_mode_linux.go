@@ -31,6 +31,14 @@ import "C"
 
 import webview "github.com/webview/webview_go"
 
+// init advertises the real applyWindowMode below (ADR-0064, ut-docs#1039):
+// Linux is the only platform whose desktop shell genuinely applies window
+// modes today, so only Linux builds claim ?control=live and run
+// watchShellMode — see shellAppliesWindowMode's own doc comment
+// (window_mode.go) for why a false claim would be served a kiosk mode the
+// window could never leave.
+func init() { shellAppliesWindowMode = true }
+
 // applyWindowMode turns the persisted display.window_mode preference into
 // real GTK calls on the shell's own toplevel window (ut-docs#611). Called
 // once at launch (before w.Run()) with whatever's persisted right now, and
