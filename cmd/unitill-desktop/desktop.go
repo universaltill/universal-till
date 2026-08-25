@@ -45,6 +45,22 @@ func init() {
 }
 
 func main() {
+	// Hidden install-time invocation (ut-docs#1040), checked before ANY
+	// window/attach logic: `unitill-desktop --install-autostart` writes this
+	// binary's own XDG autostart entry (reconcileAutostart, the same code
+	// every normal launch reconciles with) and exits — no server, no
+	// window, no display needed. Run by the .deb postinstall as the
+	// detected login user on a desktop-OS Pi, so the desktop session
+	// launches the till once, after which the normal
+	// fetchShellPrefs→reconcileAutostart loop owns the entry.
+	if installAutostartRequested(os.Args[1:]) {
+		if err := reconcileAutostart(true); err != nil {
+			fmt.Fprintln(os.Stderr, "install autostart entry:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Attach mode: on a .deb install the till already runs as a systemd
 	// service on :8080 — spawning a second server would fight over the same
 	// database. If something that answers our /healthz is already there,
