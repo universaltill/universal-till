@@ -1476,6 +1476,8 @@
   "pos.toast.payment_insufficient": "المبلغ المستلم لا يغطي إجمالي عملية البيع",
   "pos.toast.tender_failed": "تعذّر إتمام عملية البيع — حاول مرة أخرى أو اطلب المساعدة من المدير",
   "pos.toast.payment_declined": "تم رفض الدفع — حاول مرة أخرى أو اختر طريقة أخرى",
+  "pos.toast.voucher_insufficient": "رصيد القسيمة لا يغطي هذه الدفعة",
+  "pos.toast.voucher_invalid": "القسيمة غير موجودة أو لم تعد صالحة",
   "catalog.error.barcode_conflict": "الباركود مستخدم بالفعل من قبل %s",
   "catalog.error.barcode_conflict_unknown": "الباركود مستخدم بالفعل في مكان آخر",
   "catalog.error.barcode_attach_failed": "فشل إرفاق الباركود",

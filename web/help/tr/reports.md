@@ -31,6 +31,17 @@ Varsayılan olarak bir rapor "günü" gece yarısından gece yarısına kadar s�
 
 Bu kaydırma, Satış eğilimi sekmesindeki en yoğun saat grafiğine de uygulanır — gece yarısından hemen sonra yapılan bir satış, gerçek saati yerine gece yarısından önceki bir saat etiketinin altında (örneğin 22:00) görünebilir; bu, Gün/Hafta/Ay/Yıl'ın bu satışı zaten önceki işletme gününe ait saymasıyla tutarlıdır.
 
+## Gün sonu (Z) raporunda hediye çekleri
+
+Mağazanız çok amaçlı hediye çeki satıyor veya kabul ediyorsa, yazdırılan
+gün sonu raporunda ayrı bir **GUTSCHEINE** bölümü görünür: o gün kaç çekin
+satıldığı ve kullanıldığı, ve tutarları. Çek satışı, ürün geliri olarak
+değil, çekin gelecekteki sahibine borçlanılan para olarak kaydedilir — bu
+yüzden tutar günün genel hasılatında görünür ama bölüm bazlı veya vergi
+oranı bazlı ürün rakamlarına asla girmez. Malların vergisi, çek daha sonra
+harcandığında, o malların kendi oranlarıyla kaydedilir — müşteri nakit
+ödemiş gibi. Bölüm yalnızca çek hareketi olan günlerde yazdırılır.
+
 ## Rapor saklama
 
 Arşivlenen her gün sonu raporu **10 yıl** saklanır — bu yasal bir kayıttır

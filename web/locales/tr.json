@@ -1476,6 +1476,8 @@
   "pos.toast.payment_insufficient": "Alınan tutar satış toplamını karşılamıyor",
   "pos.toast.tender_failed": "Satış tamamlanamadı — tekrar deneyin veya bir yöneticiden yardım isteyin",
   "pos.toast.payment_declined": "Ödeme reddedildi — tekrar deneyin veya başka bir yöntem seçin",
+  "pos.toast.voucher_insufficient": "Hediye çeki bakiyesi bu ödemeyi karşılamıyor",
+  "pos.toast.voucher_invalid": "Hediye çeki bulunamadı veya artık geçerli değil",
   "catalog.error.barcode_conflict": "Barkod zaten %s tarafından kullanılıyor",
   "catalog.error.barcode_conflict_unknown": "Barkod zaten başka bir yerde kullanılıyor",
   "catalog.error.barcode_attach_failed": "barkod eklenemedi",

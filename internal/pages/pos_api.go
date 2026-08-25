@@ -338,6 +338,14 @@ func classifyTenderError(err error) string {
 		return "pos.toast.insufficient_stock"
 	case strings.Contains(err.Error(), "do not cover total"):
 		return "pos.toast.payment_insufficient"
+	// Tracked voucher redemption failures (ut-docs#1008): the message texts
+	// matched here are data.ErrVoucherInsufficientBalance /
+	// ErrVoucherNotFound / ErrVoucherNotActive as CompleteSale wraps them.
+	case strings.Contains(err.Error(), "voucher balance does not cover"):
+		return "pos.toast.voucher_insufficient"
+	case strings.Contains(err.Error(), "voucher") &&
+		(strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not active")):
+		return "pos.toast.voucher_invalid"
 	default:
 		return "pos.toast.tender_failed"
 	}
@@ -604,7 +612,26 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// from its Cloud API transaction result), same shape as the
 				// existing cash `change` field. Never affects payment coverage.
 				Tip int64 `json:"tip,omitempty"`
+				// VoucherID (ut-docs#1008) marks this payment as a TRACKED
+				// voucher redemption against a real vouchers.id — method must
+				// be "voucher", and the balance must cover the amount (a
+				// shortfall rejects the tender). Empty keeps the generic,
+				// untracked voucher payment exactly as before.
+				VoucherID string `json:"voucher_id,omitempty"`
 			} `json:"payments"`
+			// IssueVouchers (ut-docs#1008) sells multi-purpose vouchers in
+			// this sale: each becomes a 0% liability (vouchers +
+			// voucher_transactions rows), excluded from article revenue and
+			// VAT bands, included in the amount the customer owes. Code is
+			// the optional preprinted voucher identifier (generated when
+			// empty); HolderLabel an optional free-text holder name.
+			// Currently API-only — no cashier dialog builds this yet (the
+			// card's accepted minimal entry point; UI pass is a follow-up).
+			IssueVouchers []struct {
+				Amount      int64  `json:"amount"`
+				Code        string `json:"code,omitempty"`
+				HolderLabel string `json:"holder_label,omitempty"`
+			} `json:"issue_vouchers,omitempty"`
 			Discount      int64  `json:"discount,omitempty"`
 			RegisterID    string `json:"registerId,omitempty"`
 			CashierID     string `json:"cashierId,omitempty"`
@@ -648,9 +675,29 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		lines := d.Engine.Lines()
-		if len(lines) == 0 {
+		// A voucher-only sale (ut-docs#1008) legitimately rings no article
+		// line — a customer buying just a gift voucher.
+		if len(lines) == 0 && len(in.IssueVouchers) == 0 {
 			http.Error(w, "no items in basket", http.StatusBadRequest)
 			return
+		}
+
+		// Validate voucher-issue input up front (validate all external
+		// input): a non-positive amount or an oversized code/label is a
+		// caller bug, refused before any DB work.
+		var voucherIssues []pos.VoucherIssueInput
+		var voucherIssueTotal money.Money
+		for _, v := range in.IssueVouchers {
+			if v.Amount <= 0 || len(v.Code) > 64 || len(v.HolderLabel) > 200 {
+				http.Error(w, "invalid voucher issue", http.StatusBadRequest)
+				return
+			}
+			voucherIssues = append(voucherIssues, pos.VoucherIssueInput{
+				VoucherID:   v.Code,
+				HolderLabel: v.HolderLabel,
+				Amount:      money.FromMinor(v.Amount),
+			})
+			voucherIssueTotal = voucherIssueTotal.Add(money.FromMinor(v.Amount))
 		}
 
 		locID, err := repo.EnsureStockLocation(r.Context())
@@ -757,6 +804,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Reference:   p.Reference,
 				ChangeGiven: money.FromMinor(p.Change),
 				TipAmount:   money.FromMinor(p.Tip),
+				VoucherID:   strings.TrimSpace(p.VoucherID),
 			})
 		}
 		// Fallback for form-encoded tender buttons (hx-vals)
@@ -835,6 +883,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if total.IsNegative() {
 			total = 0
 		}
+		// Voucher issues ride on top AFTER the clamp, mirroring
+		// pos.computeSaleTotals exactly — the full face value is owed
+		// regardless of any article discount (ut-docs#1008), so what's
+		// demanded here and what CompleteSale enforces agree.
+		total = total.Add(voucherIssueTotal)
 		if len(payments) == 0 {
 			payments = append(payments, pos.PaymentInput{
 				MethodID: "cash",
@@ -930,6 +983,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			AllowNegativeInventory:  allowNegative,
 			ActorID:                 cashierID,
 			Offline:                 offline,
+			VoucherIssues:           voucherIssues,
 		}
 		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r))
 		if err != nil {

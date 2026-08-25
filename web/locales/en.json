@@ -1476,6 +1476,8 @@
   "pos.toast.payment_insufficient": "Amount received does not cover the sale total",
   "pos.toast.tender_failed": "Sale could not be completed — try again or ask an administrator for help",
   "pos.toast.payment_declined": "Payment declined — try again or choose another method",
+  "pos.toast.voucher_insufficient": "Voucher balance does not cover this payment",
+  "pos.toast.voucher_invalid": "Voucher not found or no longer active",
   "catalog.error.barcode_conflict": "Barcode already in use by %s",
   "catalog.error.barcode_conflict_unknown": "Barcode already in use elsewhere",
   "catalog.error.barcode_attach_failed": "barcode attach failed",

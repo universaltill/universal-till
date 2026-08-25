@@ -1583,21 +1583,32 @@ type EODMethod struct {
 // EODReport is the classic Z-report for one business day, or — when From/To
 // are set instead of Day — a date-ranged summary spanning multiple days.
 type EODReport struct {
-	Day          string      `json:"day,omitempty"`
-	From         string      `json:"from,omitempty"`
-	To           string      `json:"to,omitempty"`
-	SalesCount   int         `json:"sales_count"`
-	Gross        int64       `json:"gross"`
-	RefundCount  int         `json:"refund_count"`
-	RefundTotal  int64       `json:"refund_total"`
-	Net          int64       `json:"net"`
-	TaxNet       int64       `json:"tax_net"`
-	Methods      []EODMethod `json:"methods"`
-	Departments  []DeptSales `json:"departments"` // per-department sales (E1b)
-	Tills        []TillSales `json:"tills"`       // per-register sales (multi-till)
-	FirstReceipt string      `json:"first_receipt"`
-	LastReceipt  string      `json:"last_receipt"`
-	GeneratedAt  string      `json:"generated_at"`
+	Day         string      `json:"day,omitempty"`
+	From        string      `json:"from,omitempty"`
+	To          string      `json:"to,omitempty"`
+	SalesCount  int         `json:"sales_count"`
+	Gross       int64       `json:"gross"`
+	RefundCount int         `json:"refund_count"`
+	RefundTotal int64       `json:"refund_total"`
+	Net         int64       `json:"net"`
+	TaxNet      int64       `json:"tax_net"`
+	Methods     []EODMethod `json:"methods"`
+	Departments []DeptSales `json:"departments"` // per-department sales (E1b)
+	Tills       []TillSales `json:"tills"`       // per-register sales (multi-till)
+	// Voucher liability flows (ut-docs#1008): count + amount (minor units) of
+	// vouchers issued and redeemed in the window, from voucher_transactions.
+	// Reported DISTINCTLY from article revenue: an issue is a 0% liability
+	// already inside the sale's total (so inside Gross) but never inside any
+	// sale_lines-derived figure (departments, per-rate VAT bands); a
+	// redemption is a payment method, not revenue. Never sum these into an
+	// Artikelumsatz figure.
+	VouchersIssuedCount   int    `json:"vouchers_issued_count"`
+	VouchersIssued        int64  `json:"vouchers_issued"`
+	VouchersRedeemedCount int    `json:"vouchers_redeemed_count"`
+	VouchersRedeemed      int64  `json:"vouchers_redeemed"`
+	FirstReceipt          string `json:"first_receipt"`
+	LastReceipt           string `json:"last_receipt"`
+	GeneratedAt           string `json:"generated_at"`
 }
 
 // EndOfDay aggregates one day's completed sales and returns.
@@ -1659,6 +1670,17 @@ WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND
 		return rep, fmt.Errorf("eod totals: %w", err)
 	}
 	rep.Net = rep.Gross - rep.RefundTotal
+
+	// Voucher flows (ut-docs#1008) — same local-calendar-day window as the
+	// totals query above, range-capable like Methods (not gated on from==to).
+	vouchers, err := r.VouchersIssuedRedeemedForRange(ctx, from, to)
+	if err != nil {
+		return rep, fmt.Errorf("eod vouchers: %w", err)
+	}
+	rep.VouchersIssuedCount = vouchers.IssuedCount
+	rep.VouchersIssued = vouchers.IssuedMinor
+	rep.VouchersRedeemedCount = vouchers.RedeemedCount
+	rep.VouchersRedeemed = vouchers.RedeemedMinor
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
