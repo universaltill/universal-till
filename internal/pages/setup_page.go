@@ -184,6 +184,22 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if langUnavailableCode != "" {
 			data["detectedLangCode"] = langUnavailableCode
 		}
+		// Which step an error re-render lands on: business-identity errors
+		// (setup.error.tse_*) belong to step 3, everything else (PIN, save)
+		// to the PIN step (7). On a POST re-render the identity fields the
+		// operator already typed are echoed back so a tax-number typo
+		// doesn't cost them the whole step (the template attribute-escapes
+		// these; same trust level as the country echo above).
+		data["errStep"] = 7
+		if strings.HasPrefix(errKey, "setup.error.tse_") {
+			data["errStep"] = 3
+		}
+		if r.Method == http.MethodPost {
+			data["tseLegalName"] = strings.TrimSpace(r.PostFormValue("tse_legal_name"))
+			data["tseOwnerName"] = strings.TrimSpace(r.PostFormValue("tse_owner_name"))
+			data["tseTaxNumber"] = strings.TrimSpace(r.PostFormValue("tse_tax_number"))
+			data["tseAddress"] = strings.TrimSpace(r.PostFormValue("tse_address"))
+		}
 		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
 
@@ -257,6 +273,19 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		hash, err := auth.HashPIN(pin)
 		if err != nil {
 			renderWizard(w, r, "auth.error.pin_format", "")
+			return
+		}
+
+		// Germany-only TSE business identity (ADR-0053, ut-docs#802):
+		// validated up front, with the other pre-persist validations — a
+		// partial or malformed submission re-renders the wizard on the
+		// business-identity step before anything is saved. An entirely
+		// blank step (skipped — the free tier brings its own fiscalisation,
+		// ADR-0045) and a non-DE country both come back as a clean zero
+		// identity with no error.
+		tseIdentity, tseErrKey := parseTSEIdentityForm(r.Form.Get("country"), r.PostFormValue)
+		if tseErrKey != "" {
+			renderWizard(w, r, tseErrKey, "")
 			return
 		}
 
@@ -376,6 +405,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// synchronous attempt; either way this never blocks or fails the
 		// wizard's own response. A no-op for a country with nothing mapped.
 		installBasePluginsForSetup(r.Context(), d, st.Country)
+
+		// German TSE provisioning kickoff (ADR-0053, ut-docs#802): same
+		// best-effort posture as the base-plugin install above — the pending
+		// state is persisted BEFORE the one time-boxed network attempt, so
+		// the wizard finishes with no network and the background retry
+		// (StartTSEProvisionRetry) picks it up. A no-op for a non-DE country
+		// or a skipped identity step. fiscal.tse_configured is NOT touched
+		// here — it only ever flips true on confirmed local receipt of the
+		// operational credential (applyFiscalTSEReady).
+		startTSEProvisioningForSetup(r.Context(), d, st.Country, tseIdentity)
 
 		// Sample-data opt-in (ut-docs#539, extended to customers/promos by
 		// ut-docs#567): checkbox default is unchecked. Best-effort by
