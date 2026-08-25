@@ -256,14 +256,19 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 			item.Issue = IssueSourceDeleted
 		case p.ProductType == bkpProductTypeOrderMode:
 			item.Issue = IssueNotSellable
-		case name == "":
-			item.Issue = IssueMissingName
 		case p.ProductNumber != "" && seen[p.ProductNumber]:
 			// Distinct from import_page.go's DB-level
 			// import.status.sku_already_in_catalog: this fires purely on a
 			// collision within THIS uploaded file, before the DB is ever
-			// consulted.
+			// consulted. Checked BEFORE missing-name (ut-docs#601 review F1):
+			// a row that both misses a name and duplicates an already-
+			// registered PLU can never import no matter what name it's given,
+			// and missing_name is a forceable issue while duplicate is not —
+			// reporting the forceable one would invite an "Import anyway"
+			// override that the duplicate condition must always veto.
 			item.Issue = IssueDuplicateSKUInFile
+		case name == "":
+			item.Issue = IssueMissingName
 		default:
 			price, perr := parseBkpSalesPrice(p.SalesPriceRaw, currencyDecimals)
 			if perr != nil {
