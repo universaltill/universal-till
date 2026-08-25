@@ -182,6 +182,8 @@ func TestDemoCatalogueUpgradeKeepsTouchedItems(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
+	rewindShiftCashRecon067(t, d)
+	rewindVoucherIssueTotal069(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -329,6 +331,8 @@ func TestDemoCatalogueUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
+	rewindShiftCashRecon067(t, d)
+	rewindVoucherIssueTotal069(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -409,6 +413,8 @@ func TestDemoCatalogueUpgradeKeepsRenamedUntradedItem(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
+	rewindShiftCashRecon067(t, d)
+	rewindVoucherIssueTotal069(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -500,6 +506,8 @@ func TestDemoCustomersPromosUpgradeKeepsTouchedRows(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
+	rewindShiftCashRecon067(t, d)
+	rewindVoucherIssueTotal069(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -611,6 +619,8 @@ func TestDemoCustomersPromosUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
+	rewindShiftCashRecon067(t, d)
+	rewindVoucherIssueTotal069(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

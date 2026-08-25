@@ -96,6 +96,33 @@ type SaleInput struct {
 	// even though the field itself wasn't split.
 	AllowNegativeInventory bool
 	Offline                bool
+	// VoucherIssues (ut-docs#1008) are multi-purpose vouchers sold in this
+	// sale. A voucher is NOT an article: it never becomes a sale_lines row
+	// (the CHECK constraint there requires a catalog identity, and a fake
+	// catalog item would count the issue as article revenue — the exact bug
+	// this field exists to avoid). Each issue is a 0% VAT liability: its
+	// amount is EXCLUDED from subtotal/tax_total (and therefore from every
+	// sale_lines-derived figure — departments, per-rate VAT bands) but
+	// INCLUDED in total, since the customer pays for it. Persisted as one
+	// vouchers row + one voucher_transactions 'issue' row in the same
+	// transaction as the sale, same precedent as sale_charges (ADR-0062).
+	// NOTE: the LAN-sync journal does not carry this field yet — same
+	// known-gap shape as ServiceChargeTaxBasisBP above; a replica must not
+	// issue tracked vouchers until the journal contract adds it.
+	VoucherIssues []VoucherIssueInput
+}
+
+// VoucherIssueInput is one voucher sold in a sale (ut-docs#1008).
+type VoucherIssueInput struct {
+	// VoucherID is the stable voucher identifier/code. Empty means
+	// CompleteSale generates one (a uuid); a caller may supply its own
+	// (e.g. a preprinted card's code), which must be unique.
+	VoucherID string
+	// HolderLabel optionally names who the voucher is for (free text).
+	HolderLabel string
+	// Amount is the voucher's face value (minor units), > 0. It becomes
+	// both original_amount and the opening balance (the liability).
+	Amount money.Money
 }
 
 type SaleLineInput struct {
@@ -154,6 +181,19 @@ type PaymentInput struct {
 	AuthCode   string `json:"auth_code,omitempty"` // terminal's auth/approval code
 	TerminalID string `json:"terminal_id,omitempty"`
 	TraceID    string `json:"trace_id,omitempty"` // terminal transaction/trace ID
+
+	// VoucherID (ut-docs#1008) marks this payment as a TRACKED voucher
+	// redemption: it must ride MethodID "voucher" (the pre-existing default
+	// payment method), and CompleteSale then validates the vouchers row's
+	// balance covers Amount (overspend rejected — no partial split logic),
+	// debits it, and records a voucher_transactions 'redemption' row
+	// alongside the payments row. Empty keeps the generic, untracked
+	// 'voucher' payment behavior exactly as it always was — redemption
+	// tracking is recorded separately from that legacy payment type, and
+	// historical voucher payments are deliberately not reinterpreted.
+	// Redemption changes NOTHING about how the goods being paid for are
+	// taxed — only the payment method differs.
+	VoucherID string `json:"voucher_id,omitempty"`
 }
 
 // maxMaskedPANDigits bounds how many ASCII digits a MaskedPAN value may
@@ -185,6 +225,26 @@ func validateMaskedPAN(s string) error {
 	return nil
 }
 
+// MaxVoucherIssueAmount is the sanity ceiling for a single voucher's face
+// value (minor units): 1,000,000.00 — the same 1,000,000-major-units ceiling
+// the catalog cost/price handlers apply to external money input
+// (universaltill/ut-docs#276), far beyond any real gift voucher yet small
+// enough that no realistic count of vouchers summed into a sale total can
+// approach int64 overflow (ut-docs#1008 review, major F3: two unbounded
+// amounts near 2^62 wrapped `total` negative, trivially passing the
+// payment-coverage check). Enforced both at the API boundary
+// (internal/pages/pos_api.go) and in computeSaleTotals itself — the API is
+// not CompleteSale's only caller.
+const MaxVoucherIssueAmount money.Money = 100_000_000
+
+// ErrVoucherOvertender rejects a tracked voucher redemption whose amount
+// exceeds what the sale still needs (ut-docs#1008 review, major F4): a
+// voucher payment can never give change or carry a tip (netPayments), so
+// accepting an over-tender would silently confiscate the excess from the
+// voucher's balance instead of refusing. Exported so the tender handler's
+// classifyTenderError can map it to its own toast via errors.Is.
+var ErrVoucherOvertender = errors.New("voucher redemption exceeds the amount the sale still needs")
+
 const receiptRetryLimit = 5
 
 var errReceiptConflictRetry = errors.New("receipt_conflict_retry")
@@ -198,14 +258,14 @@ var receiptAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo)
 	return repo.NextReceiptNo(ctx, tx)
 }
 
-func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, total money.Money, err error) {
+func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucherIssueTotal, total money.Money, err error) {
 	for _, l := range in.Lines {
 		if err := validateLine(l); err != nil {
-			return 0, 0, 0, 0, err
+			return 0, 0, 0, 0, 0, err
 		}
 		lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
 		if l.LineDiscount.IsNegative() || l.LineDiscount > lineBase {
-			return 0, 0, 0, 0, fmt.Errorf("invalid line discount for item %s", l.ItemID)
+			return 0, 0, 0, 0, 0, fmt.Errorf("invalid line discount for item %s", l.ItemID)
 		}
 		lineNet := lineBase.Sub(l.LineDiscount)
 		lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
@@ -214,7 +274,7 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, total m
 	}
 	discountedSubtotal := subtotal.Sub(in.SaleDiscount)
 	if in.ServiceCharge.IsNegative() {
-		return 0, 0, 0, 0, fmt.Errorf("service charge must be >= 0")
+		return 0, 0, 0, 0, 0, fmt.Errorf("service charge must be >= 0")
 	}
 	serviceCharge = in.ServiceCharge
 	// ADR-0061 Decision 2: the service charge is ALWAYS taxed — at a
@@ -234,10 +294,36 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, total m
 	if total.IsNegative() {
 		total = 0
 	}
-	return subtotal, taxTotal, serviceCharge, total, nil
+	// Voucher issues (ut-docs#1008): a 0% liability the customer pays for —
+	// folded into total AFTER the negative clamp (a sale discount must never
+	// eat into a voucher's face value: the full amount is owed to the future
+	// bearer), and NEVER into subtotal/taxTotal (it is not revenue and not a
+	// taxable supply; VAT arises only at redemption, ut-docs#1008). The
+	// summed face value is returned separately so CompleteSale can persist
+	// it on the sale header (sales.voucher_issue_total, migration 069) —
+	// InferTaxInclusive needs it on the other side of its identity.
+	for i, v := range in.VoucherIssues {
+		if !v.Amount.IsPositive() {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount must be > 0", i+1)
+		}
+		// Defense in depth for the int64-overflow coverage bypass (review
+		// F3) — the same ceiling pos_api.go enforces at the HTTP boundary,
+		// re-checked here because the API is not the only CompleteSale
+		// caller (self-order, future plugin paths, journal replay).
+		if v.Amount > MaxVoucherIssueAmount {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount %d exceeds the maximum of %d minor units", i+1, v.Amount.Minor(), MaxVoucherIssueAmount.Minor())
+		}
+		voucherIssueTotal = voucherIssueTotal.Add(v.Amount)
+		total = total.Add(v.Amount)
+	}
+	return subtotal, taxTotal, serviceCharge, voucherIssueTotal, total, nil
 }
 
-func netPayments(payments []PaymentInput) (money.Money, error) {
+// netPayments validates the payment list and returns the sum that must cover
+// `total` (the sale's computed total, passed in so a tracked voucher
+// redemption can be capped at what the sale still needs at its point in the
+// list — review F4).
+func netPayments(payments []PaymentInput, total money.Money) (money.Money, error) {
 	var sum money.Money
 	if len(payments) == 0 {
 		return 0, errors.New("sale requires at least one payment")
@@ -262,6 +348,36 @@ func netPayments(payments []PaymentInput) (money.Money, error) {
 		case "", TipRecipientEmployee, TipRecipientBusiness:
 		default:
 			return 0, fmt.Errorf("payment %d tip recipient must be %q or %q", i+1, TipRecipientEmployee, TipRecipientBusiness)
+		}
+		if p.VoucherID != "" {
+			// Tracked voucher redemption (ut-docs#1008): rides the existing
+			// 'voucher' payment method only, and — fail-closed, this card
+			// defers any split/change semantics for vouchers — never gives
+			// change or carries a tip: the debited amount must be exactly
+			// what the payments row records.
+			if strings.ToLower(strings.TrimSpace(p.MethodID)) != "voucher" {
+				return 0, fmt.Errorf("payment %d: voucher_id requires the voucher payment method", i+1)
+			}
+			if p.ChangeGiven.IsPositive() {
+				return 0, fmt.Errorf("payment %d: a voucher redemption cannot give change", i+1)
+			}
+			if p.TipAmount.IsPositive() {
+				return 0, fmt.Errorf("payment %d: a voucher redemption cannot carry a tip", i+1)
+			}
+			// Same identifier bounds the issue path and GET /api/vouchers/{id}
+			// enforce (review minor F6) — one shared rule for every surface a
+			// voucher id enters through.
+			if err := validateVoucherID(p.VoucherID); err != nil {
+				return 0, fmt.Errorf("payment %d: %w", i+1, err)
+			}
+			// Over-tender cap (review F4): with change and tips forbidden
+			// above, any excess over what the sale still needs at this point
+			// would be silently drained from the voucher's balance and lost
+			// to the customer — refuse instead. `sum` is the coverage
+			// contributed by the payments before this one.
+			if outstanding := total.Sub(sum); p.Amount > outstanding {
+				return 0, fmt.Errorf("payment %d (amount %d, outstanding %d): %w", i+1, p.Amount.Minor(), outstanding.Minor(), ErrVoucherOvertender)
+			}
 		}
 		// Tip is intentionally excluded from the sum that must cover the
 		// sale total -- it never offsets or inflates payment coverage.
@@ -299,11 +415,60 @@ func isReceiptConflictErr(err error) bool {
 // It enforces payment coverage, FK constraints, and uses a single transaction for integrity.
 func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, error) {
 	repo := data.NewPOSRepo(sqlDB)
-	if len(in.Lines) == 0 {
-		return "", errors.New("sale requires at least one line")
+	// A voucher-only sale (ut-docs#1008) is legitimate — a customer buying
+	// just a gift voucher rings no article line at all.
+	if len(in.Lines) == 0 && len(in.VoucherIssues) == 0 {
+		return "", errors.New("sale requires at least one line or voucher issue")
 	}
 	if in.SaleType == "" {
 		in.SaleType = "sale"
+	}
+	// Voucher flows are sale-only in this card (ut-docs#1008 non-goals):
+	// issuing a voucher on a return, or refunding onto a tracked voucher,
+	// are undesigned — fail closed rather than invent semantics here.
+	if in.SaleType == "return" {
+		if len(in.VoucherIssues) > 0 {
+			return "", errors.New("a return cannot issue vouchers")
+		}
+		for i, p := range in.Payments {
+			if p.VoucherID != "" {
+				return "", fmt.Errorf("payment %d: a return cannot redeem a tracked voucher", i+1)
+			}
+		}
+	}
+	// Normalize/generate voucher identifiers ONCE, before the receipt retry
+	// loop below — a retried transaction must issue the SAME voucher codes
+	// it would have on the first attempt.
+	issuedIDs := make(map[string]bool, len(in.VoucherIssues))
+	for i := range in.VoucherIssues {
+		id := strings.TrimSpace(in.VoucherIssues[i].VoucherID)
+		if id == "" {
+			id = uuid.NewString()
+		}
+		if err := validateVoucherID(id); err != nil {
+			return "", fmt.Errorf("voucher issue %d: %w", i+1, err)
+		}
+		in.VoucherIssues[i].VoucherID = id
+		in.VoucherIssues[i].HolderLabel = strings.TrimSpace(in.VoucherIssues[i].HolderLabel)
+		issuedIDs[id] = true
+	}
+	// Normalize each payment's redemption identifier the same way (review
+	// minor F6 — the redemption path used to accept what the issue path
+	// rejects), and refuse redeeming a voucher this SAME sale is issuing
+	// (review major F5): CompleteSale writes the issue rows before the
+	// payment loop runs, so without this guard a self-referencing sale
+	// fabricated an issue+redemption pair — inflating both GUTSCHEINE
+	// counters and Gross — with no real prior liability behind it. Same
+	// fail-closed style as the SaleType == "return" guard above.
+	for i := range in.Payments {
+		vid := strings.TrimSpace(in.Payments[i].VoucherID)
+		in.Payments[i].VoucherID = vid
+		if vid == "" {
+			continue
+		}
+		if issuedIDs[vid] {
+			return "", fmt.Errorf("payment %d: voucher %q is issued in this same sale and cannot also pay for it", i+1, vid)
+		}
 	}
 	if in.Currency == "" {
 		in.Currency = "GBP"
@@ -343,11 +508,11 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			in.Lines[i].ItemID = ""
 		}
 	}
-	subtotal, taxTotal, serviceCharge, total, err := computeSaleTotals(in)
+	subtotal, taxTotal, serviceCharge, voucherIssueTotal, total, err := computeSaleTotals(in)
 	if err != nil {
 		return "", err
 	}
-	netPaid, err := netPayments(in.Payments)
+	netPaid, err := netPayments(in.Payments, total)
 	if err != nil {
 		return "", err
 	}
@@ -414,6 +579,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				Total:                   total.Minor(),
 				ServiceCharge:           serviceCharge.Minor(),
 				ServiceChargeTaxBasisBP: in.ServiceChargeTaxBasisBP,
+				VoucherIssueTotal:       voucherIssueTotal.Minor(),
 				Note:                    in.Note,
 				CreatedAt:               now,
 				TenderType:              tenderType,
@@ -492,6 +658,34 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				}
 			}
 
+			// Voucher issues (ut-docs#1008): one vouchers row (the liability)
+			// plus one 'issue' transaction row, inside the SAME transaction
+			// as the sale — the sale_charges precedent (ADR-0062) for a
+			// sale-level financial event that is not an article line.
+			for _, v := range in.VoucherIssues {
+				if err := repo.CreateVoucher(ctx, tx, data.Voucher{
+					ID:                  v.VoucherID,
+					HolderLabel:         v.HolderLabel,
+					OriginalAmountMinor: v.Amount.Minor(),
+					BalanceMinor:        v.Amount.Minor(),
+					Currency:            in.Currency,
+					IssuedSaleID:        saleID,
+					CreatedAt:           now,
+				}); err != nil {
+					return err
+				}
+				if err := repo.RecordVoucherTransaction(ctx, tx, data.VoucherTransaction{
+					ID:          uuid.NewString(),
+					VoucherID:   v.VoucherID,
+					SaleID:      saleID,
+					Type:        "issue",
+					AmountMinor: v.Amount.Minor(),
+					CreatedAt:   now,
+				}); err != nil {
+					return err
+				}
+			}
+
 			for _, p := range in.Payments {
 				if err := validateMaskedPAN(p.MaskedPAN); err != nil {
 					return err
@@ -504,6 +698,27 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				}
 				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), p.TipAmount.Minor(), valueOrDefault(p.TipRecipient, TipRecipientEmployee), time.Now().UTC().Format(time.RFC3339), cardPresent); err != nil {
 					return err
+				}
+				// Tracked voucher redemption (ut-docs#1008): debit the
+				// voucher's balance (fail-closed on unknown/inactive/
+				// insufficient — the whole sale rolls back) and record the
+				// redemption event alongside the payments row. The goods'
+				// own tax figures are untouched: only the payment method
+				// differs from a cash sale.
+				if p.VoucherID != "" {
+					if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor()); err != nil {
+						return err
+					}
+					if err := repo.RecordVoucherTransaction(ctx, tx, data.VoucherTransaction{
+						ID:          uuid.NewString(),
+						VoucherID:   p.VoucherID,
+						SaleID:      saleID,
+						Type:        "redemption",
+						AmountMinor: p.Amount.Minor(),
+						CreatedAt:   now,
+					}); err != nil {
+						return err
+					}
 				}
 			}
 
@@ -551,7 +766,32 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	return "", fmt.Errorf("insert sale: unable to allocate receipt number")
 }
 
+// validateVoucherID applies the one shared identifier rule for every surface
+// a voucher id enters through (issue input, a payment's redemption id — and
+// mirroring GET /api/vouchers/{id}'s own bound): at most 64 characters, no
+// control characters.
+func validateVoucherID(id string) error {
+	if len(id) > 64 {
+		return errors.New("voucher id must be at most 64 characters")
+	}
+	for _, r := range id {
+		if r < 0x20 || r == 0x7f {
+			return errors.New("voucher id contains control characters")
+		}
+	}
+	return nil
+}
+
 // UpdateSaleStatus updates sale.status and writes audit_log. Status expected: open|parked|voided|refunded.
+//
+// Voiding a sale that ISSUED vouchers cascades to them (ut-docs#1008 review,
+// blocker F2): each still-untouched voucher (balance == original_amount) is
+// voided in the same transaction, so a voided sale can never leave behind a
+// live, spendable voucher the till has no record of selling. If any of the
+// sale's vouchers has already been (partly) redeemed elsewhere, the whole
+// void FAILS with data.ErrVoucherRedeemedCannotVoid — fail-closed: what an
+// already-spent voucher means for its voided issuing sale is a human
+// decision, not semantics this code invents.
 func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, reason string) error {
 	if saleID == "" {
 		return errors.New("saleID required")
@@ -568,6 +808,11 @@ func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorI
 	err := db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		if err := repo.UpdateSaleStatus(ctx, tx, saleID, status); err != nil {
 			return err
+		}
+		if status == "voided" {
+			if err := repo.VoidVouchersIssuedInSale(ctx, tx, saleID); err != nil {
+				return err
+			}
 		}
 		if err := repo.InsertAudit(ctx, tx, actorID, "sale", saleID, status, map[string]any{
 			"reason":   reason,

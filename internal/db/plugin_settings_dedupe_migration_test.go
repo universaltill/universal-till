@@ -68,6 +68,8 @@ func TestMigration052DedupesGlobalPluginSettings(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
+	rewindShiftCashRecon067(t, d)
+	rewindVoucherIssueTotal069(t, d)
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
@@ -165,6 +167,8 @@ func TestMigration052IsIdempotentOnCleanData(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
+	rewindShiftCashRecon067(t, d)
+	rewindVoucherIssueTotal069(t, d)
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 52`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}

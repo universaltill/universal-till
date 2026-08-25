@@ -56,7 +56,36 @@
         <input type="number" id="closing-cash" step="0.01" min="0" required placeholder="0.00"
                onchange="document.getElementById('closing-cash-minor').value = Math.round(parseFloat(this.value || 0) * 100)">
       </label>
+      <input type="hidden" name="skim" id="skim-minor">
+      <label>{{ T "shifts.skim" }} (£, {{ T "shifts.skim_hint" }})
+        <input type="number" id="skim-pounds" step="0.01" min="0" placeholder="0.00"
+               onchange="document.getElementById('skim-minor').value = this.value === '' ? '' : Math.round(parseFloat(this.value || 0) * 100)">
+      </label>
+      <label>{{ T "shifts.reason" }} <input type="text" name="skim_reason" placeholder="{{ T "shifts.skim" }}"></label>
+      <label>{{ T "shifts.manager_pin" }}
+        <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "shifts.manager_pin_placeholder" }}">
+      </label>
+      <p class="muted" style="font-size:.82rem">{{ T "shifts.skim_manager_pin_hint" }}</p>
       <label>{{ T "shifts.note" }} <input type="text" name="note" placeholder="{{ T "shifts.note_hint" }}"></label>
+      <details class="catalog-extra">
+        <summary>{{ T "shifts.count_protocol" }}</summary>
+        <p class="muted" style="font-size:.82rem">{{ T "shifts.count_protocol_hint" }}</p>
+        <input type="hidden" name="count_protocol" id="count-protocol">
+        <div id="denom-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:.4rem">
+          <label>£50 <input type="number" min="0" step="1" data-denom="5000" class="denom-count"></label>
+          <label>£20 <input type="number" min="0" step="1" data-denom="2000" class="denom-count"></label>
+          <label>£10 <input type="number" min="0" step="1" data-denom="1000" class="denom-count"></label>
+          <label>£5 <input type="number" min="0" step="1" data-denom="500" class="denom-count"></label>
+          <label>£2 <input type="number" min="0" step="1" data-denom="200" class="denom-count"></label>
+          <label>£1 <input type="number" min="0" step="1" data-denom="100" class="denom-count"></label>
+          <label>50p <input type="number" min="0" step="1" data-denom="50" class="denom-count"></label>
+          <label>20p <input type="number" min="0" step="1" data-denom="20" class="denom-count"></label>
+          <label>10p <input type="number" min="0" step="1" data-denom="10" class="denom-count"></label>
+          <label>5p <input type="number" min="0" step="1" data-denom="5" class="denom-count"></label>
+          <label>2p <input type="number" min="0" step="1" data-denom="2" class="denom-count"></label>
+          <label>1p <input type="number" min="0" step="1" data-denom="1" class="denom-count"></label>
+        </div>
+      </details>
       <button type="submit" class="btn primary" style="width:100%">{{ T "shifts.close" }}</button>
     </form>
 
@@ -92,9 +121,9 @@
           {{ else }}<option value="reg-default">{{ T "shifts.default_register" }}</option>{{ end }}
         </select>
       </label>
-      <input type="hidden" name="opening_cash" id="opening-cash-minor" value="0">
-      <label>{{ T "shifts.opening_cash" }} (£)
-        <input type="number" id="opening-cash" step="0.01" min="0" required value="0.00"
+      <input type="hidden" name="opening_cash" id="opening-cash-minor" value="{{ .CarryForwardMinor }}">
+      <label>{{ T "shifts.opening_cash" }} (£){{ if .HasCarryForward }} — {{ T "shifts.opening_carried" }}{{ end }}
+        <input type="number" id="opening-cash" step="0.01" min="0" required value="{{ .CarryForwardDisplay }}"
                onchange="document.getElementById('opening-cash-minor').value = Math.round(parseFloat(this.value || 0) * 100)">
       </label>
       <button type="submit" class="btn primary" style="width:100%">{{ T "shifts.open_new" }}</button>
@@ -105,6 +134,7 @@
     <details class="catalog-extra">
       <summary>{{ T "shifts.formula_title" }}</summary>
       <p class="muted" style="font-size:.82rem">{{ T "shifts.formula" }}</p>
+      <p class="muted" style="font-size:.82rem">{{ T "shifts.skim_formula" }}</p>
     </details>
   </div>
 </div>
@@ -125,5 +155,24 @@ document.body.addEventListener('htmx:responseError', function (ev) {
   // itself for a non-2xx status.
   target.innerHTML = ev.detail.xhr.responseText || '';
 });
+
+// Denomination count → count_protocol JSON (ut-docs#1006): a flat object
+// keyed by denomination in minor units mapping to piece count, only
+// denominations actually counted. Left entirely empty, no protocol is
+// submitted at all (the field stays "", stored as NULL).
+(function () {
+  var grid = document.getElementById('denom-grid');
+  var out = document.getElementById('count-protocol');
+  if (!grid || !out) return;
+  grid.addEventListener('change', function () {
+    var protocol = {};
+    var any = false;
+    grid.querySelectorAll('.denom-count').forEach(function (inp) {
+      var n = parseInt(inp.value, 10);
+      if (!isNaN(n) && n > 0) { protocol[inp.getAttribute('data-denom')] = n; any = true; }
+    });
+    out.value = any ? JSON.stringify(protocol) : '';
+  });
+})();
 </script>
 {{ end }}

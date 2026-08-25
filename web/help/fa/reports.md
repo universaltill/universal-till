@@ -31,6 +31,23 @@ routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
 
 این جابه‌جایی برای نمودار «شلوغ‌ترین ساعت» در روند فروش هم اعمال می‌شود — فروشی که کمی پس از نیمه‌شب انجام شده ممکن است زیر برچسب ساعتی پیش از نیمه‌شب (مثلاً ۲۲:۰۰) نمایش داده شود، نه ساعت واقعی‌اش، هم‌راستا با این‌که روز/هفته/ماه/سال از پیش همان فروش را متعلق به روز کاری قبل می‌دانند.
 
+## کارت‌های هدیه در گزارش پایان روز (Z)
+
+اگر فروشگاه شما کارت هدیهٔ چندمنظوره می‌فروشد یا می‌پذیرد، در گزارش چاپی
+پایان روز بخش جداگانه‌ای با عنوان **GUTSCHEINE** نمایش داده می‌شود: تعداد
+کارت‌های صادرشده و خرج‌شده در آن روز و مبلغ آن‌ها. فروش کارت هدیه به‌عنوان
+بدهی به دارندهٔ آیندهٔ کارت ثبت می‌شود، نه درآمد کالا — بنابراین مبلغ در
+جمع کل دریافتی روز دیده می‌شود اما هرگز وارد ارقام کالایی به تفکیک بخش یا
+نرخ مالیات نمی‌شود. مالیات کالاها هنگام خرج شدن کارت، با نرخ خود همان
+کالاها ثبت می‌شود — درست مانند وقتی که مشتری نقد پرداخت کرده باشد. این
+بخش فقط در روزهایی که کارت هدیه‌ای جابه‌جا شده چاپ می‌شود.
+
+اگر فروشی که در آن کارت هدیه فروخته شده باطل شود، تا زمانی که کارت هنوز
+استفاده نشده باشد، کارت هم همراه آن باطل می‌شود — از گزارش حذف می‌شود و
+دیگر قابل خرج کردن نیست. اما اگر بخشی از کارت قبلاً خرج شده باشد، صندوق
+ابطال آن فروش را نمی‌پذیرد: ابتدا وضعیت کارت باقی‌مانده را با مشتری
+روشن کنید.
+
 ## نگه‌داری گزارش
 
 هر گزارش پایان روز بایگانی‌شده **۱۰ سال** نگه داشته می‌شود — این یک سند
@@ -90,6 +107,42 @@ JSON دانلود کنید، مثلاً برای تحویل به حسابرس.
 بتوانید رقمی مانند «مجموع ودیعهٔ بطری برداشت‌شده این هفته» را ببینید. این
 بخش فقط زمانی نمایش داده می‌شود که حداقل یک تعدیل در آن بازه وجود داشته
 باشد.
+
+## Counting the drawer at close: skim & new float
+
+The opening cash for a new shift is **carried over automatically** from
+the register's last close — whatever the previous close left in the
+drawer is pre-filled, so you confirm it rather than re-type it. You can
+still edit the figure if the drawer was corrected in between; whatever
+you submit is what's recorded.
+
+When you close a shift, count the drawer and enter the counted cash as
+before. Two optional extras join it:
+
+- **Skim to safe** — the amount you move from the drawer to the safe as
+  part of the close. The counted cash minus the skim becomes the drawer's
+  **new float**, which is what the next shift on that register opens with.
+  A skim can't exceed the counted cash, and it never changes the expected
+  figure — the variance always compares your count against takings
+  *before* the skim, so moving money to the safe can't hide a shortage.
+  An optional reason can be recorded with it.
+- **Denomination count** — an optional per-denomination count (how many
+  of each coin and note) stored with the close as a count protocol, for
+  shops that want the till count documented piece by piece. Leave it
+  empty to skip it entirely.
+
+## Cash reconciliation on the day-end report
+
+The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
+section on any day at least one shift was closed: opening float, cash
+sales, pay-ins, pay-outs, calculated (what should be in the drawers),
+counted (what was in them), variance, skim to safe, and the new float
+carried to the next day. A non-zero variance is flagged with `!!` on the
+printout, and the Day-end tab marks that day's row with a warning tag so
+a discrepancy is visible on screen without reprinting each period. A day
+with no closed shift still produces a complete report — the section is
+simply absent, and running End of day is never blocked on closing a
+shift.
 
 ## دیدن فروش همهٔ صندوق‌ها (دفتر فروش)
 
@@ -153,3 +206,12 @@ JSON دانلود کنید، مثلاً برای تحویل به حسابرس.
 - سوابق پرداخت همراه با سایر سوابق مالی فروشگاه نگهداری می‌شوند و زودتر
   از موعد حذف نمی‌شوند — همان مدت نگهداری بقیهٔ این صفحه (به نگهداری
   گزارش‌ها در بالا مراجعه کنید).
+- **در گزارش چاپی پایان روز (Z)** — برای هر روزی که دست‌کم یک پرداخت
+  انعامی ثبت کرده باشد — معمولاً پرداختی که در آن از درخواست انعام خودِ
+  دستگاه کارتخوان استفاده شده — گزارش یک خط کوتاه انعام بر اساس روش
+  پرداخت نیز چاپ می‌کند (مثلاً «4x Card £3.20»). این مبلغ جدا از جمع
+  فروش روز نگه داشته می‌شود و به‌عنوان درآمد شمرده نمی‌شود. این رقم
+  می‌تواند با رقم «دریافتی» در بالا متفاوت باشد: خط گزارش Z صرف‌نظر از
+  اینکه انعام متعلق به چه کسی است هر پرداخت انعامی را می‌شمرد، در حالی
+  که «دریافتی» فقط انعام‌های ثبت‌شده برای کارمند را می‌شمرد (پیش‌فرض) —
+  وقتی انعامی برای کسب‌وکار ثبت شود، این دو انتظار می‌رود متفاوت باشند.
