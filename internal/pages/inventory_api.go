@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -467,6 +471,39 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		// German TSE hard gate (ADR-0048, ut-docs#731): a return moves real
+		// money and is aufzeichnungspflichtig under KassenSichV the same as
+		// a sale, so it's blocked the same way completeTender blocks a
+		// sale — checked before CompleteSale runs, same as the /refund
+		// page's own return flow (refund_page.go). The refusal lands in
+		// the inventory page's own #return-result slot, inside an
+		// otherwise fully-translated screen, and this gate exists FOR the
+		// German market — so it reuses the refund flow's already-shipped
+		// copy rather than raw Go error text (ut-docs#316/#893: a
+		// sentinel's Error() string is still raw English, and a settings
+		// read failure here would put SQL text on the operator's screen).
+		gate, err := enforceFiscalGate(ctx, dp)
+		if err != nil {
+			locale := httpx.ResolveLocale(w, r)
+			var fiscalNC *fiscalNeverConfiguredError
+			var fiscalTF *fiscalTSEFailingError
+			switch {
+			case errors.As(err, &fiscalTF):
+				log.Printf("inventory return rejected: %v (ADR-0048 fiscal hard gate)", err)
+				respondReturnError(w, r, http.StatusConflict, httpx.T(locale, "refund.error.fiscal_tse_failing"))
+			case errors.As(err, &fiscalNC):
+				log.Printf("inventory return rejected: %v (ADR-0048 fiscal hard gate)", err)
+				respondReturnError(w, r, http.StatusConflict, httpx.T(locale, "refund.error.fiscal_never_configured"))
+			default:
+				// Settings-store read failure inside EvaluateGate: an
+				// internal fault, not a fiscal posture. Fails closed all
+				// the same, but as the 500 it is.
+				log.Printf("inventory return: fiscal gate evaluation failed: %v", err)
+				respondReturnError(w, r, http.StatusInternalServerError, httpx.T(locale, "refund.error.server"))
+			}
+			return
+		}
+
 		// Create return sale
 		returnInput := pos.SaleInput{
 			SaleType:               "return",
@@ -482,6 +519,22 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		if err != nil {
 			respondReturnError(w, r, http.StatusInternalServerError, err.Error())
 			return
+		}
+		// Same per-completion audit marker completeTender writes for a sale
+		// taken during an active TSE-override window (ADR-0048 Decision
+		// 3) — the journal must show exactly which money-moving
+		// completions (sale AND return alike) were taken unsigned.
+		// Best-effort after the fact, same as completeTender's own: the
+		// return is already committed, so a failed marker write is
+		// logged, never unwinds it.
+		if gate.Decision == fiscal.AllowedWithOverride {
+			if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", returnSaleID, "unsigned_override", map[string]any{
+				"override_actor":  gate.OverrideActor,
+				"override_reason": gate.OverrideReason,
+				"override_until":  gate.OverrideUntil.UTC().Format(time.RFC3339),
+			}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+				log.Printf("fiscal gate: unsigned_override audit marker for return %s failed: %v", returnSaleID, auditErr)
+			}
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(ctx, dp, returnInput)
