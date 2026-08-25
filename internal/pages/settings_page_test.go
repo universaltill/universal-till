@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -1644,5 +1645,85 @@ func TestSettingsEndpoints_RepoErrorIsLocalized(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "no such table") {
 		t.Fatalf("upsert error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// TestExitToOSEndpoint_NoShellAttached503NoAudit (ut-docs#1039): the .deb
+// attach-mode topology — ShellPollWindowController wired, no shell polling,
+// no spawn-mode fallback. A correct manager PIN must get an honest 503
+// ("this till's window can't be reached"), never the fabricated 204 the
+// old NoopWindowController default produced — and NO audit row: only a
+// real exit gets audited, same only-on-success reasoning as ut-docs#616.
+func TestExitToOSEndpoint_NoShellAttached503NoAudit(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	d.WindowCtl = common.NewShellPollWindowController(d.Shell, nil)
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os",
+		strings.NewReader(url.Values{"manager_pin": {"482913"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no-shell exit-to-os = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+	if n := auditCount(t, d.Db, "exit_to_os"); n != 0 {
+		t.Fatalf("audit_log has %d exit_to_os entries after a failed exit, want 0 (only a real exit is audited)", n)
+	}
+}
+
+// TestExitToOSEndpoint_AttachedAckingShell204AndAudit: with a shell holding
+// a live control poll that applies and acknowledges "normal", the same
+// request is a genuine 204 with the ut-docs#616 audit row.
+func TestExitToOSEndpoint_AttachedAckingShell204AndAudit(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	d.WindowCtl = common.NewShellPollWindowController(d.Shell, nil)
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the attached shell: heartbeat now, then behave like the real
+	// long poll — wake on the mode change, apply, acknowledge.
+	d.Shell.SetMode("kiosk")
+	d.Shell.NoteSeen("kiosk")
+	_, rev := d.Shell.Snapshot()
+	go func() {
+		mode, _ := d.Shell.Wait(context.Background(), rev, 5*time.Second)
+		d.Shell.NoteSeen(mode)
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os",
+		strings.NewReader(url.Values{"manager_pin": {"482913"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("attached+acked exit-to-os = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if mode, _ := d.Shell.Snapshot(); mode != "normal" {
+		t.Fatalf("live mode after exit-to-os = %q, want normal", mode)
+	}
+	if n := auditCount(t, d.Db, "exit_to_os"); n != 1 {
+		t.Fatalf("audit_log has %d exit_to_os entries after a real exit, want 1", n)
 	}
 }

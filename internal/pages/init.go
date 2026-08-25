@@ -197,44 +197,15 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		log.Infof("AI env override present (UT_AI_*) — plugin settings take precedence when the AI plugin is active")
 	}
 
-	// WindowCtl (ut-docs#608/#611/#882/#883): the Pi headless kiosk appliance
-	// and the desktop shell (macOS/Windows/Linux) are the two platforms
-	// wired to a real OS effect today — GOOS gated for the kiosk case (not
-	// just the env check) so a manually-set UT_KIOSK=1 on macOS/Windows
-	// (touch-UI styling only, see httpx.InitKiosk above) never shells out to
-	// a `sudo systemctl` that doesn't exist there. A plain browser session
-	// (no UT_DESKTOP_CONTROL_ADDR, no UT_KIOSK) keeps NoopWindowController.
-	// Live apply on the desktop shell is real end-to-end on Linux (#882);
-	// on macOS/Windows the shell's control listener runs but has no native
-	// handler wired yet (#609/#610's own scope), so a call there is
-	// accepted (204) and simply has no visible effect until next launch —
-	// deliberately NOT a 503/500, which would regress a working
-	// persist-only flow into one that looks broken (see
-	// settings_page.go's window-mode handler comment and
-	// webkit_darwin.go's own showWindow doc comment).
-	//
-	// Detection is UT_KIOSK=1 OR the kiosk unit file already being present
-	// (independent review, ut-docs#883): unitill-kiosk-setup.sh's own
-	// is_pi_appliance gate deliberately never re-runs on an upgrade, so a
-	// box already kiosked before ut-docs#883 landed has unitill-kiosk.service
-	// on disk without pos.env ever gaining UT_KIOSK=1. Env-only detection
-	// would leave that box silently on NoopWindowController forever — the
-	// unit-file probe is what makes it instead attempt the real systemctl
-	// call and surface a clear "missing sudoers grant" error, which is the
-	// acceptance criteria's own named scenario.
-	windowCtl := common.WindowController(common.NoopWindowController{})
-	// ut-docs#882: unitill-desktop (the macOS/Windows/Linux desktop shell)
-	// sets UT_DESKTOP_CONTROL_ADDR on us when it spawns this process — the
-	// live, no-relaunch counterpart to #611's next-launch-only apply.
-	// Never set on the Pi kiosk path below (no shell process exists there),
-	// so the ordering here doesn't matter in practice; the kiosk check is
-	// still last so it wins if that ever changes.
-	if hc, ok := common.NewHTTPWindowControllerFromEnv(); ok {
-		windowCtl = hc
-	}
-	if runtime.GOOS == "linux" && (os.Getenv("UT_KIOSK") == "1" || piKioskServiceInstalled()) {
-		windowCtl = common.NewKioskSystemdWindowController()
-	}
+	// Shell channel + WindowCtl (ut-docs#608/#611/#882/#883, reshaped by
+	// ADR-0064 / ut-docs#1039): the shell channel is the
+	// server-authoritative live window mode the desktop shell long-polls
+	// via GET /api/window-mode?control=live — seeded from the persisted
+	// preference so the shell's launch fetch and the live channel can
+	// never start out disagreeing. See newWindowController below for how
+	// the controller is picked.
+	shellChannel := common.NewShellChannel(state.WindowMode)
+	windowCtl := newWindowController(shellChannel, piKioskServiceInstalled())
 
 	dp := &common.Deps{
 		Cfg:         cfg,
@@ -253,6 +224,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
 		WindowCtl:   windowCtl,
+		Shell:       shellChannel,
 	}
 
 	// Register routes
@@ -386,4 +358,53 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		return mux, dp
 	}
 	return auth.Middleware(mux, authSvc), dp
+}
+
+// newWindowController picks Deps.WindowCtl (ut-docs#608/#611/#882/#883,
+// ADR-0064 / ut-docs#1039). The Pi headless kiosk appliance and the desktop
+// shell (macOS/Windows/Linux) are the two platforms wired to a real OS
+// effect — GOOS gated for the kiosk case (not just the env check) so a
+// manually-set UT_KIOSK=1 on macOS/Windows (touch-UI styling only, see
+// httpx.InitKiosk in Init) never shells out to a `sudo systemctl` that
+// doesn't exist there.
+//
+// The default — every non-Pi session, including a plain browser one — is
+// ShellPollWindowController over the shell channel, NOT the old
+// NoopWindowController (that default was the ut-docs#1039 field trap: on a
+// .deb install the shell attaches to the already-running systemd service,
+// no env handoff ever happens, and exit-to-os PIN-checked, audited, called
+// a no-op and answered "Exited to OS." while the window stayed
+// fullscreen-undecorated). The polled controller works identically in
+// attach and spawn mode because all traffic is shell → server; whether the
+// shell spawned this process no longer matters. When no shell is attached
+// it reports so honestly (503 at the handler), and the window-state
+// endpoint's fail-closed downgrade guarantees an unattended chrome-hiding
+// preference can never seal a window. NoopWindowController itself is kept
+// for bare-Deps tests — it is just no longer the production default.
+//
+// ut-docs#882's env-handed channel (UT_DESKTOP_CONTROL_ADDR, set only when
+// unitill-desktop spawned this process) survives as the polled
+// controller's fallback for a spawn-mode shell too old to poll — ADR-0064
+// Decision 5. It is never set on the Pi kiosk path (no shell process
+// exists there).
+//
+// Pi kiosk detection is UT_KIOSK=1 OR the kiosk unit file already being
+// present (independent review, ut-docs#883): unitill-kiosk-setup.sh's own
+// is_pi_appliance gate deliberately never re-runs on an upgrade, so a box
+// already kiosked before ut-docs#883 landed has unitill-kiosk.service on
+// disk without pos.env ever gaining UT_KIOSK=1. Env-only detection would
+// leave that box silently on the wrong controller forever — the unit-file
+// probe is what makes it instead attempt the real systemctl call and
+// surface a clear "missing sudoers grant" error, which is that card's
+// acceptance criteria's own named scenario. The kiosk branch wins last, as
+// before.
+func newWindowController(shell *common.ShellChannel, piKioskUnitPresent bool) common.WindowController {
+	if runtime.GOOS == "linux" && (os.Getenv("UT_KIOSK") == "1" || piKioskUnitPresent) {
+		return common.NewKioskSystemdWindowController()
+	}
+	var fallback common.WindowController
+	if hc, ok := common.NewHTTPWindowControllerFromEnv(); ok {
+		fallback = hc
+	}
+	return common.NewShellPollWindowController(shell, fallback)
 }
