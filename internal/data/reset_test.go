@@ -732,3 +732,57 @@ func TestEraseCustomer_AnonymisesArchivedSaleToo(t *testing.T) {
 		t.Fatalf("restored sale should stay anonymous, got customer_id=%v", *liveCID)
 	}
 }
+
+// ut-docs#1006 review finding 4: resetArchiveTables' column list for
+// "shifts" was extended (new_float, count_protocol) alongside migration
+// 067, but nothing pinned the two travelling together — reverting the
+// column list alone left every other test green (a silent, ADR-0042-
+// violating data-loss bug on a real go-live reset). Mirrors
+// TestResetThenRestoreRoundTrip_SaleTrackingToken's shape for the shifts
+// table's newest columns.
+func TestResetThenRestoreRoundTrip_ShiftNewFloatCountProtocol(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore-shift-cash-recon.db")
+	x(`INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`)
+	x(`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('user1','user1','User One','','cashier',1)`)
+	x(`INSERT INTO shifts(id,register_id,cashier_id,opened_at,closed_at,opening_cash,closing_cash,expected_cash,new_float,count_protocol)
+	   VALUES('shift1','reg1','user1','2026-01-01T08:00:00Z','2026-01-01T17:00:00Z',10000,51110,51110,10000,'{"5000":10,"100":11,"10":1}')`)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	var archivedNewFloat int64
+	var archivedProtocol string
+	if err := d.DB.QueryRow(`SELECT new_float, count_protocol FROM shifts_archive WHERE id='shift1' AND reset_batch_id=?`, batchID).
+		Scan(&archivedNewFloat, &archivedProtocol); err != nil {
+		t.Fatalf("read archived new_float/count_protocol: %v", err)
+	}
+	if archivedNewFloat != 10000 {
+		t.Errorf("archived new_float = %d, want 10000", archivedNewFloat)
+	}
+	if archivedProtocol != `{"5000":10,"100":11,"10":1}` {
+		t.Errorf("archived count_protocol = %q, want the seeded JSON", archivedProtocol)
+	}
+
+	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if c := count("shifts"); c != 1 {
+		t.Fatalf("shifts after restore: %d rows, want 1", c)
+	}
+	var restoredNewFloat int64
+	var restoredProtocol string
+	if err := d.DB.QueryRow(`SELECT new_float, count_protocol FROM shifts WHERE id='shift1'`).
+		Scan(&restoredNewFloat, &restoredProtocol); err != nil {
+		t.Fatalf("read restored new_float/count_protocol: %v", err)
+	}
+	if restoredNewFloat != 10000 {
+		t.Errorf("restored new_float = %d, want 10000 (a missing archive-table column mirror silently drops it)", restoredNewFloat)
+	}
+	if restoredProtocol != `{"5000":10,"100":11,"10":1}` {
+		t.Errorf("restored count_protocol = %q, want the seeded JSON", restoredProtocol)
+	}
+}
