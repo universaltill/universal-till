@@ -1,12 +1,15 @@
 package pages
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -155,5 +158,59 @@ func TestPOSTender_VoucherOverspendLocalizedRejection(t *testing.T) {
 	}
 	if balance != 100 {
 		t.Fatalf("balance after refused overspend = %d, want 100", balance)
+	}
+}
+
+// ut-docs#1008 review F3/F6, API boundary: the tender handler rejects a
+// voucher issue above the pos.MaxVoucherIssueAmount sanity ceiling (the
+// int64-overflow coverage bypass) and a redemption voucher_id longer than
+// the 64-character bound every other voucher-id surface enforces — both as
+// a 400 before any DB work.
+func TestPOSTender_VoucherInputBounds(t *testing.T) {
+	mux, dp := newVoucherTenderDeps(t)
+
+	// Issue amount above the ceiling (1,000,000.01 in minor units).
+	rec := postTenderJSON(t, mux, `{"payments":[{"method":"cash","amount":100000001}],"issue_vouchers":[{"amount":100000001}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized voucher issue: code %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM vouchers`).Scan(&count); err != nil {
+		t.Fatalf("count vouchers: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected oversized issue still wrote %d vouchers row(s)", count)
+	}
+
+	// Redemption id above the 64-character bound.
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("scan item: %v", err)
+	}
+	longID := strings.Repeat("x", 65)
+	rec = postTenderJSON(t, mux, `{"payments":[{"method":"voucher","amount":300,"voucher_id":"`+longID+`"}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("65-char voucher_id: code %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#1008 review F9: classifyTenderError matches voucher failures by
+// errors.Is against the exported sentinels, not by message substring — a
+// wrapped-and-reworded error still classifies, which the old substring
+// match could not guarantee.
+func TestClassifyTenderError_VoucherSentinelsSurviveWrapping(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("some new wording entirely: %w", data.ErrVoucherInsufficientBalance), "pos.toast.voucher_insufficient"},
+		{fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", data.ErrVoucherNotFound)), "pos.toast.voucher_invalid"},
+		{fmt.Errorf("reworded: %w", data.ErrVoucherNotActive), "pos.toast.voucher_invalid"},
+		{fmt.Errorf("payment 1 (amount 5000, outstanding 1000): %w", pos.ErrVoucherOvertender), "pos.toast.voucher_overtender"},
+		{errors.New("something else"), "pos.toast.tender_failed"},
+	}
+	for _, tc := range cases {
+		if got := classifyTenderError(tc.err); got != tc.want {
+			t.Errorf("classifyTenderError(%v) = %q, want %q", tc.err, got, tc.want)
+		}
 	}
 }

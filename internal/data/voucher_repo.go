@@ -32,6 +32,13 @@ var ErrVoucherNotActive = errors.New("voucher is not active")
 // explicitly defers partial-voucher/partial-cash split logic).
 var ErrVoucherInsufficientBalance = errors.New("voucher balance does not cover the tendered amount")
 
+// ErrVoucherRedeemedCannotVoid is returned when voiding a sale whose issued
+// voucher has already been partly or fully redeemed elsewhere (ut-docs#1008
+// review, blocker F2): the void is refused outright — fail-closed — because
+// unwinding a liability someone has already spent against needs a human
+// decision, not invented semantics.
+var ErrVoucherRedeemedCannotVoid = errors.New("voucher issued in this sale has already been redeemed; the sale cannot be voided")
+
 // Voucher is one vouchers row — the per-voucher outstanding liability, keyed
 // by the stable voucher identifier a shop prints on the physical voucher.
 // JSON tags are snake_case per this repo's API convention; amounts are raw
@@ -166,8 +173,83 @@ WHERE id = ? AND status = 'active' AND balance >= ?`,
 	if err != nil {
 		return fmt.Errorf("debit voucher: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		// A RowsAffected failure is a driver/DB fault, not evidence the
+		// guard refused — reporting it as "insufficient balance" (the old
+		// `_`-discard did exactly that) would mislabel an internal error as
+		// a customer-facing business rejection (review minor F8).
+		return fmt.Errorf("debit voucher: rows affected: %w", err)
+	}
+	if n != 1 {
 		return fmt.Errorf("voucher %q: %w", voucherID, ErrVoucherInsufficientBalance)
+	}
+	return nil
+}
+
+// VoidVouchersIssuedInSale voids every voucher whose 'issue' transaction
+// belongs to saleID, inside the caller's transaction — the voucher side of
+// voiding the sale that sold them (ut-docs#1008 review, blocker F2). For each
+// such voucher, in one guarded UPDATE (the same predicates-repeated-in-the-
+// WHERE pattern DebitVoucherForRedemption uses, so a concurrent redemption
+// between read and write loses cleanly): a genuinely untouched voucher
+// (status 'active', balance still == original_amount) becomes status 'void'
+// with balance 0. A voucher already partly or fully redeemed — or one a
+// concurrent redemption touches mid-void — fails the whole call with
+// ErrVoucherRedeemedCannotVoid, rolling the sale void back. A voucher already
+// 'void' (the sale was voided before) is skipped: re-voiding is idempotent.
+func (r *POSRepo) VoidVouchersIssuedInSale(ctx context.Context, tx *sql.Tx, saleID string) error {
+	rows, err := r.exec(tx).QueryContext(ctx, `
+SELECT DISTINCT voucher_id FROM voucher_transactions WHERE sale_id = ? AND type = 'issue'`, saleID)
+	if err != nil {
+		return fmt.Errorf("void vouchers for sale: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("void vouchers for sale: scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("void vouchers for sale: %w", err)
+	}
+	rows.Close()
+
+	for _, id := range ids {
+		res, err := r.exec(tx).ExecContext(ctx, `
+UPDATE vouchers
+SET status = 'void', balance = 0
+WHERE id = ? AND status = 'active' AND balance = original_amount`, id)
+		if err != nil {
+			return fmt.Errorf("void voucher %q: %w", id, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("void voucher %q: rows affected: %w", id, err)
+		}
+		if n == 1 {
+			continue
+		}
+		// The guarded UPDATE refused — find out why. Already 'void' means a
+		// previous void of this sale got here first: idempotent, skip.
+		// Anything else ('redeemed', or 'active' with balance <
+		// original_amount) means value has left this voucher — fail closed.
+		var status string
+		err = r.exec(tx).QueryRowContext(ctx, `SELECT status FROM vouchers WHERE id = ?`, id).Scan(&status)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("void voucher %q: %w", id, ErrVoucherNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("void voucher %q: %w", id, err)
+		}
+		if status == "void" {
+			continue
+		}
+		return fmt.Errorf("voucher %q (status %s): %w", id, status, ErrVoucherRedeemedCannotVoid)
 	}
 	return nil
 }
@@ -189,13 +271,26 @@ type VoucherRangeSummary struct {
 // convention dateRangeSummary and WorkerAllocationsSummary use (ut-docs#869:
 // a bare UTC date() match silently aggregates the wrong calendar day on any
 // non-UTC host, and this feature's pilot market — Germany — is non-UTC).
+//
+// A transaction whose own sale was VOIDED is excluded (ut-docs#1008 review,
+// blocker F2): a voided sale drops out of the report's Gross/Net via the
+// status filter, so still counting its voucher issue (or a redemption taken
+// in a since-voided sale) here would report flows the till's takings no
+// longer contain. LEFT JOIN, deliberately permissive on a MISSING sale row:
+// sale_id is a soft reference with no FK (see the file header), and a sale
+// archived by ResetTransactionHistory — physically gone from `sales` — was a
+// real, non-voided sale whose voucher flows must keep counting; a void, by
+// contrast, keeps its sales row (pos.UpdateSaleStatus never deletes), so
+// `status = 'voided'` is reliably observable whenever it happened.
 func (r *POSRepo) VouchersIssuedRedeemedForRange(ctx context.Context, from, to string) (VoucherRangeSummary, error) {
 	var out VoucherRangeSummary
 	rows, err := r.db.QueryContext(ctx, `
-SELECT type, COUNT(*), COALESCE(SUM(amount), 0)
-FROM voucher_transactions
-WHERE date(created_at, 'localtime') BETWEEN date(?) AND date(?)
-GROUP BY type`, from, to)
+SELECT vt.type, COUNT(*), COALESCE(SUM(vt.amount), 0)
+FROM voucher_transactions vt
+LEFT JOIN sales s ON s.id = vt.sale_id
+WHERE date(vt.created_at, 'localtime') BETWEEN date(?) AND date(?)
+  AND (s.id IS NULL OR s.status != 'voided')
+GROUP BY vt.type`, from, to)
 	if err != nil {
 		return out, fmt.Errorf("vouchers issued/redeemed for range: %w", err)
 	}

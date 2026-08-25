@@ -144,8 +144,9 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 
 // InferTaxInclusive infers a persisted sale's pricing mode from its own
 // header arithmetic (settings may have changed since the sale happened):
-// inclusive keeps total = subtotal − discount + service charge; exclusive
-// adds tax on top. All values are the sale row's persisted minor units.
+// inclusive keeps total = subtotal − discount + service charge + voucher
+// issues; exclusive adds tax on top. All values are the sale row's
+// persisted minor units.
 //
 // A service charge is added to the total in BOTH modes (inclusive keeps
 // its tax inside the amount, exclusive adds it on top with the lines'),
@@ -153,11 +154,17 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 // is misread as exclusive — which then mis-derives the whole sale on
 // every path that asks: the invoice VAT breakdown, the refund math, the
 // day-close VAT bands, and (since ADR-0061 taxes the charge by pricing
-// mode) a journal replay's recomputed totals. This is the single shared
-// inference — internal/pages' saleIsTaxInclusive delegates here.
-func InferTaxInclusive(subtotal, discountTotal, taxTotal, total, serviceCharge int64) bool {
+// mode) a journal replay's recomputed totals. The same holds for a
+// voucher issue's face value (ut-docs#1008 review, blocker F1): it too is
+// folded into total in both modes with no subtotal/taxTotal counterpart
+// (a 0% liability, sales.voucher_issue_total — migration 068), so leaving
+// it out of the identity made every inclusive sale that also issued a
+// voucher read as exclusive, double-charging VAT on its refunds. This is
+// the single shared inference — internal/pages' saleIsTaxInclusive
+// delegates here.
+func InferTaxInclusive(subtotal, discountTotal, taxTotal, total, serviceCharge, voucherIssueTotal int64) bool {
 	if taxTotal == 0 {
 		return false // both modes agree; exclusive math is the identity
 	}
-	return total == subtotal-discountTotal+serviceCharge
+	return total == subtotal-discountTotal+serviceCharge+voucherIssueTotal
 }

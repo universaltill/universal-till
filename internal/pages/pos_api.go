@@ -338,14 +338,18 @@ func classifyTenderError(err error) string {
 		return "pos.toast.insufficient_stock"
 	case strings.Contains(err.Error(), "do not cover total"):
 		return "pos.toast.payment_insufficient"
-	// Tracked voucher redemption failures (ut-docs#1008): the message texts
-	// matched here are data.ErrVoucherInsufficientBalance /
-	// ErrVoucherNotFound / ErrVoucherNotActive as CompleteSale wraps them.
-	case strings.Contains(err.Error(), "voucher balance does not cover"):
+	// Tracked voucher redemption failures (ut-docs#1008): matched with
+	// errors.Is against the exported sentinels, not by message substring
+	// (review minor F9) — CompleteSale returns the repo's wrapped error
+	// unstringified (db.WithTx and completeTender both pass it through), so
+	// the sentinel survives to here and a rewording of the error text can
+	// no longer silently break the classification.
+	case errors.Is(err, data.ErrVoucherInsufficientBalance):
 		return "pos.toast.voucher_insufficient"
-	case strings.Contains(err.Error(), "voucher") &&
-		(strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not active")):
+	case errors.Is(err, data.ErrVoucherNotFound), errors.Is(err, data.ErrVoucherNotActive):
 		return "pos.toast.voucher_invalid"
+	case errors.Is(err, pos.ErrVoucherOvertender):
+		return "pos.toast.voucher_overtender"
 	default:
 		return "pos.toast.tender_failed"
 	}
@@ -683,12 +687,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// Validate voucher-issue input up front (validate all external
-		// input): a non-positive amount or an oversized code/label is a
+		// input): a non-positive or absurdly large amount (the
+		// pos.MaxVoucherIssueAmount sanity ceiling — review F3: unbounded
+		// amounts near 2^62 overflowed the int64 total negative and slipped
+		// past the payment-coverage check) or an oversized code/label is a
 		// caller bug, refused before any DB work.
 		var voucherIssues []pos.VoucherIssueInput
 		var voucherIssueTotal money.Money
 		for _, v := range in.IssueVouchers {
-			if v.Amount <= 0 || len(v.Code) > 64 || len(v.HolderLabel) > 200 {
+			if v.Amount <= 0 || money.FromMinor(v.Amount) > pos.MaxVoucherIssueAmount || len(v.Code) > 64 || len(v.HolderLabel) > 200 {
 				http.Error(w, "invalid voucher issue", http.StatusBadRequest)
 				return
 			}
@@ -797,6 +804,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
 				return
 			}
+			// A redemption id gets the same bound the issue path's Code and
+			// GET /api/vouchers/{id} already enforce (review minor F6) —
+			// TrimSpace alone let through what every other voucher-id
+			// surface rejects. Control characters are refused one layer
+			// down by pos.CompleteSale's shared validateVoucherID.
+			voucherID := strings.TrimSpace(p.VoucherID)
+			if len(voucherID) > 64 {
+				http.Error(w, "invalid voucher id", http.StatusBadRequest)
+				return
+			}
 			payments = append(payments, pos.PaymentInput{
 				MethodID:    p.Method,
 				Amount:      money.FromMinor(p.Amount),
@@ -804,7 +821,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Reference:   p.Reference,
 				ChangeGiven: money.FromMinor(p.Change),
 				TipAmount:   money.FromMinor(p.Tip),
-				VoucherID:   strings.TrimSpace(p.VoucherID),
+				VoucherID:   voucherID,
 			})
 		}
 		// Fallback for form-encoded tender buttons (hx-vals)
@@ -1171,6 +1188,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// (bad status value, DB failure) shares the generic fallback.
 			if errors.Is(err, data.ErrSaleNotFound) {
 				common.LogAndLocalizedError(w, r, http.StatusNotFound, "pos.error.sale_not_found", "pos-api", err)
+				return
+			}
+			// Void refused because a voucher issued in this sale has already
+			// been (partly) spent elsewhere (ut-docs#1008 review F2) — a
+			// distinct, actionable refusal, not a server fault: the operator
+			// needs to know WHY this specific void cannot happen.
+			if errors.Is(err, data.ErrVoucherRedeemedCannotVoid) {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "pos.error.void_voucher_redeemed", "pos-api", err)
 				return
 			}
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "pos.error.server", "pos-api", err)

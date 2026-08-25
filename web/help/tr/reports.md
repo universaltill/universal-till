@@ -42,6 +42,11 @@ oranı bazlı ürün rakamlarına asla girmez. Malların vergisi, çek daha sonr
 harcandığında, o malların kendi oranlarıyla kaydedilir — müşteri nakit
 ödemiş gibi. Bölüm yalnızca çek hareketi olan günlerde yazdırılır.
 
+Bir çekin satıldığı satış iptal edilirse, çek henüz hiç kullanılmamışsa
+çek de onunla birlikte iptal edilir — rapordan kaybolur ve artık
+harcanamaz. Çekin herhangi bir kısmı zaten harcanmışsa kasa o satışın
+iptalini reddeder: önce bekleyen çeki müşteriyle çözüme kavuşturun.
+
 ## Rapor saklama
 
 Arşivlenen her gün sonu raporu **10 yıl** saklanır — bu yasal bir kayıttır

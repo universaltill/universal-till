@@ -59,6 +59,12 @@ recorded when the voucher is later spent, at those goods' own rates, the
 same as if the customer had paid cash. The section only prints on days
 with voucher activity.
 
+Voiding the sale that sold a voucher cancels the voucher with it, as long
+as the voucher is still unused — it disappears from the report and can no
+longer be spent. If any part of the voucher has already been spent, the
+till refuses to void that sale: sort out the outstanding voucher with the
+customer first.
+
 ## Report retention
 
 Every archived end-of-day report is kept for **10 years** — this is a legal

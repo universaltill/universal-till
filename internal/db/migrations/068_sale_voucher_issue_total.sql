@@ -1,0 +1,21 @@
+-- 068: voucher_issue_total on sales (ut-docs#1008 independent review,
+-- blocker F1). The summed face value of the multi-purpose vouchers ISSUED in
+-- this sale — the one component of `total` that lives in neither subtotal nor
+-- tax_total (a voucher issue is a 0% liability, migration 067). It has to be
+-- PERSISTED on the sale header, not derived by a query-time join against
+-- voucher_transactions: pos.InferTaxInclusive re-derives a historical sale's
+-- pricing mode from the header's own arithmetic (total == subtotal − discount
+-- + service_charge [+ tax when exclusive]), and a voucher issue folded into
+-- total with nothing on the other side made every inclusive-priced sale that
+-- also sold a voucher read as EXCLUSIVE — which then added VAT a second time
+-- on refunds of that sale and mis-banded it on the day-close VAT table and
+-- the invoice. Same persist-don't-recompute reasoning as
+-- service_charge_amount (migration 024). 0 is the correct value for every
+-- pre-existing row: this column ships in the same release as voucher issuing
+-- itself, so no earlier sale can have issued one.
+ALTER TABLE sales ADD COLUMN voucher_issue_total INTEGER NOT NULL DEFAULT 0;
+-- Mirror onto sales_archive, per 040_reset_archive.sql's own header rule
+-- (same as 062 did for service_charge_tax_basis_bp): without this, "Clear
+-- transaction history" would drop the figure on archive and
+-- RestoreResetBatch could never bring it back.
+ALTER TABLE sales_archive ADD COLUMN voucher_issue_total INTEGER NOT NULL DEFAULT 0;

@@ -3,10 +3,12 @@ package pos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/money"
 )
@@ -416,5 +418,302 @@ func TestCompleteSale_VoucherIssueTaxExclusive(t *testing.T) {
 	// 10.00 net + 1.90 tax (19% exclusive) + 15.00 voucher = 26.90.
 	if subtotal != 1000 || taxTotal != 190 || total != 2690 {
 		t.Fatalf("exclusive figures: subtotal=%d tax=%d total=%d, want 1000/190/2690", subtotal, taxTotal, total)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Independent-review fix pass (ut-docs#1008): regression tests for findings
+// F1 (voucher issue broke InferTaxInclusive), F2 (void cascade + reporting),
+// F3 (amount ceiling / int64 overflow), F4 (over-tender confiscation),
+// F5 (same-sale issue+redeem) and F6 (redemption id validation).
+// ---------------------------------------------------------------------------
+
+// F1: an INCLUSIVE-priced sale that also issues a voucher must still be
+// inferred as inclusive from its persisted header. Before the fix, the
+// voucher's face value sat in `total` with nothing on the other side of
+// InferTaxInclusive's identity, so exactly this sale shape was misread as
+// exclusive — double-charging VAT on its refunds and mis-banding the
+// day-close/invoice VAT tables.
+func TestCompleteSale_VoucherIssueKeepsInclusiveInference(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	saleID, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:         []SaleLineInput{articleLine()},
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-INF1", Amount: money.FromMinor(1500)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(2500)}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSale: %v", err)
+	}
+
+	var subtotal, discount, taxTotal, total, serviceCharge, voucherIssueTotal int64
+	if err := sqlDB.QueryRow(`SELECT subtotal, discount_total, tax_total, total, service_charge_amount, voucher_issue_total FROM sales WHERE id = ?`, saleID).
+		Scan(&subtotal, &discount, &taxTotal, &total, &serviceCharge, &voucherIssueTotal); err != nil {
+		t.Fatalf("read sale header: %v", err)
+	}
+	if voucherIssueTotal != 1500 {
+		t.Fatalf("persisted voucher_issue_total = %d, want 1500", voucherIssueTotal)
+	}
+	if !InferTaxInclusive(subtotal, discount, taxTotal, total, serviceCharge, voucherIssueTotal) {
+		t.Fatalf("inclusive sale with a voucher issue misread as exclusive (subtotal=%d discount=%d tax=%d total=%d sc=%d voucher=%d)",
+			subtotal, discount, taxTotal, total, serviceCharge, voucherIssueTotal)
+	}
+
+	// Control: the same header WITHOUT the voucher term must NOT read as
+	// inclusive — proving the voucher term is what balances the identity,
+	// i.e. this is exactly the sale shape the old code broke on.
+	if InferTaxInclusive(subtotal, discount, taxTotal, total, serviceCharge, 0) {
+		t.Fatalf("control: identity balanced without the voucher term — test would not have caught the regression")
+	}
+}
+
+// localDayOf returns the shop-local calendar day of the given RFC3339
+// timestamp exactly as the voucher range query derives it — so the
+// assertions below hit the same window regardless of the host timezone.
+func localDayOf(t *testing.T, sqlDB *sql.DB, createdAt string) string {
+	t.Helper()
+	var day string
+	if err := sqlDB.QueryRow(`SELECT date(?, 'localtime')`, createdAt).Scan(&day); err != nil {
+		t.Fatalf("derive local day: %v", err)
+	}
+	return day
+}
+
+// F2 (a)+(b): voiding the sale that issued a still-untouched voucher voids
+// the voucher with it — no longer spendable — and the day-close GUTSCHEINE
+// aggregation stops counting the issue.
+func TestUpdateSaleStatus_VoidCascadesToUntouchedVoucher(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	saleID, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-VOID1", Amount: money.FromMinor(2000)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(2000)}},
+	})
+	if err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+
+	repo := data.NewPOSRepo(sqlDB)
+	var txCreatedAt string
+	if err := sqlDB.QueryRow(`SELECT created_at FROM voucher_transactions WHERE voucher_id = 'GS-VOID1'`).Scan(&txCreatedAt); err != nil {
+		t.Fatalf("read issue tx: %v", err)
+	}
+	day := localDayOf(t, sqlDB, txCreatedAt)
+
+	// Control before the void: the issue counts.
+	sum, err := repo.VouchersIssuedRedeemedForRange(ctx, day, day)
+	if err != nil {
+		t.Fatalf("range before void: %v", err)
+	}
+	if sum.IssuedCount != 1 || sum.IssuedMinor != 2000 {
+		t.Fatalf("before void: issued = %d/%d, want 1/2000", sum.IssuedCount, sum.IssuedMinor)
+	}
+
+	if err := UpdateSaleStatus(ctx, sqlDB, saleID, "voided", "", "test void"); err != nil {
+		t.Fatalf("void sale: %v", err)
+	}
+
+	var status string
+	var balance int64
+	if err := sqlDB.QueryRow(`SELECT status, balance FROM vouchers WHERE id = 'GS-VOID1'`).Scan(&status, &balance); err != nil {
+		t.Fatalf("read voucher: %v", err)
+	}
+	if status != "void" || balance != 0 {
+		t.Fatalf("voucher after sale void: status=%q balance=%d, want 'void'/0 — a voided sale left a live, spendable voucher", status, balance)
+	}
+
+	// Not redeemable any more: a tender against it must fail and persist
+	// nothing.
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:    []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{{MethodID: "voucher", VoucherID: "GS-VOID1", Amount: money.FromMinor(1000)}},
+	}); !errors.Is(err, data.ErrVoucherNotActive) {
+		t.Fatalf("redeeming a voided voucher: err = %v, want ErrVoucherNotActive", err)
+	}
+
+	// (b) Reporting: the GUTSCHEINE aggregation no longer counts the issue.
+	sum, err = repo.VouchersIssuedRedeemedForRange(ctx, day, day)
+	if err != nil {
+		t.Fatalf("range after void: %v", err)
+	}
+	if sum.IssuedCount != 0 || sum.IssuedMinor != 0 {
+		t.Fatalf("after void: issued = %d/%d, want 0/0 — a voided sale's voucher issue still reported", sum.IssuedCount, sum.IssuedMinor)
+	}
+}
+
+// F2 (c): a voucher that has ALREADY been partly redeemed elsewhere blocks
+// voiding its issuing sale outright — fail-closed, nothing changed.
+func TestUpdateSaleStatus_VoidRefusedWhenVoucherAlreadyRedeemed(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	issueSaleID, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-SPENT1", Amount: money.FromMinor(2000)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(2000)}},
+	})
+	if err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:    []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{{MethodID: "voucher", VoucherID: "GS-SPENT1", Amount: money.FromMinor(1000)}},
+	}); err != nil {
+		t.Fatalf("redemption sale: %v", err)
+	}
+
+	err = UpdateSaleStatus(ctx, sqlDB, issueSaleID, "voided", "", "test void")
+	if !errors.Is(err, data.ErrVoucherRedeemedCannotVoid) {
+		t.Fatalf("voiding the issuing sale of a spent voucher: err = %v, want ErrVoucherRedeemedCannotVoid", err)
+	}
+
+	// Nothing changed: the sale is still completed, the voucher untouched.
+	var saleStatus string
+	if err := sqlDB.QueryRow(`SELECT status FROM sales WHERE id = ?`, issueSaleID).Scan(&saleStatus); err != nil {
+		t.Fatalf("read sale: %v", err)
+	}
+	if saleStatus != "completed" {
+		t.Fatalf("sale status after refused void = %q, want 'completed' (the refusal must roll everything back)", saleStatus)
+	}
+	var vStatus string
+	var balance int64
+	if err := sqlDB.QueryRow(`SELECT status, balance FROM vouchers WHERE id = 'GS-SPENT1'`).Scan(&vStatus, &balance); err != nil {
+		t.Fatalf("read voucher: %v", err)
+	}
+	if vStatus != "active" || balance != 1000 {
+		t.Fatalf("voucher after refused void: status=%q balance=%d, want 'active'/1000", vStatus, balance)
+	}
+}
+
+// F3: a voucher amount above the sanity ceiling is rejected with a clear
+// error — including the reviewer's exact overflow probe (two amounts near
+// 2^62 that used to wrap `total` negative and sail past payment coverage).
+func TestCompleteSale_VoucherIssueRejectsExcessiveAmount(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{Amount: MaxVoucherIssueAmount + 1}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: MaxVoucherIssueAmount + 1}},
+	}); err == nil || !strings.Contains(err.Error(), "exceeds the maximum") {
+		t.Fatalf("amount above ceiling: err = %v, want a clear exceeds-the-maximum error", err)
+	}
+
+	// The reviewer's probe: two near-2^62 vouchers plus a token cash payment
+	// used to overflow total negative, so netPaid < total passed trivially.
+	huge := money.FromMinor(int64(1) << 62)
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{Amount: huge}, {Amount: huge}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(1)}},
+	}); err == nil {
+		t.Fatalf("overflow probe committed a sale, want rejection")
+	}
+	var count int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("count sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected oversized voucher sales still persisted %d sale(s)", count)
+	}
+}
+
+// F4: tendering a voucher for MORE than the sale needs is refused (change
+// and tips are forbidden for voucher redemptions, so the excess would be
+// silently confiscated from the voucher's balance) — and the balance stays
+// untouched.
+func TestCompleteSale_VoucherOvertenderRejected(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-OT1", Amount: money.FromMinor(5000)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(5000)}},
+	}); err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+
+	// Small basket (10.00 inclusive), much larger voucher tender (50.00).
+	_, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:    []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{{MethodID: "voucher", VoucherID: "GS-OT1", Amount: money.FromMinor(5000)}},
+	})
+	if !errors.Is(err, ErrVoucherOvertender) {
+		t.Fatalf("over-tendered voucher: err = %v, want ErrVoucherOvertender", err)
+	}
+
+	var balance int64
+	if err := sqlDB.QueryRow(`SELECT balance FROM vouchers WHERE id = 'GS-OT1'`).Scan(&balance); err != nil {
+		t.Fatalf("read voucher: %v", err)
+	}
+	if balance != 5000 {
+		t.Fatalf("balance after refused over-tender = %d, want 5000 (nothing may be confiscated)", balance)
+	}
+	var saleCount int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM sales WHERE tender_type = 'voucher'`).Scan(&saleCount); err != nil {
+		t.Fatalf("count sales: %v", err)
+	}
+	if saleCount != 0 {
+		t.Fatalf("refused over-tender still persisted %d sale(s)", saleCount)
+	}
+}
+
+// F5: a sale cannot redeem a voucher it is issuing itself — the issue rows
+// are written before the payment loop, so without the up-front guard this
+// fabricated an issue+redemption pair from nothing.
+func TestCompleteSale_RejectsRedeemingVoucherIssuedInSameSale(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	_, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:         []SaleLineInput{articleLine()},
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-SELF1", Amount: money.FromMinor(1000)}},
+		Payments: []PaymentInput{
+			{MethodID: "voucher", VoucherID: "GS-SELF1", Amount: money.FromMinor(1000)},
+			{MethodID: "cash", Amount: money.FromMinor(1000)},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "same sale") {
+		t.Fatalf("same-sale issue+redeem: err = %v, want a clear same-sale rejection", err)
+	}
+	var count int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM vouchers WHERE id = 'GS-SELF1'`).Scan(&count); err != nil {
+		t.Fatalf("count vouchers: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected same-sale voucher still persisted %d vouchers row(s)", count)
+	}
+}
+
+// F6: a redemption's voucher id gets the SAME validation the issue path has
+// always had — length bound and no control characters.
+func TestCompleteSale_RedemptionVoucherIDValidation(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	long := strings.Repeat("x", 65)
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:    []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{{MethodID: "voucher", VoucherID: long, Amount: money.FromMinor(1000)}},
+	}); err == nil || !strings.Contains(err.Error(), "64 characters") {
+		t.Fatalf("65-char redemption id: err = %v, want the 64-character bound error", err)
+	}
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:    []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{{MethodID: "voucher", VoucherID: "GS\x00BAD", Amount: money.FromMinor(1000)}},
+	}); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("control-char redemption id: err = %v, want the control-characters error", err)
 	}
 }
