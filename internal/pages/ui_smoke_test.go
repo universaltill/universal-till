@@ -520,7 +520,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 			t.Fatalf("seed role %s: %v", role, err)
 		}
 	}
-	catalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "reports", "audit", "plugin_management", "data_management", "sync_management", "import_export", "issue_reporting", "tax_code_management", "stock_location_management"}
+	catalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "reports", "audit", "plugin_management", "data_management", "sync_management", "import_export", "issue_reporting", "tax_code_management", "stock_location_management", "worker_allocation"}
 	for _, action := range catalog {
 		if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES (?)`, action); err != nil {
 			t.Fatalf("seed permission_action %s: %v", action, err)
@@ -571,8 +571,12 @@ func seedForPages(t *testing.T, db *sql.DB) {
 	_, _ = db.Exec(`INSERT INTO item_variants(id,item_id,sku,name,price,is_active) VALUES('var1','itm1','ABC-L','Large',150,1)`)
 	_, _ = db.Exec(`INSERT INTO variant_barcodes(barcode,variant_id,is_primary) VALUES('VAR','var1',1)`)
 	_, _ = db.Exec(`INSERT INTO inventory(id,item_id,variant_id,location_id,quantity,updated_at) VALUES('inv2',NULL,'var1','loc_main',30,datetime('now'))`)
-	_, _ = db.Exec(`INSERT INTO users(id,username,pin_hash,role,created_at) VALUES('user1','admin','','admin',datetime('now'))`)
-	_, _ = db.Exec(`INSERT INTO users(id,username,pin_hash,role,created_at) VALUES('system','system','','admin',datetime('now'))`)
+	// display_name is NOT NULL in the real schema (001_init.sql) — set here
+	// too (ut-docs#964) so AuthRepo.ListUsers' plain (non-COALESCEd) scan of
+	// this column doesn't fail on these two pre-seeded rows the moment a
+	// page actually calls ListUsers against this fixture and checks its error.
+	_, _ = db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('user1','admin','Admin','','admin',datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('system','system','System','','admin',datetime('now'))`)
 }
 
 // TestPluginRepoGetPluginVersionAt_SeedForPagesSchema is a regression test

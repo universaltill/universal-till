@@ -510,6 +510,22 @@
   {{ end }}
   {{ end }}
 
+  {{ if .tseProvisioning }}
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.tse.title" }}</h3>
+  <div class="chip-row" data-testid="tse-provisioning" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin:.3rem 0">
+    {{ if .tseProvisioning.ReasonKey }}
+    <span class="chip">{{ printf (T .tseProvisioning.MessageKey) (T .tseProvisioning.ReasonKey) }}</span>
+    {{ else }}
+    <span class="chip">{{ T .tseProvisioning.MessageKey }}</span>
+    {{ end }}
+    <button class="btn secondary" data-testid="tse-provisioning-dismiss"
+            hx-post="/api/settings/dismiss-tse-provisioning"
+            hx-target="closest .chip-row" hx-swap="outerHTML"
+            hx-disabled-elt="this">{{ T "settings.tse.dismiss_btn" }}</button>
+  </div>
+  {{ end }}
+
   {{ if gt .sampleCount 0 }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.demo_title" }}</h3>
@@ -1113,6 +1129,34 @@
     <span id="settings-save-msg" aria-live="polite"></span>
   </form>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
+</div>
+<!-- ut-docs#861: the shop's default locale — used for anything with no
+     request to resolve a per-browser preference from (notification email,
+     background jobs). Distinct from the ?lang=/ut_lang cookie a manager's
+     own browser might be on; same "codes, not display names" picker shape
+     as setup.html's own language step (ut-docs#590) — no locale-name map
+     exists elsewhere in this codebase to reuse, and inventing one just for
+     this card would be scope creep. -->
+<div class="card">
+  <h2>{{ T "settings.language.title" }}</h2>
+  <p class="muted">{{ T "settings.language.help" }}</p>
+  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+    {{ $cur := defaultlocale }}
+    <select name="locale">
+      {{ range locales }}
+      <option value="{{ . }}" {{ if eq . $cur }}selected{{ end }}>{{ . }}</option>
+      {{ end }}
+    </select>
+    <button class="btn" type="submit">{{ T "settings.language.apply" }}</button>
+    <!-- No id here (ut-docs#861 review F4): the shared handler's elevation
+         prompt hardcodes "#settings-save-msg" (the Currency card's span,
+         above) as its target regardless of which form on this endpoint
+         triggered it, so an id here would never actually receive anything
+         — same as every other card sharing this endpoint besides Currency
+         itself. Not fixed further: splitting that target per-card is a
+         bigger change than this card's scope. -->
+    <span aria-live="polite"></span>
+  </form>
 </div>
 <div class="card">
   <h2>{{ T "settings.shop_type.title" }}</h2>

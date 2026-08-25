@@ -14,7 +14,7 @@ Gün, reyon ve ödeme türüne göre satış toplamları; en çok/yavaş satanla
 ## Nasıl kullanılır
 
 1. Raporlar'ı açın: üstteki satır seçili dönemin ana rakamlarını (ciro, satış, vergi, iadeler, net, geçen yıl) ve düşük stok uyarısını her zaman gösterir.
-2. Altındaki sekmelerden birini seçin — Satış eğilimi, Ürünler, Vergi, Tahmin, Ödemeler ve kanallar veya Gün sonu (EOD) — o rapor yalnızca sekmeyi açtığınızda çalışır.
+2. Altındaki sekmelerden birini seçin — Satış eğilimi, Ürünler, Vergi, Tahmin, Ödemeler ve kanallar, Bahşişler veya Gün sonu (EOD) — o rapor yalnızca sekmeyi açtığınızda çalışır.
 3. Kapanışta Gün sonu'nu (Gün sonu sekmesinde) çalıştırın: günü toplar ve kayıtlarınız için yazdırabilir.
 
 ## Rapor dönemleri
@@ -128,3 +128,34 @@ geri almaz. Bir yedek kasada "Tüm kasalar" ya da belirli başka bir kasa
 seçmek, neden boş kaldığını açıklamayan bir tablo yerine, kasalar arası
 satışların yalnızca mağazanın ana kasasında kullanılabildiğini açıklayan
 bir mesaj gösterir.
+
+## Çalışanlara bahşiş ve servis ücreti ödemeleri (Bahşişler sekmesi)
+
+**Bahşişler** sekmesi, bahşiş ve servis ücretlerinin çalışanlara nasıl
+ödendiğini kaydeder ve bunu raporlar — işverenlerin tutmasını isteyen
+Birleşik Krallık'ın Bahşiş Dağıtımı Yasası'nın (Employment (Allocation of
+Tips) Act 2023) kayıt tutma gerekliliğinin bir parçası. Yalnızca bir
+yöneticinin girdiğini kaydeder: yazılım kendiliğinden hiçbir parayı tespit
+etmez veya taşımaz.
+
+- **Alınan / dağıtılan** — seçili dönem için iki toplam: ne geldi (tamamlanan
+  satışlardaki bahşişler, ya da tahsil edildiyse servis ücreti) ve bir
+  çalışana ödendiği kaydedilen ne. Bu ikisi farklı saatlerde işler — bugün
+  alınan para bir sonraki vardiyaya kadar ödenmemiş olabilir — bu yüzden
+  kısa bir pencerede iki rakamın uyuşmaması normaldir, tek başına bir sorun
+  değildir; her ikisini de kapsayacak kadar geniş bir pencerede kontrol
+  edin.
+- **Ödeme kaydetme** — bir yönetici ("Çalışan ödemeleri" yetkisiyle)
+  çalışanı, paranın gerçekten ödendiği tarihi, türünü (bahşiş ya da servis
+  ücreti), tutarı ve isteğe bağlı bir not seçip gönderir. Tarih gelecekte
+  olamaz — bu zaten gerçekleşmiş bir ödemeyi kaydeder.
+- **Bir çalışanın kendi kayıtları** — toplamları ve ödeme listesini tek bir
+  kişiyle sınırlamak için Çalışan filtresini kullanın, örneğin talep
+  üzerine bir çalışana kendisine ödendiği kaydedileni göstermek için.
+- **Dışa aktarma** — bir tarih aralığı (isteğe bağlı olarak tek bir çalışan)
+  için ödeme kayıtlarını CSV dosyası olarak indirin; bir çalışana, bir
+  muhasebeciye ya da yalnızca toplamlar değil ayrıntılı kayıtlara ihtiyaç
+  duyan başka birine vermek için.
+- Ödeme kayıtları, mağazanın diğer mali kayıtlarıyla birlikte tutulur ve
+  erken silinmez — bu sayfadaki diğer her şeyle aynı saklama süresi
+  (yukarıdaki Rapor saklama bölümüne bakın).

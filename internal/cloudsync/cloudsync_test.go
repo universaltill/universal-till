@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +19,9 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/issuereport"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -978,4 +981,94 @@ func TestStartJoinsWaitGroupOnCancel(t *testing.T) {
 	}
 	cancel()
 	waitJoined(t, wg)
+}
+
+// --- fiscal_tse_ready directive (ADR-0053, ut-docs#802) ---
+
+// The payload-less fiscal_tse_ready directive routes to its hook; a nil hook
+// fails cleanly like every other type's nil-hook branch.
+func TestApplyFiscalTSEReady(t *testing.T) {
+	d := directive{ID: "f1", Type: "fiscal_tse_ready", Payload: map[string]any{}}
+
+	status, msg := apply(context.Background(), d, Hooks{})
+	if status != "failed" || msg != "fiscal_tse_ready is not supported on this till" {
+		t.Fatalf("nil hook: status=%q msg=%q", status, msg)
+	}
+
+	called := 0
+	hooks := Hooks{FiscalTSEReady: func(ctx context.Context) (string, error) {
+		called++
+		return "credential stored", nil
+	}}
+	status, msg = apply(context.Background(), d, hooks)
+	if status != "applied" || msg != "credential stored" || called != 1 {
+		t.Fatalf("success: status=%q msg=%q called=%d", status, msg, called)
+	}
+
+	// A hook failure (credential fetch/store failed) must come back "failed"
+	// so the cloud re-serves the directive on the next tick.
+	hooks.FiscalTSEReady = func(ctx context.Context) (string, error) {
+		return "", errors.New("credential fetch failed: 502")
+	}
+	status, msg = apply(context.Background(), d, hooks)
+	if status != "failed" || msg != "credential fetch failed: 502" {
+		t.Fatalf("hook error: status=%q msg=%q", status, msg)
+	}
+}
+
+// Adding the fiscal_tse_ready case must leave the unknown-type rejection for
+// every OTHER unrecognized directive type exactly as it was — asserted
+// against a fully-wired Hooks (including the new hook), so the default
+// branch is genuinely the one rejecting, not a nil-hook branch.
+func TestApplyUnknownTypeStillRejectedAfterFiscalTSEReady(t *testing.T) {
+	hooks := Hooks{
+		SetSetting:     func(ctx context.Context, key, value string) (string, error) { return "ok", nil },
+		FiscalTSEReady: func(ctx context.Context) (string, error) { return "ok", nil },
+	}
+	status, msg := apply(context.Background(), directive{ID: "u1", Type: "definitely_not_a_type", Payload: map[string]any{}}, hooks)
+	if status != "failed" || msg != "unknown directive type definitely_not_a_type" {
+		t.Fatalf("unknown type: status=%q msg=%q", status, msg)
+	}
+}
+
+// ADR-0045 Decision 2 / ut-docs#802: the at-rest TSE operational credential
+// is never synced to the marketplace/cloud. A full Tick — heartbeat,
+// catalog snapshot, directive results — with the credential sitting on disk
+// must not carry the secret in ANY outbound payload. (The complementary
+// support-bundle exclusion test lives in internal/fiscal.)
+func TestTickNeverSendsTSECredential(t *testing.T) {
+	dir := t.TempDir()
+	paths.Init(dir)
+	t.Cleanup(func() { paths.Init("") })
+	const secret = "super-secret-operational-credential-PLOVER"
+	if err := fiscal.NewTSECredentialStore().Save(map[string]any{"api_key": secret}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cloud := &fakeCloud{directives: []map[string]any{
+		{"id": "d1", "type": "set_setting", "payload": map[string]any{"key": "k", "value": "v"}},
+	}}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	d := openMigratedDB(t, "tse-exclusion.db")
+
+	hooks := Hooks{SetSetting: func(ctx context.Context, key, value string) (string, error) { return "ok", nil }}
+	if err := Tick(context.Background(), testCfg(srv.URL), d.DB, hooks); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	cloud.mu.Lock()
+	defer cloud.mu.Unlock()
+	for _, group := range []any{cloud.syncBodies, cloud.snapshots, cloud.results} {
+		raw, err := json.Marshal(group)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("an outbound cloud payload carried the TSE credential: %s", raw)
+		}
+	}
+	if len(cloud.syncBodies) == 0 || len(cloud.snapshots) == 0 {
+		t.Fatal("test did not exercise the outbound payloads it claims to check")
+	}
 }

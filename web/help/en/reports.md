@@ -5,7 +5,7 @@ section: Running the business
 order: 210
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z report, end of day, takings, journal, shift, audit]
+keywords: [z report, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation]
 ---
 
 # Reports & end of day
@@ -15,7 +15,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 ## How to use it
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, tax, refunds, net, last year) and a low-stock warning.
-2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, or Day-end (EOD) — and that report loads when you open it.
+2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, or Day-end (EOD) — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals the day and can print for your records.
 
 ## Report periods
@@ -145,6 +145,34 @@ primary and never receives siblings' sales back down. Picking "All tills"
 or a specific other till on a replica shows a message explaining that
 cross-till sales are only available on the shop's primary till, instead of
 a table that's quietly empty with nothing to explain why.
+
+## Worker tip and service-charge payouts (Tips tab)
+
+The **Tips** tab records how tips and service charges are paid out to
+workers, and reports on it — one part of the record-keeping the UK
+Employment (Allocation of Tips) Act 2023 asks employers to keep. It records
+what a manager tells it: the software does not detect or move any money on
+its own.
+
+- **Received vs allocated** — two totals for the selected period: what came
+  in (tips on completed sales, or service charge once that's collected) and
+  what's been recorded as paid out to a worker. They run on different
+  clocks — money received today might not be paid out until a later shift —
+  so the two figures not matching on a short window is normal, not a
+  problem by itself; check over a window wide enough to cover both.
+- **Recording a payout** — a manager (Worker payouts permission) picks the
+  worker, the date the money was actually paid, tip or service charge, the
+  amount, and an optional note, then submits. The date can't be in the
+  future — this records a payment that already happened.
+- **A worker's own records** — use the Worker filter to narrow both the
+  totals and the payout list to one person, e.g. to show a worker (or show
+  them, on request) what's been recorded as paid to them.
+- **Export** — download the payout records for a date range (optionally one
+  worker) as a CSV file, for handing to a worker, an accountant, or anyone
+  else who needs the underlying records rather than just the totals.
+- Payout records are kept alongside the shop's other financial records and
+  are not deleted early — the same retention as everything else on this
+  page (see Report retention above).
 
 ## Reconciling a card payment (receipt detail)
 

@@ -214,6 +214,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// dismiss it — best-effort like everything else on this page, a
 		// read error just renders with nothing pending.
 		pendingBasePlugins, _ := loadPendingBasePlugins(r.Context(), d)
+		// German TSE provisioning status (ADR-0053, ut-docs#802): whatever
+		// the wizard's kickoff / the background retry / the ready-directive
+		// handler has left in flight or failed, so the merchant sees exactly
+		// where it stands (still pending vs kickoff rejected vs credential
+		// fetch failed) and can dismiss it — best-effort like everything
+		// else on this page, a read error just renders with nothing pending.
+		tseState, _ := loadTSEProvisioningState(r.Context(), d)
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -335,6 +342,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"shopTypes":             setupShopTypes,
 			"restorePromptDeferred": restorePromptStatus == common.RestorePromptStatusDeferred,
 			"pendingBasePlugins":    pendingBasePluginViews(pendingBasePlugins),
+			"tseProvisioning":       tseProvisioningViewFor(tseState),
 			"resetBatches":          resetBatches,
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
@@ -1182,6 +1190,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	})
 
+	// Dismiss the TSE provisioning status chip (ADR-0053, ut-docs#802)
+	// without provisioning — e.g. a shop that decided against the managed
+	// service after a subscription_inactive rejection. Clears the whole
+	// lifecycle state (a later re-run of provisioning re-creates it); same
+	// hx-swap "outerHTML"/empty-200-body convention as the two dismisses
+	// above. Deliberately does NOT touch fiscal.tse_configured or any stored
+	// credential — this dismisses a status chip, not a configured TSE.
+	mux.HandleFunc("POST /api/settings/dismiss-tse-provisioning", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "settings") {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		if err := saveTSEProvisioningState(r.Context(), d, nil); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	})
+
 	// This till's own display name (ut-docs#396) — distinct from a replica's
 	// own sync.till_name — shown in Settings and on the /tills page.
 	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
@@ -1296,6 +1323,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 					{Name: "country", Value: r.Form.Get("country")},
 					{Name: "region", Value: r.Form.Get("region")},
 					{Name: "taxRatePct", Value: r.Form.Get("taxRatePct")},
+					{Name: "locale", Value: r.Form.Get("locale")},
 				}, elev)
 			return
 		}
@@ -1326,6 +1354,21 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			st.Region = v
 			auditPayload["region"] = v
 		}
+		if v := strings.TrimSpace(r.Form.Get("locale")); v != "" {
+			// Reject silently rather than 400 (ut-docs#861) — matches this
+			// handler's existing lenient contract (see the comment at its
+			// top: "empty fields are simply skipped, a bad taxRatePct is
+			// ignored"). An unrecognized locale isn't just cosmetically
+			// wrong the way an unknown currency code is (that falls back to
+			// a plain "CODE 1.23" format): it would make T() fall back to
+			// raw keys sitewide for anything with no request to resolve a
+			// per-browser preference from — notification email in
+			// particular, the exact case this card exists to fix.
+			if slices.Contains(httpx.AvailableLocales(), v) {
+				st.Locale = v
+				auditPayload["locale"] = v
+			}
+		}
 		// TaxInclusive/AllowNegativeInventory are deliberately NOT set here:
 		// the only caller (the currency card) never posts them, and an
 		// unconditional write silently zeroed both on every currency change
@@ -1345,6 +1388,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		d.SetState(st)
 		httpx.InitCurrency(st.Currency)
+		// Live-apply, no restart (ut-docs#861) — st.Locale is always the
+		// current-or-just-changed value (CurrentState() seeds it when the
+		// "locale" field wasn't posted this call), same unconditional-call
+		// shape as InitCurrency above. SetDefaultLocale is itself a no-op on
+		// an empty value, so a till whose Locale has genuinely never been
+		// set (fresh boot, before LoadState's cfg.Locales.Locale fallback
+		// even applies) can't accidentally blank the wired translator.
+		httpx.SetDefaultLocale(st.Locale)
 		// In place: replacing the engine would empty a basket in progress.
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
 		// the same tax config or it would silently charge stale rates.
@@ -1531,6 +1582,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				s.Country = value
 			case common.KeyRegion:
 				s.Region = value
+			case common.KeyLocale:
+				// ut-docs#861 review finding F2: without this case,
+				// SaveState's now-unconditional KeyLocale write (added by
+				// this same card) meant an operator editing store.locale
+				// via this raw table saw it silently reverted on the very
+				// next /api/settings/save from any OTHER card (that
+				// handler always writes back CurrentState().Locale, which
+				// this switch never updated) — the exact ut-docs#178 class
+				// of bug its own comment two cases up warns about. Same
+				// validation as the shipped Language card, not the bare
+				// unvalidated pass-through Currency/Country get above: an
+				// invalid locale here breaks T() rendering sitewide
+				// immediately (worse blast radius than an unknown currency
+				// code, which just falls back to a plain "CODE 1.23"
+				// format), so this is closer in kind to the
+				// KeyServiceChargeRate validation below than to Currency.
+				if slices.Contains(httpx.AvailableLocales(), value) {
+					s.Locale = value
+				}
 			case common.KeyTaxInclusive:
 				s.TaxInclusive = truthy(value)
 			case common.KeyTaxRate:
@@ -1555,6 +1625,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
 				logging.L().Errorf("settings: mark currency confirmed: %v", err)
 			}
+		case common.KeyLocale:
+			// Live-apply here too (ut-docs#861 review F2) — same
+			// unconditional-on-current-value shape as InitCurrency above;
+			// SetDefaultLocale's own empty-guard makes this safe even when
+			// the switch above left s.Locale untouched (invalid value).
+			httpx.SetDefaultLocale(st.Locale)
 		case common.KeyTaxInclusive, common.KeyServiceChargeRate, common.KeyCountry:
 			// In place: replacing the engine would empty a basket in progress.
 			// Both engines — see the currency-card handler above (ut-docs#449).

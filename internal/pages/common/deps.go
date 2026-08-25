@@ -153,10 +153,15 @@ func (d *Deps) WaitForAsyncWork() {
 
 // RuntimeState mirrors fields needed from pages.state (theme, tax, currency).
 type RuntimeState struct {
-	Theme        string
-	Currency     string
-	Country      string
-	Region       string
+	Theme    string
+	Currency string
+	Country  string
+	Region   string
+	// Locale is the shop's default locale (ut-docs#861) — settable live via
+	// Settings' Language card, distinct from a manager's own per-browser
+	// ?lang=/ut_lang cookie preference. Empty means "use the compiled-in/
+	// UT_DEFAULT_LOCALE fallback", same as every other RuntimeState field.
+	Locale       string
 	TaxInclusive bool
 	TaxRatePct   int
 	// ServiceChargeRateBasisPoints (ut-docs#244) is the till-set service

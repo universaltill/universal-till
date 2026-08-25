@@ -17,6 +17,21 @@
   <div id="import-result" style="margin-top:.8rem; overflow-x:auto"></div>
 </div>
 
+<script>
+// Problem grid (ut-docs#601): a preview row's inline correction input is
+// required exactly while its "Import anyway" checkbox is ticked — native
+// form validation then blocks the Import submit until the correction is
+// filled in. Delegated: the grid is swapped into #import-result by htmx.
+// The server re-validates regardless (import.problem_grid.* statuses), so
+// this is a convenience, not the enforcement.
+document.getElementById('import-result').addEventListener('change', function (e) {
+  var cb = e.target.closest('input[type=checkbox][data-fix-target]');
+  if (!cb) return;
+  var fix = document.getElementById(cb.getAttribute('data-fix-target'));
+  if (fix) fix.required = cb.checked;
+});
+</script>
+
 <div class="card" style="margin-top:1rem">
   <h3>{{ T "import.export_title" }}</h3>
   <p class="muted">{{ T "import.export_help" }}</p>

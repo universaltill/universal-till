@@ -91,6 +91,34 @@ func evaluateFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error
 	return fiscal.EvaluateGate(ctx, fiscalSettingsReader(d), d.CurrentState().Country, time.Now())
 }
 
+// enforceFiscalGate evaluates the ADR-0048 German TSE hard gate and turns a
+// blocking decision into the sentinel errors callers already switch on
+// (fiscalNeverConfiguredError / fiscalTSEFailingError). Shared by every
+// money-moving completion path, not just completeTender's own sale/kiosk
+// tender: a refund moves real money and is aufzeichnungspflichtig under
+// KassenSichV the same as a sale (ut-docs#731, decided 2026-08-18), so the
+// refund page and CreateReturn route through this exact check rather than a
+// separately maintained copy that could silently drift from it. The
+// returned Gate is valid even on a nil error so a caller can still inspect
+// gate.Decision == fiscal.AllowedWithOverride to write its own per-completion
+// audit marker, mirroring completeTender's own unsigned_override marker
+// below.
+func enforceFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error) {
+	gate, err := evaluateFiscalGate(ctx, d)
+	if err != nil {
+		return gate, err
+	}
+	switch gate.Decision {
+	case fiscal.BlockedNeverConfigured:
+		// Hard block, unconditionally — no override path exists for this
+		// branch, by design (ADR-0048 Decision 2.2).
+		return gate, &fiscalNeverConfiguredError{}
+	case fiscal.BlockedTSEFailing:
+		return gate, &fiscalTSEFailingError{}
+	}
+	return gate, nil
+}
+
 // completeTender runs the money-critical authorize -> complete -> publish
 // pipeline shared by every till-mode's tender path (cashier and self-order
 // kiosk alike): payment authorization gate, CompleteSale, basket reset via
@@ -109,17 +137,9 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// block on connectivity, ADR-0003). Expiry of an override window is
 	// enforced right here by re-evaluating against wall-clock time on every
 	// tender — no background job; blocking resumes on the next attempt.
-	gate, err := evaluateFiscalGate(ctx, d)
+	gate, err := enforceFiscalGate(ctx, d)
 	if err != nil {
 		return "", err
-	}
-	switch gate.Decision {
-	case fiscal.BlockedNeverConfigured:
-		// Hard block, unconditionally — no override path exists for this
-		// branch, by design (ADR-0048 Decision 2.2).
-		return "", &fiscalNeverConfiguredError{}
-	case fiscal.BlockedTSEFailing:
-		return "", &fiscalTSEFailingError{}
 	}
 
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
