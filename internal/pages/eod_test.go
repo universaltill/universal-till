@@ -44,12 +44,17 @@ func TestBuildEODDoc(t *testing.T) {
 		SalesCount: 12, Gross: 15000, RefundCount: 1, RefundTotal: 500,
 		Net: 14500, TaxNet: 2400,
 		Methods:      []data.EODMethod{{Method: "cash", In: 9000, Out: 500}, {Method: "card", In: 6000}},
+		Tips:         []data.EODTip{{Method: "card", Count: 4, Amount: 320}},
 		FirstReceipt: "000000001", LastReceipt: "000000013",
 	}
 	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
 	for _, want := range []string{
 		"END OF DAY 2026-07-14", "Sales (12)", "Refunds (1)", "NET",
 		"£145.00", "Cash", "£85.00", // 9000 in − 500 out
+		// ut-docs#1007: tips print separately, held out of revenue —
+		// "4x Card" + total £3.20, never folded into the Cash/Card
+		// payment-method rows above.
+		"TIPS", "4x Card", "£3.20",
 		"Receipts 000000001 - 000000013",
 	} {
 		if !strings.Contains(out, want) {
@@ -59,6 +64,9 @@ func TestBuildEODDoc(t *testing.T) {
 	// No voucher activity -> no GUTSCHEINE section at all (ut-docs#1008).
 	if strings.Contains(out, "GUTSCHEINE") {
 		t.Errorf("Z-report shows a voucher section with no voucher activity")
+	}
+	if strings.Contains(out, "BY VAT RATE") {
+		t.Error("no TaxBands set — VAT footer section must be omitted")
 	}
 }
 
@@ -81,6 +89,52 @@ func TestBuildEODDoc_VoucherSection(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("Z-report voucher section missing %q\n%s", want, out)
 		}
+	}
+}
+
+// TestBuildEODDoc_VATRateBands: the German day-close's per-rate breakdown
+// (ut-docs#1003) prints as a footer section, same precedent as the
+// Departments/Tills footers — one line per band: rate, net, tax, gross.
+func TestBuildEODDoc_VATRateBands(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-08-24", GeneratedAt: "2026-08-24T21:30:00Z",
+		SalesCount: 3, Gross: 125750, RefundCount: 1, RefundTotal: 3210,
+		Net: 122540, TaxNet: 9612,
+		TaxBands: []data.TaxBand{
+			{RateBP: 0, Net: 1500, Tax: 0, Gross: 1500},
+			{RateBP: 700, Net: 96336, Tax: 6744, Gross: 103080},
+			{RateBP: 1900, Net: 15092, Tax: 2868, Gross: 17960},
+		},
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if !strings.Contains(out, "BY VAT RATE") {
+		t.Fatalf("Z-report missing the VAT rate footer section:\n%s", out)
+	}
+	for _, want := range []string{
+		"0%", "7%", "19%", // rates formatted as percentages, not basis points
+		"£963.36", "£67.44", "£1,030.80", // 7% band: net, tax, gross
+		"£150.92", "£28.68", "£179.60", // 19% band
+		"£15.00", // 0% band
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("VAT band footer missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// A day with zero tipped payments (e.g. a terminal with tipping disabled
+// and no cash tips either) must print no TIPS section at all, not an
+// empty one — ut-docs#1007.
+func TestBuildEODDoc_NoTips(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 1, Gross: 500, Net: 500,
+		Methods:      []data.EODMethod{{Method: "cash", In: 500}},
+		FirstReceipt: "000000001", LastReceipt: "000000001",
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if strings.Contains(out, "TIPS") {
+		t.Errorf("Z-report with zero tips must not print a TIPS section, got:\n%s", out)
 	}
 }
 

@@ -170,3 +170,12 @@ etmez veya taşımaz.
 - Ödeme kayıtları, mağazanın diğer mali kayıtlarıyla birlikte tutulur ve
   erken silinmez — bu sayfadaki diğer her şeyle aynı saklama süresi
   (yukarıdaki Rapor saklama bölümüne bakın).
+- **Yazdırılan Gün sonu (Z) raporunda** — en az bir ödemenin bahşiş
+  kaydettiği her gün için rapor, ödeme yöntemine göre kısa bir bahşiş
+  satırı da yazdırır (örn. "4x Card £3.20") — en sık, kart terminalinin
+  kendi bahşiş isteminin kullanıldığı bir ödeme. Bu, günün satış
+  toplamlarından ayrı tutulur, gelir sayılmaz. Yukarıdaki "Alınan"
+  rakamından farklı okunabilir: Z-raporu satırı, bahşişin kime ait
+  olduğuna bakmaksızın bahşişli her ödemeyi sayar; "Alınan" ise yalnızca
+  çalışana kaydedilen bahşişleri sayar (varsayılan) — bir bahşiş
+  işletmeye kaydedildiğinde ikisinin farklı çıkması beklenir.
