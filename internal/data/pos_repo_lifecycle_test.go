@@ -702,6 +702,13 @@ func TestEndOfDayRange_NoSalesReturnsZeroedReportWithoutError(t *testing.T) {
 	}
 }
 
+// The TaxBands golden tests (TestEndOfDay_TaxBands_PerRateNetTaxGross,
+// TestEndOfDayRange_TaxBandsAcrossDays) and assertEODTaxBandIdentities
+// moved to internal/pages/eod_tax_bands_test.go: rep.TaxBands is no longer
+// computed inside dateRangeSummary (the SQL-only aggregation missed the
+// service charge's tax and whole-sale discounts — see eod_tax_bands.go),
+// so the contract now lives where the computation does.
+
 func TestAuditActionSummary(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()

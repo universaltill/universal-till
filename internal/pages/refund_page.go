@@ -35,19 +35,12 @@ type refundLineView struct {
 // saleIsTaxInclusive infers the original sale's pricing mode from its own
 // header arithmetic (settings may have changed since the sale happened):
 // inclusive keeps total = subtotal − discount; exclusive adds tax on top.
+// The inference itself is pos.InferTaxInclusive (extracted with the shared
+// VAT banding, ut-docs#1003) so the day-close band computation — which
+// reads raw sale rows, not data.SaleDetail — can never drift from it; see
+// its doc comment for why the service charge participates.
 func saleIsTaxInclusive(d data.SaleDetail) bool {
-	if d.TaxTotal == 0 {
-		return false // both modes agree; exclusive math is the identity
-	}
-	// A service charge is added to the total in BOTH modes (inclusive keeps
-	// its tax inside the amount, exclusive adds it on top with the lines'),
-	// so it has to come off the comparison or an inclusive sale carrying one
-	// is misread as exclusive -- which then mis-derives the whole sale on
-	// every path that asks: the invoice VAT breakdown, the refund math, and
-	// (since ADR-0061 taxes the charge by pricing mode) a journal replay's
-	// recomputed totals. Reduces to the original comparison exactly when
-	// there is no charge, so no pre-service-charge sale changes reading.
-	return d.Total == d.Subtotal-d.DiscountTotal+d.ServiceCharge
+	return pos.InferTaxInclusive(d.Subtotal, d.DiscountTotal, d.TaxTotal, d.Total, d.ServiceCharge)
 }
 
 // refundLinePool computes, per refund-line key, the TRUE quantity still
