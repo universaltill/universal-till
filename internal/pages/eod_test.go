@@ -56,6 +56,39 @@ func TestBuildEODDoc(t *testing.T) {
 			t.Errorf("Z-report missing %q", want)
 		}
 	}
+	if strings.Contains(out, "BY VAT RATE") {
+		t.Error("no TaxBands set — VAT footer section must be omitted")
+	}
+}
+
+// TestBuildEODDoc_VATRateBands: the German day-close's per-rate breakdown
+// (ut-docs#1003) prints as a footer section, same precedent as the
+// Departments/Tills footers — one line per band: rate, net, tax, gross.
+func TestBuildEODDoc_VATRateBands(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-08-24", GeneratedAt: "2026-08-24T21:30:00Z",
+		SalesCount: 3, Gross: 125750, RefundCount: 1, RefundTotal: 3210,
+		Net: 122540, TaxNet: 9612,
+		TaxBands: []data.TaxBand{
+			{RateBP: 0, Net: 1500, Tax: 0, Gross: 1500},
+			{RateBP: 700, Net: 96336, Tax: 6744, Gross: 103080},
+			{RateBP: 1900, Net: 15092, Tax: 2868, Gross: 17960},
+		},
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if !strings.Contains(out, "BY VAT RATE") {
+		t.Fatalf("Z-report missing the VAT rate footer section:\n%s", out)
+	}
+	for _, want := range []string{
+		"0%", "7%", "19%", // rates formatted as percentages, not basis points
+		"£963.36", "£67.44", "£1,030.80", // 7% band: net, tax, gross
+		"£150.92", "£28.68", "£179.60", // 19% band
+		"£15.00", // 0% band
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("VAT band footer missing %q in:\n%s", want, out)
+		}
+	}
 }
 
 func TestRenderTextPreviewLayout(t *testing.T) {

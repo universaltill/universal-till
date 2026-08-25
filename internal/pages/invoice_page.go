@@ -6,14 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
@@ -68,92 +66,19 @@ type vatBand struct {
 // invoice can never declare a different VAT on the charge than the sale
 // actually collected. Every band's Net+Tax == Gross, and the bands' gross
 // sums to sale.Total, both before and after this ADR.
+//
+// The math itself lives in pos.VATBandsForSale (extracted verbatim from
+// here, ut-docs#1003) so the day-close Z-report's per-rate breakdown runs
+// the SAME per-sale banding — this is now just the data.SaleDetail adapter.
 func vatBreakdown(sale data.SaleDetail) []vatBand {
-	inclusive := saleIsTaxInclusive(sale)
-	byRate := map[int]*vatBand{}
-	var grossSum int64
+	lines := make([]pos.VATLine, 0, len(sale.Lines))
 	for _, l := range sale.Lines {
-		b, ok := byRate[l.TaxRateBP]
-		if !ok {
-			b = &vatBand{RateBP: l.TaxRateBP}
-			byRate[l.TaxRateBP] = b
-		}
-		b.Gross += l.LineTotal
-		b.Tax += l.TaxAmount
-		b.Net += l.LineTotal - l.TaxAmount
-		grossSum += l.LineTotal
+		lines = append(lines, pos.VATLine{RateBP: l.TaxRateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
 	}
-	out := make([]vatBand, 0, len(byRate))
-	for _, b := range byRate {
-		out = append(out, *b)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].RateBP < out[j].RateBP })
-
-	if d := sale.DiscountTotal; d > 0 && grossSum > 0 {
-		remaining := d
-		for i := range out {
-			share := d * out[i].Gross / grossSum
-			if i == len(out)-1 {
-				share = remaining // largest-remainder: the pennies land here
-			}
-			remaining -= share
-			if inclusive {
-				// Discount comes off the gross; re-derive net/tax at the
-				// band's rate (mirrors the engine: total = subtotal − d).
-				out[i].Gross -= share
-				out[i].Net = out[i].Gross * 10000 / (10000 + int64(out[i].RateBP))
-				out[i].Tax = out[i].Gross - out[i].Net
-			} else {
-				// Exclusive engine discounts the NET base and keeps line
-				// tax as computed (total = subtotal − d + tax).
-				out[i].Net -= share
-				out[i].Gross = out[i].Net + out[i].Tax
-			}
-		}
-	}
-	// ADR-0061 Decision 2: the service charge carries VAT of its own,
-	// apportioned across the sale's own rate bands (or taxed at the flat
-	// basis the originating till's country plugin fixed, which rides the
-	// sale row so a re-issued invoice matches the original). Folded in
-	// here rather than left as an untaxed lump, so the VAT table declares
-	// the charge's tax and the bands still sum to what the customer paid.
-	if sale.ServiceCharge > 0 {
-		lines := make([]pos.ChargeTaxLine, 0, len(sale.Lines))
-		for _, l := range sale.Lines {
-			// The band weights want each line's value in the sale's OWN
-			// pricing mode -- gross when inclusive (the shared function
-			// derives the true net itself), net when exclusive.
-			net := l.LineTotal
-			if !inclusive {
-				net -= l.TaxAmount
-			}
-			lines = append(lines, pos.ChargeTaxLine{RateBP: l.TaxRateBP, Net: money.FromMinor(net)})
-		}
-		for _, b := range pos.ApportionServiceChargeTax(money.FromMinor(sale.ServiceCharge), lines, inclusive, sale.ServiceChargeTaxBasisBP) {
-			idx := -1
-			for i := range out {
-				if out[i].RateBP == b.RateBP {
-					idx = i
-					break
-				}
-			}
-			if idx < 0 {
-				out = append(out, vatBand{RateBP: b.RateBP})
-				idx = len(out) - 1
-			}
-			// b.Amount is in the sale's pricing mode, same as the charge:
-			// inclusive -> it already contains b.Tax; exclusive -> the tax
-			// rides on top.
-			if inclusive {
-				out[idx].Gross += b.Amount.Minor()
-				out[idx].Net += b.Amount.Minor() - b.Tax.Minor()
-			} else {
-				out[idx].Net += b.Amount.Minor()
-				out[idx].Gross += b.Amount.Minor() + b.Tax.Minor()
-			}
-			out[idx].Tax += b.Tax.Minor()
-		}
-		sort.Slice(out, func(i, j int) bool { return out[i].RateBP < out[j].RateBP })
+	bands := pos.VATBandsForSale(lines, sale.DiscountTotal, saleIsTaxInclusive(sale), sale.ServiceCharge, sale.ServiceChargeTaxBasisBP)
+	out := make([]vatBand, 0, len(bands))
+	for _, b := range bands {
+		out = append(out, vatBand{RateBP: b.RateBP, Net: b.Net, Tax: b.Tax, Gross: b.Gross})
 	}
 	return out
 }
