@@ -52,6 +52,19 @@ const (
 	// they picked "Later" and Settings → Data should offer a resume link
 	// straight into /import until they either use it or dismiss it.
 	KeyRestorePromptStatus = "setup.restore_prompt_status"
+	// KeyCurrencyConfirmed marks that an operator has explicitly chosen the
+	// till's currency at least once — via the setup wizard, Settings, or the
+	// import currency-confirmation prompt (ut-docs#970) — as opposed to it
+	// still sitting on the compiled-in default (GBP) nobody ever touched.
+	// Deliberately separate from KeyCurrency itself: SaveState always writes
+	// KeyCurrency (even when nothing changed it from the default), so its
+	// mere presence can't distinguish "operator chose this" from "nobody
+	// has ever looked." A catalogue import prices its rows in whatever
+	// currency ActiveCurrency() reports, so importing into a till whose
+	// currency was never confirmed can silently relabel another currency's
+	// prices as the default — this key is what import_page.go gates on
+	// before committing.
+	KeyCurrencyConfirmed = "store.currency_confirmed"
 	// KeyPendingBasePlugins holds the JSON list of still-pending country
 	// base-plugin auto-installs (ut-docs#591): populated by the setup wizard
 	// the instant a country with a setupBasePlugins entry is confirmed,
