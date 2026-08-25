@@ -147,7 +147,23 @@ func parseTaxCodeForm(r *http.Request, locale string) (name string, rateBP int, 
 		if terr != nil {
 			return "", 0, nil, httpStatusError{status: http.StatusBadRequest, msg: httpx.T(locale, "taxcodes.err.invalid_rate")}
 		}
-		takeawayBP = &tbp
+		// A takeaway rate equal to the dine-in rate is a no-op override --
+		// canonicalize it to "no override" (nil) here, at the one place a
+		// human hand-creates or edits a tax code, exactly like
+		// import_page.go's CSV-import path already does at parse time
+		// (it.HasTakeaway && it.TakeawayRateBP != it.TaxRateBP). Without
+		// this, a hand-created 7/7 pair stores an explicit
+		// takeaway_rate_basis_points, ExportRows/FindOrCreateTaxCode never
+		// canonicalizes it back down, and a later re-import of that same
+		// shop's own export (equal pairs normalized to nil by the importer)
+		// can't find a match on (rate, takeaway) and creates a SECOND code
+		// for the same rate -- abandoning the merchant's original code and
+		// silently migrating every item that used it (ut-docs#1013 review
+		// finding, generalizing the equal-pair churn ut-docs#536 already
+		// fixed on the import side to this write path too).
+		if tbp != rateBP {
+			takeawayBP = &tbp
+		}
 	}
 	return name, rateBP, takeawayBP, nil
 }

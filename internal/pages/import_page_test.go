@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -605,6 +606,93 @@ func TestImport_TaxColumnsGroupOntoTaxCodesAndPopulateOverrides(t *testing.T) {
 	}
 	if taxCodesFinal != taxCodesAfter {
 		t.Fatalf("re-import duplicated tax codes: %d -> %d", taxCodesAfter, taxCodesFinal)
+	}
+}
+
+// TestHandCreatedEqualPairTaxCode_MatchesFreshImportNoChurn is ut-docs#1013's
+// second acceptance criterion, read correctly: NOT the plugin's
+// takeaway_rate_overrides JSON (which has no export/import round-trip at
+// all — that shape is covered separately by
+// TestResolve_NoOpOverrideStableAcrossReserialization in ut-plugin-tax-de),
+// but a hand-created TAX CODE whose takeaway rate equals its dine-in rate —
+// the exact shape ut-docs#536 already fixed on the CSV-import side (pinned
+// above by cafeTaxCSV's "Cake Slice,T2,4.00,7,7" row).
+//
+// Before this test (ut-docs#1013 review finding), only the IMPORT path
+// canonicalized an equal pair to "no override" (nil, see the
+// it.HasTakeaway && it.TakeawayRateBP != it.TaxRateBP check above). A code
+// hand-created via the tax-code management UI (POST /api/catalog/tax-codes)
+// stored an explicit takeaway_rate_basis_points == rate_basis_points, which
+// FindOrCreateTaxCode's (rate, takeaway) lookup could never match against a
+// later import's canonicalized (rate, nil) query — silently creating a
+// SECOND "Imported 7%" code and migrating every subsequently-imported item
+// onto it, abandoning the merchant's own hand-created code. Fixed by
+// canonicalizing at the one place a human creates/edits a tax code
+// (parseTaxCodeForm), so both paths agree on what "no override" means.
+func TestHandCreatedEqualPairTaxCode_MatchesFreshImportNoChurn(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerTaxCodes(mux, dp)
+	registerImport(mux, dp)
+
+	// A German café hand-creates "Speisen 7% (Haus & Ausser Haus)" via the
+	// tax-code management UI — food is 7% in both consumption modes, and a
+	// merchant reading the form literally could fill in the SAME rate for
+	// both fields rather than leaving takeaway blank.
+	form := url.Values{"name": {"Speisen 7%"}, "rate": {"7"}, "takeawayRate": {"7"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create tax code: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var handCreatedID string
+	var takeawayNull bool
+	if err := dp.Db.QueryRow(
+		`SELECT id, takeaway_rate_basis_points IS NULL FROM tax_codes WHERE name = ?`, "Speisen 7%").
+		Scan(&handCreatedID, &takeawayNull); err != nil {
+		t.Fatalf("read created tax code: %v", err)
+	}
+	if !takeawayNull {
+		t.Fatal("hand-created equal-pair (7,7) tax code must canonicalize takeaway_rate_basis_points to NULL, same as the CSV-import path — a real export of this code would otherwise echo an explicit takeaway column a later re-import can't match back")
+	}
+
+	var taxCodesBefore int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM tax_codes`).Scan(&taxCodesBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	// Import a FRESH item whose CSV row declares the SAME (7, 7) pair —
+	// exactly what exporting this shop's own catalog (or a second till's
+	// backup) and re-importing it would produce.
+	const freshCakeCSV = "Name,SKU,Price,Tax rate,Takeaway tax\n" +
+		"Cake Slice,CAKE-FRESH,4.00,7,7\n"
+	body, ct := multipartCSV(t, freshCakeCSV, map[string]string{"commit": "1"})
+	importReq := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	importReq.Header.Set("Content-Type", ct)
+	importRec := httptest.NewRecorder()
+	mux.ServeHTTP(importRec, importReq)
+	if importRec.Code != http.StatusOK {
+		t.Fatalf("import: code %d body %s", importRec.Code, importRec.Body.String())
+	}
+
+	gotID, gotRate, gotTakeaway := itemTaxPair(t, dp.Db, "CAKE-FRESH")
+	if gotID != handCreatedID {
+		t.Fatalf("fresh (7,7) import landed on tax code %s, not the hand-created %s — churn: the merchant's own code was silently abandoned", gotID, handCreatedID)
+	}
+	if gotRate != 700 || gotTakeaway != nil {
+		t.Fatalf("pair after import = (%d,%v), want (700,nil)", gotRate, gotTakeaway)
+	}
+
+	var taxCodesAfter int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM tax_codes`).Scan(&taxCodesAfter); err != nil {
+		t.Fatal(err)
+	}
+	if taxCodesAfter != taxCodesBefore {
+		t.Fatalf("import created a duplicate tax code for an already-existing (rate,takeaway) pair: %d -> %d", taxCodesBefore, taxCodesAfter)
 	}
 }
 
