@@ -42,7 +42,27 @@
       tab: '{{ if $hasTabs }}{{ (index .Groups 0).ID }}{{ end }}',
       q: '',
       matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
-      sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); }
+      sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); },
+      /* Roving-tabindex arrow-key nav (ut-docs#424, WAI-ARIA tabs pattern):
+         moves focus to the next/previous [role=tab] within this component
+         and activates it via its own @click handler — reuses the same
+         tab-switch logic instead of duplicating it, wrapping at either end.
+         dir is a DOM-order step (+1/-1), not a screen direction — the
+         @keydown.right/.left handlers below flip its sign under RTL, since
+         DOM-next renders to the visual LEFT there (this.$el.querySelectorAll
+         walks source order regardless of dir) and the WAI-ARIA APG expects
+         Right/Left to keep moving toward the visually next/previous tab,
+         not blindly forward/backward through the markup. Falls back to the
+         first tab when nothing is currently focused (e.g. a stray keydown
+         reaching the tablist without a tab holding focus) rather than
+         indexing off document.activeElement's -1 ('not found') result. */
+      focusTab(dir) {
+        const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
+        if (!tabs.length) return;
+        const i = Math.max(0, tabs.indexOf(document.activeElement));
+        const next = tabs[(i + dir + tabs.length) % tabs.length];
+        next.click(); next.focus();
+      }
     }">
       <input type="search" id="products-search" x-model="q"
              placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
@@ -59,9 +79,9 @@
            once via its stacked section header; tabs make that one-at-a-
            time, so the tab itself is now what carries the color instead
            of losing it. */}}
-      <div class="tab-bar" role="tablist">
+      <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
         {{ range .Groups }}
-        <button type="button" class="tab" role="tab" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+        <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
         {{ end }}
       </div>
       {{ end }}
@@ -82,7 +102,7 @@
              active one too would hide the till's main content until
              Alpine hydrates, the same tradeoff index.html's own Pay/Split
              tabs make (only "split", never "pay", is cloaked). */}}
-        <div class="products-tab-panel" x-show="tab === '{{ $g.ID }}'"{{ if ne $i 0 }} x-cloak{{ end }}>
+        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" role="tabpanel" aria-labelledby="cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" class="products-tab-panel" x-show="tab === '{{ $g.ID }}'"{{ if ne $i 0 }} x-cloak{{ end }}>
           {{ template "category-group-body" $g }}
           <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         </div>
