@@ -575,3 +575,64 @@ func TestPostRefund_InvalidQuantity(t *testing.T) {
 		t.Fatalf("expected 400 for a non-numeric quantity, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ut-docs#1008 review, blocker F1 — the real-money case, end to end: an
+// INCLUSIVE-priced sale that also issued a voucher, refunded through the
+// real POST /api/refund handler. Before the fix, the voucher's face value
+// unbalanced pos.InferTaxInclusive's identity, the sale was misread as
+// EXCLUSIVE, and computeRefundTotal added 19% VAT on top of the
+// already-inclusive line price — refunding 14.16 in cash for goods the
+// customer paid 11.90 for. The original sale goes through the real
+// pos.CompleteSale (never hand-inserted rows) so the header the inference
+// reads is exactly what production persists.
+func TestPostRefund_InclusiveSaleWithVoucherIssueRefundsInclusiveAmount(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	if _, err := dp.Db.Exec(`INSERT OR IGNORE INTO payment_methods (id, name, type, is_active) VALUES ('voucher', 'Voucher', 'voucher', 1)`); err != nil {
+		t.Fatalf("seed voucher method: %v", err)
+	}
+
+	// 11.90 inclusive at 19% (tax inside: 1.90) + a 15.00 voucher issue.
+	saleID, err := pos.CompleteSale(ctx, dp.Db, pos.SaleInput{
+		SaleType: "sale", Currency: "GBP", TaxInclusive: true,
+		Lines: []pos.SaleLineInput{{
+			ItemID: "itm1", SKU: "ABC", Name: "Apple", Qty: 1,
+			UnitPrice: money.FromMinor(1190), TaxRateBasisPoints: 1900,
+			LocationID: "loc_main",
+		}},
+		VoucherIssues:          []pos.VoucherIssueInput{{VoucherID: "GS-RF1", Amount: money.FromMinor(1500)}},
+		Payments:               []pos.PaymentInput{{MethodID: "cash", Amount: money.FromMinor(2690)}},
+		AllowNegativeInventory: true,
+	})
+	if err != nil {
+		t.Fatalf("CompleteSale: %v", err)
+	}
+	var receiptNo string
+	if err := dp.Db.QueryRow(`SELECT receipt_no FROM sales WHERE id = ?`, saleID).Scan(&receiptNo); err != nil {
+		t.Fatalf("read receipt no: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// The cash handed back must be the inclusive price the customer paid
+	// (11.90), NOT 11.90 + a second 19% VAT application (14.16 — the exact
+	// overpayment the reviewer's probe produced).
+	var refundTotal, refundPaid int64
+	if err := dp.Db.QueryRow(`SELECT total FROM sales WHERE sale_type = 'return'`).Scan(&refundTotal); err != nil {
+		t.Fatalf("read return sale: %v", err)
+	}
+	if err := dp.Db.QueryRow(`SELECT p.amount FROM payments p JOIN sales s ON s.id = p.sale_id WHERE s.sale_type = 'return'`).Scan(&refundPaid); err != nil {
+		t.Fatalf("read return payment: %v", err)
+	}
+	if refundTotal != 1190 || refundPaid != 1190 {
+		t.Fatalf("refund total/paid = %d/%d, want 1190/1190 (an inflated figure means the sale was misread as tax-exclusive)", refundTotal, refundPaid)
+	}
+}

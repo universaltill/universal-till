@@ -346,6 +346,7 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			total INTEGER NOT NULL,
 			service_charge_amount INTEGER NOT NULL DEFAULT 0,
 			service_charge_tax_basis_bp INTEGER NOT NULL DEFAULT 0,
+			voucher_issue_total INTEGER NOT NULL DEFAULT 0,
 			rounding INTEGER NOT NULL DEFAULT 0,
 			note TEXT, 
 			created_at TEXT NOT NULL, 
