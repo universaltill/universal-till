@@ -19,18 +19,49 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-MIGRATIONS_DIR="internal/db/migrations"
+# Overridable so the regression test can point this at a scratch directory
+# instead of planting live fixtures into the real, embedded, append-only
+# migrations tree (found in independent review, ut-docs#1056: a leftover
+# fixture there — trap missed on SIGKILL/power loss — would get
+# //go:embed'd and, since internal/db/db.go applies by a high-watermark
+# `version > current` check, permanently skip every real migration above
+# it on that install: the exact silent data-loss class this guard exists
+# to prevent).
+MIGRATIONS_DIR="${MIGRATIONS_DIR:-internal/db/migrations}"
+
+if [[ ! -d "${MIGRATIONS_DIR}" ]]; then
+  echo "❌ migration-version-collision guard: ${MIGRATIONS_DIR} does not exist (renamed or missing?)" >&2
+  exit 1
+fi
 
 versions_file="$(mktemp)"
 trap 'rm -f "${versions_file}"' EXIT
 
+unparseable=()
 for f in "${MIGRATIONS_DIR}"/*.sql; do
   [[ -e "${f}" ]] || continue
   name="$(basename "${f}")"
   if [[ "${name}" =~ ^([0-9]+)_ ]]; then
-    echo "${BASH_REMATCH[1]} ${name}" >>"${versions_file}"
+    # Normalize with base-10 (10#) so "67" and "067" compare equal — a
+    # plain string compare missed this (independent review, ut-docs#1056):
+    # `internal/db/migration.go`'s strconv.Atoi parses both as the same
+    # int, so the Go loader would catch a zero-padding collision the guard
+    # was silently letting through.
+    version="$((10#${BASH_REMATCH[1]}))"
+    echo "${version} ${name}" >>"${versions_file}"
+  else
+    unparseable+=("${name}")
   fi
 done
+
+if [[ ${#unparseable[@]} -gt 0 ]]; then
+  echo "❌ migration-version-collision guard: filename(s) with no parseable leading version number" >&2
+  for name in "${unparseable[@]}"; do
+    echo "  - ${name}" >&2
+  done
+  echo "   (internal/db/migration.go's loadMigrations hard-fails on these too — name must start with digits + '_')" >&2
+  exit 1
+fi
 
 dup_versions="$(cut -d' ' -f1 "${versions_file}" | sort -n | uniq -d)"
 
