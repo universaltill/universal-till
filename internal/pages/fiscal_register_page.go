@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -56,6 +57,33 @@ type fiscalRegisterDEEntryView struct {
 	// days -- the shop's notification duty doesn't end at acquisition; a
 	// removed till/TSE has to be reported too (ut-docs#665 review, S3).
 	DecommissionDueSoon bool
+}
+
+// fiscalRegisterPluginActive reports whether the German tax plugin
+// (taxDePluginID, import_page.go) is installed and active. Used by
+// menu_page.go's nav-tile gate (ut-docs#1084): ADR-0050 Decision 1 places
+// the §146a Abs. 4 AO notification data this page captures squarely in
+// the country plugin, and country=DE alone (the tile's only gate before
+// ut-docs#1084) let the tile appear on a shop with zero plugins installed
+// -- the literal, visible form of the product owner's ut-docs#1026
+// complaint. Not applied to this page's own route handlers: direct
+// navigation to /fiscal-register has never had a country gate either
+// (see registerFiscalRegisterDE's doc comment), and this page is one of
+// the manual's screenshotted topics (web/help/*/fiscal-register.md) --
+// docs-shots' throwaway till never has any plugin installed by design
+// (playwright.docs.config.ts: "always fresh... an installed plugin
+// [would] silently bake into 'reproducible' documentation screenshots"),
+// so gating the route itself would make this topic unscreenshotable
+// without a broader change to that harness. Tracked as the remaining
+// half of ut-docs#1026 rather than solved here. A lookup error fails
+// closed (false): a broken plugin lookup must never leave the tile
+// advertising a page whose data source isn't there.
+func fiscalRegisterPluginActive(ctx context.Context, d *common.Deps) bool {
+	active, err := data.NewPluginRepo(d.Db).PluginActive(ctx, taxDePluginID)
+	if err != nil {
+		return false
+	}
+	return active
 }
 
 // withinLastMonth reports whether date (fiscalRegisterDEDateLayout) falls

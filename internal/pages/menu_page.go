@@ -72,12 +72,19 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 			add("/country-settings", "countrysettings.title")
 			add("/translations", "translations.title")
 			add("/report-issue", "issuereport.title")
-			// §146a Abs. 4 AO fiscal register (ut-docs#665): the page route
-			// itself has no country gate (a manager navigating directly
-			// still reaches it), but the nav TILE is Germany-only -- no
-			// other market has this obligation, so surfacing it elsewhere
-			// would just be clutter.
-			if fiscal.RequiresHardGate(d.CurrentState().Country) {
+			// §146a Abs. 4 AO fiscal register (ut-docs#665): the nav TILE is
+			// Germany-only -- no other market has this obligation, so
+			// surfacing it elsewhere would just be clutter. As of
+			// ut-docs#1084, country alone is no longer sufficient: the tile
+			// also requires the German tax plugin to be installed and
+			// active (fiscalRegisterPluginActive, fiscal_register_page.go)
+			// -- a shop with country=DE and zero plugins installed must not
+			// see this tile (the exact objection ut-docs#1026 raised). The
+			// page ROUTE itself is deliberately NOT gated the same way --
+			// see fiscalRegisterPluginActive's own doc comment for why
+			// (a docs-shots screenshot-harness constraint) -- so this is a
+			// visibility-only fix, not a reachability one.
+			if fiscal.RequiresHardGate(d.CurrentState().Country) && fiscalRegisterPluginActive(r.Context(), d) {
 				add("/fiscal-register", "fiscalregister.title")
 			}
 		}
