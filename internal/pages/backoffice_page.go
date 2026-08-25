@@ -35,7 +35,7 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 		// exact-now exclusive upper bound can drop a sale committed in this
 		// same wall-clock second (see reportNow's doc comment in
 		// reports_page.go).
-		weekNow := time.Now().Add(time.Second)
+		weekNow := dayRef.Add(time.Second) // ut-docs#969 review (N4): share dayRef rather than a second time.Now() read
 		// 0, 0 (calendar-local-midnight grouping): this widget only sums
 		// day.Total/day.Count across every returned row for a weekly
 		// aggregate — it never displays the per-row Day label — so which
