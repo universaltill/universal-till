@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -280,6 +281,76 @@ VALUES ('itm-ot', 'OT-SKU', 'Order Type Item', 500, 1)`)
 	}
 	if byID.OrderType != "takeaway" {
 		t.Fatalf("GetSaleDetailByID.OrderType = %q, want %q", byID.OrderType, "takeaway")
+	}
+}
+
+// TestPOSRepo_InsertSale_RejectsMissingRequiredFields covers ut-docs#989: a
+// follow-up to the InsertSaleParams struct refactor (ut-docs#976). The old
+// positional signature forced every argument to be supplied at every call
+// site; a struct literal lets a genuinely-required field default to its Go
+// zero value silently if a future caller simply omits it -- and this
+// codebase has already established (docs/code-reviews/
+// 2026-08-15-sync-journal-currency-createdat-validation-647.md) that
+// SQLite's NOT NULL does not catch an empty string. InsertSale must reject
+// a call missing any of the confirmed-required fields, naming the field in
+// the error, rather than silently writing an empty column.
+func TestPOSRepo_InsertSale_RejectsMissingRequiredFields(t *testing.T) {
+	d := openBatch8DB(t, "required-fields.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	base := func() InsertSaleParams {
+		return InsertSaleParams{
+			SaleID: "sale-req", ReceiptNo: "000000200", SaleType: "sale",
+			Currency: "GBP", Subtotal: 100, Total: 100,
+			CreatedAt: "2026-08-25T09:00:00Z", TenderType: "cash",
+			SyncStatus: "synced",
+		}
+	}
+
+	// Sanity check: the fully-populated base case must succeed -- otherwise
+	// the rejection cases below would prove nothing.
+	if err := repo.InsertSale(ctx, nil, base()); err != nil {
+		t.Fatalf("InsertSale with all required fields set: %v", err)
+	}
+
+	tests := []struct {
+		field string
+		zero  func(p *InsertSaleParams)
+	}{
+		{"SaleID", func(p *InsertSaleParams) { p.SaleID = "" }},
+		{"ReceiptNo", func(p *InsertSaleParams) { p.ReceiptNo = "" }},
+		{"SaleType", func(p *InsertSaleParams) { p.SaleType = "" }},
+		{"Currency", func(p *InsertSaleParams) { p.Currency = "" }},
+		{"CreatedAt", func(p *InsertSaleParams) { p.CreatedAt = "" }},
+		{"SyncStatus", func(p *InsertSaleParams) { p.SyncStatus = "" }},
+		{"TenderType", func(p *InsertSaleParams) { p.TenderType = "" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.field, func(t *testing.T) {
+			p := base()
+			p.SaleID = "sale-req-" + tc.field // keep PKs distinct per subtest
+			p.ReceiptNo = "000000201-" + tc.field
+			tc.zero(&p)
+			err := repo.InsertSale(ctx, nil, p)
+			if err == nil {
+				t.Fatalf("InsertSale with empty %s: want error, got nil", tc.field)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("InsertSale with empty %s: error %q does not name the missing field", tc.field, err.Error())
+			}
+		})
+	}
+
+	// Optional fields must still be safely omittable -- the guard must not
+	// over-reach into fields the existing test suite deliberately relies on
+	// zero-value omission for (RegisterID, CashierID, CustomerID, TableID,
+	// Note, OrderType, sync-retry fields, ServiceCharge/TaxBasisBP).
+	optional := base()
+	optional.SaleID = "sale-req-optional"
+	optional.ReceiptNo = "000000202"
+	if err := repo.InsertSale(ctx, nil, optional); err != nil {
+		t.Fatalf("InsertSale with only required fields set: %v", err)
 	}
 }
 
