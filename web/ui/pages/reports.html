@@ -80,6 +80,7 @@
   <button id="report-tab-tax" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/tax?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.tax" }}</button>
   <button id="report-tab-forecast" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/forecast?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.forecast" }}</button>
   <button id="report-tab-payments" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/payments?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.payments" }}</button>
+  <button id="report-tab-tips" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/tips?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.tips" }}</button>
   {{ if .IsManager }}
   <button id="report-tab-eod" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/eod?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.eod" }}</button>
   {{ end }}

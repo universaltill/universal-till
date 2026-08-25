@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -641,7 +642,7 @@ func TestReportsPage_TopItemsDeferredToItemsTab(t *testing.T) {
 func TestReportsTabs_AllNamedTabsReturn200(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newReportsPageTestDeps(t)
-	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod"} {
+	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod", "tips"} {
 		rec := getReportsTab(t, mux, name, "?days=14")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("tab %q: expected 200, got %d: %s", name, rec.Code, rec.Body.String())
@@ -783,7 +784,7 @@ func TestReportsPage_TabNavWiredToFragmentRoutes(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod"} {
+	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod", "tips"} {
 		want := `hx-get="/ui/reports/tab/` + name + `?days=30"`
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected the tab nav to contain %s, got: %s", want, body)
@@ -858,5 +859,433 @@ func TestReportsTabs_EOD_BusinessDayStartRoundTrips(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `name="business_day_start" value="06:30"`) {
 		t.Fatalf("expected the saved business_day_start to round-trip into the rendered field, got: %s", body)
+	}
+}
+
+// ut-docs#964: the "tips" tab's received-vs-allocated summary — "received"
+// (payments.tip_amount on a completed sale, tip_recipient='employee') and
+// "allocated" (worker_allocations, this ADR-0063 ledger) are two
+// independent figures, so this seeds both sides distinctly and checks each
+// renders, not just that the tab returns 200.
+func TestReportsPage_TipsTabShowsReceivedVsAllocated(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,cashier_id,created_at) VALUES('s1','R001','completed','sale','GBP',1000,0,0,1000,'worker1',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id,sale_id,method_id,amount,currency,change_given,tip_amount,tip_recipient,paid_at) VALUES('p1','s1','cash',1000,'GBP',0,500,'employee',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','worker1',300,datetime('now'),'shift payout')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "tips", "?days=14")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£5.00") {
+		t.Fatalf("expected tip received (£5.00) rendered, got: %s", body)
+	}
+	if !strings.Contains(body, "£3.00") {
+		t.Fatalf("expected tip allocated (£3.00) rendered, got: %s", body)
+	}
+}
+
+// A role holding `reports` but not `worker_allocation` (the cashier default)
+// must still see the tab's totals — same visibility split EOD's own
+// IsManager/CanRunEOD gating uses — but not the row-level detail table, the
+// record-a-payout form, or the export link, since those expose or let
+// someone write individual workers' payout records.
+func TestReportsPage_TipsTabRecordFormGatedOnWorkerAllocationPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	authRepo := data.NewAuthRepo(dp.Db)
+
+	// A role that can view Reports but is not trusted to record/export
+	// worker payouts -- grant `reports`, leave `worker_allocation` denied
+	// (cashier's default).
+	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','u1',300,datetime('now'),'')`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/tips", nil), auth.User{ID: "u1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£3.00") {
+		t.Fatalf("expected the allocated total visible under `reports` alone, got: %s", body)
+	}
+	if strings.Contains(body, `hx-post="/api/reports/worker-allocations"`) {
+		t.Fatalf("expected the record-payout form hidden without worker_allocation, got: %s", body)
+	}
+	if strings.Contains(body, "/api/reports/worker-allocations/export") {
+		t.Fatalf("expected the export link hidden without worker_allocation, got: %s", body)
+	}
+
+	// A manager holds worker_allocation (migration 066) and must see both.
+	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/tips", nil), auth.User{ID: "m1", Role: "manager"})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, `hx-post="/api/reports/worker-allocations"`) {
+		t.Fatalf("expected the record-payout form visible for a manager, got: %s", body)
+	}
+	if !strings.Contains(body, "/api/reports/worker-allocations/export") {
+		t.Fatalf("expected the export link visible for a manager, got: %s", body)
+	}
+}
+
+// Independent review, ut-docs#964 blocker 2: a role holding `reports` but
+// not `worker_allocation` must NOT be able to read one named worker's
+// totals via ?cashier=, even though the tab renders a worker picker
+// populated with every user for a worker_allocation-holding session — a
+// reports-only session gets the shop-wide total regardless of what it puts
+// on the query string. Confirms the fix pins the exact leak the review
+// reproduced ("read worker2's £42.42 payout total via ?cashier=worker2" as
+// a `reports`-only session, two clicks in the normal UI).
+func TestReportsPage_TipsTabCashierFilterIgnoredWithoutWorkerAllocationPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	authRepo := data.NewAuthRepo(dp.Db)
+
+	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','worker1',300,datetime('now'),'')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa2','tip','','worker2',4242,datetime('now'),'')`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/tips?cashier=worker2", nil), auth.User{ID: "u1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// Shop-wide total (£3.00 + £42.42 = £45.42), NOT worker2's isolated
+	// £42.42 -- proves ?cashier= was ignored, not honored.
+	if !strings.Contains(body, "£45.42") {
+		t.Fatalf("expected the shop-wide total (?cashier= ignored for a reports-only session), got: %s", body)
+	}
+	if strings.Contains(body, "£42.42") {
+		t.Fatalf("LEAK: expected worker2's isolated total NOT shown to a reports-only session via ?cashier=, got: %s", body)
+	}
+	// The picker itself must also be absent (it's gated under CanRecord in
+	// the template now, not just its effect on the query).
+	if strings.Contains(body, `name="cashier"`) {
+		t.Fatalf("expected the worker filter picker hidden without worker_allocation, got: %s", body)
+	}
+}
+
+func workerAllocationCount(t *testing.T, dp *common.Deps) int {
+	t.Helper()
+	var n int
+	if err := dp.Db.QueryRowContext(t.Context(), `SELECT count(*) FROM worker_allocations`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// A valid POST persists a row and the re-rendered tab reflects the updated
+// allocated total immediately (the htmx swap target).
+func TestReportsPage_RecordWorkerAllocation_ValidPayoutPersistsAndRefreshesTab(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	form := url.Values{
+		"date":        {today},
+		"cashier_id":  {"worker1"},
+		"source_type": {"tip"},
+		"amount":      {"1234"},
+		"note":        {"shift-end payout"},
+	}
+	rec := postForm(mux, "/api/reports/worker-allocations", form, &auth.User{ID: "mgr1", Role: "manager"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "£12.34") {
+		t.Fatalf("expected the refreshed tab to show the new allocated total (£12.34), got: %s", rec.Body.String())
+	}
+
+	if n := workerAllocationCount(t, dp); n != 1 {
+		t.Fatalf("expected 1 worker_allocations row, got %d", n)
+	}
+	var sourceType, cashierID, note string
+	var amount int64
+	if err := dp.Db.QueryRowContext(ctx, `SELECT source_type, cashier_id, amount_minor, note FROM worker_allocations`).
+		Scan(&sourceType, &cashierID, &amount, &note); err != nil {
+		t.Fatal(err)
+	}
+	if sourceType != "tip" || cashierID != "worker1" || amount != 1234 || note != "shift-end payout" {
+		t.Fatalf("unexpected persisted row: type=%s cashier=%s amount=%d note=%s", sourceType, cashierID, amount, note)
+	}
+
+	// The write must also be audited (ADR-0063/#964's own record-keeping
+	// point — a payout with no audit trail is not a usable statutory record).
+	var auditCount int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT count(*) FROM audit_log WHERE action = 'worker_allocation_recorded'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("expected 1 worker_allocation_recorded audit entry, got %d", auditCount)
+	}
+}
+
+// Each of these is rejected with 400 and writes nothing — a future date (a
+// payout record documents money already paid, never a promise), an unknown
+// cashier_id, a source_type outside the UK-scoped tip/service_charge subset,
+// and a non-positive amount.
+func TestReportsPage_RecordWorkerAllocation_InvalidInputsRejectedAndWriteNothing(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	manager := &auth.User{ID: "mgr1", Role: "manager"}
+
+	cases := []struct {
+		name string
+		form url.Values
+	}{
+		{"future date", url.Values{"date": {tomorrow}, "cashier_id": {"worker1"}, "source_type": {"tip"}, "amount": {"100"}}},
+		{"unknown cashier", url.Values{"date": {today}, "cashier_id": {"does-not-exist"}, "source_type": {"tip"}, "amount": {"100"}}},
+		{"bad source_type", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"yuzde_usulu_pool"}, "amount": {"100"}}},
+		{"zero amount", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"tip"}, "amount": {"0"}}},
+		{"negative amount", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"tip"}, "amount": {"-50"}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := postForm(mux, "/api/reports/worker-allocations", c.form, manager)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if n := workerAllocationCount(t, dp); n != 0 {
+		t.Fatalf("expected no rows written by any rejected request, got %d", n)
+	}
+}
+
+// The CSV export returns the right headers and contains a recorded row's
+// data — mirrors eod_api.go's own archive/export CSV precedent.
+func TestReportsPage_WorkerAllocationExport_ReturnsCSVWithRecordedRow(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','worker1',1234,'2026-08-25T18:00:00Z','shift payout')`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/reports/worker-allocations/export?from=2026-08-25&to=2026-08-25", nil), auth.User{ID: "mgr1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/csv" {
+		t.Fatalf("expected Content-Type text/csv, got %q", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") {
+		t.Fatalf("expected Content-Disposition attachment, got %q", cd)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Worker One") {
+		t.Fatalf("expected the worker's display name in the export, got: %s", body)
+	}
+	if !strings.Contains(body, "1234") {
+		t.Fatalf("expected the raw minor-unit amount in the export, got: %s", body)
+	}
+	if !strings.Contains(body, "shift payout") {
+		t.Fatalf("expected the note in the export, got: %s", body)
+	}
+
+	var auditCount int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT count(*) FROM audit_log WHERE action = 'worker_allocation_exported'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("expected 1 worker_allocation_exported audit entry, got %d", auditCount)
+	}
+}
+
+// A session lacking `worker_allocation` gets 403 from both the record POST
+// and the export GET — the same permission gates both, per #964's brief.
+func TestReportsPage_WorkerAllocation_ForbiddenWithoutPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	cashier := &auth.User{ID: "u1", Role: "cashier"}
+	today := time.Now().Format("2006-01-02")
+	form := url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"tip"}, "amount": {"100"}}
+	rec := postForm(mux, "/api/reports/worker-allocations", form, cashier)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 from POST, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := workerAllocationCount(t, dp); n != 0 {
+		t.Fatalf("expected no row written by a forbidden POST, got %d", n)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/reports/worker-allocations/export?from=2026-08-25&to=2026-08-25", nil), *cashier)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 from export GET, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A regression guard on the window round-trip: parseReportWindow/
+// renderTipsTab read r.URL.Query() (the GET-tab route's own convention),
+// which would be empty on this POST's body-encoded fields if the handler
+// didn't explicitly copy them onto r.URL.RawQuery before re-rendering —
+// silently resetting the just-posted-from window/cashier filter back to
+// the 14-day/all-workers default instead of keeping what the operator had
+// open. Seeds an allocation outside the default 14-day window but inside a
+// wider one, and a second worker's allocation, to prove the SAME period and
+// cashier filter the record form re-submitted are honored on the refresh.
+func TestReportsPage_RecordWorkerAllocation_RefreshedTabKeepsWindowAndCashierFilter(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker2','worker2','Worker Two','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	// 30 days ago: outside the 14-day default, inside a 90-day window.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa-old','tip','','worker1',700,datetime('now','-30 days'),'')`); err != nil {
+		t.Fatal(err)
+	}
+	// Today, but a DIFFERENT worker -- must be excluded by the cashier filter.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa-other','tip','','worker2',999,datetime('now'),'')`); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	form := url.Values{
+		"date":        {today},
+		"cashier_id":  {"worker1"},
+		"source_type": {"tip"},
+		"amount":      {"100"},
+		"days":        {"90"},
+		"cashier":     {"worker1"},
+	}
+	rec := postForm(mux, "/api/reports/worker-allocations", form, &auth.User{ID: "mgr1", Role: "manager"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// £8.00 = 700 (30-days-ago) + 100 (just posted) for worker1 only, over a
+	// 90-day window -- proves BOTH the wider window and the cashier filter
+	// survived the refresh, not just one of the two.
+	if !strings.Contains(body, "£8.00") {
+		t.Fatalf("expected the refreshed tab to keep the 90-day window and worker1 filter (£8.00 = £7.00 + £1.00), got: %s", body)
+	}
+	if strings.Contains(body, "£9.99") {
+		t.Fatalf("expected worker2's allocation excluded by the re-submitted cashier filter, got: %s", body)
+	}
+}
+
+// Independent review, ut-docs#964 blocker 1: pins workerAllocationRequestedAt
+// against a fixed, non-UTC nowLocal so this is deterministic regardless of
+// the host's real TZ or wall clock at test time (the original inline
+// version mixed a UTC "today" comparison with a local instant construction,
+// so a manager's own local "today" could be rejected as future, or a real
+// local tomorrow silently accepted, depending on which side of UTC midnight
+// the shop's offset put them on).
+func TestWorkerAllocationRequestedAt_LocalTodayNotRejectedAsFuture(t *testing.T) {
+	// UTC+3 (Turkey/ADR-0063's own named market) at 01:30 local -- UTC is
+	// still 22:30 the PREVIOUS day, so a UTC-based "today" check would see
+	// this local date as tomorrow and reject it.
+	loc, err := time.LoadLocation("Europe/Istanbul")
+	if err != nil {
+		t.Skipf("tzdata for Europe/Istanbul unavailable: %v", err)
+	}
+	nowLocal := time.Date(2026, 8, 25, 1, 30, 0, 0, loc)
+
+	allocatedAt, isFuture, err := workerAllocationRequestedAt("2026-08-25", nowLocal)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isFuture {
+		t.Fatal("the shop's own local today must not be rejected as future")
+	}
+
+	// The stored instant, read back through the SAME local location (the
+	// repo's date(allocated_at,'localtime') equivalent for this offset),
+	// must resolve to exactly the picked date -- not a neighbouring day.
+	parsed, err := time.Parse(time.RFC3339, allocatedAt)
+	if err != nil {
+		t.Fatalf("stored allocatedAt %q did not parse as RFC3339: %v", allocatedAt, err)
+	}
+	if got := parsed.In(loc).Format("2006-01-02"); got != "2026-08-25" {
+		t.Fatalf("allocatedAt %s resolves to local date %s, want 2026-08-25", allocatedAt, got)
+	}
+}
+
+func TestWorkerAllocationRequestedAt_LocalTomorrowRejectedAsFuture(t *testing.T) {
+	// UTC-7 (Pacific, an Americas market on the other side of the same
+	// bug): at 20:00 local, UTC is already 03:00 the NEXT day, so a
+	// UTC-based "today" check would let a real local tomorrow through.
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("tzdata for America/Los_Angeles unavailable: %v", err)
+	}
+	nowLocal := time.Date(2026, 8, 24, 20, 0, 0, 0, loc)
+
+	_, isFuture, err := workerAllocationRequestedAt("2026-08-25", nowLocal)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isFuture {
+		t.Fatal("the shop's own local tomorrow must be rejected as future")
+	}
+}
+
+func TestWorkerAllocationRequestedAt_MalformedDateRejected(t *testing.T) {
+	if _, _, err := workerAllocationRequestedAt("not-a-date", time.Now()); err == nil {
+		t.Fatal("expected an error for a malformed date")
 	}
 }
