@@ -25,8 +25,9 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		repo := data.NewPOSRepo(d.Db)
-		todayTotal, todayCount, _ := repo.DayTotal(r.Context(), 0)
-		ydayTotal, ydayCount, _ := repo.DayTotal(r.Context(), 1)
+		dayRef := time.Now()
+		todayTotal, todayCount, _ := repo.DayTotal(r.Context(), 0, dayRef)
+		ydayTotal, ydayCount, _ := repo.DayTotal(r.Context(), 1, dayRef)
 
 		var weekTotal int64
 		var weekCount int
