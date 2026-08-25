@@ -146,7 +146,17 @@
       <p class="muted">{{ T "settings.display.window_mode_kiosk_appliance" }}</p>
       {{ else if .shellAttached }}
       <!-- A desktop shell is holding a live control poll: chrome-hiding
-           modes are served for real and exit-to-os really works. -->
+           modes are served for real and exit-to-os really works. ut-docs#1040
+           review finding 2: this is also the ONLY topology where "full
+           screen/kiosk overlays this computer's own desktop" is actually
+           true — an earlier draft added a fourth, always-visible paragraph
+           gated only on NOT being a Pi kiosk appliance, which said so
+           unconditionally, including on macOS/Windows where the very next
+           paragraph (window_mode_pending_note) says the opposite (window
+           stays normal, no shell support yet) and on "no shell attached"
+           where chrome-hiding stays off. Folded into this branch's own
+           string instead of a separate always-on block, so the three
+           mutually-exclusive truths stay three, not four. -->
       <p class="muted">{{ T "settings.display.window_mode_shell_attached" }}</p>
       {{ else }}
       <!-- No shell attached: the server serves "normal" to every client
