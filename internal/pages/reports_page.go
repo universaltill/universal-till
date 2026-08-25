@@ -475,11 +475,30 @@ func workerAllocationDisplayNames(users []data.UserRow) map[string]string {
 // date(allocated_at, 'localtime') BETWEEN date(?) AND date(?) convention,
 // ut-docs#869 — see WorkerAllocationsSummary's doc comment) — window.To is
 // EXCLUSIVE (parseReportWindow's own convention, matching SalesByDay et al),
-// so it's stepped back a second before formatting, the same one-second
-// buffer reportNow() itself adds on the other end, to avoid inclusively
-// pulling in the following calendar day.
+// so it's stepped back a second before mapping to a calendar date, the same
+// one-second buffer reportNow() itself adds on the other end, to avoid
+// inclusively pulling in the following calendar day.
+//
+// Both ends are mapped through businessDateFor(t, window.Hour, window.Minute)
+// — the SAME business-day-start boundary the window itself was built from
+// (parseReportWindow) — rather than formatted directly (ut-docs#1020 item
+// 6). A raw .Format("2006-01-02") is only correct when the business day
+// starts at midnight: with e.g. a 06:00 start, a single ?period=day report
+// resolves to the half-open instant range [day 06:00, day+1 06:00), and
+// formatting window.To.Add(-time.Second) directly yields "day+1", not
+// "day" — so a one-day report's own date range spanned TWO calendar days,
+// and a ?period=month report spilled one day into the next month. Every
+// payout recorded on that spillover day was then double-counted: present
+// in both the report it actually belongs to and the following one.
+// businessDateFor resolves an instant to the calendar date its BUSINESS
+// day belongs to (an instant before hh:mm belongs to the previous calendar
+// date), which is exactly what both From and the (already-decremented)
+// To need mapped through to land back on the single calendar date the
+// window was actually built to represent.
 func workerAllocationDateRange(window reportWindow) (from, to string) {
-	return window.From.Format("2006-01-02"), window.To.Add(-time.Second).Format("2006-01-02")
+	from = businessDateFor(window.From, window.Hour, window.Minute).Format("2006-01-02")
+	to = businessDateFor(window.To.Add(-time.Second), window.Hour, window.Minute).Format("2006-01-02")
+	return from, to
 }
 
 // workerAllocationRequestedAt validates a manager-picked "YYYY-MM-DD" date
@@ -793,7 +812,14 @@ func registerWorkerAllocationAPI(mux *http.ServeMux, d *common.Deps) {
 			if worker == "" {
 				worker = row.CashierID
 			}
-			_ = cw.Write([]string{row.AllocatedAt, worker, row.SourceType, strconv.FormatInt(row.AmountMinor, 10), row.Note})
+			// csvSafe on worker + note (ut-docs#1020 item 2): note is a
+			// manager-typed free-text field, and worker falls back to a
+			// user's own DisplayName/Username — both operator-set text
+			// that opens in Excel/Sheets unescaped, where a field
+			// starting with =/+/-/@ becomes a live formula. This export's
+			// own help text frames it as for "a worker, an accountant, or
+			// anyone else" to open directly.
+			_ = cw.Write([]string{row.AllocatedAt, csvSafe(worker), row.SourceType, strconv.FormatInt(row.AmountMinor, 10), csvSafe(row.Note)})
 		}
 		cw.Flush()
 		if err := cw.Error(); err != nil {
