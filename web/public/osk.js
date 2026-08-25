@@ -9,6 +9,14 @@
 (function () {
   'use strict';
 
+  // Declared up here, not next to guardField() below where it reads more
+  // naturally, because guardSweep() already runs a few lines down (from
+  // the enabled/touchstart setup) — a `var` initializer only runs when
+  // its own line executes, unlike a function declaration, so leaving this
+  // next to guardField() would leave oskGuarded still `undefined` the
+  // first time guardSweep() actually runs.
+  var oskGuarded = new WeakSet();
+
   var mode = (document.body.dataset.osk || 'auto');
   if (mode === 'off') return;
   // auto: show on anything that looks like a touch device. `pointer: coarse`
@@ -22,9 +30,36 @@
   if (!enabled) {
     window.addEventListener('touchstart', function once() {
       enabled = true;
+      guardSweep(document);
       updateToggles();
       window.removeEventListener('touchstart', once);
     }, { passive: true });
+  } else {
+    // enabled is already true at parse time (mode="on", or a coarse
+    // pointer was already reported) — the touchstart branch above won't
+    // fire to trigger the first sweep, so do it here instead.
+    // (guardSweep/wantsOSK aren't defined yet lexically, but function
+    // declarations are hoisted within this IIFE, so this call is safe.)
+    guardSweep(document);
+  }
+  // ut-docs#1022: keep sweeping as htmx swaps in new content, and as
+  // anything else (Alpine, plugin-served fragments) mutates the DOM —
+  // same belt-and-braces pattern as autofill.js's suppress()/sweep(),
+  // for the same reason: a per-template opt-in silently regresses the
+  // moment someone adds a 29th page that forgets it.
+  document.addEventListener('htmx:afterSwap', function () { guardSweep(document); });
+  if (window.MutationObserver) {
+    new MutationObserver(function (mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var added = mutations[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          var node = added[j];
+          if (node.nodeType !== 1) continue; // element nodes only
+          guardField(node);
+          if (node.querySelectorAll) guardSweep(node);
+        }
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true });
   }
 
   var LAYOUTS = {
@@ -80,8 +115,15 @@
   }
 
   function isNumeric(el) {
-    return el.type === 'number' || el.type === 'tel' ||
-      (el.getAttribute('inputmode') || '').match(/^(numeric|decimal|tel)$/);
+    // guardSweep()/show() may already have overwritten the live inputmode
+    // attribute with "none" (ut-docs#1022) — read the saved ORIGINAL value
+    // once one exists, never the possibly-overridden live one, or every
+    // numeric field would silently fall back to the letter layout the
+    // moment it's been swept.
+    var im = el.dataset.oskPrevInputmode !== undefined
+      ? el.dataset.oskPrevInputmode
+      : (el.getAttribute('inputmode') || '');
+    return el.type === 'number' || el.type === 'tel' || im.match(/^(numeric|decimal|tel)$/);
   }
 
   function wantsOSK(el) {
@@ -89,6 +131,36 @@
     if (el.tagName === 'TEXTAREA') return true;
     if (el.tagName !== 'INPUT') return false;
     return ['text', 'search', 'password', 'email', 'url', 'number', 'tel'].indexOf(el.type) !== -1;
+  }
+
+  // Suppress the native OS keyboard on every OSK-able field BEFORE it is
+  // ever focused, not reactively inside show() (ut-docs#1022). The browser
+  // decides whether to open its own IME at FOCUS time, which for a click
+  // happens before our click handler (and therefore show()) ever runs —
+  // so a guard applied only in show() is always one interaction too late
+  // for a field's first tap. This sweeps every OSK-able field up front
+  // instead, central rather than per-template, so the fix doesn't need a
+  // 29th one-off `{{ if ne (oskmode) "off" }}inputmode="none"{{ end }}`
+  // guard in every page that ships one. index.html's scan input keeps its
+  // own static template guard on top of this — its `autofocus` fires
+  // before ANY deferred script, including this one, can run at all, so it
+  // is the one field this sweep structurally cannot get to in time.
+  // (oskGuarded itself is declared at the top of the file — see the
+  // comment there for why.)
+
+  function guardField(el) {
+    if (!wantsOSK(el) || oskGuarded.has(el)) return;
+    oskGuarded.add(el);
+    if (el.dataset.oskPrevInputmode === undefined) {
+      el.dataset.oskPrevInputmode = el.getAttribute('inputmode') || '';
+    }
+    el.setAttribute('inputmode', 'none');
+  }
+
+  function guardSweep(root) {
+    if (!enabled) return;
+    var els = (root || document).querySelectorAll('input, textarea');
+    for (var i = 0; i < els.length; i++) guardField(els[i]);
   }
 
   function build() {
@@ -172,26 +244,13 @@
     }
   }
 
-  function restoreInputmode(el) {
-    var prev = el.dataset.oskPrevInputmode;
-    if (prev) el.setAttribute('inputmode', prev);
-    else if (prev !== undefined) el.removeAttribute('inputmode');
-    delete el.dataset.oskPrevInputmode;
-  }
-
   function show(el) {
     // Re-tapping the field the OSK is already open for (caret placement)
     // must not reset the layer/shift or re-trigger the smooth scroll.
     if (current === el && osk && osk.classList.contains('osk-open')) return;
-    // Retargeting to another field: release the old one's inputmode, or it
-    // stays "none" for the life of the page (dead native IME on Android).
-    if (current && current !== el) restoreInputmode(current);
     current = el;
     if (!osk) build();
     shift = false;
-    // isNumeric reads the REAL inputmode (numeric/decimal/tel) for layout
-    // selection — must happen before the inputmode="none" override below
-    // overwrites it.
     layer = isNumeric(el) ? 'num' : baseLayout();
     render();
     osk.classList.add('osk-open');
@@ -203,12 +262,11 @@
     // fixed layout (confirmed live, real device, 2026-07-28: the status
     // bar ended up floating mid-screen, overlapping content) — while this
     // custom keyboard also tries to render in whatever space is left.
-    // inputmode="none" is the standard, widely-supported way to do this;
-    // insert()/backspace() below already write via setRangeText + a
-    // synthetic `input` event, never needed a real IME to begin with.
-    // Kiosk/desktop are unaffected (no OS virtual keyboard to suppress
-    // there in the first place). Save+restore, not just remove: the
-    // isNumeric() call above already needed the ORIGINAL inputmode.
+    // guardField() (above) already does this for every OSK-able field up
+    // front, before it is ever focused (ut-docs#1022) — this call is a
+    // fallback for a field guardSweep() never reached (inserted between
+    // sweeps by something other than htmx or a DOM mutation) and is
+    // normally a no-op, since guardField() already ran.
     if (el.dataset.oskPrevInputmode === undefined) {
       el.dataset.oskPrevInputmode = el.getAttribute('inputmode') || '';
     }
@@ -225,7 +283,15 @@
   }
 
   function hide() {
-    if (current) restoreInputmode(current);
+    // Deliberately does NOT restore the field's original inputmode
+    // (ut-docs#1022): guardField() sets inputmode="none" once, up front,
+    // for the life of the page while OSK is enabled. Restoring it here on
+    // every blur would reopen the exact race this fix closes — the native
+    // keyboard racing ours — for any field a second tap ever lands on.
+    // The only way OSK mode changes at all is the settings form's full
+    // page reload (web/ui/pages/settings.html), which re-renders from
+    // scratch and never applies this override in the first place when the
+    // new mode is "off" — nothing left to restore.
     current = null;
     if (!osk) return;
     osk.classList.remove('osk-open');
