@@ -27,12 +27,14 @@ func newBasePluginTestDeps(t *testing.T) *common.Deps {
 }
 
 // deLanguageCatalogEntry is the DE listing a real marketplace would serve:
-// canonical type "language", locale "de" — exactly what ut-docs#591's
-// registry maps DE to.
+// canonical type "language", availableLocales ["de"] — exactly what
+// ut-docs#591's registry maps DE to. The fake serves this in the real
+// ut-cloud wire shape (camelCase `availableLocales`), not the singular
+// `locale` field the server never sent (#1055).
 func deLanguageCatalogEntry(listingID, pluginID, version string) marketplace.PluginSummary {
 	return marketplace.PluginSummary{
 		ID: pluginID, ListingID: listingID, Name: "German language pack",
-		Version: version, CanonicalType: "language", Locale: "de",
+		Version: version, CanonicalType: "language", AvailableLocales: []string{"de"},
 	}
 }
 
@@ -104,8 +106,8 @@ func TestResolveAndInstallBasePlugin_FiltersNonMatchingEntriesClientSide(t *test
 		"listing-lang-de": "ut-plugin-language-de",
 	})
 	mkt.setCatalog(
-		marketplace.PluginSummary{ID: "ut-plugin-language-fr", ListingID: "listing-lang-fr", Version: "1.0.0", CanonicalType: "language", Locale: "fr"},
-		marketplace.PluginSummary{ID: "ut-plugin-theme-de", ListingID: "listing-theme", Version: "1.0.0", CanonicalType: "theme", Locale: "de"},
+		marketplace.PluginSummary{ID: "ut-plugin-language-fr", ListingID: "listing-lang-fr", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"fr"}},
+		marketplace.PluginSummary{ID: "ut-plugin-theme-de", ListingID: "listing-theme", Version: "1.0.0", CanonicalType: "theme", AvailableLocales: []string{"de"}},
 		deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"),
 	)
 	dp.Cfg.Marketplace = mkt.config()

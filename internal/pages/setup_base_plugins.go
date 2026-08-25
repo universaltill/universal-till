@@ -97,9 +97,13 @@ func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country str
 // and installs the highest-semver matching listing through the existing
 // Ed25519-verified install path (cloudInstallPluginVersion) — never a second
 // install code path. Filtering is done client-side on BOTH CanonicalType and
-// Locale even though the request also asks the server to filter by locale:
+// locale even though the request also asks the server to filter by locale:
 // the server-side filter isn't reliably applied, so this never trusts it
-// alone. Returns nil when there's genuinely nothing to do (no listing
+// alone. The locale test is "spec.Locale is among the listing's
+// AvailableLocales" (the real catalog's per-listing availableLocales array —
+// a listing can serve several locales; #1055: matching on a singular field
+// the real server never sent is what made this silently install nothing).
+// Returns nil when there's genuinely nothing to do (no listing
 // published yet, or an equivalent plugin is already active — idempotent on
 // a retry or a second wizard run) or a non-nil error describing why the
 // spec should stay pending for the next attempt.
@@ -114,7 +118,7 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 	var best *marketplace.PluginSummary
 	for i := range resp.Plugins {
 		p := &resp.Plugins[i]
-		if p.CanonicalType != spec.CanonicalType || p.Locale != spec.Locale {
+		if p.CanonicalType != spec.CanonicalType || !localeInList(p.AvailableLocales, spec.Locale) {
 			continue
 		}
 		if best == nil || updates.Newer(p.Version, best.Version) {
@@ -144,6 +148,18 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 		return fmt.Errorf("install %s@%s: %w", listingID, best.Version, err)
 	}
 	return nil
+}
+
+// localeInList reports whether want is present in locales, compared
+// case-insensitively — locale tags are case-insensitive ("de" == "DE"), and
+// the catalog's casing is the server's choice, not a contract.
+func localeInList(locales []string, want string) bool {
+	for _, l := range locales {
+		if strings.EqualFold(l, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // loadPendingBasePlugins / savePendingBasePlugins persist the still-pending
