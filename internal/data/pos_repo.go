@@ -2535,8 +2535,41 @@ type InsertSaleParams struct {
 	SyncLastError           string
 }
 
+// validateRequired checks the InsertSaleParams fields that must never be
+// left at their Go zero value -- every one of these binds directly into a
+// NOT NULL column with no nullIfEmpty() indirection, so an omitted field
+// would otherwise write a silent empty string past the schema's own
+// DEFAULT (SQL defaults only apply when a column is omitted from the
+// INSERT, never when it's explicitly bound to ""). Everything else
+// (RegisterID, CashierID, CustomerID, TableID, Note, OrderType, the
+// sync-retry fields, ServiceCharge/ServiceChargeTaxBasisBP) is legitimately
+// optional and existing tests rely on omitting them -- do not add to this
+// list without checking those.
+func (p InsertSaleParams) validateRequired() error {
+	for _, f := range []struct {
+		name  string
+		empty bool
+	}{
+		{"SaleID", p.SaleID == ""},
+		{"ReceiptNo", p.ReceiptNo == ""},
+		{"SaleType", p.SaleType == ""},
+		{"Currency", p.Currency == ""},
+		{"CreatedAt", p.CreatedAt == ""},
+		{"SyncStatus", p.SyncStatus == ""},
+		{"TenderType", p.TenderType == ""},
+	} {
+		if f.empty {
+			return fmt.Errorf("insert sale: %s is required", f.name)
+		}
+	}
+	return nil
+}
+
 // InsertSale writes the sale header row. See InsertSaleParams for field docs.
 func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, p InsertSaleParams) error {
+	if err := p.validateRequired(); err != nil {
+		return err
+	}
 	offlineVal := 0
 	if p.Offline {
 		offlineVal = 1
