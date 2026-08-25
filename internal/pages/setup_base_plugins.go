@@ -97,9 +97,13 @@ func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country str
 // and installs the highest-semver matching listing through the existing
 // Ed25519-verified install path (cloudInstallPluginVersion) — never a second
 // install code path. Filtering is done client-side on BOTH CanonicalType and
-// Locale even though the request also asks the server to filter by locale:
+// locale even though the request also asks the server to filter by locale:
 // the server-side filter isn't reliably applied, so this never trusts it
-// alone. Returns nil when there's genuinely nothing to do (no listing
+// alone. The locale test is "spec.Locale is among the listing's
+// AvailableLocales" (the real catalog's per-listing availableLocales array —
+// a listing can serve several locales; #1055: matching on a singular field
+// the real server never sent is what made this silently install nothing).
+// Returns nil when there's genuinely nothing to do (no listing
 // published yet, or an equivalent plugin is already active — idempotent on
 // a retry or a second wizard run) or a non-nil error describing why the
 // spec should stay pending for the next attempt.
@@ -114,7 +118,7 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 	var best *marketplace.PluginSummary
 	for i := range resp.Plugins {
 		p := &resp.Plugins[i]
-		if p.CanonicalType != spec.CanonicalType || p.Locale != spec.Locale {
+		if p.CanonicalType != spec.CanonicalType || !localeInList(p.AvailableLocales, spec.Locale) {
 			continue
 		}
 		if best == nil || updates.Newer(p.Version, best.Version) {
@@ -144,6 +148,37 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 		return fmt.Errorf("install %s@%s: %w", listingID, best.Version, err)
 	}
 	return nil
+}
+
+// localeInList reports whether the catalog listing's availableLocales cover
+// want. Two tags match when their base language matches, compared
+// case-insensitively: locale tags are case-insensitive ("de" == "DE"), the
+// catalog's casing is the server's choice rather than a contract, and a
+// listing published as "de-DE" is still the German pack a `de` spec wants.
+// That base-language rule is the same one the POS already applies to its own
+// locale lookups (baseLang in plugin_page.go, config.baseLang's region-tag
+// fallback) and mirrors ut-cloud's primaryLang comparison in
+// catalog.localeAvailable — matching only whole tags would re-open #1055 for
+// any pack published with a region subtag.
+//
+// It deliberately does NOT mirror the other two branches of ut-cloud's
+// localeAvailable, which treat an EMPTY availableLocales list and an "en"
+// entry as matching every requested locale. Those are right for *browsing*
+// the catalog (show the merchant everything they could read) and wrong here,
+// where the match decides plugin *identity*: an unrestricted or English
+// listing satisfying a `de` spec would silently auto-install the wrong
+// language pack. A base plugin must positively declare the locale it serves.
+func localeInList(locales []string, want string) bool {
+	wantBase := baseLang(strings.TrimSpace(want))
+	if wantBase == "" {
+		return false
+	}
+	for _, l := range locales {
+		if baseLang(strings.TrimSpace(l)) == wantBase {
+			return true
+		}
+	}
+	return false
 }
 
 // loadPendingBasePlugins / savePendingBasePlugins persist the still-pending

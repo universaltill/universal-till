@@ -306,12 +306,16 @@ type PluginSummary struct {
 	Rating        float64  `json:"rating,omitempty"`
 	ReviewCount   int      `json:"review_count,omitempty"`
 	DownloadCount int      `json:"download_count,omitempty"`
-	ArtifactURL   string   `json:"artifact_url"`  // For backward compatibility
-	ArtifactHash  string   `json:"artifact_hash"` // For backward compatibility
-	Locale        string   `json:"locale,omitempty"`
-	ApprovedAt    string   `json:"approved_at,omitempty"`
-	CreatedAt     string   `json:"created_at,omitempty"`
-	UpdatedAt     string   `json:"updated_at,omitempty"`
+	ArtifactURL   string   `json:"artifact_url"`     // For backward compatibility
+	ArtifactHash  string   `json:"artifact_hash"`    // For backward compatibility
+	Locale        string   `json:"locale,omitempty"` // legacy singular field; the real server sends available_locales
+	// AvailableLocales is the per-listing locale list (wire key
+	// availableLocales in the live protojson schema) — a listing can serve
+	// multiple locales, so this is an array, never a single value.
+	AvailableLocales []string `json:"available_locales,omitempty"`
+	ApprovedAt       string   `json:"approved_at,omitempty"`
+	CreatedAt        string   `json:"created_at,omitempty"`
+	UpdatedAt        string   `json:"updated_at,omitempty"`
 }
 
 // UnmarshalJSON maps the live catalog wire format onto PluginSummary. The
@@ -321,37 +325,39 @@ type PluginSummary struct {
 // accept both so the catalog decodes regardless of which the server sends.
 func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 	var w struct {
-		ID                   string   `json:"id"`
-		ListingID            string   `json:"listing_id"`
-		Name                 string   `json:"name"`
-		Description          string   `json:"description"`
-		Vendor               string   `json:"vendor"`
-		DeveloperID          string   `json:"developer_id"`
-		Version              string   `json:"version"`
-		Type                 string   `json:"type"`
-		CanonicalType        string   `json:"canonical_type"`
-		TrustLevel           string   `json:"trustLevel"`
-		TrustTier            string   `json:"trust_tier"`
-		RequiredCapabilities []string `json:"requiredCapabilities"`
-		Capabilities         []string `json:"capabilities"`
-		Permissions          []string `json:"permissions"`
-		MinHostVersion       string   `json:"minHostVersion"`
-		PriceFlag            string   `json:"price_flag"`
-		PaidListing          bool     `json:"paidListing"`
-		PaidListingSnake     bool     `json:"paid_listing"`
-		Architectures        []string `json:"architectures"`
-		DeviceArch           string   `json:"device_arch"`
-		IconURLCamel         string   `json:"iconUrl"`
-		IconURL              string   `json:"icon_url"`
-		Rating               float64  `json:"rating"`
-		ReviewCount          int      `json:"review_count"`
-		DownloadCount        int      `json:"download_count"`
-		ArtifactURL          string   `json:"artifact_url"`
-		ArtifactHash         string   `json:"artifact_hash"`
-		Locale               string   `json:"locale"`
-		ApprovedAt           string   `json:"approved_at"`
-		CreatedAt            string   `json:"created_at"`
-		UpdatedAt            string   `json:"updated_at"`
+		ID                    string   `json:"id"`
+		ListingID             string   `json:"listing_id"`
+		Name                  string   `json:"name"`
+		Description           string   `json:"description"`
+		Vendor                string   `json:"vendor"`
+		DeveloperID           string   `json:"developer_id"`
+		Version               string   `json:"version"`
+		Type                  string   `json:"type"`
+		CanonicalType         string   `json:"canonical_type"`
+		TrustLevel            string   `json:"trustLevel"`
+		TrustTier             string   `json:"trust_tier"`
+		RequiredCapabilities  []string `json:"requiredCapabilities"`
+		Capabilities          []string `json:"capabilities"`
+		Permissions           []string `json:"permissions"`
+		MinHostVersion        string   `json:"minHostVersion"`
+		PriceFlag             string   `json:"price_flag"`
+		PaidListing           bool     `json:"paidListing"`
+		PaidListingSnake      bool     `json:"paid_listing"`
+		Architectures         []string `json:"architectures"`
+		DeviceArch            string   `json:"device_arch"`
+		IconURLCamel          string   `json:"iconUrl"`
+		IconURL               string   `json:"icon_url"`
+		Rating                float64  `json:"rating"`
+		ReviewCount           int      `json:"review_count"`
+		DownloadCount         int      `json:"download_count"`
+		ArtifactURL           string   `json:"artifact_url"`
+		ArtifactHash          string   `json:"artifact_hash"`
+		Locale                string   `json:"locale"`
+		AvailableLocalesCamel []string `json:"availableLocales"`
+		AvailableLocales      []string `json:"available_locales"`
+		ApprovedAt            string   `json:"approved_at"`
+		CreatedAt             string   `json:"created_at"`
+		UpdatedAt             string   `json:"updated_at"`
 	}
 	if err := json.Unmarshal(data, &w); err != nil {
 		return err
@@ -378,6 +384,13 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 	p.ArtifactURL = w.ArtifactURL
 	p.ArtifactHash = w.ArtifactHash
 	p.Locale = w.Locale
+	// Prefer the camelCase key — that's what the live protojson schema
+	// actually sends — with the snake_case one as the canonical fallback,
+	// mirroring IconURL/PaidListing above.
+	p.AvailableLocales = w.AvailableLocalesCamel
+	if len(p.AvailableLocales) == 0 {
+		p.AvailableLocales = w.AvailableLocales
+	}
 	p.ApprovedAt = w.ApprovedAt
 	p.CreatedAt = w.CreatedAt
 	p.UpdatedAt = w.UpdatedAt

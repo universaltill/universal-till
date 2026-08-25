@@ -211,8 +211,30 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			m.mu.Lock()
 			entries := append([]marketplace.PluginSummary(nil), m.catalog...)
 			m.mu.Unlock()
+			// Serve the REAL ut-cloud catalog wire shape (see internal/plugins/
+			// marketplace/testdata/cloud_list_plugins_response.json): protojson
+			// lowerCamelCase keys, a plain `type`, and the per-listing
+			// `availableLocales` array. This fake used to json-encode
+			// marketplace.PluginSummary directly, which emitted the POS's own
+			// snake_case canonical tags (`locale`, `canonical_type`) — a shape
+			// the real server never sends — which is exactly how ut-docs#591's
+			// locale match passed its tests while silently matching nothing in
+			// production (#1055). `listing_id` is a fake-only extra kept so
+			// tests keep modeling the listing-id / plugin-id distinction the
+			// download-token flow depends on.
+			wire := make([]map[string]any, 0, len(entries))
+			for _, e := range entries {
+				wire = append(wire, map[string]any{
+					"id":               e.ID,
+					"listing_id":       e.ListingID,
+					"name":             e.Name,
+					"version":          e.Version,
+					"type":             e.CanonicalType,
+					"availableLocales": e.AvailableLocales,
+				})
+			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(marketplace.ListPluginsResponse{Plugins: entries})
+			_ = json.NewEncoder(w).Encode(map[string]any{"plugins": wire})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/downloads/tokens":
 			var req struct {
 				ListingID string `json:"listing_id"`
