@@ -1651,14 +1651,25 @@ type EODReport struct {
 	// EndOfDayRange themselves — the banding math (discount proration +
 	// ADR-0061 service-charge apportionment) lives in internal/pos, which
 	// this package cannot import. See dateRangeSummary's inline note.
-	TaxBands     []TaxBand   `json:"tax_bands"`
-	Methods      []EODMethod `json:"methods"`
-	Tips         []EODTip    `json:"tips"`        // tips by payment method, held out of revenue (ut-docs#1007)
-	Departments  []DeptSales `json:"departments"` // per-department sales (E1b)
-	Tills        []TillSales `json:"tills"`       // per-register sales (multi-till)
-	FirstReceipt string      `json:"first_receipt"`
-	LastReceipt  string      `json:"last_receipt"`
-	GeneratedAt  string      `json:"generated_at"`
+	TaxBands    []TaxBand   `json:"tax_bands"`
+	Methods     []EODMethod `json:"methods"`
+	Tips        []EODTip    `json:"tips"`        // tips by payment method, held out of revenue (ut-docs#1007)
+	Departments []DeptSales `json:"departments"` // per-department sales (E1b)
+	Tills       []TillSales `json:"tills"`       // per-register sales (multi-till)
+	// Voucher liability flows (ut-docs#1008): count + amount (minor units) of
+	// vouchers issued and redeemed in the window, from voucher_transactions.
+	// Reported DISTINCTLY from article revenue: an issue is a 0% liability
+	// already inside the sale's total (so inside Gross) but never inside any
+	// sale_lines-derived figure (departments, per-rate VAT bands); a
+	// redemption is a payment method, not revenue. Never sum these into an
+	// Artikelumsatz figure.
+	VouchersIssuedCount   int    `json:"vouchers_issued_count"`
+	VouchersIssued        int64  `json:"vouchers_issued"`
+	VouchersRedeemedCount int    `json:"vouchers_redeemed_count"`
+	VouchersRedeemed      int64  `json:"vouchers_redeemed"`
+	FirstReceipt          string `json:"first_receipt"`
+	LastReceipt           string `json:"last_receipt"`
+	GeneratedAt           string `json:"generated_at"`
 	// CashReconciliation is single-day only (same from==to gate as
 	// Departments/Tills): nil on range reports, and nil when no shift was
 	// closed that day — a day-close still completes without one.
@@ -1794,6 +1805,17 @@ WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND
 		return rep, fmt.Errorf("eod totals: %w", err)
 	}
 	rep.Net = rep.Gross - rep.RefundTotal
+
+	// Voucher flows (ut-docs#1008) — same local-calendar-day window as the
+	// totals query above, range-capable like Methods (not gated on from==to).
+	vouchers, err := r.VouchersIssuedRedeemedForRange(ctx, from, to)
+	if err != nil {
+		return rep, fmt.Errorf("eod vouchers: %w", err)
+	}
+	rep.VouchersIssuedCount = vouchers.IssuedCount
+	rep.VouchersIssued = vouchers.IssuedMinor
+	rep.VouchersRedeemedCount = vouchers.RedeemedCount
+	rep.VouchersRedeemed = vouchers.RedeemedMinor
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
@@ -1951,7 +1973,7 @@ type EODTaxBandLine struct {
 // EODTaxBandSale is one completed sale in the day-close window with
 // exactly the header fields the per-sale VAT banding needs: the pricing-
 // mode inference (pos.InferTaxInclusive) reads Subtotal/DiscountTotal/
-// TaxTotal/Total/ServiceCharge, the banding itself prorates DiscountTotal
+// TaxTotal/Total/ServiceCharge/VoucherIssueTotal, the banding itself prorates DiscountTotal
 // and apportions ServiceCharge at ServiceChargeTaxBasisBP, and SaleType
 // decides the sign ('return' subtracts).
 type EODTaxBandSale struct {
@@ -1963,7 +1985,12 @@ type EODTaxBandSale struct {
 	Total                   int64
 	ServiceCharge           int64
 	ServiceChargeTaxBasisBP int
-	Lines                   []EODTaxBandLine
+	// VoucherIssueTotal (ut-docs#1008 review F1, migration 069): read
+	// solely so pos.InferTaxInclusive can balance its identity for a sale
+	// that also issued vouchers — the banding itself never places voucher
+	// face value in any band (a 0% liability, not a taxable supply).
+	VoucherIssueTotal int64
+	Lines             []EODTaxBandLine
 }
 
 // SalesForTaxBands loads every completed sale (and return) in the SAME
@@ -1983,7 +2010,7 @@ type EODTaxBandSale struct {
 func (r *POSRepo) SalesForTaxBands(ctx context.Context, from, to string) ([]EODTaxBandSale, error) {
 	saleRows, err := r.db.QueryContext(ctx, `
 SELECT id, sale_type, subtotal, discount_total, tax_total, total,
-       service_charge_amount, service_charge_tax_basis_bp
+       service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total
 FROM sales
 WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND date(?)
 ORDER BY created_at, id`, from, to)
@@ -1996,7 +2023,7 @@ ORDER BY created_at, id`, from, to)
 	for saleRows.Next() {
 		var s EODTaxBandSale
 		if err := saleRows.Scan(&s.ID, &s.SaleType, &s.Subtotal, &s.DiscountTotal,
-			&s.TaxTotal, &s.Total, &s.ServiceCharge, &s.ServiceChargeTaxBasisBP); err != nil {
+			&s.TaxTotal, &s.Total, &s.ServiceCharge, &s.ServiceChargeTaxBasisBP, &s.VoucherIssueTotal); err != nil {
 			return nil, fmt.Errorf("scan eod band sale: %w", err)
 		}
 		idx[s.ID] = len(out)
@@ -2822,16 +2849,22 @@ type InsertSaleParams struct {
 	// sale rebuilds the SAME totals CompleteSale originally stored -- see
 	// migration 062.
 	ServiceChargeTaxBasisBP int
-	Note                    string
-	CreatedAt               string
-	TenderType              string
-	OrderType               string
-	TableID                 string
-	Offline                 bool
-	SyncStatus              string
-	SyncAttempts            int
-	SyncNextAttemptAt       string
-	SyncLastError           string
+	// VoucherIssueTotal (ut-docs#1008 review F1, migration 069) is the
+	// summed face value of the vouchers issued in this sale — included in
+	// Total but in neither Subtotal nor TaxTotal (a 0% liability), stored
+	// on the header so pos.InferTaxInclusive can balance its identity from
+	// the sale row alone, same shape as ServiceCharge above.
+	VoucherIssueTotal int64
+	Note              string
+	CreatedAt         string
+	TenderType        string
+	OrderType         string
+	TableID           string
+	Offline           bool
+	SyncStatus        string
+	SyncAttempts      int
+	SyncNextAttemptAt string
+	SyncLastError     string
 }
 
 // validateRequired checks the InsertSaleParams fields that must never be
@@ -2874,9 +2907,9 @@ func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, p InsertSaleParams
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, rounding, note, created_at, completed_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt)
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
@@ -4176,11 +4209,19 @@ type SaleDetail struct {
 	// against the primary's own policy; omitempty keeps the wire additive --
 	// a pre-ADR-0061 peer simply lacks the key, which reads as 0, exactly the
 	// behaviour that peer had.
-	ServiceChargeTaxBasisBP int                 `json:"service_charge_tax_basis_bp,omitempty"`
-	CreatedAt               string              `json:"created_at"`
-	CashierID               string              `json:"cashier_id"`
-	Lines                   []SaleDetailLine    `json:"lines"`
-	Payments                []SaleDetailPayment `json:"payments"`
+	ServiceChargeTaxBasisBP int `json:"service_charge_tax_basis_bp,omitempty"`
+	// VoucherIssueTotal (ut-docs#1008 review F1, migration 069): the summed
+	// face value of vouchers issued in this sale — in Total, in neither
+	// Subtotal nor TaxTotal. saleIsTaxInclusive/pos.InferTaxInclusive read
+	// it to balance the pricing-mode identity; omitempty keeps the LAN-sync
+	// journal wire additive, same convention as the field above (a
+	// pre-migration-068 peer's journal simply lacks the key, which reads as
+	// 0 — correct, since such a peer cannot issue tracked vouchers yet).
+	VoucherIssueTotal int64               `json:"voucher_issue_total,omitempty"`
+	CreatedAt         string              `json:"created_at"`
+	CashierID         string              `json:"cashier_id"`
+	Lines             []SaleDetailLine    `json:"lines"`
+	Payments          []SaleDetailPayment `json:"payments"`
 	// Charges (ADR-0062, ut-docs#963/#984) is the itemized additive
 	// statutory charge list read from sale_charges, in seq order. Empty for
 	// every sale until step 2/3 of that ADR starts writing sale_charges rows
@@ -4249,13 +4290,13 @@ func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDeta
 	err := r.db.QueryRowContext(ctx, `
 SELECT s.id, s.receipt_no, s.status, s.sale_type, s.tender_type, s.order_type, s.offline, s.sync_status,
        s.currency, s.subtotal, s.discount_total, s.tax_total, s.total, s.service_charge_amount,
-       s.service_charge_tax_basis_bp, s.created_at,
+       s.service_charge_tax_basis_bp, s.voucher_issue_total, s.created_at,
        COALESCE(s.cashier_id, ''), COALESCE(s.table_id, ''), COALESCE(t.label, '')
 FROM sales s LEFT JOIN tables t ON t.id = s.table_id
 WHERE s.receipt_no = ?`, receiptNo).Scan(
 		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.OrderType, &d.Offline,
 		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
-		&d.Total, &d.ServiceCharge, &d.ServiceChargeTaxBasisBP, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel)
+		&d.Total, &d.ServiceCharge, &d.ServiceChargeTaxBasisBP, &d.VoucherIssueTotal, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel)
 	if err == sql.ErrNoRows {
 		return SaleDetail{}, false, nil
 	}

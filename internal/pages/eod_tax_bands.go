@@ -16,8 +16,13 @@ import (
 // over sale_lines was the first implementation and silently missed two
 // sale-level amounts that have no sale_lines row — the service charge's
 // tax and the whole-sale discount — so any sale carrying either broke the
-// Z-report's own identities (sum(band.Tax) == TaxNet, sum(band.Gross) ==
-// Net), under-declaring VAT collected on service charges. This is the
+// Z-report's own identities, under-declaring VAT collected on service
+// charges. Those identities are: sum(band.Tax) == TaxNet always, and
+// sum(band.Gross) == Net on any day WITHOUT voucher issues — a voucher
+// issue's face value (ut-docs#1008) is inside Net (it is in sales.total)
+// but deliberately in NO band (a 0% liability, not a taxable supply), so
+// on a voucher day sum(band.Gross) == Net − vouchers issued, and the
+// GUTSCHEINE section supplies exactly that reconciling delta. This is the
 // SAME shared pos.VATBandsForSale the invoice's VAT table uses, so the
 // day-close can never disagree with the invoices issued for its sales.
 
@@ -37,7 +42,7 @@ func computeEODTaxBands(ctx context.Context, repo *data.POSRepo, from, to string
 		for _, l := range s.Lines {
 			lines = append(lines, pos.VATLine{RateBP: l.RateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
 		}
-		inclusive := pos.InferTaxInclusive(s.Subtotal, s.DiscountTotal, s.TaxTotal, s.Total, s.ServiceCharge)
+		inclusive := pos.InferTaxInclusive(s.Subtotal, s.DiscountTotal, s.TaxTotal, s.Total, s.ServiceCharge, s.VoucherIssueTotal)
 		sign := int64(1)
 		if s.SaleType == "return" {
 			sign = -1
