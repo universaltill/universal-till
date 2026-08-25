@@ -47,25 +47,107 @@ type BkpProductRow struct {
 	TaxPercentage2Raw string
 }
 
-// bkpProductsQuery is deliberately unexported and only ever used by
-// ReadBkpProducts below — see BkpProductRow's doc comment for why the query
-// text lives in this package and not in internal/catimport.
+// The Products query is BUILT FROM THE SCHEMA, not hard-coded (ut-docs#968).
+//
+// ut-docs#511 and #512 had to guess this schema from a ticket's prose and
+// guessed wrong in the same way twice: the real speedy kasse PRO 4.4.08
+// Products table has **no ProductGroupText column at all** — the category
+// name lives on ProductGroups, keyed by Products.ProductGroupID — and the
+// old "no such column" fallback then re-ran the SAME missing column minus
+// the tax columns, so a real backup failed twice and reported it as a
+// "no-tax fallback" error that named the wrong cause.
+//
+// Introspecting first is what stops the next unseen variant becoming the
+// next outage: every column below is optional, and a backup missing any of
+// them reads narrower rather than failing.
+//
 // ORDER BY rowid (review finding, ut-docs#511, 2026-08-09): without an
 // explicit order, which of several same-PLU rows "wins" (registers first,
-// so a later duplicate is the one flagged) is whatever order SQLite's
-// query planner happens to pick — not contractual, and liable to change if
-// the source ever gains an index on ProductNumber (its natural PLU lookup
-// key). rowid is the source file's own insertion order, the only
-// deterministic ordering available without assuming anything about the
-// source schema beyond what's already documented.
-const bkpProductsQuery = `SELECT ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType, TaxPercentage, TaxPercentage2 FROM Products ORDER BY rowid`
+// so a later duplicate is the one flagged) is whatever order SQLite's query
+// planner happens to pick — not contractual, and liable to change if the
+// source ever gains an index on ProductNumber (its natural PLU lookup key).
+// rowid is the source file's own insertion order, the only deterministic
+// ordering available without assuming anything about the source schema.
 
-// bkpProductsQueryNoTax is bkpProductsQuery without the two tax columns —
-// the fallback for a backup.db whose Products table predates them (ut-docs#512:
-// nobody on this project has seen every real speedy kasse export, same
-// caveat as bkpScanString's doc comment; TaxPercentage/TaxPercentage2 are
-// documented from one real ticket's prose, not guaranteed on every backup).
-const bkpProductsQueryNoTax = `SELECT ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType FROM Products ORDER BY rowid`
+// bkpTableColumns returns the column names of table t, lowercased, or an
+// empty set if the table does not exist. A missing table is not an error:
+// ProductGroups is absent from older exports, and the caller degrades to an
+// empty category rather than refusing the import.
+func bkpTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, "SELECT name FROM pragma_table_info(?)", table)
+	if err != nil {
+		return nil, fmt.Errorf("introspect %s: %w", table, err)
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan %s column name: %w", table, err)
+		}
+		cols[strings.ToLower(name)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s columns: %w", table, err)
+	}
+	return cols, nil
+}
+
+// buildBkpProductsQuery assembles the SELECT for the schema actually present.
+// It always yields the same eight result columns, in the same order, with a
+// literal NULL standing in for anything this backup does not carry — so the
+// scan below never has to branch on shape.
+func buildBkpProductsQuery(productCols, groupCols map[string]bool) string {
+	col := func(name, fallback string) string {
+		if productCols[strings.ToLower(name)] {
+			return "p." + name
+		}
+		return fallback
+	}
+
+	// Category: prefer a denormalised column when a backup has one (older
+	// exports and this package's own older fixtures do), otherwise join.
+	category := "NULL"
+	join := ""
+	switch {
+	case productCols["productgrouptext"]:
+		category = "p.ProductGroupText"
+	// The join KEY is introspected on both sides, not just the display
+	// column (independent review, ut-docs#968): emitting
+	// "g.ProductGroupID" because Products happens to have that column,
+	// without confirming ProductGroups has it too, re-creates this card's
+	// own bug one table over — the query fails with "no such column:
+	// g.ProductGroupID" and the entire import dies rather than degrading
+	// to an empty category, which is exactly the outcome the introspection
+	// above exists to prevent.
+	case productCols["productgroupid"] && groupCols["productgroupid"] &&
+		(groupCols["productgrouptext"] || groupCols["productgroupname"]):
+		switch {
+		case groupCols["productgrouptext"] && groupCols["productgroupname"]:
+			// ProductGroupText is the display name; fall back to
+			// ProductGroupName when a group left it blank.
+			category = "COALESCE(NULLIF(g.ProductGroupText, ''), g.ProductGroupName)"
+		case groupCols["productgrouptext"]:
+			category = "g.ProductGroupText"
+		default:
+			category = "g.ProductGroupName"
+		}
+		// LEFT, never INNER: a product pointing at a group id that no
+		// longer exists must still import, with no category.
+		join = " LEFT JOIN ProductGroups g ON g.ProductGroupID = p.ProductGroupID"
+	}
+
+	return "SELECT " + strings.Join([]string{
+		col("ProductNumber", "NULL"),
+		col("ProductTextShort", "NULL"),
+		col("SalesPrice", "NULL"),
+		category,
+		col("Status", "NULL"),
+		col("ProductType", "NULL"),
+		col("TaxPercentage", "NULL"),
+		col("TaxPercentage2", "NULL"),
+	}, ", ") + " FROM Products p" + join + " ORDER BY p.rowid"
+}
 
 // ReadBkpProducts reads every row of an extracted speedy kasse backup.db's
 // Products table. db is NOT this application's own catalog database — it's
@@ -73,21 +155,21 @@ const bkpProductsQueryNoTax = `SELECT ProductNumber, ProductTextShort, SalesPric
 // extracted from the operator's uploaded .bkp archive, closed and removed
 // by the caller once this returns.
 func ReadBkpProducts(ctx context.Context, db *sql.DB) ([]BkpProductRow, error) {
-	rows, err := db.QueryContext(ctx, bkpProductsQuery)
-	hasTaxColumns := true
+	productCols, err := bkpTableColumns(ctx, db, "Products")
 	if err != nil {
-		// SQLite reports a missing column by name in the error text — same
-		// fallback shape as CatalogRepo.ReadLookup's is_active handling
-		// (catalog_repo.go), for the same reason: an older/foreign schema
-		// missing an optional column is not a failure, just a narrower read.
-		if !strings.Contains(err.Error(), "no such column") {
-			return nil, fmt.Errorf("query Products: %w", err)
-		}
-		hasTaxColumns = false
-		rows, err = db.QueryContext(ctx, bkpProductsQueryNoTax)
-		if err != nil {
-			return nil, fmt.Errorf("query Products (no-tax fallback): %w", err)
-		}
+		return nil, err
+	}
+	if len(productCols) == 0 {
+		return nil, fmt.Errorf("query Products: backup contains no Products table")
+	}
+	groupCols, err := bkpTableColumns(ctx, db, "ProductGroups")
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.QueryContext(ctx, buildBkpProductsQuery(productCols, groupCols))
+	if err != nil {
+		return nil, fmt.Errorf("query Products: %w", err)
 	}
 	defer rows.Close()
 
@@ -95,12 +177,9 @@ func ReadBkpProducts(ctx context.Context, db *sql.DB) ([]BkpProductRow, error) {
 	for rows.Next() {
 		var productNumber, textShort, salesPrice, groupText, status, productType any
 		var taxPct, taxPct2 any
-		var scanErr error
-		if hasTaxColumns {
-			scanErr = rows.Scan(&productNumber, &textShort, &salesPrice, &groupText, &status, &productType, &taxPct, &taxPct2)
-		} else {
-			scanErr = rows.Scan(&productNumber, &textShort, &salesPrice, &groupText, &status, &productType)
-		}
+		// Always eight columns: buildBkpProductsQuery substitutes NULL for
+		// anything the backup doesn't carry, so there is no shape to branch on.
+		scanErr := rows.Scan(&productNumber, &textShort, &salesPrice, &groupText, &status, &productType, &taxPct, &taxPct2)
 		if scanErr != nil {
 			return nil, fmt.Errorf("scan Products row: %w", scanErr)
 		}

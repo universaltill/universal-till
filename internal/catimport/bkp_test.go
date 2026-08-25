@@ -763,3 +763,202 @@ func TestParseBkp_NoTaxColumnsInSourceSchemaStillImports(t *testing.T) {
 		t.Errorf("got %+v, want one item with no tax data", res.Items)
 	}
 }
+
+// --- ut-docs#968: meta.inf's per-file "checksum" is a CRC32, not a SHA-256 ---
+//
+// Verified against a real speedy kasse PRO 4.4.08 backup (270MB, from the
+// pilot site, 2026-08-09) — the file itself is never committable, so only its
+// SHAPE is reproduced here, with every identifying value replaced:
+//
+//	{"meta":{"files":[{"name":"backup.db","size":N,"checksum":"887be5e7"},…],…},
+//	 "checksum":"<128 hex over the meta object>"}
+//
+// The per-file value is 8 hex characters — CRC32 — and it matched the real
+// archive's bytes exactly. Comparing it against a 64-character SHA-256 can
+// never succeed, so every genuine backup was rejected as corrupt.
+
+// metaInfRealShape renders the real meta.inf structure with a caller-supplied
+// per-file checksum for backup.db.
+func metaInfRealShape(backupDBChecksum string, size int) string {
+	return fmt.Sprintf(`{"meta":{"files":[{"name":"backup.db","size":%d,"checksum":%q},{"name":"documents.zip","size":1024,"checksum":"835f511a"}],"backupTimestampLocal":"2026-01-01 00:00:00.000","appVersion":"4.4.08","appPackageName":"com.pepperm.cashbox.demo","appEditionDesc":"speedy kasse PRO ","licenseKey":"0-000000-000000","cashboxName":"Test Cafe","dbVersion":404009},"checksum":%q}`,
+		size, backupDBChecksum, strings.Repeat("a", 128))
+}
+
+func crc32Hex(b []byte) string {
+	return fmt.Sprintf("%08x", crc32.ChecksumIEEE(b))
+}
+
+func TestParseBkp_RealWorldMetaShape_CRC32ChecksumAccepted(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(metaInfRealShape(crc32Hex(dbBytes), len(dbBytes))),
+	})
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("a real-shaped backup with a correct CRC32 must import, got: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+}
+
+func TestParseBkp_RealWorldMetaShape_WrongCRC32Rejected(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	wrong := "00000000"
+	if wrong == crc32Hex(dbBytes) {
+		t.Fatal("test setup bug: wrong CRC32 accidentally matches the real one")
+	}
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(metaInfRealShape(wrong, len(dbBytes))),
+	})
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if !errors.Is(err, ErrBkpChecksumMismatch) {
+		t.Fatalf("err = %v, want ErrBkpChecksumMismatch", err)
+	}
+}
+
+// A width we cannot compute must NOT hard-fail the import — that is the exact
+// mistake this bug was: hard-failing on an unconfirmed schema guess. Falling
+// back leaves archive/zip's own per-entry CRC32 as the integrity guarantee.
+func TestParseBkp_UnrecognisedChecksumWidthDoesNotHardFail(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(metaInfRealShape(strings.Repeat("b", 40), len(dbBytes))), // SHA-1 width
+	})
+	if _, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2); err != nil {
+		t.Fatalf("an unrecognised checksum width must not hard-fail, got: %v", err)
+	}
+}
+
+// --- ut-docs#968: the real Products table has no ProductGroupText column ---
+//
+// Verified against the same real backup: the category name lives on
+// ProductGroups (keyed by Products.ProductGroupID), not denormalised onto
+// Products. Every query in bkp_products_repo.go selected
+// Products.ProductGroupText, so a real backup failed with
+// "no such column: ProductGroupText" — and the "no such column" fallback
+// made it worse by re-running the SAME missing column minus the tax columns,
+// reporting it as a "no-tax fallback" failure.
+
+// buildBkpDBBytesRealShape builds a fixture with the REAL speedy kasse 4.4.08
+// shape: Products.ProductGroupID joining to a ProductGroups table.
+func buildBkpDBBytesRealShape(t *testing.T, rows []bkpProductRow, groups map[int]string) []byte {
+	t.Helper()
+	tmp, err := os.CreateTemp("", "bkp-real-fixture-*.db")
+	if err != nil {
+		t.Fatalf("create temp db: %v", err)
+	}
+	path := tmp.Name()
+	_ = tmp.Close()
+	t.Cleanup(func() { _ = os.Remove(path) })
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open temp db: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE Products (
+		ProductID INTEGER PRIMARY KEY,
+		ProductNumber TEXT,
+		ProductTextShort TEXT,
+		ProductGroupID INTEGER,
+		SalesPrice REAL,
+		Status INTEGER,
+		TaxPercentage REAL,
+		TaxPercentage2 REAL,
+		ProductType INTEGER
+	)`); err != nil {
+		t.Fatalf("create Products: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE ProductGroups (
+		ProductGroupID INTEGER PRIMARY KEY,
+		ProductGroupName TEXT,
+		ProductGroupText TEXT
+	)`); err != nil {
+		t.Fatalf("create ProductGroups: %v", err)
+	}
+	for id, name := range groups {
+		if _, err := db.Exec(`INSERT INTO ProductGroups (ProductGroupID, ProductGroupName, ProductGroupText) VALUES (?,?,?)`, id, name, name); err != nil {
+			t.Fatalf("insert group: %v", err)
+		}
+	}
+	for i, r := range rows {
+		groupID := 1
+		if r.ProductGroupText == "" {
+			groupID = 0 // deliberately unmatched, exercises the LEFT JOIN
+		}
+		if _, err := db.Exec(`INSERT INTO Products
+			(ProductID, ProductNumber, ProductTextShort, ProductGroupID, SalesPrice, Status, TaxPercentage, TaxPercentage2, ProductType)
+			VALUES (?,?,?,?,?,?,?,?,?)`,
+			i+1, r.ProductNumber, r.ProductTextShort, groupID, r.SalesPrice, r.Status, r.TaxPercentage, r.TaxPercentage2, r.ProductType); err != nil {
+			t.Fatalf("insert product: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close temp db: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read temp db: %v", err)
+	}
+	return b
+}
+
+func TestParseBkp_RealSchema_CategoryComesFromProductGroupsJoin(t *testing.T) {
+	dbBytes := buildBkpDBBytesRealShape(t,
+		[]bkpProductRow{
+			{ProductNumber: "30033", ProductTextShort: "Latte Macchiato", SalesPrice: 5.0, ProductGroupText: "Kaffee", Status: 0, ProductType: 0, TaxPercentage: 19, TaxPercentage2: 7},
+		},
+		map[int]string{1: "Kaffee"},
+	)
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(metaInfRealShape(crc32Hex(dbBytes), len(dbBytes))),
+	})
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("a real-schema backup must import, got: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	if got := res.Items[0].Category; got != "Kaffee" {
+		t.Errorf("Category = %q, want %q — the join to ProductGroups is what carries it", got, "Kaffee")
+	}
+	if !res.Items[0].HasTax || res.Items[0].TaxRateBP != 1900 {
+		t.Errorf("dine-in tax = %d (has=%v), want 1900", res.Items[0].TaxRateBP, res.Items[0].HasTax)
+	}
+	if !res.Items[0].HasTakeaway || res.Items[0].TakeawayRateBP != 700 {
+		t.Errorf("takeaway tax = %d (has=%v), want 700", res.Items[0].TakeawayRateBP, res.Items[0].HasTakeaway)
+	}
+}
+
+// A product whose group id matches no ProductGroups row must still import,
+// with an empty category — never dropped, never a failed import.
+func TestParseBkp_RealSchema_UnmatchedGroupStillImports(t *testing.T) {
+	dbBytes := buildBkpDBBytesRealShape(t,
+		[]bkpProductRow{
+			{ProductNumber: "1", ProductTextShort: "Orphan", SalesPrice: 1.0, ProductGroupText: "", Status: 0, ProductType: 0, TaxPercentage: 19, TaxPercentage2: 19},
+		},
+		map[int]string{1: "Kaffee"},
+	)
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(metaInfRealShape(crc32Hex(dbBytes), len(dbBytes))),
+	})
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("unmatched group must not fail the import, got: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Category != "" {
+		t.Fatalf("items=%d category=%q, want 1 item with empty category", len(res.Items), res.Items[0].Category)
+	}
+}
