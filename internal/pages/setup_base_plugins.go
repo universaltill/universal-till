@@ -150,12 +150,31 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 	return nil
 }
 
-// localeInList reports whether want is present in locales, compared
-// case-insensitively — locale tags are case-insensitive ("de" == "DE"), and
-// the catalog's casing is the server's choice, not a contract.
+// localeInList reports whether the catalog listing's availableLocales cover
+// want. Two tags match when their base language matches, compared
+// case-insensitively: locale tags are case-insensitive ("de" == "DE"), the
+// catalog's casing is the server's choice rather than a contract, and a
+// listing published as "de-DE" is still the German pack a `de` spec wants.
+// That base-language rule is the same one the POS already applies to its own
+// locale lookups (baseLang in plugin_page.go, config.baseLang's region-tag
+// fallback) and mirrors ut-cloud's primaryLang comparison in
+// catalog.localeAvailable — matching only whole tags would re-open #1055 for
+// any pack published with a region subtag.
+//
+// It deliberately does NOT mirror the other two branches of ut-cloud's
+// localeAvailable, which treat an EMPTY availableLocales list and an "en"
+// entry as matching every requested locale. Those are right for *browsing*
+// the catalog (show the merchant everything they could read) and wrong here,
+// where the match decides plugin *identity*: an unrestricted or English
+// listing satisfying a `de` spec would silently auto-install the wrong
+// language pack. A base plugin must positively declare the locale it serves.
 func localeInList(locales []string, want string) bool {
+	wantBase := baseLang(strings.TrimSpace(want))
+	if wantBase == "" {
+		return false
+	}
 	for _, l := range locales {
-		if strings.EqualFold(l, want) {
+		if baseLang(strings.TrimSpace(l)) == wantBase {
 			return true
 		}
 	}
