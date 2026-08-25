@@ -100,15 +100,41 @@ has_real_display_manager() {
     esac
 }
 
-is_pi_appliance() {
+# Shared fresh-install gates for BOTH auto-setup branches below (headless
+# appliance and desktop kiosk overlay, ut-docs#1040). One author for the
+# environment checks, so the two branches can never drift into overlapping:
+# they differ ONLY on the resolved display manager (and the overlay's own
+# opt-out marker), which makes them mutually exclusive by construction.
+is_fresh_install_pi_debian() {
     [ "$1" = "configure" ] || return 1
     [ -z "$2" ] || return 1                 # upgrade → never auto-stage
     [ -d /run/systemd/system ] || return 1
     grep -qs "Raspberry Pi" /proc/device-tree/model || return 1
     grep -qsE '^ID=(debian|raspbian)' /etc/os-release || return 1
+    return 0
+}
+
+is_pi_appliance() {
+    is_fresh_install_pi_debian "$1" "$2" || return 1
     if has_real_display_manager; then
-        return 1                            # desktop image → manual opt-in only
+        return 1                            # desktop image → overlay branch below
     fi
+    return 0
+}
+
+# ut-docs#1040: the OTHER Pi shape — a fresh install on a Pi that DOES run a
+# desktop OS (Raspberry Pi OS "with Desktop", what a shop owner actually
+# flashes). The owner asked for exactly this: the till fullscreen (kiosk) ON
+# TOP of the existing desktop session, with a PIN-gated way back to the
+# desktop — never the headless cage takeover, which would cost them the
+# desktop they chose that image for. Opt out any time, BEFORE installing:
+#   sudo touch /etc/unitill/no-desktop-kiosk-overlay
+# (deliberately distinct from /etc/unitill/no-kiosk, which already means
+# "never kiosk-ify this box's console" for the headless path).
+is_desktop_kiosk_overlay() {
+    is_fresh_install_pi_debian "$1" "$2" || return 1
+    has_real_display_manager || return 1    # headless → appliance branch above
+    [ ! -e /etc/unitill/no-desktop-kiosk-overlay ] || return 1
     return 0
 }
 if is_pi_appliance "${1:-}" "${2:-}"; then
@@ -140,6 +166,76 @@ EOF
     systemctl enable unitill-kiosk-firstboot.service >/dev/null 2>&1 || true
     echo "Raspberry Pi appliance detected: fullscreen kiosk will be set up on next boot."
     echo "To keep this Pi kiosk-free instead: sudo touch /etc/unitill/no-kiosk"
+fi
+
+# Desktop kiosk overlay (ut-docs#1040): everything app-side already exists
+# and keys off two persisted settings plus an XDG autostart entry —
+#   - `unitill-pos provision-desktop-kiosk-defaults` seeds
+#     display.window_mode=kiosk + display.launch_on_startup=true through the
+#     repository layer (never raw SQL from this script) and records a
+#     system-actor audit entry, so the decision is visible to the owner on
+#     the till's own /audit page, not just in this install log. Idempotent
+#     (a DB-side completion marker), so a re-run never clobbers a window
+#     mode the owner has since changed. Run as the pos service user against
+#     the service's own data dir — the same UT_DATA_DIR unitill-pos.service
+#     pins — so it seeds the database the running till actually reads.
+#   - `unitill-desktop --install-autostart`, run once as the detected login
+#     user, writes ~/.config/autostart/unitill.desktop via the SAME Go code
+#     (reconcileAutostart) that owns that entry on every normal launch — the
+#     entry format has exactly one author, never a bash-heredoc copy here.
+# From then on the existing, already-tested flow does the rest: the desktop
+# session autostarts unitill-desktop, which fetches the seeded prefs from
+# the service and goes fullscreen kiosk; the PIN-gated "Exit to OS window"
+# in Settings hands the screen back to the desktop (ut-docs#883/#1039).
+if is_desktop_kiosk_overlay "${1:-}" "${2:-}"; then
+    mkdir -p /etc/unitill
+    # Login user: same rule as unitill-kiosk-setup.sh --auto (no SUDO_USER
+    # exists inside a dpkg transaction) — uid 1000, falling back to "pi".
+    # Unlike --auto we never CREATE a user here: with no login user there is
+    # no desktop session to overlay, so we log and leave the box alone.
+    OVERLAY_USER="$(getent passwd 1000 | cut -d: -f1 || true)"
+    OVERLAY_USER="${OVERLAY_USER:-pi}"
+    if ! id "$OVERLAY_USER" >/dev/null 2>&1; then
+        echo "Desktop Pi detected, but no login user (uid 1000 or 'pi') found — skipping the fullscreen-till setup."
+        echo "Run this once as your desktop user to finish it: /opt/unitill/bin/unitill-desktop --install-autostart"
+    else
+        AUTOSTART_STAGED=false
+        # Can fail legitimately (e.g. installed with --no-install-recommends,
+        # so the GTK/WebKit libs unitill-desktop links against are absent and
+        # the dynamic linker refuses to exec it) — never fail the install
+        # over it; the audit entry records the honest outcome either way.
+        if runuser -u "$OVERLAY_USER" -- /opt/unitill/bin/unitill-desktop --install-autostart; then
+            AUTOSTART_STAGED=true
+        else
+            echo "Warning: could not stage the till's autostart entry for user '$OVERLAY_USER'." >&2
+            echo "Run this once as that user to finish it: /opt/unitill/bin/unitill-desktop --install-autostart" >&2
+        fi
+        if runuser -u pos -- env UT_ENV_FILE=/opt/unitill/pos.env UT_DATA_DIR=/opt/unitill/data /opt/unitill/bin/unitill-pos provision-desktop-kiosk-defaults --trigger=deb-postinstall --autostart-staged="$AUTOSTART_STAGED"; then
+            # MUST restart: unitill-pos.service was already (re)started
+            # further up, BEFORE these two settings existed, and the running
+            # server caches them in memory (common.RuntimeState, seeded once
+            # by pages.Init's LoadState). Without this restart the seeding
+            # above is silently undone twice over:
+            #   - GET /api/window-mode answers from that stale cache, so the
+            #     autostarted desktop shell reads launch_on_startup=false and
+            #     its own reconcileAutostart(false) DELETES the autostart
+            #     entry we just staged — the overlay uninstalls itself on the
+            #     first login;
+            #   - the first-boot wizard (and every Settings save) calls
+            #     common.SaveState, which rewrites the WHOLE settings map
+            #     from that stale cache, putting window_mode back to
+            #     "normal" and launch_on_startup back to "false".
+            # try-restart, not restart: a no-op if the service isn't running
+            # (it will then read the seeded values on its own first start).
+            # Never fail the install on it, same as the restart above.
+            systemctl try-restart unitill-pos.service >/dev/null 2>&1 || true
+        else
+            echo "Warning: could not seed the fullscreen-till defaults — pick 'Kiosk' under Settings → Display instead." >&2
+        fi
+        echo "Raspberry Pi with a desktop detected: the till will open fullscreen over this desktop at login (user: $OVERLAY_USER)."
+        echo "Leave it any time via Settings → Display → 'Exit to OS window' (admin PIN)."
+        echo "To keep this desktop overlay-free instead: sudo touch /etc/unitill/no-desktop-kiosk-overlay"
+    fi
 fi
 
 echo "Universal Till installed. Open http://localhost:8080 — the first-boot"
