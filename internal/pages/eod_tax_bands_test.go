@@ -373,4 +373,20 @@ func TestBuildEODDoc_VATRateBandWideAmountsNotClipped(t *testing.T) {
 			t.Errorf("wide VAT band figure %q clipped from the Z-report:\n%s", want, out)
 		}
 	}
+	// Row-level: the band ROW itself must carry every column. Contains()
+	// over the whole doc is not enough — this fixture's NET/Tax totals
+	// lines repeat two of the three figures, which masked a real clip when
+	// column widths were measured in bytes while fmt pads and the renderer
+	// clips in runes (each £ charged a phantom column; found during
+	// ut-docs#1004).
+	bandRow := ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "£840,336.13") {
+			bandRow = l
+			break
+		}
+	}
+	if bandRow == "" || !strings.Contains(bandRow, "£1,000,000.00") {
+		t.Errorf("VAT band row lost its gross column: %q\n%s", bandRow, out)
+	}
 }
