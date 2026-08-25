@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-// TestMigration070BackfillsEqualPairTakeawayRate simulates a till carrying a
+// TestMigration071BackfillsEqualPairTakeawayRate simulates a till carrying a
 // tax code hand-created BEFORE ut-docs#1013's fix to parseTaxCodeForm — an
 // explicit takeaway_rate_basis_points equal to its own rate_basis_points
 // (e.g. 7%/7% for food, typed literally into both fields) — and confirms
-// migration 070 canonicalizes it to NULL on upgrade, matching every code
+// migration 071 canonicalizes it to NULL on upgrade, matching every code
 // created after the fix and the CSV-import path's own long-standing rule
-// (ut-docs#536). See internal/db/migrations/070_backfill_equal_pair_takeaway_rate.sql.
-func TestMigration070BackfillsEqualPairTakeawayRate(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "m070-upgrade.db")
+// (ut-docs#536). See internal/db/migrations/071_backfill_equal_pair_takeaway_rate.sql.
+func TestMigration071BackfillsEqualPairTakeawayRate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m071-upgrade.db")
 	d, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -36,16 +36,16 @@ func TestMigration070BackfillsEqualPairTakeawayRate(t *testing.T) {
 		t.Fatalf("seed no-takeaway tax code: %v", err)
 	}
 
-	// Rewind so 070 replays on reopen. 070 is pure DML (no ALTER TABLE) and
+	// Rewind so 071 replays on reopen. 071 is pure DML (no ALTER TABLE) and
 	// is the current latest migration, so there's no later DDL to undo first.
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 70`); err != nil {
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 71`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	d, err = Open(path) // replays 070 against the simulated pre-fix till
+	d, err = Open(path) // replays 071 against the simulated pre-fix till
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,13 +76,13 @@ func TestMigration070BackfillsEqualPairTakeawayRate(t *testing.T) {
 	}
 }
 
-// TestMigration070IsIdempotentOnCleanData confirms 070 is a genuine no-op
+// TestMigration071IsIdempotentOnCleanData confirms 071 is a genuine no-op
 // the SECOND time it runs against a till already clean of equal pairs --
-// the common case for every till upgrading past 070 already having gone
+// the common case for every till upgrading past 071 already having gone
 // through it once, and every till created after ut-docs#1013's write-path
 // fix, which never produces an equal pair to begin with.
-func TestMigration070IsIdempotentOnCleanData(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "m070-clean.db")
+func TestMigration071IsIdempotentOnCleanData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m071-clean.db")
 	d, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -93,13 +93,13 @@ func TestMigration070IsIdempotentOnCleanData(t *testing.T) {
 		t.Fatalf("seed tax code: %v", err)
 	}
 
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 70`); err != nil {
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 71`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
-	d, err = Open(path) // re-applies 070 a second time
+	d, err = Open(path) // re-applies 071 a second time
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +110,6 @@ func TestMigration070IsIdempotentOnCleanData(t *testing.T) {
 		t.Fatal(err)
 	}
 	if takeaway == nil || *takeaway != 700 {
-		t.Errorf("takeaway_rate_basis_points after re-applying 070 = %v, want unchanged 700", takeaway)
+		t.Errorf("takeaway_rate_basis_points after re-applying 071 = %v, want unchanged 700", takeaway)
 	}
 }
