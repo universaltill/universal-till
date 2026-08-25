@@ -300,7 +300,7 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	// bearer), and NEVER into subtotal/taxTotal (it is not revenue and not a
 	// taxable supply; VAT arises only at redemption, ut-docs#1008). The
 	// summed face value is returned separately so CompleteSale can persist
-	// it on the sale header (sales.voucher_issue_total, migration 068) —
+	// it on the sale header (sales.voucher_issue_total, migration 069) —
 	// InferTaxInclusive needs it on the other side of its identity.
 	for i, v := range in.VoucherIssues {
 		if !v.Amount.IsPositive() {

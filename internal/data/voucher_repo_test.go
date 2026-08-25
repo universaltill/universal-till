@@ -10,7 +10,7 @@ import (
 )
 
 // Voucher repo tests (ut-docs#1008) — real migrated schema via b8OpenDB
-// (internal/db.Open runs migration 067), never a hand-built twin.
+// (internal/db.Open runs migration 068), never a hand-built twin.
 
 func vSeedVoucher(t *testing.T, ctx context.Context, repo *POSRepo, id string, amount int64) {
 	t.Helper()
