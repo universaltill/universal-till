@@ -23,6 +23,11 @@ func setupStatusDB(t *testing.T) *sql.DB {
 		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE sales (id TEXT PRIMARY KEY, status TEXT NOT NULL, voided_at TEXT, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT);`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT, entity_id TEXT, action TEXT, data_json TEXT, created_at TEXT, blocked_actor_id TEXT);`,
+		// vouchers/voucher_transactions: column-identical to migration 067
+		// (ut-docs#1008) -- the void path now always checks
+		// voucher_transactions for issues to cascade to.
+		`CREATE TABLE vouchers (id TEXT PRIMARY KEY, holder_label TEXT, original_amount INTEGER NOT NULL, balance INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'EUR', voucher_type TEXT NOT NULL DEFAULT 'multi_purpose' CHECK (voucher_type IN ('multi_purpose')), status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','redeemed','void')), issued_sale_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
+		`CREATE TABLE voucher_transactions (id TEXT PRIMARY KEY, voucher_id TEXT NOT NULL REFERENCES vouchers (id), sale_id TEXT, type TEXT NOT NULL CHECK (type IN ('issue','redemption')), amount INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

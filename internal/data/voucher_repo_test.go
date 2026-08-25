@@ -3,6 +3,8 @@ package data
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -166,5 +168,62 @@ func TestEODReport_IncludesVoucherFlows(t *testing.T) {
 	// Distinct, not double counted: Gross stays the sales-row figure.
 	if rep.Gross != 1190 {
 		t.Fatalf("EOD gross = %d, want 1190 (sales rows only)", rep.Gross)
+	}
+}
+
+// F8 (ut-docs#1008 review): the guarded-UPDATE race protection in
+// DebitVoucherForRedemption, exercised for real. Two concurrent debits
+// against a balance that covers exactly ONE of them: exactly one may
+// succeed, the loser must get the typed refusal (insufficient-balance from
+// the guarded UPDATE's affected-rows check when the race interleaves, or
+// not-active from the pre-read when the winner already drained it), and the
+// balance must land at exactly zero — never negative. Iterated across fresh
+// vouchers so the read/update interleave actually occurs: with the WHERE
+// guards removed from the UPDATE, an interleaved pair double-debits the
+// balance to -amount, which this test catches.
+func TestVoucherRepo_ConcurrentDebitOnlyOneWins(t *testing.T) {
+	d := b8OpenDB(t, "voucher-race.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	for i := 0; i < 20; i++ {
+		id := fmt.Sprintf("GS-RACE-%d", i)
+		vSeedVoucher(t, ctx, repo, id, 1000)
+
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for g := 0; g < 2; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs <- repo.DebitVoucherForRedemption(ctx, nil, id, 1000)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+
+		var okCount int
+		for err := range errs {
+			if err == nil {
+				okCount++
+				continue
+			}
+			if !errors.Is(err, ErrVoucherInsufficientBalance) && !errors.Is(err, ErrVoucherNotActive) {
+				t.Fatalf("iteration %d: losing debit returned %v, want ErrVoucherInsufficientBalance or ErrVoucherNotActive", i, err)
+			}
+		}
+		if okCount != 1 {
+			t.Fatalf("iteration %d: %d debits succeeded, want exactly 1", i, okCount)
+		}
+		v, err := repo.GetVoucherBalance(ctx, id)
+		if err != nil {
+			t.Fatalf("iteration %d: read voucher: %v", i, err)
+		}
+		if v.BalanceMinor != 0 || v.Status != "redeemed" {
+			t.Fatalf("iteration %d: balance=%d status=%q after the race, want 0/'redeemed' (a negative balance means the guard clause is gone)", i, v.BalanceMinor, v.Status)
+		}
 	}
 }
