@@ -129,6 +129,66 @@ func TestResolveAndInstallBasePlugin_FiltersNonMatchingEntriesClientSide(t *test
 	}
 }
 
+// A listing published with a REGION-SUFFIXED locale tag ("de-DE") must still
+// satisfy a bare "de" spec: ut-cloud's own catalog.localeAvailable compares
+// primary language subtags, availableLocales comes straight from a plugin
+// author's manifest (so the tag's shape is their choice, not a contract), and
+// the POS already treats "de-DE" as "de" everywhere else it resolves a locale.
+// Matching whole tags only would silently install nothing — #1055 all over
+// again, one subtag further down.
+func TestResolveAndInstallBasePlugin_MatchesRegionSuffixedCatalogLocale(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-de", ListingID: "listing-lang-de", Name: "German language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"de-DE"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de"); !active {
+		t.Fatal(`expected a listing published as "de-DE" to satisfy the bare "de" spec`)
+	}
+}
+
+// The flip side of the base-language rule: it must not become a catch-all.
+// ut-cloud's localeAvailable deliberately treats an EMPTY availableLocales
+// list (and an "en" entry) as matching every locale — right for browsing the
+// catalog, wrong for deciding plugin identity, because it would auto-install
+// the wrong language pack. A base plugin has to positively declare its locale.
+func TestResolveAndInstallBasePlugin_UnrestrictedOrForeignListingNeverMatches(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{
+		"listing-lang-global": "ut-plugin-language-global",
+		"listing-lang-en":     "ut-plugin-language-en",
+	})
+	mkt.setCatalog(
+		// No availableLocales at all — "global" by ut-cloud's browse rule.
+		marketplace.PluginSummary{ID: "ut-plugin-language-global", ListingID: "listing-lang-global", Version: "1.0.0", CanonicalType: "language"},
+		// English pack: ut-cloud's browse rule says "en" is readable by all.
+		marketplace.PluginSummary{ID: "ut-plugin-language-en", ListingID: "listing-lang-en", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"en-US"}},
+	)
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("expected a clean no-op, got %v", err)
+	}
+	repo := data.NewPluginRepo(dp.Db)
+	if active, _ := repo.PluginActive(t.Context(), "ut-plugin-language-global"); active {
+		t.Fatal("a listing declaring no locale must not be auto-installed for a de spec")
+	}
+	if active, _ := repo.PluginActive(t.Context(), "ut-plugin-language-en"); active {
+		t.Fatal("an en-US language pack must not be auto-installed for a de spec")
+	}
+	if hits := mkt.downloadTokenHits(); hits != 0 {
+		t.Fatalf("expected no download-token request, got %d", hits)
+	}
+}
+
 // A country with nothing published yet for its locale is a no-op, not an
 // error — the till just has nothing to install.
 func TestResolveAndInstallBasePlugin_NoMatchingListingIsNoOp(t *testing.T) {
