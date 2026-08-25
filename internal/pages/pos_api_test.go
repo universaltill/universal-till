@@ -38,6 +38,10 @@ func newPOSTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		"VAR": {SKU: "VAR", Name: "Apple - Large", Qty: 1, PriceCents: 150, ItemID: "itm1", VariantID: "var1", TaxRateBP: 2000},
 	}
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
+	// Same charge-policy seam init.go wires in production (ADR-0061) — the
+	// tender handler consults d.Engine.ChargePolicy(), which answers only
+	// through this asker.
+	engine.SetChargePolicyAsker(&pluginChargePolicyAsker{db: db})
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
 	pm, err := plugins.Init(t.Context(), cfg, db)
@@ -540,7 +544,8 @@ func TestTenderHandler_QuickTenderCoversServiceCharge(t *testing.T) {
 	}
 
 	// ABC: price 100, 20% tax = 20, 10% service charge on the 100
-	// subtotal = 10 -> total 130.
+	// subtotal = 10, itself taxed at the sale's blended 20% rate = 2
+	// (ADR-0061 — the charge is never untaxed) -> total 132.
 	var total, serviceCharge int64
 	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales`).Scan(&total, &serviceCharge); err != nil {
 		t.Fatalf("query sale: %v", err)
@@ -548,15 +553,15 @@ func TestTenderHandler_QuickTenderCoversServiceCharge(t *testing.T) {
 	if serviceCharge != 10 {
 		t.Fatalf("expected service_charge_amount 10, got %d", serviceCharge)
 	}
-	if total != 130 {
-		t.Fatalf("expected total 130 (100 + 20 tax + 10 service charge), got %d", total)
+	if total != 132 {
+		t.Fatalf("expected total 132 (100 + 22 tax + 10 service charge), got %d", total)
 	}
 	var paymentAmount int64
 	if err := dp.Db.QueryRow(`SELECT amount FROM payments`).Scan(&paymentAmount); err != nil {
 		t.Fatalf("query payment: %v", err)
 	}
-	if paymentAmount != 130 {
-		t.Fatalf("expected the zero-amount payment to be filled in as 130, got %d", paymentAmount)
+	if paymentAmount != 132 {
+		t.Fatalf("expected the zero-amount payment to be filled in as 132, got %d", paymentAmount)
 	}
 }
 
@@ -576,7 +581,8 @@ func TestTenderHandler_QuickTenderCoversFractionalServiceCharge(t *testing.T) {
 	}
 
 	// ABC: price 100, 20% tax = 20, 12.5% service charge on the 100
-	// subtotal = 12.5 -> rounds to 13 (half-up) -> total 133.
+	// subtotal = 12.5 -> rounds to 13 (half-up); the charge is itself taxed
+	// at the sale's blended 20% rate = 3 (ADR-0061) -> total 136.
 	var total, serviceCharge int64
 	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales`).Scan(&total, &serviceCharge); err != nil {
 		t.Fatalf("query sale: %v", err)
@@ -584,8 +590,8 @@ func TestTenderHandler_QuickTenderCoversFractionalServiceCharge(t *testing.T) {
 	if serviceCharge != 13 {
 		t.Fatalf("expected service_charge_amount 13 (12.5%% of 100, half-up), got %d", serviceCharge)
 	}
-	if total != 133 {
-		t.Fatalf("expected total 133 (100 + 20 tax + 13 service charge), got %d", total)
+	if total != 136 {
+		t.Fatalf("expected total 136 (100 + 20 tax + 13 service charge + 3 tax on it), got %d", total)
 	}
 }
 

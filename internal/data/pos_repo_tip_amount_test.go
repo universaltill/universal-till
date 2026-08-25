@@ -43,7 +43,7 @@ func TestPOSRepo_TipAmount_RoundTrips(t *testing.T) {
 
 	// 420 = 370 sale total + 50 tip, charged as a single card transaction --
 	// the shape a SumUp reader's Cloud API transaction result would report.
-	if err := repo.InsertPayment(ctx, nil, "pay-tip", "sale-tip", "card", 420, "GBP", "auth-ref-1", 0, 50, "2026-07-28T10:00:00Z", CardPresentFields{}); err != nil {
+	if err := repo.InsertPayment(ctx, nil, "pay-tip", "sale-tip", "card", 420, "GBP", "auth-ref-1", 0, 50, "employee", "2026-07-28T10:00:00Z", CardPresentFields{}); err != nil {
 		t.Fatalf("insert payment: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestPOSRepo_TipAmount_DefaultsToZero(t *testing.T) {
 	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-notip','R-NOTIP-1','completed','sale','GBP',250,0,0,250,datetime('now'))`)
 	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-notip','sale-notip',1,'itm-tea','Tea',1,250,0,0,0,250,250)`)
 
-	if err := repo.InsertPayment(ctx, nil, "pay-notip", "sale-notip", "cash", 250, "GBP", "", 0, 0, "2026-07-28T10:00:00Z", CardPresentFields{}); err != nil {
+	if err := repo.InsertPayment(ctx, nil, "pay-notip", "sale-notip", "cash", 250, "GBP", "", 0, 0, "employee", "2026-07-28T10:00:00Z", CardPresentFields{}); err != nil {
 		t.Fatalf("insert payment: %v", err)
 	}
 

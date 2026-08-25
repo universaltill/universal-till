@@ -38,6 +38,20 @@ type SaleInput struct {
 	// service charge is revenue the customer owes and DOES participate in
 	// netPayments' payment-sufficiency check.
 	ServiceCharge money.Money
+	// ServiceChargeTaxBasisBP (ADR-0061) is the flat tax rate for the
+	// service charge, threaded through by the tender handler from an
+	// installed country plugin's charge.policy.ask answer
+	// (service_charge_tax_basis_bp). 0 — the value on every sale until a
+	// country plugin actually answers, and always on a synced/replayed sale
+	// — means the fail-closed default: the charge is taxed at the sale's own
+	// per-line rates, apportioned by net line value
+	// (ApportionServiceChargeTax). Deterministic either way, so a replayed
+	// sale's computeSaleTotals reproduces the original totals exactly
+	// without ever re-asking the policy hook (ADR-0061 Decision 4). NOTE:
+	// the LAN-sync journal does not carry this field yet — that lands with
+	// the follow-up card that makes ut-plugin-tax-{de,uk} actually answer
+	// the hook, before any plugin can set it non-zero in production.
+	ServiceChargeTaxBasisBP int
 	// OrderType is "" (dine-in/standard) or pos.OrderTypeTakeaway --
 	// whatever the checkout's basket already carries (Service.OrderType);
 	// persisted so a completed sale's receipt/journal/kitchen ticket can
@@ -117,6 +131,15 @@ type PaymentInput struct {
 	// the sale total, and does not affect netPayments/CompleteSale's
 	// payment-sufficiency check. Zero for tenders with no tip (e.g. cash).
 	TipAmount money.Money `json:"tip_amount"`
+	// TipRecipient (ADR-0061 Decision 3) is whose money the tip is for tax
+	// purposes: TipRecipientEmployee or TipRecipientBusiness. Persisted per
+	// payment so a report built later (ut-docs#964) reads the recipient as
+	// it actually was at capture time, never recomputed from a policy that
+	// may have since changed. Empty defaults to employee at persistence —
+	// the one default every researched market agrees on; the tender path
+	// consults charge.policy.ask's tip_default_recipient before this ever
+	// applies. Any other value is rejected (validate all external input).
+	TipRecipient string `json:"tip_recipient,omitempty"`
 
 	// Card-present reconciliation fields (ut-docs#543) -- optional,
 	// provider-agnostic metadata a locally-attached card terminal (e.g. a
@@ -194,6 +217,16 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, total m
 		return 0, 0, 0, 0, fmt.Errorf("service charge must be >= 0")
 	}
 	serviceCharge = in.ServiceCharge
+	// ADR-0061 Decision 2: the service charge is ALWAYS taxed — at a
+	// plugin-answered flat basis when one was threaded through, else
+	// apportioned across the sale's own per-line rate bands (the fail-closed
+	// default; no plugin subsystem exists in this package, so nothing here
+	// can be asked — the untaxed path is unreachable by construction).
+	// Inclusive pricing embeds the charge's tax inside the charge amount
+	// (taxTotal declares it, total is unchanged); exclusive adds it on top
+	// via the taxTotal fold below — the same split the lines themselves get.
+	chargeTax := ServiceChargeTax(serviceCharge, ChargeTaxLinesFromSale(in.Lines), in.TaxInclusive, in.ServiceChargeTaxBasisBP)
+	taxTotal = taxTotal.Add(chargeTax)
 	total = discountedSubtotal.Add(serviceCharge)
 	if !in.TaxInclusive {
 		total = total.Add(taxTotal)
@@ -224,6 +257,11 @@ func netPayments(payments []PaymentInput) (money.Money, error) {
 		}
 		if p.TipAmount.IsNegative() {
 			return 0, fmt.Errorf("payment %d tip must be >= 0", i+1)
+		}
+		switch p.TipRecipient {
+		case "", TipRecipientEmployee, TipRecipientBusiness:
+		default:
+			return 0, fmt.Errorf("payment %d tip recipient must be %q or %q", i+1, TipRecipientEmployee, TipRecipientBusiness)
 		}
 		// Tip is intentionally excluded from the sum that must cover the
 		// sale total -- it never offsets or inflates payment coverage.
@@ -362,7 +400,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
-			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), serviceCharge.Minor(), in.Note, now, tenderType, in.OrderType, in.TableID, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
+			if err := repo.InsertSale(ctx, tx, saleID, receiptNo, in.SaleType, in.RegisterID, in.CashierID, in.CustomerID, in.Currency, subtotal.Minor(), in.SaleDiscount.Minor(), taxTotal.Minor(), total.Minor(), serviceCharge.Minor(), in.ServiceChargeTaxBasisBP, in.Note, now, tenderType, in.OrderType, in.TableID, in.Offline, syncStatus, 0, syncNextAttemptAt, ""); err != nil {
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}
@@ -440,7 +478,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					TerminalID: p.TerminalID,
 					TraceID:    p.TraceID,
 				}
-				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), p.TipAmount.Minor(), time.Now().UTC().Format(time.RFC3339), cardPresent); err != nil {
+				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), p.TipAmount.Minor(), valueOrDefault(p.TipRecipient, TipRecipientEmployee), time.Now().UTC().Format(time.RFC3339), cardPresent); err != nil {
 					return err
 				}
 			}

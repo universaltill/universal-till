@@ -42,7 +42,7 @@ func TestPOSRepo_CardPresentFields_RoundTrip(t *testing.T) {
 	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-cp','R-CP-1','completed','sale','GBP',370,0,0,370,datetime('now'))`)
 	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-cp','sale-cp',1,'itm-coffee','Flat White',1,370,0,0,0,370,370)`)
 
-	if err := repo.InsertPayment(ctx, nil, "pay-cp", "sale-cp", "card", 370, "GBP", "", 0, 0, "2026-08-16T10:00:00Z",
+	if err := repo.InsertPayment(ctx, nil, "pay-cp", "sale-cp", "card", 370, "GBP", "", 0, 0, "employee", "2026-08-16T10:00:00Z",
 		CardPresentFields{MaskedPAN: "VISA •••• 4242", AuthCode: "013579", TerminalID: "TERM-01", TraceID: "TRACE-99"}); err != nil {
 		t.Fatalf("insert payment: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestPOSRepo_CardPresentFields_DefaultEmpty(t *testing.T) {
 	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-cash','R-CASH-1','completed','sale','GBP',250,0,0,250,datetime('now'))`)
 	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-cash','sale-cash',1,'itm-tea','Tea',1,250,0,0,0,250,250)`)
 
-	if err := repo.InsertPayment(ctx, nil, "pay-cash", "sale-cash", "cash", 250, "GBP", "", 0, 0, "2026-08-16T10:00:00Z", CardPresentFields{}); err != nil {
+	if err := repo.InsertPayment(ctx, nil, "pay-cash", "sale-cash", "cash", 250, "GBP", "", 0, 0, "employee", "2026-08-16T10:00:00Z", CardPresentFields{}); err != nil {
 		t.Fatalf("insert payment: %v", err)
 	}
 

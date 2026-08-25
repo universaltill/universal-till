@@ -129,13 +129,13 @@ type resetArchiveTable struct {
 // catalog/user rows and intra-batch parents are satisfied on re-insert.
 var resetArchiveTables = []resetArchiveTable{
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
-	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, masked_pan, auth_code, terminal_id, trace_id"},
+	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
 	{"sale_discounts", "id, sale_id, line_id, type, value, amount, reason"},
 	{"stock_movements", "id, item_id, variant_id, location_id, sale_line_id, type, quantity, cost_price, created_at"},
 	{"sale_line_modifiers", "id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor"},
 	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax"},
-	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token"},
+	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp"},
 	{"held_sales", "id, label, total_minor, line_count, payload, created_at, table_id"},
 	{"shifts", "id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note"},
 }
