@@ -49,8 +49,20 @@ func TestHTMLEscape(t *testing.T) {
 // newImportTestDeps builds Deps on a fully-migrated database — the import
 // commit path creates items/categories/barcodes/stock and writes audit rows,
 // which the simplified seedForPages schema (no categories.parent_id) can't
-// satisfy.
+// satisfy. Currency is pre-confirmed (see newImportTestDepsWithCurrencyState):
+// these tests exercise the import pipeline itself, not the ut-docs#970
+// first-import currency-confirmation gate.
 func newImportTestDeps(t *testing.T) *common.Deps {
+	t.Helper()
+	return newImportTestDepsWithCurrencyState(t, true)
+}
+
+// newImportTestDepsWithCurrencyState is newImportTestDeps parameterized on
+// whether the till's currency has been explicitly confirmed
+// (common.KeyCurrencyConfirmed, ut-docs#970) — confirmed=false reproduces a
+// fresh till that has never had its currency touched, the exact state the
+// import currency-confirmation gate exists for.
+func newImportTestDepsWithCurrencyState(t *testing.T, confirmed bool) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
 	d, err := appdb.Open(filepath.Join(t.TempDir(), "import.db"))
@@ -65,13 +77,19 @@ func newImportTestDeps(t *testing.T) *common.Deps {
 		t.Fatalf("init plugins: %v", err)
 	}
 	state := common.LoadState(t.Context(), settings.NewStore(d.DB), cfg)
+	store := settings.NewStore(d.DB)
+	if confirmed {
+		if err := store.Set(t.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
+			t.Fatalf("seed currency confirmed: %v", err)
+		}
+	}
 	return &common.Deps{
 		Cfg:      cfg,
 		Db:       d.DB,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
-		Settings: settings.NewStore(d.DB),
+		Settings: store,
 	}
 }
 

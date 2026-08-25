@@ -262,8 +262,22 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 
 		// Locale/currency/tax — same application path as /api/settings/save.
 		st := d.CurrentState()
-		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" && httpx.CurrencyByCode(v).Code == v {
+		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" && httpx.IsKnownCurrency(v) {
 			st.Currency = v
+			// Only mark confirmed (ut-docs#970) when the operator actually
+			// interacted with the country select — country/currency start
+			// PRE-FILLED from OS locale + timezone detection (ut-docs#590),
+			// not from a choice, so a submitted non-blank value alone proves
+			// nothing (review finding F3: this originally marked confirmed
+			// on every completed wizard run, since the field is essentially
+			// never blank). web/ui/pages/setup.html's currencyTouched only
+			// flips true on a genuine @change on the country select.
+			if r.Form.Get("currency_touched") == "1" {
+				if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
+					http.Error(w, "setup failed", http.StatusInternalServerError)
+					return
+				}
+			}
 		}
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
 			st.Country = v

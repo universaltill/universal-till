@@ -473,6 +473,14 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 	if st.Currency != "EUR" || st.Country != "DE" || st.TaxRatePct != 19 {
 		t.Fatalf("save not applied: %+v", st)
 	}
+	// ut-docs#970 review (F2): this is the handler the shipped currency card
+	// actually posts to — an earlier attempt marked confirmation in
+	// /api/settings/upsert's generic key/value switch instead, which the
+	// shipped UI never calls, so an operator using Settings normally stayed
+	// gated on their next import. Regression coverage for the fix.
+	if confirmed, ok, err := d.Settings.Get(t.Context(), common.KeyCurrencyConfirmed); err != nil || !ok || confirmed != "true" {
+		t.Fatalf("currency_confirmed = (%q, %v, %v), want (true, true, nil) after /api/settings/save sets a currency", confirmed, ok, err)
+	}
 
 	// Upsert: empty key is a 400; a known key reflects into state.
 	if rec := postForm(mux, "/api/settings/upsert", url.Values{"value": {"x"}}, &mgrUser); rec.Code != http.StatusBadRequest {
