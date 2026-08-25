@@ -152,7 +152,7 @@ var resetArchiveTables = []resetArchiveTable{
 	{"sale_charges", "sale_id, seq, key, label, amount_minor, tax_basis_bp, base"},
 	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp"},
 	{"held_sales", "id, label, total_minor, line_count, payload, created_at, table_id"},
-	{"shifts", "id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note"},
+	{"shifts", "id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note, new_float, count_protocol"},
 }
 
 // restoreEmptyCheckTables are the live tables that must ALL be empty before a

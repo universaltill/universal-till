@@ -2,6 +2,7 @@ package pages
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -34,6 +35,18 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 		// the template's hardcoded "reg-default" fallback, which only
 		// happens to line up with EnsureRegister's own default id today.
 		registers, _ := repo.ListRegisters(r.Context())
+		// Carried-forward opening float (ut-docs#1006): prefill the open
+		// form with what this till's register's last close left in the
+		// drawer (new float after any skim), so the operator confirms
+		// rather than re-types it — still editable, an explicit value
+		// always wins. Best-effort like the register resolution above; no
+		// prior close (or no resolved register) leaves the 0.00 default.
+		carryMinor := int64(0)
+		if tillRegisterID != "" {
+			if carried, ok, cfErr := pos.LastClosedShiftNewFloat(r.Context(), d.Db, tillRegisterID); cfErr == nil && ok {
+				carryMinor = carried.Minor()
+			}
+		}
 		data := map[string]any{
 			"title":          "Shifts",
 			"theme":          d.CurrentState().Theme,
@@ -43,6 +56,11 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 			"History":        history,
 			"Registers":      registers,
 			"TillRegisterID": tillRegisterID,
+			// Minor units plus a pre-formatted decimal for the number input
+			// (templates shouldn't do float math on money).
+			"CarryForwardMinor":   carryMinor,
+			"CarryForwardDisplay": fmt.Sprintf("%d.%02d", carryMinor/100, carryMinor%100),
+			"HasCarryForward":     carryMinor > 0,
 		}
 		httpx.Render("ui/pages/shifts.html", data)(w, r)
 	})
