@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -26,6 +27,21 @@ type ShiftCloseInput struct {
 	ShiftID     string
 	ClosingCash money.Money
 	Note        string
+	// Skim is the cash moved from the counted drawer to the safe at close
+	// (ut-docs#1006). Zero means no skim. Must be >= 0 and <= ClosingCash —
+	// it's an amount being removed; the sign is handled internally (the
+	// audit row records it negative, like any other cash leaving the till).
+	// The skim never feeds back into expected/calculated cash: variance is
+	// checked against the count BEFORE the skim is applied.
+	Skim money.Money
+	// SkimReason is the optional free-text reason recorded on the skim's
+	// audit row; defaults to CashAdjustmentReasonSkim when empty.
+	SkimReason string
+	// CountProtocol is an optional denomination-count JSON blob persisted
+	// with the close: a flat object keyed by denomination in minor units
+	// mapping to piece count, e.g. {"5000":2,"100":13}. Must be well-formed
+	// JSON when non-empty.
+	CountProtocol string
 }
 
 // CashAdjustmentReasonPfandrueckgabe is the fixed reason recorded for
@@ -33,11 +49,23 @@ type ShiftCloseInput struct {
 // any other free-text cash adjustment.
 const CashAdjustmentReasonPfandrueckgabe = "Pfandrückgabe"
 
+// CashAdjustmentReasonSkim is the default reason recorded for a
+// skim-to-safe when the operator gives none — reason stays free text,
+// unlike Pfandrückgabe this is just a suggested default.
+const CashAdjustmentReasonSkim = "Skim to safe"
+
 // CashAdjustmentInput captures payouts or adjustments affecting expected cash
 type CashAdjustmentInput struct {
 	ShiftID string
-	Type    string      // payout|adjustment
-	Amount  money.Money // negative for payout
+	// Type is one of:
+	//   payout     — cash paid out of the drawer (supplier, petty cash, …)
+	//   adjustment — a correction in either direction (float top-up, …)
+	//   skim       — cash moved from the drawer to the safe (ut-docs#1006)
+	// No TSE/fiscal gate applies to any of these — whether cash
+	// adjustments get the ADR-0048 hard-gate is ut-docs#998's open
+	// question, deliberately not decided here.
+	Type    string
+	Amount  money.Money // negative for cash leaving the drawer (payout/skim)
 	Reason  string
 	ActorID string
 }
@@ -91,7 +119,17 @@ func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (string, error
 	return shiftID, nil
 }
 
-// CloseShift closes an existing shift, calculates expected cash, and persists closing cash
+// CloseShift closes an existing shift, calculates expected cash, and
+// persists closing cash. With a Skim it also records the skim-to-safe
+// (ut-docs#1006): new_float = counted closing cash minus the skim, and the
+// skim lands as a cash_adjustment audit row in the SAME transaction as the
+// close — written directly here rather than via RecordCashAdjustment,
+// which requires the shift to still be open (it no longer is at that
+// point), but in the exact shape RecordCashAdjustment writes so
+// SumShiftAdjustments-style queries treat it identically. Expected cash is
+// computed BEFORE the close is persisted, so the skim row can never feed
+// back into the calculated figure — variance compares the count against
+// takings, before any skim.
 func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 	repo := data.NewPOSRepo(sqlDB)
 	if in.ShiftID == "" {
@@ -99,6 +137,15 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 	}
 	if in.ClosingCash < 0 {
 		return errors.New("closing_cash must be >= 0")
+	}
+	if in.Skim < 0 {
+		return errors.New("skim must be >= 0")
+	}
+	if in.Skim > in.ClosingCash {
+		return errors.New("skim cannot exceed the counted closing cash")
+	}
+	if in.CountProtocol != "" && !json.Valid([]byte(in.CountProtocol)) {
+		return errors.New("count_protocol must be valid JSON")
 	}
 
 	// Verify shift exists and is open
@@ -113,9 +160,11 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 		return fmt.Errorf("compute expected cash: %w", err)
 	}
 
+	newFloat := in.ClosingCash - in.Skim
+
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Format(time.RFC3339)
-		if err := repo.UpdateShiftClose(ctx, tx, in.ShiftID, in.ClosingCash.Minor(), expectedCash, in.Note, now); err != nil {
+		if err := repo.UpdateShiftClose(ctx, tx, in.ShiftID, in.ClosingCash.Minor(), expectedCash, newFloat.Minor(), in.Note, in.CountProtocol, now); err != nil {
 			return err
 		}
 		variance := in.ClosingCash - money.FromMinor(expectedCash)
@@ -128,10 +177,40 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 		if err := repo.InsertAudit(ctx, tx, cashierID, "shift", in.ShiftID, "close", payload, now, ""); err != nil {
 			return err
 		}
+		if in.Skim > 0 {
+			reason := in.SkimReason
+			if reason == "" {
+				reason = CashAdjustmentReasonSkim
+			}
+			skimPayload := map[string]any{
+				"shift_id": in.ShiftID,
+				"type":     "skim",
+				"amount":   (-in.Skim).Minor(),
+				"reason":   reason,
+			}
+			if err := repo.InsertAudit(ctx, tx, cashierID, "shift", in.ShiftID, "cash_adjustment", skimPayload, now, ""); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 
 	return err
+}
+
+// LastClosedShiftNewFloat returns the opening float carried forward from a
+// register's most recent closed shift (its new_float after any skim,
+// falling back to closing_cash for a shift closed before ut-docs#1006).
+// ok is false when the register has no closed shift yet.
+func LastClosedShiftNewFloat(ctx context.Context, sqlDB *sql.DB, registerID string) (money.Money, bool, error) {
+	if registerID == "" {
+		return 0, false, errors.New("register_id required")
+	}
+	carry, ok, err := data.NewPOSRepo(sqlDB).LastClosedShiftCarryForward(ctx, registerID)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	return money.FromMinor(carry), true, nil
 }
 
 // RecordCashAdjustment records a payout or adjustment for a shift
@@ -141,8 +220,8 @@ func RecordCashAdjustment(ctx context.Context, sqlDB *sql.DB, in CashAdjustmentI
 	if in.ShiftID == "" {
 		return "", errors.New("shift_id required")
 	}
-	if in.Type != "payout" && in.Type != "adjustment" {
-		return "", errors.New("type must be 'payout' or 'adjustment'")
+	if in.Type != "payout" && in.Type != "adjustment" && in.Type != "skim" {
+		return "", errors.New("type must be 'payout', 'adjustment' or 'skim'")
 	}
 	if in.Amount == 0 {
 		return "", errors.New("amount must be non-zero")

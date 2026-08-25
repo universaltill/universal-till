@@ -1580,6 +1580,23 @@ type EODMethod struct {
 	Out    int64  `json:"out"`
 }
 
+// CashReconciliation is the day-level cash-drawer reconciliation on the
+// Z-report (ut-docs#1006, German pilot): every shift CLOSED on the shop-local
+// day, summed. All amounts are minor units. Skim and PayOuts are stored as
+// the (negative) amounts recorded — cash that left the drawer.
+type CashReconciliation struct {
+	OpeningFloat int64 `json:"opening_float"`
+	CashSales    int64 `json:"cash_sales"`
+	PayIns       int64 `json:"pay_ins"`    // sum of positive non-skim adjustments
+	PayOuts      int64 `json:"pay_outs"`   // sum of negative non-skim adjustments (negative value)
+	Calculated   int64 `json:"calculated"` // sum of each closed shift's expected_cash
+	Counted      int64 `json:"counted"`    // sum of each closed shift's closing_cash
+	Variance     int64 `json:"variance"`   // Counted - Calculated
+	Skim         int64 `json:"skim"`       // sum of skim adjustments (negative value)
+	NewFloat     int64 `json:"new_float"`  // sum of each closed shift's new_float (fallback closing_cash)
+	ShiftsClosed int   `json:"shifts_closed"`
+}
+
 // EODReport is the classic Z-report for one business day, or — when From/To
 // are set instead of Day — a date-ranged summary spanning multiple days.
 type EODReport struct {
@@ -1598,6 +1615,63 @@ type EODReport struct {
 	FirstReceipt string      `json:"first_receipt"`
 	LastReceipt  string      `json:"last_receipt"`
 	GeneratedAt  string      `json:"generated_at"`
+	// CashReconciliation is single-day only (same from==to gate as
+	// Departments/Tills): nil on range reports, and nil when no shift was
+	// closed that day — a day-close still completes without one.
+	CashReconciliation *CashReconciliation `json:"cash_reconciliation,omitempty"`
+}
+
+// CashReconciliationForLocalDay aggregates the cash-drawer reconciliation
+// for every shift closed on the shop-local calendar day (ADR-0057 —
+// date(closed_at,'localtime'), the same convention dateRangeSummary uses
+// for sales). Returns nil, nil when zero shifts were closed that day: EOD
+// generation must never fail or block because nobody closed a shift
+// (offline-first / never-block-day-close). CashSales is NOT filled here —
+// the caller takes it from the report's own payment-method breakdown so
+// the two figures can never disagree on the same report.
+func (r *POSRepo) CashReconciliationForLocalDay(ctx context.Context, day string) (*CashReconciliation, error) {
+	var rec CashReconciliation
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*),
+  COALESCE(SUM(opening_cash), 0),
+  COALESCE(SUM(closing_cash), 0),
+  COALESCE(SUM(expected_cash), 0),
+  COALESCE(SUM(COALESCE(new_float, closing_cash)), 0)
+FROM shifts
+WHERE closed_at IS NOT NULL AND date(closed_at, 'localtime') = date(?)`, day).
+		Scan(&rec.ShiftsClosed, &rec.OpeningFloat, &rec.Counted, &rec.Calculated, &rec.NewFloat)
+	if err != nil {
+		return nil, fmt.Errorf("cash reconciliation shifts: %w", err)
+	}
+	if rec.ShiftsClosed == 0 {
+		return nil, nil
+	}
+	rec.Variance = rec.Counted - rec.Calculated
+
+	// Adjustments recorded against those shifts, split by declared type:
+	// "skim" (cash moved to the safe) apart from ordinary pay-ins/pay-outs,
+	// which split by sign — the same sign-over-label convention the
+	// manager-PIN gate uses (a row with no type at all is treated as a
+	// plain adjustment, not a skim).
+	err = r.db.QueryRowContext(ctx, `
+SELECT
+  COALESCE(SUM(CASE WHEN COALESCE(json_extract(a.data_json, '$.type'), '') = 'skim'
+                    THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0),
+  COALESCE(SUM(CASE WHEN COALESCE(json_extract(a.data_json, '$.type'), '') != 'skim'
+                     AND CAST(json_extract(a.data_json, '$.amount') AS INTEGER) > 0
+                    THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0),
+  COALESCE(SUM(CASE WHEN COALESCE(json_extract(a.data_json, '$.type'), '') != 'skim'
+                     AND CAST(json_extract(a.data_json, '$.amount') AS INTEGER) < 0
+                    THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0)
+FROM audit_log a
+JOIN shifts s ON s.id = a.entity_id
+WHERE a.entity_type = 'shift' AND a.action = 'cash_adjustment'
+  AND s.closed_at IS NOT NULL AND date(s.closed_at, 'localtime') = date(?)`, day).
+		Scan(&rec.Skim, &rec.PayIns, &rec.PayOuts)
+	if err != nil {
+		return nil, fmt.Errorf("cash reconciliation adjustments: %w", err)
+	}
+	return &rec, nil
 }
 
 // EndOfDay aggregates one day's completed sales and returns.
@@ -1693,6 +1767,25 @@ GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 	if from == to {
 		if depts, err := r.DepartmentsForDay(ctx, from); err == nil {
 			rep.Departments = depts
+		}
+		// Cash-drawer reconciliation (ut-docs#1006) — single-day only, like
+		// the breakdowns around it (summing counted-vs-calculated across a
+		// multi-day range would be misleading). Best-effort on the same
+		// swallow-the-error pattern as Departments: a reconciliation query
+		// failure must not sink the whole Z-report (day-close still
+		// completes; the section is simply absent, same as a day with no
+		// closed shift).
+		if rc, rcErr := r.CashReconciliationForLocalDay(ctx, from); rcErr == nil && rc != nil {
+			// CashSales comes from the report's own payment-method
+			// breakdown (net cash: sales in minus refunds out), so the two
+			// figures on one report can never disagree.
+			for _, m := range rep.Methods {
+				if m.Method == "cash" {
+					rc.CashSales = m.In - m.Out
+					break
+				}
+			}
+			rep.CashReconciliation = rc
 		}
 	}
 
@@ -3330,17 +3423,44 @@ WHERE id = ? AND closed_at IS NULL
 	return registerID, cashierID, openingCash, nil
 }
 
-// UpdateShiftClose sets closing details.
-func (r *POSRepo) UpdateShiftClose(ctx context.Context, tx *sql.Tx, shiftID string, closingCash, expectedCash int64, note string, closedAt string) error {
+// UpdateShiftClose sets closing details. newFloat is the drawer's
+// carry-forward after close (counted closing cash minus any skim recorded
+// with the close — ut-docs#1006); countProtocol is the optional
+// denomination-count JSON blob, stored NULL when empty.
+func (r *POSRepo) UpdateShiftClose(ctx context.Context, tx *sql.Tx, shiftID string, closingCash, expectedCash, newFloat int64, note, countProtocol string, closedAt string) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
 UPDATE shifts
-SET closed_at = ?, closing_cash = ?, expected_cash = ?, note = ?
+SET closed_at = ?, closing_cash = ?, expected_cash = ?, new_float = ?, note = ?, count_protocol = ?
 WHERE id = ?
-`, closedAt, closingCash, expectedCash, nullIfEmpty(note), shiftID)
+`, closedAt, closingCash, expectedCash, newFloat, nullIfEmpty(note), nullIfEmpty(countProtocol), shiftID)
 	if err != nil {
 		return fmt.Errorf("update shift: %w", err)
 	}
 	return nil
+}
+
+// LastClosedShiftCarryForward returns the cash the most recent closed shift
+// on a register left in the drawer — its new_float when recorded, else its
+// closing_cash (a shift closed before ut-docs#1006, or by older code, has
+// no new_float; the full counted amount stayed in the drawer then). ok is
+// false when the register has no closed shift yet. This is what an omitted
+// opening_cash on shift-open defaults to, so the float carries forward
+// instead of being re-typed.
+func (r *POSRepo) LastClosedShiftCarryForward(ctx context.Context, registerID string) (int64, bool, error) {
+	var carry int64
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(new_float, closing_cash, 0)
+FROM shifts
+WHERE register_id = ? AND closed_at IS NOT NULL
+ORDER BY closed_at DESC
+LIMIT 1`, registerID).Scan(&carry)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("last closed shift carry-forward: %w", err)
+	}
+	return carry, true, nil
 }
 
 // ShiftOpenExists checks if shift is open.
