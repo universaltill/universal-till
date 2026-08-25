@@ -1,8 +1,10 @@
 package pages
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -234,8 +236,14 @@ func TestTaxCodesAPI_Create_AcceptsExactly100(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newTaxCodesTestDeps(t)
 
+	// takeawayRate deliberately != rate (50, not 100): this test's own
+	// purpose is the rate=100 boundary, not equal-pair canonicalization
+	// (see TestTaxCodesAPI_Create_EqualPairCanonicalizesToNoOverride for
+	// that, ut-docs#1013) — an equal pair here would store
+	// takeaway_rate_basis_points as NULL and break this test's own
+	// non-null round-trip assertion below for an unrelated reason.
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes",
-		strings.NewReader("name=Full+Rate&rate=100&takeawayRate=100"))
+		strings.NewReader("name=Full+Rate&rate=100&takeawayRate=50"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -249,9 +257,104 @@ func TestTaxCodesAPI_Create_AcceptsExactly100(t *testing.T) {
 	).Scan(&rateBP, &takeawayBP); err != nil {
 		t.Fatal(err)
 	}
-	if rateBP != 10000 || takeawayBP != 10000 {
-		t.Fatalf("expected 10000bp/10000bp persisted, got %d/%d", rateBP, takeawayBP)
+	if rateBP != 10000 || takeawayBP != 5000 {
+		t.Fatalf("expected 10000bp/5000bp persisted, got %d/%d", rateBP, takeawayBP)
 	}
+
+	// The 100 boundary is shared parsing code (parsePercentToBP) for both
+	// fields -- cover it on takeawayRate too, with rate deliberately != 100
+	// this time so the pair stays a genuine override, not another
+	// equal-pair case.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes",
+		strings.NewReader("name=Full+Takeaway+Rate&rate=50&takeawayRate=100"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("takeawayRate=100: expected 200, got %d body %s", rec2.Code, rec2.Body.String())
+	}
+	var rateBP2, takeawayBP2 int
+	if err := dp.Db.QueryRow(
+		`SELECT rate_basis_points, takeaway_rate_basis_points FROM tax_codes WHERE name = 'Full Takeaway Rate'`,
+	).Scan(&rateBP2, &takeawayBP2); err != nil {
+		t.Fatal(err)
+	}
+	if rateBP2 != 5000 || takeawayBP2 != 10000 {
+		t.Fatalf("expected 5000bp/10000bp persisted, got %d/%d", rateBP2, takeawayBP2)
+	}
+}
+
+// TestTaxCodesAPI_Create_EqualPairCanonicalizesToNoOverride is ut-docs#1013's
+// review finding: a hand-created tax code whose takeaway rate equals its
+// dine-in rate must canonicalize to "no override" (takeaway_rate_basis_points
+// NULL), exactly like import_page.go's CSV-import path already does
+// (it.HasTakeaway && it.TakeawayRateBP != it.TaxRateBP). Before this fix, a
+// German café hand-typing "7" into both fields for a food item stored an
+// EXPLICIT equal-pair override that a later export → import round-trip of
+// the shop's own catalog could never match back onto (FindOrCreateTaxCode
+// searches on the stored (rate, takeaway) pair) — silently creating a
+// duplicate code and abandoning the merchant's own
+// (TestHandCreatedEqualPairTaxCode_MatchesFreshImportNoChurn in
+// import_page_test.go covers that full downstream consequence; this test
+// pins the canonicalization itself, at its source).
+func TestTaxCodesAPI_Create_EqualPairCanonicalizesToNoOverride(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newTaxCodesTestDeps(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes",
+		strings.NewReader("name=Speisen+7%25&rate=7&takeawayRate=7"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create: expected 200, got %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var rateBP int
+	var takeawayBP sql.NullInt64
+	if err := dp.Db.QueryRow(
+		`SELECT rate_basis_points, takeaway_rate_basis_points FROM tax_codes WHERE name = 'Speisen 7%'`,
+	).Scan(&rateBP, &takeawayBP); err != nil {
+		t.Fatal(err)
+	}
+	if rateBP != 700 {
+		t.Fatalf("rate_basis_points = %d, want 700", rateBP)
+	}
+	if takeawayBP.Valid {
+		t.Fatalf("takeaway_rate_basis_points = %d, want NULL (an equal pair is a no-op, not a stored override)", takeawayBP.Int64)
+	}
+
+	// The update path shares parseTaxCodeForm, so it must canonicalize
+	// identically -- an operator editing a genuinely-different pair back
+	// down to equal must clear the stored override, not leave it stale.
+	updateForm := "id=" + url.QueryEscape(rateCodeID(t, dp, "Speisen 7%")) +
+		"&name=Speisen+7%25&rate=7&takeawayRate=7"
+	updReq := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes/update", strings.NewReader(updateForm))
+	updReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	updRec := httptest.NewRecorder()
+	mux.ServeHTTP(updRec, updReq)
+	if updRec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d body %s", updRec.Code, updRec.Body.String())
+	}
+	if err := dp.Db.QueryRow(
+		`SELECT takeaway_rate_basis_points FROM tax_codes WHERE name = 'Speisen 7%'`,
+	).Scan(&takeawayBP); err != nil {
+		t.Fatal(err)
+	}
+	if takeawayBP.Valid {
+		t.Fatalf("after update, takeaway_rate_basis_points = %d, want still NULL", takeawayBP.Int64)
+	}
+}
+
+// rateCodeID looks up a tax code's id by name -- test helper for the update
+// leg of TestTaxCodesAPI_Create_EqualPairCanonicalizesToNoOverride.
+func rateCodeID(t *testing.T, dp *common.Deps, name string) string {
+	t.Helper()
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM tax_codes WHERE name = ?`, name).Scan(&id); err != nil {
+		t.Fatalf("look up tax code %q: %v", name, err)
+	}
+	return id
 }
 
 // A blank/whitespace-only name must come back as the localised
