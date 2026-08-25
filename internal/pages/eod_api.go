@@ -53,12 +53,20 @@ var eodDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 // fmtRateBP renders a basis-point tax rate as a percentage label for the
 // Z-report's VAT band footer: 700 → "7%", 1900 → "19%", and a non-whole
 // rate like 1050 → "10.5%" (trailing zeros trimmed, integer arithmetic
-// only — no floats near money-adjacent figures).
+// only — no floats near money-adjacent figures). Defensive on negatives:
+// nothing in the codebase validates tax_rate_bp >= 0, and the naive
+// "%d.%02d" on e.g. -50 rendered the garbage "0.-5%" — so the sign is
+// pulled out and the digits formatted from the absolute value instead of
+// assuming non-negative input.
 func fmtRateBP(bp int) string {
-	if bp%100 == 0 {
-		return fmt.Sprintf("%d%%", bp/100)
+	sign := ""
+	if bp < 0 {
+		sign, bp = "-", -bp
 	}
-	return strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0") + "%"
+	if bp%100 == 0 {
+		return fmt.Sprintf("%s%d%%", sign, bp/100)
+	}
+	return sign + strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0") + "%"
 }
 
 // buildEODDoc renders the Z-report for the receipt printer.
@@ -86,11 +94,39 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 	// per-register breakdown, as footer lines so they print on the Z-report
 	// without depending on new Doc fields.
 	if len(rep.TaxBands) > 0 {
+		// Column widths: start from the historical fixed layout (6/11/10/11
+		// = 41 chars incl. separators, print.Width is 42) and grow any
+		// column whose largest value doesn't fit. If the grown row would
+		// exceed print.Width — where the ESC/POS renderer hard-clips footer
+		// lines, silently amputating the gross's trailing digits on a
+		// £1,000,000.00+ day (2026-08-25 review finding) — collapse to
+		// tight widths (each column exactly its widest cell) instead, which
+		// keeps every digit printable up to ~£1M in all three money columns
+		// at once before physics wins.
+		rate, net, tax, gross := make([]string, len(rep.TaxBands)), make([]string, len(rep.TaxBands)), make([]string, len(rep.TaxBands)), make([]string, len(rep.TaxBands))
+		tw := [4]int{0, len("Net"), len("Tax"), len("Gross")} // tight: header floors
+		for i, b := range rep.TaxBands {
+			rate[i], net[i], tax[i], gross[i] = fmtRateBP(b.RateBP), money(b.Net), money(b.Tax), money(b.Gross)
+			for j, s := range []string{rate[i], net[i], tax[i], gross[i]} {
+				if len(s) > tw[j] {
+					tw[j] = len(s)
+				}
+			}
+		}
+		w := tw
+		for j, min := range [4]int{6, 11, 10, 11} { // historical layout when it fits
+			if w[j] < min {
+				w[j] = min
+			}
+		}
+		if w[0]+w[1]+w[2]+w[3]+3 > print.Width {
+			w = tw
+		}
 		doc.Footer = append(doc.Footer, "", "BY VAT RATE")
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-6s %11s %10s %11s", "", "Net", "Tax", "Gross"))
-		for _, b := range rep.TaxBands {
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-6s %11s %10s %11s",
-				fmtRateBP(b.RateBP), money(b.Net), money(b.Tax), money(b.Gross)))
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-*s %*s %*s %*s", w[0], "", w[1], "Net", w[2], "Tax", w[3], "Gross"))
+		for i := range rep.TaxBands {
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-*s %*s %*s %*s",
+				w[0], rate[i], w[1], net[i], w[2], tax[i], w[3], gross[i]))
 		}
 	}
 	if len(rep.Departments) > 0 {
@@ -135,6 +171,14 @@ func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID
 	repo := data.NewPOSRepo(d.Db)
 	rep, err := repo.EndOfDay(ctx, day)
 	if err != nil {
+		return rep, false, err
+	}
+	// Per-VAT-rate breakdown (ut-docs#1003) — computed here, not inside
+	// EndOfDay, because the banding math needs internal/pos (see
+	// eod_tax_bands.go). Must succeed BEFORE the report is archived: the
+	// archive is write-once per day, so a report archived without its VAT
+	// table could never be repaired.
+	if err := attachEODTaxBands(ctx, repo, &rep); err != nil {
 		return rep, false, err
 	}
 	raw, err := json.Marshal(rep)
@@ -465,6 +509,13 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		rep, err := repo.EndOfDayRange(r.Context(), from, to)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.range_failed", "eod_range_query", err)
+			return
+		}
+		// Per-VAT-rate breakdown (ut-docs#1003), same as generateEOD's
+		// single-day flow — see eod_tax_bands.go for why it's not inside
+		// EndOfDayRange itself.
+		if err := attachEODTaxBands(r.Context(), repo, &rep); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.range_failed", "eod_range_bands", err)
 			return
 		}
 		raw, err := json.Marshal(rep)

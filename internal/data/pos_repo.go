@@ -1079,6 +1079,7 @@ GROUP BY sl.tax_rate_bp ORDER BY sl.tax_rate_bp DESC`, fromStr, toStr)
 		if err := rows.Scan(&b.RateBP, &b.Net, &b.Tax); err != nil {
 			return nil, fmt.Errorf("scan tax band: %w", err)
 		}
+		b.Gross = b.Net + b.Tax
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -1588,16 +1589,21 @@ type EODMethod struct {
 // EODReport is the classic Z-report for one business day, or — when From/To
 // are set instead of Day — a date-ranged summary spanning multiple days.
 type EODReport struct {
-	Day          string      `json:"day,omitempty"`
-	From         string      `json:"from,omitempty"`
-	To           string      `json:"to,omitempty"`
-	SalesCount   int         `json:"sales_count"`
-	Gross        int64       `json:"gross"`
-	RefundCount  int         `json:"refund_count"`
-	RefundTotal  int64       `json:"refund_total"`
-	Net          int64       `json:"net"`
-	TaxNet       int64       `json:"tax_net"`
-	TaxBands     []TaxBand   `json:"tax_bands"` // per-VAT-rate net/tax/gross (ut-docs#1003)
+	Day         string `json:"day,omitempty"`
+	From        string `json:"from,omitempty"`
+	To          string `json:"to,omitempty"`
+	SalesCount  int    `json:"sales_count"`
+	Gross       int64  `json:"gross"`
+	RefundCount int    `json:"refund_count"`
+	RefundTotal int64  `json:"refund_total"`
+	Net         int64  `json:"net"`
+	TaxNet      int64  `json:"tax_net"`
+	// TaxBands is the per-VAT-rate net/tax/gross breakdown (ut-docs#1003).
+	// Filled by internal/pages' attachEODTaxBands, NOT by EndOfDay/
+	// EndOfDayRange themselves — the banding math (discount proration +
+	// ADR-0061 service-charge apportionment) lives in internal/pos, which
+	// this package cannot import. See dateRangeSummary's inline note.
+	TaxBands     []TaxBand   `json:"tax_bands"`
 	Methods      []EODMethod `json:"methods"`
 	Departments  []DeptSales `json:"departments"` // per-department sales (E1b)
 	Tills        []TillSales `json:"tills"`       // per-register sales (multi-till)
@@ -1689,48 +1695,18 @@ GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 		return rep, err
 	}
 
-	// Per-VAT-rate breakdown (ut-docs#1003): net / tax / gross per
-	// sale_lines.tax_rate_bp — what a German day-close (Z-Bon, VAT return,
-	// DATEV handoff) needs per rate. Applies to ranged reports too, same as
-	// Methods above. Deliberate details:
-	//   - Same LOCAL-calendar-day convention as this function's totals query
-	//     (ut-docs#869) — NOT TaxSummary's UTC datetime window, which is a
-	//     different report on a different time convention.
-	//   - Returns subtract, mirroring TaxSummary's sign-flip convention.
-	//   - Zero-value "note" lines (total_before_tax = total_after_tax = 0,
-	//     arbitrary tax_rate_bp) are excluded so they can't invent a
-	//     spurious band; a real 0%-rate sale has nonzero money and keeps
-	//     its own band.
-	//   - ORDER BY rate ASC (0%, 7%, 19% — the card's reference layout).
-	// Every summed column is a pre-rounded integer minor-unit value, so
-	// SUM() is exact integer arithmetic: band sums reconcile exactly with
-	// rep.TaxNet / rep.Net with no re-rounding anywhere (the reference
-	// implementation's rounding bug this card exists to avoid).
-	bandRows, err := r.db.QueryContext(ctx, `
-SELECT sl.tax_rate_bp,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.total_before_tax ELSE sl.total_before_tax END), 0) AS net,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.tax_amount ELSE sl.tax_amount END), 0) AS tax
-FROM sale_lines sl
-JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed'
-  AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
-  AND (sl.total_before_tax != 0 OR sl.total_after_tax != 0)
-GROUP BY sl.tax_rate_bp ORDER BY sl.tax_rate_bp ASC`, from, to)
-	if err != nil {
-		return rep, fmt.Errorf("eod tax bands: %w", err)
-	}
-	defer bandRows.Close()
-	for bandRows.Next() {
-		var b TaxBand
-		if err := bandRows.Scan(&b.RateBP, &b.Net, &b.Tax); err != nil {
-			return rep, fmt.Errorf("scan eod tax band: %w", err)
-		}
-		b.Gross = b.Net + b.Tax
-		rep.TaxBands = append(rep.TaxBands, b)
-	}
-	if err := bandRows.Err(); err != nil {
-		return rep, err
-	}
+	// Per-VAT-rate breakdown (ut-docs#1003): NOT computed here. rep.TaxBands
+	// is filled by internal/pages' attachEODTaxBands (eod_tax_bands.go),
+	// which feeds SalesForTaxBands (below — the same local-calendar-day
+	// window as this function) through the shared per-sale banding in
+	// internal/pos (pos.VATBandsForSale). A pure SQL aggregation over
+	// sale_lines was tried first and silently dropped two sale-level
+	// amounts that have no sale_lines row — the service charge's tax
+	// (ADR-0061) and the whole-sale discount — so the band sums broke the
+	// Z-report's own identities on any sale carrying either. The correct
+	// math needs internal/pos, which this package cannot import
+	// (internal/pos already imports internal/data), so the computation
+	// lives one layer up.
 
 	// Department and per-till breakdowns are single-day only for now, both
 	// gated on the same from==to check — DepartmentsForDay is a day-scoped
@@ -1778,6 +1754,98 @@ GROUP BY s.till_id ORDER BY 4 DESC`, from)
 		rep.Tills = tills
 	}
 	return rep, nil
+}
+
+// EODTaxBandLine is one sale line's input to the day-close VAT banding
+// (ut-docs#1003): the recorded rate, tax and tax-inclusive line total —
+// the same three figures data.SaleDetailLine carries for the invoice's
+// VAT table (LineTotal is sale_lines.total_after_tax).
+type EODTaxBandLine struct {
+	RateBP    int
+	TaxAmount int64
+	LineTotal int64
+}
+
+// EODTaxBandSale is one completed sale in the day-close window with
+// exactly the header fields the per-sale VAT banding needs: the pricing-
+// mode inference (pos.InferTaxInclusive) reads Subtotal/DiscountTotal/
+// TaxTotal/Total/ServiceCharge, the banding itself prorates DiscountTotal
+// and apportions ServiceCharge at ServiceChargeTaxBasisBP, and SaleType
+// decides the sign ('return' subtracts).
+type EODTaxBandSale struct {
+	ID                      string
+	SaleType                string
+	Subtotal                int64
+	DiscountTotal           int64
+	TaxTotal                int64
+	Total                   int64
+	ServiceCharge           int64
+	ServiceChargeTaxBasisBP int
+	Lines                   []EODTaxBandLine
+}
+
+// SalesForTaxBands loads every completed sale (and return) in the SAME
+// local-calendar-day window dateRangeSummary aggregates — date(created_at,
+// 'localtime') BETWEEN date(from) AND date(to), ut-docs#869 — with the
+// per-line figures the day-close VAT banding needs. The caller
+// (internal/pages' attachEODTaxBands) runs each sale through the shared
+// pos.VATBandsForSale; the math cannot live here because internal/data
+// cannot import internal/pos (see dateRangeSummary's inline note).
+//
+// Zero-value "note" lines (total_before_tax = total_after_tax = 0,
+// arbitrary tax_rate_bp) are excluded at the query so they can't invent a
+// spurious band — same exclusion the previous SQL-aggregate banding had; a
+// real 0%-rate line has nonzero money and keeps its band. Two fixed
+// queries regardless of sale count (no N+1); lines are grouped per sale in
+// Go.
+func (r *POSRepo) SalesForTaxBands(ctx context.Context, from, to string) ([]EODTaxBandSale, error) {
+	saleRows, err := r.db.QueryContext(ctx, `
+SELECT id, sale_type, subtotal, discount_total, tax_total, total,
+       service_charge_amount, service_charge_tax_basis_bp
+FROM sales
+WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND date(?)
+ORDER BY created_at, id`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("eod band sales: %w", err)
+	}
+	defer saleRows.Close()
+	var out []EODTaxBandSale
+	idx := map[string]int{}
+	for saleRows.Next() {
+		var s EODTaxBandSale
+		if err := saleRows.Scan(&s.ID, &s.SaleType, &s.Subtotal, &s.DiscountTotal,
+			&s.TaxTotal, &s.Total, &s.ServiceCharge, &s.ServiceChargeTaxBasisBP); err != nil {
+			return nil, fmt.Errorf("scan eod band sale: %w", err)
+		}
+		idx[s.ID] = len(out)
+		out = append(out, s)
+	}
+	if err := saleRows.Err(); err != nil {
+		return nil, err
+	}
+
+	lineRows, err := r.db.QueryContext(ctx, `
+SELECT sl.sale_id, COALESCE(sl.tax_rate_bp, 0), sl.tax_amount, sl.total_after_tax
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+  AND (sl.total_before_tax != 0 OR sl.total_after_tax != 0)
+ORDER BY sl.sale_id, sl.line_no`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("eod band lines: %w", err)
+	}
+	defer lineRows.Close()
+	for lineRows.Next() {
+		var saleID string
+		var l EODTaxBandLine
+		if err := lineRows.Scan(&saleID, &l.RateBP, &l.TaxAmount, &l.LineTotal); err != nil {
+			return nil, fmt.Errorf("scan eod band line: %w", err)
+		}
+		if i, ok := idx[saleID]; ok {
+			out[i].Lines = append(out[i].Lines, l)
+		}
+	}
+	return out, lineRows.Err()
 }
 
 // ArchiveReport stores a generated report; kind+period is unique so the
