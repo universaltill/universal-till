@@ -14,6 +14,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 func fatalf(format string, args ...any) {
@@ -34,6 +35,19 @@ func main() {
 
 	if err := data.NewDemoSeedRepo(conn.DB).SeedDemoCatalogue(context.Background()); err != nil {
 		fatalf("seed demo catalogue: %v", err)
+	}
+
+	// ut-docs#970: run-till.sh's till never drives the setup wizard
+	// (UT_AUTH=off, specs go straight to authenticated pages) or Settings,
+	// so it would otherwise sit permanently "unconfirmed" and every spec
+	// that commits a catalog import (e.g. catalog-import-friendly-errors)
+	// would hit the new currency-confirmation gate instead of the flow it's
+	// actually testing. This till is the e2e equivalent of an
+	// already-trading shop with an established currency — just seeded
+	// programmatically rather than through the wizard, same reasoning as
+	// migration 063's setup.completed-based backfill for real installs.
+	if err := data.NewSettingsRepo(conn.DB).Set(context.Background(), common.KeyCurrencyConfirmed, "true"); err != nil {
+		fatalf("mark currency confirmed: %v", err)
 	}
 	fmt.Println("demo catalogue seeded")
 }
