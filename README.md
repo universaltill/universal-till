@@ -462,10 +462,14 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 **Core POS is free forever, unconditionally** ([ADR-0027](https://github.com/universaltill/ut-docs/blob/main/adr/0027-plugin-availability-independent-of-payment.md)).
 Paid plans buy hosted infrastructure and support, never the till itself.
 
-**Every plan includes unlimited tills** — including the free one. A till
-running on your own counter costs us nothing, so we don't charge for it.
-Most POS vendors charge a licence for every device; ready2order is €35.90
-per till, per month.
+**Every plan includes unlimited tills in software** — including the free
+one. A till running on your own counter costs us nothing, so we don't
+charge for it. Most POS vendors charge a licence for every device;
+ready2order is €35.90 per till, per month. Where local law separately
+mandates a paid certified device (e.g. Germany's TSE), that device's real
+cost is disclosed as its own line, never folded into the plan price and
+never marked up beyond a published margin — see
+[ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).
 
 Our rule for what's free: **if a feature costs us money to run, it's in a
 subscription. If it doesn't, everyone gets it.** So everything that runs on
@@ -480,7 +484,7 @@ time (remote support, migration).
 | | **Local** | **Shop** | **Pro** | **Chain** |
 |---|---|---|---|---|
 | **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
-| **Tills** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
+| **Tills (software)** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
 | **Locations** | 1 | 1 | 1 | 3 (+€39 each, to 10) |
 | Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ |
 | All free plugins | ✅ | ✅ | ✅ | ✅ |
@@ -499,7 +503,9 @@ time (remote support, migration).
 | **Remote support session** | ❌ | ✅ | ✅ priority | ✅ on demand |
 | Support | Community | Email/ticket, Mon–Sat | Priority, same business day | Named contact + phone |
 
-Extra location **€39/month** (published up to 10) · **no per-till charge, ever** ·
+Extra location **€39/month** (published up to 10) · **software carries no
+per-till charge, ever** (a mandated device's real per-till cost, where one
+exists, is a disclosed line — [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md)) ·
 **no activation fee** · no minimum term on monthly billing · annual billing =
 **2 months free**.
 
