@@ -2,11 +2,21 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// ErrNoOSDesktop is ExitToOS's honest answer on the Pi kiosk appliance:
+// cage occupies the whole console, so there is no OS desktop to hand the
+// screen back to — the operator's way out is the window-mode toggle
+// (ApplyMode), not exit-to-os. Distinct from ErrNoWindowControl so the
+// settings handler can tell the operator the true, appliance-specific
+// story instead of the generic "window can't be reached" one (review of
+// ut-docs#1039, blocker 1; ADR-0064 Decision 4).
+var ErrNoOSDesktop = errors.New("this till is a dedicated kiosk appliance with no OS desktop to exit to")
 
 // systemctlKioskTimeout bounds one systemctl call. `systemctl start` can
 // block on the unit's own job (unitill-kiosk-setup.sh's own comment warns a
@@ -58,11 +68,15 @@ func runSystemctlKiosk(verb string) error {
 	return nil
 }
 
-// ExitToOS is a deliberate no-op on the Pi headless kiosk path — there is no
+// ExitToOS refuses, honestly, on the Pi headless kiosk path — there is no
 // OS desktop to exit to (cage occupies the whole console); the operator's
-// way out on this platform is the window-mode toggle itself (ApplyMode),
-// not exit-to-os.
-func (KioskSystemdWindowController) ExitToOS() error { return nil }
+// way out on this platform is the window-mode toggle itself (ApplyMode).
+// This used to be a silent `return nil`, which let a correct manager PIN
+// produce "204 Exited to OS." plus an exit_to_os audit row while
+// cage+chromium stayed fullscreen with nothing changed — the exact
+// fabricated success ADR-0064 Decision 4 binds this card to remove
+// (review of ut-docs#1039, blocker 1).
+func (KioskSystemdWindowController) ExitToOS() error { return ErrNoOSDesktop }
 
 // ApplyMode enables+starts unitill-kiosk.service for "kiosk" mode, and
 // disables+stops it for any other mode — replacing the file-touch-only

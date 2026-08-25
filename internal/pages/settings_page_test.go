@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -1644,5 +1645,251 @@ func TestSettingsEndpoints_RepoErrorIsLocalized(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "no such table") {
 		t.Fatalf("upsert error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// TestExitToOSEndpoint_NoShellAttached503NoAudit (ut-docs#1039): the .deb
+// attach-mode topology — ShellPollWindowController wired, no shell polling,
+// no spawn-mode fallback. A correct manager PIN must get an honest 503
+// ("this till's window can't be reached"), never the fabricated 204 the
+// old NoopWindowController default produced — and NO audit row: only a
+// real exit gets audited, same only-on-success reasoning as ut-docs#616.
+func TestExitToOSEndpoint_NoShellAttached503NoAudit(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	d.WindowCtl = common.NewShellPollWindowController(d.Shell, nil)
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os",
+		strings.NewReader(url.Values{"manager_pin": {"482913"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no-shell exit-to-os = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no_shell") {
+		t.Fatalf("no-shell body = %q, want the no_shell marker (nothing changed here, unlike not_confirmed)", rec.Body.String())
+	}
+	if n := auditCount(t, d.Db, "exit_to_os"); n != 0 {
+		t.Fatalf("audit_log has %d exit_to_os entries after a failed exit, want 0 (only a real exit is audited)", n)
+	}
+}
+
+// TestExitToOSEndpoint_AttachedAckingShell204AndAudit: with a shell holding
+// a live control poll that applies and acknowledges "normal", the same
+// request is a genuine 204 with the ut-docs#616 audit row.
+func TestExitToOSEndpoint_AttachedAckingShell204AndAudit(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	d.WindowCtl = common.NewShellPollWindowController(d.Shell, nil)
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the attached shell: heartbeat now, then behave like the real
+	// long poll — wake on the mode change, apply, acknowledge.
+	d.Shell.SetMode("kiosk")
+	d.Shell.NoteSeen("kiosk")
+	_, rev := d.Shell.Snapshot()
+	go func() {
+		mode, _ := d.Shell.Wait(context.Background(), rev, 5*time.Second)
+		d.Shell.NoteSeen(mode)
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os",
+		strings.NewReader(url.Values{"manager_pin": {"482913"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("attached+acked exit-to-os = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if mode, _ := d.Shell.Snapshot(); mode != "normal" {
+		t.Fatalf("live mode after exit-to-os = %q, want normal", mode)
+	}
+	if n := auditCount(t, d.Db, "exit_to_os"); n != 1 {
+		t.Fatalf("audit_log has %d exit_to_os entries after a real exit, want 1", n)
+	}
+}
+
+// TestExitToOSEndpoint_PiKioskAppliance503NoAudit is the permanent version
+// of the review probe for ut-docs#1039 blocker 1: on the Pi kiosk
+// appliance (KioskSystemdWindowController wired), a correct manager PIN
+// must get an honest 503 naming the appliance — never the fabricated
+// "204 Exited to OS." + audit row the probe demonstrated while
+// cage+chromium stayed fullscreen with nothing changed. web/help's display
+// topic documents exactly this: exit-to-os does not apply on a Pi, the
+// window-mode toggle is the way out.
+func TestExitToOSEndpoint_PiKioskAppliance503NoAudit(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	// The real constructor: ExitToOS must fail before ever reaching
+	// systemctl (ApplyMode is the only method allowed to shell out).
+	d.WindowCtl = common.NewKioskSystemdWindowController()
+	d.Shell.SetMode("kiosk")
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os",
+		strings.NewReader(url.Values{"manager_pin": {"482913"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Pi-appliance exit-to-os = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "kiosk_appliance") {
+		t.Fatalf("Pi-appliance exit-to-os body = %q, want the kiosk_appliance marker the UI maps to its own honest message", rec.Body.String())
+	}
+	if n := auditCount(t, d.Db, "exit_to_os"); n != 0 {
+		t.Fatalf("audit_log has %d exit_to_os entries, want 0 — no exit happened", n)
+	}
+	if mode, _ := d.Shell.Snapshot(); mode != "kiosk" {
+		t.Fatalf("live mode = %q after the refused exit, want kiosk (nothing changed)", mode)
+	}
+}
+
+// erroringWindowController fails ExitToOS with a fixed error — used to
+// drive the handler's per-sentinel mapping directly.
+type erroringWindowController struct{ exitErr error }
+
+func (e erroringWindowController) ExitToOS() error          { return e.exitErr }
+func (e erroringWindowController) ApplyMode(m string) error { return nil }
+
+// TestExitToOSEndpoint_NotConfirmedIsAuditedAndDistinct (review of
+// ut-docs#1039, finding 3): when a shell was attached and the exit WAS
+// signalled but never acknowledged, the live mode has already moved to
+// "normal" — the shell will leave kiosk moments later by re-reading state.
+// Telling the operator "nothing changed" is false, and skipping the audit
+// row hides a real, manager-authorised lockdown break. The handler must
+// answer with the distinct not_confirmed marker AND write the exit_to_os
+// audit row (flagged unconfirmed), unlike the genuinely-nothing-changed
+// no_shell case.
+func TestExitToOSEndpoint_NotConfirmedIsAuditedAndDistinct(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	d.WindowCtl = erroringWindowController{exitErr: common.ErrExitNotConfirmed}
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os",
+		strings.NewReader(url.Values{"manager_pin": {"482913"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("not-confirmed exit-to-os = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not_confirmed") {
+		t.Fatalf("not-confirmed body = %q, want the not_confirmed marker (distinct from no_shell's nothing-changed message)", rec.Body.String())
+	}
+	if n := auditCount(t, d.Db, "exit_to_os"); n != 1 {
+		t.Fatalf("audit_log has %d exit_to_os entries, want 1 — the lockdown break happened and was authorised", n)
+	}
+	var dataJSON string
+	if err := d.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action='exit_to_os'`).Scan(&dataJSON); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dataJSON, `"confirmed":false`) {
+		t.Fatalf("unconfirmed audit data_json = %q, want it flagged \"confirmed\":false", dataJSON)
+	}
+}
+
+// TestSettingsDisplayWindowControlNoteTellsTheTruthInAllThreeCases (review
+// of ut-docs#1039, finding 8): the Display card's note must state what is
+// actually holding the window on THIS till. The old single "stays off
+// until the desktop app is running" note was flatly false on a Pi kiosk
+// appliance, where kiosk is real, systemd-driven, and needs no desktop
+// app — on the one card whose acceptance criterion is that the product
+// never lies to the operator.
+func TestSettingsDisplayWindowControlNoteTellsTheTruthInAllThreeCases(t *testing.T) {
+	renderSettings := func(t *testing.T, mux *http.ServeMux) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+	const (
+		noShellMarker   = "until the Universal Till desktop app is running"
+		attachedMarker  = "running and holding this till"
+		applianceMarker = "driven by the till itself"
+	)
+
+	// Case 1: no shell attached (and not a Pi appliance) — the honest
+	// "saved but off" warning, and neither of the other two notes.
+	mux, _, _ := newFullAuthDeps(t)
+	body := renderSettings(t, mux)
+	if !strings.Contains(body, noShellMarker) {
+		t.Fatalf("no-shell Display card missing the %q note", noShellMarker)
+	}
+	if strings.Contains(body, applianceMarker) || strings.Contains(body, attachedMarker) {
+		t.Fatal("no-shell Display card shows a note for a topology this till is not in")
+	}
+
+	// Case 2: a desktop shell is holding a live control poll.
+	mux2, _, d2 := newFullAuthDeps(t)
+	d2.WindowCtl = common.NewShellPollWindowController(d2.Shell, nil)
+	d2.Shell.NoteSeen("normal")
+	body = renderSettings(t, mux2)
+	if !strings.Contains(body, attachedMarker) {
+		t.Fatalf("attached Display card missing the %q note", attachedMarker)
+	}
+	if strings.Contains(body, noShellMarker) || strings.Contains(body, applianceMarker) {
+		t.Fatal("attached Display card still shows a note for a topology this till is not in")
+	}
+
+	// Case 3: the Pi kiosk appliance — kiosk is real here, driven by
+	// systemd; the note must say so and point at the window-mode toggle
+	// as the way out, not at a desktop app that will never run.
+	mux3, _, d3 := newFullAuthDeps(t)
+	d3.WindowCtl = common.NewKioskSystemdWindowController()
+	body = renderSettings(t, mux3)
+	if !strings.Contains(body, applianceMarker) {
+		t.Fatalf("Pi-appliance Display card missing the %q note", applianceMarker)
+	}
+	if strings.Contains(body, noShellMarker) || strings.Contains(body, attachedMarker) {
+		t.Fatal("Pi-appliance Display card claims a desktop-app dependency it does not have")
 	}
 }

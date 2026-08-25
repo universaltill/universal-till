@@ -149,6 +149,19 @@ func ClampWindowMode(mode string) string {
 	return DefaultWindowMode
 }
 
+// IsChromeHiding reports whether mode hides the OS window chrome — the
+// pair of modes an operator cannot leave without a working exit
+// (ADR-0064). One predicate, used by every server-side site that cares
+// (the GET /api/window-mode fail-closed downgrade in particular), so the
+// pair can never drift between call sites. The desktop shell's own
+// flagsForWindowMode (cmd/unitill-desktop/window_mode.go) encodes the same
+// pairing — fullscreen and kiosk both map to undecorated-fullscreen — and
+// must be kept in agreement by hand: there is no shared package between
+// the two binaries.
+func IsChromeHiding(mode string) bool {
+	return mode == "fullscreen" || mode == "kiosk"
+}
+
 // LoadState pulls settings from the DB-backed settings store with cfg defaults.
 func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) RuntimeState {
 	get := func(key, def string) string {
