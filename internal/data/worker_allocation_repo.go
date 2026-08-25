@@ -192,3 +192,57 @@ WHERE source_type = 'yuzde_usulu_pool' AND date(allocated_at, 'localtime') BETWE
 
 	return out, nil
 }
+
+// ListWorkerAllocations returns the row-level detail behind
+// WorkerAllocationsSummary's AllocatedMinor total for [from, to] (same
+// date(allocated_at, 'localtime') BETWEEN date(?) AND date(?) convention as
+// the summary query above — see its doc comment for why a bare UTC date()
+// match would silently aggregate the wrong calendar day on a non-UTC host,
+// ut-docs#869), optionally scoped to one cashierID ("" = every worker).
+// sourceType is required (unlike cashierID) — same "" -> error and
+// unsupported-value -> error guards as WorkerAllocationsSummary, so a caller
+// can't silently list every source_type's rows through the wrong report
+// (#964's UK report reads "tip"/"service_charge" only; #965's Turkey report
+// reads "yuzde_usulu_pool" only — each is a distinct legal record, not one
+// combined feed). Ordered by allocated_at DESC — most recent payout first,
+// the order a manager or a worker checking their own payout history expects.
+func (r *POSRepo) ListWorkerAllocations(ctx context.Context, from, to, cashierID, sourceType string) ([]WorkerAllocation, error) {
+	if sourceType == "" {
+		return nil, fmt.Errorf("list worker allocations: source_type is required")
+	}
+	switch sourceType {
+	case "tip", "yuzde_usulu_pool", "service_charge":
+	default:
+		return nil, fmt.Errorf("list worker allocations: unsupported source_type %q", sourceType)
+	}
+
+	query := `
+SELECT id, source_type, source_id, cashier_id, amount_minor, allocated_at, note
+FROM worker_allocations
+WHERE source_type = ? AND date(allocated_at, 'localtime') BETWEEN date(?) AND date(?)`
+	args := []any{sourceType, from, to}
+	if cashierID != "" {
+		query += ` AND cashier_id = ?`
+		args = append(args, cashierID)
+	}
+	query += ` ORDER BY allocated_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list worker allocations: %w", err)
+	}
+	defer rows.Close()
+
+	var out []WorkerAllocation
+	for rows.Next() {
+		var wa WorkerAllocation
+		if err := rows.Scan(&wa.ID, &wa.SourceType, &wa.SourceID, &wa.CashierID, &wa.AmountMinor, &wa.AllocatedAt, &wa.Note); err != nil {
+			return nil, fmt.Errorf("list worker allocations: scan: %w", err)
+		}
+		out = append(out, wa)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list worker allocations: %w", err)
+	}
+	return out, nil
+}
