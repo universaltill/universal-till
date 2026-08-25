@@ -81,7 +81,10 @@ func TestWatchShellMode_AppliesChangesAndSendsControlParams(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		watchShellMode(ctx, srv.Client(), srv.URL, "normal", 1, func(mode string) { applied <- mode })
+		watchShellMode(ctx, srv.Client(), srv.URL, "normal", 1, func(mode string, done func()) {
+			applied <- mode
+			done()
+		})
 		close(done)
 	}()
 
@@ -156,7 +159,10 @@ func TestWatchShellMode_UnchangedModeNotReapplied(t *testing.T) {
 		<-done
 	}()
 	go func() {
-		watchShellMode(ctx, srv.Client(), srv.URL, "kiosk", 1, func(mode string) { applied <- mode })
+		watchShellMode(ctx, srv.Client(), srv.URL, "kiosk", 1, func(mode string, done func()) {
+			applied <- mode
+			done()
+		})
 		close(done)
 	}()
 
@@ -208,7 +214,10 @@ func TestWatchShellMode_RetriesAfterErrorsWithBackoff(t *testing.T) {
 		<-watcherDone
 	}()
 	go func() {
-		watchShellMode(ctx, srv.Client(), srv.URL, "normal", 1, func(mode string) { applied <- mode })
+		watchShellMode(ctx, srv.Client(), srv.URL, "normal", 1, func(mode string, done func()) {
+			applied <- mode
+			done()
+		})
 		close(watcherDone)
 	}()
 
@@ -251,7 +260,7 @@ func TestWatchShellMode_SurvivesConnectionFailure(t *testing.T) {
 		shellPollRetryDelay = oldDelay
 	}()
 	go func() {
-		watchShellMode(ctx, &http.Client{Timeout: time.Second}, "http://127.0.0.1:1", "normal", 1, func(string) {
+		watchShellMode(ctx, &http.Client{Timeout: time.Second}, "http://127.0.0.1:1", "normal", 1, func(string, func()) {
 			t.Error("apply called with no server")
 		})
 		close(done)
@@ -311,4 +320,179 @@ func mustParseQuery(t *testing.T, raw string) url.Values {
 		t.Fatalf("parse query %q: %v", raw, err)
 	}
 	return q
+}
+
+// TestWatchShellMode_AppliedAdvancesOnlyOnRealAck (review of ut-docs#1039,
+// finding 4): applied= must acknowledge a window that really changed, not
+// a closure merely QUEUED onto the GTK thread. The apply callback receives
+// a done() to call once the mode is truly applied; until then every poll
+// keeps reporting the previous mode, so a wedged GTK loop simply never
+// acks and the server's exit-to-os answers with the honest not-confirmed
+// path instead of "Exited to OS." over a sealed window. Also pins that a
+// pending apply is not re-dispatched when the server repeats the same mode
+// (a wedged loop must not accumulate queued closures).
+func TestWatchShellMode_AppliedAdvancesOnlyOnRealAck(t *testing.T) {
+	oldDelay := shellPollRetryDelay
+	shellPollRetryDelay = 10 * time.Millisecond
+
+	ps := &pollServer{t: t, release: make(chan struct{})}
+	ps.script = []struct {
+		mode string
+		rev  uint64
+	}{
+		{"kiosk", 2},
+		{"kiosk", 2}, // the server repeating itself (a wait timeout answer)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(ps.handler))
+	defer srv.Close()
+
+	var mu sync.Mutex
+	var applies []string
+	var pendingDone func()
+	ctx, cancel := context.WithCancel(context.Background())
+	watcherDone := make(chan struct{})
+	released := false
+	defer func() {
+		cancel()
+		if !released {
+			close(ps.release)
+		}
+		<-watcherDone
+		shellPollRetryDelay = oldDelay
+	}()
+	go func() {
+		watchShellMode(ctx, srv.Client(), srv.URL, "normal", 1, func(mode string, done func()) {
+			mu.Lock()
+			applies = append(applies, mode)
+			pendingDone = done
+			mu.Unlock()
+			// deliberately NOT calling done() — the "GTK thread wedged" case
+		})
+		close(watcherDone)
+	}()
+
+	// Wait until the watcher has consumed both scripted answers and made a
+	// third request (which parks) — i.e. at least 3 requests seen.
+	waitFor := func(n int) []string {
+		deadline := time.After(3 * time.Second)
+		for {
+			if qs := ps.queries(); len(qs) >= n {
+				return qs
+			}
+			select {
+			case <-deadline:
+				t.Fatalf("never saw %d requests: %v", n, ps.queries())
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+	qs := waitFor(3)
+
+	// The un-acked polls keep reporting the mode last really applied.
+	for i := 1; i < 3; i++ {
+		if got := mustParseQuery(t, qs[i]).Get("applied"); got != "normal" {
+			t.Fatalf("poll %d applied = %q before done(), want normal — the ack must mean applied, not dispatched", i, got)
+		}
+	}
+	mu.Lock()
+	if len(applies) != 1 || applies[0] != "kiosk" {
+		t.Fatalf("applies = %v, want exactly [kiosk] — a pending apply must not be re-dispatched", applies)
+	}
+	done := pendingDone
+	mu.Unlock()
+	if done == nil {
+		t.Fatal("no done() captured")
+	}
+
+	// The window really applied now: ack it, unpark the watcher, and the
+	// next poll must carry applied=kiosk.
+	done()
+	released = true
+	close(ps.release)
+	deadline := time.After(3 * time.Second)
+	for {
+		qs = ps.queries()
+		if len(qs) >= 4 {
+			last := mustParseQuery(t, qs[len(qs)-1]).Get("applied")
+			if last == "kiosk" {
+				break
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("no poll carried applied=kiosk after done(): %v", ps.queries())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestWatchShellMode_DowngradesAfterProlongedOutageInChromeHidingMode
+// (review of ut-docs#1039, finding 5): a server outage mid-kiosk must not
+// leave a sealed window on a keyboardless touchscreen. Once consecutive
+// poll failures outlast shellPollDowngradeAfter while the current mode
+// hides OS chrome, the shell applies "normal" on its own — the whole
+// mechanism's failure mode is a normal window, never a sealed one, LIVE
+// and not just at next launch.
+func TestWatchShellMode_DowngradesAfterProlongedOutageInChromeHidingMode(t *testing.T) {
+	oldDelay, oldAfter := shellPollRetryDelay, shellPollDowngradeAfter
+	shellPollRetryDelay = 10 * time.Millisecond
+	shellPollDowngradeAfter = 100 * time.Millisecond
+
+	applied := make(chan string, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	defer func() {
+		cancel()
+		<-done
+		shellPollRetryDelay, shellPollDowngradeAfter = oldDelay, oldAfter
+	}()
+	go func() {
+		// Nothing listening: the till server crash-looped after an upgrade.
+		watchShellMode(ctx, &http.Client{Timeout: time.Second}, "http://127.0.0.1:1", "kiosk", 1, func(mode string, d func()) {
+			applied <- mode
+			d()
+		})
+		close(done)
+	}()
+
+	select {
+	case got := <-applied:
+		if got != "normal" {
+			t.Fatalf("watchdog applied %q, want normal", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no watchdog downgrade — a dead server left the window sealed in kiosk")
+	}
+
+	// One-shot until something changes: no repeated re-apply spam.
+	select {
+	case got := <-applied:
+		t.Fatalf("watchdog applied again (%q) while still failing", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestWatchShellMode_NoDowngradeWhenWindowIsNormal: the watchdog exists
+// only to unseal a chrome-hiding window; a shell already in a normal (or
+// maximized) window must not see spurious applies during an outage.
+func TestWatchShellMode_NoDowngradeWhenWindowIsNormal(t *testing.T) {
+	oldDelay, oldAfter := shellPollRetryDelay, shellPollDowngradeAfter
+	shellPollRetryDelay = 10 * time.Millisecond
+	shellPollDowngradeAfter = 50 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	defer func() {
+		cancel()
+		<-done
+		shellPollRetryDelay, shellPollDowngradeAfter = oldDelay, oldAfter
+	}()
+	go func() {
+		watchShellMode(ctx, &http.Client{Timeout: time.Second}, "http://127.0.0.1:1", "normal", 1, func(mode string, d func()) {
+			t.Errorf("apply(%q) during outage while already normal", mode)
+			d()
+		})
+		close(done)
+	}()
+	time.Sleep(300 * time.Millisecond)
 }

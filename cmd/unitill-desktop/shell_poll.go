@@ -21,9 +21,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -47,6 +50,27 @@ const shellPollClientTimeout = (shellPollWaitSeconds + 15) * time.Second
 // so tests can shrink it.
 var shellPollRetryDelay = 2 * time.Second
 
+// shellPollDowngradeAfter is the shell-side outage watchdog (review of
+// ut-docs#1039, finding 5): once consecutive poll failures have lasted
+// this long while the window is in a chrome-hiding mode, the shell applies
+// "normal" on its own — an `apt upgrade` that leaves unitill-pos
+// crash-looping must not leave a fullscreen+undecorated "can't connect"
+// page on a keyboardless touchscreen with no exit. Must equal the server's
+// common.ShellAttachedWindow (60s) so both sides give up on each other on
+// the same clock — no shared package between the binaries, so the number
+// is the contract, pinned by TestShellPollContractsMatchCommonPackage. A
+// package var so tests can shrink it.
+var shellPollDowngradeAfter = 60 * time.Second
+
+// isChromeHidingMode mirrors the server's common.IsChromeHiding via this
+// binary's own flag table: a mode whose window hides the OS chrome
+// (undecorated fullscreen) is the only kind the outage watchdog must
+// unseal.
+func isChromeHidingMode(mode string) bool {
+	f := flagsForWindowMode(mode)
+	return f.Fullscreen && !f.Decorated
+}
+
 // newShellPollClient is the client showWindow hands watchShellMode —
 // plain, loopback-only traffic; the timeout is the load-bearing part.
 func newShellPollClient() *http.Client {
@@ -54,22 +78,60 @@ func newShellPollClient() *http.Client {
 }
 
 // watchShellMode long-polls GET /api/window-mode?control=live and calls
-// apply(mode) on every change, forever, until ctx is cancelled — the only
-// exit. `initial` is the mode the shell already applied at launch (from
-// fetchShellPrefs) and `since` that fetch's revision, so a Settings change
-// landing between the launch fetch and the first poll is caught by the
-// first poll (the server answers immediately whenever since is stale).
+// apply(mode, done) on every change, forever, until ctx is cancelled — the
+// only exit. `initial` is the mode the shell already applied at launch
+// (from fetchShellPrefs) and `since` that fetch's revision, so a Settings
+// change landing between the launch fetch and the first poll is caught by
+// the first poll (the server answers immediately whenever since is stale).
 //
-// applied= carries the last mode apply() was invoked for — updated only
-// after apply returns — which is both this shell's heartbeat (it keeps the
-// server's Attached() true, and with it this shell's entitlement to
+// apply must invoke done() only once the mode has REALLY been applied to
+// the window — for the GTK wiring that means from inside the dispatched
+// closure, after applyWindowMode returned, not when Dispatch merely queued
+// it (review of ut-docs#1039, finding 4). applied= carries the last mode
+// whose done() has fired, which is both this shell's heartbeat (it keeps
+// the server's Attached() true, and with it this shell's entitlement to
 // chrome-hiding modes) and its acknowledgement (it releases the server's
 // exit-to-os WaitApplied, turning the operator's "Exited to OS." into a
-// statement of fact). Errors never end the loop: the server being down or
-// mid-restart is routine, so back off shellPollRetryDelay and try again.
-func watchShellMode(ctx context.Context, client *http.Client, baseURL string, initial string, since uint64, apply func(mode string)) {
+// statement of fact). A wedged GTK loop therefore simply never acks, and
+// the server's honest not-confirmed path fires instead of a fabricated
+// success. A mode whose apply is still pending is not re-dispatched when
+// the server repeats it.
+//
+// Errors never end the loop: the server being down or mid-restart is
+// routine, so back off shellPollRetryDelay and try again — but with the
+// finding-5 watchdog: once consecutive failures outlast
+// shellPollDowngradeAfter while the window is chrome-hiding, apply
+// ("normal") so the outage's failure mode is a normal window, never a
+// sealed one.
+func watchShellMode(ctx context.Context, client *http.Client, baseURL string, initial string, since uint64, apply func(mode string, done func())) {
+	// lastApplied is the mode the window really reached (done() fired) —
+	// guarded by mu because done runs on the GTK thread, not this loop.
+	// lastRequested is the mode most recently handed to apply, loop-local.
+	var mu sync.Mutex
 	lastApplied := initial
+	lastRequested := initial
+	appliedNow := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return lastApplied
+	}
+	requestApply := func(mode string) {
+		lastRequested = mode
+		apply(mode, func() {
+			mu.Lock()
+			lastApplied = mode
+			mu.Unlock()
+		})
+	}
+	var failingSince time.Time
 	backoff := func() bool { // false = ctx cancelled, stop
+		if failingSince.IsZero() {
+			failingSince = time.Now()
+		} else if time.Since(failingSince) > shellPollDowngradeAfter && isChromeHidingMode(lastRequested) {
+			fmt.Fprintf(os.Stderr, "unitill-desktop: till server unreachable for over %s while the window hides OS chrome — leaving %s for a normal window (it will be re-applied when the server is back)\n",
+				shellPollDowngradeAfter, lastRequested)
+			requestApply("normal")
+		}
 		t := time.NewTimer(shellPollRetryDelay)
 		defer t.Stop()
 		select {
@@ -83,7 +145,7 @@ func watchShellMode(ctx context.Context, client *http.Client, baseURL string, in
 		q := url.Values{
 			"control": {"live"},
 			"since":   {strconv.FormatUint(since, 10)},
-			"applied": {lastApplied},
+			"applied": {appliedNow()},
 			"wait":    {strconv.Itoa(shellPollWaitSeconds)},
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/window-mode?"+q.Encode(), nil)
@@ -117,6 +179,7 @@ func watchShellMode(ctx context.Context, client *http.Client, baseURL string, in
 			}
 			continue
 		}
+		failingSince = time.Time{} // healthy answer — reset the watchdog
 		since = body.Data.Rev
 		mode := body.Data.WindowMode
 		switch mode {
@@ -126,9 +189,8 @@ func watchShellMode(ctx context.Context, client *http.Client, baseURL string, in
 			// fetchShellPrefs: never a window that can't be escaped.
 			mode = "normal"
 		}
-		if mode != lastApplied {
-			apply(mode)
-			lastApplied = mode
+		if mode != lastRequested {
+			requestApply(mode)
 		}
 		// A healthy answer needs no backoff — the next request parks in
 		// the server's own long-poll hold, so this loop is not a busy one.

@@ -134,16 +134,25 @@
         </select>
         <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
       </label>
-      {{ if not .shellAttached }}
-      <!-- ADR-0064 / ut-docs#1039: no desktop shell is holding a live
-           control poll right now, so the server serves "normal" to every
-           other client (the fail-closed downgrade) and a chrome-hiding
-           choice stays saved-but-off. Say so, honestly, instead of letting
-           the operator think the till is about to lock down. Full-width
-           <p>, wraps freely — German runs ~30% longer than English. (On a
-           Pi kiosk appliance this note shows too even though kiosk there
-           is real, driven by systemd, not a shell — a known cosmetic
-           imprecision, see the card's notes.) -->
+      <!-- ADR-0064 / ut-docs#1039 (finding 8 of its review): the note
+           states what is actually holding the window on THIS till — one of
+           three mutually-exclusive truths, never a note for a topology the
+           till is not in. Full-width <p>, wraps freely — German runs ~30%
+           longer than English. -->
+      {{ if .piKioskAppliance }}
+      <!-- Pi kiosk appliance: kiosk is real and systemd-driven; no desktop
+           app will ever run here, and the way out of kiosk is this very
+           selector — the note must say that, not demand a desktop app. -->
+      <p class="muted">{{ T "settings.display.window_mode_kiosk_appliance" }}</p>
+      {{ else if .shellAttached }}
+      <!-- A desktop shell is holding a live control poll: chrome-hiding
+           modes are served for real and exit-to-os really works. -->
+      <p class="muted">{{ T "settings.display.window_mode_shell_attached" }}</p>
+      {{ else }}
+      <!-- No shell attached: the server serves "normal" to every client
+           (the fail-closed downgrade) and a chrome-hiding choice stays
+           saved-but-off. Say so, honestly, instead of letting the operator
+           think the till is about to lock down. -->
       <p class="muted">{{ T "settings.display.window_mode_no_shell" }}</p>
       {{ end }}
       <p class="muted">{{ T "settings.display.window_mode_pending_note" }}</p>
@@ -235,7 +244,9 @@
   var T = {
     success: "{{ T "settings.display.exit_to_os_success" }}",
     error: "{{ T "settings.display.exit_to_os_error" }}",
-    unavailable: "{{ T "settings.display.exit_to_os_unavailable" }}"
+    unavailable: "{{ T "settings.display.exit_to_os_unavailable" }}",
+    notConfirmed: "{{ T "settings.display.exit_to_os_not_confirmed" }}",
+    kioskAppliance: "{{ T "settings.display.exit_to_os_kiosk_appliance" }}"
   };
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -251,10 +262,22 @@
         renderNotice(msg, 'success', T.success);
         form.querySelector('[name="manager_pin"]').value = '';
       } else if (r.status === 503) {
-        // ADR-0064 / ut-docs#1039: the PIN was right but nothing can act
-        // on the window (no desktop shell attached, or it never confirmed)
-        // — a different fact from a wrong PIN, told apart honestly.
-        renderNotice(msg, 'error', T.unavailable);
+        // ADR-0064 / ut-docs#1039: the PIN was right but nothing can (or
+        // can confirm to) act on the window — three different facts, told
+        // apart honestly by the marker token in the 503 body (see the
+        // exit-to-os handler): a Pi kiosk appliance with no OS desktop at
+        // all; an exit that WAS signalled but not yet confirmed by the
+        // shell (state changed — the audit row is written); and a till
+        // with no shell attached, where truly nothing changed.
+        r.text().then(function (body) {
+          if (body.indexOf('kiosk_appliance') !== -1) {
+            renderNotice(msg, 'error', T.kioskAppliance);
+          } else if (body.indexOf('not_confirmed') !== -1) {
+            renderNotice(msg, 'error', T.notConfirmed);
+          } else {
+            renderNotice(msg, 'error', T.unavailable);
+          }
+        }).catch(function () { renderNotice(msg, 'error', T.unavailable); });
       } else {
         renderNotice(msg, 'error', T.error);
       }
