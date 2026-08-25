@@ -510,6 +510,22 @@
   {{ end }}
   {{ end }}
 
+  {{ if .tseProvisioning }}
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.tse.title" }}</h3>
+  <div class="chip-row" data-testid="tse-provisioning" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin:.3rem 0">
+    {{ if .tseProvisioning.ReasonKey }}
+    <span class="chip">{{ printf (T .tseProvisioning.MessageKey) (T .tseProvisioning.ReasonKey) }}</span>
+    {{ else }}
+    <span class="chip">{{ T .tseProvisioning.MessageKey }}</span>
+    {{ end }}
+    <button class="btn secondary" data-testid="tse-provisioning-dismiss"
+            hx-post="/api/settings/dismiss-tse-provisioning"
+            hx-target="closest .chip-row" hx-swap="outerHTML"
+            hx-disabled-elt="this">{{ T "settings.tse.dismiss_btn" }}</button>
+  </div>
+  {{ end }}
+
   {{ if gt .sampleCount 0 }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.demo_title" }}</h3>

@@ -103,7 +103,9 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await page.locator('select[name=country]').selectOption('GB');
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 3 · shop name. setup.html is a standalone document that bypasses
+    // Step 4 · shop name (step 3, business identity, is Germany-only —
+    // ADR-0053/ut-docs#802 — and this flow picks GB, so the wizard jumps
+    // from 2 straight to 4). setup.html is a standalone document that bypasses
     // web/ui/layouts/base.html (ut-docs#400 review: a first version of the
     // autofill-suppression fix loaded only via that layout and silently
     // missed this page, along with login.html — the exact class of gap
@@ -112,17 +114,17 @@ test.describe.serial('first-boot setup and PIN login', () => {
     const storeName = page.locator('input[name=store_name]');
     await expect(storeName).toHaveAttribute('autocomplete', /^off-/);
     await storeName.fill('E2E Test Shop');
-    await step(3).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 4 · shop type + sample-data opt-in (ut-docs#539). Pick a type;
+    // Step 5 · shop type + sample-data opt-in (ut-docs#539). Pick a type;
     // leave the sample-data checkbox at its unchecked default — the auth
     // project is "a genuinely fresh install", and a fresh install must end
     // up with an empty catalogue unless the operator opts in.
     await page.locator('select[name=shop_type]').selectOption('cafe');
     await expect(page.locator('input[name=demo_data]:visible')).not.toBeChecked();
-    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 5 · restore from another POS? (ut-docs#617). Drives the Yes ->
+    // Step 6 · restore from another POS? (ut-docs#617). Drives the Yes ->
     // CSV/Excel sub-picker -> Next path deliberately, not the simpler
     // "No" default: this is the path the review found unreachable (B1 —
     // `choice` doubled as both the panel selector and the answer, so the
@@ -131,23 +133,23 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // was already checked and firing no further `change`). Real coverage
     // for the fix, and for the "no detour through Settings/Catalog"
     // acceptance criterion below.
-    await step(5).locator('.setup-nav button.secondary', { hasText: 'Yes' }).click();
-    const csvPanel = step(5).locator('label.set-row', { hasText: 'CSV' });
+    await step(6).locator('.setup-nav button.secondary', { hasText: 'Yes' }).click();
+    const csvPanel = step(6).locator('label.set-row', { hasText: 'CSV' });
     await expect(csvPanel).toBeVisible();
-    const nextBtn = step(5).locator('.setup-nav button.primary', { hasText: 'Next' });
+    const nextBtn = step(6).locator('.setup-nav button.primary', { hasText: 'Next' });
     await expect(nextBtn).toBeDisabled();
     await csvPanel.locator('input[type=radio]').check();
     await expect(nextBtn).toBeEnabled();
     await expect(csvPanel).toBeVisible(); // the bug: picking the radio used to hide this whole panel, Next included
     await nextBtn.click();
 
-    // Step 6 · admin PIN.
+    // Step 7 · admin PIN.
     await expect(page.locator('input[name=pin]')).toHaveAttribute('autocomplete', /^off-/);
-    await step(6).locator('input[name=pin]').fill('482913');
-    await step(6).locator('input[name=pin_confirm]').fill('482913');
-    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await step(7).locator('input[name=pin]').fill('482913');
+    await step(7).locator('input[name=pin_confirm]').fill('482913');
+    await step(7).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 7 · finish — real form submit. "CSV/Excel" lands straight in
+    // Step 8 · finish — real form submit. "CSV/Excel" lands straight in
     // the existing catalog importer instead of home (ut-docs#617 AC: "no
     // detour through Settings/Catalog navigation").
     await Promise.all([
