@@ -119,6 +119,10 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 		AuthSvc:  svc,
 		Cfg:      &config.Config{Theme: "default"},
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+		// Shell mirrors pages.Init's production wiring (ADR-0064): the
+		// window-state endpoint and the Display card read it. Handlers stay
+		// nil-safe for the bare-Deps helpers that predate this field.
+		Shell: common.NewShellChannel(common.DefaultWindowMode),
 	}
 	mux := http.NewServeMux()
 	registerAuth(mux, d, svc)

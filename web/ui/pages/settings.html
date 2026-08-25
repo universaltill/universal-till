@@ -119,8 +119,9 @@
   <div class="set-divider">
     <!-- ut-docs#608 scaffold, #883 for the Pi kiosk path: stores the setting
          and applies it via WindowCtl. Real OS effect today: the Pi headless
-         kiosk (#883, immediately) and the Linux desktop shell (#611, at its
-         own next launch). macOS (#609)/Windows (#610) still owe real
+         kiosk (#883, immediately) and the Linux desktop shell (ADR-0064 /
+         ut-docs#1039, immediately over the shell's live control poll — in
+         attach AND spawn mode). macOS (#609)/Windows (#610) still owe real
          implementations — see the pending-note copy below. -->
     <form id="window-mode-form" hx-post="/api/settings/window-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
       {{ $windowMode := .windowMode }}
@@ -133,6 +134,18 @@
         </select>
         <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
       </label>
+      {{ if not .shellAttached }}
+      <!-- ADR-0064 / ut-docs#1039: no desktop shell is holding a live
+           control poll right now, so the server serves "normal" to every
+           other client (the fail-closed downgrade) and a chrome-hiding
+           choice stays saved-but-off. Say so, honestly, instead of letting
+           the operator think the till is about to lock down. Full-width
+           <p>, wraps freely — German runs ~30% longer than English. (On a
+           Pi kiosk appliance this note shows too even though kiosk there
+           is real, driven by systemd, not a shell — a known cosmetic
+           imprecision, see the card's notes.) -->
+      <p class="muted">{{ T "settings.display.window_mode_no_shell" }}</p>
+      {{ end }}
       <p class="muted">{{ T "settings.display.window_mode_pending_note" }}</p>
       <div id="window-mode-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
     </form>
@@ -221,7 +234,8 @@
   var btn = document.getElementById('exit-to-os-btn');
   var T = {
     success: "{{ T "settings.display.exit_to_os_success" }}",
-    error: "{{ T "settings.display.exit_to_os_error" }}"
+    error: "{{ T "settings.display.exit_to_os_error" }}",
+    unavailable: "{{ T "settings.display.exit_to_os_unavailable" }}"
   };
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -236,6 +250,11 @@
       if (r.ok) {
         renderNotice(msg, 'success', T.success);
         form.querySelector('[name="manager_pin"]').value = '';
+      } else if (r.status === 503) {
+        // ADR-0064 / ut-docs#1039: the PIN was right but nothing can act
+        // on the window (no desktop shell attached, or it never confirmed)
+        // — a different fact from a wrong PIN, told apart honestly.
+        renderNotice(msg, 'error', T.unavailable);
       } else {
         renderNotice(msg, 'error', T.error);
       }
