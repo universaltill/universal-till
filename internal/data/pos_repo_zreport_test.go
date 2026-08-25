@@ -116,8 +116,13 @@ func TestArchiveReport_ConcurrentClosesAreGaplessAndUnique(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 
 	// N goroutines, each a distinct period, all against the SAME *sql.DB
-	// (pooled connections, so the statements genuinely contend) -- this is
-	// what exercises the lost-race retry path.
+	// (pooled connections, so the statements genuinely contend). What this
+	// pins is the end-to-end invariant: concurrent closes never duplicate,
+	// skip or reorder a number. It does NOT exercise ArchiveReport's retry
+	// loop -- ut-docs#1080's review measured zero lost races on this DSN
+	// (an autocommit INSERT...SELECT holds SQLite's write lock while it
+	// evaluates MAX()), so the retry is defence in depth. See
+	// ArchiveReport's doc comment.
 	const n = 10
 	var wg sync.WaitGroup
 	errs := make([]error, n)
@@ -217,5 +222,64 @@ VALUES ('legacy1', 'eod', '2025-12-30', '{}'), ('legacy2', 'eod', '2025-12-31', 
 	if legacy.FirstReceipt != "" || legacy.LastReceipt != "" {
 		t.Fatalf("expected legacy row's NULL receipt range to read back empty, got %q..%q",
 			legacy.FirstReceipt, legacy.LastReceipt)
+	}
+}
+
+// The gapless guarantee rests on a DB-level constraint, not on Go: if
+// ux_report_archive_kind_znumber were ever downgraded to a plain (non-
+// UNIQUE) index, every test above would still pass -- they only ever go
+// through ArchiveReport, which allocates correctly on its own -- while the
+// database quietly stopped rejecting a duplicate Z-number arriving any
+// other way (a restore, a repair script, a future writer). This pins the
+// constraint itself by writing straight past the repository.
+func TestArchiveReport_ZNumberUniquenessIsEnforcedByTheDatabase(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO report_archive (id, kind, period, content_json, z_number)
+VALUES ('dupz', 'eod', '2026-01-02', '{}', 1)`); err == nil {
+		t.Fatal("expected the database to reject a second (kind, z_number) = (eod, 1) row")
+	}
+
+	// Same z_number under a different kind is fine -- the index is
+	// kind-scoped, so each kind carries its own sequence.
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO report_archive (id, kind, period, content_json, z_number)
+VALUES ('otherkind', 'shift', '2026-01-02', '{}', 1)`); err != nil {
+		t.Fatalf("(shift, 1) alongside (eod, 1) must be allowed: %v", err)
+	}
+}
+
+// ArchiveReport scopes MAX(z_number) and the prev_closed_at lookup by kind,
+// and migration 070's index is (kind, z_number) -- so a second report kind
+// ("weekly/monthly later", per 013's own comment) gets its own sequence
+// starting at 1 rather than continuing the EOD one or chaining across.
+func TestArchiveReport_SequenceIsScopedPerKind(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	for _, p := range []string{"2026-01-01", "2026-01-02"} {
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`), "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := dbx.repo.ArchiveReport(ctx, "weekly", "2026-W01", []byte(`{}`), "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := findArchived(t, dbx.repo, "eod", "2026-01-02").ZNumber; got != 2 {
+		t.Fatalf("expected the second eod close to be z_number=2, got %d", got)
+	}
+	weekly := findArchived(t, dbx.repo, "weekly", "2026-W01")
+	if weekly.ZNumber != 1 {
+		t.Fatalf("expected the first weekly close to start its own sequence at 1, got %d", weekly.ZNumber)
+	}
+	if weekly.PrevZNumber != nil || weekly.PrevClosedAt != nil {
+		t.Fatalf("expected no predecessor for a kind's first close, got prev_z=%v prev_closed=%v",
+			weekly.PrevZNumber, weekly.PrevClosedAt)
 	}
 }

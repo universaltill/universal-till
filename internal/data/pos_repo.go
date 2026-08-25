@@ -2137,10 +2137,30 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
 // pre-migration legacy row (never numbered) can't be picked up as the
 // "previous close" while prev_z_number stays NULL.
 //
+// "Gapless" describes allocation: no number is ever skipped or handed out
+// twice while the rows exist. Age-based retention still applies on top --
+// PruneReportArchiveOlderThan (ADR-0040 §2) deletes old rows, so the
+// surviving sequence can start above 1, and in the one pathological case
+// where it removes every numbered row of a kind (a till dormant for the
+// whole 10-year window) the next close restarts at 1.
+//
 // A duplicate (kind, period) is absorbed by DO NOTHING before any row is
-// written, so it consumes no number. Any error is therefore a lost race on
-// the ux_report_archive_kind_znumber UNIQUE index between two concurrent
-// closes -- retried up to 3 times, same shape as InvoiceRepo.Create.
+// written, so it consumes no number and reports created=false, not an
+// error. The 3-attempt retry (same shape as InvoiceRepo.Create) covers the
+// one error class worth retrying: a lost race on the
+// ux_report_archive_kind_znumber UNIQUE index, i.e. two closes that both
+// computed the same MAX(z_number)+1. That race is defence in depth, not an
+// observed failure -- ut-docs#1080's review measured it on the DSN this
+// repo actually opens (internal/db.Open: WAL, busy_timeout 5000) and got
+// zero lost races out of 60 concurrent single-attempt inserts, because an
+// autocommit INSERT...SELECT takes SQLite's write lock before it evaluates
+// the SELECT, so MAX() is read under that lock and concurrent closes
+// serialise instead of racing. The loop is kept so the invariant survives
+// a later change to that shape (an explicit deferred transaction, another
+// driver). Errors of any other class -- I/O, busy-timeout expiry, a
+// cancelled ctx, a schema mismatch -- are not masked by it: every attempt
+// fails identically and the original error is returned wrapped after the
+// third.
 func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, content []byte, firstReceipt, lastReceipt string) (bool, error) {
 	id := uuid.NewString()
 	var lastErr error
