@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -397,6 +398,49 @@ func TestCreateNegativeInventoryOverride_ValidationErrors(t *testing.T) {
 	}
 }
 
+// TestCreateReturn_LineIDErrorMessageIsHTMLEscaped guards against
+// ut-docs#1000: respondReturnError's HTML branch used to interpolate the
+// error message (which can embed caller-supplied request fields, e.g. an
+// unrecognized line_id) into the response with no escaping. inventory.html's
+// return form posts via htmx and app.js force-swaps non-2xx text/html
+// responses into the page DOM, so an unescaped line_id containing markup
+// would execute in the operator's browser.
+func TestCreateReturn_LineIDErrorMessageIsHTMLEscaped(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, _, _ := seedCompletedSaleForReturn(t, dp)
+
+	const payload = `<script>alert(1)</script>`
+	req := httptest.NewRequest(http.MethodPost, "/api/inventory/return",
+		strings.NewReader(`{"original_sale_id":"`+saleID+`","reason":"x","lines":[{"line_id":"`+payload+`","quantity":1}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	// No "Accept: application/json" — this is the HTML/htmx branch.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for the unrecognized line_id, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, payload) {
+		t.Fatalf("line_id was reflected into the HTML response unescaped: %s", body)
+	}
+	if !strings.Contains(body, "&lt;script&gt;") {
+		t.Fatalf("expected the line_id to be HTML-escaped in the response, got %s", body)
+	}
+}
+
+// TestErrorHTML_EscapesMessage is a direct unit test on the shared helper
+// respondError/respondOverrideError/respondReturnError's HTML branches all
+// go through (ut-docs#1000) — covers the two call sites
+// TestCreateReturn_LineIDErrorMessageIsHTMLEscaped doesn't exercise end-to-end.
+func TestErrorHTML_EscapesMessage(t *testing.T) {
+	got := errorHTML(`<script>alert(1)</script>`)
+	want := `<div class='error'>&lt;script&gt;alert(1)&lt;/script&gt;</div>`
+	if got != want {
+		t.Fatalf("errorHTML did not escape its message:\ngot:  %s\nwant: %s", got, want)
+	}
+}
+
 func seedCompletedSaleForReturn(t *testing.T, dp *common.Deps) (saleID, receiptNo, lineID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -572,6 +616,35 @@ func TestGetLowStock_JSONError_UsesDataErrorEnvelope(t *testing.T) {
 	errVal, hasError := raw["error"]
 	if !hasError || string(errVal) == "null" || string(errVal) == `""` {
 		t.Fatalf("expected a non-empty \"error\" value, got %s", rec.Body.String())
+	}
+}
+
+// TestGetLowStock_HTMLError_UsesErrorHTMLHelper covers the HTML branch of
+// the same error path TestGetLowStock_JSONError_UsesDataErrorEnvelope covers
+// for JSON: found during independent review of ut-docs#1000's fix as the
+// same unescaped-interpolation shape left behind at this call site (query
+// errors here aren't currently attacker-echoed text, but the response must
+// go through the same escaping helper as every other respond*Error branch
+// in this file, not a bespoke fmt.Sprintf, so a future caller-influenced
+// error message here doesn't reopen the gap).
+func TestGetLowStock_HTMLError_UsesErrorHTMLHelper(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	dp.Db.Close() // closed *sql.DB forces GetLowStockItems's query to fail deterministically
+
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/low-stock", nil)
+	// No "Accept: application/json" — this is the HTML/htmx branch.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	_, queryErr := pos.GetLowStockItems(context.Background(), dp.Db, "")
+	if queryErr == nil {
+		t.Fatal("expected the closed *sql.DB to still fail the same query")
+	}
+	if want := errorHTML(queryErr.Error()); rec.Body.String() != want {
+		t.Fatalf("expected the HTML error body to be built by errorHTML(), got %s, want %s", rec.Body.String(), want)
 	}
 }
 
