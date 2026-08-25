@@ -5,15 +5,21 @@
 # 067_vouchers.sql and 067_shift_cash_reconciliation.sql, each branched
 # from a similar point in history).
 #
-# internal/db/migration.go's loadMigrations sorts migrations by their
-# leading NNN_ version number; sort.Slice has no defined tie-break for two
-# equal keys, so a collision could silently let one file win the sort and
-# the other lose — not a build failure, not a test failure, a silently
-# missing table/column on some fraction of installs (this schema is
-# fiscal/compliance-relevant, so that's a real data-loss class, not
-# cosmetic). loadMigrations itself now hard-fails on a duplicate too
-# (checkNoDuplicateVersions) — this guard is the earlier, faster signal at
-# PR time, without needing a Go build.
+# This is NOT a sort-order/tie-break problem (correction, follow-up
+# independent review — an earlier version of this comment claimed it was,
+# which was wrong): internal/db/db.go's migrate() reads the highest
+# applied version ONCE via `SELECT MAX(version)` before its loop, then
+# skips any migration whose Version is <= that watermark — never
+# re-checking per file. On an upgrade where an install already has ONE of
+# two same-numbered files, a later release's SECOND same-numbered file is
+# skipped entirely, forever, silently — the watermark already passed that
+# number and never looks backward (this schema is fiscal/compliance-
+# relevant, so that's a real data-loss class, not cosmetic). On a fresh
+# install both try to apply instead, and the second's own INSERT into
+# schema_migrations (version is its PRIMARY KEY) fails loudly — a
+# different, but still wrong, outcome. loadMigrations itself now
+# hard-fails on a duplicate too (checkNoDuplicateVersions) — this guard is
+# the earlier, faster signal at PR time, without needing a Go build.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

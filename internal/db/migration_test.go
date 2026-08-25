@@ -1,14 +1,22 @@
 package db
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 )
 
 // TestCheckNoDuplicateVersions_DetectsCollision reproduces the real
 // ut-docs#1056 collision by hand (067_vouchers.sql vs
-// 067_shift_cash_reconciliation.sql) — this is the exact shape that used
-// to let sort.Slice silently pick a winner with no defined tie-break.
+// 067_shift_cash_reconciliation.sql). The real failure this guards
+// against is NOT a sort-order tie-break — it's db.go's migrate() MAX
+// (version) watermark silently skipping a same-or-lower-numbered file
+// entirely on upgrade (see checkNoDuplicateVersions' doc comment,
+// corrected after a follow-up independent review found the original
+// rationale here wrong). Asserts the error names BOTH colliding filenames
+// and the version, not just "an error" — that's the whole diagnostic
+// value of a boot-time error, and checking only err != nil would not
+// catch a regression that dropped that detail from the message.
 func TestCheckNoDuplicateVersions_DetectsCollision(t *testing.T) {
 	migs := []migration{
 		{Version: 67, Name: "067_vouchers.sql"},
@@ -17,6 +25,12 @@ func TestCheckNoDuplicateVersions_DetectsCollision(t *testing.T) {
 	err := checkNoDuplicateVersions(migs)
 	if err == nil {
 		t.Fatal("expected an error for two migrations sharing version 67, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{"67", "067_vouchers.sql", "067_shift_cash_reconciliation.sql"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message %q missing %q", msg, want)
+		}
 	}
 }
 
