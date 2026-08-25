@@ -38,7 +38,7 @@ func TestUnusualSales(t *testing.T) {
 	// real clock — see unusualSales'/DayTotal's own doc comments (ut-docs#969:
 	// two independent real-clock reads a moment apart can disagree about
 	// what day "today" is, right around a UTC day boundary).
-	ref := time.Now()
+	ref := time.Now().UTC()
 	sale := func(id string, daysAgo, total int) {
 		// createdAt mirrors what production actually writes (real UTC, see
 		// internal/pos/sales.go's time.Now().UTC().Format(time.RFC3339)) —
@@ -75,7 +75,7 @@ func TestUnusualSales(t *testing.T) {
 
 // TestUnusualSales must reach the same verdict no matter which real calendar
 // day it happens to run on — the actual regression test for ut-docs#969.
-// Sweeps a full week of fixed reference instants, each just after local
+// Sweeps a full week of fixed reference instants, each just after UTC
 // midnight (the exact window the original bug was observed in), including
 // both a Sunday and a Monday per the card's acceptance criteria.
 func TestUnusualSales_EveryWeekdayIsDeterministic(t *testing.T) {
@@ -475,7 +475,7 @@ func TestUnusualSales_ThinBaselineIsNotUnusual(t *testing.T) {
 			t.Fatalf("exec: %v", err)
 		}
 	}
-	ref := time.Now()
+	ref := time.Now().UTC()
 	sale := func(id string, daysAgo, total int) {
 		createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
 		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)

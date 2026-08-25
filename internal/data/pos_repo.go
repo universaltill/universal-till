@@ -1129,7 +1129,7 @@ ORDER BY (revenue - cost) DESC LIMIT ?`, fromStr, toStr, limit)
 // several DayTotal reads to compare days against each other (e.g. "yesterday"
 // against several weeks of baseline) must pass the SAME ref to every call so
 // "today" can't drift between two independent reads of the real clock a few
-// milliseconds apart. That drift is real: around a UTC day boundary, a Go
+// milliseconds apart. That drift is real: around a local day boundary, a Go
 // caller's own time.Now() and a later SQLite 'now' evaluated a moment
 // afterward can land on different calendar days, silently shifting every
 // daysAgo offset by one and misaligning "yesterday" against its own baseline

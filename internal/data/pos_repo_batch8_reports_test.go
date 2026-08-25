@@ -483,7 +483,7 @@ func TestPOSRepo_DayTotal_EveryWeekdayIsDeterministic(t *testing.T) {
 	repo := NewPOSRepo(d.DB)
 
 	// A fixed instant per weekday (2026-08-24 is a Monday), each just after
-	// local midnight — the exact window ut-docs#969 was observed in.
+	// UTC midnight — the exact window ut-docs#969 was observed in.
 	for i := 0; i < 7; i++ {
 		ref := time.Date(2026, 8, 24+i, 0, 0, 30, 0, time.UTC)
 		today := b8At(ref)
