@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,18 @@ type ShiftCloseInput struct {
 	// mapping to piece count, e.g. {"5000":2,"100":13}. Must be well-formed
 	// JSON when non-empty.
 	CountProtocol string
+	// SkimApproverID is the manager who authorized the skim (ut-docs#1006
+	// review finding 1) — required whenever Skim > 0. A skim moves real
+	// cash out of the drawer, the exact class of action
+	// RecordCashAdjustment's sign-based manager-PIN gate exists for
+	// (ut-docs#266); closing a shift must not become a way to move cash out
+	// without that same authorization just because it bypasses
+	// RecordCashAdjustment itself (which requires an open shift). The
+	// caller (the HTTP handler) is responsible for running the PIN check
+	// and resolving this to the approving manager's user id — this
+	// function only enforces that it was actually done, and records that
+	// manager (not the shift's cashier) as the skim audit row's actor.
+	SkimApproverID string
 }
 
 // CashAdjustmentReasonPfandrueckgabe is the fixed reason recorded for
@@ -144,8 +157,11 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 	if in.Skim > in.ClosingCash {
 		return errors.New("skim cannot exceed the counted closing cash")
 	}
-	if in.CountProtocol != "" && !json.Valid([]byte(in.CountProtocol)) {
-		return errors.New("count_protocol must be valid JSON")
+	if in.Skim > 0 && in.SkimApproverID == "" {
+		return errors.New("skim requires an authorized approver")
+	}
+	if in.CountProtocol != "" && !ValidCountProtocol(in.CountProtocol) {
+		return errors.New("count_protocol must be a flat JSON object of denomination:count")
 	}
 
 	// Verify shift exists and is open
@@ -188,7 +204,7 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 				"amount":   (-in.Skim).Minor(),
 				"reason":   reason,
 			}
-			if err := repo.InsertAudit(ctx, tx, cashierID, "shift", in.ShiftID, "cash_adjustment", skimPayload, now, ""); err != nil {
+			if err := repo.InsertAudit(ctx, tx, in.SkimApproverID, "shift", in.ShiftID, "cash_adjustment", skimPayload, now, ""); err != nil {
 				return err
 			}
 		}
@@ -196,6 +212,42 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 	})
 
 	return err
+}
+
+// maxCountProtocolLen bounds the denomination-count JSON blob a client can
+// attach to a close — generous for any real currency's note/coin set, but
+// not unbounded (ut-docs#1006 review finding 6: a client-supplied blob
+// written straight into the shifts row had no size limit).
+const maxCountProtocolLen = 4096
+
+// ValidCountProtocol reports whether s is a flat JSON object mapping a
+// denomination key to a non-negative piece count, e.g. {"5000":2,"100":13}
+// — the documented count_protocol shape. json.Valid alone accepts any
+// JSON value (a bare string, a number, an array), which silently defeats
+// the documented contract (ut-docs#1006 review finding 6). Exported so the
+// HTTP handler can pre-validate and return 400 rather than relying on
+// CloseShift's own error, which the handler layer can't safely distinguish
+// from a genuine internal error.
+func ValidCountProtocol(s string) bool {
+	if len(s) > maxCountProtocolLen {
+		return false
+	}
+	var m map[string]json.Number
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	if err := dec.Decode(&m); err != nil {
+		return false
+	}
+	if dec.More() {
+		return false
+	}
+	for _, v := range m {
+		n, err := v.Int64()
+		if err != nil || n < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // LastClosedShiftNewFloat returns the opening float carried forward from a

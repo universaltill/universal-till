@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -196,6 +197,11 @@ func TestCloseShift_ComputesExpectedCashAndVariance(t *testing.T) {
 // no longer re-types it. An explicitly provided value, including 0, is
 // always respected (ut-docs#1006).
 func TestOpenShift_CarryForwardDefaultsOpeningCash(t *testing.T) {
+	// This test is about carry-forward, not the skim manager-PIN gate
+	// (covered separately by TestCloseShift_SkimRequiresManagerPIN and
+	// friends) — same UT_AUTH=off split TestCloseShift_SkimAndCountProtocol
+	// uses.
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newShiftsAPITestDeps(t)
 	ctx := context.Background()
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
@@ -287,6 +293,11 @@ func TestOpenShift_CarryForwardDefaultsOpeningCash(t *testing.T) {
 // TestCloseShift_SkimAndCountProtocol wires the new close-time skim /
 // count-protocol params through the handler into pos.CloseShift.
 func TestCloseShift_SkimAndCountProtocol(t *testing.T) {
+	// Auth is exercised separately below (TestCloseShift_
+	// SkimRequiresManagerPIN and friends); this test is about the
+	// accounting effect of a skim, same split TestRecordCashAdjustment
+	// uses for the standalone adjustment endpoint.
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newShiftsAPITestDeps(t)
 	ctx := context.Background()
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
@@ -362,6 +373,180 @@ func TestCloseShift_ValidationErrors(t *testing.T) {
 	}
 	if rec := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"does-not-exist","closing_cash":100}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for an unknown shift, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#1006 review finding 1 (blocker, confirmed live by the reviewer): a
+// skim moves real cash out of the drawer — exactly the class of action
+// RecordCashAdjustment's sign-based manager-PIN gate exists for
+// (ut-docs#266) — but the close-flow skim path bypassed it entirely,
+// writing the negative cash_adjustment audit row with no PIN check at all.
+// A plain close (no skim) must stay ungated, same as a positive adjustment
+// does today.
+func TestCloseShift_SkimRequiresManagerPIN(t *testing.T) {
+	// UT_AUTH unset (auth enabled) — the default this pipeline's own
+	// TestRecordCashAdjustment_RequiresManagerPINWhenAmountRemovesCash uses.
+	t.Setenv("UT_AUTH", "")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	openReq := httptest.NewRequest(http.MethodPost, "/api/shifts/open", strings.NewReader(`{"register_id":"reg1","cashier_id":"user1","opening_cash":10000}`))
+	openReq.Header.Set("Content-Type", "application/json")
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", openRec.Code, openRec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A skim with no manager_pin must be rejected, and the shift must stay
+	// open (no partial close, no cash_adjustment row written).
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/close",
+		strings.NewReader(`shift_id=`+shiftID+`&closing_cash=51110&skim=41110`))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a skim with no manager PIN, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var stillOpen int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM shifts WHERE id=? AND closed_at IS NULL`, shiftID).Scan(&stillOpen); err != nil {
+		t.Fatal(err)
+	}
+	if stillOpen != 1 {
+		t.Fatal("a rejected skim must leave the shift open, not partially close it")
+	}
+	var adjustments int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE entity_type='shift' AND entity_id=? AND action='cash_adjustment'`, shiftID).Scan(&adjustments); err != nil {
+		t.Fatal(err)
+	}
+	if adjustments != 0 {
+		t.Fatal("a rejected skim must not write a cash_adjustment audit row")
+	}
+
+	// A plain close (no skim) needs no PIN at all — the gate only fires
+	// when cash actually leaves the drawer.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/shifts/close",
+		strings.NewReader(`shift_id=`+shiftID+`&closing_cash=10000`))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2 = auth.WithUser(req2, auth.User{ID: "user1"})
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a plain close with no skim and no PIN, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+// Correct manager PIN authorizes the skim, and — same as PfandRueckgabe/
+// RecordCashAdjustment — the approving MANAGER, not the shift's cashier,
+// becomes the skim audit row's actor.
+func TestCloseShift_SkimWithManagerPINRecordsManagerAsActor(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx,
+		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		t.Fatal(err)
+	}
+	openReq := httptest.NewRequest(http.MethodPost, "/api/shifts/open", strings.NewReader(`{"register_id":"reg1","cashier_id":"cashier1","opening_cash":10000}`))
+	openReq.Header.Set("Content-Type", "application/json")
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", openRec.Code, openRec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+
+	makeReq := func(form string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/shifts/close", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = auth.WithUser(req, auth.User{ID: "cashier1", Role: "cashier"})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Wrong PIN: forbidden, shift stays open.
+	if rec := makeReq("shift_id=" + shiftID + "&closing_cash=51110&skim=41110&manager_pin=000000"); rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 with a wrong PIN, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Correct PIN: succeeds, and the manager (not cashier1) is the skim
+	// audit row's actor.
+	rec2 := makeReq("shift_id=" + shiftID + "&closing_cash=51110&skim=41110&manager_pin=482913")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 with a correct manager PIN, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT actor_id FROM audit_log WHERE entity_type='shift' AND entity_id=? AND action='cash_adjustment'`, shiftID).Scan(&actorID); err != nil {
+		t.Fatal(err)
+	}
+	if actorID != "mgr1" {
+		t.Fatalf("expected the manager as the skim audit row's actor, got %q (was: the shift's cashier — ut-docs#1006 review finding 1)", actorID)
+	}
+}
+
+// ut-docs#1006 review finding 6: skim>closing_cash and a malformed
+// count_protocol are user-input errors and must 400, not fall through to
+// the handler's generic 500 mapping.
+func TestCloseShift_SkimAndCountProtocolValidationAre400(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+
+	// A rejected close leaves the shift open (see
+	// TestCloseShift_SkimRequiresManagerPIN), so each case below opens on
+	// its OWN fresh register rather than reusing one that may still be open.
+	regN := 0
+	openAndGetID := func() string {
+		regN++
+		regID := fmt.Sprintf("reg-400-%d", regN)
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES(?,?,1)`, regID, "Till "+regID); err != nil {
+			t.Fatal(err)
+		}
+		rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"`+regID+`","cashier_id":"user1","opening_cash":10000}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+		}
+		var id string
+		if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE register_id=? AND closed_at IS NULL`, regID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	shiftID := openAndGetID()
+	rec := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":10000,"skim":10001}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for skim > closing_cash, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	shiftID = openAndGetID()
+	rec2 := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":10000,"count_protocol":"[1,2,3]"}`)
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a non-object count_protocol, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	shiftID = openAndGetID()
+	rec3 := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+shiftID+`","closing_cash":10000,"count_protocol":"\"hello\""}`)
+	if rec3.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a bare-string count_protocol, got %d: %s", rec3.Code, rec3.Body.String())
 	}
 }
 

@@ -967,6 +967,7 @@
   "shifts.reason": "Neden",
   "shifts.skim": "Skim to safe",
   "shifts.skim_hint": "moved to the safe at close",
+  "shifts.skim_manager_pin_hint": "Skimming cash to the safe requires manager approval, same as any other payout.",
   "shifts.skim_formula": "New float = counted − skim. A skim never changes the expected cash.",
   "shifts.count_protocol": "Denomination count (optional)",
   "shifts.count_protocol_hint": "How many of each coin and note are in the drawer. Leave empty to skip.",

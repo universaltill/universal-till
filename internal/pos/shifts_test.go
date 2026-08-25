@@ -359,11 +359,12 @@ VALUES ('pay1', 'sale1', 'cash', 41110, 'GBP', 0, ?)
 
 	// Close counting £511.10, skimming £411.10 back to the safe.
 	err = CloseShift(ctx, db, ShiftCloseInput{
-		ShiftID:       shiftID,
-		ClosingCash:   51110,
-		Skim:          41110,
-		SkimReason:    "evening skim",
-		CountProtocol: `{"5000":10,"100":11,"10":1}`,
+		ShiftID:        shiftID,
+		ClosingCash:    51110,
+		Skim:           41110,
+		SkimReason:     "evening skim",
+		CountProtocol:  `{"5000":10,"100":11,"10":1}`,
+		SkimApproverID: "mgr1",
 	})
 	if err != nil {
 		t.Fatalf("CloseShift failed: %v", err)
@@ -472,6 +473,12 @@ func TestCloseShift_SkimValidation(t *testing.T) {
 		{"negative skim", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000, Skim: -100}},
 		{"skim exceeds counted cash", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000, Skim: 10001}},
 		{"malformed count protocol", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000, CountProtocol: `{"100":`}},
+		{"non-object count protocol", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000, CountProtocol: `[1,2,3]`}},
+		// ut-docs#1006 review finding 1: CloseShift itself refuses a skim
+		// with no approver — the HTTP handler is expected to have already
+		// run the manager-PIN check and resolved this, but the domain layer
+		// doesn't trust that blindly.
+		{"skim with no approver", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10100, Skim: 100}},
 	}
 	for _, c := range cases {
 		if err := CloseShift(ctx, db, c.in); err == nil {
@@ -549,7 +556,7 @@ func TestLastClosedShiftNewFloat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
-	if err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: shiftID, ClosingCash: 51110, Skim: 41110}); err != nil {
+	if err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: shiftID, ClosingCash: 51110, Skim: 41110, SkimApproverID: "mgr1"}); err != nil {
 		t.Fatalf("CloseShift failed: %v", err)
 	}
 	cf, ok, err := LastClosedShiftNewFloat(ctx, db, "reg1")
