@@ -167,6 +167,37 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(t.Revenue)))
 		}
 	}
+	// Cash-drawer reconciliation (ut-docs#1006) — printed only when at
+	// least one shift was closed that day; a day-close without one still
+	// renders a complete report. Amounts stored negative (skim, pay-outs)
+	// print sign-first ("-£411.10"), same convention as the Refunds line.
+	if rc := rep.CashReconciliation; rc != nil {
+		signed := func(minor int64) string {
+			if minor < 0 {
+				return "-" + money(-minor)
+			}
+			return money(minor)
+		}
+		line := func(label string, amount string) string {
+			return fmt.Sprintf("%-20s %s", label, amount)
+		}
+		varianceLine := line("Variance", signed(rc.Variance))
+		if rc.Variance != 0 {
+			// Flag a count discrepancy so it can't be missed on paper.
+			varianceLine += " !!"
+		}
+		doc.Footer = append(doc.Footer, "", "CASH RECONCILIATION",
+			line("Opening float", signed(rc.OpeningFloat)),
+			line("Cash sales", signed(rc.CashSales)),
+			line("Pay-ins", signed(rc.PayIns)),
+			line("Pay-outs", signed(rc.PayOuts)),
+			line("Calculated", signed(rc.Calculated)),
+			line("Counted", signed(rc.Counted)),
+			varianceLine,
+			line("Skim to safe", signed(rc.Skim)),
+			line("New float", signed(rc.NewFloat)),
+		)
+	}
 	if rep.FirstReceipt != "" {
 		doc.Footer = append(doc.Footer, "", "Receipts "+rep.FirstReceipt+" - "+rep.LastReceipt)
 	}

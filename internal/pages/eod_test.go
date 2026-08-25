@@ -96,6 +96,65 @@ func TestBuildEODDoc_VATRateBands(t *testing.T) {
 	}
 }
 
+// TestBuildEODDoc_CashReconciliation reproduces ut-docs#1002's de-identified
+// reference day-close block (ut-docs#1006): opening float 100.00, cash
+// takings 411.10, calculated 511.10, counted 511.10, variance 0.00, skim
+// -411.10, new float 100.00.
+func TestBuildEODDoc_CashReconciliation(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 12, Gross: 41110, Net: 41110,
+		Methods: []data.EODMethod{{Method: "cash", In: 41110}},
+		CashReconciliation: &data.CashReconciliation{
+			OpeningFloat: 10000,
+			CashSales:    41110,
+			Calculated:   51110,
+			Counted:      51110,
+			Variance:     0,
+			Skim:         -41110,
+			NewFloat:     10000,
+			ShiftsClosed: 1,
+		},
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	for _, want := range []string{
+		"CASH RECONCILIATION",
+		"Opening float", "£100.00",
+		"Cash sales", "£411.10",
+		"Calculated", "£511.10",
+		"Counted",
+		"Variance", "£0.00",
+		"Skim to safe", "-£411.10",
+		"New float",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cash reconciliation block missing %q", want)
+		}
+	}
+	if strings.Contains(out, "!!") {
+		t.Error("zero variance must not carry the !! marker")
+	}
+
+	// A non-zero variance is flagged so it can't be missed on paper.
+	rep.CashReconciliation.Counted = 51000
+	rep.CashReconciliation.Variance = -110
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if !strings.Contains(out, "!!") {
+		t.Error("non-zero variance must be flagged with !!")
+	}
+	if !strings.Contains(out, "-£1.10") {
+		t.Error("negative variance must render signed (-£1.10)")
+	}
+
+	// No reconciliation (no shift closed that day): the section is absent
+	// and the report still renders — day-close is never blocked on it.
+	rep.CashReconciliation = nil
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if strings.Contains(out, "CASH RECONCILIATION") {
+		t.Error("section must be omitted when no reconciliation exists")
+	}
+}
+
 // A day with zero tipped payments (e.g. a terminal with tipping disabled
 // and no cash tips either) must print no TIPS section at all, not an
 // empty one — ut-docs#1007.
