@@ -219,7 +219,14 @@ release:
     **Raspberry Pi kiosk (Pi OS Lite, no desktop):** install the `.deb` and
     reboot — a fresh install sets the fullscreen kiosk up automatically on
     first boot (opt out first with `sudo touch /etc/unitill/no-kiosk` if you
-    don't want that). On upgrades, desktop images, or other Debian boxes,
-    run `sudo /usr/lib/unitill/unitill-kiosk-setup` once and reboot.
+    don't want that).
+
+    **Raspberry Pi with a desktop (Pi OS "with Desktop"):** a fresh `.deb`
+    install instead brings the till up fullscreen *on top of* the desktop at
+    login, with Settings → Display → "Exit to OS window" (admin PIN) as the
+    way back (opt out first with `sudo mkdir -p /etc/unitill && sudo touch
+    /etc/unitill/no-desktop-kiosk-overlay`). On upgrades, or on a non-Pi
+    Debian box, run `sudo /usr/lib/unitill/unitill-kiosk-setup` once and
+    reboot for the dedicated no-desktop kiosk.
 
     Every download opens the setup wizard at http://localhost:8080.

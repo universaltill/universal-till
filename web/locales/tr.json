@@ -686,7 +686,7 @@
   "settings.display.exit_to_os_kiosk_appliance": "Bu kasa, çıkılacak bir işletim sistemi masaüstü olmayan özel bir kiosk cihazıdır — hiçbir şey değişmedi. Bunun yerine kiosk ekranını kapatmak için yukarıdaki pencere modu ayarını kullanın.",
   "settings.display.exit_to_os_not_confirmed": "Kasanın penceresinden kapanması istendi, ancak henüz onaylamadı — kasanın ekranını kontrol edin. Çıkış kaydedildi.",
   "settings.display.window_mode_kiosk_appliance": "Bu kasa özel bir kiosk cihazıdır: kiosk ekranını kasanın kendisi çalıştırır ve arkasında bir işletim sistemi masaüstü yoktur. Kiosk modundan çıkmak için pencere modunu buradan değiştirin — \"İşletim sistemi penceresine çık\" bu kasada geçerli değildir.",
-  "settings.display.window_mode_shell_attached": "Universal Till masaüstü uygulaması çalışıyor ve bu kasanın penceresini tutuyor — pencere modu değişiklikleri anında uygulanır ve \"İşletim sistemi penceresine çık\" ekranı gerçekten geri verir.",
+  "settings.display.window_mode_shell_attached": "Universal Till masaüstü uygulaması çalışıyor ve bu kasanın penceresini tutuyor — pencere modu değişiklikleri anında uygulanır ve \"İşletim sistemi penceresine çık\" ekranı gerçekten geri verir. Tam ekran ve kiosk, kasayı bu bilgisayarın kendi masaüstünün üzerinde çalıştırır ve masaüstü tam arkasında kalır — masaüstü olan bir Raspberry Pi'ye yapılan yeni kurulum kiosk modunda bu şekilde kendiliğinden başlar.",
   "settings.error.save_failed": "Kaydedilemedi — lütfen tekrar deneyin.",
   "settings.backup.col_date": "Tarih",
   "settings.backup.col_file": "Dosya",
