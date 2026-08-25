@@ -102,6 +102,42 @@ JSON، مثلاً لتسليمها لمدقق حسابات.
 المسحوبة هذا الأسبوع" دون فتح صفحة التدقيق. يظهر هذا القسم فقط عند وجود
 تعديل واحد على الأقل خلال الفترة.
 
+## Counting the drawer at close: skim & new float
+
+The opening cash for a new shift is **carried over automatically** from
+the register's last close — whatever the previous close left in the
+drawer is pre-filled, so you confirm it rather than re-type it. You can
+still edit the figure if the drawer was corrected in between; whatever
+you submit is what's recorded.
+
+When you close a shift, count the drawer and enter the counted cash as
+before. Two optional extras join it:
+
+- **Skim to safe** — the amount you move from the drawer to the safe as
+  part of the close. The counted cash minus the skim becomes the drawer's
+  **new float**, which is what the next shift on that register opens with.
+  A skim can't exceed the counted cash, and it never changes the expected
+  figure — the variance always compares your count against takings
+  *before* the skim, so moving money to the safe can't hide a shortage.
+  An optional reason can be recorded with it.
+- **Denomination count** — an optional per-denomination count (how many
+  of each coin and note) stored with the close as a count protocol, for
+  shops that want the till count documented piece by piece. Leave it
+  empty to skip it entirely.
+
+## Cash reconciliation on the day-end report
+
+The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
+section on any day at least one shift was closed: opening float, cash
+sales, pay-ins, pay-outs, calculated (what should be in the drawers),
+counted (what was in them), variance, skim to safe, and the new float
+carried to the next day. A non-zero variance is flagged with `!!` on the
+printout, and the Day-end tab marks that day's row with a warning tag so
+a discrepancy is visible on screen without reprinting each period. A day
+with no closed shift still produces a complete report — the section is
+simply absent, and running End of day is never blocked on closing a
+shift.
+
 ## عرض مبيعات كل الصناديق (سجل المبيعات)
 
 تعرض صفحة سجل المبيعات (قائمة الإيصالات/المزامنة، خارج شاشة البيع)

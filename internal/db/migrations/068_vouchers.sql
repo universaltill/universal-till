@@ -1,4 +1,4 @@
--- 067: vouchers as a 0% liability class (ut-docs#1008). A multi-purpose
+-- 068: vouchers as a 0% liability class (ut-docs#1008). A multi-purpose
 -- voucher's issue is NOT revenue and NOT a taxable supply — VAT arises only
 -- at redemption, against the redeemed goods' own rates. So a voucher is
 -- deliberately NOT a sale_lines row (sale_lines requires item_id/variant_id

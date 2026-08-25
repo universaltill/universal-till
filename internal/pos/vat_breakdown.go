@@ -157,7 +157,7 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 // mode) a journal replay's recomputed totals. The same holds for a
 // voucher issue's face value (ut-docs#1008 review, blocker F1): it too is
 // folded into total in both modes with no subtotal/taxTotal counterpart
-// (a 0% liability, sales.voucher_issue_total — migration 068), so leaving
+// (a 0% liability, sales.voucher_issue_total — migration 069), so leaving
 // it out of the identity made every inclusive sale that also issued a
 // voucher read as exclusive, double-charging VAT on its refunds. This is
 // the single shared inference — internal/pages' saleIsTaxInclusive

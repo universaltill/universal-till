@@ -154,7 +154,8 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	rewindFiscalRegisterDE059(t, d)
 	rewindTipRecipient061(t, d)
 	rewindServiceChargeTaxBasis062(t, d)
-	rewindVoucherIssueTotal068(t, d)
+	rewindShiftCashRecon067(t, d)
+	rewindVoucherIssueTotal069(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -279,18 +280,35 @@ func rewindServiceChargeTaxBasis062(t *testing.T, d *DB) {
 	}
 }
 
-// rewindVoucherIssueTotal068 undoes migration 068's non-idempotent DDL (the
+// rewindShiftCashRecon067 undoes migration 067's non-idempotent DDL (the
+// shifts/shifts_archive new_float + count_protocol columns, ut-docs#1006) —
+// same replay problem as the rewind helpers above.
+func rewindShiftCashRecon067(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`ALTER TABLE shifts DROP COLUMN new_float`,
+		`ALTER TABLE shifts DROP COLUMN count_protocol`,
+		`ALTER TABLE shifts_archive DROP COLUMN new_float`,
+		`ALTER TABLE shifts_archive DROP COLUMN count_protocol`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 067 (%s): %v", q, err)
+		}
+	}
+}
+
+// rewindVoucherIssueTotal069 undoes migration 069's non-idempotent DDL (the
 // sales/sales_archive voucher_issue_total columns, ut-docs#1008 review F1)
-// — same replay problem as the rewind helpers above. Migration 067's
+// — same replay problem as the rewind helpers above. Migration 068's
 // CREATE TABLE IF NOT EXISTS statements are idempotent and need no rewind.
-func rewindVoucherIssueTotal068(t *testing.T, d *DB) {
+func rewindVoucherIssueTotal069(t *testing.T, d *DB) {
 	t.Helper()
 	for _, q := range []string{
 		`ALTER TABLE sales DROP COLUMN voucher_issue_total`,
 		`ALTER TABLE sales_archive DROP COLUMN voucher_issue_total`,
 	} {
 		if _, err := d.DB.Exec(q); err != nil {
-			t.Fatalf("rewind 068 (%s): %v", q, err)
+			t.Fatalf("rewind 069 (%s): %v", q, err)
 		}
 	}
 }

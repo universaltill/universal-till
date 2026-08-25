@@ -1,7 +1,7 @@
--- 068: voucher_issue_total on sales (ut-docs#1008 independent review,
+-- 069: voucher_issue_total on sales (ut-docs#1008 independent review,
 -- blocker F1). The summed face value of the multi-purpose vouchers ISSUED in
 -- this sale — the one component of `total` that lives in neither subtotal nor
--- tax_total (a voucher issue is a 0% liability, migration 067). It has to be
+-- tax_total (a voucher issue is a 0% liability, migration 068). It has to be
 -- PERSISTED on the sale header, not derived by a query-time join against
 -- voucher_transactions: pos.InferTaxInclusive re-derives a historical sale's
 -- pricing mode from the header's own arithmetic (total == subtotal − discount

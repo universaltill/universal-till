@@ -16,7 +16,7 @@ import (
 // Voucher liability tests (ut-docs#1008). Unlike this package's older
 // setupSaleDB fixture (a hand-built schema subset), these open the REAL
 // migrated schema via internal/db.Open — the vouchers/voucher_transactions
-// tables under test are defined by migration 067, and asserting against a
+// tables under test are defined by migration 068, and asserting against a
 // hand-copied twin of that schema would prove nothing about the migration
 // itself. Every sale goes through the real pos.CompleteSale, never
 // hand-inserted fixture rows (the sibling ut-docs#1003 card's review

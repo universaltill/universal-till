@@ -54,7 +54,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT, type TEXT, is_active INTEGER DEFAULT 1);`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL, blocked_actor_id TEXT);`,
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER DEFAULT 1);`,
-		// vouchers/voucher_transactions: column-identical to migration 067
+		// vouchers/voucher_transactions: column-identical to migration 068
 		// (ut-docs#1008) -- UpdateSaleStatus's void path now always checks
 		// voucher_transactions for issues to cascade to, even when the sale
 		// issued none.
