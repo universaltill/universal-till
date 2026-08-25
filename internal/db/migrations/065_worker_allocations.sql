@@ -1,4 +1,4 @@
--- 064: worker_allocations ledger (ADR-0063, ut-docs#987). Shared
+-- 065: worker_allocations ledger (ADR-0063, ut-docs#987). Shared
 -- record-keeping primitive for two independent statutory obligations —
 -- UK Employment (Allocation of Tips) Act 2023 (ut-docs#964) and Turkey
 -- İş Kanunu 4857 art. 51 "yüzde usulü" (ut-docs#965) — both of which
