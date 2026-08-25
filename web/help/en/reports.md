@@ -47,6 +47,24 @@ just after midnight can show under a pre-midnight hour label (e.g. 22:00)
 rather than its real clock time, consistent with Day/Week/Month/Year
 already counting that sale as part of the previous business day.
 
+## Gift vouchers on the day-end (Z) report
+
+When your shop sells or accepts multi-purpose gift vouchers, the printed
+day-end report shows a separate **GUTSCHEINE** section: how many vouchers
+were issued and redeemed that day, and for how much. Selling a voucher is
+recorded as money owed to the voucher's future bearer, not as product
+revenue — so the amount appears in the day's overall takings but never in
+the per-department or per-tax-rate product figures. Tax on the goods is
+recorded when the voucher is later spent, at those goods' own rates, the
+same as if the customer had paid cash. The section only prints on days
+with voucher activity.
+
+Voiding the sale that sold a voucher cancels the voucher with it, as long
+as the voucher is still unused — it disappears from the report and can no
+longer be spent. If any part of the voucher has already been spent, the
+till refuses to void that sale: sort out the outstanding voucher with the
+customer first.
+
 ## Report retention
 
 Every archived end-of-day report is kept for **10 years** — this is a legal

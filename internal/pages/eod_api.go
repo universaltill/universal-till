@@ -167,6 +167,18 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(t.Revenue)))
 		}
 	}
+	// Voucher liability flows (ut-docs#1008) — their own footer section,
+	// SEPARATE from and never summed into the article/department figures: an
+	// issue is a 0% liability (inside the day's overall total, outside
+	// Artikelumsatz and every per-rate VAT band), a redemption is a payment
+	// method. Same footer-line precedent as BY DEPARTMENT / BY TILL above;
+	// "GUTSCHEINE" matches the Germany-pilot Z-report vocabulary the card
+	// specifies. Omitted entirely on a day with no voucher activity.
+	if rep.VouchersIssuedCount > 0 || rep.VouchersRedeemedCount > 0 {
+		doc.Footer = append(doc.Footer, "", "GUTSCHEINE")
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Issued (%d)", rep.VouchersIssuedCount), money(rep.VouchersIssued)))
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Redeemed (%d)", rep.VouchersRedeemedCount), money(rep.VouchersRedeemed)))
+	}
 	// Cash-drawer reconciliation (ut-docs#1006) — printed only when at
 	// least one shift was closed that day; a day-close without one still
 	// renders a complete report. Amounts stored negative (skim, pay-outs)
