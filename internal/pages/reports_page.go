@@ -1,15 +1,21 @@
 package pages
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -435,8 +441,365 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"EODTime":          eodTime,
 				"BusinessDayStart": bizDayStart,
 			})(w, r)
+		case "tips":
+			renderTipsTab(repo, d, r, window)(w, r)
 		default:
 			http.NotFound(w, r)
+		}
+	})
+
+	registerWorkerAllocationAPI(mux, d)
+}
+
+// workerAllocationDisplayNames maps every user's cashier_id to a
+// human-readable name (DisplayName, falling back to Username) via the same
+// AuthRepo.ListUsers lookup the tab's worker picker and cashier filter use
+// — falls back to the raw id when the user row can't be found (e.g. a
+// since-deleted account), per #964's brief: "don't just dump the raw id if
+// a display name is available".
+func workerAllocationDisplayNames(users []data.UserRow) map[string]string {
+	names := make(map[string]string, len(users))
+	for _, u := range users {
+		name := u.DisplayName
+		if name == "" {
+			name = u.Username
+		}
+		names[u.ID] = name
+	}
+	return names
+}
+
+// workerAllocationDateRange converts a reportWindow's [From, To) instant
+// range into the inclusive "YYYY-MM-DD" date-string pair
+// WorkerAllocationsSummary/ListWorkerAllocations expect (their own
+// date(allocated_at, 'localtime') BETWEEN date(?) AND date(?) convention,
+// ut-docs#869 — see WorkerAllocationsSummary's doc comment) — window.To is
+// EXCLUSIVE (parseReportWindow's own convention, matching SalesByDay et al),
+// so it's stepped back a second before formatting, the same one-second
+// buffer reportNow() itself adds on the other end, to avoid inclusively
+// pulling in the following calendar day.
+func workerAllocationDateRange(window reportWindow) (from, to string) {
+	return window.From.Format("2006-01-02"), window.To.Add(-time.Second).Format("2006-01-02")
+}
+
+// workerAllocationRequestedAt validates a manager-picked "YYYY-MM-DD" date
+// against nowLocal's LOCAL calendar day and, if it isn't in the future,
+// builds the UTC instant to store as allocated_at. Pulled out as its own
+// pure function (independent review, ut-docs#964 blocker) so the future-day
+// check and the stored instant are computed from the exact same nowLocal —
+// they cannot disagree with each other the way the original inline version
+// could when it mixed a UTC "today" comparison with a since-corrected local
+// construction, and so this is unit-testable without depending on either
+// the host's real TZ or the wall clock at test time.
+//
+// nowLocal MUST be in the shop's local location (callers pass time.Now(),
+// which already is) — every other clock this tab touches (parseReportWindow,
+// reportNow, generateEOD's own day boundary, and the read side's own
+// date(allocated_at, 'localtime')) is local, not UTC. A UTC "today" here
+// would reject a real today as "in the future" for the last 1-3 hours of
+// every trading day in Turkey (UTC+3) or UK BST (UTC+1), and would silently
+// accept a real tomorrow as valid for most of the day in any Americas shop.
+//
+// The stored instant is built by taking nowLocal's own wall-clock
+// time-of-day and swapping in the picked calendar date, in the SAME
+// location, before converting to UTC — so date(allocatedAt, 'localtime')
+// on the read side always resolves back to exactly the date the manager
+// picked, never a neighbouring calendar day.
+func workerAllocationRequestedAt(date string, nowLocal time.Time) (allocatedAt string, isFuture bool, err error) {
+	loc := nowLocal.Location()
+	pickedDate, err := time.ParseInLocation("2006-01-02", date, loc)
+	if err != nil {
+		return "", false, err
+	}
+	if date > nowLocal.Format("2006-01-02") {
+		return "", true, nil
+	}
+	at := time.Date(pickedDate.Year(), pickedDate.Month(), pickedDate.Day(),
+		nowLocal.Hour(), nowLocal.Minute(), nowLocal.Second(), 0, loc)
+	return at.UTC().Format(time.RFC3339), false, nil
+}
+
+// tipsDetailRow is one combined-source-type row for the "tips" tab's detail
+// table — ADR-0063's own worker_allocations rows, joined here (not in SQL)
+// to a human worker name, since ListWorkerAllocations is deliberately
+// single-source_type (see its own doc comment).
+type tipsDetailRow struct {
+	AllocatedAt string
+	Worker      string
+	SourceType  string
+	AmountMinor int64
+	Note        string
+}
+
+// renderTipsTab builds and renders the "tips" tab fragment — factored out
+// of the tab switch so the record-payout POST handler can re-render the
+// SAME fragment after a successful write (the htmx swap target sees updated
+// totals immediately), rather than duplicating this view-building logic.
+//
+// Visibility mirrors the "eod" tab's own CanView/CanRunEOD split (ut-docs#794):
+// CanView (`reports`) gates whether ANYTHING here is populated at all — the
+// two received-vs-allocated summary totals are visible under CanView alone.
+// CanRecord (`worker_allocation`) additionally gates the row-level detail
+// table and the record-a-payout form/export link, since those expose (or
+// let someone write) individual workers' payout records, not just an
+// aggregate total.
+func renderTipsTab(repo *data.POSRepo, d *common.Deps, r *http.Request, window reportWindow) http.HandlerFunc {
+	ctx := r.Context()
+	canView := canPerform(d, r, "reports")
+	canRecord := canPerform(d, r, "worker_allocation")
+	// The ?cashier= filter is only honored for a canRecord session
+	// (independent review, ut-docs#964 blocker: a canView-only session —
+	// holding `reports` but not `worker_allocation` — could otherwise
+	// read ANY named worker's received/allocated totals by picking them
+	// from the worker dropdown the tab itself renders; the doc comment
+	// below already claimed per-worker detail needs `worker_allocation`,
+	// this makes the per-worker SUMMARY actually honor that too, not just
+	// the row-level table). A canView-only session always sees the
+	// shop-wide total regardless of what's in the query string.
+	cashierFilter := ""
+	if canRecord {
+		cashierFilter = strings.TrimSpace(r.URL.Query().Get("cashier"))
+	}
+
+	var tipSummary, scSummary data.WorkerAllocationSummary
+	var workers []data.UserRow
+	var detail []tipsDetailRow
+	from, to := workerAllocationDateRange(window)
+
+	if canView {
+		tipSummary, _ = repo.WorkerAllocationsSummary(ctx, from, to, cashierFilter, "tip")
+		scSummary, _ = repo.WorkerAllocationsSummary(ctx, from, to, cashierFilter, "service_charge")
+		if canRecord {
+			allUsers, _ := data.NewAuthRepo(d.Db).ListUsers(ctx)
+			workers = allUsers
+			names := workerAllocationDisplayNames(allUsers)
+			tipRows, _ := repo.ListWorkerAllocations(ctx, from, to, cashierFilter, "tip")
+			scRows, _ := repo.ListWorkerAllocations(ctx, from, to, cashierFilter, "service_charge")
+			merged := make([]data.WorkerAllocation, 0, len(tipRows)+len(scRows))
+			merged = append(merged, tipRows...)
+			merged = append(merged, scRows...)
+			sort.Slice(merged, func(i, j int) bool { return merged[i].AllocatedAt > merged[j].AllocatedAt })
+			for _, m := range merged {
+				worker := names[m.CashierID]
+				if worker == "" {
+					worker = m.CashierID
+				}
+				detail = append(detail, tipsDetailRow{
+					AllocatedAt: m.AllocatedAt,
+					Worker:      worker,
+					SourceType:  m.SourceType,
+					AmountMinor: m.AmountMinor,
+					Note:        m.Note,
+				})
+			}
+		}
+	}
+
+	return httpx.RenderPartial("ui/partials/reports_tab_tips.html", map[string]any{
+		"StoreName":     storeNameOrDefault(ctx, d),
+		"CanView":       canView,
+		"CanRecord":     canRecord,
+		"CashierFilter": cashierFilter,
+		"Workers":       workers,
+		"TipReceived":   tipSummary.ReceivedMinor,
+		"TipAllocated":  tipSummary.AllocatedMinor,
+		"SCReceived":    scSummary.ReceivedMinor,
+		"SCAllocated":   scSummary.AllocatedMinor,
+		"Detail":        detail,
+		"From":          from,
+		"To":            to,
+		// LOCAL, matching the POST handler's own future-date check (fixed
+		// alongside this, ut-docs#964 review) — both must agree, and local
+		// is correct: parseReportWindow/reportNow/generateEOD/the read
+		// side's date(...,'localtime') are all local already, so a UTC
+		// "today" here was the one clock actually out of step, not the
+		// other way around as the previous comment claimed.
+		"Today":  time.Now().Format("2006-01-02"),
+		"Days":   parseReportDays(r),
+		"Period": reportPeriodParam(r),
+		"Anchor": window.Anchor,
+	})
+}
+
+// registerWorkerAllocationAPI mounts the record-a-payout POST and the CSV
+// export GET behind the "tips" tab (ut-docs#964). A separate function
+// (rather than inlining the two mux.HandleFunc calls directly in the
+// /ui/reports/tab/{name} closure) purely to keep registerReportsPage's
+// switch body from growing two more unrelated route registrations inside
+// it — called once from registerReportsPage itself, no new call site needed
+// in init.go.
+func registerWorkerAllocationAPI(mux *http.ServeMux, d *common.Deps) {
+	repo := data.NewPOSRepo(d.Db)
+	authRepo := data.NewAuthRepo(d.Db)
+
+	mux.HandleFunc("POST /api/reports/worker-allocations", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "worker_allocation") {
+			http.Error(w, "worker_allocation permission required", http.StatusForbidden)
+			return
+		}
+		ctx := r.Context()
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form data", http.StatusBadRequest)
+			return
+		}
+
+		date := strings.TrimSpace(r.FormValue("date"))
+		if !eodDateRe.MatchString(date) {
+			http.Error(w, "date must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+
+		cashierID := strings.TrimSpace(r.FormValue("cashier_id"))
+		if cashierID == "" {
+			http.Error(w, "cashier_id is required", http.StatusBadRequest)
+			return
+		}
+		if _, found, err := authRepo.GetUser(ctx, cashierID); err != nil || !found {
+			http.Error(w, "cashier_id must be a real user id", http.StatusBadRequest)
+			return
+		}
+
+		sourceType := strings.TrimSpace(r.FormValue("source_type"))
+		if sourceType != "tip" && sourceType != "service_charge" {
+			http.Error(w, `source_type must be "tip" or "service_charge"`, http.StatusBadRequest)
+			return
+		}
+
+		amtStr := strings.TrimSpace(r.FormValue("amount"))
+		amountMinor, err := strconv.ParseInt(amtStr, 10, 64)
+		if err != nil || amountMinor <= 0 {
+			http.Error(w, "amount must be a positive integer (minor units)", http.StatusBadRequest)
+			return
+		}
+
+		note := r.FormValue("note")
+
+		allocatedAt, isFuture, err := workerAllocationRequestedAt(date, time.Now())
+		if err != nil {
+			http.Error(w, "date must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if isFuture {
+			http.Error(w, "date must not be in the future", http.StatusBadRequest)
+			return
+		}
+		id := uuid.NewString()
+
+		tx, err := d.Db.BeginTx(ctx, nil)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.save", "worker_allocation_record", err)
+			return
+		}
+		defer tx.Rollback()
+
+		if err := repo.InsertWorkerAllocation(ctx, tx, id, sourceType, "", cashierID, amountMinor, allocatedAt, note); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.save", "worker_allocation_record", err)
+			return
+		}
+		actorID := getSessionUserID(r)
+		now := time.Now().UTC().Format(time.RFC3339)
+		if err := repo.InsertAudit(ctx, tx, actorID, "worker_allocation", id, "worker_allocation_recorded",
+			map[string]any{"source_type": sourceType, "cashier_id": cashierID, "amount_minor": amountMinor, "note": note}, now, ""); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.save", "worker_allocation_record", err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.save", "worker_allocation_record", err)
+			return
+		}
+
+		// Re-render the same "tips" tab fragment the GET route serves, so
+		// the htmx swap shows the just-recorded payout's updated totals in
+		// place — same window params (?days/period/anchor) this POST's own
+		// form re-submits (reports_tab_tips.html wires them as hidden
+		// fields on the record form for exactly this). parseReportWindow/
+		// renderTipsTab read r.URL.Query() (the GET-tab route's own
+		// convention), which is empty for this POST's body-encoded fields —
+		// so those already-parsed form values are copied onto r.URL.RawQuery
+		// here, after every r.FormValue() read above, so the re-render sees
+		// the SAME window (and cashier filter) the operator had open rather
+		// than silently resetting to the 14-day default.
+		q := url.Values{}
+		if period := r.FormValue("period"); period != "" {
+			q.Set("period", period)
+			q.Set("anchor", r.FormValue("anchor"))
+		} else if days := r.FormValue("days"); days != "" {
+			q.Set("days", days)
+		}
+		if cashier := r.FormValue("cashier"); cashier != "" {
+			q.Set("cashier", cashier)
+		}
+		r.URL.RawQuery = q.Encode()
+
+		bizDayStart, _, _ := d.Settings.Get(ctx, keyReportsBusinessDayStart)
+		window := parseReportWindow(r, bizDayStart)
+		renderTipsTab(repo, d, r, window)(w, r)
+	})
+
+	mux.HandleFunc("GET /api/reports/worker-allocations/export", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "worker_allocation") {
+			http.Error(w, "worker_allocation permission required", http.StatusForbidden)
+			return
+		}
+		ctx := r.Context()
+		from := strings.TrimSpace(r.URL.Query().Get("from"))
+		to := strings.TrimSpace(r.URL.Query().Get("to"))
+		if !eodDateRe.MatchString(from) || !eodDateRe.MatchString(to) {
+			http.Error(w, "from and to must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if from > to {
+			http.Error(w, "from must not be after to", http.StatusBadRequest)
+			return
+		}
+		cashierID := strings.TrimSpace(r.URL.Query().Get("cashier"))
+
+		// Same tolerant "" -> raw id fallback as the tab's own worker-name
+		// lookup (renderTipsTab) — a lookup failure degrades to raw ids
+		// rather than blocking the export outright, matching this
+		// codebase's existing ListUsers-error convention elsewhere
+		// (audit_page.go, users_page.go: `_, _ := ...ListUsers(...)`).
+		allUsers, _ := authRepo.ListUsers(ctx)
+		names := workerAllocationDisplayNames(allUsers)
+
+		tipRows, err := repo.ListWorkerAllocations(ctx, from, to, cashierID, "tip")
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.export", "worker_allocation_export", err)
+			return
+		}
+		scRows, err := repo.ListWorkerAllocations(ctx, from, to, cashierID, "service_charge")
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.export", "worker_allocation_export", err)
+			return
+		}
+		rows := make([]data.WorkerAllocation, 0, len(tipRows)+len(scRows))
+		rows = append(rows, tipRows...)
+		rows = append(rows, scRows...)
+		sort.Slice(rows, func(i, j int) bool { return rows[i].AllocatedAt > rows[j].AllocatedAt })
+
+		now := time.Now().UTC().Format(time.RFC3339)
+		actorID := getSessionUserID(r)
+		_ = repo.InsertAudit(ctx, nil, actorID, "worker_allocation", "-", "worker_allocation_exported",
+			map[string]any{"from": from, "to": to, "cashier": cashierID}, now, "")
+
+		filename := fmt.Sprintf("worker-allocations-%s-to-%s.csv", from, to)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+		w.WriteHeader(http.StatusOK)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"date", "worker", "source_type", "amount_minor", "note"})
+		for _, row := range rows {
+			worker := names[row.CashierID]
+			if worker == "" {
+				worker = row.CashierID
+			}
+			_ = cw.Write([]string{row.AllocatedAt, worker, row.SourceType, strconv.FormatInt(row.AmountMinor, 10), row.Note})
+		}
+		cw.Flush()
+		if err := cw.Error(); err != nil {
+			// Headers and a 200 are already on the wire (same precedent as
+			// eod_api.go's archive/export) -- log rather than panic.
+			logging.L().Errorf("worker allocation export: csv write: %v", err)
 		}
 	})
 }
