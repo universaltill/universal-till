@@ -1635,11 +1635,10 @@ func (r *POSRepo) CashReconciliationForLocalDay(ctx context.Context, day string)
 SELECT COUNT(*),
   COALESCE(SUM(opening_cash), 0),
   COALESCE(SUM(closing_cash), 0),
-  COALESCE(SUM(expected_cash), 0),
-  COALESCE(SUM(COALESCE(new_float, closing_cash)), 0)
+  COALESCE(SUM(expected_cash), 0)
 FROM shifts
 WHERE closed_at IS NOT NULL AND date(closed_at, 'localtime') = date(?)`, day).
-		Scan(&rec.ShiftsClosed, &rec.OpeningFloat, &rec.Counted, &rec.Calculated, &rec.NewFloat)
+		Scan(&rec.ShiftsClosed, &rec.OpeningFloat, &rec.Counted, &rec.Calculated)
 	if err != nil {
 		return nil, fmt.Errorf("cash reconciliation shifts: %w", err)
 	}
@@ -1647,6 +1646,24 @@ WHERE closed_at IS NOT NULL AND date(closed_at, 'localtime') = date(?)`, day).
 		return nil, nil
 	}
 	rec.Variance = rec.Counted - rec.Calculated
+
+	// New float is NOT additive across sequential shifts on the SAME
+	// register the way Opening/Counted/Calculated are (ut-docs#1006 review
+	// finding 3): a register that closed twice in one day physically holds
+	// only its LAST close's new float, not the sum of both closes'. Sum
+	// only the most-recent close per register (a window function, not a
+	// second full-table scan) — this matches LastClosedShiftCarryForward,
+	// which also only ever looks at the latest close per register.
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(new_float_or_closing), 0)
+FROM (
+  SELECT COALESCE(new_float, closing_cash) AS new_float_or_closing,
+         ROW_NUMBER() OVER (PARTITION BY register_id ORDER BY closed_at DESC) AS rn
+  FROM shifts
+  WHERE closed_at IS NOT NULL AND date(closed_at, 'localtime') = date(?)
+) WHERE rn = 1`, day).Scan(&rec.NewFloat); err != nil {
+		return nil, fmt.Errorf("cash reconciliation new float: %w", err)
+	}
 
 	// Adjustments recorded against those shifts, split by declared type:
 	// "skim" (cash moved to the safe) apart from ordinary pay-ins/pay-outs,

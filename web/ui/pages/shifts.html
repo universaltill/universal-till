@@ -62,6 +62,11 @@
                onchange="document.getElementById('skim-minor').value = this.value === '' ? '' : Math.round(parseFloat(this.value || 0) * 100)">
       </label>
       <label>{{ T "shifts.reason" }} <input type="text" name="skim_reason" placeholder="{{ T "shifts.skim" }}"></label>
+      <label>{{ T "shifts.manager_pin" }}
+        <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "shifts.manager_pin_placeholder" }}">
+      </label>
+      <p class="muted" style="font-size:.82rem">{{ T "shifts.skim_manager_pin_hint" }}</p>
+      <label>{{ T "shifts.note" }} <input type="text" name="note" placeholder="{{ T "shifts.note_hint" }}"></label>
       <details class="catalog-extra">
         <summary>{{ T "shifts.count_protocol" }}</summary>
         <p class="muted" style="font-size:.82rem">{{ T "shifts.count_protocol_hint" }}</p>

@@ -127,6 +127,12 @@ type ShiftCloseRequest struct {
 	Skim          int64  `json:"skim"` // minor units, >= 0
 	SkimReason    string `json:"skim_reason"`
 	CountProtocol string `json:"count_protocol"` // raw JSON denomination count
+	// ManagerPIN authorizes a skim (ut-docs#1006 review finding 1) — a skim
+	// moves real cash out of the drawer, the same class of action
+	// RecordCashAdjustment's sign-based gate requires a manager PIN for
+	// (ut-docs#266); only required/checked when Skim > 0, same as that
+	// handler's own gate only fires on a negative amount.
+	ManagerPIN string `json:"manager_pin"`
 }
 
 // ShiftCloseResponse models response for shift close
@@ -164,6 +170,7 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 			req.Note = r.FormValue("note")
 			req.SkimReason = r.FormValue("skim_reason")
 			req.CountProtocol = r.FormValue("count_protocol")
+			req.ManagerPIN = r.FormValue("manager_pin")
 			if ccStr := r.FormValue("closing_cash"); ccStr != "" {
 				if cc, err := strconv.ParseInt(ccStr, 10, 64); err == nil {
 					req.ClosingCash = cc
@@ -189,6 +196,58 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 			respondCloseError(w, r, http.StatusBadRequest, "skim must be >= 0")
 			return
 		}
+		// ut-docs#1006 review finding 6: these are user-input errors, not
+		// internal ones — checked here (400) rather than left to surface
+		// as pos.CloseShift's generic error (which the handler mapped to
+		// 500 across the board).
+		if req.Skim > req.ClosingCash {
+			respondCloseError(w, r, http.StatusBadRequest, "skim cannot exceed the counted closing cash")
+			return
+		}
+		if req.CountProtocol != "" && !pos.ValidCountProtocol(req.CountProtocol) {
+			respondCloseError(w, r, http.StatusBadRequest, "count_protocol must be a flat JSON object of denomination:count")
+			return
+		}
+
+		// Get actor from session (the skim audit row's actor when no PIN
+		// gate applies — mirrors RecordCashAdjustment's actorID pattern)
+		actorID := getSessionUserID(r)
+
+		// Manager approval whenever a skim actually moves cash out of the
+		// drawer (ut-docs#1006 review finding 1) — a skim is exactly the
+		// class of action RecordCashAdjustment's sign-based gate exists for
+		// (ut-docs#266), and closing a shift must not become a way to move
+		// cash out without that same authorization just because the skim
+		// audit row is written here rather than through
+		// RecordCashAdjustment (which requires the shift to still be open).
+		// A plain close (no skim) stays ungated, same as a positive
+		// adjustment does today.
+		skimApproverID := ""
+		if req.Skim > 0 {
+			authOff := auth.Disabled(os.Getenv("UT_AUTH"))
+			if !authOff {
+				if strings.TrimSpace(req.ManagerPIN) == "" {
+					respondCloseError(w, r, http.StatusForbidden, "manager PIN required")
+					return
+				}
+				approver, err := dp.AuthSvc.AuthorizeManager(ctx, strings.TrimSpace(req.ManagerPIN))
+				if err != nil {
+					status := http.StatusForbidden
+					if errors.Is(err, auth.ErrLockedOut) {
+						status = http.StatusTooManyRequests
+					}
+					respondCloseError(w, r, status, "manager PIN required")
+					return
+				}
+				skimApproverID = approver.ID
+			} else {
+				// Auth disabled (test/dev mode, UT_AUTH) — same convention
+				// RecordCashAdjustment follows: the gate itself is skipped,
+				// but CloseShift still requires a non-empty
+				// SkimApproverID, so fall back to the session actor.
+				skimApproverID = actorID
+			}
+		}
 
 		// Get expected cash before closing
 		openingCash, ok, err := repo.GetShiftOpeningCash(ctx, req.ShiftID)
@@ -209,12 +268,13 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 
 		// Close shift
 		err = pos.CloseShift(ctx, dp.Db, pos.ShiftCloseInput{
-			ShiftID:       req.ShiftID,
-			ClosingCash:   money.FromMinor(req.ClosingCash),
-			Note:          req.Note,
-			Skim:          money.FromMinor(req.Skim),
-			SkimReason:    req.SkimReason,
-			CountProtocol: req.CountProtocol,
+			ShiftID:        req.ShiftID,
+			ClosingCash:    money.FromMinor(req.ClosingCash),
+			Note:           req.Note,
+			Skim:           money.FromMinor(req.Skim),
+			SkimReason:     req.SkimReason,
+			CountProtocol:  req.CountProtocol,
+			SkimApproverID: skimApproverID,
 		})
 		if err != nil {
 			respondCloseError(w, r, http.StatusInternalServerError, err.Error())
@@ -522,6 +582,16 @@ func respondCloseSuccess(w http.ResponseWriter, r *http.Request, data ShiftClose
 	} else {
 		msg := fmt.Sprintf("<div class='success'>Shift closed. Expected: £%.2f, Actual: £%.2f, Variance: £%.2f</div>",
 			float64(data.ExpectedCash)/100, float64(data.ClosingCash)/100, float64(data.Variance)/100)
+		if data.Skim != 0 {
+			// ut-docs#1006 review finding 9: the HTML path (what the close
+			// form actually renders) previously dropped the skim/new-float
+			// figures the JSON path already returned — an operator who just
+			// skimmed the drawer got no on-screen confirmation of the new
+			// float they left it on.
+			msg = fmt.Sprintf("<div class='success'>Shift closed. Expected: £%.2f, Actual: £%.2f, Variance: £%.2f, Skim: £%.2f, New float: £%.2f</div>",
+				float64(data.ExpectedCash)/100, float64(data.ClosingCash)/100, float64(data.Variance)/100,
+				float64(-data.Skim)/100, float64(data.NewFloat)/100)
+		}
 		writeHTML(w, http.StatusOK, msg)
 	}
 }
