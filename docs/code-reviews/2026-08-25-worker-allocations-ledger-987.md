@@ -15,7 +15,7 @@ Neither obligation is about how much is collected or taxed
 what happens to the money afterward: it must be paid out to named workers,
 and the payout must be provable later.
 
-- New migration `064_worker_allocations.sql`: `worker_allocations` +
+- New migration `065_worker_allocations.sql`: `worker_allocations` +
   `worker_allocations_archive` twin (ADR-0042 §1 pattern — no FK, no
   PK/UNIQUE on the archive twin, NOT NULL kept), indexed on
   `cashier_id`/`(source_type, source_id)`/`allocated_at`.

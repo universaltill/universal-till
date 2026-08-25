@@ -440,7 +440,7 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		`CREATE TABLE sale_links (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, original_sale_id TEXT NOT NULL, reason TEXT);`,
 		`CREATE TABLE stock_movements (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, cost_price INTEGER, created_at TEXT NOT NULL);`,
 		// worker_allocations: column-identical to
-		// internal/db/migrations/064_worker_allocations.sql (ADR-0063,
+		// internal/db/migrations/065_worker_allocations.sql (ADR-0063,
 		// ut-docs#987) -- ResetTransactionHistory's resetArchiveTables loop
 		// (internal/data/reset_archive_repo.go) archives every table in its
 		// list unconditionally, so this fixture needs both twins or the
