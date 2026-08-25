@@ -443,6 +443,12 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		// ADR-0062 step 2/3).
 		`CREATE TABLE sale_charges (sale_id TEXT NOT NULL, seq INTEGER NOT NULL, key TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', amount_minor INTEGER NOT NULL, tax_basis_bp INTEGER NOT NULL DEFAULT 0, base TEXT NOT NULL DEFAULT 'net_lines', PRIMARY KEY (sale_id, seq));`,
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, method_id TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT NOT NULL, reference TEXT, change_given INTEGER NOT NULL DEFAULT 0, tip_amount INTEGER NOT NULL DEFAULT 0, tip_recipient TEXT NOT NULL DEFAULT 'employee', masked_pan TEXT, auth_code TEXT, terminal_id TEXT, trace_id TEXT, paid_at TEXT NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
+		// vouchers/voucher_transactions: column-identical to
+		// internal/db/migrations/067_vouchers.sql (ut-docs#1008) — the EOD
+		// summary (dateRangeSummary) now always reads voucher_transactions,
+		// same drift rule as sale_charges above.
+		`CREATE TABLE vouchers (id TEXT PRIMARY KEY, holder_label TEXT, original_amount INTEGER NOT NULL, balance INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'EUR', voucher_type TEXT NOT NULL DEFAULT 'multi_purpose' CHECK (voucher_type IN ('multi_purpose')), status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','redeemed','void')), issued_sale_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
+		`CREATE TABLE voucher_transactions (id TEXT PRIMARY KEY, voucher_id TEXT NOT NULL REFERENCES vouchers (id), sale_id TEXT, type TEXT NOT NULL CHECK (type IN ('issue','redemption')), amount INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		`CREATE TABLE sale_links (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, original_sale_id TEXT NOT NULL, reason TEXT);`,
 		`CREATE TABLE stock_movements (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, cost_price INTEGER, created_at TEXT NOT NULL);`,
 		// worker_allocations: column-identical to

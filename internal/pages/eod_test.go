@@ -56,6 +56,32 @@ func TestBuildEODDoc(t *testing.T) {
 			t.Errorf("Z-report missing %q", want)
 		}
 	}
+	// No voucher activity -> no GUTSCHEINE section at all (ut-docs#1008).
+	if strings.Contains(out, "GUTSCHEINE") {
+		t.Errorf("Z-report shows a voucher section with no voucher activity")
+	}
+}
+
+// ut-docs#1008: voucher flows print as their own GUTSCHEINE footer section —
+// separate from (never summed into) the article/department figures, same
+// footer precedent as BY DEPARTMENT / BY TILL.
+func TestBuildEODDoc_VoucherSection(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 2, Gross: 5000, Net: 5000, TaxNet: 700,
+		VouchersIssuedCount: 1, VouchersIssued: 1500,
+		VouchersRedeemedCount: 2, VouchersRedeemed: 800,
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	for _, want := range []string{
+		"GUTSCHEINE",
+		"Issued (1)", "£15.00",
+		"Redeemed (2)", "£8.00",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Z-report voucher section missing %q\n%s", want, out)
+		}
+	}
 }
 
 func TestRenderTextPreviewLayout(t *testing.T) {
