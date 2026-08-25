@@ -135,6 +135,13 @@ type resetArchiveTable struct {
 // Restore runs this slice in REVERSE (parent-before-child) so FKs to live
 // catalog/user rows and intra-batch parents are satisfied on re-insert.
 var resetArchiveTables = []resetArchiveTable{
+	// worker_allocations (ADR-0063, ut-docs#987) has no FK to sales/payments
+	// at all — source_id is a soft, informational cross-reference, so unlike
+	// stock_movements/sale_line_modifiers above, its position in this
+	// child-before-parent ordering is not load-bearing: nothing here can
+	// trip a cascade or FK ordering trap regardless of where it sits.
+	// Listed first for that reason.
+	{"worker_allocations", "id, source_type, source_id, cashier_id, amount_minor, allocated_at, note"},
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
 	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
@@ -152,8 +159,15 @@ var resetArchiveTables = []resetArchiveTable{
 // restore may run. shifts/stock_movements are included alongside sales/
 // held_sales because both can be created independently of a sale (a shift
 // open, a manual stock adjustment) and face the same collision class on
-// their own id sequences (ADR-0042 §2).
-var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_movements"}
+// their own id sequences (ADR-0042 §2). worker_allocations (ADR-0063,
+// ut-docs#987, independent review) joins them for the same reason: a
+// yuzde_usulu_pool payout needs no sale/shift/held-sale row of its own, so
+// without this check a post-reset pool distribution could sit in the live
+// table while all four other checks pass, and RestoreResetBatch would then
+// re-insert the archived batch's rows alongside it — a merge, which
+// ADR-0042 §2 says restore must never be ("return to exactly the pre-reset
+// state, never a merge").
+var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_movements", "worker_allocations"}
 
 // ResetTransactionHistory clears ALL transactional data — sales, payments,
 // invoices, shifts, held sales, stock movements and the sale-line modifier
