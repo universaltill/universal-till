@@ -43,6 +43,10 @@ jobs:
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test
         run: bash scripts/ci/guard-data-access_test.sh
+      - name: Migration-version-collision guard
+        run: bash scripts/ci/guard-migration-version-collision.sh
+      - name: Migration-version-collision guard regression test
+        run: bash scripts/ci/guard-migration-version-collision_test.sh
       - name: Kiosk-engine isolation guard
         run: bash scripts/ci/guard-kiosk-engine.sh
       - name: Kiosk-engine isolation guard regression test
