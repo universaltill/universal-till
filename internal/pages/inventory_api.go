@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"strconv"
@@ -164,6 +165,15 @@ func writeHTMLStockChanged(w http.ResponseWriter, status int, html string) {
 	writeHTML(w, status, html)
 }
 
+// errorHTML renders an error message into the `<div class='error'>…</div>`
+// fragment the respond*Error helpers' HTML branch writes, HTML-escaping the
+// message so caller-controlled input echoed back in a validation error
+// (e.g. an unrecognized line_id) can't inject markup into an authenticated
+// operator's browser via htmx's error-response DOM swap (ut-docs#1000).
+func errorHTML(message string) string {
+	return fmt.Sprintf("<div class='error'>%s</div>", html.EscapeString(message))
+}
+
 // respondError writes error response (JSON or HTML based on request). JSON
 // uses the { "data": null, "error": … } envelope universal-till/CLAUDE.md
 // mandates for every JSON API response (ut-docs#378).
@@ -171,7 +181,7 @@ func respondError(w http.ResponseWriter, r *http.Request, status int, message st
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, errorHTML(message))
 	}
 }
 
@@ -324,7 +334,7 @@ func respondOverrideError(w http.ResponseWriter, r *http.Request, status int, me
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, errorHTML(message))
 	}
 }
 
@@ -568,7 +578,7 @@ func respondReturnError(w http.ResponseWriter, r *http.Request, status int, mess
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})
 	} else {
-		writeHTML(w, status, fmt.Sprintf("<div class='error'>%s</div>", message))
+		writeHTML(w, status, errorHTML(message))
 	}
 }
 
@@ -601,7 +611,7 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 			if strings.Contains(r.Header.Get("Accept"), "application/json") {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
 			} else {
-				writeHTML(w, http.StatusInternalServerError, fmt.Sprintf("<div class='error'>%s</div>", err.Error()))
+				writeHTML(w, http.StatusInternalServerError, errorHTML(err.Error()))
 			}
 			return
 		}
