@@ -97,6 +97,32 @@ func TestTSECredentialStoreRejectsEmptyCredential(t *testing.T) {
 	}
 }
 
+// Regression test (Reviewer finding, ut-docs#802): os.WriteFile alone opens
+// O_CREATE|O_TRUNC, so a write that fails partway through used to leave a
+// truncated/zero-length file at the final path — which Exists() (and the
+// caller's old stat-only idempotency check) would report as "a credential is
+// stored," even though nothing readable was ever written. Save is now
+// write-tmp-then-rename; this pins that a failed write leaves NEITHER the
+// final path NOR a stray .tmp file behind. The failure is forced by making
+// the final path's .tmp sibling a directory — os.WriteFile(tmp, ...) then
+// fails with EISDIR regardless of the OS user's privileges (a permission-bit
+// failure wouldn't reproduce under a root-run test).
+func TestTSECredentialStoreSaveFailureLeavesNoPartialFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "fiscal", "cred.json")
+	store := NewTSECredentialStoreAt(target)
+	if err := os.MkdirAll(filepath.Join(dir, "fiscal", "cred.json.tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Save(map[string]any{"api_key": "x"}); err == nil {
+		t.Fatal("Save must fail when its .tmp path is unwritable")
+	}
+	if store.Exists() {
+		t.Fatal("a failed Save must not leave any file at the final path")
+	}
+}
+
 // The default store lives under paths.Data("fiscal", ...) — the till's
 // stable operational data root — and NOT under paths.Plugins (that tree is
 // plugin auth cache, a different data class), never a cwd-relative path.

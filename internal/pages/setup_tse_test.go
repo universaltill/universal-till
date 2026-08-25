@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -565,6 +566,46 @@ func TestApplyFiscalTSEReady_IdempotentWhenCredentialAlreadyLocal(t *testing.T) 
 	}
 	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); v != "true" {
 		t.Fatalf("fiscal.tse_configured = %q, want true", v)
+	}
+}
+
+// Regression test (Reviewer finding, ut-docs#802): a stray zero-length or
+// corrupt credential file (the kind a failed write used to leave behind
+// before Save became write-tmp-then-rename) must NOT satisfy the
+// idempotency fast path. Before the fix, applyFiscalTSEReady used
+// store.Exists() (a stat-only check), so this exact file would have flipped
+// fiscal.tse_configured true over a credential nothing could ever read back.
+// The directive must instead fall through to a real fetch.
+func TestApplyFiscalTSEReady_CorruptExistingFileIsNotTreatedAsStored(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+
+	store := fiscal.NewTSECredentialStore()
+	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), nil, 0o600); err != nil { // zero-length, unreadable JSON
+		t.Fatal(err)
+	}
+
+	msg, err := applyFiscalTSEReady(t.Context(), d)
+	if err != nil {
+		t.Fatalf("applyFiscalTSEReady: %v", err)
+	}
+	if msg == "" {
+		t.Fatal("want a human-readable result message")
+	}
+	if cloud.credentialCount() != 1 {
+		t.Fatalf("credential fetches = %d, want 1 — a corrupt existing file must not short-circuit the fetch", cloud.credentialCount())
+	}
+	cred, ok, err := store.Load()
+	if err != nil || !ok || cred["api_key"] != "op-key-1" {
+		t.Fatalf("credential not stored correctly after overwrite: ok=%v err=%v cred=%+v", ok, err, cred)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); v != "true" {
+		t.Fatalf("fiscal.tse_configured = %q, want true only after the real fetch succeeded", v)
 	}
 }
 

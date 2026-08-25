@@ -350,8 +350,14 @@ func applyFiscalTSEReady(ctx context.Context, d *common.Deps) (string, error) {
 	store := fiscal.NewTSECredentialStore()
 	// Idempotent re-serve: a directive whose ack never reached the cloud
 	// re-applies after the credential already landed — never a second fetch
-	// (the endpoint is single-use and would 410).
-	if store.Exists() {
+	// (the endpoint is single-use and would 410). Deliberately Load(), not
+	// Exists(): a Stat-only check would treat a zero-length file left behind
+	// by a prior failed write (review finding, ut-docs#802 — Save is now
+	// write-tmp-then-rename so this shouldn't recur, but this check must not
+	// depend on that alone) as "already stored" and flip tse_configured true
+	// over an unreadable credential. Load() is the same confirmed-readable
+	// bar the success path below holds itself to.
+	if cred, ok, err := store.Load(); err == nil && ok && len(cred) > 0 {
 		return finishTSEProvisioning(ctx, d, "TSE operational credential already stored")
 	}
 
@@ -414,7 +420,7 @@ func applyFiscalTSEReady(ctx context.Context, d *common.Deps) (string, error) {
 func finishTSEProvisioning(ctx context.Context, d *common.Deps, msg string) (string, error) {
 	if err := d.Settings.Set(ctx, fiscal.KeyTSEConfigured, "true"); err != nil {
 		// Leave the directive un-acked: the re-serve is idempotent (the
-		// store.Exists() fast path above) and will retry this write.
+		// store.Load() fast path above) and will retry this write.
 		return "", fmt.Errorf("persist %s: %w", fiscal.KeyTSEConfigured, err)
 	}
 	if err := saveTSEProvisioningState(ctx, d, nil); err != nil {
