@@ -33,8 +33,11 @@ func TestPOSRepo_ServiceCharge_RoundTrips(t *testing.T) {
 	repo := NewPOSRepo(d.DB)
 
 	// subtotal 1000, 10% service charge -> total 1100.
-	if err := repo.InsertSale(ctx, nil, "sale-sc", "R-SC-1", "sale", "", "", "", "GBP",
-		1000, 0, 0, 1100, 100, 700, "", "2026-08-01T10:00:00Z", "card", "", "", false, "synced", 0, "", ""); err != nil {
+	if err := repo.InsertSale(ctx, nil, InsertSaleParams{
+		SaleID: "sale-sc", ReceiptNo: "R-SC-1", SaleType: "sale", Currency: "GBP",
+		Subtotal: 1000, Total: 1100, ServiceCharge: 100, ServiceChargeTaxBasisBP: 700,
+		CreatedAt: "2026-08-01T10:00:00Z", TenderType: "card", SyncStatus: "synced",
+	}); err != nil {
 		t.Fatalf("insert sale: %v", err)
 	}
 
@@ -77,8 +80,11 @@ func TestPOSRepo_ServiceCharge_DefaultsToZero(t *testing.T) {
 	ctx := context.Background()
 	repo := NewPOSRepo(d.DB)
 
-	if err := repo.InsertSale(ctx, nil, "sale-nosc", "R-NOSC-1", "sale", "", "", "", "GBP",
-		250, 0, 0, 250, 0, 0, "", "2026-08-01T10:00:00Z", "cash", "", "", false, "synced", 0, "", ""); err != nil {
+	if err := repo.InsertSale(ctx, nil, InsertSaleParams{
+		SaleID: "sale-nosc", ReceiptNo: "R-NOSC-1", SaleType: "sale", Currency: "GBP",
+		Subtotal: 250, Total: 250, CreatedAt: "2026-08-01T10:00:00Z", TenderType: "cash",
+		SyncStatus: "synced",
+	}); err != nil {
 		t.Fatalf("insert sale: %v", err)
 	}
 
