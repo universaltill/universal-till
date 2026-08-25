@@ -122,10 +122,20 @@ sudo apt install ./unitill-pos_*_arm64.deb
 On a **Raspberry Pi (Pi OS Lite, fresh install)** this also stages the
 fullscreen kiosk automatically: the first boot after installing sets up
 cage + Chromium and boots straight into the till. To keep a Pi kiosk-free
-(dev box), `sudo touch /etc/unitill/no-kiosk` before rebooting. Desktop
-images and upgrades are never auto-converted — run
-`sudo /usr/lib/unitill/unitill-kiosk-setup` there yourself if you want the
-kiosk.
+(dev box), `sudo touch /etc/unitill/no-kiosk` before rebooting.
+
+On a **Raspberry Pi with a desktop (Pi OS "with Desktop", fresh install)**
+the till instead comes up as a fullscreen **kiosk overlay on top of the
+desktop**: the install seeds kiosk window mode + launch-on-startup and adds
+an autostart entry for the desktop app, so the till opens fullscreen at
+login while the desktop stays underneath — Settings → Display → "Exit to
+OS window" (PIN-gated) hands the screen back. Opt out before installing
+with `sudo mkdir -p /etc/unitill && sudo touch
+/etc/unitill/no-desktop-kiosk-overlay` (the directory does not exist yet on
+a machine that has never had the till installed). Upgrades never
+auto-convert an existing install either way — run
+`sudo /usr/lib/unitill/unitill-kiosk-setup` yourself if you want the
+dedicated (no-desktop) kiosk on a box that didn't get it at install time.
 
 **Windows**: download the `windows_amd64.zip`, extract anywhere,
 double-click `run-unitill.bat`.
