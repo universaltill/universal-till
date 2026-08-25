@@ -246,3 +246,155 @@ func TestWorkerAllocationsSummary_UnsupportedSourceType(t *testing.T) {
 		t.Fatal("expected an error for an unsupported source_type, got nil")
 	}
 }
+
+// TestListWorkerAllocations_RoundTrip confirms a written row comes back out
+// with every field intact (id/source_type/source_id/cashier_id/amount_minor/
+// allocated_at/note) — the row-level detail behind WorkerAllocationsSummary's
+// AllocatedMinor total.
+func TestListWorkerAllocations_RoundTrip(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	tx, err := dbx.d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T18:00:00Z", "shift-end payout"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "tip")
+	if err != nil {
+		t.Fatalf("ListWorkerAllocations: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0]
+	if got.ID != "wa1" || got.SourceType != "tip" || got.SourceID != "pay1" || got.CashierID != "user1" ||
+		got.AmountMinor != 500 || got.AllocatedAt != "2026-08-25T18:00:00Z" || got.Note != "shift-end payout" {
+		t.Fatalf("unexpected row: %+v", got)
+	}
+}
+
+// TestListWorkerAllocations_DateRangeFiltering confirms only rows whose
+// allocated_at falls within [from, to] (local calendar day, inclusive) come
+// back — same convention WorkerAllocationsSummary uses.
+func TestListWorkerAllocations_DateRangeFiltering(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	tx, err := dbx.d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T18:00:00Z", "in range"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa2", "tip", "pay2", "user1", 999, "2026-01-01T18:00:00Z", "out of range"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "tip")
+	if err != nil {
+		t.Fatalf("ListWorkerAllocations: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "wa1" {
+		t.Fatalf("expected only wa1 in range, got %+v", rows)
+	}
+}
+
+// TestListWorkerAllocations_CashierFiltering confirms cashierID narrows the
+// result to that worker's own payouts only, "" returns every worker's.
+func TestListWorkerAllocations_CashierFiltering(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	tx, err := dbx.d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T18:00:00Z", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa2", "tip", "pay2", "user2", 700, "2026-08-25T18:05:00Z", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	scoped, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "user1", "tip")
+	if err != nil {
+		t.Fatalf("ListWorkerAllocations scoped: %v", err)
+	}
+	if len(scoped) != 1 || scoped[0].CashierID != "user1" {
+		t.Fatalf("expected only user1's row, got %+v", scoped)
+	}
+
+	all, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "tip")
+	if err != nil {
+		t.Fatalf("ListWorkerAllocations all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected both rows unscoped, got %d", len(all))
+	}
+}
+
+// TestListWorkerAllocations_OrderedByAllocatedAtDesc confirms the result is
+// most-recent-first.
+func TestListWorkerAllocations_OrderedByAllocatedAtDesc(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	tx, err := dbx.d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa-early", "tip", "pay1", "user1", 100, "2026-08-25T09:00:00Z", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa-late", "tip", "pay2", "user1", 200, "2026-08-25T20:00:00Z", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "tip")
+	if err != nil {
+		t.Fatalf("ListWorkerAllocations: %v", err)
+	}
+	if len(rows) != 2 || rows[0].ID != "wa-late" || rows[1].ID != "wa-early" {
+		t.Fatalf("expected [wa-late, wa-early] order, got %+v", rows)
+	}
+}
+
+// TestListWorkerAllocations_SourceTypeRequired mirrors
+// WorkerAllocationsSummary's own guard: "" is rejected rather than silently
+// listing every source_type's rows through one report.
+func TestListWorkerAllocations_SourceTypeRequired(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", ""); err == nil {
+		t.Fatal("expected an error for an empty source_type, got nil")
+	}
+}
+
+// TestListWorkerAllocations_UnsupportedSourceType mirrors
+// WorkerAllocationsSummary's own default case.
+func TestListWorkerAllocations_UnsupportedSourceType(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "not_a_real_type"); err == nil {
+		t.Fatal("expected an error for an unsupported source_type, got nil")
+	}
+}
