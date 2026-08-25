@@ -92,3 +92,52 @@ func TestReadBkpProducts_MissingTaxColumnsIsBackwardCompatible(t *testing.T) {
 		t.Errorf("non-tax columns must still read correctly, got %+v", rows[0])
 	}
 }
+
+// ut-docs#968 (independent review): buildBkpProductsQuery introspects the
+// category DISPLAY column on ProductGroups, but the join predicate it emits
+// is "ON g.ProductGroupID = p.ProductGroupID" — so a ProductGroups table
+// that carries the category text under a differently-named key column made
+// the whole query fail with "no such column: g.ProductGroupID", killing the
+// entire import instead of degrading to an empty category.
+//
+// That is precisely the failure mode this card exists to eliminate: the
+// file's own contract is "every column is optional, and a backup missing
+// any of them reads narrower rather than failing". Introspecting the join
+// key on both sides is what makes that contract true.
+func TestReadBkpProducts_ProductGroupsWithoutJoinKeyStillImports(t *testing.T) {
+	db := openTempSQLite(t)
+	if _, err := db.Exec(`CREATE TABLE Products (
+		ProductNumber TEXT, ProductTextShort TEXT, ProductGroupID INTEGER,
+		SalesPrice REAL, Status INTEGER, ProductType INTEGER
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	// Carries the category text, but its key column is NOT ProductGroupID.
+	if _, err := db.Exec(`CREATE TABLE ProductGroups (
+		GroupID INTEGER PRIMARY KEY, ProductGroupText TEXT
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO ProductGroups (GroupID, ProductGroupText) VALUES (1,'Kaffee')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO Products
+		(ProductNumber, ProductTextShort, ProductGroupID, SalesPrice, Status, ProductType)
+		VALUES ('30033','Latte Macchiato',1,5.00,0,0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := data.ReadBkpProducts(context.Background(), db)
+	if err != nil {
+		t.Fatalf("an unjoinable ProductGroups must degrade to no category, not fail the import: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].ProductTextShort != "Latte Macchiato" || rows[0].SalesPriceRaw != "5" {
+		t.Errorf("the product itself must still read correctly, got %+v", rows[0])
+	}
+	if rows[0].ProductGroupText != "" {
+		t.Errorf("category = %q, want empty — the join key is absent so there is nothing to join on", rows[0].ProductGroupText)
+	}
+}
