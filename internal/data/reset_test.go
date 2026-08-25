@@ -51,6 +51,10 @@ func seedFullSale(t *testing.T, x func(q string, args ...any)) {
 	x(`INSERT INTO sale_line_modifiers (id, sale_line_id, group_name_snapshot, option_name_snapshot, price_delta_minor)
 	   VALUES ('slm1','l1','Extras','Extra shot',50)`)
 	x(`INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason) VALUES ('d1','s1','l1','fixed',10,10,'test')`)
+	// ADR-0062/ut-docs#984: sale_charges has no ON DELETE CASCADE from
+	// sales, so it must archive/clear before sales does — this row is what
+	// pins that ordering in the reset/restore round-trip tests below.
+	x(`INSERT INTO sale_charges (sale_id, seq, key, label, amount_minor, tax_basis_bp, base) VALUES ('s1',0,'service_charge','',10,0,'net_lines')`)
 	x(`INSERT INTO payments (id, sale_id, method_id, amount) VALUES ('p1','s1','cash',100)`)
 	x(`INSERT INTO invoices (id, series, invoice_no, display_no, sale_id, customer_name, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by)
 	   VALUES ('inv1','A',1,'A-1','s1','Cust','{}',100,0,100,'[]','2026-01-01T00:00:00Z','u1')`)
@@ -70,7 +74,7 @@ func seedFullSale(t *testing.T, x func(q string, args ...any)) {
 // archive/delete order) paired with its archive counterpart.
 var resetTables = []string{
 	"invoices", "sale_links", "payments", "sale_discounts",
-	"stock_movements", "sale_line_modifiers", "sale_lines", "sales",
+	"stock_movements", "sale_line_modifiers", "sale_lines", "sale_charges", "sales",
 	"held_sales", "shifts",
 }
 
@@ -166,7 +170,7 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 	wantLive := map[string]int{
 		"sales": 2, "sale_lines": 1, "sale_line_modifiers": 1,
 		"sale_discounts": 1, "sale_links": 1, "payments": 1, "invoices": 1,
-		"held_sales": 1, "shifts": 1, "stock_movements": 1,
+		"held_sales": 1, "shifts": 1, "stock_movements": 1, "sale_charges": 1,
 	}
 	for tbl, want := range wantLive {
 		if c := count(tbl); c != want {
@@ -203,6 +207,11 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 	var smLine string
 	if err := d.DB.QueryRow(`SELECT sale_line_id FROM stock_movements WHERE id='sm1'`).Scan(&smLine); err != nil || smLine != "l1" {
 		t.Fatalf("restored stock movement: sale_line_id=%q err=%v, want l1", smLine, err)
+	}
+	var chargeKey string
+	var chargeAmount int64
+	if err := d.DB.QueryRow(`SELECT key, amount_minor FROM sale_charges WHERE sale_id='s1' AND seq=0`).Scan(&chargeKey, &chargeAmount); err != nil || chargeKey != "service_charge" || chargeAmount != 10 {
+		t.Fatalf("restored sale charge: key=%q amount=%d err=%v, want service_charge/10", chargeKey, chargeAmount, err)
 	}
 	// The archive is emptied for this batch, and the batch stops existing
 	// (ADR-0042 §2: a restored batch cannot be restored twice).
