@@ -132,8 +132,17 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 		}()
 		go func() {
 			defer close(pollDone)
-			watchShellMode(pollCtx, newShellPollClient(), url, prefs.WindowMode, prefs.Rev, func(mode string) {
-				w.Dispatch(func() { applyWindowMode(w, mode) })
+			// done() fires INSIDE the dispatched closure, after
+			// applyWindowMode returned on the UI thread — so applied=
+			// acknowledges a window that really changed, not a closure
+			// merely queued onto a possibly-wedged GTK loop (review of
+			// ut-docs#1039, finding 4). Dispatch executes closures in
+			// order, so acks cannot arrive out of order either.
+			watchShellMode(pollCtx, newShellPollClient(), url, prefs.WindowMode, prefs.Rev, func(mode string, done func()) {
+				w.Dispatch(func() {
+					applyWindowMode(w, mode)
+					done()
+				})
 			})
 		}()
 	}

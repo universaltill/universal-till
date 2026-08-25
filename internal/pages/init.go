@@ -262,46 +262,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
 	StartSyncPush(bgCtx, dp, wg) // replica journal loop (ADR-0011 D3); joined by app.Run's drain
-	// Re-derive everything Init computed from settings — same moves as the
-	// settings handlers make on a manual edit. Shared by the replica drift
-	// loop (ADR-0011 D2b) and cloud set_setting directives (ADR-0018).
-	rederiveSettings := func(c context.Context) {
-		st := common.LoadState(c, setStore, cfg)
-		applied := dp.UpdateState(func(s *common.RuntimeState) {
-			// display.ui_scale is per-till; when unset keep the env-derived
-			// value Init resolved instead of LoadState's zero.
-			if st.UIScale <= 0 {
-				st.UIScale = s.UIScale
-			}
-			*s = st
-		})
-		httpx.InitCurrency(applied.Currency)
-		// In-place tax swap: replacing the engine (as the settings
-		// handlers do) would empty the basket of a sale in progress.
-		// Both engines: the kiosk's separate instance (ut-docs#449) must
-		// see the same tax config or a kiosk checkout would silently
-		// charge stale rates after a settings drift.
-		if newCfg := (pos.Config{
-			TaxInclusive:                 applied.TaxInclusive,
-			TaxRateBasisPoints:           applied.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(applied),
-		}); dp.Engine.Config() != newCfg {
-			dp.Engine.SetConfig(newCfg)
-			dp.KioskEngine.SetConfig(newCfg)
-		}
-		authSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
-		if !authDisabled {
-			httpx.InitIdleLock(applied.IdleLockMinutes)
-		}
-		if overrides, err := data.NewTranslationRepo(dp.Db).ListOverrides(c); err == nil {
-			i18n.SetShopOverrides(overrides)
-		}
-		// The replica drift loop / cloud directives can rewrite
-		// plugin_settings rows (sync_admin ApplyAdmin) without a plugin
-		// reload — cached ".ask" answers must not survive that
-		// (ut-docs#222 review finding).
-		plugins.SharedBus(dp.Db).BumpGeneration()
-	}
+	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	StartSyncPull(bgCtx, dp, rederiveSettings, wg)  // joined by app.Run's drain
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	StartEODScheduler(bgCtx, dp, wg)                // background Z-report (docs: G30); joined by app.Run's drain
@@ -360,6 +321,71 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	return auth.Middleware(mux, authSvc), dp
 }
 
+// newRederiveSettings builds the shared settings re-derive: everything
+// Init computed from settings, redone with the same moves the settings
+// handlers make on a manual edit. Shared by the replica drift loop
+// (ADR-0011 D2b) and cloud set_setting directives (ADR-0018). Extracted
+// from Init's body (review of ut-docs#1039, finding 9 / ut-docs#1058) so
+// it is testable against a hand-built Deps: the drift path was reloading
+// RuntimeState — WindowMode included — without ever telling the live shell
+// channel, so a directive setting kiosk left the Settings page claiming
+// kiosk with a shell attached while the window stayed put until the next
+// restart. Everything it needs beyond Deps travels as explicit params.
+func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) func(context.Context) {
+	return func(c context.Context) {
+		st := common.LoadState(c, dp.Settings, dp.Cfg)
+		applied := dp.UpdateState(func(s *common.RuntimeState) {
+			// display.ui_scale is per-till; when unset keep the env-derived
+			// value Init resolved instead of LoadState's zero.
+			if st.UIScale <= 0 {
+				st.UIScale = s.UIScale
+			}
+			*s = st
+		})
+		httpx.InitCurrency(applied.Currency)
+		// In-place tax swap: replacing the engine (as the settings
+		// handlers do) would empty the basket of a sale in progress.
+		// Both engines: the kiosk's separate instance (ut-docs#449) must
+		// see the same tax config or a kiosk checkout would silently
+		// charge stale rates after a settings drift.
+		if newCfg := (pos.Config{
+			TaxInclusive:                 applied.TaxInclusive,
+			TaxRateBasisPoints:           applied.TaxRatePct * 100,
+			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(applied),
+		}); dp.Engine.Config() != newCfg {
+			dp.Engine.SetConfig(newCfg)
+			dp.KioskEngine.SetConfig(newCfg)
+		}
+		dp.AuthSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
+		if !authDisabled {
+			httpx.InitIdleLock(applied.IdleLockMinutes)
+		}
+		if overrides, err := data.NewTranslationRepo(dp.Db).ListOverrides(c); err == nil {
+			i18n.SetShopOverrides(overrides)
+		}
+		// Push the re-derived window mode onto the live shell channel
+		// (review of ut-docs#1039, finding 9 / ut-docs#1058) — the same
+		// move the window-mode settings handler makes via ApplyMode, so a
+		// cloud set_setting directive or replica drift takes live effect
+		// instead of waiting for a restart. Guarded by a Snapshot compare
+		// rather than calling SetMode unconditionally: SetMode also closes
+		// the one-shot server-restart adoption window (finding 7), and a
+		// re-derive that changes nothing carries no operator intent — it
+		// must not stop AdoptIfUntouched from keeping an escaped window
+		// escaped across a crash/upgrade restart.
+		if dp.Shell != nil {
+			if cur, _ := dp.Shell.Snapshot(); cur != common.ClampWindowMode(applied.WindowMode) {
+				dp.Shell.SetMode(applied.WindowMode)
+			}
+		}
+		// The replica drift loop / cloud directives can rewrite
+		// plugin_settings rows (sync_admin ApplyAdmin) without a plugin
+		// reload — cached ".ask" answers must not survive that
+		// (ut-docs#222 review finding).
+		plugins.SharedBus(dp.Db).BumpGeneration()
+	}
+}
+
 // newWindowController picks Deps.WindowCtl (ut-docs#608/#611/#882/#883,
 // ADR-0064 / ut-docs#1039). The Pi headless kiosk appliance and the desktop
 // shell (macOS/Windows/Linux) are the two platforms wired to a real OS
@@ -398,8 +424,21 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 // surface a clear "missing sudoers grant" error, which is that card's
 // acceptance criteria's own named scenario. The kiosk branch wins last, as
 // before.
+//
+// INVARIANT (review of ut-docs#1039, blocker 2): the shell channel is
+// marked as the exit path — and GET /api/window-mode will serve
+// chrome-hiding modes to a live poller — ONLY when this function wires
+// ShellPollWindowController, whose constructor is the single place that
+// marks it. On the kiosk branch the channel stays unmarked on purpose:
+// nothing consumes it there (exit-to-os drives systemd), so a control=live
+// GTK shell pointed at a kiosk-detected box must still be served "normal"
+// — this detection is a sticky file-presence probe, the documented disable
+// path leaves the unit file on disk, and the setup script runs on desktop
+// images and non-Pi Debian boxes, so that combination is reachable in the
+// field, not theoretical.
 func newWindowController(shell *common.ShellChannel, piKioskUnitPresent bool) common.WindowController {
 	if runtime.GOOS == "linux" && (os.Getenv("UT_KIOSK") == "1" || piKioskUnitPresent) {
+		// Deliberately NOT shell.MarkExitPath() — see the invariant above.
 		return common.NewKioskSystemdWindowController()
 	}
 	var fallback common.WindowController

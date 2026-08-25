@@ -28,6 +28,15 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
+// isPiKioskAppliance reports whether the wired WindowController is the Pi
+// kiosk appliance's systemd controller — the source of truth for the
+// Display card's topology note (review of ut-docs#1039, finding 8),
+// because it is the same fact pages.Init decided window control on.
+func isPiKioskAppliance(wc common.WindowController) bool {
+	_, ok := wc.(common.KioskSystemdWindowController)
+	return ok
+}
+
 // shortDeviceID trims a long "till-<uuid>" id to a readable prefix for display.
 func shortDeviceID(id string) string {
 	if len(id) > 16 {
@@ -347,15 +356,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,
 			"launchOnStartup":       st.LaunchOnStartup,
-			// shellAttached (ADR-0064, ut-docs#1039): whether a desktop
-			// shell is holding a live control poll right now. When false,
-			// the Display card warns that full-screen/kiosk stay off until
-			// the desktop app runs — the honest counterpart of the
-			// window-state endpoint's fail-closed downgrade. Nil-safe for
-			// bare-Deps tests. (On the Pi kiosk appliance this is false
-			// too — kiosk there is driven by systemd, not a shell — see
-			// the template comment where it renders.)
+			// shellAttached + piKioskAppliance (ADR-0064, ut-docs#1039;
+			// finding 8 of its review): which of the three window-control
+			// topologies this till is actually in, so the Display card can
+			// say the true thing in each — a desktop shell holding a live
+			// control poll; a Pi kiosk appliance (kiosk is real and
+			// systemd-driven, no desktop app will ever run); or neither,
+			// where chrome-hiding modes stay off (the fail-closed
+			// downgrade) until the desktop app runs. The appliance case is
+			// read off the controller pages.Init actually wired — the one
+			// fact that decides where exit-to-os and apply really go.
+			// Nil-safe for bare-Deps tests.
 			"shellAttached":      d.Shell != nil && d.Shell.Attached(common.ShellAttachedWindow),
+			"piKioskAppliance":   isPiKioskAppliance(d.WindowCtl),
 			"barcodeSymbologies": barcodeSymbologies,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
@@ -851,19 +864,44 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		if err := wc.ExitToOS(); err != nil {
 			logging.L().Errorf("exit to OS: %v", err)
-			// ADR-0064 (ut-docs#1039): no shell attached, or the attached
-			// shell never acknowledged applying "normal" — the window
-			// cannot be (confirmed) reached, which is unavailability, not
-			// an internal fault: 503, and the UI shows the dedicated
-			// "can't be reached, nothing changed" message rather than the
-			// wrong-PIN one. No audit row on any failure path — only a
-			// real exit is audited (the ut-docs#616 only-on-success
-			// reasoning below).
-			if errors.Is(err, common.ErrNoWindowControl) || errors.Is(err, common.ErrExitNotConfirmed) {
-				http.Error(w, "window control unavailable", http.StatusServiceUnavailable)
-				return
+			// ADR-0064 (ut-docs#1039): nothing can act on the window, or
+			// the attached shell never acknowledged applying "normal" —
+			// unavailability, not an internal fault: 503, with a marker
+			// token in the body the settings page maps to the honest,
+			// case-specific operator message (three distinct truths, one
+			// status code):
+			//
+			//   kiosk_appliance — this till is a Pi kiosk appliance; there
+			//       is no OS desktop, the window-mode toggle is the way
+			//       out. Nothing changed; no audit row.
+			//   not_confirmed — a shell was attached and the exit WAS
+			//       signalled (the live mode is now "normal", which the
+			//       shell will pick up from state on its next poll), but
+			//       no applied=normal acknowledgement came back in time.
+			//       The lockdown break did happen under a verified manager
+			//       PIN, so it IS audited (review of ut-docs#1039,
+			//       finding 3 — the old single "nothing changed" message
+			//       was false here, and the real exit went unaudited).
+			//   no_shell — no desktop shell attached, no fallback channel:
+			//       genuinely nothing changed; no audit row (only a real
+			//       exit is audited, the ut-docs#616 reasoning below).
+			//
+			// Order matters only for clarity — the three sentinels are
+			// distinct, none wraps another.
+			switch {
+			case errors.Is(err, common.ErrNoOSDesktop):
+				http.Error(w, "window control unavailable: kiosk_appliance", http.StatusServiceUnavailable)
+			case errors.Is(err, common.ErrExitNotConfirmed):
+				if aerr := posRepo.InsertAudit(r.Context(), nil, approver.ID, "settings", "-", "exit_to_os",
+					map[string]any{"confirmed": false}, time.Now().UTC().Format(time.RFC3339), ""); aerr != nil {
+					logging.L().Errorf("exit-to-os audit (unconfirmed): %v", aerr)
+				}
+				http.Error(w, "window control unavailable: not_confirmed", http.StatusServiceUnavailable)
+			case errors.Is(err, common.ErrNoWindowControl):
+				http.Error(w, "window control unavailable: no_shell", http.StatusServiceUnavailable)
+			default:
+				http.Error(w, "could not exit to OS", http.StatusInternalServerError)
 			}
-			http.Error(w, "could not exit to OS", http.StatusInternalServerError)
 			return
 		}
 		// ut-docs#616: record who authorized breaking kiosk lockdown, now that

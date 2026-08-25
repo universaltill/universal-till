@@ -64,10 +64,16 @@ type ShellChannel struct {
 	// the last rev it saw can never miss a change that happened between
 	// two of its requests.
 	rev uint64
-	// changed is closed and replaced under mu on every state change (mode
-	// or lastApplied) — the standard Go broadcast idiom: writers never
-	// block on a slow waiter, waiters never busy-poll.
+	// changed is closed and replaced under mu on every MODE change — the
+	// standard Go broadcast idiom: writers never block on a slow waiter,
+	// waiters never busy-poll. Acknowledgements broadcast on acked instead
+	// (review of ut-docs#1039, finding 11): the ack rides on every shell
+	// heartbeat, and waking every parked long poll per heartbeat is O(N)
+	// spurious wakeups — and an amplifier for hostile poll traffic.
 	changed chan struct{}
+	// acked is closed and replaced under mu whenever lastApplied changes;
+	// only WaitApplied parks on it.
+	acked chan struct{}
 	// lastSeen is when a control=live poll last arrived; Attached derives
 	// from it.
 	lastSeen time.Time
@@ -77,6 +83,19 @@ type ShellChannel struct {
 	// shell that has not applied anything yet ("") cannot be mistaken for
 	// one that applied "normal".
 	lastApplied string
+	// exitPath records that this channel really is the exit path — that
+	// Deps.WindowCtl is the ShellPollWindowController consuming it, so a
+	// mode published here can also be LEFT over the same channel. Set only
+	// by NewShellPollWindowController (never on the Pi kiosk appliance,
+	// where exit-to-os drives systemd and nothing consumes this channel).
+	// GET /api/window-mode requires it, alongside control=live, before
+	// serving a chrome-hiding mode (review of ut-docs#1039, blocker 2).
+	exitPath bool
+	// touched records that an explicit SetMode happened since this process
+	// started; adopted records that the one-shot AdoptIfUntouched already
+	// ran. Together they scope the server-restart adoption below.
+	touched bool
+	adopted bool
 	// now is injectable so staleness tests are deterministic and sleepless.
 	now func() time.Time
 }
@@ -88,6 +107,7 @@ func NewShellChannel(initial string) *ShellChannel {
 		mode:    ClampWindowMode(initial),
 		rev:     1,
 		changed: make(chan struct{}),
+		acked:   make(chan struct{}),
 		now:     time.Now,
 	}
 }
@@ -101,11 +121,15 @@ func (c *ShellChannel) Snapshot() (string, uint64) {
 
 // SetMode sets the live mode (clamped). A no-op — no rev bump, no
 // broadcast — when the clamped mode is unchanged, so a repeated save of
-// the same setting never wakes the shell for nothing.
+// the same setting never wakes the shell for nothing. Every call, no-op
+// included, still counts as an explicit instruction and closes the
+// AdoptIfUntouched window: an operator who re-applies "kiosk" right after
+// a server start means it, even if the live mode already reads kiosk.
 func (c *ShellChannel) SetMode(mode string) {
 	mode = ClampWindowMode(mode)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.touched = true
 	if mode == c.mode {
 		return
 	}
@@ -114,10 +138,74 @@ func (c *ShellChannel) SetMode(mode string) {
 	c.broadcastLocked()
 }
 
-// broadcastLocked wakes every parked waiter. Callers hold c.mu.
+// MarkExitPath declares that this channel is genuinely the exit path —
+// see the exitPath field comment. Production's only call site is
+// NewShellPollWindowController, the controller that consumes the channel;
+// test fixtures may call it to mirror that wiring. There is deliberately
+// no way to unmark: a channel that was ever the exit path stays one for
+// the process lifetime, same as the controller wiring itself.
+func (c *ShellChannel) MarkExitPath() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.exitPath = true
+}
+
+// IsExitPath reports whether MarkExitPath ran — i.e. whether a mode served
+// over this channel can also be left over it.
+func (c *ShellChannel) IsExitPath() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.exitPath
+}
+
+// AdoptIfUntouched adopts the shell's own reported window mode as the live
+// mode, once per process start, and only while no explicit SetMode has
+// happened yet (review of ut-docs#1039, finding 7 / ADR-0064 amendment):
+// the attached shell is the authority on what the window currently IS; the
+// persisted preference is what it should be at SHELL launch. Without this,
+// a `unitill-pos` crash/upgrade restart (Restart=always) re-seeds the live
+// mode from the persisted preference and slams a window the operator just
+// escaped straight back into undecorated fullscreen, unasked.
+//
+// Adoption is strictly "keep what the window already is", never an
+// instruction to enter anything: a reported mode that would ESCALATE the
+// live mode into a chrome-hiding one is refused (a hostile loopback caller
+// must not be able to talk the server into serving kiosk to the real
+// shell). An empty/garbage applied value leaves the one-shot window open —
+// the shell's launch-time prefs fetch carries no applied= yet.
+func (c *ShellChannel) AdoptIfUntouched(applied string) bool {
+	if !validWindowModes[applied] {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.touched || c.adopted {
+		return false
+	}
+	c.adopted = true
+	if applied == c.mode {
+		return true
+	}
+	if IsChromeHiding(applied) {
+		return false
+	}
+	c.mode = applied
+	c.rev++
+	c.broadcastLocked()
+	return true
+}
+
+// broadcastLocked wakes every parked mode waiter (Wait). Callers hold c.mu.
 func (c *ShellChannel) broadcastLocked() {
 	close(c.changed)
 	c.changed = make(chan struct{})
+}
+
+// broadcastAckLocked wakes every parked acknowledgement waiter
+// (WaitApplied). Callers hold c.mu.
+func (c *ShellChannel) broadcastAckLocked() {
+	close(c.acked)
+	c.acked = make(chan struct{})
 }
 
 // Wait returns the current (mode, rev) as soon as rev differs from since —
@@ -155,7 +243,7 @@ func (c *ShellChannel) NoteSeen(applied string) {
 	c.lastSeen = c.now()
 	if applied != c.lastApplied {
 		c.lastApplied = applied
-		c.broadcastLocked()
+		c.broadcastAckLocked()
 	}
 }
 
@@ -179,7 +267,7 @@ func (c *ShellChannel) WaitApplied(ctx context.Context, mode string, d time.Dura
 			c.mu.Unlock()
 			return true
 		}
-		ch := c.changed
+		ch := c.acked
 		c.mu.Unlock()
 		select {
 		case <-ctx.Done():

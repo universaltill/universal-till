@@ -40,8 +40,14 @@ type ShellPollWindowController struct {
 }
 
 // NewShellPollWindowController returns the channel-backed controller.
-// fallback may be nil.
+// fallback may be nil. Constructing it is what marks ch as the exit path
+// (review of ut-docs#1039, blocker 2): the fail-closed downgrade in
+// GET /api/window-mode serves chrome-hiding modes only over a channel this
+// controller consumes, and tying the mark to the constructor — rather than
+// a flag someone must remember to set — makes "the channel is the exit
+// path" true exactly when the controller that makes it true exists.
 func NewShellPollWindowController(ch *ShellChannel, fallback WindowController) WindowController {
+	ch.MarkExitPath()
 	return &ShellPollWindowController{ch: ch, fallback: fallback}
 }
 
