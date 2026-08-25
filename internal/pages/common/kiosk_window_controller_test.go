@@ -67,13 +67,22 @@ func TestKioskSystemdWindowController_ApplyMode_SurfacesFailure(t *testing.T) {
 	}
 }
 
-// TestKioskSystemdWindowController_ExitToOS: the Pi headless kiosk has no OS
-// desktop to exit to (cage fills the whole console) — this is a deliberate
-// no-op, not an unimplemented gap.
-func TestKioskSystemdWindowController_ExitToOS(t *testing.T) {
+// TestKioskSystemdWindowController_ExitToOSIsHonestError (review of
+// ut-docs#1039, blocker 1): the Pi headless kiosk has no OS desktop to exit
+// to (cage fills the whole console) — but that must be an HONEST error the
+// settings handler can map to a clear 503, never a nil that lets the UI
+// claim "Exited to OS." while cage+chromium stay fullscreen. ADR-0064
+// Decision 4 binds this: "the Pi headless appliance's deliberate no-op
+// likewise reports that there is no desktop to exit to rather than
+// claiming it exited."
+func TestKioskSystemdWindowController_ExitToOSIsHonestError(t *testing.T) {
 	c := KioskSystemdWindowController{}
-	if err := c.ExitToOS(); err != nil {
-		t.Fatalf("ExitToOS() = %v, want nil", err)
+	err := c.ExitToOS()
+	if err == nil {
+		t.Fatal("ExitToOS() = nil on the Pi kiosk appliance — the fabricated success ut-docs#1039's review proved (204 + audit row while the window never moved)")
+	}
+	if !errors.Is(err, ErrNoOSDesktop) {
+		t.Fatalf("ExitToOS() = %v, want errors.Is(ErrNoOSDesktop)", err)
 	}
 }
 

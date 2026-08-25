@@ -60,9 +60,23 @@ type Deps struct {
 	AI          *ai.Service
 	// WindowCtl is the host-OS hook for the till's own window/process
 	// (ut-docs#608 scaffold) — exiting kiosk/fullscreen to the OS desktop,
-	// and (later) actually applying a window-mode change. NoopWindowController
-	// until #609/#610/#611 wire a real per-platform implementation.
+	// and applying a window-mode change. pages.Init wires the real
+	// per-platform implementation (ShellPollWindowController by default
+	// since ADR-0064, KioskSystemdWindowController on the Pi appliance);
+	// handlers nil-check and fall back to NoopWindowController so
+	// bare-Deps tests stay valid.
 	WindowCtl WindowController
+
+	// Shell is the server-authoritative live window-mode channel the
+	// desktop shell long-polls via GET /api/window-mode?control=live
+	// (ADR-0064, ut-docs#1039). Set once in pages.Init, seeded from the
+	// persisted display.window_mode; ShellPollWindowController writes it,
+	// the window-state endpoint serves it (downgrading chrome-hiding modes
+	// for any client not holding a live control poll — the fail-closed
+	// guarantee), and the Settings Display card reads Attached from it to
+	// warn when no shell is holding the window. Nil-checked by readers so
+	// bare-Deps tests stay valid.
+	Shell *ShellChannel
 
 	// SyncPushNow, when non-nil, nudges the replica journal-push loop
 	// (pages.StartSyncPush) to run one push attempt immediately instead of
