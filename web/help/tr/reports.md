@@ -47,6 +47,21 @@ Bir çekin satıldığı satış iptal edilirse, çek henüz hiç kullanılmamı
 harcanamaz. Çekin herhangi bir kısmı zaten harcanmışsa kasa o satışın
 iptalini reddeder: önce bekleyen çeki müşteriyle çözüme kavuşturun.
 
+## Gün sonu (Z) raporunda ödeme yöntemi ve KDV oranı bir arada
+
+Yazdırılan gün sonu raporunda **BY METHOD & VAT RATE** tablosu bulunur:
+günün hasılatı aynı anda hem ödeme yöntemine hem KDV oranına göre ayrılır
+— her kombinasyon için bir satır (ör. %7'de nakit, %19'da kart) ve her
+satırda net, vergi ve brüt tutar. Bu, muhasebecinin muhasebe yazılımına
+işlediği tablodur: para hangi ödeme yöntemiyle geldi, hangi KDV oranına
+karşılık. Satırlar her zaman günün KDV oranı bazlı toplamlarına tam olarak
+denk gelir. Bir satış birden fazla yöntemle ödendiyse, tutarları her
+yöntemin ödediği payla orantılı olarak bölünür. Bahşişler buraya dahil
+edilmez — bahşişin KDV'si yoktur — bu yüzden bir kartın satır toplamı, o
+kartın hasılat satırından tam olarak günün kart bahşişleri kadar az
+olabilir; o gün bir kart iadesi varsa daha da az olur (iade kart hasılat
+satırını da azalttığı için ikisi birbiriyle uyumlu kalır).
+
 ## Rapor saklama
 
 Arşivlenen her gün sonu raporu **10 yıl** saklanır — bu yasal bir kayıttır

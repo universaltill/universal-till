@@ -65,6 +65,21 @@ longer be spent. If any part of the voucher has already been spent, the
 till refuses to void that sale: sort out the outstanding voucher with the
 customer first.
 
+## Payment method and VAT rate together on the day-end (Z) report
+
+The printed day-end report includes a **BY METHOD & VAT RATE** table: the
+day's takings broken down by payment method and VAT rate at once — one row
+per combination (e.g. cash at 7%, card at 19%), each with its net, tax and
+gross amount. This is the grid an accountant posts into bookkeeping
+software: which payment method the money arrived through, against which
+VAT rate. The rows always add up exactly to the day's per-VAT-rate totals.
+When a sale was paid with more than one method, its amounts are split
+across those methods in proportion to what each method paid. Tips are not
+included here — a tip carries no VAT — so a card row group can total less
+than that card's takings line by exactly the day's card tips, and less
+still on a day with a card refund (a refund reduces the card takings line
+too, so the two stay in step).
+
 ## Report retention
 
 Every archived end-of-day report is kept for **10 years** — this is a legal

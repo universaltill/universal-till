@@ -1056,6 +1056,18 @@ type TaxBand struct {
 	Gross  int64 `json:"gross"`   // Net + Tax: tax-inclusive, minor units
 }
 
+// MethodTaxBand is one (payment method, VAT rate)'s totals over the
+// reporting window — the cell the DATEV/accounting export posting batch
+// is generated from (debit account = method, credit account = rate).
+// ut-docs#1004.
+type MethodTaxBand struct {
+	Method string `json:"method"`
+	RateBP int    `json:"rate_bp"`
+	Net    int64  `json:"net"`
+	Tax    int64  `json:"tax"`
+	Gross  int64  `json:"gross"`
+}
+
 // TaxSummary groups completed sales' lines by tax rate over [from, to).
 // Returns reduce the figures (sale_type='return' lines subtract).
 func (r *POSRepo) TaxSummary(ctx context.Context, from, to time.Time) ([]TaxBand, error) {
@@ -1651,11 +1663,18 @@ type EODReport struct {
 	// EndOfDayRange themselves — the banding math (discount proration +
 	// ADR-0061 service-charge apportionment) lives in internal/pos, which
 	// this package cannot import. See dateRangeSummary's inline note.
-	TaxBands    []TaxBand   `json:"tax_bands"`
-	Methods     []EODMethod `json:"methods"`
-	Tips        []EODTip    `json:"tips"`        // tips by payment method, held out of revenue (ut-docs#1007)
-	Departments []DeptSales `json:"departments"` // per-department sales (E1b)
-	Tills       []TillSales `json:"tills"`       // per-register sales (multi-till)
+	TaxBands []TaxBand `json:"tax_bands"`
+	// MethodTaxBands is the payment-method x VAT-rate cross-tab
+	// (ut-docs#1004) the DATEV/accounting export posting batch is generated
+	// from. Filled by internal/pages' attachEODMethodTaxBands, NOT by
+	// EndOfDay/EndOfDayRange themselves — same layering reason as TaxBands
+	// above (the banding math lives in internal/pos, which this package
+	// cannot import).
+	MethodTaxBands []MethodTaxBand `json:"method_tax_bands"`
+	Methods        []EODMethod     `json:"methods"`
+	Tips           []EODTip        `json:"tips"`        // tips by payment method, held out of revenue (ut-docs#1007)
+	Departments    []DeptSales     `json:"departments"` // per-department sales (E1b)
+	Tills          []TillSales     `json:"tills"`       // per-register sales (multi-till)
 	// Voucher liability flows (ut-docs#1008): count + amount (minor units) of
 	// vouchers issued and redeemed in the window, from voucher_transactions.
 	// Reported DISTINCTLY from article revenue: an issue is a 0% liability
@@ -1991,6 +2010,23 @@ type EODTaxBandSale struct {
 	// face value in any band (a 0% liability, not a taxable supply).
 	VoucherIssueTotal int64
 	Lines             []EODTaxBandLine
+	// Payments (ut-docs#1004): the sale's tendered revenue per method, for
+	// the method x VAT-rate cross-tab's apportionment. Ordered by method_id
+	// within the sale (the query's ORDER BY), which the apportionment
+	// relies on for a stable "last payment takes the remainder" rule.
+	Payments []EODTaxBandPayment
+}
+
+// EODTaxBandPayment is one payment's tendered REVENUE share for a sale
+// (ut-docs#1004): amount minus change given minus tip — tips are
+// deliberately excluded here (they carry no VAT rate; see
+// eod_method_tax_bands.go's doc comment for why this makes
+// MethodTaxBand's column totals reconcile to EODMethod.In minus that
+// method's EODTip amount, not to EODMethod.In directly, whenever a
+// method carries tips).
+type EODTaxBandPayment struct {
+	Method string
+	Amount int64
 }
 
 // SalesForTaxBands loads every completed sale (and return) in the SAME
@@ -2004,9 +2040,9 @@ type EODTaxBandSale struct {
 // Zero-value "note" lines (total_before_tax = total_after_tax = 0,
 // arbitrary tax_rate_bp) are excluded at the query so they can't invent a
 // spurious band — same exclusion the previous SQL-aggregate banding had; a
-// real 0%-rate line has nonzero money and keeps its band. Two fixed
-// queries regardless of sale count (no N+1); lines are grouped per sale in
-// Go.
+// real 0%-rate line has nonzero money and keeps its band. Three fixed
+// queries regardless of sale count (no N+1); lines and payments are
+// grouped per sale in Go.
 func (r *POSRepo) SalesForTaxBands(ctx context.Context, from, to string) ([]EODTaxBandSale, error) {
 	saleRows, err := r.db.QueryContext(ctx, `
 SELECT id, sale_type, subtotal, discount_total, tax_total, total,
@@ -2054,7 +2090,37 @@ ORDER BY sl.sale_id, sl.line_no`, from, to)
 			out[i].Lines = append(out[i].Lines, l)
 		}
 	}
-	return out, lineRows.Err()
+	if err := lineRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Payments per sale (ut-docs#1004): tendered REVENUE only — change
+	// given comes back off, and tip_amount (which InsertPayment folds into
+	// `amount`, see the EODTip doc comment) is subtracted because a tip
+	// carries no VAT rate and must not be apportioned into any band. The
+	// ORDER BY method_id within each sale gives the apportionment a stable
+	// payment order (its "last payment takes the remainder" rule).
+	payRows, err := r.db.QueryContext(ctx, `
+SELECT p.sale_id, p.method_id, COALESCE(SUM(p.amount - p.change_given - p.tip_amount), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("eod band payments: %w", err)
+	}
+	defer payRows.Close()
+	for payRows.Next() {
+		var saleID string
+		var p EODTaxBandPayment
+		if err := payRows.Scan(&saleID, &p.Method, &p.Amount); err != nil {
+			return nil, fmt.Errorf("scan eod band payment: %w", err)
+		}
+		if i, ok := idx[saleID]; ok {
+			out[i].Payments = append(out[i].Payments, p)
+		}
+	}
+	return out, payRows.Err()
 }
 
 // ArchiveReport stores a generated report; kind+period is unique so the
