@@ -145,6 +145,156 @@ func TestAskChargePolicy_ValidatesPluginInput(t *testing.T) {
 	}
 }
 
+// ADR-0062 (ut-docs#963/#984): a plugin's Charges list is validated at the
+// same untrusted-input boundary as the legacy scalar fields — a rate
+// outside [0, 10000] bp clamps (never drops the item), the reserved
+// "service_charge" key is dropped, a duplicate key within the same answer
+// is dropped, and an unrecognized base defaults to "net_lines". Order among
+// the surviving items is preserved.
+func TestAskChargePolicy_ValidatesChargesList(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedChargePolicyPlugin(t, db)
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+
+	bus.SetEventMode("charge.policy.ask", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-uk",
+		[]string{"charge.policy.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{
+				"charges": [
+					{"key": "municipality_tax", "label": "Municipality Tax", "default_rate_bp": 500, "tax_basis_bp": 0, "base": "net_lines"},
+					{"key": "tourism_tax", "label": "Tourism Tax", "default_rate_bp": 99999},
+					{"key": "negative_rate", "default_rate_bp": -50},
+					{"key": "service_charge", "label": "sneaky", "default_rate_bp": 100},
+					{"key": "municipality_tax", "label": "duplicate", "default_rate_bp": 100},
+					{"key": "weird_base", "default_rate_bp": 100, "base": "made_up"}
+				]
+			}`), nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	asker := &pluginChargePolicyAsker{db: db}
+	policy, ok := asker.AskChargePolicy()
+	if !ok {
+		t.Fatal("expected an answer")
+	}
+	// service_charge (reserved) and the duplicate municipality_tax must both
+	// be dropped -- 4 of the original 6 survive.
+	if len(policy.Charges) != 4 {
+		t.Fatalf("want 4 surviving charges, got %d: %+v", len(policy.Charges), policy.Charges)
+	}
+	wantKeys := []string{"municipality_tax", "tourism_tax", "negative_rate", "weird_base"}
+	for i, want := range wantKeys {
+		if policy.Charges[i].Key != want {
+			t.Fatalf("charge %d: want key %q, got %q (order not preserved): %+v", i, want, policy.Charges[i].Key, policy.Charges)
+		}
+	}
+	if policy.Charges[0].DefaultRateBP != 500 || policy.Charges[0].Label != "Municipality Tax" || policy.Charges[0].Base != "net_lines" {
+		t.Fatalf("municipality_tax not mapped cleanly: %+v", policy.Charges[0])
+	}
+	if policy.Charges[1].DefaultRateBP != 10000 {
+		t.Fatalf("tourism_tax rate 99999 must clamp to 10000 (100%%), got %d", policy.Charges[1].DefaultRateBP)
+	}
+	if policy.Charges[2].DefaultRateBP != 0 {
+		t.Fatalf("negative_rate must clamp to 0, got %d", policy.Charges[2].DefaultRateBP)
+	}
+	if policy.Charges[3].Base != "net_lines" {
+		t.Fatalf("unrecognized base must default to net_lines, got %q", policy.Charges[3].Base)
+	}
+}
+
+// TaxBasisBP is just as plugin-supplied and applied-verbatim as
+// DefaultRateBP, so it gets the same [0, 10000] bp clamp both directions —
+// and the reserved/duplicate key checks fold case and trim whitespace,
+// treating an empty key (after trimming) as invalid too.
+func TestAskChargePolicy_ChargesKeyHygieneAndTaxBasisClamp(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedChargePolicyPlugin(t, db)
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+
+	bus.SetEventMode("charge.policy.ask", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-uk",
+		[]string{"charge.policy.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{
+				"charges": [
+					{"key": "  Municipality_Tax  ", "default_rate_bp": 500, "tax_basis_bp": 250000},
+					{"key": "municipality_tax", "default_rate_bp": 100},
+					{"key": " Service_Charge", "default_rate_bp": 100},
+					{"key": "negative_basis", "tax_basis_bp": -700},
+					{"key": "   "}
+				]
+			}`), nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	asker := &pluginChargePolicyAsker{db: db}
+	policy, ok := asker.AskChargePolicy()
+	if !ok {
+		t.Fatal("expected an answer")
+	}
+	// Only the first "Municipality_Tax" (trimmed) and negative_basis survive:
+	// the second municipality_tax is a case/whitespace-fold duplicate, the
+	// " Service_Charge" entry is a fold of the reserved key, and the
+	// whitespace-only key is empty after trimming.
+	if len(policy.Charges) != 2 {
+		t.Fatalf("want 2 surviving charges, got %d: %+v", len(policy.Charges), policy.Charges)
+	}
+	if got := policy.Charges[0].Key; got != "Municipality_Tax" {
+		t.Fatalf("want trimmed key %q, got %q", "Municipality_Tax", got)
+	}
+	if got := policy.Charges[0].TaxBasisBP; got != 10000 {
+		t.Fatalf("tax_basis_bp 250000 must clamp to 10000 (100%%), got %d", got)
+	}
+	if got := policy.Charges[1].TaxBasisBP; got != 0 {
+		t.Fatalf("negative tax_basis_bp must clamp to 0, got %d", got)
+	}
+}
+
+// An empty/absent charges array must map to a nil Charges list, not an
+// empty-but-non-nil one -- the zero-behavior-change case for every market
+// researched except the GCC.
+func TestAskChargePolicy_NoChargesIsNil(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedChargePolicyPlugin(t, db)
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+
+	bus.SetEventMode("charge.policy.ask", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-uk",
+		[]string{"charge.policy.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"service_charge_permitted": true}`), nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	asker := &pluginChargePolicyAsker{db: db}
+	policy, ok := asker.AskChargePolicy()
+	if !ok {
+		t.Fatal("expected an answer")
+	}
+	if policy.Charges != nil {
+		t.Fatalf("want nil Charges for a legacy-shaped answer, got %+v", policy.Charges)
+	}
+}
+
 // A plugin reload (Manager.Reload → ResetSubscribers, which bumps the bus
 // generation) must invalidate the cached answer — a plugin update or
 // settings change can legitimately change the policy.
