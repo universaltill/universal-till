@@ -1289,3 +1289,77 @@ func TestWorkerAllocationRequestedAt_MalformedDateRejected(t *testing.T) {
 		t.Fatal("expected an error for a malformed date")
 	}
 }
+
+// TestWorkerAllocationDateRange_MapsThroughBusinessDayBoundary is the
+// regression test for ut-docs#1020 item 6: workerAllocationDateRange used
+// to format window.To.Add(-time.Second) directly, which is only correct
+// when the business day starts at midnight. With any other start (e.g.
+// 06:00), a single ?period=day report's window resolves to
+// [day 06:00, day+1 06:00) and formatting the decremented upper bound
+// directly yields "day+1", not "day" — so a one-day report's own date
+// range spanned TWO calendar days, and a ?period=month report spilled one
+// day into the following month. Every payout on that spillover day was
+// then double-counted: present in both the report it belongs to and the
+// next one. Fixed by mapping both ends through businessDateFor — the SAME
+// boundary parseReportWindow itself built the window from.
+func TestWorkerAllocationDateRange_MapsThroughBusinessDayBoundary(t *testing.T) {
+	cases := []struct {
+		name             string
+		query            string
+		bizStart         string
+		wantFrom, wantTo string
+	}{
+		{"day at midnight", "?period=day&anchor=2026-08-25", "", "2026-08-25", "2026-08-25"},
+		{"day at 06:00", "?period=day&anchor=2026-08-25", "06:00", "2026-08-25", "2026-08-25"},
+		{"month at midnight", "?period=month&anchor=2026-08-25", "", "2026-08-01", "2026-08-31"},
+		{"month at 06:00", "?period=month&anchor=2026-08-25", "06:00", "2026-08-01", "2026-08-31"},
+		{"week at 06:00", "?period=week&anchor=2026-08-25", "06:00", "2026-08-24", "2026-08-30"},
+		{"year at 06:00", "?period=year&anchor=2026-08-25", "06:00", "2026-01-01", "2026-12-31"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/ui/reports/tab/tips"+c.query, nil)
+			window := parseReportWindow(req, c.bizStart)
+			gotFrom, gotTo := workerAllocationDateRange(window)
+			if gotFrom != c.wantFrom || gotTo != c.wantTo {
+				t.Fatalf("window [%s, %s) -> dates %s..%s, want %s..%s",
+					window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), gotFrom, gotTo, c.wantFrom, c.wantTo)
+			}
+		})
+	}
+}
+
+// TestReportsPage_WorkerAllocationExport_EscapesFormulaInjection is the
+// regression test for ut-docs#1020 item 2: encoding/csv quotes correctly
+// (not a parsing bug), but a manager-typed note or a worker's own display
+// name starting with =, +, -, or @ becomes a LIVE FORMULA when the export
+// is opened in Excel/Sheets — the help text explicitly frames this export
+// as for "a worker, an accountant, or anyone else" to open. csvSafe
+// prefixes such a field with a leading apostrophe, defusing it while
+// keeping the value readable.
+func TestReportsPage_WorkerAllocationExport_EscapesFormulaInjection(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','=cmd|''/c calc''!A1','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','worker1',500,'2026-08-25T18:00:00Z','+SUM(A1:A9)')`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/reports/worker-allocations/export?from=2026-08-25&to=2026-08-25", nil), auth.User{ID: "mgr1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `'=cmd`) {
+		t.Fatalf("expected the worker display name defused with a leading apostrophe, got: %s", body)
+	}
+	if !strings.Contains(body, `'+SUM(A1:A9)`) {
+		t.Fatalf("expected the note defused with a leading apostrophe, got: %s", body)
+	}
+}
