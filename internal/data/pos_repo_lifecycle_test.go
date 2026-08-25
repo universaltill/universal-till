@@ -702,6 +702,164 @@ func TestEndOfDayRange_NoSalesReturnsZeroedReportWithoutError(t *testing.T) {
 	}
 }
 
+// assertEODTaxBandIdentities pins the internal-consistency contract of
+// EODReport.TaxBands (ut-docs#1003): the per-rate rows must add up EXACTLY
+// (integer minor units, no re-rounding anywhere) to the report-level totals
+// computed independently from the sales table a few lines earlier in
+// dateRangeSummary:
+//
+//	sum(band.Tax)   == rep.TaxNet          (tax net of returns)
+//	sum(band.Gross) == rep.Net             (tax-inclusive, net of refunds)
+//	sum(band.Net)   == rep.Net - rep.TaxNet (pre-tax net total)
+//
+// A Z-report whose printed rows don't add to its printed totals is legally
+// unusable — this is the reference implementation's rounding bug the card
+// exists to avoid, asserted here rather than inspected.
+func assertEODTaxBandIdentities(t *testing.T, rep EODReport) {
+	t.Helper()
+	var sumNet, sumTax, sumGross int64
+	for _, b := range rep.TaxBands {
+		if b.Gross != b.Net+b.Tax {
+			t.Fatalf("band %d: Gross %d != Net %d + Tax %d", b.RateBP, b.Gross, b.Net, b.Tax)
+		}
+		sumNet += b.Net
+		sumTax += b.Tax
+		sumGross += b.Gross
+	}
+	if sumTax != rep.TaxNet {
+		t.Fatalf("sum of band tax %d != report TaxNet %d", sumTax, rep.TaxNet)
+	}
+	if sumGross != rep.Net {
+		t.Fatalf("sum of band gross %d != report Net %d", sumGross, rep.Net)
+	}
+	if sumNet != rep.Net-rep.TaxNet {
+		t.Fatalf("sum of band net %d != report Net-TaxNet %d", sumNet, rep.Net-rep.TaxNet)
+	}
+}
+
+func TestEndOfDay_TaxBands_PerRateNetTaxGross(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	// Local-noon-anchored, host-timezone-safe (ut-docs#869) — same shape as
+	// TestEndOfDay_AggregatesSalesReturnsAndMethods above.
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	at := b8At(today)
+
+	b8Item(t, dbx.d, "vat-itm", 100, nil, 1) // shared FK target for lines
+
+	// Reference day from the ut-docs#1003 card (all figures minor units):
+	//   7% band: net 963.36, tax 67.44, gross 1030.80
+	//  19% band: net 150.92, tax 28.68, gross 179.60
+	//   0% band: net  15.00, tax  0.00, gross  15.00
+	// Grand: tax 96.12, net(pre-tax) 1129.28, gross(tax-incl) 1225.40.
+	//
+	// Sale 1: the bulk of the 7% band, the whole 0% band, plus two
+	// zero-value "note" marker lines (price 0.00, arbitrary nonzero rates)
+	// that must NOT invent spurious bands.
+	b8Sale(t, dbx.d, "vat-s1", at, "completed", "sale", 6744, 104580)
+	b8Line(t, dbx.d, "vat-s1", 1, "vat-itm", "", "Groceries 7%", 1, 700, 6744, 96336, 103080)
+	b8Line(t, dbx.d, "vat-s1", 2, "vat-itm", "", "Zero-rated", 1, 0, 0, 1500, 1500)
+	b8Line(t, dbx.d, "vat-s1", 3, "vat-itm", "", "-- note --", 1, 500, 0, 0, 0)
+	b8Line(t, dbx.d, "vat-s1", 4, "vat-itm", "", "-- another note --", 1, 2300, 0, 0, 0)
+
+	// Sale 2: the whole 19% band, plus an extra 7% line that the return
+	// below cancels out exactly — proving the return reduces the CORRECT
+	// band, not another one.
+	b8Sale(t, dbx.d, "vat-s2", at, "completed", "sale", 3078, 21170)
+	b8Line(t, dbx.d, "vat-s2", 1, "vat-itm", "", "Standard 19%", 1, 1900, 2868, 15092, 17960)
+	b8Line(t, dbx.d, "vat-s2", 2, "vat-itm", "", "Groceries 7%", 1, 700, 210, 3000, 3210)
+
+	// Return in the 7% band only.
+	b8Sale(t, dbx.d, "vat-r1", at, "completed", "return", 210, 3210)
+	b8Line(t, dbx.d, "vat-r1", 1, "vat-itm", "", "Groceries 7%", 1, 700, 210, 3000, 3210)
+
+	// Voided sale: excluded entirely (would corrupt the 19% band otherwise).
+	b8Sale(t, dbx.d, "vat-v1", at, "voided", "sale", 999, 999)
+	b8Line(t, dbx.d, "vat-v1", 1, "vat-itm", "", "Voided", 1, 1900, 999, 999, 999)
+
+	day := b8ExpectedDay(t, dbx.d, today, 0, 0)
+	rep, err := dbx.repo.EndOfDay(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exactly 3 bands, ascending by rate — the note lines' 5%/23% rates
+	// must not appear, and the 0% band must appear on its own (a real
+	// zero-rated sale, never folded into another band).
+	if len(rep.TaxBands) != 3 {
+		t.Fatalf("expected 3 tax bands (0%%, 7%%, 19%%), got %+v", rep.TaxBands)
+	}
+	want := []TaxBand{
+		{RateBP: 0, Net: 1500, Tax: 0, Gross: 1500},
+		{RateBP: 700, Net: 96336, Tax: 6744, Gross: 103080},
+		{RateBP: 1900, Net: 15092, Tax: 2868, Gross: 17960},
+	}
+	for i, w := range want {
+		if rep.TaxBands[i] != w {
+			t.Fatalf("band[%d] = %+v, want %+v", i, rep.TaxBands[i], w)
+		}
+	}
+	for _, b := range rep.TaxBands {
+		if b.RateBP == 500 || b.RateBP == 2300 {
+			t.Fatalf("zero-value note lines invented a spurious %d bp band: %+v", b.RateBP, rep.TaxBands)
+		}
+	}
+
+	// Grand totals per the card: tax 96.12, pre-tax net 1129.28,
+	// tax-inclusive gross 1225.40 — via the report's own fields, then the
+	// band-sum identities against them.
+	if rep.TaxNet != 9612 {
+		t.Fatalf("expected TaxNet 9612, got %d", rep.TaxNet)
+	}
+	if rep.Net != 122540 {
+		t.Fatalf("expected Net (tax-inclusive, net of refunds) 122540, got %d", rep.Net)
+	}
+	assertEODTaxBandIdentities(t, rep)
+}
+
+func TestEndOfDayRange_TaxBandsAcrossDays(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	day1 := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	day2 := day1.AddDate(0, 0, 1)
+
+	b8Item(t, dbx.d, "vat-itm", 100, nil, 1)
+
+	b8Sale(t, dbx.d, "vat-d1", b8At(day1), "completed", "sale", 1900, 11900)
+	b8Line(t, dbx.d, "vat-d1", 1, "vat-itm", "", "Standard 19%", 1, 1900, 1900, 10000, 11900)
+
+	b8Sale(t, dbx.d, "vat-d2", b8At(day2), "completed", "sale", 1090, 8090)
+	b8Line(t, dbx.d, "vat-d2", 1, "vat-itm", "", "Standard 19%", 1, 1900, 950, 5000, 5950)
+	b8Line(t, dbx.d, "vat-d2", 2, "vat-itm", "", "Groceries 7%", 1, 700, 140, 2000, 2140)
+
+	fromDay := b8ExpectedDay(t, dbx.d, day1, 0, 0)
+	toDay := b8ExpectedDay(t, dbx.d, day2, 0, 0)
+	rep, err := dbx.repo.EndOfDayRange(ctx, fromDay, toDay)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bands merge across the whole range (same as Methods — not gated on
+	// from == to), ascending by rate.
+	want := []TaxBand{
+		{RateBP: 700, Net: 2000, Tax: 140, Gross: 2140},
+		{RateBP: 1900, Net: 15000, Tax: 2850, Gross: 17850},
+	}
+	if len(rep.TaxBands) != 2 {
+		t.Fatalf("expected 2 tax bands over the range, got %+v", rep.TaxBands)
+	}
+	for i, w := range want {
+		if rep.TaxBands[i] != w {
+			t.Fatalf("band[%d] = %+v, want %+v", i, rep.TaxBands[i], w)
+		}
+	}
+	assertEODTaxBandIdentities(t, rep)
+}
+
 func TestAuditActionSummary(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
