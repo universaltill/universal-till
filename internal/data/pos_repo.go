@@ -1586,6 +1586,30 @@ type EODMethod struct {
 	Out    int64  `json:"out"`
 }
 
+// EODTip is one payment method's tips for the day (minor units), held OUT
+// of revenue (ut-docs#1007): the reference day-close reports tips by
+// payment method, separately from revenue, and posts them to their own
+// ledger account rather than a revenue account. NOTE: EODMethod.In is the
+// full tendered amount (sale + tip, per InsertPayment's own convention —
+// payments.amount already includes any tip_amount, see
+// internal/pos/sales_test.go's tip round-trip coverage), so a card
+// method's In DOES include its tips -- Tips is an additional breakdown
+// alongside Methods, not a carve-out from it. What tips are genuinely
+// excluded from is revenue: Gross/Net/TaxNet come from sale/sale_lines
+// totals, never from payments, so a payment's tip_amount can never
+// inflate them by construction -- see dateRangeSummary's doc comment on
+// the tips query. Only methods with at least one tipped payment appear
+// (mirrors the EODMethod query's own convention of one row per method
+// actually seen,
+// not a zero row for every configured method) -- a card terminal with
+// tipping disabled and zero cash tips legitimately produces no rows at
+// all for a given day.
+type EODTip struct {
+	Method string `json:"method"`
+	Count  int    `json:"count"`
+	Amount int64  `json:"amount"`
+}
+
 // EODReport is the classic Z-report for one business day, or — when From/To
 // are set instead of Day — a date-ranged summary spanning multiple days.
 type EODReport struct {
@@ -1605,6 +1629,7 @@ type EODReport struct {
 	// this package cannot import. See dateRangeSummary's inline note.
 	TaxBands     []TaxBand   `json:"tax_bands"`
 	Methods      []EODMethod `json:"methods"`
+	Tips         []EODTip    `json:"tips"`        // tips by payment method, held out of revenue (ut-docs#1007)
 	Departments  []DeptSales `json:"departments"` // per-department sales (E1b)
 	Tills        []TillSales `json:"tills"`       // per-register sales (multi-till)
 	FirstReceipt string      `json:"first_receipt"`
@@ -1692,6 +1717,46 @@ GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 		rep.Methods = append(rep.Methods, m)
 	}
 	if err := rows.Err(); err != nil {
+		return rep, err
+	}
+
+	// Tips by payment method (ut-docs#1007), held OUT of revenue: a
+	// separate query on the same join/date-range shape as the EODMethod
+	// query above, but summing payments.tip_amount instead of the
+	// tendered `amount` column — tip_amount is a distinct payments column
+	// (migration 019_payment_tip_amount.sql; tip_recipient, not summed
+	// here, came later in migration 061 per ADR-0061), never folded into
+	// a sale's total (sale.total/tax_total come from sale_lines, not
+	// payments), so this can only ever ADD a Tips entry, never change
+	// Gross/Net/TaxNet — note it does NOT mean tips are absent from
+	// EODMethod.In, which is the full tendered amount and already
+	// includes any tip (see the EODTip doc comment above). p.tip_amount
+	// > 0 keeps a method with no tipped payments this period out of the
+	// slice entirely, matching the EODMethod query's own "one row per
+	// method actually seen" convention. No sale_type restriction: today
+	// every tipped payment is a completeTender 'sale' row (the refund
+	// path never sets TipAmount), so this is equivalent to EODMethod's
+	// own split in practice; if a returned sale ever carries its own
+	// tipped payment, this query would add it rather than net it the way
+	// EODMethod.Out does — revisit then, not speculatively now.
+	tipRows, err := r.db.QueryContext(ctx, `
+SELECT p.method_id, COUNT(*), COALESCE(SUM(p.tip_amount), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE p.tip_amount > 0 AND s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+GROUP BY p.method_id ORDER BY p.method_id`, from, to)
+	if err != nil {
+		return rep, fmt.Errorf("eod tips: %w", err)
+	}
+	defer tipRows.Close()
+	for tipRows.Next() {
+		var tp EODTip
+		if err := tipRows.Scan(&tp.Method, &tp.Count, &tp.Amount); err != nil {
+			return rep, fmt.Errorf("scan eod tip: %w", err)
+		}
+		rep.Tips = append(rep.Tips, tp)
+	}
+	if err := tipRows.Err(); err != nil {
 		return rep, err
 	}
 
