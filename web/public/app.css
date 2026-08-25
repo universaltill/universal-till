@@ -950,9 +950,23 @@ a.btn, a.btn:hover { text-decoration: none; }
              border: 1px dashed var(--accent); color: var(--accent); background: var(--surface); }
 .held-chip:hover { background: var(--accent); color: #fff; }
 
-.tab-bar { display: flex; gap: .25rem; border-bottom: 2px solid var(--border); }
+/* flex-wrap: wrap (ut-docs#424) — a shop with 12+ top-level categories
+   (or a narrow viewport) previously had nowhere for overflow tabs to go
+   but shrink, and flex:1 + flex-basis:0 below still floors each tab at
+   its own min-content width (browsers' default min-width:auto) while
+   shrinking — but for a multi-word label, min-content is only the widest
+   WORD, not the whole label, so a tab could still narrow enough to wrap
+   its own text across multiple lines before the row ran out of tabs to
+   shrink. white-space: nowrap on .tab-bar .tab (below) raises that floor
+   to the label's full width, so a tab that doesn't fit its row moves to
+   the next one instead of wrapping internally. A row that fits without
+   wrapping (e.g. the tender's fixed 2-tab Pay/Split bar) renders exactly
+   as before, since flex:1 still evenly fills a single line when nothing
+   overflows. */
+.tab-bar { display: flex; flex-wrap: wrap; gap: .25rem; border-bottom: 2px solid var(--border); }
 .tab-bar .tab {
   flex: 1; padding: .5rem .6rem; font: inherit; font-weight: 600; text-align: center;
+  white-space: nowrap;
   background: none; border: none; border-bottom: 3px solid transparent;
   /* border-block-start: always-on color accent from --cat-color when a
      tab carries one (sale-screen category tabs, ut-docs#418) — falls
