@@ -11,9 +11,12 @@
 //   - Only the OPERATIONAL credential ever lands here. The admin PUK lives
 //     exclusively in the cloud secret store and must never reach a till.
 //   - Never logged, never included in a diagnostics/support bundle
-//     (ADR-0034/ADR-0022 — the bundle collector is allowlist-based and this
-//     path is on no allowlist; TestTSECredentialExcludedFromSupportBundle
-//     pins that), never synced to the marketplace.
+//     (ADR-0034/ADR-0022 — there is no filesystem-walking support-bundle
+//     collector in this repo today, so this path is excluded by absence
+//     rather than by an explicit denylist; TestTSECredentialExcludedFromSupportBundle
+//     pins today's disjointness but is not a substitute for re-checking this
+//     comment if a real collector is ever added), never synced to the
+//     marketplace.
 package fiscal
 
 import (
@@ -64,6 +67,14 @@ func (s *TSECredentialStore) Exists() bool {
 // (MkdirAll first — a fresh install has no fiscal/ dir yet), file 0600. An
 // empty credential is rejected outright: fiscal.tse_configured is only ever
 // set after a confirmed store, and "confirmed" must never mean an empty map.
+//
+// The write is write-tmp-then-rename, not a direct os.WriteFile: WriteFile
+// opens O_CREATE|O_TRUNC, so a mid-write failure (full disk, IO error) would
+// otherwise leave a truncated/zero-length file behind. That file would still
+// pass Exists() (review finding, ut-docs#802) and, via the caller's stat-only
+// idempotency fast path, could flip fiscal.tse_configured true over a
+// credential that was never actually readable. Rename is atomic on the same
+// filesystem, so Path() only ever observes "absent" or "fully written."
 func (s *TSECredentialStore) Save(cred map[string]any) error {
 	if len(cred) == 0 {
 		return fmt.Errorf("tse credential store: refusing to store an empty credential")
@@ -75,8 +86,14 @@ func (s *TSECredentialStore) Save(cred map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("tse credential store: encode: %w", err)
 	}
-	if err := os.WriteFile(s.path, data, 0o600); err != nil {
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("tse credential store: write: %w", err)
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("tse credential store: commit: %w", err)
 	}
 	return nil
 }
