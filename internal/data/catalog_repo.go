@@ -423,18 +423,17 @@ ORDER BY is_primary DESC, barcode`, itemID)
 // (embedded-data) key an explicit-type escape-hatch row was never stored
 // under.
 //
-// Known asymmetry with the scan path (ut-docs#948 review F-9): the scan
-// path resolves canonical-first with a raw fallback (ut-docs#934 F2),
-// whereas this deletes exact-first with a canonical fallback. For the
-// rare collision where a plain escape-hatch code and a different item's
-// genuine scale label share the same zeroed template key, scanning the
-// escape-hatch code resolves to the scale-label row while deleting it
-// removes the escape-hatch row. Each ordering is locally correct (delete
-// by exact code must remove that row; scan by specificity must prefer the
-// embedded match), but the pair is not coherent end-to-end — the
-// underlying ADR-level question ("what should a plain code that collides
-// with an enabled embedded key's zeroed template scan to?") is tracked as
-// a Backlog follow-up (ut-docs#958), not resolved here.
+// Deliberately asymmetric with the scan path (ADR-0059 §6, ut-docs#958),
+// not an inconsistency to fix: ResolveScanLine resolves the rare collision
+// case canonical-first, because a genuine embedded-data decode (weight/
+// price, hence money) must never be shadowed by an incidental raw-code
+// match. Delete/exists stay exact-first here because acting on the code a
+// caller actually named must never redirect to a DIFFERENT, unrelated
+// item's row — a data-loss risk unifying the two orderings would trade the
+// rare collision bug for. See ADR-0059 §6 and
+// TestScanDeleteExists_CollisionResolutionIsDeliberatelyAsymmetric
+// (internal/data/pos_repo_scanline_test.go) for the full analysis and the
+// test pinning both properties together.
 func (r *CatalogRepo) DeleteBarcode(ctx context.Context, barcode string) error {
 	deleted, err := r.deleteBarcodeExact(ctx, barcode)
 	if err != nil || deleted {

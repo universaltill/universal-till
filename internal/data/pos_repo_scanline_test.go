@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
@@ -161,6 +162,141 @@ func TestResolveScanLine_NoEnabledSymbologyMatch(t *testing.T) {
 	}
 	if line, ok := repo.ResolveShortcutLine(ctx, badCheckDigit); ok {
 		t.Fatalf("full chain must also miss (got %+v): the barcode row exists but no enabled symbology admits the scan", line)
+	}
+}
+
+// TestScanDeleteExists_CollisionResolutionIsDeliberatelyAsymmetric is
+// ADR-0059 §6's pinning test (ut-docs#958): when an explicit-type
+// escape-hatch row (stored under its raw code) and a different item's
+// genuine scale label (stored under the zeroed template that raw code would
+// otherwise canonicalise to) collide on the same zeroed key, scan resolves
+// the CANONICAL (scale-label) row while DeleteBarcode/BarcodeExists resolve
+// the EXACT (escape-hatch) row — deliberately, not by oversight. Each
+// ordering protects a different, independently real property:
+//   - scan: a genuine embedded-data decode (weight/price, hence money) must
+//     never be shadowed by an incidental raw-code match — pinned for the
+//     general (non-collision) case by
+//     TestResolveScanLine_WeightEmbedded/PriceEmbedded and, end to end
+//     through the API, TestScanAPI_WeightEmbeddedLabel in
+//     internal/pages/pos_scan_barcode_test.go, which this test must not
+//     regress.
+//   - delete/exists: acting on the exact code a caller named must never
+//     redirect to a DIFFERENT, unrelated item's row — pinned by
+//     TestDeleteBarcode_ExactMatchWinsOverCoincidentalCanonicalCollision in
+//     catalog_repo_barcode_escape_hatch_test.go, which this test must not
+//     regress either.
+//
+// Unifying the two orderings would necessarily break one of those two
+// already-shipped correctness properties (verified directly: reordering
+// ResolveScanLine to exact-first passed this package's tests as they stood
+// before this test existed, but failed TestScanAPI_WeightEmbeddedLabel — a
+// genuine scale item stops resolving whenever an unrelated item's plain
+// code coincides with its zeroed template; this test itself now also fails
+// under that same mutation, which is the point of adding it). ADR-0059 §6
+// resolves ut-docs#958 by keeping both orderings
+// exactly as they are and documenting why, rather than picking a winner
+// that would trade a rare, not-yet-reachable collision bug (this ADR's own
+// Context: needs #935's settings UI, unshipped) for a money or
+// data-loss bug in the common case. This test exists so a future change
+// can't quietly collapse the asymmetry into one without a test failure
+// naming which property broke.
+func TestScanDeleteExists_CollisionResolutionIsDeliberatelyAsymmetric(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	seedSettingsTable(t, db)
+	defer db.Close()
+	catalog := data.NewCatalogRepo(db)
+	pos := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Escape-hatch item", BasePrice: 100, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Genuine scale item", BasePrice: 200, IsActive: true})
+	enabled := []string{"EAN13", "EAN13_WEIGHT_PREFIX2X"}
+	if err := data.NewSettingsRepo(db).SetEnabledBarcodeSymbologies(ctx, enabled); err != nil {
+		t.Fatal(err)
+	}
+
+	// i1: an explicit-type escape-hatch row, stored under its raw code.
+	// Its canonical (zeroed) form — weight digits AND check digit zeroed,
+	// not recomputed — is the literal string "2412345000000" (13 digits).
+	escaped := ean13t(t, "241234500000")
+	if err := catalog.AddBarcode(ctx, catalogtypes.BarcodeInput{
+		Barcode: escaped, ItemID: "i1", BarcodeType: "EAN13",
+	}); err != nil {
+		t.Fatalf("i1 escape-hatch add: %v", err)
+	}
+
+	// i2: a genuine scale label for a DIFFERENT item, inferred (untyped) to
+	// the same zeroed key as escaped's canonical form.
+	genuineScaleLabel := ean13t(t, "241234501234")
+	if err := catalog.AddBarcode(ctx, catalogtypes.BarcodeInput{Barcode: genuineScaleLabel, ItemID: "i2"}); err != nil {
+		t.Fatalf("i2 genuine scale add: %v", err)
+	}
+
+	// Scan resolves the CANONICAL row (i2, the genuine scale label) — money
+	// correctness for the embedded decode wins over the coincidental exact
+	// match. This is unchanged, existing ResolveScanLine behaviour.
+	line, dec, ok := pos.ResolveScanLine(ctx, escaped, enabled)
+	if !ok {
+		t.Fatal("expected the escape-hatch code to resolve")
+	}
+	if line.ItemID != "i2" {
+		t.Fatalf("scan resolved item %q, want i2 (canonical wins — a genuine embedded decode must not be shadowed)", line.ItemID)
+	}
+	if !dec.HasEmbeddedWeight {
+		t.Fatalf("expected the canonical match to decode an embedded weight, got %+v", dec)
+	}
+
+	// BarcodeExists reports true here — it finds i1's EXACT row on the
+	// first, exact-first lookup (catalog_repo.go's barcodeExistsExact),
+	// never reaching the canonical fallback: with both rows present,
+	// existence is true either way, so this call alone doesn't pin the
+	// ordering (unlike scan's ItemID or delete's which-row-survives
+	// check). DeleteBarcode, unchanged, targets the EXACT row (i1)
+	// specifically to avoid ever deleting an unrelated item's data by
+	// canonicalisation redirect. This is the documented asymmetry, not a
+	// bug: deletion's "never touch the wrong item" safety property
+	// outranks matching scan's read-only resolution order.
+	if exists, err := catalog.BarcodeExists(ctx, escaped); err != nil || !exists {
+		t.Fatalf("BarcodeExists(escaped) = %v/%v, want true/nil", exists, err)
+	}
+	if err := catalog.DeleteBarcode(ctx, escaped); err != nil {
+		t.Fatalf("delete escaped: %v", err)
+	}
+
+	// i1's exact escape-hatch row is gone — checked directly against the
+	// DB (not BarcodeExists, which would legitimately still report true via
+	// i2's surviving canonical row at the same collision).
+	var i1RowCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE barcode = ? AND item_id = 'i1'`, escaped).Scan(&i1RowCount); err != nil {
+		t.Fatal(err)
+	}
+	if i1RowCount != 0 {
+		t.Fatal("i1's escape-hatch row should be gone after DeleteBarcode")
+	}
+
+	// NOW BarcodeExists(escaped) genuinely exercises the canonical
+	// fallback: i1's exact row is gone, so the only way this can still
+	// report true is by canonicalising escaped and finding i2's surviving
+	// row at that key. This is functional coverage of the fallback branch,
+	// not an ordering pin: BarcodeExists's result is a plain OR of "exact
+	// row exists" and "canonical row exists", so — unlike Scan's resolved
+	// ItemID or Delete's which-row-survives outcome — no assertion on its
+	// bool return can ever distinguish exact-first from canonical-first
+	// when both rows are present; that asymmetry is provably unobservable
+	// through this API, which is exactly why only Scan and Delete are
+	// pinned by ItemID/row-identity assertions above.
+	if exists, err := catalog.BarcodeExists(ctx, escaped); err != nil || !exists {
+		t.Fatalf("BarcodeExists(escaped) after i1's row is gone = %v/%v, want true/nil (must fall through to i2's canonical row)", exists, err)
+	}
+	// ...i2's unrelated genuine scale-label row was never touched — proof
+	// the delete acted on the exact row, not the canonical one scan just
+	// resolved to.
+	label2, dec2, ok := pos.ResolveScanLine(ctx, genuineScaleLabel, enabled)
+	if !ok || label2.ItemID != "i2" {
+		t.Fatalf("i2's genuine scale label must still resolve after deleting i1's escape-hatch code: ok=%v line=%+v", ok, label2)
+	}
+	if !dec2.HasEmbeddedWeight {
+		t.Fatalf("i2's genuine scale label should still decode its embedded weight, got %+v", dec2)
 	}
 }
 
