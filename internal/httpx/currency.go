@@ -42,6 +42,11 @@ var currencyRegistry = []CurrencyInfo{
 func Currencies() []CurrencyInfo { return currencyRegistry }
 
 // CurrencyByCode resolves a code; unknown codes fall back to "CODE 1.23".
+// This fallback makes CurrencyByCode unsuitable as a validity check on its
+// own (ut-docs#970 review, finding F1) — CurrencyByCode(v).Code == v is
+// ALWAYS true for an already-uppercased/trimmed v, known or not, so that
+// idiom silently accepts anything. Callers that need to reject an unknown
+// code must use IsKnownCurrency instead.
 func CurrencyByCode(code string) CurrencyInfo {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	for _, c := range currencyRegistry {
@@ -50,6 +55,20 @@ func CurrencyByCode(code string) CurrencyInfo {
 		}
 	}
 	return CurrencyInfo{Code: code, Name: code, Display: code + " ", Decimals: 2}
+}
+
+// IsKnownCurrency reports whether code is a real entry in the registry (the
+// only set the Settings/setup currency pickers actually offer) — unlike
+// CurrencyByCode, this genuinely rejects an unrecognised code instead of
+// silently fabricating a plausible-looking CurrencyInfo for it.
+func IsKnownCurrency(code string) bool {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	for _, c := range currencyRegistry {
+		if c.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 // ActiveCurrency returns the configured currency's formatting info.

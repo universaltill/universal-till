@@ -1304,6 +1304,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" {
 			st.Currency = v
 			auditPayload["currency"] = v
+			// ut-docs#970 review (F2): this is the handler the shipped
+			// Settings currency card actually posts to (settings.html's
+			// `hx-post="/api/settings/save"`) — the earlier attempt to mark
+			// this in POST /api/settings/upsert's generic key/value switch
+			// was the WRONG handler (that one backs the advanced raw
+			// key/value table, not the currency picker), so an operator
+			// using the shipped UI was still gated on their next import.
+			// Left the upsert-handler marking in place too (harmless, and
+			// correct for a caller that does use the raw table), but this
+			// is the one that actually matters for the real UI.
+			if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
+				logging.L().Errorf("settings: mark currency confirmed: %v", err)
+			}
 		}
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
 			st.Country = v
@@ -1536,6 +1549,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		switch key {
 		case common.KeyCurrency:
 			httpx.InitCurrency(st.Currency)
+			// An explicit Settings write is exactly the "operator chose
+			// this" signal ut-docs#970's import gate needs — mark it
+			// confirmed so a catalogue import never re-asks after this.
+			if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
+				logging.L().Errorf("settings: mark currency confirmed: %v", err)
+			}
 		case common.KeyTaxInclusive, common.KeyServiceChargeRate, common.KeyCountry:
 			// In place: replacing the engine would empty a basket in progress.
 			// Both engines — see the currency-card handler above (ut-docs#449).

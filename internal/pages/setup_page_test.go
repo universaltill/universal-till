@@ -179,6 +179,55 @@ func TestSetupWizardHappyPath(t *testing.T) {
 	}
 }
 
+// TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect is the
+// regression test for ut-docs#970 review finding F3: country/currency start
+// PRE-FILLED from OS locale + timezone detection (ut-docs#590), not from an
+// operator choice, so a submitted non-blank currency field alone proves
+// nothing — the wizard can complete with the operator never having opened
+// the country step at all. web/ui/pages/setup.html's currency_touched hidden
+// field only flips to "1" on a genuine @change on the country select.
+func TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect(t *testing.T) {
+	t.Run("no currency_touched field (operator never opened the country step)", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if confirmed, ok, _ := d.Settings.Get(t.Context(), common.KeyCurrencyConfirmed); ok && confirmed == "true" {
+			t.Fatalf("currency marked confirmed with no currency_touched field — a completed wizard alone must not count as an operator choice")
+		}
+	})
+	t.Run("currency_touched=1 (operator actually used the country select)", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"}, "currency_touched": {"1"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if confirmed, ok, err := d.Settings.Get(t.Context(), common.KeyCurrencyConfirmed); err != nil || !ok || confirmed != "true" {
+			t.Fatalf("currency_confirmed = (%q, %v, %v), want (true, true, nil) when the operator touched the country select", confirmed, ok, err)
+		}
+	})
+	t.Run("currency_touched=1 but an unrecognised currency code is rejected, not confirmed", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"GB"}, "currency": {"NOTREAL"}, "tax_rate_pct": {"20"}, "currency_touched": {"1"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if confirmed, ok, _ := d.Settings.Get(t.Context(), common.KeyCurrencyConfirmed); ok && confirmed == "true" {
+			t.Fatalf("an unrecognised currency code must not be accepted or marked confirmed")
+		}
+	})
+}
+
 // ut-docs#429: a genuinely fresh till, taken through the guided wizard with
 // no other setup, must be able to open a shift immediately afterward. The
 // wizard provisions an admin + PIN as real usable state; it must provision a

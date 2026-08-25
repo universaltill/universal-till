@@ -177,6 +177,104 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ut-docs#970: a fresh till defaults to GBP with nothing recording
+		// whether an operator ever actually chose that — so a catalogue
+		// import (e.g. a German backup) can silently price every row under
+		// a currency nobody confirmed. Gate the WRITE, not the parse/preview
+		// (preview writes nothing, so it's never gated — see the warning
+		// line below instead).
+		// ut-docs#970 review (F11): defaults to unconfirmed, not confirmed —
+		// a Settings.Get error must fail SAFE (prompt) for a money-labelling
+		// gate, not silently let the commit through under an unverified
+		// currency because the read happened to fail.
+		currencyConfirmed := false
+		justConfirmedCurrency := false // this request is the one that supplied confirm_currency, for the audit log
+		if confirmedVal, _, cerr := d.Settings.Get(r.Context(), common.KeyCurrencyConfirmed); cerr != nil {
+			log.Printf("[import] read currency confirmed flag: %v", cerr)
+		} else {
+			currencyConfirmed = confirmedVal == "true"
+		}
+		if commit && !currencyConfirmed {
+			confirmCode := strings.ToUpper(strings.TrimSpace(r.FormValue("confirm_currency")))
+			if confirmCode == "" {
+				// First attempt to commit with an unconfirmed currency:
+				// write nothing, ask instead.
+				renderImportCurrencyConfirm(w, T)
+				return
+			}
+			// ut-docs#970 review (F1, blocker): CurrencyByCode(v).Code == v
+			// is ALWAYS true for an already-uppercased/trimmed v — it's a
+			// permissive lookup with a "fabricate a plausible CurrencyInfo"
+			// fallback, not a membership check, so this "validation" never
+			// actually rejected anything. Confirmed live: POST'ing
+			// confirm_currency=XYZ switched the till to a currency that
+			// isn't in the registry at all and marked it confirmed — the
+			// exact "money labelled as the wrong currency" class this card
+			// exists to fix, reopened through the fix's own confirm step.
+			if !httpx.IsKnownCurrency(confirmCode) {
+				http.Error(w, T("import.error.invalid_currency"), http.StatusBadRequest)
+				return
+			}
+			chosen := httpx.CurrencyByCode(confirmCode)
+			active := httpx.ActiveCurrency()
+			if chosen.Code != active.Code {
+				// The operator says the file is in a different currency
+				// than the till's (unconfirmed) default — switch the till
+				// to it AND re-parse the original upload under the new
+				// decimal count. Decimals vary per currency (GBP=2, IRT=0,
+				// ...); committing the already-parsed rows unchanged would
+				// silently keep the WRONG minor-unit amounts even though
+				// the currency label was fixed.
+				if _, serr := file.Seek(0, io.SeekStart); serr != nil {
+					log.Printf("[import] seek upload for re-parse: %v", serr)
+					http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
+					return
+				}
+				if isBkp {
+					res, err = catimport.ParseBkp(file, header.Size, chosen.Decimals)
+				} else {
+					enabledIDs, symErr := settingsRepo.EnabledBarcodeSymbologies(r.Context())
+					if symErr != nil {
+						log.Printf("[import] enabled symbologies unavailable, using defaults: %v", symErr)
+					}
+					res, err = catimport.Parse(file, chosen.Decimals, enabledIDs)
+				}
+				if err != nil {
+					log.Printf("[import] re-parse under confirmed currency %s: %v", chosen.Code, err)
+					http.Error(w, T("import.error.invalid_file"), http.StatusBadRequest)
+					return
+				}
+				st := d.CurrentState()
+				fromCurrency := active.Code
+				st.Currency = chosen.Code
+				if serr := common.SaveState(r.Context(), d.Settings, st); serr != nil {
+					log.Printf("[import] save switched currency: %v", serr)
+					http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
+					return
+				}
+				d.SetState(st)
+				// ut-docs#970 review (F4): this is the same destructive-ish
+				// switch /api/settings/save's currency card performs — that
+				// path audits it (settingsAudit, "setting_upserted");
+				// switching from here must too, and must name what it
+				// switched FROM (the combined import-commit audit below only
+				// ever records the final currency, never the change).
+				if aerr := posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "settings", common.KeyCurrency,
+					"currency_switched_by_import", map[string]any{"from": fromCurrency, "to": chosen.Code},
+					time.Now().UTC().Format(time.RFC3339), ""); aerr != nil {
+					log.Printf("[import] audit currency switch: %v", aerr)
+				}
+				httpx.InitCurrency(st.Currency)
+			}
+			if serr := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); serr != nil {
+				log.Printf("[import] mark currency confirmed: %v", serr)
+				http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
+				return
+			}
+			currencyConfirmed = true
+			justConfirmedCurrency = true
+		}
+
 		// Annotate duplicates (server truth) for both preview and commit.
 		type rowView struct {
 			catimport.ImportItem
@@ -514,11 +612,23 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "import",
 				map[string]any{"format": res.Format, "created": created, "warned": warned, "failed": failed, "rows": len(rows),
 					"tax_codes_created": taxCodesCreated, "takeaway_overrides_set": overridesSet,
-					"takeaway_overrides_plugin_disabled": overridesPluginDisabled},
+					"takeaway_overrides_plugin_disabled": overridesPluginDisabled,
+					// ut-docs#970: record what currency these rows were
+					// actually priced under, alongside whether this request
+					// is the one that just confirmed it (vs. an already-
+					// confirmed till committing as normal).
+					"currency": httpx.ActiveCurrency().Code, "currency_confirmed_this_import": justConfirmedCurrency},
 				time.Now().UTC().Format(time.RFC3339), "")
 		}
 
 		var b strings.Builder
+		if !currencyConfirmed {
+			// Preview is never gated (it writes nothing) — but must still
+			// tell the operator the currency shown is only the unconfirmed
+			// default, not something anyone chose.
+			fmt.Fprintf(&b, `<p class="notice-block-warn"><span class="row-warn-icon" aria-hidden="true">⚠</span>%s</p>`,
+				fmt.Sprintf(htmlEscape(T("import.warning.currency_unconfirmed")), htmlEscape(httpx.ActiveCurrency().Code)))
+		}
 		if commit {
 			fmt.Fprintf(&b, `<p><strong>✓ %s: %d — %s: %d — %s: %d</strong>`,
 				T("import.created"), created, T("import.warned"), warned,
@@ -590,6 +700,53 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))
 	})
+}
+
+// renderImportCurrencyConfirm is ut-docs#970's commit-time gate response: a
+// fresh till defaults to GBP, and nothing distinguishes "the operator chose
+// GBP" from "nobody has ever looked" — so committing a catalogue import
+// while the till's currency has never been explicitly confirmed
+// (common.KeyCurrencyConfirmed) must stop and ask, not silently price every
+// row under whatever the (possibly wrong) default happens to be. The
+// operator either confirms the shown default is correct or picks the
+// currency the file's prices are actually in; either way the request round-
+// trips back through POST /api/import with confirm_currency set (handled at
+// the top of that handler, above), never through a second route.
+func renderImportCurrencyConfirm(w http.ResponseWriter, T func(string) string) {
+	active := httpx.ActiveCurrency()
+	var b strings.Builder
+	// ut-docs#970 review (F6): a block-level class that's actually styled —
+	// .row-warn on its own only has a `tr.row-warn td` rule, so this block
+	// previously rendered with no warning treatment at all.
+	b.WriteString(`<div class="notice-block-warn">`)
+	fmt.Fprintf(&b, `<p><strong>%s</strong></p><p>%s</p>`,
+		htmlEscape(T("import.currency_confirm.title")), htmlEscape(T("import.currency_confirm.help")))
+	// ut-docs#970 review (F4): picking a different currency here switches
+	// the till's live currency, same as the Settings currency card — same
+	// warning that card already carries (no new locale key needed), because
+	// the till isn't necessarily empty (the setup wizard's starter catalogue,
+	// or a prior confirmed-currency import, may already hold priced items).
+	fmt.Fprintf(&b, `<p>%s</p>`, htmlEscape(T("settings.currency.warning")))
+	b.WriteString(`<label>` + htmlEscape(T("settings.currency.title")) + ` <select name="confirm_currency" id="import-confirm-currency" form="import-form">`)
+	for _, c := range httpx.Currencies() {
+		selected := ""
+		if c.Code == active.Code {
+			selected = " selected"
+		}
+		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, htmlEscape(c.Code), selected, htmlEscape(c.Name))
+	}
+	b.WriteString(`</select></label> `)
+	// hx-encoding is required here, not optional: this button lives outside
+	// <form id="import-form"> (it's rendered into the swapped #import-result
+	// div), so without an explicit multipart encoding htmx falls back to
+	// urlencoded and the included file input serializes as the literal
+	// string "[object File]" instead of the actual upload — confirmed by
+	// driving this in a real browser while testing (ut-docs#970).
+	fmt.Fprintf(&b, `<button class="btn primary" type="button" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" hx-encoding="multipart/form-data" hx-include="#import-form, #import-confirm-currency" hx-vals=%s>%s</button>`,
+		`'{"commit":"1"}'`, htmlEscape(T("import.currency_confirm.button")))
+	b.WriteString(`</div>`)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(b.String()))
 }
 
 // writeCatalogCSV is G22b's catalog export writer. The CSV round-trips
