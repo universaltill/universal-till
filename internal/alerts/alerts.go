@@ -138,9 +138,16 @@ func pushNotify(ctx context.Context, cfg *config.Config, typ string, body map[st
 // weekday over the previous 4 weeks. Returns (ratio, yesterdayTotal, true)
 // only when the baseline is meaningful (≥3 of 4 weeks had sales) and the
 // deviation is big (>1.8× or <0.4×).
-func unusualSales(ctx context.Context, db *sql.DB) (float64, int64, bool) {
+//
+// ref anchors what "today" means for every DayTotal call below — all five
+// reads (yesterday plus the four baseline weeks) must agree on the same
+// "today", which only holds if they share one Go-side instant instead of
+// each independently reading SQLite's own 'now' a few milliseconds apart
+// (ut-docs#969: that independent-read race is what let this misfire, not a
+// weekday-specific detector bug — see DayTotal's own doc comment).
+func unusualSales(ctx context.Context, db *sql.DB, ref time.Time) (float64, int64, bool) {
 	repo := data.NewPOSRepo(db)
-	yTotal, yCount, err := repo.DayTotal(ctx, 1)
+	yTotal, yCount, err := repo.DayTotal(ctx, 1, ref)
 	if err != nil || yCount == 0 && yTotal == 0 {
 		// A zero day is only unusual if the baseline says the day normally
 		// sells — fall through with zero and let the ratio check decide.
@@ -149,7 +156,7 @@ func unusualSales(ctx context.Context, db *sql.DB) (float64, int64, bool) {
 	var sum int64
 	weeks := 0
 	for _, back := range []int{8, 15, 22, 29} { // same weekday, 1-4 weeks earlier
-		t, c, err := repo.DayTotal(ctx, back)
+		t, c, err := repo.DayTotal(ctx, back, ref)
 		if err == nil && (c > 0 || t > 0) {
 			sum += t
 			weeks++
@@ -185,7 +192,7 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, wg *sync.WaitGro
 			if err := pushDigest(ctx, cfg, db); err != nil {
 				logging.L().Warnf("alerts: digest push failed (will retry tomorrow): %v", err)
 			}
-			if ratio, total, unusual := unusualSales(ctx, db); unusual {
+			if ratio, total, unusual := unusualSales(ctx, db, time.Now()); unusual {
 				if err := pushNotify(ctx, cfg, "unusual_sales", map[string]any{
 					"ratio_pct": int(ratio * 100),
 					"total":     total,
