@@ -3,6 +3,7 @@ package pos
 import (
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 )
 
@@ -210,6 +211,58 @@ func TestOrderTypeTaxSwitching(t *testing.T) {
 	b = *s.SetOrderType("")
 	if b.Tax != dineInTax {
 		t.Fatalf("dine-in (reverted) tax = %v, want %v", b.Tax, dineInTax)
+	}
+}
+
+// TestOrderTypeTaxSwitching_ModifierInheritsParentRate is ut-docs#1013's
+// modifier acceptance criterion: a zero-price modifier must never
+// introduce a tax rate distinct from its parent line's. Our basket model
+// makes this true BY CONSTRUCTION -- data.SelectedModifier carries no rate
+// field of its own (see AddLineWithModifiers), a modifier's
+// PriceDeltaMinor is folded straight into the single BasketLine's
+// PriceCents, and every rate decision (effectiveTaxRateBP, and the
+// TaxRateAsker it consults) is made exactly once for that whole line,
+// keyed on the LINE's own TaxCodeID. There is no code path where a
+// modifier article's own rate could leak in, priced or not.
+//
+// This test pins that invariant so it stays true on purpose, not by
+// accident: real trading data examined for ut-docs#1013 showed a
+// zero-price oat-milk modifier carrying a DIFFERENT rate (19%) than its
+// parent cappuccino (7% takeaway) 27 times in one day -- harmless there
+// only because the modifier was priced at 0.00.
+func TestOrderTypeTaxSwitching_ModifierInheritsParentRate(t *testing.T) {
+	resolver := mapResolver{
+		"CAPPUCCINO": {SKU: "CAPPUCCINO", ItemID: "item-cappuccino", TaxCodeID: "tax-milk-drink", Name: "Cappuccino", Qty: 1, PriceCents: 1000, TaxRateBP: 1900},
+	}
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+	s.SetTaxRateAsker(fakeTaxAsker{takeawayRateByTaxCode: map[string]int{"tax-milk-drink": 700}})
+
+	base, ok := resolver.Resolve("CAPPUCCINO")
+	if !ok {
+		t.Fatal("resolver setup broken")
+	}
+	// A zero-price oat-milk modifier -- if it carried its own rate it would
+	// be 19% vs. the cappuccino's own 7% takeaway rate, but
+	// data.SelectedModifier has no rate field at all, so there is nothing
+	// for a modifier-level rate to override with.
+	s.AddLineWithModifiers(base, 1, []data.SelectedModifier{
+		{GroupID: "milk", OptionID: "oat", GroupName: "Milk", OptionName: "Oat milk", PriceDeltaMinor: 0},
+	})
+
+	line := s.Basket().Lines[0]
+	if line.TaxCodeID != "tax-milk-drink" {
+		t.Fatalf("line TaxCodeID = %q, want the parent's %q", line.TaxCodeID, "tax-milk-drink")
+	}
+
+	dineInTax := money.FromMinor(190) // 19% of 1000, the parent's own rate
+	if got := s.Basket().Tax; got != dineInTax {
+		t.Fatalf("dine-in tax with zero-price modifier = %v, want %v", got, dineInTax)
+	}
+
+	s.SetOrderType(OrderTypeTakeaway)
+	takeawayTax := money.FromMinor(70) // 7% of 1000, the parent's overridden rate
+	if got := s.Basket().Tax; got != takeawayTax {
+		t.Fatalf("takeaway tax with zero-price modifier = %v, want %v (never the hypothetical modifier-level rate)", got, takeawayTax)
 	}
 }
 
