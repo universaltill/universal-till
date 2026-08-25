@@ -12,10 +12,16 @@ import (
 )
 
 const (
-	KeyTheme             = "theme"
-	KeyCurrency          = "store.currency"
-	KeyCountry           = "store.country"
-	KeyRegion            = "store.region"
+	KeyTheme    = "theme"
+	KeyCurrency = "store.currency"
+	KeyCountry  = "store.country"
+	KeyRegion   = "store.region"
+	// KeyLocale is the shop's live-switchable default locale (ut-docs#861) —
+	// same key internal/settings/runtime.go's LoadRuntimeConfig/SaveRuntimeConfig
+	// already read/wrote at boot, but until #861 nothing but that one
+	// boot-time round-trip ever touched it. Settings' Language card is the
+	// first live writer.
+	KeyLocale            = "store.locale"
 	KeyTaxInclusive      = "store.tax_inclusive"
 	KeyTaxRate           = "store.tax_rate"
 	KeyServiceChargeRate = "store.service_charge_rate_pct"
@@ -157,6 +163,7 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		Currency:               get(KeyCurrency, cfg.Locales.Currency),
 		Country:                get(KeyCountry, "GB"),
 		Region:                 get(KeyRegion, ""),
+		Locale:                 get(KeyLocale, cfg.Locales.Locale),
 		TaxRatePct:             cfg.Locales.TaxRate,
 		TaxInclusive:           cfg.Locales.TaxInclusive,
 		AllowNegativeInventory: false,
@@ -289,6 +296,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyCurrency:                    st.Currency,
 		KeyCountry:                     st.Country,
 		KeyRegion:                      st.Region,
+		KeyLocale:                      st.Locale,
 		KeyTaxInclusive:                strconv.FormatBool(st.TaxInclusive),
 		KeyTaxRate:                     strconv.Itoa(st.TaxRatePct),
 		KeyServiceChargeRate:           FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),

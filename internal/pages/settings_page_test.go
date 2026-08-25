@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -1001,6 +1003,110 @@ func TestSaveSettingsCurrencyOnlyDoesNotClearTaxOrInventoryFlags(t *testing.T) {
 	}
 	if v, _, _ := d.Settings.Get(t.Context(), "pos.allow_negative_inventory"); v != "true" {
 		t.Fatalf("stored pos.allow_negative_inventory = %q, want true", v)
+	}
+}
+
+// TestSaveSettings_Locale (ut-docs#861): a shop's default locale is settable
+// via the shipped Settings Language card (same handler currency/country
+// already use), applies live (no restart, no second InitI18n call), and
+// persists across a boot-time reload from the settings store — exactly the
+// gap the card was filed for (previously only UT_DEFAULT_LOCALE at install
+// time could change this).
+func TestSaveSettings_Locale(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t) // already calls initAuthTestI18n -> httpx.InitI18n(realBundle, "en")
+
+	if got := httpx.DefaultLocale(); got != "en" {
+		t.Fatalf("DefaultLocale before save = %q, want en", got)
+	}
+
+	rec := postForm(mux, "/api/settings/save", url.Values{"locale": {"ar"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save = %d", rec.Code)
+	}
+	if got := httpx.DefaultLocale(); got != "ar" {
+		t.Fatalf("DefaultLocale after save = %q, want ar (live apply, no restart)", got)
+	}
+	if v, ok, err := d.Settings.Get(t.Context(), "store.locale"); err != nil || !ok || v != "ar" {
+		t.Fatalf("stored store.locale = (%q, %v, %v), want (ar, true, nil)", v, ok, err)
+	}
+
+	// Reloading from the store (what a real boot does) must see the same
+	// value — this is the "no redeploy needed" acceptance criterion.
+	reloaded := common.LoadState(t.Context(), d.Settings, &config.Config{})
+	if reloaded.Locale != "ar" {
+		t.Fatalf("LoadState after save: Locale = %q, want ar", reloaded.Locale)
+	}
+}
+
+// TestSaveSettings_LocaleRejectsUnknownValue: an unrecognized locale is
+// silently skipped (same lenient contract this handler already applies to
+// every other field — see the handler's own "no rejecting validation"
+// comment), never stored or applied — an unknown locale would make T() fall
+// back to raw keys sitewide for anything with no request to resolve a
+// per-browser preference from (background jobs, notification email).
+func TestSaveSettings_LocaleRejectsUnknownValue(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	rec := postForm(mux, "/api/settings/save", url.Values{"locale": {"xx-not-real"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save = %d", rec.Code)
+	}
+	if got := httpx.DefaultLocale(); got != "en" {
+		t.Fatalf("DefaultLocale after unknown-locale save = %q, want unchanged en", got)
+	}
+	// SaveState always re-persists the full RuntimeState snapshot (by
+	// design — see its own doc comment), so store.locale existing isn't
+	// itself a failure; what must never happen is the REJECTED value
+	// landing there.
+	if v, _, _ := d.Settings.Get(t.Context(), "store.locale"); v == "xx-not-real" {
+		t.Fatalf("unknown locale value %q was persisted to store.locale, want rejected", v)
+	}
+}
+
+// TestUpsertLocale_ReflectsIntoStateAndSurvivesLaterSave (ut-docs#861 review
+// finding F2): SaveState now unconditionally re-persists KeyLocale on every
+// call (this card's own change), but until this fix the raw upsert editor's
+// reflect-into-state switch had no case for it — an operator editing
+// store.locale via Settings' All-settings table saw their edit silently
+// reverted by the very next /api/settings/save from ANY other card (that
+// handler always writes back CurrentState().Locale, which stayed stale).
+// Same class of bug as ut-docs#178.
+func TestUpsertLocale_ReflectsIntoStateAndSurvivesLaterSave(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.locale"}, "value": {"ar"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert = %d", rec.Code)
+	}
+	if got := d.CurrentState().Locale; got != "ar" {
+		t.Fatalf("CurrentState().Locale after upsert = %q, want ar (reflect-into-state case missing)", got)
+	}
+	if got := httpx.DefaultLocale(); got != "ar" {
+		t.Fatalf("DefaultLocale after upsert = %q, want ar (live-apply missing)", got)
+	}
+
+	// An unrelated save from another card (currency) must NOT revert it —
+	// this is the actual regression: SaveState always writes back whatever
+	// CurrentState().Locale currently is.
+	if rec := postForm(mux, "/api/settings/save", url.Values{"currency": {"EUR"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("save = %d", rec.Code)
+	}
+	if got := d.CurrentState().Locale; got != "ar" {
+		t.Fatalf("Locale after an unrelated currency save = %q, want unchanged ar (silently reverted)", got)
+	}
+	if got, _, _ := d.Settings.Get(t.Context(), "store.locale"); got != "ar" {
+		t.Fatalf("stored store.locale after unrelated save = %q, want unchanged ar", got)
+	}
+
+	// Invalid value via the raw editor: persisted raw (this table's
+	// established freedom, same as currency/country get) but NOT reflected
+	// into live state / DefaultLocale() — matches the shipped Language
+	// card's validation, which the raw editor must not be a way around.
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.locale"}, "value": {"xx-not-real"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert invalid = %d", rec.Code)
+	}
+	if got := httpx.DefaultLocale(); got != "ar" {
+		t.Fatalf("DefaultLocale after invalid upsert = %q, want unchanged ar", got)
 	}
 }
 
