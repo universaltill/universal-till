@@ -278,7 +278,7 @@ type ListPluginsRequest struct {
 	Locale     string `json:"locale,omitempty"`
 	DeviceArch string `json:"device_arch,omitempty"`
 	// Capability filters by canonical plugin_type (ADR-0002 taxonomy,
-	// e.g. "payment", "inventory") — NOT a device/runtime capability
+	// e.g. "payment", "report") — NOT a device/runtime capability
 	// filter. That's a distinct concept, see PluginSummary.Capabilities
 	// below (sourced from the manifest's required_capabilities).
 	Capability []string `json:"capability,omitempty"`
