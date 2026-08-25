@@ -1,8 +1,11 @@
 package pos
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 )
 
@@ -210,6 +213,81 @@ func TestOrderTypeTaxSwitching(t *testing.T) {
 	b = *s.SetOrderType("")
 	if b.Tax != dineInTax {
 		t.Fatalf("dine-in (reverted) tax = %v, want %v", b.Tax, dineInTax)
+	}
+}
+
+// TestOrderTypeTaxSwitching_ModifierInheritsParentRate is ut-docs#1013's
+// modifier acceptance criterion: a modifier must never introduce a tax rate
+// distinct from its parent line's. Our basket model makes this true BY
+// CONSTRUCTION -- data.SelectedModifier carries no rate field of its own
+// (see AddLineWithModifiers), a modifier's PriceDeltaMinor is folded
+// straight into the single BasketLine's PriceCents, and every rate
+// decision (effectiveTaxRateBP, and the TaxRateAsker it consults) is made
+// exactly once for that whole line, keyed on the LINE's own TaxCodeID.
+// There is no code path where a modifier article's own rate could leak in.
+//
+// This test pins that invariant two ways, so it stays true on purpose:
+//
+//  1. A structural guard over data.SelectedModifier's own field set --
+//     asserted FIRST, so a future field addition fails loudly here rather
+//     than leaving the assertions below silently checking nothing.
+//  2. A PRICED modifier (not 0.00): the ticket's own real trading data
+//     shows a zero-price oat-milk modifier carrying a DIFFERENT rate (19%)
+//     than its parent cappuccino (7% takeaway) 27 times in one day --
+//     "harmless there only because the modifier was priced at 0.00...
+//     wrong the moment a modifier is priced." A zero-price case alone
+//     can't distinguish "inherits the parent's rate" from "the modifier
+//     contributed nothing taxable at all," since a 0.00 delta changes
+//     nothing about the line's tax either way -- it passes as easily with
+//     AddLineWithModifiers stubbed out to ignore mods entirely. Pricing
+//     the modifier at a non-zero amount that would visibly change the tax
+//     under a (wrong) modifier-level-rate model is what actually exercises
+//     the invariant.
+func TestOrderTypeTaxSwitching_ModifierInheritsParentRate(t *testing.T) {
+	modType := reflect.TypeOf(data.SelectedModifier{})
+	for i := 0; i < modType.NumField(); i++ {
+		if name := modType.Field(i).Name; strings.Contains(strings.ToLower(name), "rate") || strings.Contains(strings.ToLower(name), "tax") {
+			t.Fatalf("data.SelectedModifier gained a rate/tax-shaped field %q -- the modifier-inherits-parent-rate invariant this test pins no longer holds by construction and needs re-deriving, not just re-passing", name)
+		}
+	}
+
+	resolver := mapResolver{
+		"CAPPUCCINO": {SKU: "CAPPUCCINO", ItemID: "item-cappuccino", TaxCodeID: "tax-milk-drink", Name: "Cappuccino", Qty: 1, PriceCents: 1000, TaxRateBP: 1900},
+	}
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+	s.SetTaxRateAsker(fakeTaxAsker{takeawayRateByTaxCode: map[string]int{"tax-milk-drink": 700}})
+
+	base, ok := resolver.Resolve("CAPPUCCINO")
+	if !ok {
+		t.Fatal("resolver setup broken")
+	}
+	// PriceDeltaMinor: 100 (not 0) -- chosen, with PriceCents: 1000 above,
+	// so the merged line total (1100) divides evenly at both 19% and 7%,
+	// keeping this test's arithmetic exact rather than exercising rounding
+	// as well. If oat milk carried its own 19% rate (it doesn't -- that's
+	// the point), the takeaway tax below would be wrong by exactly the
+	// modifier's share.
+	s.AddLineWithModifiers(base, 1, []data.SelectedModifier{
+		{GroupID: "milk", OptionID: "oat", GroupName: "Milk", OptionName: "Oat milk", PriceDeltaMinor: 100},
+	})
+
+	line := s.Basket().Lines[0]
+	if line.TaxCodeID != "tax-milk-drink" {
+		t.Fatalf("line TaxCodeID = %q, want the parent's %q", line.TaxCodeID, "tax-milk-drink")
+	}
+	if line.PriceCents != money.FromMinor(1100) {
+		t.Fatalf("line PriceCents = %v, want 1100 (1000 base + 100 modifier delta)", line.PriceCents)
+	}
+
+	dineInTax := money.FromMinor(209) // 19% of the WHOLE 1100, modifier included -- the parent's own rate
+	if got := s.Basket().Tax; got != dineInTax {
+		t.Fatalf("dine-in tax with priced modifier = %v, want %v", got, dineInTax)
+	}
+
+	s.SetOrderType(OrderTypeTakeaway)
+	takeawayTax := money.FromMinor(77) // 7% of the whole 1100 -- never the hypothetical 19% modifier-level rate
+	if got := s.Basket().Tax; got != takeawayTax {
+		t.Fatalf("takeaway tax with priced modifier = %v, want %v (never the hypothetical modifier-level rate)", got, takeawayTax)
 	}
 }
 
