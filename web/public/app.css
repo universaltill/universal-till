@@ -1090,6 +1090,13 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
    left/right, for RTL. */
 tr.row-warn td { background: rgba(217, 119, 6, .12); }
 .row-warn-icon { color: var(--warning); margin-inline-end: .3em; }
+/* Block-level warning notice (ut-docs#970 review, F6) — .row-warn above is
+   scoped to `tr.row-warn td` only, so a non-table warning block (e.g. the
+   catalogue-import currency-confirmation prompt) rendered with just
+   `class="row-warn"` got NO background/border at all, reading as plain body
+   text. Same amber palette as the row variant, block-shaped instead. */
+.notice-block-warn { background: rgba(217, 119, 6, .12); border: 1px solid rgba(217, 119, 6, .35);
+  border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
 
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
    Touch-first: bigger targets, no text selection or tap highlights, no

@@ -29,7 +29,8 @@
          lock. -->
     <main class="setup-card" x-data="{ step: {{ if .errKey }}6{{ else }}1{{ end }}, last: 7,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
-                                       tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}' }">
+                                       tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
+                                       currencyTouched: false }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
@@ -66,7 +67,7 @@
           <h1>{{ T "setup.country.title" }}</h1>
           <p class="muted">{{ T "setup.country.hint" }}</p>
           <select name="country" x-model="country"
-                  @change="const o = $event.target.selectedOptions[0]; currency = o.dataset.currency || currency; tax = o.dataset.tax ?? tax; taxinc = o.dataset.taxinc || taxinc;">
+                  @change="const o = $event.target.selectedOptions[0]; currency = o.dataset.currency || currency; tax = o.dataset.tax ?? tax; taxinc = o.dataset.taxinc || taxinc; currencyTouched = true;">
             <option value="">{{ T "setup.country.choose" }}</option>
             {{ range .countries }}
             <option value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</option>
@@ -75,6 +76,13 @@
           <input type="hidden" name="currency" :value="currency">
           <input type="hidden" name="tax_rate_pct" :value="tax">
           <input type="hidden" name="tax_inclusive" :value="taxinc">
+          <!-- ut-docs#970 review (F3): country/currency start PRE-FILLED from
+               OS locale + timezone detection (ut-docs#590), not from an
+               operator choice — completing the wizard without ever opening
+               this step must not count as "the operator confirmed the
+               currency" (the whole reason ut-docs#970's import gate exists).
+               currencyTouched only flips true on a genuine @change above. -->
+          <input type="hidden" name="currency_touched" :value="currencyTouched ? '1' : '0'">
           <p class="muted" x-show="currency"><span x-text="currency"></span> · <span x-text="tax"></span>% </p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = 1">{{ T "setup.back" }}</button>
