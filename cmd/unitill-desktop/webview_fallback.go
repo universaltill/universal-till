@@ -32,6 +32,10 @@ import (
 // channel to wire either way.
 func showWindow(url, title string, childPid int, ctl *controlServer) {
 	_ = childPid
+	// Must run BEFORE the window exists: ut-docs#1093 is a defect in the
+	// compositing surface WebKit creates at window construction, so once
+	// webview.New has returned it is already too late.
+	waitForSafeStartup()
 	w := webview.New(false)
 	if w == nil {
 		if ctl != nil {
