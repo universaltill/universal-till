@@ -175,6 +175,14 @@ func EvaluateGate(ctx context.Context, s SettingsReader, country string, now tim
 	}, nil
 }
 
+// IsSystemOfRecord reports whether the shop has declared itself
+// fiscal.system_of_record, using the same truthy parsing EvaluateGate uses
+// internally — so a caller outside this package can never read this
+// setting differently than the gate does.
+func IsSystemOfRecord(ctx context.Context, s SettingsReader) (bool, error) {
+	return boolSetting(ctx, s, KeySystemOfRecord)
+}
+
 // boolSetting reads key and interprets it with parseBoolSetting; a missing
 // key is false.
 func boolSetting(ctx context.Context, s SettingsReader, key string) (bool, error) {
