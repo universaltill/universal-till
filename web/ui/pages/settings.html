@@ -578,6 +578,25 @@
   </div>
   {{ end }}
 
+  {{ if .missingFiscalSigner }}
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.fiscal_signer.missing.title" }} {{ helpLink "sell" }}</h3>
+  <!-- Not `.chip` (deliberately, Tester finding on this card): .chip is
+       `white-space: nowrap` — right for the short pill-style badges it's
+       used for elsewhere on this page (barcode symbologies, pending-base-
+       plugin locale tags), but a sentence-length message inside it
+       overflows past `.settings-grid .card`'s `overflow:hidden` and gets
+       silently clipped instead of wrapping (confirmed visually — the same
+       clipping reproduces on the neighboring tseProvisioning banner's own
+       long messages too, a pre-existing bug in that sibling, out of scope
+       to fix here). `.notice-block-warn` is this codebase's existing
+       wrapping warning-block component (see internal/pages/import_page.go's
+       currency-confirmation prompt) — reused as-is, same icon convention,
+       rather than inventing new CSS. -->
+  <p class="notice-block-warn" data-testid="fiscal-signer-missing"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "settings.fiscal_signer.missing.message" }}</p>
+  <a class="btn secondary" href="/plugins">{{ T "settings.fiscal_signer.missing.install_btn" }}</a>
+  {{ end }}
+
   {{ if gt .sampleCount 0 }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.demo_title" }}</h3>

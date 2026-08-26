@@ -230,6 +230,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// fetch failed) and can dismiss it — best-effort like everything
 		// else on this page, a read error just renders with nothing pending.
 		tseState, _ := loadTSEProvisioningState(r.Context(), d)
+		// Missing fiscal signer (DE hard-gate visibility card): a
+		// system-of-record DE shop with no active fiscal.sign.ask plugin
+		// gets a persistent, non-dismissable banner here --
+		// detection-and-visibility only, never touches the gate itself.
+		// Best-effort like tseState above: a read error just renders
+		// with the banner absent.
+		missingSigner, missingSignerErr := missingFiscalSigner(r.Context(), d, d.CurrentState().Country)
+		if missingSignerErr != nil {
+			logging.L().Errorf("missing-fiscal-signer check: %v", missingSignerErr)
+		}
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -352,6 +362,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"restorePromptDeferred": restorePromptStatus == common.RestorePromptStatusDeferred,
 			"pendingBasePlugins":    pendingBasePluginViews(pendingBasePlugins),
 			"tseProvisioning":       tseProvisioningViewFor(tseState),
+			"missingFiscalSigner":   missingSigner,
 			"resetBatches":          resetBatches,
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,

@@ -1709,5 +1709,8 @@
   "settings.tse.reason.not_configured": "راه‌اندازی TSE هنوز در این فروشگاه در دسترس نیست",
   "settings.tse.reason.invalid_request": "مشخصات ارسال‌شدهٔ کسب‌وکار پذیرفته نشد — شمارهٔ مالیاتی را بررسی کنید",
   "settings.tse.reason.rejected": "درخواست رد شد",
-  "settings.tse.dismiss_btn": "نادیده بگیر"
+  "settings.tse.dismiss_btn": "نادیده بگیر",
+  "settings.fiscal_signer.missing.title": "امضاکنندهٔ مالیاتی نصب نشده است",
+  "settings.fiscal_signer.missing.message": "این فروشگاه برای فعالیت به‌عنوان سامانهٔ رسمی و قانونی ثبت فروش تنظیم شده، اما هیچ افزونهٔ امضای مالیاتی نصب نیست — فروش‌ها امضا نمی‌شوند. برای رفع این مشکل، افزونهٔ مالیاتی کشور را نصب کنید.",
+  "settings.fiscal_signer.missing.install_btn": "نصب افزونه"
 }
