@@ -11,8 +11,11 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -72,6 +75,25 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	// Exclusive lock on the data directory (ut-docs#1097): must be acquired
+	// before ANYTHING below touches cfg.DBPath's directory — the legacy-data
+	// migration and pending-restore apply are exactly the kind of one-shot,
+	// no-going-back file operations a second concurrent unitill-pos process
+	// must never race. A port probe (the desktop shell's old signal for "is
+	// a server already running") only answers whether something is
+	// listening; this answers whether something already owns the data,
+	// which is the question that actually decides whether it's safe to
+	// proceed. Held for this whole function's lifetime via defer, released
+	// after database.Close() below (declared first here so it unlocks last).
+	dataDirLock, err := db.AcquireDataDirLock(cfg.DBPath)
+	if err != nil {
+		if errors.Is(err, db.ErrDataDirLocked) {
+			return fmt.Errorf("another Universal Till server is already running against %s — refusing to start a second instance against the same data (ut-docs#1097): %w", filepath.Dir(cfg.DBPath), err)
+		}
+		return fmt.Errorf("acquire data directory lock: %w", err)
+	}
+	defer dataDirLock.Release()
 
 	paths.MigrateLegacyData(cfg.DBPath)
 
