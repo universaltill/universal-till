@@ -17,6 +17,14 @@ var ErrDataDirLocked = errors.New("data directory is already locked by another r
 // process); this lock is a coarser, earlier gate — which unitill-pos
 // PROCESS may open this data directory at all — checked before db.Open ever
 // touches the .db file.
+//
+// Scoped to filepath.Dir(dbPath), the same way every other per-till artefact
+// in this package is keyed (backup.go's backups/ directory, replica.go's
+// replica-identity and pending-restore markers). With the default config
+// that IS paths.DataDir(); with UT_DB_PATH pointing the database somewhere
+// else, the lock follows the DATABASE — the resource whose concurrent
+// writers caused ut-docs#1097 — and so does every one of those siblings,
+// which is exactly the consistency wanted here.
 const dataDirLockName = ".unitill.lock"
 
 // DataDirLock is an exclusive, advisory, whole-process lock on a till's data
@@ -84,6 +92,14 @@ func AcquireDataDirLock(dbPath string) (*DataDirLock, error) {
 // (mirrors how callers already `defer lock.Release()` unconditionally after
 // a successful Acquire); calling it twice on the same lock is not
 // supported, same as the *os.File.Close it wraps.
+//
+// Deliberately does NOT delete the lock file. Unlinking it would open the
+// one race an OS-level lock otherwise doesn't have: a second process that
+// already opened the same path would end up holding a lock on the now-
+// unlinked inode while a third opens a freshly created file — and both
+// would succeed. A leftover zero-cost dotfile is the correct trade; a stale
+// file conveys no ownership on its own (the OS lock does), which is why a
+// SIGKILLed till's leftover .unitill.lock does not block the next start.
 func (l *DataDirLock) Release() error {
 	if l == nil || l.f == nil {
 		return nil
