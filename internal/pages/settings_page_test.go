@@ -411,6 +411,60 @@ func TestExitToOSBlankPINRejectedWithoutBurningLockoutBudget(t *testing.T) {
 	}
 }
 
+// TestExitToOSEndpoint_LockedOutReturns429NotGeneric403 is ut-docs#1104: the
+// handler already special-cases auth.ErrLockedOut into 429 (vs. a plain PIN
+// failure's 403), but nothing proved it — every existing exit-to-os test
+// that burns failed attempts
+// (TestExitToOSBlankPINRejectedWithoutBurningLockoutBudget) deliberately
+// sends BLANK pins, which the handler rejects before ever calling
+// AuthorizeManager, so the lockout path itself had no coverage here. Five
+// wrong, non-blank attempts burn the device-wide lockout budget
+// (auth.ErrLockedOut, 5 failures — internal/auth/auth_test.go's
+// TestLoginLockout); the request right after — even with the CORRECT PIN —
+// must come back 429, not 403, since that's the status the client JS
+// branches on to show "locked out" instead of "wrong PIN"
+// (web/ui/pages/settings.html, web/ui/pages/login.html).
+func TestExitToOSEndpoint_LockedOutReturns429NotGeneric403(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _, d := newFullAuthDeps(t)
+	wc := &recordingWindowController{}
+	d.WindowCtl = wc
+
+	hash, err := auth.HashPIN("482913")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(t.Context(),
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('mgr1','mgr1','Manager One',?,'manager',1)`, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	makeReq := func(pin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os",
+			strings.NewReader(url.Values{"manager_pin": {pin}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = auth.WithUser(req, cashUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 5 wrong, non-blank attempts — enough to burn the device-wide lockout
+	// budget.
+	for i := 0; i < 5; i++ {
+		if rec := makeReq("000000"); rec.Code != http.StatusForbidden {
+			t.Fatalf("wrong PIN attempt %d: got %d, want 403", i+1, rec.Code)
+		}
+	}
+	// Locked out now: even the CORRECT PIN must come back 429, not 403.
+	if rec := makeReq("482913"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("correct PIN while locked out: got %d, want 429: %s", rec.Code, rec.Body.String())
+	}
+	if wc.called {
+		t.Fatal("a locked-out attempt must never reach the window-control hook")
+	}
+}
+
 // Telemetry opt-in is manager-gated and stored as a string flag.
 func TestTelemetryEndpoint(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
