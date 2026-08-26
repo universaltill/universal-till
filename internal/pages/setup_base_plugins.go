@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/updates"
@@ -170,18 +170,32 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 		return nil
 	}
 
-	pluginID := best.ID
-	if pluginID == "" {
-		pluginID = best.ListingID
-	}
-	if active, activeErr := data.NewPluginRepo(d.Db).PluginActive(ctx, pluginID); activeErr == nil && active {
-		return nil // idempotent: an equivalent plugin is already installed and active
-	}
-
 	listingID := best.ListingID
 	if listingID == "" {
 		listingID = best.ID
 	}
+	// Idempotency check, keyed by LISTING id, not manifest plugin id
+	// (ut-docs#1063). PluginRepo.PluginActive looks up the `plugins` table's
+	// manifest-plugin-id primary key — but against the real wire, a catalog
+	// listing's `id` and `listing_id` are the same listing UUID (no separate
+	// manifest id field on PluginSummary; confirmed by the cross-repo
+	// contract test), so a check keyed on best.ID/best.ListingID could never
+	// match a `plugins.id` row and this short-circuit was always false in
+	// production. plugins.InstallStatusStore is already keyed by listing id —
+	// the same identity cloudInstallPluginVersion itself uses for its own
+	// upgrade/idempotency bookkeeping below — so ask it directly whether this
+	// exact listing is already installed and active, instead of re-deriving a
+	// plugin id we don't actually have yet. PluginID != "" mirrors the same
+	// two-part Active check cloudInstallPluginVersion's own priorInstalled
+	// and sync_admin.go's convergePluginSet both apply to this store's
+	// records (review note, ut-docs#1063) — an Active record with a blank
+	// PluginID isn't reachable today (every writer of Active sets it), but
+	// matching the sibling checks costs nothing and keeps the three from
+	// silently drifting apart.
+	if status, hadStatus, statusErr := plugins.NewInstallStatusStore(d.Db).Get(ctx, listingID); statusErr == nil && hadStatus && status.State == plugins.InstallStateActive && status.PluginID != "" {
+		return nil // idempotent: this listing is already installed and active
+	}
+
 	if _, err := cloudInstallPluginVersion(ctx, d, listingID, best.Version); err != nil {
 		return fmt.Errorf("install %s@%s: %w", listingID, best.Version, err)
 	}
