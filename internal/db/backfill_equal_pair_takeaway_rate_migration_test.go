@@ -44,6 +44,7 @@ func TestMigration071BackfillsEqualPairTakeawayRate(t *testing.T) {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
 	rewindPaymentsVoucherID072(t, d)
+	rewindCountryDefaultLocale073(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +102,7 @@ func TestMigration071IsIdempotentOnCleanData(t *testing.T) {
 	}
 	// 072's DDL replays with it — undo it first (see the sibling test above).
 	rewindPaymentsVoucherID072(t, d)
+	rewindCountryDefaultLocale073(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

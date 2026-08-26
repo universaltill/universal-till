@@ -59,6 +59,11 @@ type CountrySetting struct {
 	ArchiveMinDays int64
 	IsBuiltin      bool
 	UpdatedAt      string
+	// DefaultLocale is the BCP-47 tag the setup wizard/Settings derive
+	// store.locale from when this country is chosen (ut-docs#1027) — e.g.
+	// "de-DE" for DE. Blank ("OTHER", any operator-created country with no
+	// opinion) means "don't touch the shop's current locale".
+	DefaultLocale string
 }
 
 // builtinCountryDefaults is what Delete restores a builtin country to. It
@@ -66,19 +71,19 @@ type CountrySetting struct {
 // asserts the two cannot drift, so this stays a restore source rather than a
 // second source of truth.
 var builtinCountryDefaults = []CountrySetting{
-	{Code: "GB", NameKey: "setup.country.gb", Currency: "GBP", CurrencySymbol: "£", TaxRateBP: 2000, TaxInclusive: true},
-	{Code: "IR", NameKey: "setup.country.ir", Currency: "IRT", TaxRateBP: 1000, TaxInclusive: true},
-	{Code: "US", NameKey: "setup.country.us", Currency: "USD", CurrencySymbol: "$", TaxRateBP: 0, TaxInclusive: false},
-	{Code: "DE", NameKey: "setup.country.de", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 1900, TaxInclusive: true},
-	{Code: "FR", NameKey: "setup.country.fr", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2000, TaxInclusive: true},
-	{Code: "ES", NameKey: "setup.country.es", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true},
-	{Code: "IT", NameKey: "setup.country.it", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2200, TaxInclusive: true},
-	{Code: "NL", NameKey: "setup.country.nl", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true},
-	{Code: "TR", NameKey: "setup.country.tr", Currency: "TRY", CurrencySymbol: "₺", TaxRateBP: 2000, TaxInclusive: true},
-	{Code: "AE", NameKey: "setup.country.ae", Currency: "AED", TaxRateBP: 500, TaxInclusive: true},
-	{Code: "SA", NameKey: "setup.country.sa", Currency: "SAR", TaxRateBP: 1500, TaxInclusive: true},
-	{Code: "IN", NameKey: "setup.country.in", Currency: "INR", CurrencySymbol: "₹", TaxRateBP: 1800, TaxInclusive: true},
-	{Code: "PK", NameKey: "setup.country.pk", Currency: "PKR", TaxRateBP: 1800, TaxInclusive: true},
+	{Code: "GB", NameKey: "setup.country.gb", Currency: "GBP", CurrencySymbol: "£", TaxRateBP: 2000, TaxInclusive: true, DefaultLocale: "en-GB"},
+	{Code: "IR", NameKey: "setup.country.ir", Currency: "IRT", TaxRateBP: 1000, TaxInclusive: true, DefaultLocale: "fa-IR"},
+	{Code: "US", NameKey: "setup.country.us", Currency: "USD", CurrencySymbol: "$", TaxRateBP: 0, TaxInclusive: false, DefaultLocale: "en-US"},
+	{Code: "DE", NameKey: "setup.country.de", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 1900, TaxInclusive: true, DefaultLocale: "de-DE"},
+	{Code: "FR", NameKey: "setup.country.fr", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2000, TaxInclusive: true, DefaultLocale: "fr-FR"},
+	{Code: "ES", NameKey: "setup.country.es", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true, DefaultLocale: "es-ES"},
+	{Code: "IT", NameKey: "setup.country.it", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2200, TaxInclusive: true, DefaultLocale: "it-IT"},
+	{Code: "NL", NameKey: "setup.country.nl", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true, DefaultLocale: "nl-NL"},
+	{Code: "TR", NameKey: "setup.country.tr", Currency: "TRY", CurrencySymbol: "₺", TaxRateBP: 2000, TaxInclusive: true, DefaultLocale: "tr-TR"},
+	{Code: "AE", NameKey: "setup.country.ae", Currency: "AED", TaxRateBP: 500, TaxInclusive: true, DefaultLocale: "ar-AE"},
+	{Code: "SA", NameKey: "setup.country.sa", Currency: "SAR", TaxRateBP: 1500, TaxInclusive: true, DefaultLocale: "ar-SA"},
+	{Code: "IN", NameKey: "setup.country.in", Currency: "INR", CurrencySymbol: "₹", TaxRateBP: 1800, TaxInclusive: true, DefaultLocale: "en-IN"},
+	{Code: "PK", NameKey: "setup.country.pk", Currency: "PKR", TaxRateBP: 1800, TaxInclusive: true, DefaultLocale: "ur-PK"},
 	{Code: "OTHER", NameKey: "setup.country.other", Currency: "", TaxRateBP: 0, TaxInclusive: true},
 }
 
@@ -120,12 +125,12 @@ func normaliseCountryCode(code string) string {
 	return strings.ToUpper(strings.TrimSpace(code))
 }
 
-const countrySettingsCols = `code, name_key, currency, currency_symbol, tax_rate_bp, tax_inclusive, archive_min_days, is_builtin, updated_at`
+const countrySettingsCols = `code, name_key, currency, currency_symbol, tax_rate_bp, tax_inclusive, archive_min_days, is_builtin, updated_at, default_locale`
 
 func scanCountrySetting(sc interface{ Scan(...any) error }) (CountrySetting, error) {
 	var c CountrySetting
 	var inclusive, builtin int
-	if err := sc.Scan(&c.Code, &c.NameKey, &c.Currency, &c.CurrencySymbol, &c.TaxRateBP, &inclusive, &c.ArchiveMinDays, &builtin, &c.UpdatedAt); err != nil {
+	if err := sc.Scan(&c.Code, &c.NameKey, &c.Currency, &c.CurrencySymbol, &c.TaxRateBP, &inclusive, &c.ArchiveMinDays, &builtin, &c.UpdatedAt, &c.DefaultLocale); err != nil {
 		return CountrySetting{}, err
 	}
 	c.TaxInclusive = inclusive == 1
@@ -244,7 +249,7 @@ func (r *CountrySettingsRepo) Upsert(ctx context.Context, c CountrySetting) erro
 	}
 	_, err = r.db.ExecContext(ctx, `
 INSERT INTO country_settings (`+countrySettingsCols+`)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(code) DO UPDATE SET
 	name_key         = excluded.name_key,
 	currency         = excluded.currency,
@@ -253,9 +258,10 @@ ON CONFLICT(code) DO UPDATE SET
 	tax_inclusive    = excluded.tax_inclusive,
 	archive_min_days = excluded.archive_min_days,
 	is_builtin       = excluded.is_builtin,
-	updated_at       = excluded.updated_at`,
+	updated_at       = excluded.updated_at,
+	default_locale   = excluded.default_locale`,
 		c.Code, c.NameKey, c.Currency, c.CurrencySymbol, c.TaxRateBP, inclusive,
-		c.ArchiveMinDays, builtin, time.Now().UTC().Format(time.RFC3339))
+		c.ArchiveMinDays, builtin, time.Now().UTC().Format(time.RFC3339), c.DefaultLocale)
 	if err != nil {
 		return countrySettingsObs.wrapf("upsert", "upsert country setting %s", err, c.Code)
 	}
