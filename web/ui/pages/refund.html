@@ -4,6 +4,17 @@
   <a class="btn secondary" href="/journal/{{ .Sale.ReceiptNo }}">← {{ T "journal.detail.title" }}</a>
 </div>
 
+<!-- German TSE hard gate (ADR-0048, ut-docs#1001): same persistent banner
+     as the sale screen (web/ui/pages/index.html) for the whole duration of
+     an active owner override window -- a status surface, never a modal
+     blocker. Not dismissible on purpose: it disappears by itself once the
+     window expires, which the gate re-checks on every submit. -->
+{{ if .fiscalOverrideActive }}
+<div class="pos-notice error" role="status" data-testid="fiscal-override-banner">
+  <span class="notice-text">{{ T "fiscal.banner.override_active" }} {{ .fiscalOverrideUntil }}</span>
+</div>
+{{ end }}
+
 <div class="card" style="max-width:46rem">
   <p class="muted">{{ T "refund.help" }}</p>
   <form id="refund-form" hx-post="/api/refund" hx-swap="none">
