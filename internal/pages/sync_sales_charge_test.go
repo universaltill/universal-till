@@ -53,7 +53,7 @@ func TestApplyJournal_ServiceChargeReplayNeverReAsksChargePolicy(t *testing.T) {
 		{Method: "cash", Amount: 132, TipAmount: 25, TipRecipient: "business"},
 	}
 
-	applied, err := applyJournal(ctx, dp, "till-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestApplyJournal_MissingTipRecipientDefaultsToEmployee(t *testing.T) {
 
 	j := seedJournalSale("remote-sale-oldtip", "T2-R778-OT", "sale", "", "itm1", 1, 100)
 	j.Sale.Payments = []data.SaleDetailPayment{{Method: "cash", Amount: 100, TipAmount: 15}}
-	applied, err := applyJournal(ctx, dp, "till-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
 	if err != nil || !applied {
 		t.Fatalf("apply: applied=%v err=%v", applied, err)
 	}
@@ -136,7 +136,7 @@ func TestApplyJournal_ServiceChargeFlatBasisReplaysExactly(t *testing.T) {
 	j.Sale.Total = 131
 	j.Sale.Payments = []data.SaleDetailPayment{{Method: "cash", Amount: 131}}
 
-	applied, err := applyJournal(ctx, dp, "till-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
 	if err != nil {
 		t.Fatalf("replay rejected a sale the replica already completed: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestBuildJournal_CarriesServiceChargeTaxBasis(t *testing.T) {
 	j.Sale.ServiceCharge = 10
 	j.Sale.ServiceChargeTaxBasisBP = 700
 	j.Sale.Payments = []data.SaleDetailPayment{{Method: "cash", Amount: 131}}
-	if _, err := applyJournal(ctx, dp, "till-1", j); err != nil {
+	if _, _, err := applyJournal(ctx, dp, "till-1", j); err != nil {
 		t.Fatalf("seed via replay: %v", err)
 	}
 

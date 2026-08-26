@@ -136,7 +136,7 @@ func TestApplyJournal_AppliesOnceThenIdempotent(t *testing.T) {
 	repo := data.NewPOSRepo(dp.Db)
 
 	j := seedJournalSale("remote-sale-1", "T2-R001", "sale", "", "itm1", 1, 100)
-	applied, err := applyJournal(ctx, dp, "till-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestApplyJournal_AppliesOnceThenIdempotent(t *testing.T) {
 	// Replaying the SAME journal entry again must be a no-op, not a
 	// duplicate sale or an error -- this is the whole idempotency
 	// guarantee sync relies on to reconcile safely after a retry/replay.
-	applied, err = applyJournal(ctx, dp, "till-1", j)
+	applied, _, err = applyJournal(ctx, dp, "till-1", j)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestApplyJournal_CarriesCardPresentFields(t *testing.T) {
 	j.Sale.Payments = []data.SaleDetailPayment{
 		{Method: "card", Amount: 100, MaskedPAN: "VISA •••• 4242", AuthCode: "013579", TerminalID: "TERM-01", TraceID: "TRACE-99"},
 	}
-	applied, err := applyJournal(ctx, dp, "till-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestApplyJournal_RejectsMissingRequiredFields(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			applied, err := applyJournal(ctx, dp, "till-1", tc.j)
+			applied, _, err := applyJournal(ctx, dp, "till-1", tc.j)
 			if err == nil {
 				t.Fatal("expected an error for a journal entry with a missing required field")
 			}
@@ -320,7 +320,7 @@ func TestApplyJournal_RejectsInvalidCurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	applied, err := applyJournal(ctx, dp, "till-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
 	if err == nil {
 		t.Fatal("expected an error for a journal entry whose currency doesn't match the shop's configured currency")
 	}
@@ -348,7 +348,7 @@ func TestApplyJournal_AcceptsEmptyCurrency(t *testing.T) {
 	j := seedJournalSale("remote-sale-nocur", "T2-R904", "sale", "", "itm1", 1, 100)
 	j.Sale.Currency = ""
 
-	applied, err := applyJournal(ctx, dp, "till-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
 	if err != nil {
 		t.Fatalf("expected an empty currency to still apply gracefully, got err=%v", err)
 	}
@@ -373,7 +373,7 @@ func TestApplyJournal_AcceptsRealCurrencyWhenPrimaryUnconfigured(t *testing.T) {
 	j := seedJournalSale("remote-sale-unconfigcur", "T2-R905", "sale", "", "itm1", 1, 100)
 	j.Sale.Currency = "GBP"
 
-	applied, err := applyJournal(ctx, dp, "till-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
 	if err != nil {
 		t.Fatalf("expected a real currency to still apply when the primary's own currency isn't configured, got err=%v", err)
 	}
@@ -414,7 +414,7 @@ func TestApplyJournal_RejectsMissingOrMalformedCreatedAt(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			applied, err := applyJournal(ctx, dp, "till-1", j)
+			applied, _, err := applyJournal(ctx, dp, "till-1", j)
 			if err == nil {
 				t.Fatal("expected an error for a journal entry with a missing/malformed created_at")
 			}

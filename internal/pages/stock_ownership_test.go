@@ -172,7 +172,7 @@ func TestApplyJournal_NegativeStockSurfacesProblem(t *testing.T) {
 	// itm1 has 50 units; a remote till sold 51.
 	logging.ResetRecent()
 	j := seedJournalSale("remote-neg-1", "T2-NEG-1", "sale", "", "itm1", 51, 100)
-	applied, err := applyJournal(ctx, dp, "till-neg-1", j)
+	applied, _, err := applyJournal(ctx, dp, "till-neg-1", j)
 	if err != nil || !applied {
 		t.Fatalf("expected the journal applied, got applied=%v err=%v", applied, err)
 	}
