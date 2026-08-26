@@ -1,0 +1,35 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "sync.quarantine_title" }}</h1>
+  <a class="btn secondary" href="/settings">← {{ T "settings.title" }}</a>
+</div>
+
+<div class="card">
+  <p class="muted">{{ T "sync.quarantine_intro" }}</p>
+  {{ if .Entries }}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "sync.quarantine_col_till" }}</th>
+        <th>{{ T "sync.quarantine_col_receipt" }}</th>
+        <th>{{ T "sync.quarantine_col_reason" }}</th>
+        <th>{{ T "sync.quarantine_col_when" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Entries }}
+      <tr>
+        <td>{{ .TillName }}</td>
+        <td>{{ .ReceiptNo }}</td>
+        <td>{{ .Reason }}</td>
+        <td>{{ .QuarantinedAt }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ if .Truncated }}<p class="muted">{{ T "sync.quarantine_truncated" }}</p>{{ end }}
+  {{ else }}
+  <p class="muted">{{ T "sync.quarantine_none" }}</p>
+  {{ end }}
+</div>
+{{ end }}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -739,6 +740,66 @@ func TestSettingsPage_TillNameFieldOnlyOnPrimary(t *testing.T) {
 	}
 	if body := get(); strings.Contains(body, `/api/settings/till-name`) {
 		t.Fatalf("replica: till-name field should be hidden, got:\n%s", body)
+	}
+}
+
+// ut-docs#1133 (ADR-0065 follow-up, independent review 2026-08-26): the
+// Tills card's quarantine help text + "View quarantined entries" button
+// must not appear on a single-till shop that has never enrolled a
+// replica — InsertJournalQuarantine only ever fires while applying a
+// REPLICA's pushed batch, so there is structurally nothing to see yet.
+// Once a replica has ever been enrolled, or a quarantine row already
+// exists (even after every replica that ever produced one is later
+// revoked — ListTills only returns CURRENTLY enrolled tills), the
+// section must show. newFullAuthDeps's minimal schema has no tills/
+// sync_journal_quarantine tables, so this needs the fully migrated DB
+// newMigratedSyncDeps (sync_admin_test.go) already sets up.
+func TestSettingsPage_QuarantineSectionOnlyWhenRelevant(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "settings-quarantine.db")
+	dp.AuthSvc = auth.NewService(dp.Db) // newMigratedSyncDeps leaves this nil -- registerSettings's canPerform needs it
+	initPagesI18n(t)
+	mux := http.NewServeMux()
+	registerSettings(mux, dp)
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	if body := get(); strings.Contains(body, `href="/sync-quarantine"`) {
+		t.Fatalf("single-till shop, never enrolled a replica: quarantine section should be hidden, got:\n%s", body)
+	}
+
+	tillID, err := data.NewTillsRepo(dp.Db).InsertTill(context.Background(), "Replica 1", hashBearer("token-settings"))
+	if err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+	if body := get(); !strings.Contains(body, `href="/sync-quarantine"`) {
+		t.Fatalf("a replica is enrolled: quarantine section should show, got:\n%s", body)
+	}
+
+	if err := data.NewPOSRepo(dp.Db).InsertJournalQuarantine(context.Background(), data.JournalQuarantineEntry{
+		TillID: tillID, SaleID: "sale-q1", ReceiptNo: "T2-Q001",
+		Reason: "unknown voucher on redemption replay", PayloadJSON: "{}",
+		QuarantinedAt: "2026-08-26T10:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed quarantine entry: %v", err)
+	}
+	if err := data.NewTillsRepo(dp.Db).DeleteTill(context.Background(), tillID); err != nil {
+		t.Fatalf("revoke till: %v", err)
+	}
+	body := get()
+	if !strings.Contains(body, `href="/sync-quarantine"`) {
+		t.Fatalf("quarantine row survives after its till is revoked: section should still show, got:\n%s", body)
+	}
+	if !strings.Contains(body, "1") {
+		t.Fatalf("expected the quarantine count in the card, got:\n%s", body)
 	}
 }
 

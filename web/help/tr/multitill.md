@@ -4,7 +4,7 @@ title: Birden çok kasa (tek dükkân)
 section: Bağlantı ve eklentiler
 order: 310
 summary: "Aynı dükkân ağında birden çok kasa çalıştırın: biri ana kasadır, diğerleri ona katılır; katalog, fiyatlar, ayarlar ve stok otomatik paylaşılır."
-routes: [/tills, /ui/tills/pending-pairings, /registers]
+routes: [/tills, /ui/tills/pending-pairings, /registers, /sync-quarantine]
 ---
 
 # Birden çok kasa (tek dükkân)
@@ -24,6 +24,7 @@ Aynı dükkân ağında birden çok kasa çalıştırın: biri ana kasadır, di�
 9. **Ana kasanın kendi** Kasalar sayfasında, Kayıtlı kasalar listesi katılmış kasaların yanında ana kasayı da ("bu kasa" etiketiyle) Ayarlar'da belirlenen adla gösterir — böylece tek kasalı bir dükkân da boş bir tablo yerine kendi kasasını görür.
 10. **Katılmış** bir kasada, Kasalar sayfası aynı dükkân genelindeki listeyi gösterir — ana kasa ("birincil" etiketiyle) ve kendisi dahil diğer her katılmış kasa ("bu kasa" etiketiyle). Orada salt okunurdur: bir katılmış kasayı yalnızca ana kasa kaldırabilir ("iptal edebilir").
 11. Gezinme çubuğunun sağ üstündeki küçük eşitleme rozeti bu kasanın kendi adını gösterir; hem ana kasada hem katılmış bir kasada tıklanabilir ve Kasalar sayfasını açar (eşitleme durumu rozetin rengiyle anlaşılır: yeşil güncel, turuncu bir süredir haber alınamadığı anlamına gelir). Henüz hiçbir kasa katılmamış tek kasalı bir dükkânda rozet hiç görünmez — eşitlenecek bir şey yoktur.
+   - **Ana kasada**, katılmış bir kasa uygulanamayan bir satış gönderirse (son derece nadir bir durum) rozet turuncuya döner ve **karantinadaki** öğe sayısını gösterir. Bu satış sessizce kaybolmak yerine, ana kasadaki **Ayarlar → Karantinadaki eşitleme öğeleri** sayfasında incelenmek üzere tutulur.
 12. Eklentiler de ana kasayı takip eder: bir eklentiyi **ana kasada** kurun veya kaldırın; her katılmış kasa aynı değişikliği yaklaşık yarım dakika içinde otomatik olarak uygular. Her kasa eklentiyi eklenti mağazasından kendisi indirir ve çalıştırmadan önce doğrular — eklentiler asla kasadan kasaya kopyalanmaz. Katılmış bir kasada doğrudan eklenti kurmaya, kaldırmaya, etkinleştirmeye/devre dışı bırakmaya veya güncellemeye çalışmak, sizi ana kasaya yönlendiren bir mesajla reddedilir. Tek istisna dosyadan içe aktarılan eklentidir: içe aktarma her kasada, katılmış bir kasada bile, çalışmaya devam eder; ancak eklenti yalnızca o kasada kalır ve yayılmaz.
 
 ## Kasalar
