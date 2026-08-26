@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
@@ -1239,5 +1240,265 @@ func TestExportDispatch_RequiresManager(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// seedArchivedEODClose archives one day-close ("eod" kind) with a minimal
+// cross-tab content blob, via the real repo write path (so z_number is
+// assigned the same way generateEOD's archival assigns it).
+func seedArchivedEODClose(t *testing.T, db *sql.DB, period string) {
+	t.Helper()
+	if _, err := data.NewPOSRepo(db).ArchiveReport(context.Background(), "eod", period,
+		[]byte(`{"day":"`+period+`","gross":11900,"method_tax_bands":[{"method":"cash","rate_bp":1900,"net":10000,"tax":1900,"gross":11900}]}`),
+		"R-1", "R-9"); err != nil {
+		t.Fatalf("archive eod close %s: %v", period, err)
+	}
+}
+
+// TestExportDispatch_PayloadIncludesEODClosesData is ut-docs#1005's parity
+// test for TestExportDispatch_PayloadIncludesItemsData: an entry that
+// declares "eod_closes" and holds sales:read (the same ledger this data is
+// derived from — no new permission) gets every archived day-close in
+// [from, to] in the dispatched payload's "eod_closes" field, each with its
+// own Z-number.
+func TestExportDispatch_PayloadIncludesEODClosesData(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp11", "datev", "DATEV Export", []string{"eod_closes"}, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp11", "sales:read")
+	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp11", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		EODCloses []struct {
+			ZNumber int64 `json:"z_number"`
+			Report  struct {
+				Day            string `json:"day"`
+				MethodTaxBands []struct {
+					Method string `json:"method"`
+					Gross  int64  `json:"gross"`
+				} `json:"method_tax_bands"`
+			} `json:"report"`
+		} `json:"eod_closes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if len(payload.EODCloses) != 1 {
+		t.Fatalf("expected 1 archived close in payload, got %+v", payload.EODCloses)
+	}
+	got := payload.EODCloses[0]
+	if got.ZNumber != 1 || got.Report.Day != "2026-08-21" {
+		t.Fatalf("unexpected close: %+v", got)
+	}
+	if len(got.Report.MethodTaxBands) != 1 || got.Report.MethodTaxBands[0].Gross != 11900 {
+		t.Fatalf("close should carry its archived cross-tab, got %+v", got.Report.MethodTaxBands)
+	}
+}
+
+// TestExportDispatch_OmitsEODClosesWhenEntityNotDeclared mirrors
+// TestExportDispatch_OmitsItemsWhenEntityNotDeclared: sales:read alone must
+// NOT deliver eod_closes — the entry has to declare the entity too, so
+// every export entry installed before ut-docs#1005 keeps getting exactly
+// today's payload.
+func TestExportDispatch_OmitsEODClosesWhenEntityNotDeclared(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp12", "datev", "DATEV Export", nil, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp12", "sales:read")
+	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp12", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		EODCloses json.RawMessage `json:"eod_closes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.EODCloses != nil && string(payload.EODCloses) != "null" {
+		t.Fatalf("expected eod_closes null without a declared \"eod_closes\" entity, got %s", payload.EODCloses)
+	}
+}
+
+// TestExportDispatch_OmitsEODClosesWithoutSalesReadPermission mirrors
+// TestExportDispatch_OmitsItemsWithoutItemsReadPermission on the other
+// axis: a declared "eod_closes" entity without the sales:read grant must
+// still omit — declaration and permission gate independently.
+func TestExportDispatch_OmitsEODClosesWithoutSalesReadPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp13", "datev", "DATEV Export", []string{"eod_closes"}, false)
+	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp13", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (missing sales:read must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		EODCloses json.RawMessage `json:"eod_closes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.EODCloses != nil && string(payload.EODCloses) != "null" {
+		t.Fatalf("expected eod_closes null without sales:read, got %s", payload.EODCloses)
+	}
+}
+
+// TestExportDispatch_EODClosesEntrySkipsSalesGatherAndCap: an entry that
+// declares "eod_closes" books the day-close grain and never reads
+// payload.Sales, so the per-sale gather AND the maxExportSalesRows cap
+// (ut-docs#439, sized for the per-sale ledger) must not apply to it — a
+// full-year closes export over a busy shop's >50,000 sales is the flagship
+// use case and must not 400 on a count of rows it never receives. With the
+// cap forced below the seeded sale count, the request still succeeds, the
+// payload's "sales" is null (never gathered), and "eod_closes" carries the
+// archived close.
+func TestExportDispatch_EODClosesEntrySkipsSalesGatherAndCap(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := maxExportSalesRows
+	maxExportSalesRows = 2
+	t.Cleanup(func() { maxExportSalesRows = orig })
+
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp14", "datev", "DATEV Export", []string{"eod_closes"}, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp14", "sales:read")
+	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	// Three sales — OVER the (test-shrunk) cap, so a surviving cap check
+	// would 400 this request before dispatch ever ran.
+	for i, r := range []string{"R1", "R2", "R3"} {
+		mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+		          VALUES(?, ?, 'completed', 'sale', 'GBP', 1000, 0, 0, 1000, ?)`,
+			fmt.Sprintf("ec-sale-%d", i), r, fmt.Sprintf("2026-08-%02dT10:00:00Z", i+1))
+	}
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp14", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (the sales cap must not apply to an eod_closes entry), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Sales     json.RawMessage       `json:"sales"`
+		EODCloses []data.EODCloseExport `json:"eod_closes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if string(payload.Sales) != "null" {
+		t.Fatalf("expected sales to be null (never gathered) for an eod_closes entry, got %s", payload.Sales)
+	}
+	if len(payload.EODCloses) != 1 || payload.EODCloses[0].Report.Day != "2026-08-21" {
+		t.Fatalf("expected the archived close in eod_closes, got %+v", payload.EODCloses)
+	}
+}
+
+// TestExportDispatch_EODClosesFieldPresentButEmptyInRange pins the wire
+// contract the plugin's routing depends on (no-omitempty, ut-docs#1005
+// review B2): an entry that declares "eod_closes" and holds sales:read gets
+// a PRESENT, EMPTY "eod_closes":[] — not an absent/null field — when the
+// range simply contains no archived close, so the plugin can distinguish
+// "supported, nothing in range" (refuse clearly) from "host predates the
+// concept" (legacy per-sale fallback).
+func TestExportDispatch_EODClosesFieldPresentButEmptyInRange(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp15", "datev", "DATEV Export", []string{"eod_closes"}, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp15", "sales:read")
+	// No archived close seeded — the range is genuinely empty.
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp15", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		EODCloses json.RawMessage `json:"eod_closes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if string(payload.EODCloses) != "[]" {
+		t.Fatalf(`expected a present-but-empty "eod_closes":[] for an empty range, got %s`, payload.EODCloses)
 	}
 }
