@@ -148,8 +148,10 @@ func TestSetupWizardDemoSeedFailureDoesNotBlockSetup(t *testing.T) {
 	}
 }
 
-// The wizard template carries the new step: shop-type select (all six
-// ADR-0026 options) and the demo-data checkbox, unchecked by default.
+// The wizard template carries the new step: shop-type tile picker (all six
+// ADR-0026 options, ut-docs#1095 — was a native <select>, now touch-first
+// tiles carrying the type in data-value rather than an <option>'s value) and
+// the demo-data checkbox, unchecked by default.
 func TestSetupWizardRendersShopTypeStep(t *testing.T) {
 	// ut-docs#662: hermetic against the developer machine's real OS locale —
 	// otherwise ut-docs#590's /setup detection redirect fires on any machine
@@ -163,7 +165,7 @@ func TestSetupWizardRendersShopTypeStep(t *testing.T) {
 		t.Fatalf("GET /setup: %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`name="shop_type"`, `value="cafe"`, `value="retail"`, `value="service"`, `value="hospitality"`, `value="market_stall"`, `value="other"`, `name="demo_data"`} {
+	for _, want := range []string{`name="shop_type"`, `data-value="cafe"`, `data-value="retail"`, `data-value="service"`, `data-value="hospitality"`, `data-value="market_stall"`, `data-value="other"`, `name="demo_data"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("setup wizard page missing %s", want)
 		}

@@ -205,18 +205,36 @@ export async function ensureOperator(page: Page) {
   if (page.url().includes('/setup')) {
     const step = (n: number) => page.locator(`[data-step="${n}"]`);
     await step(1).locator('.setup-nav button', { hasText: 'Next' }).click(); // language
-    await page.locator('select[name=country]').selectOption('GB');
+    // ut-docs#1095: country is a tile picker now, not a <select> — reveal
+    // the full list if only the detected tile is showing, then tap GB.
+    // isVisible() doesn't auto-wait — wait for the step's own heading
+    // first, or this races Alpine's x-show and always reads false
+    // (verified against a country-detecting till: reproduced 5/5, fixed by
+    // this wait 9/9 — see login.spec.ts's own note on the same fix).
+    await step(2).locator('h1').waitFor();
+    const showAllBtn = step(2).locator('button', { hasText: 'Show all countries' });
+    if (await showAllBtn.isVisible()) await showAllBtn.click();
+    await step(2).locator('button.picker-tile[value="GB"]').click();
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
     await page.locator('input[name=store_name]').fill('Demo Shop');
-    await step(3).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name
-    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type + demo data
-    await step(5).locator('.setup-nav button.primary', { hasText: 'No' }).click(); // restore from another POS? — No
-    await step(6).locator('input[name=pin]').fill(ADMIN_PIN);
-    await step(6).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
-    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
+    // Step numbers from here on: data-step="3" is the Germany-only business-
+    // identity step (ADR-0053/ut-docs#802) — this flow picks GB, so the
+    // wizard jumps 2 -> 4, same skip login.spec.ts's own walkthrough
+    // accounts for. This helper previously used step(3)/step(4)/step(5)/
+    // step(6)/step(7) here, off by one against the real data-step values
+    // ever since #802 inserted the identity step — invisible because
+    // nothing on the "default" (auth-off) project ever reaches /setup, so
+    // this branch was untested dead code; fixed while the country tile
+    // swap above already required touching this function.
+    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name
+    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type + demo data
+    await step(6).locator('.setup-nav button.primary', { hasText: 'No' }).click(); // restore from another POS? — No
+    await step(7).locator('input[name=pin]').fill(ADMIN_PIN);
+    await step(7).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
+    await step(7).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
     await Promise.all([
       page.waitForURL((u) => !u.pathname.includes('/setup')),
-      step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
+      step(8).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
     ]);
   } else if (page.url().includes('/login')) {
     for (const d of ADMIN_PIN.split('')) {

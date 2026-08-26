@@ -1381,6 +1381,29 @@ body.login-screen {
 .setup-dot.active { background: var(--accent); }
 .setup-langs { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
 .setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; flex-wrap: wrap; }
+
+/* Touch-first tile picker (setup wizard country/shop-type, ut-docs#1095) —
+   replaces a native <select> with large tappable tiles. Borrows the
+   grid/press feel of .btn-tile above (the sale-screen product tiles) but
+   sized down for a single line of text instead of image+name+price.
+   --control-border/--focus-border (see :root's own comments on both) are
+   the same tokens every real form control on this page uses, since this
+   button IS a form control now, not decoration. */
+.picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr)); gap: .5rem; margin-block-end: .4rem; }
+.picker-tile {
+  display: flex; align-items: center; justify-content: center;
+  min-block-size: 3.2rem; padding: .6rem .5rem; border: 1px solid var(--control-border);
+  border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
+  font: inherit; font-size: .95rem; font-weight: 600; color: var(--text);
+  cursor: pointer; text-align: center; line-height: 1.25;
+  transition: border-color .12s ease, background .12s ease, transform .05s ease;
+}
+.picker-tile:hover { border-color: #cbd5e1; }
+.picker-tile:active { transform: scale(.97); }
+.picker-tile:focus-visible { outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border); }
+.picker-tile[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent);
+}
 [x-cloak] { display: none !important; }
 
 /* Bottom status bar: always-visible version + live connectivity. Bookends the
