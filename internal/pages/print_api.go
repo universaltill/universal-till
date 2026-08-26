@@ -18,13 +18,26 @@ import (
 
 // Printer settings keys (docs: architecture/receipt-printing.md).
 const (
-	keyPrinterMode    = "printer.mode"    // off | network | device
-	keyPrinterAddress = "printer.address" // host[:port]
-	keyPrinterDevice  = "printer.device"  // /dev/usb/lp0
-	keyPrinterCharset = "printer.charset" // utf8 | ascii
-	keyPrinterAuto    = "printer.auto_print"
-	keyPrinterKitchen = "printer.kitchen_addr" // kitchen printer host[:port] or device path
+	keyPrinterMode      = "printer.mode"    // off | network | device
+	keyPrinterAddress   = "printer.address" // host[:port]
+	keyPrinterDevice    = "printer.device"  // /dev/usb/lp0
+	keyPrinterCharset   = "printer.charset" // utf8 | ascii
+	keyPrinterAuto      = "printer.auto_print"
+	keyPrinterKitchen   = "printer.kitchen_addr" // kitchen printer host[:port] or device path
+	keyPrinterDrawerPin = "printer.drawer_pin"   // "2" | "5" (ut-docs#1136)
 )
+
+// parseDrawerPin resolves the drawer_pin setting to 2 or 5. Anything else --
+// unset, empty, corrupted, a future value this build doesn't know about --
+// falls back to 2, the connector pin nearly every drawer already ships wired
+// to and the byte Doc.DrawerPin's own zero value already defaults to; this
+// keeps a garbled setting exactly as safe as never having set it at all.
+func parseDrawerPin(v string) int {
+	if strings.TrimSpace(v) == "5" {
+		return 5
+	}
+	return 2
+}
 
 // printerConfig reads the printer.* settings into a print.Config.
 func printerConfig(ctx context.Context, d *common.Deps) print.Config {
@@ -41,6 +54,7 @@ func printerConfig(ctx context.Context, d *common.Deps) print.Config {
 		Charset:        get(keyPrinterCharset, "utf8"),
 		AutoPrint:      get(keyPrinterAuto, "true") == "true",
 		KitchenAddress: get(keyPrinterKitchen, ""),
+		DrawerPin:      parseDrawerPin(get(keyPrinterDrawerPin, "2")),
 	}
 }
 
@@ -132,7 +146,8 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 			"Receipt " + detail.ReceiptNo,
 			detail.CreatedAt,
 		},
-		Charset: cfg.Charset,
+		Charset:   cfg.Charset,
+		DrawerPin: cfg.DrawerPin,
 	}
 	if rd.ShowBarcode {
 		// Scan-to-refund (G28): the receipt number as a barcode.
@@ -354,6 +369,17 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if r.Form.Get("autoPrint") == "on" || r.Form.Get("autoPrint") == "1" {
 			auto = "true"
 		}
+		// drawerPin: empty (a client that predates this field) silently
+		// keeps today's behaviour rather than rejecting the whole form;
+		// anything present must be one of the two real values.
+		drawerPin := strings.TrimSpace(r.Form.Get("drawerPin"))
+		if drawerPin == "" {
+			drawerPin = "2"
+		}
+		if drawerPin != "2" && drawerPin != "5" {
+			http.Error(w, "drawerPin must be 2 or 5", http.StatusBadRequest)
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			locale := httpx.ResolveLocale(w, r)
@@ -366,6 +392,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 					{Name: "device", Value: device},
 					{Name: "kitchenAddr", Value: kitchenAddr},
 					{Name: "autoPrint", Value: r.Form.Get("autoPrint")},
+					{Name: "drawerPin", Value: drawerPin},
 				}, elev)
 			return
 		}
@@ -375,12 +402,14 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Settings.Set(r.Context(), keyPrinterCharset, charset)
 		_ = d.Settings.Set(r.Context(), keyPrinterKitchen, kitchenAddr)
 		_ = d.Settings.Set(r.Context(), keyPrinterAuto, auto)
+		_ = d.Settings.Set(r.Context(), keyPrinterDrawerPin, drawerPin)
 		// ut-docs#866 review (N4): payload is deliberately partial — mode/
 		// charset/auto_print only, not address/device/kitchenAddr. Those are
 		// LAN network/device identifiers, not shop-config content worth
-		// journaling into the audit log's long-lived history.
+		// journaling into the audit log's long-lived history. drawer_pin is
+		// shop-config content the same way mode/charset are, so it's included.
 		settingsAudit(r, posRepo, elev, "settings", "printer", "printer_settings_changed",
-			map[string]any{"mode": mode, "charset": charset, "auto_print": auto})
+			map[string]any{"mode": mode, "charset": charset, "auto_print": auto, "drawer_pin": drawerPin})
 		settingsRespondSaved(w, r, elev)
 	})
 
