@@ -44,6 +44,7 @@ func TestBuiltinDefaultsMatchMigrationSeed(t *testing.T) {
 			got.TaxRateBP != want.TaxRateBP ||
 			got.TaxInclusive != want.TaxInclusive ||
 			got.ArchiveMinDays != want.ArchiveMinDays ||
+			got.DefaultLocale != want.DefaultLocale ||
 			!got.IsBuiltin {
 			t.Errorf("%s drifted between migration 041 and builtinCountryDefaults:\n  seeded=%+v\n  go    =%+v", want.Code, got, want)
 		}

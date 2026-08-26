@@ -346,6 +346,30 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
 			st.Country = v
+			// ut-docs#1027: derive the locale from the country's own
+			// country_settings row, server-side — never trust a client-
+			// posted locale value for this (this endpoint is auth-exempt
+			// during first boot). Blank DefaultLocale (OTHER, or a country
+			// with no mapped default) leaves st.Locale exactly as
+			// CurrentState() seeded it, same leave-alone contract as
+			// currency/tax_rate_pct/tax_inclusive above.
+			//
+			// Review finding (blocker): plain UI text gracefully falls back
+			// to English via I18n.T() when a language pack isn't installed
+			// yet, but store.locale ALSO drives httpx.IsRTL (page direction)
+			// and httpx.LocalizeDigits (number rendering) immediately and
+			// unconditionally — neither has a translation-missing fallback.
+			// An RTL locale (fa/ar/ur/...) whose base language isn't
+			// actually installed would silently mirror the whole UI and
+			// switch to Perso-/Eastern-Arabic digits while still showing
+			// English text — worse than today's en-US, not better. A
+			// non-RTL locale is always safe to preset (Latin digits, LTR
+			// either way), which covers this card's own headline case (DE)
+			// unconditionally; an RTL one only presets once its base
+			// language is already available.
+			if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), v); csErr == nil && ok && localeSafeToPreset(cs.DefaultLocale) {
+				st.Locale = cs.DefaultLocale
+			}
 		}
 		if v := r.Form.Get("tax_rate_pct"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
@@ -359,6 +383,14 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		d.SetState(st)
 		httpx.InitCurrency(st.Currency)
+		// ut-docs#1027: live-apply the just-derived locale, same posture as
+		// InitCurrency above — SetDefaultLocale no-ops on an empty value, so
+		// this is safe even when no country matched (st.Locale left at
+		// CurrentState()'s own seed). Only affects ResolveLocale's final
+		// fallback (no request-scoped ?lang=/ut_lang cookie yet); a fresh
+		// wizard run's own step-1 language detection cookie, when present,
+		// still wins for this browser, exactly as it does today.
+		httpx.SetDefaultLocale(st.Locale)
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
 		// the same tax config or it would silently charge stale rates.
 		newCfg := pos.Config{

@@ -267,6 +267,46 @@ func TestCountrySettingsPageSaveAndFloorRefusal(t *testing.T) {
 	}
 }
 
+// TestCountrySettingsPageSavePreservesDefaultLocale is the regression test
+// for ut-docs#1027: this form has no default_locale field (it's not
+// operator-editable here), so a save must preserve DE's seeded "de-DE"
+// rather than blanking it — the same preserve-what-the-form-doesn't-carry
+// contract this handler already applies to NameKey, right above it in the
+// handler itself.
+func TestCountrySettingsPageSavePreservesDefaultLocale(t *testing.T) {
+	mux, repo, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+	ctx := t.Context()
+
+	before, _, err := repo.Get(ctx, "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.DefaultLocale != "de-DE" {
+		t.Fatalf("seeded DE.DefaultLocale = %q, want de-DE", before.DefaultLocale)
+	}
+
+	rec := postForm(mux, "/api/country-settings", url.Values{
+		"code":             {"DE"},
+		"currency":         {"EUR"},
+		"currency_symbol":  {"€"},
+		"tax_rate_pct":     {"7"},
+		"tax_inclusive":    {"1"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("manager save = %d, want 303", rec.Code)
+	}
+
+	after, _, err := repo.Get(ctx, "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.DefaultLocale != "de-DE" {
+		t.Errorf("DE.DefaultLocale after an unrelated tax-rate edit = %q, want unchanged de-DE", after.DefaultLocale)
+	}
+}
+
 func TestCountrySettingsPageDeleteRestoresBuiltin(t *testing.T) {
 	mux, repo, _ := newCountrySettingsTestMux(t)
 	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
