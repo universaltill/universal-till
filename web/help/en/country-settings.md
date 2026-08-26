@@ -16,10 +16,11 @@ This page is where those per-country defaults live. **The first-boot setup wizar
 
 ## How to use it
 
-1. Open **Country settings** from the menu (manager only). Each country is listed with its currency, tax rate and archive-retention floor.
-2. Edit the values on a row and press **Save**.
-3. To add somewhere that isn't listed, fill in **Add a country** with a short code of your own choosing (letters and numbers only, up to 8 characters), its currency and tax rate.
-4. **Restore defaults** puts a built-in country back to the values it shipped with. A country you added yourself is removed completely by **Delete**.
+1. Open **Country settings** from the menu (manager only). By default you see only your own shop's country, with its currency, tax rate and archive-retention floor.
+2. Edit the values on the row and press **Save**.
+3. To see every country the till knows about — useful if you're setting values up for a till that will run in a different country — follow **Show all countries**. **Show only my country** takes you back to just your own.
+4. To add somewhere that isn't listed, fill in **Add a country** with a short code of your own choosing (letters and numbers only, up to 8 characters), its currency and tax rate — this form is available in both views.
+5. **Restore defaults** puts a built-in country back to the values it shipped with. A country you added yourself is removed completely by **Delete**.
 
 ## Good to know
 
@@ -28,3 +29,4 @@ This page is where those per-country defaults live. **The first-boot setup wizar
 - **Archive retention** here is a floor you can raise but not lower below the minimum shown. It controls when a reset archive batch (Settings → Data → Reset archives) becomes eligible for permanent deletion: a batch holding real sales can't be deleted until this many days have passed since it was archived. Raising the value protects existing batches further out immediately; it never shortens protection already in effect. The Reset archives list itself shows each protected batch's retained-until date directly and hides its Delete-permanently button until then, so you never type the confirmation only to be refused.
 - Editing a country here does not change any shop already set up, and does not rewrite sales you have already taken.
 - If you are unsure what your own country requires you to keep, ask your accountant before assuming any number shown here is a compliance guarantee — this page does not certify compliance with any particular country's record-keeping law.
+- If your shop's own country setting doesn't match anything on this page (rare — this normally can't happen), the page shows every country with a note explaining why, instead of the usual single-country view.

@@ -1569,6 +1569,10 @@
   "selforder.checkout.tax_unavailable": "Bazı ürünler şu anda buradan sipariş edilemiyor — lütfen kasada ödeyin.",
   "countrysettings.title": "Ülke ayarları",
   "countrysettings.intro": "Her ülke için varsayılan para birimi, vergi oranı ve arşiv saklama alt sınırı. Kurulum bu tablodan okumaya başladığında yeni bir dükkânın başlangıç değerleri olacaklar — şimdilik burada bir ülkeyi düzenlemek zaten çalışan bir dükkânı etkilemez.",
+  "countrysettings.showing_mine": "Dükkânınızın ülkesine ait ayarlar gösteriliyor.",
+  "countrysettings.show_all": "Tüm ülkeleri göster",
+  "countrysettings.show_mine": "Yalnızca kendi ülkemi göster",
+  "countrysettings.unknown_country": "Dükkânınızın ayarlı ülkesi bu listede yok — düzeltilene kadar tüm ülkeler gösteriliyor.",
   "countrysettings.col.country": "Ülke",
   "countrysettings.col.currency": "Para birimi",
   "countrysettings.col.symbol": "Simge",
@@ -1713,5 +1717,8 @@
   "settings.tse.reason.not_configured": "TSE kurulumu bu markette henüz kullanılamıyor",
   "settings.tse.reason.invalid_request": "gönderilen işletme bilgileri kabul edilmedi — vergi numarasını kontrol edin",
   "settings.tse.reason.rejected": "istek reddedildi",
-  "settings.tse.dismiss_btn": "Kapat"
+  "settings.tse.dismiss_btn": "Kapat",
+  "settings.fiscal_signer.missing.title": "Mali imzalayıcı yüklü değil",
+  "settings.fiscal_signer.missing.message": "Bu işletme, satışların yasal resmi kaydını tutan sistem olarak çalışacak şekilde ayarlanmış, ancak mali imzalama eklentisi yüklü değil — satışlar imzalanmıyor. Bunu düzeltmek için ülkenizin vergi eklentisini yükleyin.",
+  "settings.fiscal_signer.missing.install_btn": "Eklentiyi yükle"
 }

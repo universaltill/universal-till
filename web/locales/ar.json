@@ -1569,6 +1569,10 @@
   "selforder.checkout.tax_unavailable": "بعض الأصناف لا يمكن طلبها هنا حاليًا — يُرجى الدفع عند الكاشير.",
   "countrysettings.title": "إعدادات الدولة",
   "countrysettings.intro": "العملة ونسبة الضريبة والحد الأدنى لمدة حفظ الأرشيف الافتراضية لكل دولة. ستصبح هذه القيم الإعدادات الابتدائية لمتجر جديد بمجرد أن يقرأ الإعداد من هذا الجدول — أما الآن، فتعديل دولة هنا لا يغيّر أي متجر يعمل بالفعل.",
+  "countrysettings.showing_mine": "يعرض إعدادات دولة متجرك.",
+  "countrysettings.show_all": "إظهار كل الدول",
+  "countrysettings.show_mine": "إظهار دولتي فقط",
+  "countrysettings.unknown_country": "دولة متجرك المُعدَّة غير موجودة في هذه القائمة — يتم عرض كل الدول حتى يتم تصحيحها.",
   "countrysettings.col.country": "الدولة",
   "countrysettings.col.currency": "العملة",
   "countrysettings.col.symbol": "الرمز",
@@ -1713,5 +1717,8 @@
   "settings.tse.reason.not_configured": "إعداد TSE غير متاح في هذا المتجر بعد",
   "settings.tse.reason.invalid_request": "لم تُقبل بيانات النشاط التجاري المُرسلة — تحقق من الرقم الضريبي",
   "settings.tse.reason.rejected": "رُفض الطلب",
-  "settings.tse.dismiss_btn": "تجاهل"
+  "settings.tse.dismiss_btn": "تجاهل",
+  "settings.fiscal_signer.missing.title": "لا يوجد موقِّع ضريبي مثبَّت",
+  "settings.fiscal_signer.missing.message": "هذا المتجر مُعدّ ليعمل بصفته السجل القانوني الرسمي للمبيعات، لكن لا توجد إضافة توقيع ضريبي مثبَّتة — لا يتم توقيع المبيعات. ثبِّت إضافة الضرائب الخاصة ببلدك لإصلاح ذلك.",
+  "settings.fiscal_signer.missing.install_btn": "تثبيت الإضافة"
 }
