@@ -228,6 +228,12 @@ func TestBuildEODDoc_CashReconciliation(t *testing.T) {
 	if strings.Contains(out, "!!") {
 		t.Error("zero variance must not carry the !! marker")
 	}
+	// No cash tips (TipsHeldOut zero value): no "Tips held out" line at all
+	// -- same "no line beats a permanent -£0.00 line" convention as
+	// GUTSCHEINE/STORNOS (ut-docs#1046).
+	if strings.Contains(out, "Tips held out") {
+		t.Error("Tips held out line must be omitted when TipsHeldOut is zero")
+	}
 
 	// A non-zero variance is flagged so it can't be missed on paper.
 	rep.CashReconciliation.Counted = 51000
@@ -246,6 +252,37 @@ func TestBuildEODDoc_CashReconciliation(t *testing.T) {
 	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
 	if strings.Contains(out, "CASH RECONCILIATION") {
 		t.Error("section must be omitted when no reconciliation exists")
+	}
+}
+
+// A cash tip held out of CashSales (ut-docs#1046) prints its own "Tips held
+// out" line inside CASH RECONCILIATION, positioned right after Cash sales.
+func TestBuildEODDoc_CashReconciliation_TipsHeldOut(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 1, Gross: 40000, Net: 40000,
+		Methods: []data.EODMethod{{Method: "cash", In: 42000}},
+		Tips:    []data.EODTip{{Method: "cash", Count: 1, Amount: 2000}},
+		CashReconciliation: &data.CashReconciliation{
+			OpeningFloat: 10000,
+			CashSales:    40000,
+			TipsHeldOut:  2000,
+			Calculated:   52000,
+			Counted:      52000,
+			ShiftsClosed: 1,
+		},
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if !strings.Contains(out, "Tips held out") || !strings.Contains(out, "£20.00") {
+		t.Errorf("expected a Tips held out £20.00 line, got:\n%s", out)
+	}
+	// Must appear inside CASH RECONCILIATION, right after Cash sales —
+	// not confused with the separate top-level TIPS BY PAYMENT METHOD
+	// section (ut-docs#1007), which reports the same figure independently.
+	cashRecIdx := strings.Index(out, "CASH RECONCILIATION")
+	tipsHeldIdx := strings.Index(out, "Tips held out")
+	if cashRecIdx < 0 || tipsHeldIdx < cashRecIdx {
+		t.Error("Tips held out line must be inside the CASH RECONCILIATION block")
 	}
 }
 
