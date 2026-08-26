@@ -85,7 +85,15 @@ type exportRequestPayload struct {
 	// rows (data.EODClosesForExport), never recomputed fresh, so an
 	// accounting batch built from it reconciles to the merchant's Z-reports
 	// by construction.
-	EODCloses []data.EODCloseExport `json:"eod_closes,omitempty"`
+	//
+	// Deliberately NO omitempty: EODClosesForExport returns a non-nil empty
+	// slice specifically so "[]" (supported host, zero archived closes in
+	// range) stays wire-distinguishable from null (entity not declared /
+	// permission not granted / pre-#1005 host). A plugin routes on that
+	// difference -- "[]" means "refuse with a clear no-closes error", null
+	// means "fall back to the legacy per-sale grain" -- and omitempty would
+	// collapse both into absence.
+	EODCloses []data.EODCloseExport `json:"eod_closes"`
 }
 
 // exportResponse is the JSON a plugin writes to stdout to answer
@@ -453,14 +461,49 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
 		}
+
+		// EODCloses (ut-docs#1005) mirrors Items/TaxCodes' shape: gated on
+		// the entry DECLARING "eod_closes" in its Entities in addition to a
+		// permission grant, so an entry installed before #1005 keeps
+		// getting exactly today's payload. The permission is sales:read --
+		// the closes are derived from the same sales ledger -- so the
+		// grant resolved above is reused directly rather than re-checked
+		// (a second CheckPermissionGranted call would audit the same
+		// denial twice for no extra safety). Resolved BEFORE the sales
+		// gather below because an entry that declares "eod_closes" never
+		// receives Sales at all: closes are the grain it actually books
+		// (one row per day-close), so the per-sale ledger -- and, crucially,
+		// the maxExportSalesRows cap sized for it -- must not apply. A
+		// full-year closes export (~365 closes) over a busy shop's >50,000
+		// sales is the flagship use case, and capping it on a count of rows
+		// it never reads would 400 it for nothing. The closes query itself
+		// is cheap and needs no equivalent cap (a year is ~365 rows).
+		wantsEODCloses := false
+		for _, e := range entry.Entities {
+			if e == "eod_closes" {
+				wantsEODCloses = true
+				break
+			}
+		}
+		var eodCloses []data.EODCloseExport
+		if wantsEODCloses && hasSales {
+			eodCloses, err = posRepo.EODClosesForExport(r.Context(), from, to)
+			if err != nil {
+				respond(w, http.StatusInternalServerError, false, err.Error())
+				return
+			}
+		}
+
 		var sales []data.ExportSaleRow
-		if hasSales {
+		if hasSales && !wantsEODCloses {
 			// ut-docs#439: reject before the expensive batch gather (and the
 			// WASM dispatch after it) if the matched row count exceeds the
 			// bound, the same "reject before doing the expensive work" shape
 			// the range cap above already uses. A cheap COUNT(*) first, not
 			// SalesForExport's own row count, so an over-large match never
 			// pays for the full batch gather it's about to be rejected for.
+			// Skipped entirely (cap included) for an eod_closes entry -- see
+			// the comment above.
 			count, cerr := posRepo.CountSalesForExport(r.Context(), from, to)
 			if cerr != nil {
 				respond(w, http.StatusInternalServerError, false, cerr.Error())
@@ -548,30 +591,6 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 					respond(w, http.StatusInternalServerError, false, err.Error())
 					return
 				}
-			}
-		}
-
-		// EODCloses (ut-docs#1005) mirrors Items/TaxCodes' shape: gated on
-		// the entry DECLARING "eod_closes" in its Entities in addition to a
-		// permission grant, so an entry installed before #1005 keeps
-		// getting exactly today's payload. The permission is sales:read --
-		// the closes are derived from the same sales ledger -- so the
-		// grant resolved for Sales above is reused directly rather than
-		// re-checked (a second CheckPermissionGranted call would audit the
-		// same denial twice for no extra safety).
-		wantsEODCloses := false
-		for _, e := range entry.Entities {
-			if e == "eod_closes" {
-				wantsEODCloses = true
-				break
-			}
-		}
-		var eodCloses []data.EODCloseExport
-		if wantsEODCloses && hasSales {
-			eodCloses, err = posRepo.EODClosesForExport(r.Context(), from, to)
-			if err != nil {
-				respond(w, http.StatusInternalServerError, false, err.Error())
-				return
 			}
 		}
 
