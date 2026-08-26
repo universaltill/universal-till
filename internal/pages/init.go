@@ -262,7 +262,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncSales(mux, dp)
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
-	StartSyncPush(bgCtx, dp, wg) // replica journal loop (ADR-0011 D3); joined by app.Run's drain
+	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
+	StartSyncPush(bgCtx, dp, wg)        // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	StartSyncPull(bgCtx, dp, rederiveSettings, wg)  // joined by app.Run's drain
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain

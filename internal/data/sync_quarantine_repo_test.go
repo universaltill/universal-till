@@ -62,3 +62,45 @@ func TestSyncQuarantineRepo_InsertAndList(t *testing.T) {
 		t.Fatalf("entries after duplicate insert = %d, want still 2", len(entries))
 	}
 }
+
+func TestSyncQuarantineRepo_Count(t *testing.T) {
+	d := b8OpenDB(t, "sync-quarantine-count.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	if n, err := repo.CountJournalQuarantine(ctx); err != nil {
+		t.Fatalf("CountJournalQuarantine (empty): %v", err)
+	} else if n != 0 {
+		t.Fatalf("count = %d, want 0 on an empty table", n)
+	}
+
+	for i, saleID := range []string{"sale-c1", "sale-c2", "sale-c3"} {
+		if err := repo.InsertJournalQuarantine(ctx, JournalQuarantineEntry{
+			TillID: "till-2", SaleID: saleID, ReceiptNo: "T2-C00" + string(rune('1'+i)),
+			Reason: "test entry", PayloadJSON: `{}`, QuarantinedAt: "2026-08-26T10:00:00Z",
+		}); err != nil {
+			t.Fatalf("InsertJournalQuarantine: %v", err)
+		}
+	}
+	n, err := repo.CountJournalQuarantine(ctx)
+	if err != nil {
+		t.Fatalf("CountJournalQuarantine: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("count = %d, want 3", n)
+	}
+
+	// A duplicate sale_id insert is a no-op (see InsertJournalQuarantine's
+	// own idempotency guard) -- the count must not double-count it.
+	if err := repo.InsertJournalQuarantine(ctx, JournalQuarantineEntry{
+		TillID: "till-2", SaleID: "sale-c1", ReceiptNo: "T2-C001",
+		Reason: "reinserted", PayloadJSON: `{}`, QuarantinedAt: "2026-08-26T12:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.CountJournalQuarantine(ctx); err != nil {
+		t.Fatal(err)
+	} else if n != 3 {
+		t.Fatalf("count after duplicate insert = %d, want still 3", n)
+	}
+}

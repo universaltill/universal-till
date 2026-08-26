@@ -1119,6 +1119,20 @@
   </form>
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
+  {{ if .IsPrimaryTill }}
+  <!-- ut-docs#1133 (ADR-0065 follow-up): a quarantined LAN-sync journal
+       entry is a primary-only concept (see registerSyncQuarantinePage's
+       doc comment) -- shown only on the primary, same guard as the
+       till-name field above. The count itself only ever grows via
+       genuine poison entries, so it's worth surfacing even at zero (an
+       operator has somewhere to check), but only warn-styled once
+       nonzero. -->
+  <p class="muted" style="margin-top:.6rem">
+    {{ T "sync.quarantine_settings_help" }}
+    {{ if gt .QuarantineCount 0 }}<strong>{{ .QuarantineCount }} {{ T "sync.chip_quarantined" }}</strong>{{ end }}
+  </p>
+  <a class="btn secondary" href="/sync-quarantine">{{ T "sync.quarantine_open" }}</a>
+  {{ end }}
 </div>
 <!-- ut-docs#866: invoice seller identity is elevation-wired — the card
      renders for every session (server-side checkOrElevate is the real

@@ -162,16 +162,34 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 				break
 			}
 		}
+		// ut-docs#1133 (ADR-0065 follow-up): a quarantined LAN-sync journal
+		// entry never becomes a sale and both ends of that pull otherwise
+		// read as fully caught-up (see registerSyncQuarantinePage's doc
+		// comment) -- surfacing a nonzero count on the nav chip, which
+		// renders on every authenticated page, is a much stronger standing
+		// signal than the point-in-time Problems-panel Warnf that used to
+		// be the only trace. Best-effort like the rest of this handler: a
+		// read error just leaves the chip's healthy state unchanged rather
+		// than failing the whole chip render.
+		quarantined, qErr := posRepo.CountJournalQuarantine(r.Context())
+		if qErr != nil {
+			logging.L().Errorf("count sync journal quarantine: %v", qErr)
+			quarantined = 0
+		}
+		if quarantined > 0 {
+			class = "warn"
+		}
 		// ut-docs#405: this used to show only a bare replica COUNT — there
 		// was nowhere else to read a name from before #396 added
 		// tillNameOrDefault. Now it shows the same "this till's own name"
 		// every other identity surface (Settings, /tills) already shows.
 		label := tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
 		httpx.RenderPartial("ui/partials/sync_chip.html", map[string]any{
-			"isReplica": false,
-			"class":     class,
-			"label":     label,
-			"count":     len(list),
+			"isReplica":   false,
+			"class":       class,
+			"label":       label,
+			"count":       len(list),
+			"quarantined": quarantined,
 		})(w, r)
 	})
 }
