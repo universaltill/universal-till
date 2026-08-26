@@ -210,10 +210,22 @@ func TestResolveAndInstallBasePlugin_NoMatchingListingIsNoOp(t *testing.T) {
 // already active must be a clean no-op — no second download, no duplicate
 // row, whether it's a second wizard run or the background retry re-running
 // after a prior success.
+//
+// Wire-faithful (ut-docs#1063): the catalog entry sets ID == ListingID, as
+// the real ut-cloud wire always does (there is no separate manifest-plugin-id
+// field on PluginSummary) — unlike deLanguageCatalogEntry's helper shape,
+// which models ID and ListingID as distinct values and would let a
+// listing-UUID-keyed idempotency bug pass unnoticed, exactly as it did before
+// ut-docs#1063's fix (the old PluginActive(best.ID) check could never match a
+// `plugins` row keyed by manifest plugin id, so this test's own second call
+// would previously have re-installed instead of no-op'ing).
 func TestResolveAndInstallBasePlugin_IdempotentWhenAlreadyActive(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
 	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "listing-lang-de", ListingID: "listing-lang-de", Name: "German language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"de"},
+	})
 	dp.Cfg.Marketplace = mkt.config()
 
 	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
