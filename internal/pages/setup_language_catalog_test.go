@@ -354,3 +354,118 @@ func TestSetupLanguageInstallRefusedAfterFirstBoot(t *testing.T) {
 			rec.Code, rec.Header().Get("Location"))
 	}
 }
+
+// ut-docs#1110: the "we don't have de yet — it's on the way" note must never
+// render alongside a working de install tile — the card's own headline
+// scenario (a real German Pi where the pack IS published) reproduced by a
+// second mechanism: detectLanguage() only ever checks the bundled/installed
+// set, with no cross-reference to the catalog fetch renderWizard performs a
+// few lines later in the exact same request.
+func TestSetupWizardCatalogAvailableLanguageSuppressesComingSoonNote(t *testing.T) {
+	resetLangCatalogForTest(t)
+	mux, _, d := newFullAuthDeps(t)
+	withOSLocale(t, "de_DE.UTF-8", "Europe/Berlin")
+	mkt := newFakeMarketplace(t, nil)
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.1.0"))
+	d.Cfg.Marketplace = mkt.config()
+
+	rec := getSetup(mux, "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup (de_DE, catalog offers de): code=%d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `data-detected-lang="de"`) {
+		t.Error(`step 1 shows the "we don't have de yet" note while a de install tile is offered on the same screen`)
+	}
+	if !strings.Contains(body, `name="locale" value="de"`) {
+		t.Error("step 1 is missing the de catalog install tile the note contradicts")
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), "setup.detected_lang_unavailable"); ok {
+		t.Errorf(`setup.detected_lang_unavailable = %q, want unset — de is available via the catalog, not genuinely missing`, v)
+	}
+}
+
+// ut-docs#1110: the country step's pending-plugin write must MERGE, never
+// wholesale-replace — an operator can queue a catalog-only language at step
+// 1 (offline, retried in the background) before confirming a country whose
+// own free base plugin also needs installing, and installBasePluginsForSetup
+// (the country step's ut-docs#591 hook, untouched by #545) still persists via
+// a bare savePendingBasePlugins, dropping whatever step 1 already queued.
+func TestInstallBasePluginsForSetup_MergesWithLanguageStepPending(t *testing.T) {
+	resetLangCatalogForTest(t)
+	_, _, d := newFullAuthDeps(t)
+
+	// Step 1: the operator picked a catalog-only Spanish pack, offline —
+	// already queued for retry.
+	esSpec := basePluginSpec{CanonicalType: "language", Locale: "es"}
+	if err := savePendingBasePlugins(t.Context(), d, []basePluginSpec{esSpec}); err != nil {
+		t.Fatalf("seed pending es spec: %v", err)
+	}
+
+	// The country step then confirms Germany, itself offline (no marketplace
+	// configured on this fixture — same shape as this file's other
+	// catalog-unreachable cases).
+	installBasePluginsForSetup(t.Context(), d, "DE")
+
+	pending, err := loadPendingBasePlugins(t.Context(), d)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	// Exactly these two, no more (a plain len check — a same-spec-added-
+	// twice regression would otherwise pass the membership loop below
+	// silently, per independent review finding 2).
+	if len(pending) != 2 {
+		t.Fatalf("pending = %+v, want exactly [es, de] — no duplicates, nothing extra", pending)
+	}
+	want := map[basePluginSpec]bool{
+		esSpec: false,
+		{CanonicalType: "language", Locale: "de"}: false,
+	}
+	for _, s := range pending {
+		if _, ok := want[s]; !ok {
+			t.Fatalf("unexpected spec left pending: %+v (full list: %+v)", s, pending)
+		}
+		want[s] = true
+	}
+	for s, seen := range want {
+		if !seen {
+			t.Errorf("expected %+v still pending after the country step, got %+v — the country step clobbered another step's queued spec", s, pending)
+		}
+	}
+}
+
+// ut-docs#1110 review finding 1: the OTHER half of the merge fix — a
+// successful install must drop only ITS OWN spec, never wholesale-replace
+// the whole list — had zero coverage; a mutant reverting
+// dismissPendingBasePlugin back to a bare savePendingBasePlugins(nil) passed
+// the entire package. This seeds an unrelated language-step spec, makes the
+// country step's own install actually SUCCEED (a reachable fake catalog),
+// and asserts the unrelated spec survives while only the installed one is
+// removed — the exact bug class this card exists to fix, on the success
+// path this time instead of the offline path above.
+func TestInstallBasePluginsForSetup_SuccessRemovesOnlyItsOwnSpecNotTheWholeList(t *testing.T) {
+	d := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	d.Cfg.Marketplace = mkt.config()
+
+	// An unrelated spec (from the wizard's language step) already queued —
+	// nothing here should ever install it or touch it.
+	esSpec := basePluginSpec{CanonicalType: "language", Locale: "es"}
+	if err := savePendingBasePlugins(t.Context(), d, []basePluginSpec{esSpec}); err != nil {
+		t.Fatalf("seed pending es spec: %v", err)
+	}
+
+	installBasePluginsForSetup(t.Context(), d, "DE")
+
+	if active, err := data.NewPluginRepo(d.Db).PluginActive(t.Context(), "ut-plugin-language-de"); err != nil || !active {
+		t.Fatalf("expected the German pack installed: active=%v err=%v", active, err)
+	}
+	pending, err := loadPendingBasePlugins(t.Context(), d)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != esSpec {
+		t.Fatalf("pending after a successful DE install = %+v, want exactly [es] — installing de must remove only de, never the whole list", pending)
+	}
+}

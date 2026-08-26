@@ -72,25 +72,63 @@ func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country str
 		return
 	}
 	pending := append([]basePluginSpec(nil), specs...)
-	if err := savePendingBasePlugins(ctx, d, pending); err != nil {
+	// Merge (append-if-absent), never wholesale-replace (ut-docs#1110): the
+	// wizard's language step (setup_language_catalog.go) can already have
+	// queued an unrelated spec — e.g. a catalog-only language picked at step
+	// 1, still offline — before this country step ever runs. A plain
+	// savePendingBasePlugins here silently dropped that spec.
+	if err := addPendingBasePlugins(ctx, d, pending); err != nil {
 		logging.L().Errorf("setup wizard: persist pending base plugins: %v", err)
 	}
 
 	attemptCtx, cancel := context.WithTimeout(ctx, setupBasePluginAttemptTimeout)
 	defer cancel()
-	remaining := make([]basePluginSpec, 0, len(pending))
 	for _, spec := range pending {
 		if err := resolveAndInstallBasePlugin(attemptCtx, d, spec); err != nil {
 			logging.L().Warnf("setup wizard: base plugin %s/%s not installed yet, will retry in background: %v",
 				spec.CanonicalType, spec.Locale, err)
-			remaining = append(remaining, spec)
+			continue
+		}
+		// Installed (or a no-op because an equivalent plugin was already
+		// active): drop just THIS spec from whatever else is pending — same
+		// reasoning as above, a wholesale replace here would erase an
+		// unrelated spec another step queued.
+		if err := dismissPendingBasePlugin(ctx, d, spec.CanonicalType, spec.Locale); err != nil {
+			logging.L().Errorf("setup wizard: clear installed pending base plugin %s/%s: %v",
+				spec.CanonicalType, spec.Locale, err)
 		}
 	}
-	if len(remaining) != len(pending) {
-		if err := savePendingBasePlugins(ctx, d, remaining); err != nil {
-			logging.L().Errorf("setup wizard: persist pending base plugins after attempt: %v", err)
-		}
+}
+
+// addPendingBasePlugins merges specs into the persisted pending list
+// (append-if-absent), unlike savePendingBasePlugins' wholesale replace — see
+// installBasePluginsForSetup's own doc comment for why this matters. An
+// unreadable existing list (corrupt JSON) is replaced rather than kept:
+// persisting these specs matters more than preserving bytes no reader can
+// parse anyway.
+func addPendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePluginSpec) error {
+	pending, err := loadPendingBasePlugins(ctx, d)
+	if err != nil {
+		logging.L().Warnf("setup wizard: pending base plugins unreadable, resetting list: %v", err)
+		pending = nil
 	}
+	seen := make(map[basePluginSpec]bool, len(pending))
+	for _, s := range pending {
+		seen[s] = true
+	}
+	changed := false
+	for _, s := range specs {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		pending = append(pending, s)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return savePendingBasePlugins(ctx, d, pending)
 }
 
 // resolveAndInstallBasePlugin resolves spec against the marketplace catalog
