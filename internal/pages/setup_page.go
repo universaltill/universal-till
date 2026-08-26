@@ -244,7 +244,23 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				http.Redirect(w, r, "/setup?lang="+code, http.StatusSeeOther)
 				return
 			}
-			if code != "" {
+			// ut-docs#1110: a language the marketplace catalog already offers
+			// is NOT "genuinely unavailable" — it must never pair the "we
+			// don't have de yet" note with a working de install tile on the
+			// very same screen (the card's own headline scenario,
+			// reproduced by a second mechanism). Checking here is a cache
+			// hit, not a second network round-trip: setupInstallableLanguages
+			// serves the same TTL cache renderWizard reads from a few lines
+			// into its own call below.
+			langs, _ := setupInstallableLanguages(r.Context(), d)
+			catalogHasCode := false
+			for _, l := range langs {
+				if l.Locale == code {
+					catalogHasCode = true
+					break
+				}
+			}
+			if code != "" && !catalogHasCode {
 				langUnavailableCode = code
 				// Best-effort, per this wizard's standing pattern (see the
 				// demo-data seed below): a failed write here must never block
