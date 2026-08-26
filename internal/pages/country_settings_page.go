@@ -60,14 +60,66 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "country_setting", targetID, action, nil, now, "")
 	}
 
+	// redirectTarget carries the "all=1" view state through a POST's
+	// redirect back to the GET page (ut-docs#1024 review finding): every
+	// form on the page posts back with "?all=1" appended to its action
+	// when rendered from the all-countries view (see the template), so a
+	// save/delete/add made there lands back on the SAME view instead of
+	// silently dropping into the filtered default — where an edited row
+	// the operator doesn't see reads as "nothing happened," and an added
+	// custom country is invisible until someone thinks to check "show
+	// all" on their own.
+	redirectTarget := func(r *http.Request, path string) string {
+		if r.URL.Query().Get("all") != "1" {
+			return path
+		}
+		if strings.Contains(path, "?") {
+			return path + "&all=1"
+		}
+		return path + "?all=1"
+	}
+
 	renderPage := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		countries, err := countryRepo.List(r.Context())
 		if err != nil {
 			http.Error(w, "failed to load country settings", http.StatusInternalServerError)
 			return
 		}
-		rows := make([]countryRow, 0, len(countries))
-		for _, c := range countries {
+
+		// ut-docs#1024: a single-shop merchant sees only their own country
+		// by default — the full 14-row seeded list read as "which country
+		// is mine?" rather than settings. "Show all countries" (?all=1) is
+		// the explicit secondary affordance back to the old unfiltered
+		// view. Genuine multi-country detection (from configured
+		// locations) isn't implementable yet — StockLocation carries no
+		// country dimension — so that's tracked as a separate follow-up,
+		// not built here.
+		st := d.CurrentState()
+		showAll := r.URL.Query().Get("all") == "1"
+		countryUnknown := false
+		visible := countries
+		if !showAll {
+			visible = nil
+			for _, c := range countries {
+				if c.Code == st.Country {
+					visible = append(visible, c)
+					break
+				}
+			}
+			if len(visible) == 0 {
+				// The shop's configured country has no seeded/custom row
+				// (shouldn't happen — setup only ever writes a seeded
+				// code — but never render a blank page over it). Also
+				// flagged as countryUnknown so the template can explain
+				// why every country is showing, rather than offering a
+				// "back to just yours" link that would only re-enter this
+				// same fallback (review finding: that link was inert).
+				visible, showAll, countryUnknown = countries, true, true
+			}
+		}
+
+		rows := make([]countryRow, 0, len(visible))
+		for _, c := range visible {
 			rows = append(rows, countryRow{
 				CountrySetting: c,
 				TaxRatePct:     formatBPAsPercent(c.TaxRateBP),
@@ -75,12 +127,14 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 			})
 		}
 		httpx.Render("ui/pages/country_settings.html", map[string]any{
-			"title":     "Country settings",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"countries": rows,
-			"floorDays": data.GlobalArchiveMinDays,
-			"errKey":    errKey,
+			"title":          "Country settings",
+			"theme":          st.Theme,
+			"menuItems":      d.MenuSnapshot(),
+			"countries":      rows,
+			"floorDays":      data.GlobalArchiveMinDays,
+			"errKey":         errKey,
+			"showAll":        showAll,
+			"countryUnknown": countryUnknown,
 		})(w, r)
 	}
 
@@ -103,18 +157,18 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 
 		code := strings.TrimSpace(r.PostFormValue("code"))
 		if code == "" {
-			http.Redirect(w, r, "/country-settings?err=countrysettings.error.code_required", http.StatusSeeOther)
+			http.Redirect(w, r, redirectTarget(r, "/country-settings?err=countrysettings.error.code_required"), http.StatusSeeOther)
 			return
 		}
 
 		taxBP, err := parsePercentAsBP(r.PostFormValue("tax_rate_pct"))
 		if err != nil {
-			http.Redirect(w, r, "/country-settings?err=countrysettings.error.tax_invalid", http.StatusSeeOther)
+			http.Redirect(w, r, redirectTarget(r, "/country-settings?err=countrysettings.error.tax_invalid"), http.StatusSeeOther)
 			return
 		}
 		archiveDays, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("archive_min_days")), 10, 64)
 		if err != nil {
-			http.Redirect(w, r, "/country-settings?err=countrysettings.error.retention_invalid", http.StatusSeeOther)
+			http.Redirect(w, r, redirectTarget(r, "/country-settings?err=countrysettings.error.retention_invalid"), http.StatusSeeOther)
 			return
 		}
 
@@ -141,11 +195,11 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 			if archiveDays < data.GlobalArchiveMinDays {
 				key = "countrysettings.error.below_floor"
 			}
-			http.Redirect(w, r, "/country-settings?err="+key, http.StatusSeeOther)
+			http.Redirect(w, r, redirectTarget(r, "/country-settings?err="+key), http.StatusSeeOther)
 			return
 		}
 		audit(r, actor.ID, cs.Code, "country_setting_save")
-		http.Redirect(w, r, "/country-settings", http.StatusSeeOther)
+		http.Redirect(w, r, redirectTarget(r, "/country-settings"), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("POST /api/country-settings/{code}/delete", func(w http.ResponseWriter, r *http.Request) {
@@ -155,11 +209,11 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		code := r.PathValue("code")
 		if err := countryRepo.Delete(r.Context(), code); err != nil {
-			http.Redirect(w, r, "/country-settings?err=countrysettings.error.delete", http.StatusSeeOther)
+			http.Redirect(w, r, redirectTarget(r, "/country-settings?err=countrysettings.error.delete"), http.StatusSeeOther)
 			return
 		}
 		audit(r, actor.ID, code, "country_setting_delete")
-		http.Redirect(w, r, "/country-settings", http.StatusSeeOther)
+		http.Redirect(w, r, redirectTarget(r, "/country-settings"), http.StatusSeeOther)
 	})
 }
 

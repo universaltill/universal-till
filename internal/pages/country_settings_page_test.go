@@ -22,7 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
-func newCountrySettingsTestMux(t *testing.T) (*http.ServeMux, *data.CountrySettingsRepo) {
+func newCountrySettingsTestMux(t *testing.T) (*http.ServeMux, *data.CountrySettingsRepo, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
 	dbase, err := db.Open(filepath.Join(t.TempDir(), "country-settings-page.db"))
@@ -33,7 +33,7 @@ func newCountrySettingsTestMux(t *testing.T) (*http.ServeMux, *data.CountrySetti
 	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase.DB)}
 	mux := http.NewServeMux()
 	registerCountrySettings(mux, d)
-	return mux, data.NewCountrySettingsRepo(dbase.DB)
+	return mux, data.NewCountrySettingsRepo(dbase.DB), d
 }
 
 // ut-docs#902: GET /country-settings must be reachable under UT_AUTH=off
@@ -43,7 +43,7 @@ func newCountrySettingsTestMux(t *testing.T) (*http.ServeMux, *data.CountrySetti
 // permanently under UT_AUTH=off, since no session is ever set in that mode.
 func TestCountrySettingsPage_ReachableUnderAuthOff(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newCountrySettingsTestMux(t)
+	mux, _, _ := newCountrySettingsTestMux(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/country-settings", nil)
 	rec := httptest.NewRecorder()
@@ -58,7 +58,7 @@ func TestCountrySettingsPage_ReachableUnderAuthOff(t *testing.T) {
 // here too (the GET-only regression test above only pins the read path).
 func TestCountrySettingsPageCreate_ReachableUnderAuthOff(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newCountrySettingsTestMux(t)
+	mux, _, _ := newCountrySettingsTestMux(t)
 
 	rec := postForm(mux, "/api/country-settings", url.Values{
 		"code":             {"ZZ"},
@@ -73,7 +73,7 @@ func TestCountrySettingsPageCreate_ReachableUnderAuthOff(t *testing.T) {
 }
 
 func TestCountrySettingsPagePermissions(t *testing.T) {
-	mux, _ := newCountrySettingsTestMux(t)
+	mux, _, _ := newCountrySettingsTestMux(t)
 	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), cashier)
@@ -90,8 +90,14 @@ func TestCountrySettingsPagePermissions(t *testing.T) {
 	}
 }
 
-func TestCountrySettingsPageRendersSeededCountries(t *testing.T) {
-	mux, _ := newCountrySettingsTestMux(t)
+// TestCountrySettingsPageDefaultShowsOnlyShopCountry pins ut-docs#1024's
+// core requirement: a single-shop merchant sees their own country's row by
+// default, not all 14 seeded jurisdictions. Replaces the old
+// TestCountrySettingsPageRendersSeededCountries, which asserted the
+// unfiltered-by-design render this card explicitly changes.
+func TestCountrySettingsPageDefaultShowsOnlyShopCountry(t *testing.T) {
+	mux, _, d := newCountrySettingsTestMux(t)
+	d.SetState(common.RuntimeState{Country: "DE"})
 	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
@@ -101,15 +107,122 @@ func TestCountrySettingsPageRendersSeededCountries(t *testing.T) {
 		t.Fatalf("manager GET = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"DE", "GBP", "Country settings"} {
+	if !strings.Contains(body, "DE") {
+		t.Errorf("rendered page missing shop's own country %q", "DE")
+	}
+	if strings.Contains(body, "FR") {
+		t.Errorf("default view rendered another seeded country (%q) — should show only the shop's own", "FR")
+	}
+}
+
+// TestCountrySettingsPageShowAllCountries pins the explicit "show all
+// countries" affordance (?all=1): every seeded country renders, same as
+// the pre-#1024 unconditional behavior.
+func TestCountrySettingsPageShowAllCountries(t *testing.T) {
+	mux, _, d := newCountrySettingsTestMux(t)
+	d.SetState(common.RuntimeState{Country: "DE"})
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings?all=1", nil), mgr)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager GET ?all=1 = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"DE", "FR", "GBP", "Country settings"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("rendered page missing %q", want)
+			t.Errorf("?all=1 rendered page missing %q — expected the full seeded list", want)
 		}
 	}
 }
 
+// TestCountrySettingsPageUnknownShopCountry_ShowsAllWithExplanation pins
+// the review-found fallback: when the shop's configured country matches no
+// row (shouldn't happen in practice, but defensively handled), the page
+// shows every country with an explanation — and must NOT offer a "show
+// only my country" link, since that link would just re-enter this same
+// fallback (the review's finding: it was rendered but permanently inert).
+func TestCountrySettingsPageUnknownShopCountry_ShowsAllWithExplanation(t *testing.T) {
+	mux, _, d := newCountrySettingsTestMux(t)
+	d.SetState(common.RuntimeState{Country: "ZZ"}) // not a seeded/custom code
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager GET = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"DE", "FR", "GBP"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("unknown-shop-country fallback missing %q — expected the full seeded list", want)
+		}
+	}
+	if !strings.Contains(body, "in this list") {
+		t.Errorf("unknown-shop-country fallback missing its explanation text")
+	}
+	if strings.Contains(body, "Show only my country") {
+		t.Errorf("unknown-shop-country fallback rendered a 'show only my country' link — it would just re-enter this same fallback")
+	}
+}
+
+// TestCountrySettingsPageSave_FromAllView_RedirectsBackToAllView pins the
+// review-found redirect gap: a save/delete made from the "show all
+// countries" view (?all=1) must land back on that same view, not silently
+// drop to the filtered default where the edited row — or a newly-added
+// custom country — would be invisible and read as "nothing happened."
+func TestCountrySettingsPageSave_FromAllView_RedirectsBackToAllView(t *testing.T) {
+	mux, _, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	rec := postForm(mux, "/api/country-settings?all=1", url.Values{
+		"code":             {"FR"},
+		"currency":         {"EUR"},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save from all view = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/country-settings?all=1" {
+		t.Errorf("save redirect = %q, want /country-settings?all=1 (must carry the view through)", loc)
+	}
+
+	rec = postForm(mux, "/api/country-settings/FR/delete?all=1", url.Values{}, &mgr)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("delete from all view = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/country-settings?all=1" {
+		t.Errorf("delete redirect = %q, want /country-settings?all=1 (must carry the view through)", loc)
+	}
+}
+
+// TestCountrySettingsPageSave_FromDefaultView_RedirectsToDefaultView proves
+// the "all=1" carry-through is opt-in, not always-on: a save from the
+// default filtered view must NOT pick up all=1 out of nowhere.
+func TestCountrySettingsPageSave_FromDefaultView_RedirectsToDefaultView(t *testing.T) {
+	mux, _, d := newCountrySettingsTestMux(t)
+	d.SetState(common.RuntimeState{Country: "GB"})
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	rec := postForm(mux, "/api/country-settings", url.Values{
+		"code":             {"GB"},
+		"currency":         {"GBP"},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save from default view = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/country-settings" {
+		t.Errorf("save redirect = %q, want plain /country-settings", loc)
+	}
+}
+
 func TestCountrySettingsPageSaveAndFloorRefusal(t *testing.T) {
-	mux, repo := newCountrySettingsTestMux(t)
+	mux, repo, _ := newCountrySettingsTestMux(t)
 	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
 	ctx := t.Context()
 
@@ -155,7 +268,7 @@ func TestCountrySettingsPageSaveAndFloorRefusal(t *testing.T) {
 }
 
 func TestCountrySettingsPageDeleteRestoresBuiltin(t *testing.T) {
-	mux, repo := newCountrySettingsTestMux(t)
+	mux, repo, _ := newCountrySettingsTestMux(t)
 	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
 	ctx := t.Context()
 

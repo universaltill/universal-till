@@ -7,6 +7,14 @@
 
 <p class="muted">{{ T "countrysettings.intro" }}</p>
 
+{{ if .countryUnknown }}
+<p class="muted">{{ T "countrysettings.unknown_country" }}</p>
+{{ else if .showAll }}
+<p class="muted"><a href="/country-settings">{{ T "countrysettings.show_mine" }}</a></p>
+{{ else }}
+<p class="muted">{{ T "countrysettings.showing_mine" }} <a href="/country-settings?all=1">{{ T "countrysettings.show_all" }}</a></p>
+{{ end }}
+
 <div class="users-layout">
   <div class="card users-list">
     <div style="overflow-x:auto">
@@ -48,11 +56,11 @@
             <input form="cs-{{ .Code }}" type="number" name="archive_min_days" value="{{ .ArchiveMinDays }}" min="{{ $.floorDays }}" step="1" dir="ltr" size="6" />
           </td>
           <td class="users-actions">
-            <form id="cs-{{ .Code }}" method="post" action="/api/country-settings">
+            <form id="cs-{{ .Code }}" method="post" action="/api/country-settings{{ if $.showAll }}?all=1{{ end }}">
               <input type="hidden" name="code" value="{{ .Code }}" />
               <button type="submit" class="btn secondary">{{ T "countrysettings.save" }}</button>
             </form>
-            <form method="post" action="/api/country-settings/{{ .Code }}/delete">
+            <form method="post" action="/api/country-settings/{{ .Code }}/delete{{ if $.showAll }}?all=1{{ end }}">
               <button type="submit" class="btn secondary">
                 {{ if .IsBuiltin }}{{ T "countrysettings.reset" }}{{ else }}{{ T "countrysettings.delete" }}{{ end }}
               </button>
@@ -67,7 +75,7 @@
 
   <div class="card users-form">
     <h3>{{ T "countrysettings.new.title" }}</h3>
-    <form method="post" action="/api/country-settings" autocomplete="off">
+    <form method="post" action="/api/country-settings{{ if .showAll }}?all=1{{ end }}" autocomplete="off">
       <label>{{ T "countrysettings.col.country" }} <input type="text" name="code" maxlength="8" required dir="ltr" /></label>
       <label>{{ T "countrysettings.col.currency" }} <input type="text" name="currency" maxlength="8" dir="ltr" /></label>
       <label>{{ T "countrysettings.col.symbol" }} <input type="text" name="currency_symbol" maxlength="4" dir="ltr" /></label>
